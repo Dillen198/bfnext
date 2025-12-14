@@ -13,7 +13,12 @@
       "Bash(echo:*)",
       "Bash(ls:*)",
       "Bash(cargo check:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(powershell -Command \". .\\setup-build.ps1; cargo check --package=bfdb 2>&1\")",
+      "Bash(Select-String -Pattern \"error|warning:\")",
+      "Bash(powershell -Command \". .\\setup-build.ps1; cargo check --package=bflib 2>&1\")",
+      "Bash(powershell -Command \". .\\setup-build.ps1; cargo check --workspace 2>&1\")",
+      "Bash(powershell -Command \". .\\setup-build.ps1; cargo check --workspace\")"
     ],
     "deny": [],
     "ask": []

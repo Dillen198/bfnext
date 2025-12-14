@@ -3,11 +3,9 @@ use clap::Parser;
 use db::StatsDb;
 use netidx::{config::Config, path::Path as NetidxPath, subscriber::SubscriberBuilder};
 use regex::Regex;
-use std::{future, net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf};
 use tokio::task;
 use warp::{
-    filters::BoxedFilter,
-    reject::{Reject, Rejection},
     reply::{Reply, Response},
     Filter,
 };

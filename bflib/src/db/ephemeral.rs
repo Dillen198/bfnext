@@ -113,8 +113,8 @@ pub struct Ephemeral {
     pub(super) cargo: FxHashMap<SlotId, Cargo>,
     /// C-130 physical cargo tracking: group_id -> C130Cargo
     pub(super) c130_crates: FxHashMap<GroupId, C130Cargo>,
-    /// Queue for staggered crate spawning: (spawn_time, crate_data)
-    pub(super) c130_spawn_queue: BTreeMap<DateTime<Utc>, Vec<(Side, String, ObjectiveId, Ucid, Crate)>>,
+    /// Queue for staggered crate spawning: (spawn_time, crate_data with index for positioning)
+    pub(super) c130_spawn_queue: BTreeMap<DateTime<Utc>, Vec<(Side, String, ObjectiveId, Ucid, Crate, usize)>>,
     pub(super) deployable_idx: FxHashMap<Side, Arc<DeployableIndex>>,
     pub(super) group_marks: FxHashMap<GroupId, MarkId>,
     objective_markup: FxHashMap<ObjectiveId, ObjectiveMarkup>,

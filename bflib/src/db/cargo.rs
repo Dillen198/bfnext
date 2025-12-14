@@ -198,13 +198,6 @@ impl C130Cargo {
         }
     }
 
-    pub fn is_landed(&self) -> bool {
-        self.state == C130CargoState::Landed
-    }
-
-    pub fn is_airborne(&self) -> bool {
-        self.state == C130CargoState::Airborne
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1425,7 +1418,8 @@ impl Db {
     // ===== C-130 Physical Cargo System =====
 
     /// Helper method to get deployable index for a side
-    pub fn deployable_idx(&self, side: Side) -> Result<&Arc<super::ephemeral::DeployableIndex>> {
+    #[allow(private_interfaces)]
+    pub(crate) fn deployable_idx(&self, side: Side) -> Result<&Arc<super::ephemeral::DeployableIndex>> {
         self.ephemeral
             .deployable_idx
             .get(&side)
@@ -1475,25 +1469,30 @@ impl Db {
             bail!("crate {} not found", crate_name)
         };
 
-        // Get player position
+        // Get player position and direction (using same method as regular cargo system)
         let unit = self.ephemeral.slot_instance_unit(lua, slot)?;
         let pos = unit.get_position()?;
         let point = Vector2::new(pos.p.x, pos.p.z);
-        debug!("[C130_CARGO] Player position: x={:.2}, z={:.2}", point.x, point.y);
 
-        // Spawn physical crate using spawn system
+        // Get direction vector from position matrix (same as regular cargo system)
+        let dir = Vector2::new(pos.x.x, pos.x.z);
+        debug!("[C130_CARGO] Player position: x={:.2}, z={:.2}, dir=({:.2}, {:.2})",
+               point.x, point.y, dir.x, dir.y);
+
+        // Spawn physical crate using spawn system (use C-130 specific template)
         let template = self
             .ephemeral
             .cfg
-            .crate_template
+            .c130_cargo_template
             .get(&side)
-            .ok_or_else(|| anyhow!("missing crate template for {:?}", side))?
+            .ok_or_else(|| anyhow!("missing c130_cargo_template for {:?}", side))?
             .clone();
 
+        // Use same spawn location approach as regular cargo system
         let spawnpos = SpawnLoc::AtPos {
             pos: point,
-            offset_direction: Vector2::new(0., 0.),
-            group_heading: 0.,
+            offset_direction: dir,  // Same as regular cargo system
+            group_heading: azumith2d(dir),  // Same as regular cargo system
         };
 
         let dk = DeployKind::Crate {
@@ -1501,6 +1500,9 @@ impl Db {
             player: ucid.clone(),
             spec: crate_def.clone(),
         };
+
+        debug!("[C130_CARGO] Spawning with template='{}', dir=({:.2}, {:.2})",
+               template, dir.x, dir.y);
 
         let group_id = self.add_and_queue_group(
             &SpawnCtx::new(lua)?,
@@ -1556,18 +1558,18 @@ impl Db {
         let num_to_spawn = crate_list.len().min(max_spawn);
         let mut spawn_time = Utc::now();
 
-        for (crate_name, crate_def) in crate_list.into_iter().take(num_to_spawn) {
+        for (idx, (crate_name, crate_def)) in crate_list.into_iter().take(num_to_spawn).enumerate() {
             spawn_time = spawn_time + chrono::Duration::seconds(spawn_delay as i64);
 
             self.ephemeral
                 .c130_spawn_queue
                 .entry(spawn_time)
                 .or_insert_with(Vec::new)
-                .push((side, crate_name, origin, ucid, crate_def));
+                .push((side, crate_name, origin, ucid.clone(), crate_def, idx));
         }
 
         Ok(String::from(format!(
-            "Queued {} crates for spawning ({} second intervals). They will appear near your aircraft.",
+            "Queued {} crates for spawning ({} second intervals). They will appear behind your aircraft.",
             num_to_spawn, spawn_delay
         )))
     }
@@ -1583,19 +1585,21 @@ impl Db {
 
         for spawn_time in to_spawn {
             if let Some(crates) = self.ephemeral.c130_spawn_queue.remove(&spawn_time) {
-                for (side, crate_name, origin, ucid, crate_def) in crates {
-                    // Get player's current position (might have moved)
+                for (side, crate_name, origin, ucid, crate_def, _crate_idx) in crates {
+                    // Get player's current position and direction (might have moved)
                     let unit_result = self.ephemeral.slot_instance_unit(lua, slot);
-                    let point = match unit_result {
+                    let (point, dir) = match unit_result {
                         Ok(unit) => {
                             let pos = unit.get_position()?;
-                            Vector2::new(pos.p.x, pos.p.z)
+                            let pt = Vector2::new(pos.p.x, pos.p.z);
+                            let direction = Vector2::new(pos.x.x, pos.x.z);
+                            (pt, direction)
                         }
                         Err(_) => continue, // Player might have disconnected
                     };
 
-                    // Spawn the crate
-                    let template = match self.ephemeral.cfg.crate_template.get(&side).cloned() {
+                    // Spawn the crate (use C-130 specific template)
+                    let template = match self.ephemeral.cfg.c130_cargo_template.get(&side).cloned() {
                         Some(name) => name,
                         None => continue,
                     };
@@ -1606,10 +1610,12 @@ impl Db {
                         C130CargoType::Deployable { name: crate_name.clone() }
                     };
 
+                    // Use same spawn location approach as regular cargo system
+                    // Note: crate_idx is kept for future use but not currently used for positioning
                     let spawnpos = SpawnLoc::AtPos {
                         pos: point,
-                        offset_direction: Vector2::new(0., 0.),
-                        group_heading: 0.,
+                        offset_direction: dir,  // Same as regular cargo system
+                        group_heading: azumith2d(dir),  // Same as regular cargo system
                     };
 
                     let dk = DeployKind::Crate {

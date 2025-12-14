@@ -27,7 +27,7 @@ use netidx::{path::Path as NetidxPath, subscriber::Subscriber};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sled::{transaction::TransactionError, Db};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use std::{ops::Deref, path::Path, str::FromStr, sync::Arc, time::Duration};
 use tokio::task;
 use uuid::Uuid;
@@ -341,7 +341,7 @@ pub(crate) struct StatsDbInner {
     shared_kills: Tree<KillId, SmallVec<[EnId; 2]>>,
     units: Tree<(RoundId, EnId), Unit>,
     groups: Tree<(RoundId, GroupId), Group>,
-    detected: Tree<(RoundId, EnId), BitFlags<DetectionSource>>,
+    detected: Tree<(RoundId, EnId), BitFlags<DetectionSource, u8>>,
     objectives: Tree<(RoundId, ObjectiveId), Objective>,
     equipment: Tree<(RoundId, ObjectiveId, String), u32>,
     liquids: Tree<(RoundId, ObjectiveId, LiquidType), u32>,
@@ -363,11 +363,6 @@ impl Deref for StatsDb {
     }
 }
 
-macro_rules! abort {
-    ($e:expr) => {
-        return Err(ConflictableTransactionError::Abort(anyhow!($e)))
-    };
-}
 
 fn txn_err(e: TransactionError<anyhow::Error>) -> anyhow::Error {
     match e {
@@ -460,7 +455,7 @@ impl StatsDb {
                                     }
                                 };
                                 info!("adding stat {st:?}");
-                                if let Err(e) = task::block_in_place(|| self.add_stat(ctx, st)) {
+                                if let Err(e) = task::block_in_place(|| self.add_stat(ctx, Utc::now(), st)) {
                                     error!("failed to add stat {e:?}")
                                 }
                             }
@@ -477,7 +472,7 @@ impl StatsDb {
         ctx: &mut StatCtx,
         start: DateTime<Utc>,
         sortie: String,
-        seqnum: SeqId,
+        seqnum: DateTime<Utc>,
     ) -> Result<()> {
         let id = RoundId::new(&self.db)?;
         let key = (sortie.clone(), id);
@@ -643,18 +638,18 @@ impl StatsDb {
         })
     }
 
-    fn add_stat(&self, ctx: &mut StatCtx, stat: Stat) -> Result<()> {
+    fn add_stat(&self, ctx: &mut StatCtx, time: DateTime<Utc>, stat: Stat) -> Result<()> {
         if let Some(ctx) = &ctx.0 {
-            if stat.seq <= ctx.seq {
+            if time <= ctx.seq {
                 return Ok(());
             }
         }
-        if let Stat::NewRound { sortie } = &stat.kind {
+        if let Stat::NewRound { sortie } = &stat {
             if ctx.0.is_some() {
                 bail!("NewRound should only appear at the beginning of the stats or after RoundEnd")
             }
             match self.seq.scan_prefix(sortie)?.next_back().transpose()? {
-                None => return self.new_round(ctx, stat.time, sortie.clone(), stat.seq),
+                None => return self.new_round(ctx, time, sortie.clone(), time),
                 Some(((_, round), seq)) => match self.round.get(&(sortie.clone(), round))? {
                     Some(r) if r.end.is_none() => {
                         ctx.0 = Some(StatCtxInner {
@@ -665,20 +660,20 @@ impl StatsDb {
                         return Ok(());
                     }
                     Some(_) | None => {
-                        return self.new_round(ctx, stat.time, sortie.clone(), stat.seq)
+                        return self.new_round(ctx, time, sortie.clone(), time)
                     }
                 },
             }
         }
-        if let Stat::RoundEnd { winner } = &stat.kind {
-            return self.round_end(ctx, stat.time, *winner);
+        if let Stat::RoundEnd { winner } = &stat {
+            return self.round_end(ctx, time, *winner);
         }
         let ctx = ctx.get_mut()?;
-        match stat.kind {
+        match stat {
             Stat::NewRound { .. } | Stat::RoundEnd { .. } => unreachable!(),
             Stat::SessionStart { stop, cfg } => {
                 self.session.insert(
-                    &(ctx.round, stat.time),
+                    &(ctx.round, time),
                     &Session {
                         cfg: (*cfg).clone(),
                         stop_time: stop,
@@ -703,7 +698,7 @@ impl StatsDb {
                             api: api_perf,
                             engine: perf,
                             frame,
-                            time: stat.time,
+                            time,
                         });
                         self.session.insert(&k, &session)?;
                     }
@@ -724,7 +719,7 @@ impl StatsDb {
                         kind,
                         owner,
                         by: None,
-                        last_change: stat.time,
+                        last_change: time,
                         health: 100,
                         logi: 100,
                         supply: 100,
@@ -857,18 +852,18 @@ impl StatsDb {
             } => {
                 self.pilots.saw_pilot(id, name)?;
                 self.pilots.with_pilot_round_info(id, ctx.round, |ri| {
-                    ri.side = (stat.time, side);
+                    ri.side = (time, side);
                     ri.points = initial_points;
                 })?;
             }
             Stat::Sideswitch { id, side } => {
                 self.pilots
-                    .with_pilot_round_info(id, ctx.round, |ri| ri.side = (stat.time, side))?;
+                    .with_pilot_round_info(id, ctx.round, |ri| ri.side = (time, side))?;
             }
             Stat::Connect { id, addr, name } => {
                 self.pilots.saw_pilot(id, name)?;
                 self.pilots.with_pilot_round_info(id, ctx.round, |ri| {
-                    ri.connected = Some((stat.time, addr.clone()))
+                    ri.connected = Some((time, addr.clone()))
                 })?;
             }
             Stat::Disconnect { id } => {
@@ -878,7 +873,7 @@ impl StatsDb {
             Stat::Slot { id, slot, typ } => {
                 self.pilots.with_pilot_round_info(id, ctx.round, |ri| {
                     ri.slot = Some(Slot {
-                        time: stat.time,
+                        time,
                         id: slot,
                         vehicle: typ.as_ref().map(|u| u.typ.clone()),
                         sortie: None,
@@ -960,7 +955,7 @@ impl StatsDb {
                 self.pilots.sortie.insert(
                     &(id, ctx.round, sid),
                     &Sortie {
-                        takeoff: stat.time,
+                        takeoff: time,
                         land: None,
                         vehicle,
                     },
@@ -975,7 +970,7 @@ impl StatsDb {
                 })?;
                 let sid = sid.ok_or_else(|| anyhow!("{id} landed without taking off"))?;
                 self.pilots
-                    .with_sortie((id, ctx.round, sid), |s| s.land = Some(stat.time))?;
+                    .with_sortie((id, ctx.round, sid), |s| s.land = Some(time))?;
             }
             Stat::Life { id, lives } => {
                 self.pilots.with_pilot_round_info(id, ctx.round, |ri| {
@@ -1019,10 +1014,13 @@ impl StatsDb {
                     self.pilots.by_token.remove(&token)?;
                 }
             }
+            Stat::PointsTransferToObjective { from: _, to: _, points: _ } => {
+                // Not currently tracked in database
+            }
         };
         self.seq
-            .insert(&(ctx.sortie.clone(), ctx.round), &stat.seq)?;
-        ctx.seq = stat.seq;
+            .insert(&(ctx.sortie.clone(), ctx.round), &time)?;
+        ctx.seq = time;
         Ok(())
     }
 }
