@@ -40,7 +40,7 @@ use dcso3::{
     MizLua, String, Vector2,
 };
 use fxhash::FxHashMap;
-use log::{error, warn};
+use log::{debug, error, warn};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -1020,11 +1020,10 @@ impl Db {
         if from == to {
             bail!("you can't transfer supplies to the same objective")
         }
-        let whcfg = match self.ephemeral.cfg.warehouse.as_ref() {
-            Some(whcfg) => whcfg,
+        let (size, transfer_size_percent) = match self.ephemeral.cfg.warehouse.as_ref() {
+            Some(whcfg) => (whcfg.supply_transfer_size as f32 / 100., whcfg.supply_transfer_size),
             None => return Ok(()),
         };
-        let size = whcfg.supply_transfer_size as f32 / 100.;
         let side = objective!(self, from)?.owner;
         if side != objective!(self, to)?.owner {
             bail!("can't transfer supply from an enemy objective")
@@ -1038,33 +1037,81 @@ impl Db {
             .context("syncing to objective")?;
         let from_obj = objective!(self, from)?;
         let to_obj = objective!(self, to)?;
-        macro_rules! compute {
-            ($src:ident, $typ:ident) => {
-                for (name, inv) in &from_obj.warehouse.$src {
-                    if inv.stored > 0 {
-                        let needed = match to_obj.warehouse.$src.get(name) {
-                            None => 0,
-                            Some(inv) => {
-                                if inv.capacity >= inv.stored {
-                                    inv.capacity - inv.stored
-                                } else {
-                                    0
-                                }
+
+        debug!("[SUPPLY_TRANSFER] Starting transfer from {:?} to {:?}, size: {}%", from, to, transfer_size_percent);
+
+        // Only transfer weapons (equipment), not airframes
+        // Weapons have names like "weapons.shells", "weapons.missiles", etc.
+        // Airframes have names like "M-2000C", "F-16C_50", etc.
+        for (name, inv) in &from_obj.warehouse.equipment {
+            // Check if this is a weapon (not an airframe)
+            // Weapons typically have "weapons." prefix or contain common weapon keywords
+            let is_weapon = name.starts_with("weapons.")
+                || name.to_lowercase().contains("shell")
+                || name.to_lowercase().contains("missile")
+                || name.to_lowercase().contains("rocket")
+                || name.to_lowercase().contains("bomb")
+                || name.to_lowercase().contains("gun")
+                || name.to_lowercase().contains("chaff")
+                || name.to_lowercase().contains("flare");
+
+            if is_weapon {
+                if inv.stored > 0 {
+                    let needed = match to_obj.warehouse.equipment.get(name) {
+                        None => 0,
+                        Some(inv) => {
+                            if inv.capacity >= inv.stored {
+                                inv.capacity - inv.stored
+                            } else {
+                                0
                             }
-                        };
-                        let amount = min(needed, max(1, (inv.stored as f32 * size) as u32));
+                        }
+                    };
+                    let amount = min(needed, max(1, (inv.stored as f32 * size) as u32));
+                    if amount > 0 {
+                        debug!("[SUPPLY_TRANSFER] Transferring weapon: {} amount: {} (stored: {}, needed: {})",
+                            name, amount, inv.stored, needed);
                         transfers.push(Transfer {
                             amount,
                             source: from,
                             target: to,
-                            item: TransferItem::$typ(name.clone()),
+                            item: TransferItem::Equipment(name.clone()),
                         });
                     }
                 }
-            };
+            } else {
+                debug!("[SUPPLY_TRANSFER] Skipping airframe: {} (stored: {})", name, inv.stored);
+            }
         }
-        compute!(equipment, Equipment);
-        compute!(liquids, Liquid);
+
+        // Transfer all liquids (fuel)
+        for (name, inv) in &from_obj.warehouse.liquids {
+            if inv.stored > 0 {
+                let needed = match to_obj.warehouse.liquids.get(name) {
+                    None => 0,
+                    Some(inv) => {
+                        if inv.capacity >= inv.stored {
+                            inv.capacity - inv.stored
+                        } else {
+                            0
+                        }
+                    }
+                };
+                let amount = min(needed, max(1, (inv.stored as f32 * size) as u32));
+                if amount > 0 {
+                    debug!("[SUPPLY_TRANSFER] Transferring liquid: {:?} amount: {} (stored: {}, needed: {})",
+                        name, amount, inv.stored, needed);
+                    transfers.push(Transfer {
+                        amount,
+                        source: from,
+                        target: to,
+                        item: TransferItem::Liquid(*name),
+                    });
+                }
+            }
+        }
+
+        debug!("[SUPPLY_TRANSFER] Total transfers queued: {}", transfers.len());
         for tr in transfers {
             tr.execute(&mut self.persisted, &self.ephemeral.to_bg)?
         }

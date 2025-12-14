@@ -463,6 +463,27 @@ pub struct CargoConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct C130CargoConfig {
+    /// List of vehicle types that can use C-130 physical cargo system (e.g., "C-130")
+    pub enabled_vehicles: FxHashSet<Vehicle>,
+    /// Spawn delay between crates when using "Spawn All" (seconds)
+    #[serde(default = "default_c130_spawn_delay")]
+    pub spawn_delay: u32,
+    /// Maximum number of crates that can be spawned at once with "Spawn All"
+    #[serde(default = "default_c130_max_spawn")]
+    pub max_spawn_all: u32,
+}
+
+fn default_c130_spawn_delay() -> u32 {
+    1
+}
+
+fn default_c130_max_spawn() -> u32 {
+    50
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WarehouseConfig {
     /// Logistics hub max supply stock as a multiple of the delivery amount
     pub hub_max: u32,
@@ -860,6 +881,12 @@ pub struct Cfg {
     /// The name of the crate group for each side
     #[serde(default)]
     pub crate_template: FxHashMap<Side, String>,
+    /// The name of the C-130 physical cargo crate template for each side
+    #[serde(default)]
+    pub c130_cargo_template: FxHashMap<Side, String>,
+    /// C-130 physical cargo configuration
+    #[serde(default)]
+    pub c130_cargo: Option<C130CargoConfig>,
     /// deployables configuration for each side
     #[serde(default)]
     pub deployables: FxHashMap<Side, Vec<Deployable>>,

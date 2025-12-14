@@ -257,6 +257,57 @@ fn spawn_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     Ok(())
 }
 
+// C-130 Physical Cargo Menu Handlers
+fn spawn_c130_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let origin = ctx.db.player_current_objective_id(&slot)?;
+
+    match ctx.db.spawn_c130_crate(lua, &ctx.idx, &slot, arg.snd.clone(), side, origin) {
+        Ok(msg) => {
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
+        }
+        Err(e) => {
+            let msg = format_compact!("Failed to spawn crate: {}", e);
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
+        }
+    }
+    Ok(())
+}
+
+fn spawn_all_c130_crates(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let origin = ctx.db.player_current_objective_id(&slot)?;
+
+    // Build list of all crates (deployables + supply transfer, excluding repair crates)
+    let mut crate_list = Vec::new();
+
+    // Add all deployable crates (not repair crates)
+    for dep in ctx.db.ephemeral.cfg.deployables.get(&side).unwrap_or(&vec![]) {
+        for cr in &dep.crates {
+            crate_list.push((cr.name.clone(), cr.clone()));
+        }
+    }
+
+    // Add supply transfer crate if warehouse enabled
+    if let Some(whcfg) = &ctx.db.ephemeral.cfg.warehouse {
+        let supply_crate = &whcfg.supply_transfer_crate[&side];
+        crate_list.push((supply_crate.name.clone(), supply_crate.clone()));
+    }
+
+    match ctx.db.queue_c130_crate_spawns(&slot, crate_list, side, origin) {
+        Ok(msg) => {
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg);
+        }
+        Err(e) => {
+            let msg = format_compact!("Failed to queue crates: {}", e);
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg);
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn add_cargo_menu_for_group(
     cfg: &Cfg,
     mc: &MissionCommands,
@@ -374,5 +425,90 @@ pub(super) fn add_cargo_menu_for_group(
             )?;
         }
     }
+    Ok(())
+}
+
+pub(super) fn add_c130_cargo_menu_for_group(
+    cfg: &Cfg,
+    mc: &MissionCommands,
+    side: &Side,
+    group: GroupId,
+) -> Result<()> {
+    let root = mc.add_submenu_for_group(group, "C-130 Cargo".into(), None)?;
+
+    // Add "Spawn All Crates" command
+    mc.add_command_for_group(
+        group,
+        "Spawn All Crates (Staggered)".into(),
+        Some(root.clone()),
+        spawn_all_c130_crates,
+        group,
+    )?;
+
+    let crates_menu = mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
+
+    // Add logistics submenu (supply transfer)
+    if let Some(whcfg) = &cfg.warehouse {
+        let logi = mc.add_submenu_for_group(group, "Logistics".into(), Some(crates_menu.clone()))?;
+        let cr = &whcfg.supply_transfer_crate[&side];
+        mc.add_command_for_group(
+            group,
+            cr.name.clone(),
+            Some(logi.clone()),
+            spawn_c130_crate,
+            ArgTuple {
+                fst: group,
+                snd: cr.name.clone(),
+            },
+        )?;
+    }
+
+    // Add all deployable crates (organized by path, excluding repair crates)
+    let mut created_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
+    for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
+        if dep.crates.is_empty() {
+            continue;
+        }
+
+        let name = dep.path.last().unwrap();
+        let root = dep
+            .path
+            .iter()
+            .fold(Ok(crates_menu.clone()), |root: Result<_>, p| {
+                let root = root?;
+                match created_menus.entry(p.clone()) {
+                    Entry::Occupied(e) => Ok(e.get().clone()),
+                    Entry::Vacant(e) => {
+                        let item = if p == name && dep.cost > 0 {
+                            String::from(format_compact!("{p}({} pts)", dep.cost))
+                        } else {
+                            p.clone()
+                        };
+                        let menu = mc.add_submenu_for_group(group, item, Some(root))?;
+                        Ok(e.insert(menu).clone())
+                    }
+                }
+            })?;
+
+        // Only add deployable crates, NOT repair crates
+        for cr in &dep.crates {
+            let title = if cr.required > 1 {
+                String::from(format_compact!("{}({})", cr.name, cr.required))
+            } else {
+                cr.name.clone()
+            };
+            mc.add_command_for_group(
+                group,
+                title,
+                Some(root.clone()),
+                spawn_c130_crate,
+                ArgTuple {
+                    fst: group,
+                    snd: cr.name.clone(),
+                },
+            )?;
+        }
+    }
+
     Ok(())
 }

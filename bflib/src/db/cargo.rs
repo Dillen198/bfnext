@@ -38,12 +38,13 @@ use dcso3::{
     env::miz::MizIndex,
     land::Land,
     net::{SlotId, Ucid},
+    object::DcsObject,
     radians_to_degrees,
     trigger::Trigger,
 };
 use enumflags2::BitFlags;
 use fxhash::FxHashMap;
-use log::debug;
+use log::{debug, error, info};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use std::{cmp::max, fmt, sync::Arc};
@@ -125,6 +126,84 @@ impl Cargo {
         self.troops
             .iter()
             .fold(cr, |acc, it| acc + it.troop.weight as i64)
+    }
+}
+
+// C-130 Physical Cargo System
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum C130CargoState {
+    /// Crate spawned near aircraft, waiting to be loaded
+    Spawned,
+    /// Crate loaded into aircraft (DCS native cargo)
+    Loaded,
+    /// Crate in the air (after airdrop)
+    Airborne,
+    /// Crate landed on ground (ready for auto-unpack)
+    Landed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum C130CargoType {
+    /// Deployable crate (name maps to deployable)
+    Deployable { name: String },
+    /// Supply transfer crate
+    SupplyTransfer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct C130Cargo {
+    /// DCS group ID of the crate object
+    pub group_id: GroupId,
+    /// Type of crate
+    pub crate_type: C130CargoType,
+    /// Current state
+    pub state: C130CargoState,
+    /// Origin objective where crate was spawned
+    pub origin: ObjectiveId,
+    /// Player who spawned the crate
+    pub player: Ucid,
+    /// Side
+    pub side: Side,
+    /// Last known position
+    pub last_pos: Vector2,
+    /// Time when crate was spawned
+    pub spawn_time: DateTime<Utc>,
+    /// Time when crate entered airborne state (for tracking)
+    pub airborne_time: Option<DateTime<Utc>>,
+    /// The actual crate definition from config
+    pub crate_def: Crate,
+}
+
+impl C130Cargo {
+    pub fn new(
+        group_id: GroupId,
+        crate_type: C130CargoType,
+        origin: ObjectiveId,
+        player: Ucid,
+        side: Side,
+        pos: Vector2,
+        crate_def: Crate,
+    ) -> Self {
+        Self {
+            group_id,
+            crate_type,
+            state: C130CargoState::Spawned,
+            origin,
+            player,
+            side,
+            last_pos: pos,
+            spawn_time: Utc::now(),
+            airborne_time: None,
+            crate_def,
+        }
+    }
+
+    pub fn is_landed(&self) -> bool {
+        self.state == C130CargoState::Landed
+    }
+
+    pub fn is_airborne(&self) -> bool {
+        self.state == C130CargoState::Airborne
     }
 }
 
@@ -1341,5 +1420,407 @@ impl Db {
             .set_unit_internal_cargo(unit_name, cargo.weight() as i64)?;
         self.delete_group(&gid)?;
         Ok(troop_cfg)
+    }
+
+    // ===== C-130 Physical Cargo System =====
+
+    /// Helper method to get deployable index for a side
+    pub fn deployable_idx(&self, side: Side) -> Result<&Arc<super::ephemeral::DeployableIndex>> {
+        self.ephemeral
+            .deployable_idx
+            .get(&side)
+            .ok_or_else(|| anyhow!("{:?} doesn't have any deployables", side))
+    }
+
+    /// Get the current objective ID for a player in a slot
+    pub fn player_current_objective_id(&self, slot: &SlotId) -> Result<ObjectiveId> {
+        let si = self
+            .ephemeral
+            .get_slot_info(slot)
+            .ok_or_else(|| anyhow!("no such slot"))?;
+        Ok(si.objective)
+    }
+
+    /// Spawn a single physical crate near the player's aircraft
+    pub fn spawn_c130_crate(
+        &mut self,
+        lua: MizLua,
+        idx: &MizIndex,
+        slot: &SlotId,
+        crate_name: String,
+        side: Side,
+        origin: ObjectiveId,
+    ) -> Result<String> {
+        debug!("[C130_CARGO] spawn_c130_crate called: crate={}, side={:?}, origin={:?}, slot={:?}",
+            crate_name, side, origin, slot);
+
+        let ucid = maybe!(self.ephemeral.players_by_slot, *slot, "no such player")?.clone();
+        let dep_idx = self.deployable_idx(side)?;
+
+        // Get crate definition (either from deployable or supply transfer)
+        let (crate_def, crate_type) = if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+            debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+            (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
+        } else if let Some(whcfg) = &self.ephemeral.cfg.warehouse {
+            let supply_crate = &whcfg.supply_transfer_crate[&side];
+            if supply_crate.name == crate_name {
+                debug!("[C130_CARGO] Found supply transfer crate: {}, weight={}kg", crate_name, supply_crate.weight);
+                (supply_crate.clone(), C130CargoType::SupplyTransfer)
+            } else {
+                error!("[C130_CARGO] Crate not found: {}", crate_name);
+                bail!("crate {} not found", crate_name)
+            }
+        } else {
+            error!("[C130_CARGO] Warehouse not configured, crate {} not found", crate_name);
+            bail!("crate {} not found", crate_name)
+        };
+
+        // Get player position
+        let unit = self.ephemeral.slot_instance_unit(lua, slot)?;
+        let pos = unit.get_position()?;
+        let point = Vector2::new(pos.p.x, pos.p.z);
+        debug!("[C130_CARGO] Player position: x={:.2}, z={:.2}", point.x, point.y);
+
+        // Spawn physical crate using spawn system
+        let template = self
+            .ephemeral
+            .cfg
+            .crate_template
+            .get(&side)
+            .ok_or_else(|| anyhow!("missing crate template for {:?}", side))?
+            .clone();
+
+        let spawnpos = SpawnLoc::AtPos {
+            pos: point,
+            offset_direction: Vector2::new(0., 0.),
+            group_heading: 0.,
+        };
+
+        let dk = DeployKind::Crate {
+            origin,
+            player: ucid.clone(),
+            spec: crate_def.clone(),
+        };
+
+        let group_id = self.add_and_queue_group(
+            &SpawnCtx::new(lua)?,
+            idx,
+            side,
+            spawnpos,
+            &template,
+            dk,
+            BitFlags::empty(),
+            None,
+        )?;
+
+        debug!("[C130_CARGO] Crate spawned successfully: group_id={:?}", group_id);
+
+        // Create C130Cargo tracking entry
+        let c130_cargo = C130Cargo::new(
+            group_id,
+            crate_type,
+            origin,
+            ucid,
+            side,
+            point,
+            crate_def,
+        );
+
+        self.ephemeral.c130_crates.insert(group_id, c130_cargo);
+        debug!("[C130_CARGO] Crate tracking added: group_id={:?}, total_tracked={}",
+            group_id, self.ephemeral.c130_crates.len());
+
+        Ok(String::from(format!("Spawned {} crate. Use DCS cargo menu (F8 -> Ground Crew -> Cargo) to load it.", crate_name)))
+    }
+
+    /// Queue multiple crates for staggered spawning (used by "Spawn All" command)
+    pub fn queue_c130_crate_spawns(
+        &mut self,
+        slot: &SlotId,
+        crate_list: Vec<(String, Crate)>,
+        side: Side,
+        origin: ObjectiveId,
+    ) -> Result<String> {
+        let ucid = maybe!(self.ephemeral.players_by_slot, *slot, "no such player")?.clone();
+
+        let spawn_delay = self.ephemeral.cfg.c130_cargo
+            .as_ref()
+            .map(|c| c.spawn_delay)
+            .unwrap_or(1);
+
+        let max_spawn = self.ephemeral.cfg.c130_cargo
+            .as_ref()
+            .map(|c| c.max_spawn_all as usize)
+            .unwrap_or(50);
+
+        let num_to_spawn = crate_list.len().min(max_spawn);
+        let mut spawn_time = Utc::now();
+
+        for (crate_name, crate_def) in crate_list.into_iter().take(num_to_spawn) {
+            spawn_time = spawn_time + chrono::Duration::seconds(spawn_delay as i64);
+
+            self.ephemeral
+                .c130_spawn_queue
+                .entry(spawn_time)
+                .or_insert_with(Vec::new)
+                .push((side, crate_name, origin, ucid, crate_def));
+        }
+
+        Ok(String::from(format!(
+            "Queued {} crates for spawning ({} second intervals). They will appear near your aircraft.",
+            num_to_spawn, spawn_delay
+        )))
+    }
+
+    /// Process the spawn queue (called from slow_timed_events)
+    pub fn process_c130_spawn_queue(&mut self, lua: MizLua, idx: &MizIndex, slot: &SlotId) -> Result<()> {
+        let now = Utc::now();
+        let to_spawn: Vec<_> = self.ephemeral
+            .c130_spawn_queue
+            .range(..=now)
+            .map(|(k, _)| *k)
+            .collect();
+
+        for spawn_time in to_spawn {
+            if let Some(crates) = self.ephemeral.c130_spawn_queue.remove(&spawn_time) {
+                for (side, crate_name, origin, ucid, crate_def) in crates {
+                    // Get player's current position (might have moved)
+                    let unit_result = self.ephemeral.slot_instance_unit(lua, slot);
+                    let point = match unit_result {
+                        Ok(unit) => {
+                            let pos = unit.get_position()?;
+                            Vector2::new(pos.p.x, pos.p.z)
+                        }
+                        Err(_) => continue, // Player might have disconnected
+                    };
+
+                    // Spawn the crate
+                    let template = match self.ephemeral.cfg.crate_template.get(&side).cloned() {
+                        Some(name) => name,
+                        None => continue,
+                    };
+
+                    let crate_type = if crate_name.contains("Supply Transfer") {
+                        C130CargoType::SupplyTransfer
+                    } else {
+                        C130CargoType::Deployable { name: crate_name.clone() }
+                    };
+
+                    let spawnpos = SpawnLoc::AtPos {
+                        pos: point,
+                        offset_direction: Vector2::new(0., 0.),
+                        group_heading: 0.,
+                    };
+
+                    let dk = DeployKind::Crate {
+                        origin,
+                        player: ucid,
+                        spec: crate_def.clone(),
+                    };
+
+                    match self.add_and_queue_group(
+                        &SpawnCtx::new(lua)?,
+                        idx,
+                        side,
+                        spawnpos,
+                        &template,
+                        dk,
+                        BitFlags::empty(),
+                        None,
+                    ) {
+                        Ok(group_id) => {
+                            let physical_crate = C130Cargo::new(
+                                group_id,
+                                crate_type,
+                                origin,
+                                ucid,
+                                side,
+                                point,
+                                crate_def,
+                            );
+
+                            self.ephemeral.c130_crates.insert(group_id, physical_crate);
+                        }
+                        Err(_) => continue,
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Track physical crate state changes and implement auto-unpack
+    pub fn update_c130_crates(&mut self, lua: MizLua, idx: &MizIndex) -> Result<()> {
+        let mut to_unpack = Vec::new();
+
+        // Update positions and detect landed crates
+        for (group_id, crate_data) in self.ephemeral.c130_crates.iter_mut() {
+            let group_oid = match self.ephemeral.object_id_by_gid.get(group_id) {
+                Some(oid) => oid.clone(),
+                None => continue,
+            };
+
+            let group = match dcso3::group::Group::get_instance(lua, &group_oid) {
+                Ok(g) => g,
+                Err(_) => continue,
+            };
+
+            // Check if crate is on ground
+            let units = group.get_units()?;
+            let unit = match units.first() {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+
+            let pos = unit.get_position()?;
+            let in_air = unit.in_air()?;
+            let velocity = unit.get_velocity()?;
+            let speed = (velocity.0.x.powi(2) + velocity.0.y.powi(2) + velocity.0.z.powi(2)).sqrt();
+
+            crate_data.last_pos = Vector2::new(pos.p.x, pos.p.z);
+
+            // State machine for crate tracking
+            match crate_data.state {
+                C130CargoState::Spawned | C130CargoState::Loaded => {
+                    // If crate is in the air and moving fast, it's been airdropped
+                    if in_air && speed > 5.0 {
+                        crate_data.state = C130CargoState::Airborne;
+                        crate_data.airborne_time = Some(Utc::now());
+                    }
+                }
+                C130CargoState::Airborne => {
+                    // If crate has landed (not in air and low speed)
+                    if !in_air && speed < 1.0 {
+                        crate_data.state = C130CargoState::Landed;
+                        to_unpack.push(*group_id);
+                    }
+                }
+                C130CargoState::Landed => {
+                    // Already landed, will be unpacked
+                }
+            }
+        }
+
+        // Auto-unpack landed crates
+        for group_id in to_unpack {
+            if let Some(crate_data) = self.ephemeral.c130_crates.remove(&group_id) {
+                let result = self.unpack_c130_crate(lua, idx, &crate_data);
+                match result {
+                    Ok(msg) => {
+                        info!("Auto-unpacked physical crate: {}", msg);
+                        self.ephemeral.msgs().panel_to_side(10, false, crate_data.side, msg);
+                    }
+                    Err(e) => {
+                        error!("Failed to auto-unpack physical crate: {}", e);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Unpack a physical crate (converts to virtual system)
+    fn unpack_c130_crate(&mut self, lua: MizLua, idx: &MizIndex, crate_data: &C130Cargo) -> Result<String> {
+        match &crate_data.crate_type {
+            C130CargoType::Deployable { name } => {
+                // Spawn as virtual crate at landing position
+                let dep_idx = self.deployable_idx(crate_data.side)?;
+                let crate_def = dep_idx.crates_by_name.get(name)
+                    .ok_or_else(|| anyhow!("Crate definition not found: {}", name))?
+                    .clone();
+
+                // Use existing crate spawning system
+                let template = self.ephemeral.cfg.crate_template[&crate_data.side].clone();
+
+                let spawnpos = SpawnLoc::AtPos {
+                    pos: crate_data.last_pos,
+                    offset_direction: Vector2::new(0., 0.),
+                    group_heading: 0.,
+                };
+
+                let dk = DeployKind::Crate {
+                    origin: crate_data.origin,
+                    player: crate_data.player,
+                    spec: crate_def,
+                };
+
+                self.add_and_queue_group(
+                    &SpawnCtx::new(lua)?,
+                    idx,
+                    crate_data.side,
+                    spawnpos,
+                    &template,
+                    dk,
+                    BitFlags::empty(),
+                    None,
+                )?;
+
+                // Delete the physical crate
+                self.delete_group(&crate_data.group_id)?;
+
+                Ok(String::from(format!("Airdropped {} crate unpacked at landing site", name)))
+            }
+            C130CargoType::SupplyTransfer => {
+                // Handle supply transfer - need to find nearest objective
+                let objectives: Vec<_> = self.persisted
+                    .objectives
+                    .into_iter()
+                    .filter_map(|(oid, obj)| {
+                        if obj.owner == crate_data.side {
+                            Some((*oid, obj))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                let nearest = objectives
+                    .iter()
+                    .min_by_key(|(_, obj)| {
+                        let dist = na::distance(&obj.zone.pos().into(), &crate_data.last_pos.into());
+                        (dist * 1000.0) as i64
+                    });
+
+                if let Some((oid, _)) = nearest {
+                    // Create virtual supply crate at landing position
+                    let template = self.ephemeral.cfg.crate_template[&crate_data.side].clone();
+                    let supply_crate = self.ephemeral.cfg.warehouse.as_ref()
+                        .ok_or_else(|| anyhow!("Warehouse not configured"))?
+                        .supply_transfer_crate[&crate_data.side].clone();
+
+                    let spawnpos = SpawnLoc::AtPos {
+                        pos: crate_data.last_pos,
+                        offset_direction: Vector2::new(0., 0.),
+                        group_heading: 0.,
+                    };
+
+                    let dk = DeployKind::Crate {
+                        origin: *oid,
+                        player: crate_data.player,
+                        spec: supply_crate,
+                    };
+
+                    self.add_and_queue_group(
+                        &SpawnCtx::new(lua)?,
+                        idx,
+                        crate_data.side,
+                        spawnpos,
+                        &template,
+                        dk,
+                        BitFlags::empty(),
+                        None,
+                    )?;
+
+                    // Delete the physical crate
+                    self.delete_group(&crate_data.group_id)?;
+
+                    Ok(String::from("Airdropped supply transfer crate unpacked"))
+                } else {
+                    bail!("No friendly objectives found for supply transfer")
+                }
+            }
+        }
     }
 }

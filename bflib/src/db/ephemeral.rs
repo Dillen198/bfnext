@@ -15,7 +15,7 @@ for more details.
 */
 
 use super::{
-    cargo::Cargo,
+    cargo::{Cargo, C130Cargo},
     group::{SpawnedGroup, SpawnedUnit},
     logistics::LogiStage,
     markup::ObjectiveMarkup,
@@ -111,6 +111,10 @@ pub struct Ephemeral {
     pub(super) to_bg: Option<UnboundedSender<Task>>,
     pub(super) players_by_slot: IndexMap<SlotId, Ucid, FxBuildHasher>,
     pub(super) cargo: FxHashMap<SlotId, Cargo>,
+    /// C-130 physical cargo tracking: group_id -> C130Cargo
+    pub(super) c130_crates: FxHashMap<GroupId, C130Cargo>,
+    /// Queue for staggered crate spawning: (spawn_time, crate_data)
+    pub(super) c130_spawn_queue: BTreeMap<DateTime<Utc>, Vec<(Side, String, ObjectiveId, Ucid, Crate)>>,
     pub(super) deployable_idx: FxHashMap<Side, Arc<DeployableIndex>>,
     pub(super) group_marks: FxHashMap<GroupId, MarkId>,
     objective_markup: FxHashMap<ObjectiveId, ObjectiveMarkup>,
@@ -150,6 +154,8 @@ impl Default for Ephemeral {
             to_bg: None,
             players_by_slot: IndexMap::default(),
             cargo: FxHashMap::default(),
+            c130_crates: FxHashMap::default(),
+            c130_spawn_queue: BTreeMap::default(),
             deployable_idx: FxHashMap::default(),
             group_marks: FxHashMap::default(),
             objective_markup: FxHashMap::default(),

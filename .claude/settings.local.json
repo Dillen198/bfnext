@@ -3,7 +3,17 @@
     "allow": [
       "Bash(cargo --list:*)",
       "Bash(source:*)",
-      "Bash(cargo build:*)"
+      "Bash(cargo build:*)",
+      "Bash(powershell -Command \"echo $env:LUA_LIB\")",
+      "Bash(powershell -Command \". .\\setup-build.ps1; echo $env:LUA_LIB\")",
+      "Bash(powershell -Command \". .\\setup-build.ps1\")",
+      "Bash(tee:*)",
+      "Bash(cargo clean:*)",
+      "Bash(. .setup-build.ps1)",
+      "Bash(echo:*)",
+      "Bash(ls:*)",
+      "Bash(cargo check:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

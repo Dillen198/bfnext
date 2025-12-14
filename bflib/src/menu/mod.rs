@@ -267,11 +267,21 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
                 .context("getting slot info")?;
             mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["EWR".into()]))?;
             mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["Cargo".into()]))?;
+            mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["C-130 Cargo".into()]))?;
             mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["Troops".into()]))?;
             mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["Actions".into()]))?;
             ewr::add_ewr_menu_for_group(&mc, si.miz_gid)?;
             let cap = CarryCap::from_typ(&cfg, si.typ.as_str());
-            if cap.crates && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
+
+            // Check if this is a C-130 for physical cargo system
+            let is_c130 = ctx.db.ephemeral.cfg.c130_cargo
+                .as_ref()
+                .map(|c| c.enabled_vehicles.contains(&si.typ))
+                .unwrap_or(false);
+
+            if is_c130 && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
+                cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si.side, si.miz_gid)?
+            } else if cap.crates && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
                 cargo::add_cargo_menu_for_group(&cfg, &mc, &si.side, si.miz_gid)?
             }
             if cap.troops && ctx.db.ephemeral.cfg.rules.troops.check(&ucid) {

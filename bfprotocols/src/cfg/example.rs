@@ -1945,6 +1945,8 @@ impl Default for Cfg {
                 (Side::Red, "RCRATE".into()),
                 (Side::Blue, "BCRATE".into()),
             ]),
+            c130_cargo_template: FxHashMap::default(),
+            c130_cargo: None,
             deployables: FxHashMap::from_iter([
                 (Side::Red, default_red_deployables()),
                 (Side::Blue, default_blue_deployables()),
