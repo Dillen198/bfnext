@@ -22,9 +22,9 @@ use dcso3::{
     DeepClone, LuaEnv, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
     coalition::{Coalition, Side, Static},
     env::miz::{self, GroupInfo, GroupKind, Miz, MizIndex, TriggerZone},
-    group::{ClassGroup, Group, GroupCategory},
+    group::{Group, GroupCategory},
     land::Land,
-    object::{DcsObject, DcsOid, ObjectCategory},
+    object::{ClassObject, DcsObject, DcsOid, ObjectCategory},
     perf::record_perf,
     world::{SearchVolume, World},
 };
@@ -98,7 +98,7 @@ pub struct SpawnCtx<'lua> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Despawn {
-    Group(DcsOid<ClassGroup>),
+    Group(DcsOid<ClassObject>),
     Static(String),
 }
 
@@ -214,9 +214,20 @@ impl<'lua> SpawnCtx<'lua> {
         let ts = Utc::now();
         match name {
             Despawn::Group(oid) => {
-                match dcso3::group::Group::get_instance(self.lua, &oid) {
-                    Ok(group) => group.destroy()?,
-                    Err(e) => info!("attempt to despawn invalid group {e:?}"),
+                // Get as Object, then convert to Unit, then get Group to despawn
+                match dcso3::object::Object::get_instance(self.lua, &oid) {
+                    Ok(obj) => {
+                        match obj.as_unit() {
+                            Ok(unit) => {
+                                match unit.get_group() {
+                                    Ok(group) => group.destroy()?,
+                                    Err(e) => info!("attempt to despawn unit without group {e:?}"),
+                                }
+                            }
+                            Err(e) => info!("attempt to despawn object that is not a unit {e:?}"),
+                        }
+                    }
+                    Err(e) => info!("attempt to despawn invalid object {e:?}"),
                 }
                 record_perf(&mut perf.despawn, ts);
                 Ok(())

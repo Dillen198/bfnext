@@ -51,9 +51,8 @@ use dcso3::{
     coalition::Side,
     controller::MissionPoint,
     env::miz::{self, GroupKind, Miz, MizIndex},
-    group::ClassGroup,
     net::{SlotId, Ucid},
-    object::{DcsObject, DcsOid},
+    object::{ClassObject, DcsObject, DcsOid},
     perf::record_perf,
     static_object::ClassStatic,
     trigger::MarkId,
@@ -111,8 +110,8 @@ pub struct Ephemeral {
     pub(super) to_bg: Option<UnboundedSender<Task>>,
     pub(super) players_by_slot: IndexMap<SlotId, Ucid, FxBuildHasher>,
     pub(super) cargo: FxHashMap<SlotId, Cargo>,
-    /// C-130 physical cargo tracking: group_id -> C130Cargo
-    pub(super) c130_crates: FxHashMap<GroupId, C130Cargo>,
+    /// C-130 physical cargo tracking: crate_name -> C130Cargo (tracked by name because DCS changes object ID when loading/dropping)
+    pub(super) c130_crates: FxHashMap<String, C130Cargo>,
     /// Queue for staggered crate spawning: (spawn_time, crate_data with index for positioning)
     pub(super) c130_spawn_queue: BTreeMap<DateTime<Utc>, Vec<(Side, String, ObjectiveId, Ucid, Crate, usize)>>,
     pub(super) deployable_idx: FxHashMap<Side, Arc<DeployableIndex>>,
@@ -122,8 +121,8 @@ pub struct Ephemeral {
     pub(super) uid_by_object_id: FxHashMap<DcsOid<ClassUnit>, UnitId>,
     pub(super) object_id_by_slot: FxHashMap<SlotId, DcsOid<ClassUnit>>,
     pub(super) slot_by_object_id: FxHashMap<DcsOid<ClassUnit>, SlotId>,
-    pub(super) object_id_by_gid: FxHashMap<GroupId, DcsOid<ClassGroup>>,
-    pub(super) gid_by_object_id: FxHashMap<DcsOid<ClassGroup>, GroupId>,
+    pub(super) object_id_by_gid: FxHashMap<GroupId, DcsOid<ClassObject>>,
+    pub(super) gid_by_object_id: FxHashMap<DcsOid<ClassObject>, GroupId>,
     pub(super) uid_by_static: FxHashMap<DcsOid<ClassStatic>, UnitId>,
     pub(super) slot_by_miz_gid: FxHashMap<miz::GroupId, SlotId>,
     pub(super) airbase_by_oid: FxHashMap<ObjectiveId, DcsOid<ClassAirbase>>,
@@ -923,7 +922,7 @@ impl Ephemeral {
             match &spawned {
                 Spawned::Static => (),
                 Spawned::Group(g) => {
-                    let oid = g.object_id()?;
+                    let oid = g.object_id()?.erased();
                     self.object_id_by_gid.insert(group.id, oid.clone());
                     self.gid_by_object_id.insert(oid, group.id);
                 }

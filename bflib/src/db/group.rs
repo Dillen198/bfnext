@@ -50,7 +50,7 @@ use dcso3::{
 };
 use enumflags2::BitFlags;
 use fxhash::{FxHashMap, FxHashSet};
-use log::{error, warn};
+use log::{error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 use std::{cmp::max, collections::VecDeque};
@@ -936,9 +936,103 @@ impl Db {
     pub fn static_born(&mut self, st: &StaticObject) -> Result<()> {
         let id = st.object_id()?;
         let name = st.get_name()?;
+
+        // Map static object ID to unit ID
         if let Some(uid) = self.persisted.units_by_name.get(name.as_str()) {
-            self.ephemeral.uid_by_static.insert(id, *uid);
+            self.ephemeral.uid_by_static.insert(id.clone(), *uid);
         }
+
+        // Check if this is a C-130 crate
+        // When DCS's cargo system loads/drops a crate, DCS destroys the old static and creates a new one
+        // We need to match by name pattern since DCS may rename the crate
+        let mut matched_crate_key: Option<std::string::String> = None;
+
+        // First try exact match
+        if self.ephemeral.c130_crates.contains_key(name.as_str()) {
+            matched_crate_key = Some(std::string::String::from(name.as_str()));
+            info!("[C130_CARGO] static_born: Found exact match for crate '{}'", name);
+        } else if !self.ephemeral.c130_crates.is_empty() {
+            // If exact match fails, try prefix match
+            // This handles cases where DCS cargo system renames the crate
+            for tracked_name in self.ephemeral.c130_crates.keys() {
+                // Check if either name is a prefix of the other
+                if name.starts_with(tracked_name.as_str()) || tracked_name.starts_with(name.as_str()) {
+                    matched_crate_key = Some(std::string::String::from(tracked_name.as_str()));
+                    info!("[C130_CARGO] static_born: Found prefix match - static '{}' matches tracked '{}'", name, tracked_name);
+                    break;
+                }
+            }
+
+            // If no match yet, check if names match the template pattern
+            // This handles DCS stripping suffixes like "_C130" when renaming
+            if matched_crate_key.is_none() {
+                for (tracked_name, crate_data) in &self.ephemeral.c130_crates {
+                    if let Some(group) = self.persisted.groups.get(&crate_data.group_id) {
+                        let template = &group.template_name;
+
+                        // Extract base template name (everything before underscore or hyphen)
+                        // E.g., "RCRATE_C130" -> "RCRATE", "BCRATE_C130" -> "BCRATE"
+                        let base_template = template.split('_').next().unwrap_or(template.as_str());
+
+                        // Check if both names start with the base template
+                        if name.starts_with(base_template) && tracked_name.starts_with(base_template) {
+                            // Additional check: extract group ID from both names
+                            // Names follow pattern: "RCRATE_C130-2289-8325" or "RCRATE-2289-8325"
+                            // Extract the first number after hyphen
+                            let name_parts: Vec<&str> = name.split('-').collect();
+                            let tracked_parts: Vec<&str> = tracked_name.split('-').collect();
+
+                            if name_parts.len() >= 2 && tracked_parts.len() >= 2 {
+                                let name_gid = name_parts[1];
+                                let tracked_gid = tracked_parts[1];
+
+                                if name_gid == tracked_gid {
+                                    matched_crate_key = Some(std::string::String::from(tracked_name.as_str()));
+                                    info!("[C130_CARGO] static_born: Found template match - static '{}' and tracked '{}' both use base template '{}' with gid {}",
+                                        name, tracked_name, base_template, name_gid);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(crate_key) = matched_crate_key {
+            let crate_data = self.ephemeral.c130_crates.get_mut(crate_key.as_str()).unwrap();
+            let gid = crate_data.group_id;
+
+            // Check if we already have a mapping for this group
+            let needs_update = !self.ephemeral.object_id_by_gid.contains_key(&gid);
+
+            if needs_update {
+                info!("[C130_CARGO] static_born: Creating object_id mapping for crate '{}' (tracked as '{}') group {:?}",
+                    name, crate_key, gid);
+
+                // For static objects, use the static's own object_id directly
+                // (not a group's object_id, since statics don't have groups in DCS API)
+                if let Ok(obj) = st.as_object() {
+                    if let Ok(static_oid) = obj.object_id() {
+                        info!("[C130_CARGO] static_born: Inserting mapping {:?} -> {:?}", gid, static_oid);
+                        self.ephemeral.object_id_by_gid.insert(gid, static_oid.clone());
+                        self.ephemeral.gid_by_object_id.insert(static_oid.clone(), gid);
+                        info!("[C130_CARGO] static_born: Mapping inserted, map now has {} entries", self.ephemeral.object_id_by_gid.len());
+
+                        // Note: We don't transition to Airborne here
+                        // The update_c130_crates function will detect when the crate is actually airborne
+                        // based on in_air and speed checks
+                    } else {
+                        info!("[C130_CARGO] static_born: Failed to get static object_id");
+                    }
+                } else {
+                    info!("[C130_CARGO] static_born: Failed to convert static to object");
+                }
+            } else {
+                info!("[C130_CARGO] static_born: Mapping already exists for {:?}, skipping", gid);
+            }
+        }
+
         Ok(())
     }
 

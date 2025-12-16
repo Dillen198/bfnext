@@ -1,0 +1,1322 @@
+12:16:20 [INFO] setting user hooks
+12:17:26 [INFO] initializing mission
+12:17:40 [INFO] mission loaded
+12:17:46 [INFO] init_miz: welcome to blue flag v3
+12:17:46 [INFO] indexing the miz
+12:17:46 [INFO] adding event handlers
+12:17:46 [DEBUG] (21) bflib: sortie is String("DC51_02")
+12:17:46 [DEBUG] (21) bflib: path to saved state is "C:\\Users\\10308\\Saved Games\\dcs.incidentdev\\DC51_02"
+12:17:46 [INFO] log is in file mode
+12:17:46 [INFO] initializing db
+12:17:46 [DEBUG] (21) bflib: saved state exists, loading it
+12:17:47 [INFO] spawning units
+12:17:47 [DEBUG] (21) bflib::db::mizinit: init slots
+12:17:47 [DEBUG] (21) bflib::db::mizinit: queue respawn deployables
+12:17:47 [DEBUG] (21) bflib::db::mizinit: respawn actions
+12:17:47 [DEBUG] (21) bflib::db::mizinit: respawning farps
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: StaticObject, id: Integer(16882689) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: StaticObject, id: Integer(16882689) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: StaticObject, id: Integer(16882945) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: StaticObject, id: Integer(16882945) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: StaticObject, id: Integer(16883201) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: StaticObject, id: Integer(16883201) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16883457) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16883713) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16883969) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16884225) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16884481) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16884737) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16884993) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16885249) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16885505) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16885761) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16886017) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16886273) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16886529) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16886785) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16887041) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16887297) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16887553) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16887809) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16888065) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16888321) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16888577) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16888833) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16889089) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16889345) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16889601) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16889857) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16890113) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16890369) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16890625) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16890881) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16891137) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16891393) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16891649) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16891905) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16892161) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16892417) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16892673) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16892929) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16893185) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16893441) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16893697) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16893953) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16894209) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16894465) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16894721) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16894977) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16895233) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16895489) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16895745) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16896001) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16896257) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16896513) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16896769) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16897025) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16897281) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16897537) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16897793) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16898049) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16898305) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16898561) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16898817) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16899073) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16899329) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16899585) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16899841) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16900097) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16900353) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16900609) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16900865) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16901121) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16901377) }, place: None, subplace: None })
+12:17:47 [INFO] onEvent: Birth(Birth { time: Time(1.0), initiator: { class: Unit, id: Integer(16901633) }, place: None, subplace: None })
+12:17:47 [INFO] setting up airbase Abu al-Duhur
+12:17:47 [INFO] setting up airbase Adana Sakirpasa
+12:17:47 [INFO] setting up airbase Al Qusayr
+12:17:47 [INFO] setting up airbase An Nasiriyah
+12:17:47 [INFO] setting up airbase Tha'lah
+12:17:47 [INFO] setting up airbase Beirut-Rafic Hariri
+12:17:47 [INFO] setting up airbase Damascus
+12:17:47 [INFO] setting up airbase Marj as Sultan South
+12:17:47 [INFO] setting up airbase Al-Dumayr
+12:17:47 [INFO] setting up airbase Eyn Shemer
+12:17:47 [INFO] setting up airbase Gaziantep
+12:17:47 [INFO] setting up airbase H4
+12:17:47 [INFO] setting up airbase Haifa
+12:17:47 [INFO] setting up airbase Hama
+12:17:47 [INFO] setting up airbase Hatay
+12:17:47 [INFO] setting up airbase Incirlik
+12:17:47 [INFO] setting up airbase Jirah
+12:17:47 [INFO] setting up airbase Khalkhalah
+12:17:47 [INFO] setting up airbase King Hussein Air College
+12:17:47 [INFO] setting up airbase Kiryat Shmona
+12:17:47 [INFO] setting up airbase Bassel Al-Assad
+12:17:47 [INFO] setting up airbase Marj as Sultan North
+12:17:47 [INFO] setting up airbase Marj Ruhayyil
+12:17:47 [INFO] setting up airbase Megiddo
+12:17:47 [INFO] setting up airbase Mezzeh
+12:17:47 [INFO] setting up airbase Minakh
+12:17:47 [INFO] setting up airbase Aleppo
+12:17:47 [INFO] setting up airbase Palmyra
+12:17:47 [INFO] setting up airbase Qabr as Sitt
+12:17:47 [INFO] setting up airbase Ramat David
+12:17:47 [INFO] setting up airbase Kuweires
+12:17:47 [INFO] setting up airbase Rayak
+12:17:47 [INFO] setting up airbase Rene Mouawad
+12:17:47 [INFO] setting up airbase Rosh Pina
+12:17:47 [INFO] setting up airbase Sayqal
+12:17:47 [INFO] setting up airbase Shayrat
+12:17:47 [INFO] setting up airbase Tabqa
+12:17:47 [INFO] setting up airbase Taftanaz
+12:17:47 [INFO] setting up airbase Tiyas
+12:17:47 [INFO] setting up airbase Wujah Al Hajar
+12:17:47 [INFO] setting up airbase Gazipasa
+12:17:47 [INFO] setting up airbase Deir ez-Zor
+12:17:47 [INFO] setting up airbase Nicosia
+12:17:47 [INFO] setting up airbase Akrotiri
+12:17:47 [INFO] setting up airbase Kingsfield
+12:17:47 [INFO] setting up airbase Paphos
+12:17:47 [INFO] setting up airbase Larnaca
+12:17:47 [INFO] setting up airbase Lakatamia
+12:17:47 [INFO] setting up airbase Ercan
+12:17:47 [INFO] setting up airbase Gecitkale
+12:17:47 [INFO] setting up airbase Pinarbashi
+12:17:47 [INFO] setting up airbase Naqoura
+12:17:47 [INFO] setting up airbase H3
+12:17:47 [INFO] setting up airbase H3 Northwest
+12:17:47 [INFO] setting up airbase H3 Southwest
+12:17:47 [INFO] setting up airbase Ruwayshid
+12:17:47 [INFO] setting up airbase Sanliurfa
+12:17:47 [INFO] setting up airbase Kharab Ishk
+12:17:47 [INFO] setting up airbase Tal Siman
+12:17:47 [INFO] setting up airbase At Tanf
+12:17:47 [INFO] setting up airbase Prince Hassan
+12:17:47 [INFO] setting up airbase King Abdullah II
+12:17:47 [INFO] setting up airbase Herzliya
+12:17:47 [INFO] setting up airbase Marka
+12:17:47 [INFO] setting up airbase Muwaffaq Salti
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:47 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:48 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase Tel Nof
+12:17:49 [INFO] setting up airbase Ben Gurion
+12:17:49 [INFO] setting up airbase Hatzor
+12:17:49 [INFO] setting up airbase Palmachim
+12:17:49 [INFO] setting up airbase H
+12:17:49 [INFO] setting up airbase DEPRFARPPAD1
+12:17:49 [INFO] airbase DEPRFARPPAD1 has no objective
+12:17:49 [INFO] setting up airbase DEPRFARPPAD2
+12:17:49 [INFO] airbase DEPRFARPPAD2 has no objective
+12:17:49 [INFO] setting up airbase RINVENTORY
+12:17:49 [INFO] setting up airbase DEPRFARPPAD0
+12:17:49 [INFO] airbase DEPRFARPPAD0 has no objective
+12:17:49 [INFO] setting up airbase DEPRFARPPAD3
+12:17:49 [INFO] airbase DEPRFARPPAD3 has no objective
+12:17:49 [INFO] setting up airbase DEFAULT
+12:17:49 [INFO] setting up airbase Baniyas
+12:17:49 [INFO] setting up airbase Maarat Al Numan
+12:17:49 [INFO] setting up airbase Madin Al Jadid
+12:17:49 [INFO] setting up airbase As Sukhnah
+12:17:49 [INFO] setting up airbase Maqne
+12:17:49 [INFO] setting up airbase Al Ulayyaniyah
+12:17:49 [INFO] setting up airbase Maqha
+12:17:49 [INFO] setting up airbase Zalif
+12:17:49 [INFO] setting up airbase Khirbat
+12:17:49 [INFO] setting up airbase Al Muzayrih
+12:17:49 [INFO] setting up airbase Kanaker
+12:17:49 [INFO] setting up airbase Joub Jannine
+12:17:49 [INFO] setting up airbase Saida
+12:17:49 [INFO] setting up airbase Suruc
+12:17:49 [INFO] setting up airbase Polis
+12:17:49 [INFO] setting up airbase Pyrgos
+12:17:49 [INFO] setting up airbase SAM Site B
+12:17:49 [INFO] setting up airbase SAM Site C
+12:17:49 [INFO] setting up airbase Tripoli
+12:17:49 [INFO] setting up airbase DEPBFARPPAD0
+12:17:49 [INFO] airbase DEPBFARPPAD0 has no objective
+12:17:49 [INFO] setting up airbase DEPBFARPPAD2
+12:17:49 [INFO] airbase DEPBFARPPAD2 has no objective
+12:17:49 [INFO] setting up airbase DEPBFARPPAD1
+12:17:49 [INFO] airbase DEPBFARPPAD1 has no objective
+12:17:49 [INFO] setting up airbase DEPBFARPPAD3
+12:17:49 [INFO] airbase DEPBFARPPAD3 has no objective
+12:17:49 [INFO] setting up airbase BINVENTORY
+12:17:49 [INFO] setting up airbase Mersin
+12:17:49 [INFO] setting up airbase Karsi
+12:17:49 [INFO] setting up airbase Manbij
+12:17:49 [INFO] setting up airbase Al Walid
+12:17:49 [INFO] setting up airbase Ruwayshid Northwest
+12:17:49 [INFO] setting up airbase Hassan East
+12:17:49 [INFO] setting up airbase Jenin
+12:17:49 [INFO] setting up airbase Netanya
+12:17:49 [INFO] setting up airbase Nikitas
+12:17:49 [INFO] setting up airbase Leonarisso
+12:17:49 [INFO] setting up airbase SAM Site A
+12:17:49 [INFO] setting up airbase SAM Site D
+12:17:49 [INFO] setting up airbase Ed Dafyana
+12:17:49 [INFO] setting up airbase At Netafim Military Base
+12:17:49 [INFO] setting up airbase SAM Site E
+12:17:49 [INFO] setting up airbase DS15
+12:17:49 [INFO] setting up airbase SAM Site F
+12:17:49 [INFO] setting up airbase Static FARP-1
+12:17:49 [INFO] setting up airbase CA998
+12:17:49 [INFO] setting up airbase Ashod
+12:17:49 [INFO] setting up airbase RCRUISER0
+12:17:49 [INFO] setting up airbase RCRUISER3
+12:17:49 [INFO] setting up airbase RNAVALFARP1
+12:17:49 [INFO] setting up airbase RNAVALFARP-4
+12:17:49 [INFO] setting up airbase RNAVALFARP-5
+12:17:49 [INFO] setting up airbase RNAVALFARP-6
+12:17:49 [INFO] setting up airbase RNAVALFARP-7
+12:17:49 [INFO] setting up airbase BCRUISER0
+12:17:49 [INFO] setting up airbase BCRUISER1
+12:17:50 [INFO] setting up airbase BCRUISER2
+12:17:50 [INFO] setting up airbase BNAVALFARP1
+12:17:50 [INFO] setting up airbase BNAVALFARP-2
+12:17:50 [INFO] setting up airbase BNAVALFARP-3
+12:17:50 [INFO] setting up airbase BNAVALFARP-4
+12:17:50 [INFO] setting up airbase BNAVALFARP-5
+12:17:50 [INFO] setting up airbase BNAVALFARP-6
+12:17:50 [INFO] setting up airbase BNAVALFARP-7
+12:17:50 [INFO] setting up airbase BNAVALFARP-8
+12:17:59 [INFO] starting timed events
+12:17:59 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:17:59 [INFO] frame                : n:      4, mean: 23445us, 25th: 10551us, 50th: 15745us, 90th: 40239us, 99th:  40239us, 99.9th:  40239us
+12:17:59 [INFO] timed_events         : n:      1, mean:   504us, 25th:   504us, 50th:   504us, 90th:   504us, 99th:    504us, 99.9th:    504us
+12:17:59 [INFO] dcs_events           : n:   1289, mean:     3us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     62us, 99.9th:     89us
+12:17:59 [INFO] unit_positions       : n:      1, mean:   433us, 25th:   433us, 50th:   433us, 90th:   433us, 99th:    433us, 99.9th:    433us
+12:17:59 [INFO] player_positions     : n:      1, mean:    15us, 25th:    15us, 50th:    15us, 90th:    15us, 99th:     15us, 99.9th:     15us
+12:17:59 [INFO] spawn_queue          : n:      1, mean:    22us, 25th:    22us, 50th:    22us, 90th:    22us, 99th:     22us, 99.9th:     22us
+12:17:59 [INFO] spawn                : n:     39, mean:  2098us, 25th:  1282us, 50th:  2476us, 90th:  3035us, 99th:   4155us, 99.9th:   4155us
+12:17:59 [INFO] advise_captured      : n:      1, mean:    99us, 25th:    99us, 50th:    99us, 90th:    99us, 99th:     99us, 99.9th:     99us
+12:17:59 [INFO] advise_capturable    : n:      1, mean:    31us, 25th:    31us, 50th:    31us, 90th:    31us, 99th:     31us, 99.9th:     31us
+12:17:59 [INFO] jtac_target_positions: n:      1, mean:    39us, 25th:    39us, 50th:    39us, 90th:    39us, 99th:     39us, 99.9th:     39us
+12:17:59 [INFO] process_messages     : n:      1, mean:     1us, 25th:     1us, 50th:     1us, 90th:     1us, 99th:      1us, 99.9th:      1us
+12:17:59 [INFO] logistics            : n:      1, mean:    52us, 25th:    52us, 50th:    52us, 90th:    52us, 99th:     52us, 99.9th:     52us
+12:17:59 [INFO] logistics_items: 0
+12:17:59 [INFO] Unit.getPosition         : n:      2, mean:    80us, 25th:    63us, 50th:    63us, 90th:    97us, 99th:     97us, 99.9th:     97us
+12:17:59 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:17:59 [INFO] Coalition.addStaticObject: n:      3, mean:   533us, 25th:   293us, 50th:   310us, 90th:   996us, 99th:    996us, 99.9th:    996us
+12:17:59 [INFO] Unit.isExist             : n:      2, mean:    20us, 25th:     7us, 50th:     7us, 90th:    34us, 99th:     34us, 99.9th:     34us
+12:17:59 [INFO] Land.getHeight           : n:     98, mean:    13us, 25th:     6us, 50th:    11us, 90th:    21us, 99th:     57us, 99.9th:     57us
+12:17:59 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:17:59 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:18:09 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:18:09 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:18:09 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:18:20 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:18:20 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:18:20 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:18:30 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:18:30 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:18:30 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:18:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:18:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:18:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:18:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:18:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:18:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:18:59 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:18:59 [INFO] frame                : n:   3800, mean: 15862us, 25th: 15425us, 50th: 15622us, 90th: 16637us, 99th:  25870us, 99.9th:  32440us
+12:18:59 [INFO] timed_events         : n:     75, mean:  4231us, 25th:  3131us, 50th:  4894us, 90th:  5210us, 99th:  10944us, 99.9th:  10944us
+12:18:59 [INFO] slow_timed           : n:      5, mean:   297us, 25th:   155us, 50th:   209us, 90th:   845us, 99th:    845us, 99.9th:    845us
+12:18:59 [INFO] dcs_events           : n:   1289, mean:     3us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     62us, 99.9th:     89us
+12:18:59 [INFO] unit_positions       : n:     75, mean:   472us, 25th:   176us, 50th:   401us, 90th:  1167us, 99th:   1444us, 99.9th:   1444us
+12:18:59 [INFO] player_positions     : n:     75, mean:     0us, 25th:     0us, 50th:     0us, 90th:     0us, 99th:     15us, 99.9th:     15us
+12:18:59 [INFO] ewr_tracks           : n:      5, mean:    22us, 25th:    11us, 50th:    13us, 90th:    72us, 99th:     72us, 99.9th:     72us
+12:18:59 [INFO] ewr_reports          : n:      5, mean:     4us, 25th:     1us, 50th:     1us, 90th:    18us, 99th:     18us, 99.9th:     18us
+12:18:59 [INFO] unit_culling         : n:      5, mean:    16us, 25th:    12us, 50th:    16us, 90th:    31us, 99th:     31us, 99.9th:     31us
+12:18:59 [INFO] remark_objectives    : n:      5, mean:    13us, 25th:     8us, 50th:    13us, 90th:    29us, 99th:     29us, 99.9th:     29us
+12:18:59 [INFO] update_jtac_contacts : n:      5, mean:    29us, 25th:     7us, 50th:     9us, 90th:   116us, 99th:    116us, 99.9th:    116us
+12:18:59 [INFO] do_repairs           : n:      5, mean:    47us, 25th:     9us, 50th:    12us, 90th:   199us, 99th:    199us, 99.9th:    199us
+12:18:59 [INFO] spawn_queue          : n:     75, mean:    21us, 25th:    13us, 50th:    21us, 90th:    25us, 99th:    218us, 99.9th:    218us
+12:18:59 [INFO] spawn                : n:     39, mean:  2098us, 25th:  1282us, 50th:  2476us, 90th:  3035us, 99th:   4155us, 99.9th:   4155us
+12:18:59 [INFO] advise_captured      : n:     75, mean:     8us, 25th:     5us, 50th:     9us, 90th:    10us, 99th:     99us, 99.9th:     99us
+12:18:59 [INFO] advise_capturable    : n:     75, mean:     2us, 25th:     1us, 50th:     3us, 90th:     3us, 99th:     31us, 99.9th:     31us
+12:18:59 [INFO] jtac_target_positions: n:     75, mean:     7us, 25th:     5us, 50th:     7us, 90th:    11us, 99th:     39us, 99.9th:     39us
+12:18:59 [INFO] process_messages     : n:     75, mean:     1us, 25th:     1us, 50th:     2us, 90th:     2us, 99th:      4us, 99.9th:      4us
+12:18:59 [INFO] snapshot             : n:      5, mean:     8us, 25th:     5us, 50th:     6us, 90th:    22us, 99th:     22us, 99.9th:     22us
+12:18:59 [INFO] logistics            : n:     75, mean:  4140us, 25th:  3088us, 50th:  4796us, 90th:  5062us, 99th:  10870us, 99.9th:  10870us
+12:18:59 [INFO] logistics_sync_to    : n:     74, mean:  4193us, 25th:  3139us, 50th:  4796us, 90th:  5058us, 99th:  10862us, 99.9th:  10862us
+12:18:59 [INFO] logistics_items: 43030
+12:18:59 [INFO] Unit.getPosition         : n:    446, mean:    51us, 25th:    33us, 50th:    49us, 90th:    77us, 99th:    243us, 99.9th:    275us
+12:18:59 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:18:59 [INFO] Coalition.addStaticObject: n:      3, mean:   533us, 25th:   293us, 50th:   310us, 90th:   996us, 99th:    996us, 99.9th:    996us
+12:18:59 [INFO] Unit.isExist             : n:    446, mean:     8us, 25th:     4us, 50th:     5us, 90th:    26us, 99th:     43us, 99.9th:     68us
+12:18:59 [INFO] Land.getHeight           : n:     98, mean:    13us, 25th:     6us, 50th:    11us, 90th:    21us, 99th:     57us, 99.9th:     57us
+12:18:59 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:18:59 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:19:02 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:19:02 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:19:02 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:19:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:19:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:19:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:19:22 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:19:22 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:19:22 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:19:33 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:19:33 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:19:33 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:19:43 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:19:43 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:19:43 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:19:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:19:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:19:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:19:59 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:19:59 [INFO] frame                : n:   7636, mean: 15751us, 25th: 15417us, 50th: 15613us, 90th: 16891us, 99th:  24510us, 99.9th:  30277us
+12:19:59 [INFO] timed_events         : n:    135, mean:  3294us, 25th:   270us, 50th:  4640us, 90th:  5349us, 99th:   7487us, 99.9th:  10944us
+12:19:59 [INFO] slow_timed           : n:     11, mean:   250us, 25th:   198us, 50th:   209us, 90th:   224us, 99th:    845us, 99.9th:    845us
+12:19:59 [INFO] dcs_events           : n:   1289, mean:     3us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     62us, 99.9th:     89us
+12:19:59 [INFO] unit_positions       : n:    135, mean:   513us, 25th:   246us, 50th:   433us, 90th:  1224us, 99th:   1458us, 99.9th:   1517us
+12:19:59 [INFO] player_positions     : n:    135, mean:     0us, 25th:     0us, 50th:     0us, 90th:     0us, 99th:      1us, 99.9th:     15us
+12:19:59 [INFO] ewr_tracks           : n:     11, mean:    17us, 25th:    13us, 50th:    13us, 90th:    14us, 99th:     72us, 99.9th:     72us
+12:19:59 [INFO] ewr_reports          : n:     11, mean:     3us, 25th:     1us, 50th:     1us, 90th:     1us, 99th:     18us, 99.9th:     18us
+12:19:59 [INFO] unit_culling         : n:     11, mean:    16us, 25th:    15us, 50th:    16us, 90th:    16us, 99th:     31us, 99.9th:     31us
+12:19:59 [INFO] remark_objectives    : n:     11, mean:    14us, 25th:    13us, 50th:    13us, 90th:    14us, 99th:     29us, 99.9th:     29us
+12:19:59 [INFO] update_jtac_contacts : n:     11, mean:    18us, 25th:     9us, 50th:     9us, 90th:    10us, 99th:    116us, 99.9th:    116us
+12:19:59 [INFO] do_repairs           : n:     11, mean:    28us, 25th:    11us, 50th:    12us, 90th:    13us, 99th:    199us, 99.9th:    199us
+12:19:59 [INFO] spawn_queue          : n:    135, mean:    22us, 25th:    21us, 50th:    22us, 90th:    25us, 99th:     43us, 99.9th:    218us
+12:19:59 [INFO] spawn                : n:     39, mean:  2098us, 25th:  1282us, 50th:  2476us, 90th:  3035us, 99th:   4155us, 99.9th:   4155us
+12:19:59 [INFO] advise_captured      : n:    135, mean:     8us, 25th:     5us, 50th:     9us, 90th:    10us, 99th:     12us, 99.9th:     99us
+12:19:59 [INFO] advise_capturable    : n:    135, mean:     2us, 25th:     2us, 50th:     3us, 90th:     3us, 99th:      3us, 99.9th:     31us
+12:19:59 [INFO] jtac_target_positions: n:    135, mean:     8us, 25th:     7us, 50th:     7us, 90th:    11us, 99th:     24us, 99.9th:     39us
+12:19:59 [INFO] process_messages     : n:    135, mean:     1us, 25th:     1us, 50th:     2us, 90th:     2us, 99th:      3us, 99.9th:      4us
+12:19:59 [INFO] snapshot             : n:     11, mean:     7us, 25th:     6us, 50th:     6us, 90th:     7us, 99th:     22us, 99.9th:     22us
+12:19:59 [INFO] logistics            : n:    135, mean:  3203us, 25th:     1us, 50th:  4579us, 90th:  5132us, 99th:   7409us, 99.9th:  10870us
+12:19:59 [INFO] logistics_sync_to    : n:     98, mean:  4409us, 25th:  4126us, 50th:  4898us, 90th:  5279us, 99th:  10862us, 99.9th:  10862us
+12:19:59 [INFO] logistics_items: 56970
+12:19:59 [INFO] Unit.getPosition         : n:    806, mean:    55us, 25th:    48us, 50th:    49us, 90th:    77us, 99th:    241us, 99.9th:    324us
+12:19:59 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:19:59 [INFO] Coalition.addStaticObject: n:      3, mean:   533us, 25th:   293us, 50th:   310us, 90th:   996us, 99th:    996us, 99.9th:    996us
+12:19:59 [INFO] Unit.isExist             : n:    806, mean:    10us, 25th:     4us, 50th:     5us, 90th:    37us, 99th:     56us, 99.9th:    212us
+12:19:59 [INFO] Land.getHeight           : n:     98, mean:    13us, 25th:     6us, 50th:    11us, 90th:    21us, 99th:     57us, 99.9th:     57us
+12:19:59 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:19:59 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:20:02 [INFO] onPlayerTryConnect addr: String("182.253.50.33:39096"), name: String("[.ID] EagleEye"), ucid: 43009af9ad72caf2a3ff31396bed074f, id: PlayerId(2)
+12:20:02 [INFO] onPlayerTrySendChat id: PlayerId(1), msg: String("SRS Running @ 46.105.46.98:5012"), all: true
+12:20:04 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:20:04 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:20:04 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:20:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:20:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:20:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:20:25 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:20:25 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:20:25 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:20:35 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:20:35 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:20:35 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:20:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:20:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:20:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:20:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:20:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:20:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:20:59 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:20:59 [INFO] frame                : n:  11467, mean: 15721us, 25th: 15400us, 50th: 15613us, 90th: 17072us, 99th:  22872us, 99.9th:  29458us
+12:20:59 [INFO] timed_events         : n:    195, mean:  2309us, 25th:    72us, 50th:  1061us, 90th:  5201us, 99th:   7487us, 99.9th:  10944us
+12:20:59 [INFO] slow_timed           : n:     17, mean:   253us, 25th:   200us, 50th:   209us, 90th:   472us, 99th:    845us, 99.9th:    845us
+12:20:59 [INFO] dcs_events           : n:   1289, mean:     3us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     62us, 99.9th:     89us
+12:20:59 [INFO] dcs_hooks            : n:      2, mean:   261us, 25th:    26us, 50th:    26us, 90th:   496us, 99th:    496us, 99.9th:    496us
+12:20:59 [INFO] unit_positions       : n:    195, mean:   513us, 25th:   265us, 50th:   433us, 90th:  1212us, 99th:   1458us, 99.9th:   1517us
+12:20:59 [INFO] player_positions     : n:    195, mean:     0us, 25th:     0us, 50th:     0us, 90th:     0us, 99th:      1us, 99.9th:     15us
+12:20:59 [INFO] ewr_tracks           : n:     17, mean:    16us, 25th:    13us, 50th:    13us, 90th:    14us, 99th:     72us, 99.9th:     72us
+12:20:59 [INFO] ewr_reports          : n:     17, mean:     2us, 25th:     1us, 50th:     1us, 90th:     2us, 99th:     18us, 99.9th:     18us
+12:20:59 [INFO] unit_culling         : n:     17, mean:    16us, 25th:    16us, 50th:    16us, 90th:    17us, 99th:     31us, 99.9th:     31us
+12:20:59 [INFO] remark_objectives    : n:     17, mean:    14us, 25th:    13us, 50th:    13us, 90th:    14us, 99th:     29us, 99.9th:     29us
+12:20:59 [INFO] update_jtac_contacts : n:     17, mean:    15us, 25th:     9us, 50th:     9us, 90th:    10us, 99th:    116us, 99.9th:    116us
+12:20:59 [INFO] do_repairs           : n:     17, mean:    22us, 25th:    12us, 50th:    12us, 90th:    13us, 99th:    199us, 99.9th:    199us
+12:20:59 [INFO] spawn_queue          : n:    195, mean:    21us, 25th:    21us, 50th:    22us, 90th:    25us, 99th:     48us, 99.9th:    218us
+12:20:59 [INFO] spawn                : n:     39, mean:  2098us, 25th:  1282us, 50th:  2476us, 90th:  3035us, 99th:   4155us, 99.9th:   4155us
+12:20:59 [INFO] advise_captured      : n:    195, mean:     8us, 25th:     6us, 50th:     9us, 90th:    10us, 99th:     12us, 99.9th:     99us
+12:20:59 [INFO] advise_capturable    : n:    195, mean:     2us, 25th:     2us, 50th:     3us, 90th:     3us, 99th:      3us, 99.9th:     31us
+12:20:59 [INFO] jtac_target_positions: n:    195, mean:     7us, 25th:     7us, 50th:     7us, 90th:    11us, 99th:     24us, 99.9th:     39us
+12:20:59 [INFO] process_messages     : n:    195, mean:     1us, 25th:     1us, 50th:     2us, 90th:     2us, 99th:      3us, 99.9th:      4us
+12:20:59 [INFO] snapshot             : n:     17, mean:     7us, 25th:     6us, 50th:     6us, 90th:     7us, 99th:     22us, 99.9th:     22us
+12:20:59 [INFO] logistics            : n:    195, mean:  2218us, 25th:     1us, 50th:  1039us, 90th:  5062us, 99th:   7409us, 99.9th:  10870us
+12:20:59 [INFO] logistics_sync_to    : n:     98, mean:  4409us, 25th:  4126us, 50th:  4898us, 90th:  5279us, 99th:  10862us, 99.9th:  10862us
+12:20:59 [INFO] logistics_items: 56970
+12:20:59 [INFO] Unit.getPosition         : n:   1166, mean:    54us, 25th:    48us, 50th:    49us, 90th:    77us, 99th:    240us, 99.9th:    276us
+12:20:59 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:20:59 [INFO] Coalition.addStaticObject: n:      3, mean:   533us, 25th:   293us, 50th:   310us, 90th:   996us, 99th:    996us, 99.9th:    996us
+12:20:59 [INFO] Unit.isExist             : n:   1166, mean:    10us, 25th:     4us, 50th:     5us, 90th:    37us, 99th:     56us, 99.9th:    212us
+12:20:59 [INFO] Land.getHeight           : n:     98, mean:    13us, 25th:     6us, 50th:    11us, 90th:    21us, 99th:     57us, 99.9th:     57us
+12:20:59 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:20:59 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:21:00 [INFO] onPlayerTrySendChat id: PlayerId(1), msg: String("Server will restart in 4 hours 39 minutes"), all: true
+12:21:00 [INFO] onPlayerTrySendChat id: PlayerId(1), msg: String("Use \"-help\" for commands."), all: true
+12:21:00 [INFO] onPlayerTrySendChat id: PlayerId(1), msg: String("[.ID] EagleEye, welcome back to INCIDENT DEVELOPMENT - MasterArm DCS Servers!"), all: true
+12:21:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:21:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:21:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:21:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:21:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:21:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:21:28 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:21:28 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:21:28 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:21:30 [INFO] onPlayerTryChangeSlot: PlayerId(2) Red Unit(1000115)
+12:21:30 [INFO] canceling force to spectators for 43009af9ad72caf2a3ff31396bed074f
+12:21:30 [INFO] onPlayerTrySendChat id: PlayerId(1), msg: String("SRS Running @ 46.105.46.98:5012"), all: true
+12:21:36 [INFO] onEvent: Birth(Birth { time: Time(233.008), initiator: { class: Unit, id: Integer(16790274) }, place: Some({ class: Airbase, id: Integer(5000017) }), subplace: Some(14) })
+12:21:37 [DEBUG] (21) bflib::menu: initializing menus for Unit(1000115)
+12:21:39 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:21:39 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:21:39 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:21:49 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:21:49 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:21:49 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:21:59 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:21:59 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:21:59 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:22:00 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:22:00 [INFO] frame                : n:  15322, mean: 15747us, 25th: 15376us, 50th: 15613us, 90th: 16990us, 99th:  22757us, 99.9th:  30277us
+12:22:00 [INFO] timed_events         : n:    256, mean:  1791us, 25th:    70us, 50th:    82us, 90th:  5103us, 99th:   6406us, 99.9th:  10944us
+12:22:00 [INFO] slow_timed           : n:     23, mean:   222us, 25th:   155us, 50th:   207us, 90th:   280us, 99th:    845us, 99.9th:    845us
+12:22:00 [INFO] dcs_events           : n:   1290, mean:     4us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     63us, 99.9th:    138us
+12:22:00 [INFO] dcs_hooks            : n:      7, mean:   119us, 25th:    26us, 50th:    61us, 90th:   496us, 99th:    496us, 99.9th:    496us
+12:22:00 [INFO] unit_positions       : n:    256, mean:   490us, 25th:   246us, 50th:   427us, 90th:  1192us, 99th:   1451us, 99.9th:   1517us
+12:22:00 [INFO] player_positions     : n:    256, mean:     6us, 25th:     0us, 50th:     0us, 90th:     0us, 99th:    166us, 99.9th:    230us
+12:22:00 [INFO] ewr_tracks           : n:     23, mean:    14us, 25th:     8us, 50th:    13us, 90th:    14us, 99th:     72us, 99.9th:     72us
+12:22:00 [INFO] ewr_reports          : n:     23, mean:     3us, 25th:     1us, 50th:     1us, 90th:     2us, 99th:     20us, 99.9th:     20us
+12:22:00 [INFO] unit_culling         : n:     23, mean:    15us, 25th:    15us, 50th:    16us, 90th:    16us, 99th:     31us, 99.9th:     31us
+12:22:00 [INFO] remark_objectives    : n:     23, mean:    12us, 25th:     9us, 50th:    13us, 90th:    14us, 99th:     29us, 99.9th:     29us
+12:22:00 [INFO] update_jtac_contacts : n:     23, mean:    13us, 25th:     7us, 50th:     9us, 90th:    10us, 99th:    116us, 99.9th:    116us
+12:22:00 [INFO] do_repairs           : n:     23, mean:    18us, 25th:     8us, 50th:    12us, 90th:    12us, 99th:    199us, 99.9th:    199us
+12:22:00 [INFO] spawn_queue          : n:    256, mean:    21us, 25th:    15us, 50th:    21us, 90th:    25us, 99th:     48us, 99.9th:    218us
+12:22:00 [INFO] spawn                : n:     39, mean:  2098us, 25th:  1282us, 50th:  2476us, 90th:  3035us, 99th:   4155us, 99.9th:   4155us
+12:22:00 [INFO] advise_captured      : n:    256, mean:     8us, 25th:     5us, 50th:     9us, 90th:    10us, 99th:     10us, 99.9th:     99us
+12:22:00 [INFO] advise_capturable    : n:    256, mean:     2us, 25th:     2us, 50th:     3us, 90th:     3us, 99th:      3us, 99.9th:     31us
+12:22:00 [INFO] jtac_target_positions: n:    256, mean:     7us, 25th:     6us, 50th:     7us, 90th:    11us, 99th:     12us, 99.9th:     39us
+12:22:00 [INFO] process_messages     : n:    256, mean:     1us, 25th:     1us, 50th:     2us, 90th:     2us, 99th:      2us, 99.9th:      4us
+12:22:00 [INFO] snapshot             : n:     23, mean:     6us, 25th:     4us, 50th:     6us, 90th:     6us, 99th:     22us, 99.9th:     22us
+12:22:00 [INFO] logistics            : n:    256, mean:  1689us, 25th:     1us, 50th:     1us, 90th:  5021us, 99th:   6311us, 99.9th:  10870us
+12:22:00 [INFO] logistics_sync_to    : n:     98, mean:  4409us, 25th:  4126us, 50th:  4898us, 90th:  5279us, 99th:  10862us, 99.9th:  10862us
+12:22:00 [INFO] logistics_items: 56970
+12:22:00 [INFO] Unit.getPosition         : n:   1555, mean:    51us, 25th:    34us, 50th:    49us, 90th:    77us, 99th:    231us, 99.9th:    276us
+12:22:00 [INFO] Unit.getPoint            : n:      2, mean:    23us, 25th:    15us, 50th:    15us, 90th:    31us, 99th:     31us, 99.9th:     31us
+12:22:00 [INFO] Unit.getVelocity         : n:      1, mean:    16us, 25th:    16us, 50th:    16us, 90th:    16us, 99th:     16us, 99.9th:     16us
+12:22:00 [INFO] Unit.inAir               : n:      1, mean:     6us, 25th:     6us, 50th:     6us, 90th:     6us, 99th:      6us, 99.9th:      6us
+12:22:00 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:22:00 [INFO] Coalition.addStaticObject: n:      3, mean:   533us, 25th:   293us, 50th:   310us, 90th:   996us, 99th:    996us, 99.9th:    996us
+12:22:00 [INFO] Unit.isExist             : n:   1554, mean:     9us, 25th:     4us, 50th:     5us, 90th:    29us, 99th:     46us, 99.9th:    212us
+12:22:00 [INFO] Land.getHeight           : n:     98, mean:    13us, 25th:     6us, 50th:    11us, 90th:    21us, 99th:     57us, 99.9th:     57us
+12:22:00 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:22:00 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:22:10 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:22:10 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:22:10 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:22:21 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:22:21 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:22:21 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:22:31 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 0 crates
+12:22:31 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 36 entries
+12:22:31 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:22:32 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] spawn_c130_crate called: crate=T72 Crate, side=Red, origin=ObjectiveId(2), slot=Unit(1000115)
+12:22:32 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Found deployable crate: T72 Crate, weight=2000kg
+12:22:32 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Player position: x=-179798.47, z=51498.34, dir=(1.00, 0.04)
+12:22:32 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Spawning with template='RCRATE_C130', dir=(1.00, 0.04)
+12:22:32 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate spawned successfully: group_id=GroupId(2292)
+12:22:32 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate tracking added: name='RCRATE_C130-2292', group_id=GroupId(2292), total_tracked=1
+12:22:33 [INFO] onEvent: Birth(Birth { time: Time(290.0), initiator: { class: StaticObject, id: Integer(16901889) }, place: None, subplace: None })
+12:22:33 [INFO] [C130_CARGO] static_born: Found prefix match - static 'RCRATE_C130-2292-8328' matches tracked 'RCRATE_C130-2292'
+12:22:33 [INFO] [C130_CARGO] static_born: Creating object_id mapping for crate 'RCRATE_C130-2292-8328' (tracked as 'RCRATE_C130-2292') group GroupId(2292)
+12:22:33 [INFO] [C130_CARGO] static_born: Inserting mapping GroupId(2292) -> { id: 16901889, class: StaticObject }
+12:22:33 [INFO] [C130_CARGO] static_born: Mapping inserted, map now has 37 entries
+12:22:33 [INFO] onEvent: Birth(Birth { time: Time(290.0), initiator: { class: StaticObject, id: Integer(16901889) }, place: None, subplace: None })
+12:22:33 [INFO] [C130_CARGO] static_born: Found prefix match - static 'RCRATE_C130-2292-8328' matches tracked 'RCRATE_C130-2292'
+12:22:33 [INFO] [C130_CARGO] static_born: Mapping already exists for GroupId(2292), skipping
+12:22:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] spawn_c130_crate called: crate=T72 Crate, side=Red, origin=ObjectiveId(2), slot=Unit(1000115)
+12:22:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Found deployable crate: T72 Crate, weight=2000kg
+12:22:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Player position: x=-179798.47, z=51498.34, dir=(1.00, 0.04)
+12:22:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Spawning with template='RCRATE_C130', dir=(1.00, 0.04)
+12:22:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate spawned successfully: group_id=GroupId(2293)
+12:22:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate tracking added: name='RCRATE_C130-2293', group_id=GroupId(2293), total_tracked=2
+12:22:41 [INFO] onEvent: Birth(Birth { time: Time(298.0), initiator: { class: StaticObject, id: Integer(16902145) }, place: None, subplace: None })
+12:22:41 [INFO] [C130_CARGO] static_born: Found prefix match - static 'RCRATE_C130-2293-8329' matches tracked 'RCRATE_C130-2293'
+12:22:41 [INFO] [C130_CARGO] static_born: Creating object_id mapping for crate 'RCRATE_C130-2293-8329' (tracked as 'RCRATE_C130-2293') group GroupId(2293)
+12:22:41 [INFO] [C130_CARGO] static_born: Inserting mapping GroupId(2293) -> { id: 16902145, class: StaticObject }
+12:22:41 [INFO] [C130_CARGO] static_born: Mapping inserted, map now has 38 entries
+12:22:41 [INFO] onEvent: Birth(Birth { time: Time(298.0), initiator: { class: StaticObject, id: Integer(16902145) }, place: None, subplace: None })
+12:22:41 [INFO] [C130_CARGO] static_born: Found prefix match - static 'RCRATE_C130-2293-8329' matches tracked 'RCRATE_C130-2293'
+12:22:41 [INFO] [C130_CARGO] static_born: Mapping already exists for GroupId(2293), skipping
+12:22:42 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 2 crates
+12:22:42 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 38 entries
+12:22:42 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:22:42 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:22:42 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:22:42 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:22:42 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 2 crates to mark, 0 crates to unpack
+12:22:48 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] spawn_c130_crate called: crate=T72 Crate, side=Red, origin=ObjectiveId(2), slot=Unit(1000115)
+12:22:48 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Found deployable crate: T72 Crate, weight=2000kg
+12:22:48 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Player position: x=-179798.47, z=51498.34, dir=(1.00, 0.04)
+12:22:48 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Spawning with template='RCRATE_C130', dir=(1.00, 0.04)
+12:22:48 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate spawned successfully: group_id=GroupId(2294)
+12:22:48 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate tracking added: name='RCRATE_C130-2294', group_id=GroupId(2294), total_tracked=3
+12:22:49 [INFO] onEvent: Birth(Birth { time: Time(306.0), initiator: { class: StaticObject, id: Integer(16902401) }, place: None, subplace: None })
+12:22:49 [INFO] [C130_CARGO] static_born: Found prefix match - static 'RCRATE_C130-2294-8330' matches tracked 'RCRATE_C130-2294'
+12:22:49 [INFO] [C130_CARGO] static_born: Creating object_id mapping for crate 'RCRATE_C130-2294-8330' (tracked as 'RCRATE_C130-2294') group GroupId(2294)
+12:22:49 [INFO] [C130_CARGO] static_born: Inserting mapping GroupId(2294) -> { id: 16902401, class: StaticObject }
+12:22:49 [INFO] [C130_CARGO] static_born: Mapping inserted, map now has 39 entries
+12:22:49 [INFO] onEvent: Birth(Birth { time: Time(306.0), initiator: { class: StaticObject, id: Integer(16902401) }, place: None, subplace: None })
+12:22:49 [INFO] [C130_CARGO] static_born: Found prefix match - static 'RCRATE_C130-2294-8330' matches tracked 'RCRATE_C130-2294'
+12:22:49 [INFO] [C130_CARGO] static_born: Mapping already exists for GroupId(2294), skipping
+12:22:53 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 3 crates
+12:22:53 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 39 entries
+12:22:53 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:22:53 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:22:53 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:22:53 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:22:53 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:22:53 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:22:53 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 1 crates to mark, 0 crates to unpack
+12:23:01 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:23:01 [INFO] frame                : n:  19220, mean: 15727us, 25th: 15343us, 50th: 15613us, 90th: 16891us, 99th:  22364us, 99.9th:  30588us
+12:23:01 [INFO] timed_events         : n:    317, mean:  1618us, 25th:    69us, 50th:    83us, 90th:  5087us, 99th:  10387us, 99.9th:  11935us
+12:23:01 [INFO] slow_timed           : n:     28, mean:   208us, 25th:   126us, 50th:   200us, 90th:   280us, 99th:    845us, 99.9th:    845us
+12:23:01 [INFO] dcs_events           : n:   1305, mean:     4us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     64us, 99.9th:    184us
+12:23:01 [INFO] dcs_hooks            : n:      7, mean:   119us, 25th:    26us, 50th:    61us, 90th:   496us, 99th:    496us, 99.9th:    496us
+12:23:01 [INFO] unit_positions       : n:    317, mean:   460us, 25th:   190us, 50th:   406us, 90th:   924us, 99th:   1445us, 99.9th:   1517us
+12:23:01 [INFO] player_positions     : n:    317, mean:    17us, 25th:     0us, 50th:     0us, 90th:   105us, 99th:    239us, 99.9th:    298us
+12:23:01 [INFO] ewr_tracks           : n:     28, mean:    12us, 25th:     8us, 50th:    13us, 90th:    14us, 99th:     72us, 99.9th:     72us
+12:23:01 [INFO] ewr_reports          : n:     28, mean:     2us, 25th:     1us, 50th:     1us, 90th:     3us, 99th:     20us, 99.9th:     20us
+12:23:01 [INFO] unit_culling         : n:     28, mean:    14us, 25th:    12us, 50th:    16us, 90th:    17us, 99th:     31us, 99.9th:     31us
+12:23:01 [INFO] remark_objectives    : n:     28, mean:    11us, 25th:     8us, 50th:    13us, 90th:    14us, 99th:     29us, 99.9th:     29us
+12:23:01 [INFO] update_jtac_contacts : n:     28, mean:    12us, 25th:     6us, 50th:     9us, 90th:    10us, 99th:    116us, 99.9th:    116us
+12:23:01 [INFO] do_repairs           : n:     28, mean:    16us, 25th:     7us, 50th:    12us, 90th:    13us, 99th:    199us, 99.9th:    199us
+12:23:01 [INFO] spawn_queue          : n:    317, mean:    40us, 25th:    13us, 50th:    21us, 90th:    25us, 99th:    218us, 99.9th:   2275us
+12:23:01 [INFO] spawn                : n:     42, mean:  2107us, 25th:  1295us, 50th:  2211us, 90th:  3026us, 99th:   4155us, 99.9th:   4155us
+12:23:01 [INFO] advise_captured      : n:    317, mean:     7us, 25th:     5us, 50th:     8us, 90th:    10us, 99th:     10us, 99.9th:     99us
+12:23:01 [INFO] advise_capturable    : n:    317, mean:     2us, 25th:     2us, 50th:     2us, 90th:     3us, 99th:      3us, 99.9th:     31us
+12:23:01 [INFO] jtac_target_positions: n:    317, mean:     7us, 25th:     4us, 50th:     7us, 90th:    10us, 99th:     12us, 99.9th:     39us
+12:23:01 [INFO] process_messages     : n:    317, mean:   128us, 25th:     1us, 50th:     2us, 90th:     2us, 99th:   8036us, 99.9th:   9986us
+12:23:01 [INFO] snapshot             : n:     28, mean:     5us, 25th:     3us, 50th:     6us, 90th:     6us, 99th:     22us, 99.9th:     22us
+12:23:01 [INFO] logistics            : n:    317, mean:  1364us, 25th:     0us, 50th:     1us, 90th:  4997us, 99th:   5877us, 99.9th:  10870us
+12:23:01 [INFO] logistics_sync_to    : n:     98, mean:  4409us, 25th:  4126us, 50th:  4898us, 90th:  5279us, 99th:  10862us, 99.9th:  10862us
+12:23:01 [INFO] logistics_items: 56970
+12:23:01 [INFO] Unit.getPosition         : n:   1960, mean:    48us, 25th:    31us, 50th:    48us, 90th:    74us, 99th:    224us, 99.9th:    276us
+12:23:01 [INFO] Unit.getPoint            : n:      2, mean:    23us, 25th:    15us, 50th:    15us, 90th:    31us, 99th:     31us, 99.9th:     31us
+12:23:01 [INFO] Unit.getVelocity         : n:      6, mean:     5us, 25th:     2us, 50th:     3us, 90th:    16us, 99th:     16us, 99.9th:     16us
+12:23:01 [INFO] Unit.inAir               : n:      1, mean:     6us, 25th:     6us, 50th:     6us, 90th:     6us, 99th:      6us, 99.9th:      6us
+12:23:01 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:23:01 [INFO] Coalition.addStaticObject: n:      6, mean:  1270us, 25th:   310us, 50th:   996us, 90th:  2041us, 99th:   2041us, 99.9th:   2041us
+12:23:01 [INFO] Unit.isExist             : n:   1954, mean:     8us, 25th:     3us, 50th:     5us, 90th:    23us, 99th:     41us, 99.9th:    212us
+12:23:01 [INFO] Land.getHeight           : n:    101, mean:    13us, 25th:     6us, 50th:    11us, 90th:    21us, 99th:     48us, 99.9th:     57us
+12:23:01 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:23:01 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:23:03 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 3 crates
+12:23:03 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 39 entries
+12:23:03 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:23:03 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:23:03 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:23:03 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:23:03 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:23:03 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:23:03 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:23:13 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 3 crates
+12:23:13 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 39 entries
+12:23:13 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:23:13 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179800.64, 51497.48)
+12:23:13 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:23:13 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179802.67, 51497.40)
+12:23:13 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:23:13 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179804.70, 51497.32)
+12:23:13 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 3 crates to mark, 0 crates to unpack
+12:23:17 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] spawn_c130_crate called: crate=SA13 Strela Crate, side=Red, origin=ObjectiveId(2), slot=Unit(1000115)
+12:23:17 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Found deployable crate: SA13 Strela Crate, weight=1000kg
+12:23:17 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Player position: x=-179798.47, z=51498.34, dir=(1.00, 0.04)
+12:23:17 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Spawning with template='RCRATE_C130', dir=(1.00, 0.04)
+12:23:17 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate spawned successfully: group_id=GroupId(2295)
+12:23:17 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate tracking added: name='RCRATE_C130-2295', group_id=GroupId(2295), total_tracked=4
+12:23:17 [INFO] onEvent: Birth(Birth { time: Time(334.0), initiator: { class: StaticObject, id: Integer(16902657) }, place: None, subplace: None })
+12:23:17 [INFO] [C130_CARGO] static_born: Found prefix match - static 'RCRATE_C130-2295-8331' matches tracked 'RCRATE_C130-2295'
+12:23:17 [INFO] [C130_CARGO] static_born: Creating object_id mapping for crate 'RCRATE_C130-2295-8331' (tracked as 'RCRATE_C130-2295') group GroupId(2295)
+12:23:17 [INFO] [C130_CARGO] static_born: Inserting mapping GroupId(2295) -> { id: 16902657, class: StaticObject }
+12:23:17 [INFO] [C130_CARGO] static_born: Mapping inserted, map now has 40 entries
+12:23:17 [INFO] onEvent: Birth(Birth { time: Time(334.0), initiator: { class: StaticObject, id: Integer(16902657) }, place: None, subplace: None })
+12:23:17 [INFO] [C130_CARGO] static_born: Found prefix match - static 'RCRATE_C130-2295-8331' matches tracked 'RCRATE_C130-2295'
+12:23:17 [INFO] [C130_CARGO] static_born: Mapping already exists for GroupId(2295), skipping
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 4 crates
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 40 entries
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179800.64, 51497.48)
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179802.67, 51497.40)
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179804.70, 51497.32)
+12:23:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 1 crates to mark, 0 crates to unpack
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 4 crates
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 40 entries
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179800.64, 51497.48)
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179802.67, 51497.40)
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179804.70, 51497.32)
+12:23:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:23:38 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] spawn_c130_crate called: crate=SA13 Strela Crate, side=Red, origin=ObjectiveId(2), slot=Unit(1000115)
+12:23:38 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Found deployable crate: SA13 Strela Crate, weight=1000kg
+12:23:38 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Player position: x=-179798.47, z=51498.34, dir=(1.00, 0.04)
+12:23:38 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Spawning with template='RCRATE_C130', dir=(1.00, 0.04)
+12:23:38 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate spawned successfully: group_id=GroupId(2296)
+12:23:38 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate tracking added: name='RCRATE_C130-2296', group_id=GroupId(2296), total_tracked=5
+12:23:39 [INFO] onEvent: Birth(Birth { time: Time(356.0), initiator: { class: StaticObject, id: Integer(16902913) }, place: None, subplace: None })
+12:23:39 [INFO] [C130_CARGO] static_born: Found prefix match - static 'RCRATE_C130-2296-8332' matches tracked 'RCRATE_C130-2296'
+12:23:39 [INFO] [C130_CARGO] static_born: Creating object_id mapping for crate 'RCRATE_C130-2296-8332' (tracked as 'RCRATE_C130-2296') group GroupId(2296)
+12:23:39 [INFO] [C130_CARGO] static_born: Inserting mapping GroupId(2296) -> { id: 16902913, class: StaticObject }
+12:23:39 [INFO] [C130_CARGO] static_born: Mapping inserted, map now has 41 entries
+12:23:39 [INFO] onEvent: Birth(Birth { time: Time(356.0), initiator: { class: StaticObject, id: Integer(16902913) }, place: None, subplace: None })
+12:23:39 [INFO] [C130_CARGO] static_born: Found prefix match - static 'RCRATE_C130-2296-8332' matches tracked 'RCRATE_C130-2296'
+12:23:39 [INFO] [C130_CARGO] static_born: Mapping already exists for GroupId(2296), skipping
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179800.64, 51497.48)
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179802.67, 51497.40)
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179804.70, 51497.32)
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179778.48, 51499.12)
+12:23:45 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 1 crates to mark, 0 crates to unpack
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179800.64, 51497.48)
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179802.67, 51497.40)
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179794.09, 51499.30)
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179804.70, 51497.32)
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Spawned, in_air=false, speed=0.00m/s, pos=(-179792.05, 51499.38)
+12:23:55 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 2 crates to mark, 0 crates to unpack
+12:24:01 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:24:01 [INFO] frame                : n:  23056, mean: 15712us, 25th: 15310us, 50th: 15613us, 90th: 16842us, 99th:  22183us, 99.9th:  30425us
+12:24:01 [INFO] timed_events         : n:    377, mean:  1575us, 25th:    62us, 50th:    82us, 90th:  5099us, 99th:  10944us, 99.9th:  15228us
+12:24:01 [INFO] slow_timed           : n:     34, mean:   251us, 25th:   144us, 50th:   207us, 90th:   472us, 99th:    845us, 99.9th:    845us
+12:24:01 [INFO] dcs_events           : n:   1325, mean:     4us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     67us, 99.9th:    184us
+12:24:01 [INFO] dcs_hooks            : n:      7, mean:   119us, 25th:    26us, 50th:    61us, 90th:   496us, 99th:    496us, 99.9th:    496us
+12:24:01 [INFO] unit_positions       : n:    377, mean:   442us, 25th:   185us, 50th:   373us, 90th:   899us, 99th:   1445us, 99.9th:   1517us
+12:24:01 [INFO] player_positions     : n:    377, mean:    23us, 25th:     0us, 50th:     0us, 90th:   108us, 99th:    239us, 99.9th:    298us
+12:24:01 [INFO] ewr_tracks           : n:     34, mean:    12us, 25th:     8us, 50th:    11us, 90th:    14us, 99th:     72us, 99.9th:     72us
+12:24:01 [INFO] ewr_reports          : n:     34, mean:     2us, 25th:     1us, 50th:     1us, 90th:     2us, 99th:     20us, 99.9th:     20us
+12:24:01 [INFO] unit_culling         : n:     34, mean:    14us, 25th:    15us, 50th:    15us, 90th:    16us, 99th:     31us, 99.9th:     31us
+12:24:01 [INFO] remark_objectives    : n:     34, mean:    11us, 25th:     8us, 50th:    13us, 90th:    14us, 99th:     29us, 99.9th:     29us
+12:24:01 [INFO] update_jtac_contacts : n:     34, mean:    11us, 25th:     6us, 50th:     9us, 90th:    10us, 99th:    116us, 99.9th:    116us
+12:24:01 [INFO] do_repairs           : n:     34, mean:    15us, 25th:     7us, 50th:     9us, 90th:    12us, 99th:    199us, 99.9th:    199us
+12:24:01 [INFO] spawn_queue          : n:    377, mean:    48us, 25th:    13us, 50th:    18us, 90th:    25us, 99th:   2201us, 99.9th:   2424us
+12:24:01 [INFO] spawn                : n:     44, mean:  2113us, 25th:  1295us, 50th:  2211us, 90th:  3026us, 99th:   4155us, 99.9th:   4155us
+12:24:01 [INFO] advise_captured      : n:    377, mean:     7us, 25th:     5us, 50th:     6us, 90th:     9us, 99th:     10us, 99.9th:     99us
+12:24:01 [INFO] advise_capturable    : n:    377, mean:     2us, 25th:     1us, 50th:     2us, 90th:     3us, 99th:      3us, 99.9th:     31us
+12:24:01 [INFO] jtac_target_positions: n:    377, mean:     6us, 25th:     4us, 50th:     7us, 90th:     8us, 99th:     12us, 99.9th:     39us
+12:24:01 [INFO] process_messages     : n:    377, mean:   289us, 25th:     1us, 50th:     1us, 90th:     2us, 99th:   9527us, 99.9th:  14647us
+12:24:01 [INFO] snapshot             : n:     34, mean:     5us, 25th:     3us, 50th:     5us, 90th:     6us, 99th:     22us, 99.9th:     22us
+12:24:01 [INFO] logistics            : n:    377, mean:  1147us, 25th:     0us, 50th:     1us, 90th:  4972us, 99th:   5877us, 99.9th:  10870us
+12:24:01 [INFO] logistics_sync_to    : n:     98, mean:  4409us, 25th:  4126us, 50th:  4898us, 90th:  5279us, 99th:  10862us, 99.9th:  10862us
+12:24:01 [INFO] logistics_items: 56970
+12:24:01 [INFO] Unit.getPosition         : n:   2376, mean:    46us, 25th:    31us, 50th:    47us, 90th:    72us, 99th:    196us, 99.9th:    275us
+12:24:01 [INFO] Unit.getPoint            : n:      2, mean:    23us, 25th:    15us, 50th:    15us, 90th:    31us, 99th:     31us, 99.9th:     31us
+12:24:01 [INFO] Unit.getVelocity         : n:     30, mean:     8us, 25th:     8us, 50th:     8us, 90th:    12us, 99th:     16us, 99.9th:     16us
+12:24:01 [INFO] Unit.inAir               : n:      1, mean:     6us, 25th:     6us, 50th:     6us, 90th:     6us, 99th:      6us, 99.9th:      6us
+12:24:01 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:24:01 [INFO] Coalition.addStaticObject: n:      8, mean:  1466us, 25th:   310us, 50th:  1903us, 90th:  2203us, 99th:   2203us, 99.9th:   2203us
+12:24:01 [INFO] Unit.isExist             : n:   2346, mean:     8us, 25th:     3us, 50th:     4us, 90th:    22us, 99th:     41us, 99.9th:    206us
+12:24:01 [INFO] Land.getHeight           : n:    103, mean:    12us, 25th:     6us, 50th:    12us, 90th:    21us, 99th:     48us, 99.9th:     57us
+12:24:01 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:24:01 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=1.24m/s, pos=(-179796.71, 51497.63)
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=1.24m/s, pos=(-179798.74, 51497.55)
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Spawned, in_air=false, speed=1.24m/s, pos=(-179790.16, 51499.45)
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=1.24m/s, pos=(-179800.78, 51497.47)
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Spawned, in_air=false, speed=1.24m/s, pos=(-179788.12, 51499.53)
+12:24:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=3.32m/s, pos=(-179771.64, 51498.60)
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=3.32m/s, pos=(-179773.68, 51498.53)
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Spawned, in_air=false, speed=3.32m/s, pos=(-179765.09, 51500.41)
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=3.32m/s, pos=(-179775.71, 51498.45)
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Spawned, in_air=false, speed=3.32m/s, pos=(-179763.05, 51500.48)
+12:24:16 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=4.47m/s, pos=(-179730.28, 51500.66)
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=4.47m/s, pos=(-179732.22, 51500.05)
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Spawned, in_air=false, speed=4.47m/s, pos=(-179724.44, 51504.15)
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=4.47m/s, pos=(-179734.16, 51499.43)
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Spawned, in_air=false, speed=4.47m/s, pos=(-179722.50, 51504.76)
+12:24:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Spawned, in_air=false, speed=31.44m/s, pos=(-179619.24, 51611.07)
+12:24:36 [INFO] [C130_CARGO] Crate 'RCRATE_C130-2294' transitioned to Airborne (speed=31.44m/s)
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Spawned, in_air=false, speed=31.44m/s, pos=(-179620.31, 51609.34)
+12:24:36 [INFO] [C130_CARGO] Crate 'RCRATE_C130-2293' transitioned to Airborne (speed=31.44m/s)
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Spawned, in_air=false, speed=31.44m/s, pos=(-179617.09, 51617.52)
+12:24:36 [INFO] [C130_CARGO] Crate 'RCRATE_C130-2295' transitioned to Airborne (speed=31.44m/s)
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Spawned, in_air=false, speed=31.44m/s, pos=(-179621.39, 51607.61)
+12:24:36 [INFO] [C130_CARGO] Crate 'RCRATE_C130-2292' transitioned to Airborne (speed=31.44m/s)
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Spawned, in_air=false, speed=31.44m/s, pos=(-179616.02, 51619.25)
+12:24:36 [INFO] [C130_CARGO] Crate 'RCRATE_C130-2296' transitioned to Airborne (speed=31.44m/s)
+12:24:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=61.85m/s, pos=(-179358.20, 52002.96)
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=61.85m/s, pos=(-179359.45, 52001.35)
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=61.85m/s, pos=(-179355.39, 52009.14)
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=61.85m/s, pos=(-179360.69, 51999.74)
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=61.85m/s, pos=(-179354.14, 52010.74)
+12:24:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:24:49 [INFO] mission winner event {"id":54,"initiator":{"id_":16790274},"place":{"id_":5000017},"subPlace":0,"time":425.553}
+12:24:49 [INFO] onEvent: MissionWinner
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=79.98m/s, pos=(-178867.87, 52605.39)
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=79.98m/s, pos=(-178869.35, 52604.01)
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=79.98m/s, pos=(-178864.06, 52610.87)
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=79.98m/s, pos=(-178870.83, 52602.62)
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=79.98m/s, pos=(-178862.58, 52612.26)
+12:24:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:25:00 [INFO] onEvent: Takeoff(AtPlace { time: Time(436.553), initiator: { class: Unit, id: Integer(16790274) }, place: Some({ class: Airbase, id: Integer(5000017) }), subplace: Some(0) })
+12:25:01 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:25:01 [INFO] frame                : n:  26881, mean: 15709us, 25th: 15294us, 50th: 15613us, 90th: 16826us, 99th:  21970us, 99.9th:  31703us
+12:25:01 [INFO] timed_events         : n:    437, mean:  1843us, 25th:    51us, 50th:    86us, 90th:  5124us, 99th:  21807us, 99.9th:  49643us
+12:25:01 [INFO] slow_timed           : n:     40, mean:   292us, 25th:   155us, 50th:   209us, 90th:   522us, 99th:    845us, 99.9th:    845us
+12:25:01 [INFO] dcs_events           : n:   1375, mean:     4us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     68us, 99.9th:    384us
+12:25:01 [INFO] dcs_hooks            : n:      7, mean:   119us, 25th:    26us, 50th:    61us, 90th:   496us, 99th:    496us, 99.9th:    496us
+12:25:01 [INFO] unit_positions       : n:    437, mean:   428us, 25th:   182us, 50th:   355us, 90th:   893us, 99th:   1444us, 99.9th:   1517us
+12:25:01 [INFO] player_positions     : n:    437, mean:    29us, 25th:     0us, 50th:     0us, 90th:   115us, 99th:    246us, 99.9th:    298us
+12:25:01 [INFO] ewr_tracks           : n:     40, mean:    11us, 25th:     8us, 50th:     8us, 90th:    14us, 99th:     72us, 99.9th:     72us
+12:25:01 [INFO] ewr_reports          : n:     40, mean:     2us, 25th:     1us, 50th:     1us, 90th:     2us, 99th:     20us, 99.9th:     20us
+12:25:01 [INFO] unit_culling         : n:     40, mean:    14us, 25th:    15us, 50th:    15us, 90th:    16us, 99th:     31us, 99.9th:     31us
+12:25:01 [INFO] remark_objectives    : n:     40, mean:    10us, 25th:     8us, 50th:     9us, 90th:    14us, 99th:     29us, 99.9th:     29us
+12:25:01 [INFO] update_jtac_contacts : n:     40, mean:    10us, 25th:     6us, 50th:     7us, 90th:    10us, 99th:    116us, 99.9th:    116us
+12:25:01 [INFO] do_repairs           : n:     40, mean:    14us, 25th:     7us, 50th:     8us, 90th:    12us, 99th:    199us, 99.9th:    199us
+12:25:01 [INFO] spawn_queue          : n:    437, mean:    43us, 25th:    13us, 50th:    15us, 90th:    24us, 99th:   2119us, 99.9th:   2424us
+12:25:01 [INFO] spawn                : n:     44, mean:  2113us, 25th:  1295us, 50th:  2211us, 90th:  3026us, 99th:   4155us, 99.9th:   4155us
+12:25:01 [INFO] advise_captured      : n:    437, mean:     7us, 25th:     5us, 50th:     6us, 90th:     9us, 99th:     10us, 99.9th:     99us
+12:25:01 [INFO] advise_capturable    : n:    437, mean:     2us, 25th:     1us, 50th:     2us, 90th:     3us, 99th:      3us, 99.9th:     31us
+12:25:01 [INFO] jtac_target_positions: n:    437, mean:     6us, 25th:     4us, 50th:     7us, 90th:     8us, 99th:     12us, 99.9th:     39us
+12:25:01 [INFO] process_messages     : n:    437, mean:   711us, 25th:     1us, 50th:     1us, 90th:     2us, 99th:  21757us, 99.9th:  49086us
+12:25:01 [INFO] snapshot             : n:     40, mean:     4us, 25th:     3us, 50th:     3us, 90th:     6us, 99th:     22us, 99.9th:     22us
+12:25:01 [INFO] logistics            : n:    437, mean:   990us, 25th:     0us, 50th:     1us, 90th:  4939us, 99th:   5726us, 99.9th:  10870us
+12:25:01 [INFO] logistics_sync_to    : n:     98, mean:  4409us, 25th:  4126us, 50th:  4898us, 90th:  5279us, 99th:  10862us, 99.9th:  10862us
+12:25:01 [INFO] logistics_items: 56970
+12:25:01 [INFO] Unit.getPosition         : n:   2796, mean:    44us, 25th:    31us, 50th:    35us, 90th:    63us, 99th:    197us, 99.9th:    275us
+12:25:01 [INFO] Unit.getPoint            : n:      3, mean:    23us, 25th:    15us, 50th:    22us, 90th:    31us, 99th:     31us, 99.9th:     31us
+12:25:01 [INFO] Unit.getVelocity         : n:     90, mean:    10us, 25th:     8us, 50th:     9us, 90th:    12us, 99th:     92us, 99.9th:     92us
+12:25:01 [INFO] Unit.inAir               : n:     31, mean:     4us, 25th:     4us, 50th:     4us, 90th:     5us, 99th:      8us, 99.9th:      8us
+12:25:01 [INFO] Unit.getAmmo             : n:      2, mean:    11us, 25th:    10us, 50th:    10us, 90th:    12us, 99th:     12us, 99.9th:     12us
+12:25:01 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:25:01 [INFO] Coalition.addStaticObject: n:      8, mean:  1466us, 25th:   310us, 50th:  1903us, 90th:  2203us, 99th:   2203us, 99.9th:   2203us
+12:25:01 [INFO] Unit.isExist             : n:   2736, mean:     8us, 25th:     3us, 50th:     4us, 90th:    21us, 99th:     41us, 99.9th:    206us
+12:25:01 [INFO] Land.getHeight           : n:    103, mean:    12us, 25th:     6us, 50th:    12us, 90th:    21us, 99th:     48us, 99.9th:     57us
+12:25:01 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:25:01 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=98.94m/s, pos=(-178062.28, 53150.03)
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=98.94m/s, pos=(-178063.91, 53148.82)
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=98.94m/s, pos=(-178057.85, 53155.17)
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=98.94m/s, pos=(-178065.55, 53147.61)
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=98.94m/s, pos=(-178056.21, 53156.38)
+12:25:08 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=114.26m/s, pos=(-177287.59, 53888.45)
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=114.26m/s, pos=(-177288.97, 53886.95)
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=114.26m/s, pos=(-177284.28, 53894.37)
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=114.26m/s, pos=(-177290.34, 53885.45)
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=114.26m/s, pos=(-177282.90, 53895.87)
+12:25:18 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=123.50m/s, pos=(-176399.45, 54862.70)
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=123.50m/s, pos=(-176400.85, 54861.23)
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=123.50m/s, pos=(-176396.03, 54868.57)
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=123.50m/s, pos=(-176402.25, 54859.76)
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=123.50m/s, pos=(-176394.63, 54870.04)
+12:25:29 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=108.78m/s, pos=(-175524.36, 55771.09)
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=108.78m/s, pos=(-175525.76, 55769.61)
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=108.78m/s, pos=(-175520.94, 55776.96)
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=108.78m/s, pos=(-175527.16, 55768.14)
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=108.78m/s, pos=(-175519.54, 55778.44)
+12:25:40 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=101.73m/s, pos=(-174715.31, 56603.13)
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=101.73m/s, pos=(-174716.75, 56601.69)
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=101.73m/s, pos=(-174711.73, 56608.91)
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=101.73m/s, pos=(-174718.19, 56600.25)
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=101.73m/s, pos=(-174710.29, 56610.34)
+12:25:51 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=92.33m/s, pos=(-174031.77, 57294.55)
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=92.33m/s, pos=(-174033.19, 57293.10)
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=92.33m/s, pos=(-174028.25, 57300.36)
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=92.33m/s, pos=(-174034.62, 57291.65)
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=92.33m/s, pos=(-174026.82, 57301.81)
+12:26:01 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:26:02 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:26:02 [INFO] frame                : n:  30769, mean: 15706us, 25th: 15278us, 50th: 15613us, 90th: 16809us, 99th:  21823us, 99.9th:  33505us
+12:26:02 [INFO] timed_events         : n:    498, mean:  2109us, 25th:    50us, 50th:   102us, 90th:  5210us, 99th:  23478us, 99.9th:  49643us
+12:26:02 [INFO] slow_timed           : n:     46, mean:   325us, 25th:   188us, 50th:   218us, 90th:   577us, 99th:    845us, 99.9th:    845us
+12:26:02 [INFO] dcs_events           : n:   1434, mean:     4us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     67us, 99.9th:    384us
+12:26:02 [INFO] dcs_hooks            : n:      7, mean:   119us, 25th:    26us, 50th:    61us, 90th:   496us, 99th:    496us, 99.9th:    496us
+12:26:02 [INFO] unit_positions       : n:    498, mean:   415us, 25th:   180us, 50th:   349us, 90th:   884us, 99th:   1444us, 99.9th:   1517us
+12:26:02 [INFO] player_positions     : n:    498, mean:    32us, 25th:     0us, 50th:     0us, 90th:   126us, 99th:    246us, 99.9th:    298us
+12:26:02 [INFO] ewr_tracks           : n:     46, mean:    11us, 25th:     8us, 50th:     8us, 90th:    14us, 99th:     72us, 99.9th:     72us
+12:26:02 [INFO] ewr_reports          : n:     46, mean:     2us, 25th:     1us, 50th:     2us, 90th:     2us, 99th:     20us, 99.9th:     20us
+12:26:02 [INFO] unit_culling         : n:     46, mean:    14us, 25th:    15us, 50th:    15us, 90th:    16us, 99th:     31us, 99.9th:     31us
+12:26:02 [INFO] remark_objectives    : n:     46, mean:    10us, 25th:     8us, 50th:     8us, 90th:    14us, 99th:     29us, 99.9th:     29us
+12:26:02 [INFO] update_jtac_contacts : n:     46, mean:    10us, 25th:     6us, 50th:     7us, 90th:    10us, 99th:    116us, 99.9th:    116us
+12:26:02 [INFO] do_repairs           : n:     46, mean:    13us, 25th:     7us, 50th:     8us, 90th:    12us, 99th:    199us, 99.9th:    199us
+12:26:02 [INFO] spawn_queue          : n:    498, mean:    40us, 25th:    13us, 50th:    15us, 90th:    23us, 99th:   2119us, 99.9th:   2424us
+12:26:02 [INFO] spawn                : n:     44, mean:  2113us, 25th:  1295us, 50th:  2211us, 90th:  3026us, 99th:   4155us, 99.9th:   4155us
+12:26:02 [INFO] advise_captured      : n:    498, mean:     6us, 25th:     5us, 50th:     5us, 90th:     9us, 99th:     10us, 99.9th:     99us
+12:26:02 [INFO] advise_capturable    : n:    498, mean:     2us, 25th:     1us, 50th:     2us, 90th:     3us, 99th:      3us, 99.9th:     31us
+12:26:02 [INFO] jtac_target_positions: n:    498, mean:     6us, 25th:     4us, 50th:     5us, 90th:     8us, 99th:     12us, 99.9th:     39us
+12:26:02 [INFO] process_messages     : n:    498, mean:  1097us, 25th:     1us, 50th:     1us, 90th:     2us, 99th:  23314us, 99.9th:  49086us
+12:26:02 [INFO] snapshot             : n:     46, mean:     4us, 25th:     3us, 50th:     3us, 90th:     6us, 99th:     22us, 99.9th:     22us
+12:26:02 [INFO] logistics            : n:    498, mean:   869us, 25th:     0us, 50th:     1us, 90th:  4902us, 99th:   5726us, 99.9th:  10870us
+12:26:02 [INFO] logistics_sync_to    : n:     98, mean:  4409us, 25th:  4126us, 50th:  4898us, 90th:  5279us, 99th:  10862us, 99.9th:  10862us
+12:26:02 [INFO] logistics_items: 56970
+12:26:02 [INFO] Unit.getPosition         : n:   3216, mean:    43us, 25th:    31us, 50th:    34us, 90th:    61us, 99th:    195us, 99.9th:    271us
+12:26:02 [INFO] Unit.getPoint            : n:      3, mean:    23us, 25th:    15us, 50th:    22us, 90th:    31us, 99th:     31us, 99.9th:     31us
+12:26:02 [INFO] Unit.getVelocity         : n:    150, mean:    10us, 25th:     8us, 50th:     9us, 90th:    12us, 99th:     20us, 99.9th:     92us
+12:26:02 [INFO] Unit.inAir               : n:     61, mean:     4us, 25th:     4us, 50th:     4us, 90th:     5us, 99th:      8us, 99.9th:      8us
+12:26:02 [INFO] Unit.getAmmo             : n:      2, mean:    11us, 25th:    10us, 50th:    10us, 90th:    12us, 99th:     12us, 99.9th:     12us
+12:26:02 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:26:02 [INFO] Coalition.addStaticObject: n:      8, mean:  1466us, 25th:   310us, 50th:  1903us, 90th:  2203us, 99th:   2203us, 99.9th:   2203us
+12:26:02 [INFO] Unit.isExist             : n:   3126, mean:     7us, 25th:     3us, 50th:     4us, 90th:    21us, 99th:     40us, 99.9th:    193us
+12:26:02 [INFO] Land.getHeight           : n:    103, mean:    12us, 25th:     6us, 50th:    12us, 90th:    21us, 99th:     48us, 99.9th:     57us
+12:26:02 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:26:02 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=80.29m/s, pos=(-173361.46, 57969.30)
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=80.29m/s, pos=(-173362.91, 57967.87)
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=80.29m/s, pos=(-173357.87, 57975.05)
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=80.29m/s, pos=(-173364.35, 57966.44)
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=80.29m/s, pos=(-173356.43, 57976.48)
+12:26:12 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=72.75m/s, pos=(-172771.56, 58552.36)
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=72.75m/s, pos=(-172773.02, 58550.96)
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=72.75m/s, pos=(-172767.90, 58558.05)
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=72.75m/s, pos=(-172774.48, 58549.56)
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=72.75m/s, pos=(-172766.43, 58559.45)
+12:26:23 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=4.90m/s, pos=(-172312.78, 58995.26)
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=4.91m/s, pos=(-172390.70, 58919.60)
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=4.91m/s, pos=(-172400.34, 58912.46)
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=4.91m/s, pos=(-172473.19, 58840.16)
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=4.90m/s, pos=(-172308.22, 59001.90)
+12:26:34 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 5 crates to mark, 0 crates to unpack
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=4.90m/s, pos=(-172312.73, 58995.31)
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=4.90m/s, pos=(-172390.70, 58919.60)
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=4.90m/s, pos=(-172400.34, 58912.46)
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=4.90m/s, pos=(-172473.19, 58840.16)
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=4.90m/s, pos=(-172308.17, 59001.94)
+12:26:44 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Airborne, in_air=false, speed=0.01m/s, pos=(-172312.78, 58995.33)
+12:26:54 [INFO] [C130_CARGO] Crate 'RCRATE_C130-2294' transitioned to Landed (speed=0.01m/s) - queuing for auto-unpack
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Airborne, in_air=false, speed=0.00m/s, pos=(-172390.71, 58919.71)
+12:26:54 [INFO] [C130_CARGO] Crate 'RCRATE_C130-2293' transitioned to Landed (speed=0.00m/s) - queuing for auto-unpack
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Airborne, in_air=false, speed=0.00m/s, pos=(-172400.36, 58912.53)
+12:26:54 [INFO] [C130_CARGO] Crate 'RCRATE_C130-2295' transitioned to Landed (speed=0.00m/s) - queuing for auto-unpack
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Airborne, in_air=false, speed=0.00m/s, pos=(-172473.25, 58840.15)
+12:26:54 [INFO] [C130_CARGO] Crate 'RCRATE_C130-2292' transitioned to Landed (speed=0.00m/s) - queuing for auto-unpack
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Airborne, in_air=false, speed=0.02m/s, pos=(-172308.18, 59001.93)
+12:26:54 [INFO] [C130_CARGO] Crate 'RCRATE_C130-2296' transitioned to Landed (speed=0.02m/s) - queuing for auto-unpack
+12:26:54 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 5 crates to unpack
+12:26:54 [INFO] [C130_CARGO] Auto-unpacking landed crate: 'RCRATE_C130-2294'
+12:26:54 [INFO] [C130_CARGO] Not enough crates for T72: missing T72 Crate (need 3, have 1)
+12:26:54 [INFO] [C130_CARGO] Auto-unpacked physical crate 'RCRATE_C130-2294': Crate landed, need more crates for T72
+12:26:54 [INFO] [C130_CARGO] Auto-unpacking landed crate: 'RCRATE_C130-2293'
+12:26:54 [INFO] [C130_CARGO] Not enough crates for T72: missing T72 Crate (need 3, have 1)
+12:26:54 [INFO] [C130_CARGO] Auto-unpacked physical crate 'RCRATE_C130-2293': Crate landed, need more crates for T72
+12:26:54 [INFO] [C130_CARGO] Auto-unpacking landed crate: 'RCRATE_C130-2295'
+12:26:54 [INFO] [C130_CARGO] Not enough crates for SA13 Strela: missing SA13 Strela Crate (need 2, have 1)
+12:26:54 [INFO] [C130_CARGO] Auto-unpacked physical crate 'RCRATE_C130-2295': Crate landed, need more crates for SA13 Strela
+12:26:54 [INFO] [C130_CARGO] Auto-unpacking landed crate: 'RCRATE_C130-2292'
+12:26:54 [INFO] [C130_CARGO] Not enough crates for T72: missing T72 Crate (need 3, have 1)
+12:26:54 [INFO] [C130_CARGO] Auto-unpacked physical crate 'RCRATE_C130-2292': Crate landed, need more crates for T72
+12:26:54 [INFO] [C130_CARGO] Auto-unpacking landed crate: 'RCRATE_C130-2296'
+12:26:54 [INFO] [C130_CARGO] Not enough crates for SA13 Strela: missing SA13 Strela Crate (need 2, have 1)
+12:26:54 [INFO] [C130_CARGO] Auto-unpacked physical crate 'RCRATE_C130-2296': Crate landed, need more crates for SA13 Strela
+12:27:03 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:27:03 [INFO] frame                : n:  34659, mean: 15703us, 25th: 15269us, 50th: 15622us, 90th: 16826us, 99th:  21823us, 99.9th:  35258us
+12:27:03 [INFO] timed_events         : n:    559, mean:  2153us, 25th:    49us, 50th:   102us, 90th:  5210us, 99th:  24182us, 99.9th:  49643us
+12:27:03 [INFO] slow_timed           : n:     51, mean:   359us, 25th:   198us, 50th:   279us, 90th:   702us, 99th:    845us, 99.9th:    845us
+12:27:03 [INFO] dcs_events           : n:   1464, mean:     4us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     67us, 99.9th:    384us
+12:27:03 [INFO] dcs_hooks            : n:      7, mean:   119us, 25th:    26us, 50th:    61us, 90th:   496us, 99th:    496us, 99.9th:    496us
+12:27:03 [INFO] unit_positions       : n:    559, mean:   405us, 25th:   176us, 50th:   344us, 90th:   872us, 99th:   1440us, 99.9th:   1517us
+12:27:03 [INFO] player_positions     : n:    559, mean:    35us, 25th:     0us, 50th:     0us, 90th:   126us, 99th:    246us, 99.9th:    399us
+12:27:03 [INFO] ewr_tracks           : n:     51, mean:    10us, 25th:     8us, 50th:     8us, 90th:    14us, 99th:     72us, 99.9th:     72us
+12:27:03 [INFO] ewr_reports          : n:     51, mean:     2us, 25th:     1us, 50th:     2us, 90th:     2us, 99th:     20us, 99.9th:     20us
+12:27:03 [INFO] unit_culling         : n:     51, mean:    14us, 25th:    15us, 50th:    15us, 90th:    16us, 99th:     31us, 99.9th:     31us
+12:27:03 [INFO] remark_objectives    : n:     51, mean:    10us, 25th:     8us, 50th:     8us, 90th:    14us, 99th:     29us, 99.9th:     29us
+12:27:03 [INFO] update_jtac_contacts : n:     51, mean:     9us, 25th:     6us, 50th:     6us, 90th:    10us, 99th:    116us, 99.9th:    116us
+12:27:03 [INFO] do_repairs           : n:     51, mean:    12us, 25th:     7us, 50th:     7us, 90th:    12us, 99th:    199us, 99.9th:    199us
+12:27:03 [INFO] spawn_queue          : n:    559, mean:    37us, 25th:    13us, 50th:    14us, 90th:    23us, 99th:    218us, 99.9th:   2424us
+12:27:03 [INFO] spawn                : n:     44, mean:  2113us, 25th:  1295us, 50th:  2211us, 90th:  3026us, 99th:   4155us, 99.9th:   4155us
+12:27:03 [INFO] advise_captured      : n:    559, mean:     6us, 25th:     5us, 50th:     5us, 90th:     9us, 99th:     10us, 99.9th:     99us
+12:27:03 [INFO] advise_capturable    : n:    559, mean:     2us, 25th:     1us, 50th:     2us, 90th:     3us, 99th:      3us, 99.9th:     31us
+12:27:03 [INFO] jtac_target_positions: n:    559, mean:     6us, 25th:     4us, 50th:     5us, 90th:     8us, 99th:     12us, 99.9th:    185us
+12:27:03 [INFO] process_messages     : n:    559, mean:  1233us, 25th:     1us, 50th:     1us, 90th:     2us, 99th:  23609us, 99.9th:  49086us
+12:27:03 [INFO] snapshot             : n:     51, mean:     4us, 25th:     3us, 50th:     3us, 90th:     6us, 99th:     22us, 99.9th:     22us
+12:27:03 [INFO] logistics            : n:    559, mean:   774us, 25th:     0us, 50th:     1us, 90th:  4845us, 99th:   5685us, 99.9th:  10870us
+12:27:03 [INFO] logistics_sync_to    : n:     98, mean:  4409us, 25th:  4126us, 50th:  4898us, 90th:  5279us, 99th:  10862us, 99.9th:  10862us
+12:27:03 [INFO] logistics_items: 56970
+12:27:03 [INFO] Unit.getPosition         : n:   3634, mean:    42us, 25th:    31us, 50th:    33us, 90th:    59us, 99th:    194us, 99.9th:    276us
+12:27:03 [INFO] Unit.getPoint            : n:      3, mean:    23us, 25th:    15us, 50th:    22us, 90th:    31us, 99th:     31us, 99.9th:     31us
+12:27:03 [INFO] Unit.getVelocity         : n:    206, mean:    10us, 25th:     8us, 50th:    11us, 90th:    12us, 99th:     20us, 99.9th:     92us
+12:27:03 [INFO] Unit.inAir               : n:     92, mean:     4us, 25th:     4us, 50th:     4us, 90th:     5us, 99th:     11us, 99.9th:     11us
+12:27:03 [INFO] Unit.getAmmo             : n:      2, mean:    11us, 25th:    10us, 50th:    10us, 90th:    12us, 99th:     12us, 99.9th:     12us
+12:27:03 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:27:03 [INFO] Coalition.addStaticObject: n:      8, mean:  1466us, 25th:   310us, 50th:  1903us, 90th:  2203us, 99th:   2203us, 99.9th:   2203us
+12:27:03 [INFO] Unit.isExist             : n:   3519, mean:     7us, 25th:     3us, 50th:     4us, 90th:    21us, 99th:     39us, 99.9th:    193us
+12:27:03 [INFO] Land.getHeight           : n:    103, mean:    12us, 25th:     6us, 50th:    12us, 90th:    21us, 99th:     48us, 99.9th:     57us
+12:27:03 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:27:03 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Landed, in_air=false, speed=0.00m/s, pos=(-172312.81, 58995.36)
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Landed, in_air=false, speed=0.00m/s, pos=(-172390.71, 58919.71)
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Landed, in_air=false, speed=0.00m/s, pos=(-172400.36, 58912.53)
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Landed, in_air=false, speed=0.00m/s, pos=(-172473.25, 58840.15)
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Landed, in_air=false, speed=0.00m/s, pos=(-172308.17, 59001.98)
+12:27:05 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Landed, in_air=false, speed=0.00m/s, pos=(-172312.81, 58995.36)
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Landed, in_air=false, speed=0.00m/s, pos=(-172390.71, 58919.71)
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Landed, in_air=false, speed=0.00m/s, pos=(-172400.36, 58912.53)
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Landed, in_air=false, speed=0.00m/s, pos=(-172473.25, 58840.15)
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Landed, in_air=false, speed=0.00m/s, pos=(-172308.17, 59001.98)
+12:27:15 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Landed, in_air=false, speed=0.00m/s, pos=(-172312.81, 58995.36)
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Landed, in_air=false, speed=0.00m/s, pos=(-172390.71, 58919.71)
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Landed, in_air=false, speed=0.00m/s, pos=(-172400.36, 58912.53)
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Landed, in_air=false, speed=0.00m/s, pos=(-172473.25, 58840.15)
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Landed, in_air=false, speed=0.00m/s, pos=(-172308.17, 59001.98)
+12:27:26 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Landed, in_air=false, speed=0.00m/s, pos=(-172312.81, 58995.36)
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Landed, in_air=false, speed=0.00m/s, pos=(-172390.71, 58919.71)
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Landed, in_air=false, speed=0.00m/s, pos=(-172400.36, 58912.53)
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Landed, in_air=false, speed=0.00m/s, pos=(-172473.25, 58840.15)
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Landed, in_air=false, speed=0.00m/s, pos=(-172308.17, 59001.98)
+12:27:36 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Landed, in_air=false, speed=0.00m/s, pos=(-172312.81, 58995.36)
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Landed, in_air=false, speed=0.00m/s, pos=(-172390.71, 58919.71)
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Landed, in_air=false, speed=0.00m/s, pos=(-172400.36, 58912.53)
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Landed, in_air=false, speed=0.00m/s, pos=(-172473.25, 58840.15)
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Landed, in_air=false, speed=0.00m/s, pos=(-172308.17, 59001.98)
+12:27:46 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Landed, in_air=false, speed=0.00m/s, pos=(-172312.81, 58995.36)
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Landed, in_air=false, speed=0.00m/s, pos=(-172390.71, 58919.71)
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Landed, in_air=false, speed=0.00m/s, pos=(-172400.36, 58912.53)
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Landed, in_air=false, speed=0.00m/s, pos=(-172473.25, 58840.15)
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Landed, in_air=false, speed=0.00m/s, pos=(-172308.17, 59001.98)
+12:27:57 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack
+12:28:02 [INFO] onPlayerTryChangeSlot: PlayerId(2) Red Instructor(Red, 1)
+12:28:02 [INFO] canceling force to spectators for 43009af9ad72caf2a3ff31396bed074f
+12:28:02 [INFO] onEvent: PlayerLeaveUnit(LeaveUnit { initiator: Some({ id: 16790274, class: Unit }) })
+12:28:02 [INFO] deslotting player 43009af9ad72caf2a3ff31396bed074f
+12:28:02 [ERROR] have ucid but no unitid for dead slot 1000115 43009af9ad72caf2a3ff31396bed074f
+12:28:02 [INFO] onPlayerTrySendChat id: PlayerId(1), msg: String("SRS Running @ 46.105.46.98:5012"), all: true
+12:28:03 [INFO] landcache calls: 0, hits: 0(NaN%), diffs: 0(NaN%)
+12:28:03 [INFO] frame                : n:  38492, mean: 15698us, 25th: 15269us, 50th: 15622us, 90th: 16793us, 99th:  21528us, 99.9th:  34668us
+12:28:03 [INFO] timed_events         : n:    619, mean:  1959us, 25th:    49us, 50th:   101us, 90th:  5124us, 99th:  23625us, 99.9th:  49643us
+12:28:03 [INFO] slow_timed           : n:     57, mean:   373us, 25th:   200us, 50th:   350us, 90th:   702us, 99th:    845us, 99.9th:    845us
+12:28:03 [INFO] dcs_events           : n:   1465, mean:     4us, 25th:     0us, 50th:     1us, 90th:     2us, 99th:     68us, 99.9th:    384us
+12:28:03 [INFO] dcs_hooks            : n:      9, mean:   100us, 25th:    30us, 50th:    54us, 90th:   496us, 99th:    496us, 99.9th:    496us
+12:28:03 [INFO] unit_positions       : n:    619, mean:   396us, 25th:   174us, 50th:   339us, 90th:   839us, 99th:   1402us, 99.9th:   1517us
+12:28:03 [INFO] player_positions     : n:    619, mean:    37us, 25th:     0us, 50th:     0us, 90th:   127us, 99th:    246us, 99.9th:    399us
+12:28:03 [INFO] ewr_tracks           : n:     57, mean:    10us, 25th:     8us, 50th:     8us, 90th:    14us, 99th:     72us, 99.9th:     72us
+12:28:03 [INFO] ewr_reports          : n:     57, mean:     2us, 25th:     1us, 50th:     2us, 90th:     2us, 99th:     20us, 99.9th:     20us
+12:28:03 [INFO] unit_culling         : n:     57, mean:    14us, 25th:    15us, 50th:    15us, 90th:    16us, 99th:     31us, 99.9th:     31us
+12:28:03 [INFO] remark_objectives    : n:     57, mean:    10us, 25th:     8us, 50th:     8us, 90th:    14us, 99th:     29us, 99.9th:     29us
+12:28:03 [INFO] update_jtac_contacts : n:     57, mean:     9us, 25th:     6us, 50th:     6us, 90th:    10us, 99th:    116us, 99.9th:    116us
+12:28:03 [INFO] do_repairs           : n:     57, mean:    12us, 25th:     7us, 50th:     7us, 90th:    12us, 99th:    199us, 99.9th:    199us
+12:28:03 [INFO] spawn_queue          : n:    619, mean:    34us, 25th:    13us, 50th:    14us, 90th:    23us, 99th:    185us, 99.9th:   2424us
+12:28:03 [INFO] spawn                : n:     44, mean:  2113us, 25th:  1295us, 50th:  2211us, 90th:  3026us, 99th:   4155us, 99.9th:   4155us
+12:28:03 [INFO] advise_captured      : n:    619, mean:     6us, 25th:     5us, 50th:     5us, 90th:     9us, 99th:     10us, 99.9th:     99us
+12:28:03 [INFO] advise_capturable    : n:    619, mean:     2us, 25th:     1us, 50th:     2us, 90th:     3us, 99th:      3us, 99.9th:     31us
+12:28:03 [INFO] jtac_target_positions: n:    619, mean:     6us, 25th:     4us, 50th:     4us, 90th:     8us, 99th:     12us, 99.9th:    185us
+12:28:03 [INFO] process_messages     : n:    619, mean:  1114us, 25th:     1us, 50th:     1us, 90th:     2us, 99th:  23461us, 99.9th:  49086us
+12:28:03 [INFO] snapshot             : n:     57, mean:     4us, 25th:     3us, 50th:     3us, 90th:     6us, 99th:     22us, 99.9th:     22us
+12:28:03 [INFO] logistics            : n:    619, mean:   699us, 25th:     0us, 50th:     0us, 90th:  4751us, 99th:   5681us, 99.9th:  10870us
+12:28:03 [INFO] logistics_sync_to    : n:     98, mean:  4409us, 25th:  4126us, 50th:  4898us, 90th:  5279us, 99th:  10862us, 99.9th:  10862us
+12:28:03 [INFO] logistics_items: 56970
+12:28:03 [INFO] Unit.getPosition         : n:   4053, mean:    41us, 25th:    30us, 50th:    33us, 90th:    57us, 99th:    193us, 99.9th:    275us
+12:28:03 [INFO] Unit.getPoint            : n:      3, mean:    23us, 25th:    15us, 50th:    22us, 90th:    31us, 99th:     31us, 99.9th:     31us
+12:28:03 [INFO] Unit.getVelocity         : n:    265, mean:    10us, 25th:     8us, 50th:    11us, 90th:    12us, 99th:     20us, 99.9th:     92us
+12:28:03 [INFO] Unit.inAir               : n:    121, mean:     4us, 25th:     4us, 50th:     4us, 90th:     5us, 99th:      8us, 99.9th:     11us
+12:28:03 [INFO] Unit.getAmmo             : n:      2, mean:    11us, 25th:    10us, 50th:    10us, 90th:    12us, 99th:     12us, 99.9th:     12us
+12:28:03 [INFO] Coalition.addGroup       : n:     36, mean:  2104us, 25th:  1233us, 50th:  2400us, 90th:  2861us, 99th:   4085us, 99.9th:   4085us
+12:28:03 [INFO] Coalition.addStaticObject: n:      8, mean:  1466us, 25th:   310us, 50th:  1903us, 90th:  2203us, 99th:   2203us, 99.9th:   2203us
+12:28:03 [INFO] Unit.isExist             : n:   3908, mean:     7us, 25th:     3us, 50th:     3us, 90th:    21us, 99th:     39us, 99.9th:    193us
+12:28:03 [INFO] Land.getHeight           : n:    103, mean:    12us, 25th:     6us, 50th:    12us, 90th:    21us, 99th:     48us, 99.9th:     57us
+12:28:03 [INFO] Timer.scheduleFunction   : n:      2, mean:   189us, 25th:    41us, 50th:    41us, 90th:   338us, 99th:    338us, 99.9th:    338us
+12:28:03 [INFO] Timer.getTime            : n:      2, mean:    32us, 25th:    11us, 50th:    11us, 90th:    53us, 99th:     53us, 99.9th:     53us
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: tracking 5 crates
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: object_id_by_gid has 41 entries
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2294' with group_id GroupId(2294)
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2294' state=Landed, in_air=false, speed=0.00m/s, pos=(-172312.81, 58995.36)
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2293' with group_id GroupId(2293)
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2293' state=Landed, in_air=false, speed=0.00m/s, pos=(-172390.71, 58919.71)
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2295' with group_id GroupId(2295)
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2295' state=Landed, in_air=false, speed=0.00m/s, pos=(-172400.36, 58912.53)
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2292' with group_id GroupId(2292)
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2292' state=Landed, in_air=false, speed=0.00m/s, pos=(-172473.25, 58840.15)
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: checking crate 'RCRATE_C130-2296' with group_id GroupId(2296)
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] Crate 'RCRATE_C130-2296' state=Landed, in_air=false, speed=0.00m/s, pos=(-172308.17, 59001.98)
+12:28:07 [DEBUG] (21) bflib::db::cargo: [C130_CARGO] update_c130_crates: 0 crates to mark, 0 crates to unpack

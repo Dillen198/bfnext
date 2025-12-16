@@ -18,7 +18,11 @@
       "Bash(Select-String -Pattern \"error|warning:\")",
       "Bash(powershell -Command \". .\\setup-build.ps1; cargo check --package=bflib 2>&1\")",
       "Bash(powershell -Command \". .\\setup-build.ps1; cargo check --workspace 2>&1\")",
-      "Bash(powershell -Command \". .\\setup-build.ps1; cargo check --workspace\")"
+      "Bash(powershell -Command \". .\\setup-build.ps1; cargo check --workspace\")",
+      "Bash(powershell -Command \". .\\setup-build.ps1; cargo check --package=bflib 2>&1 | Select-String -Pattern ''''error|warning|Finished|Checking''''\")",
+      "Bash(powershell -Command \". .\\setup-build.ps1; cargo check --package=bflib 2>&1 | Select-String -Pattern ''''error\\[|warning:.*bflib|Finished''''\")",
+      "Bash(powershell -Command:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

@@ -15,6 +15,7 @@ for more details.
 */
 
 use super::{Db, ephemeral::DeployableIndex, group::SpawnedGroup, objective::Objective};
+use anyhow::Context as _;
 use crate::{
     db::group::DeployKind,
     group, maybe, objective,
@@ -152,7 +153,9 @@ pub enum C130CargoType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct C130Cargo {
-    /// DCS group ID of the crate object
+    /// DCS group name of the crate object (persists even when DCS changes object ID on load/drop)
+    pub name: String,
+    /// DCS group ID of the crate object (changes when loaded/dropped, updated via static_born)
     pub group_id: GroupId,
     /// Type of crate
     pub crate_type: C130CargoType,
@@ -176,6 +179,7 @@ pub struct C130Cargo {
 
 impl C130Cargo {
     pub fn new(
+        name: String,
         group_id: GroupId,
         crate_type: C130CargoType,
         origin: ObjectiveId,
@@ -185,6 +189,7 @@ impl C130Cargo {
         crate_def: Crate,
     ) -> Self {
         Self {
+            name,
             group_id,
             crate_type,
             state: C130CargoState::Spawned,
@@ -854,7 +859,7 @@ impl Db {
         if !supply_transfer.is_empty() {
             let centroid = centroid2d(supply_transfer.iter().map(|(_, c)| c.pos));
             let oid = close_enough_to_repair(self, st.side, centroid, || {
-                base_repairs.iter().map(|(_, c)| c)
+                supply_transfer.iter().map(|(_, c)| c)
             });
             if let Some(to) = oid {
                 let (gid, _) = supply_transfer.into_iter().next().unwrap();
@@ -1517,8 +1522,18 @@ impl Db {
 
         debug!("[C130_CARGO] Crate spawned successfully: group_id={:?}", group_id);
 
+        // Get the group name for tracking (persists across DCS cargo load/drop)
+        let group_name = match self.persisted.groups.get(&group_id) {
+            Some(g) => g.name.clone(),
+            None => {
+                error!("[C130_CARGO] Failed to get group name for {:?}", group_id);
+                bail!("Failed to get group name for spawned crate")
+            }
+        };
+
         // Create C130Cargo tracking entry
         let c130_cargo = C130Cargo::new(
+            group_name.clone(),
             group_id,
             crate_type,
             origin,
@@ -1528,9 +1543,9 @@ impl Db {
             crate_def,
         );
 
-        self.ephemeral.c130_crates.insert(group_id, c130_cargo);
-        debug!("[C130_CARGO] Crate tracking added: group_id={:?}, total_tracked={}",
-            group_id, self.ephemeral.c130_crates.len());
+        self.ephemeral.c130_crates.insert(group_name.clone(), c130_cargo);
+        debug!("[C130_CARGO] Crate tracking added: name='{}', group_id={:?}, total_tracked={}",
+            group_name, group_id, self.ephemeral.c130_crates.len());
 
         Ok(String::from(format!("Spawned {} crate. Use DCS cargo menu (F8 -> Ground Crew -> Cargo) to load it.", crate_name)))
     }
@@ -1635,7 +1650,17 @@ impl Db {
                         None,
                     ) {
                         Ok(group_id) => {
+                            // Get the group name for tracking (persists across DCS cargo load/drop)
+                            let group_name = match self.persisted.groups.get(&group_id) {
+                                Some(g) => g.name.clone(),
+                                None => {
+                                    error!("[C130_CARGO] Failed to get group name for {:?}", group_id);
+                                    continue;
+                                }
+                            };
+
                             let physical_crate = C130Cargo::new(
+                                group_name.clone(),
                                 group_id,
                                 crate_type,
                                 origin,
@@ -1645,7 +1670,8 @@ impl Db {
                                 crate_def,
                             );
 
-                            self.ephemeral.c130_crates.insert(group_id, physical_crate);
+                            debug!("[C130_CARGO] Spawned crate: name='{}', group_id={:?}", group_name, group_id);
+                            self.ephemeral.c130_crates.insert(group_name, physical_crate);
                         }
                         Err(_) => continue,
                     }
@@ -1659,47 +1685,77 @@ impl Db {
     /// Track physical crate state changes and implement auto-unpack
     pub fn update_c130_crates(&mut self, lua: MizLua, idx: &MizIndex) -> Result<()> {
         let mut to_unpack = Vec::new();
+        let mut groups_to_mark = Vec::new();
+
+        debug!("[C130_CARGO] update_c130_crates: tracking {} crates", self.ephemeral.c130_crates.len());
+        debug!("[C130_CARGO] update_c130_crates: object_id_by_gid has {} entries", self.ephemeral.object_id_by_gid.len());
 
         // Update positions and detect landed crates
-        for (group_id, crate_data) in self.ephemeral.c130_crates.iter_mut() {
-            let group_oid = match self.ephemeral.object_id_by_gid.get(group_id) {
+        for (crate_name, crate_data) in self.ephemeral.c130_crates.iter_mut() {
+            debug!("[C130_CARGO] update_c130_crates: checking crate '{}' with group_id {:?}", crate_name, crate_data.group_id);
+            let group_oid = match self.ephemeral.object_id_by_gid.get(&crate_data.group_id) {
                 Some(oid) => oid.clone(),
-                None => continue,
+                None => {
+                    debug!("[C130_CARGO] crate '{}' group_id {:?} has no object_id in map (map has {} total entries), skipping",
+                        crate_name, crate_data.group_id, self.ephemeral.object_id_by_gid.len());
+                    continue;
+                }
             };
 
-            let group = match dcso3::group::Group::get_instance(lua, &group_oid) {
-                Ok(g) => g,
-                Err(_) => continue,
+            // Get the object directly (crates are static objects, stored as Object oids)
+            let obj = match dcso3::object::Object::get_instance(lua, &group_oid) {
+                Ok(o) => o,
+                Err(e) => {
+                    debug!("[C130_CARGO] Failed to get object instance for crate '{}' ({:?}): {:?}", crate_name, crate_data.group_id, e);
+                    continue;
+                }
             };
 
-            // Check if crate is on ground
-            let units = group.get_units()?;
-            let unit = match units.first() {
-                Ok(u) => u,
-                Err(_) => continue,
-            };
-
-            let pos = unit.get_position()?;
-            let in_air = unit.in_air()?;
-            let velocity = unit.get_velocity()?;
+            let pos = obj.get_position()?;
+            let in_air = obj.in_air()?;
+            let velocity = obj.get_velocity()?;
             let speed = (velocity.0.x.powi(2) + velocity.0.y.powi(2) + velocity.0.z.powi(2)).sqrt();
 
-            crate_data.last_pos = Vector2::new(pos.p.x, pos.p.z);
+            debug!("[C130_CARGO] Crate '{}' state={:?}, in_air={}, speed={:.2}m/s, pos=({:.2}, {:.2})",
+                crate_name, crate_data.state, in_air, speed, pos.p.x, pos.p.z);
+
+            let new_pos = Vector2::new(pos.p.x, pos.p.z);
+
+            // Update marker if crate has moved significantly (> 10 meters)
+            if na::distance(&new_pos.into(), &crate_data.last_pos.into()) > 10.0 {
+                crate_data.last_pos = new_pos;
+
+                // Update the unit position in the database so mark_group can use the correct position
+                if let Some(group) = self.persisted.groups.get(&crate_data.group_id) {
+                    for uid in &group.units {
+                        if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
+                            unit.pos = new_pos;
+                            unit.position = pos;
+                            unit.heading = azumith3d(pos.x.0);
+                        }
+                    }
+                }
+
+                groups_to_mark.push(crate_data.group_id);
+            }
 
             // State machine for crate tracking
             match crate_data.state {
                 C130CargoState::Spawned | C130CargoState::Loaded => {
-                    // If crate is in the air and moving fast, it's been airdropped
-                    if in_air && speed > 5.0 {
+                    // If crate is moving fast, it's been airdropped
+                    // Note: Static objects report in_air=false even when falling, so check speed only
+                    if speed > 5.0 {
+                        info!("[C130_CARGO] Crate '{}' transitioned to Airborne (speed={:.2}m/s)", crate_name, speed);
                         crate_data.state = C130CargoState::Airborne;
                         crate_data.airborne_time = Some(Utc::now());
                     }
                 }
                 C130CargoState::Airborne => {
-                    // If crate has landed (not in air and low speed)
-                    if !in_air && speed < 1.0 {
+                    // If crate has landed (low speed)
+                    if speed < 1.0 {
+                        info!("[C130_CARGO] Crate '{}' transitioned to Landed (speed={:.2}m/s) - queuing for auto-unpack", crate_name, speed);
                         crate_data.state = C130CargoState::Landed;
-                        to_unpack.push(*group_id);
+                        to_unpack.push(crate_name.clone());
                     }
                 }
                 C130CargoState::Landed => {
@@ -1708,17 +1764,27 @@ impl Db {
             }
         }
 
+        debug!("[C130_CARGO] update_c130_crates: {} crates to mark, {} crates to unpack", groups_to_mark.len(), to_unpack.len());
+
+        // Update markers for moved crates
+        for group_id in groups_to_mark {
+            if let Err(e) = self.mark_group(&group_id) {
+                error!("Failed to update marker for C-130 crate group {:?}: {:?}", group_id, e);
+            }
+        }
+
         // Auto-unpack landed crates
-        for group_id in to_unpack {
-            if let Some(crate_data) = self.ephemeral.c130_crates.remove(&group_id) {
-                let result = self.unpack_c130_crate(lua, idx, &crate_data);
+        for crate_name in to_unpack {
+            if let Some(crate_data) = self.ephemeral.c130_crates.get(&crate_name).cloned() {
+                info!("[C130_CARGO] Auto-unpacking landed crate: '{}'", crate_name);
+                let result = self.unpack_c130_crate(lua, idx, &crate_data, &crate_name);
                 match result {
                     Ok(msg) => {
-                        info!("Auto-unpacked physical crate: {}", msg);
+                        info!("[C130_CARGO] Auto-unpacked physical crate '{}': {}", crate_name, msg);
                         self.ephemeral.msgs().panel_to_side(10, false, crate_data.side, msg);
                     }
                     Err(e) => {
-                        error!("Failed to auto-unpack physical crate: {}", e);
+                        error!("[C130_CARGO] Failed to auto-unpack physical crate '{}': {}", crate_name, e);
                     }
                 }
             }
@@ -1727,102 +1793,233 @@ impl Db {
         Ok(())
     }
 
-    /// Unpack a physical crate (converts to virtual system)
-    fn unpack_c130_crate(&mut self, lua: MizLua, idx: &MizIndex, crate_data: &C130Cargo) -> Result<String> {
+    /// Unpack a physical crate (spawns deployable if enough crates are present)
+    fn unpack_c130_crate(&mut self, lua: MizLua, idx: &MizIndex, crate_data: &C130Cargo, crate_name: &str) -> Result<String> {
         match &crate_data.crate_type {
             C130CargoType::Deployable { name } => {
-                // Spawn as virtual crate at landing position
+                // Check if this crate was already removed (processed by another crate in the same batch)
+                if !self.ephemeral.c130_crates.contains_key(crate_name) {
+                    return Ok(String::from("Crate already processed"));
+                }
+
+                // Get deployable spec
                 let dep_idx = self.deployable_idx(crate_data.side)?;
-                let crate_def = dep_idx.crates_by_name.get(name)
-                    .ok_or_else(|| anyhow!("Crate definition not found: {}", name))?
+
+                // Two-step lookup: crate name -> deployable name -> deployable spec
+                let deployable_name = dep_idx.deployables_by_crates.get(name)
+                    .ok_or_else(|| anyhow!("Deployable not found for crate: {}", name))?
+                    .clone();
+                let deployable = dep_idx.deployables_by_name.get(&deployable_name)
+                    .ok_or_else(|| anyhow!("Deployable spec not found: {}", deployable_name))?
                     .clone();
 
-                // Use existing crate spawning system
-                let template = self.ephemeral.cfg.crate_template[&crate_data.side].clone();
+                // Find all landed crates nearby (within 100m) for this deployable
+                let mut nearby_crates: FxHashMap<String, Vec<String>> = FxHashMap::default();
+                let crate_pos = crate_data.last_pos;
 
+                info!("[C130_CARGO] Searching for nearby crates for deployable '{}' from crate '{}' at pos ({:.2}, {:.2})",
+                    deployable_name, crate_name, crate_pos.x, crate_pos.y);
+
+                for (other_name, other_data) in &self.ephemeral.c130_crates {
+                    // Only consider landed crates on the same side
+                    if other_data.state == C130CargoState::Landed && other_data.side == crate_data.side {
+                        // Check if it's for the same deployable
+                        if let C130CargoType::Deployable { name: other_crate_name } = &other_data.crate_type {
+                            if let Some(other_dep_name) = dep_idx.deployables_by_crates.get(other_crate_name) {
+                                if other_dep_name == &deployable_name {
+                                    // Check distance
+                                    let dist = na::distance(&crate_pos.into(), &other_data.last_pos.into());
+                                    info!("[C130_CARGO]   - Found potential crate '{}' for same deployable, distance={:.2}m",
+                                        other_name, dist);
+                                    if dist < 100.0 {
+                                        nearby_crates
+                                            .entry(other_crate_name.clone())
+                                            .or_default()
+                                            .push(other_name.clone());
+                                    }
+                                } else {
+                                    info!("[C130_CARGO]   - Skipping crate '{}' (different deployable: '{}')",
+                                        other_name, other_dep_name);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                info!("[C130_CARGO] Found {} nearby crate types for '{}'", nearby_crates.len(), deployable_name);
+
+                // Check if we have enough of each required crate type
+                let mut have_all_required = true;
+                let mut missing_crates = Vec::new();
+
+                for req in &deployable.crates {
+                    let count = nearby_crates.get(&req.name).map(|v| v.len()).unwrap_or(0);
+                    if count < req.required as usize {
+                        have_all_required = false;
+                        missing_crates.push(format!("{} (need {}, have {})", req.name, req.required, count));
+                    }
+                }
+
+                if !have_all_required {
+                    info!("[C130_CARGO] Not enough crates for {}: missing {}", deployable_name, missing_crates.join(", "));
+                    return Ok(String::from(format!("Crate landed, need more crates for {}", deployable_name)));
+                }
+
+                // We have enough! Spawn the deployable
                 let spawnpos = SpawnLoc::AtPos {
-                    pos: crate_data.last_pos,
+                    pos: crate_pos,
                     offset_direction: Vector2::new(0., 0.),
                     group_heading: 0.,
                 };
 
-                let dk = DeployKind::Crate {
-                    origin: crate_data.origin,
-                    player: crate_data.player,
-                    spec: crate_def,
-                };
+                // Only support Group deployables for C-130 airdrops
+                match &deployable.kind {
+                    DeployableKind::Group { template } => {
+                        let template = template.clone();
+                        let dk = DeployKind::Deployed {
+                            player: crate_data.player,
+                            moved_by: None,
+                            spec: deployable.clone(),
+                            cost_fraction: 1.0,
+                            origin: Some(crate_data.origin),
+                        };
 
-                self.add_and_queue_group(
-                    &SpawnCtx::new(lua)?,
-                    idx,
-                    crate_data.side,
-                    spawnpos,
-                    &template,
-                    dk,
-                    BitFlags::empty(),
-                    None,
-                )?;
+                        match self.add_and_queue_group(
+                            &SpawnCtx::new(lua)?,
+                            idx,
+                            crate_data.side,
+                            spawnpos,
+                            &template,
+                            dk,
+                            BitFlags::empty(),
+                            None,
+                        ) {
+                            Ok(_) => {
+                                // Delete all the crates used for this deployable
+                                let mut crates_to_delete = Vec::new();
+                                for req in &deployable.crates {
+                                    if let Some(crate_names) = nearby_crates.get(&req.name) {
+                                        for (i, crate_name) in crate_names.iter().enumerate() {
+                                            if i < req.required as usize {
+                                                crates_to_delete.push(crate_name.clone());
+                                            }
+                                        }
+                                    }
+                                }
 
-                // Delete the physical crate
-                self.delete_group(&crate_data.group_id)?;
+                                for crate_name in &crates_to_delete {
+                                    if let Some(crate_to_delete) = self.ephemeral.c130_crates.remove(crate_name) {
+                                        if let Err(e) = self.delete_group(&crate_to_delete.group_id) {
+                                            error!("[C130_CARGO] Failed to delete crate '{}': {:?}", crate_name, e);
+                                        }
+                                    }
+                                }
 
-                Ok(String::from(format!("Airdropped {} crate unpacked at landing site", name)))
+                                info!("[C130_CARGO] Deployed {} using {} crates", deployable_name, crates_to_delete.len());
+                                Ok(String::from(format!("Airdropped {} deployed", deployable_name)))
+                            }
+                            Err(e) => {
+                                error!("[C130_CARGO] Failed to spawn group '{}' from crate: {:?}", template, e);
+                                Err(anyhow!("Failed to spawn deployable: {:?}", e))
+                            }
+                        }
+                    }
+                    DeployableKind::Objective(_) => {
+                        Err(anyhow!("C-130 airdrops don't support objective deployables"))
+                    }
+                }
             }
             C130CargoType::SupplyTransfer => {
-                // Handle supply transfer - need to find nearest objective
-                let objectives: Vec<_> = self.persisted
+                // Handle supply transfer - find nearest objective and add supplies directly
+                let objectives: Vec<(ObjectiveId, Vector2)> = self.persisted
                     .objectives
                     .into_iter()
                     .filter_map(|(oid, obj)| {
                         if obj.owner == crate_data.side {
-                            Some((*oid, obj))
+                            Some((*oid, obj.zone.pos()))
                         } else {
                             None
                         }
                     })
                     .collect();
 
-                let nearest = objectives
+                let nearest_oid = objectives
                     .iter()
-                    .min_by_key(|(_, obj)| {
-                        let dist = na::distance(&obj.zone.pos().into(), &crate_data.last_pos.into());
+                    .min_by_key(|(_, pos)| {
+                        let dist = na::distance(&(*pos).into(), &crate_data.last_pos.into());
                         (dist * 1000.0) as i64
-                    });
+                    })
+                    .map(|(oid, _)| *oid);
 
-                if let Some((oid, _)) = nearest {
-                    // Create virtual supply crate at landing position
-                    let template = self.ephemeral.cfg.crate_template[&crate_data.side].clone();
-                    let supply_crate = self.ephemeral.cfg.warehouse.as_ref()
-                        .ok_or_else(|| anyhow!("Warehouse not configured"))?
-                        .supply_transfer_crate[&crate_data.side].clone();
-
-                    let spawnpos = SpawnLoc::AtPos {
-                        pos: crate_data.last_pos,
-                        offset_direction: Vector2::new(0., 0.),
-                        group_heading: 0.,
+                if let Some(oid) = nearest_oid {
+                    // Get warehouse config and extract needed data before mutable borrows
+                    let (transfer_amount, exempt_airframes) = {
+                        let whcfg = self.ephemeral.cfg.warehouse.as_ref()
+                            .ok_or_else(|| anyhow!("Warehouse not configured"))?;
+                        (whcfg.supply_transfer_size, whcfg.exempt_airframes.clone())
                     };
 
-                    let dk = DeployKind::Crate {
-                        origin: *oid,
-                        player: crate_data.player,
-                        spec: supply_crate,
-                    };
+                    // Sync warehouse to get current state
+                    let (obj_mut, wh) = self.sync_warehouse_to_objective(lua, oid)
+                        .context("syncing warehouse for supply transfer")?;
 
-                    self.add_and_queue_group(
-                        &SpawnCtx::new(lua)?,
-                        idx,
-                        crate_data.side,
-                        spawnpos,
-                        &template,
-                        dk,
-                        BitFlags::empty(),
-                        None,
-                    )?;
+                    // Add supplies directly to warehouse (transfer_amount% of capacity for each item)
+                    let mut added_items = Vec::new();
+
+                    // Add equipment (non-exempt items)
+                    for (name, inv) in obj_mut.warehouse.equipment.iter_mut_cow() {
+                        if exempt_airframes.contains(name.as_str()) {
+                            continue; // Skip airframes
+                        }
+
+                        if inv.capacity > inv.stored {
+                            let available_space = inv.capacity - inv.stored;
+                            let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
+                            let to_add = amount.min(available_space);
+
+                            if to_add > 0 {
+                                inv.stored += to_add;
+                                added_items.push(format!("{}: +{}", name, to_add));
+                                info!("[SUPPLY_TRANSFER] Added {} x{} to {:?}", name, to_add, oid);
+                            }
+                        }
+                    }
+
+                    // Add liquids (fuel)
+                    for (liq_type, inv) in obj_mut.warehouse.liquids.iter_mut_cow() {
+                        if inv.capacity > inv.stored {
+                            let available_space = inv.capacity - inv.stored;
+                            let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
+                            let to_add = amount.min(available_space);
+
+                            if to_add > 0 {
+                                inv.stored += to_add;
+                                added_items.push(format!("{:?}: +{}", liq_type, to_add));
+                                info!("[SUPPLY_TRANSFER] Added {:?} x{} to {:?}", liq_type, to_add, oid);
+                            }
+                        }
+                    }
+
+                    // Sync back to DCS warehouse
+                    use crate::db::logistics::sync_obj_to_warehouse;
+                    sync_obj_to_warehouse(&obj_mut, &wh)?;
 
                     // Delete the physical crate
                     self.delete_group(&crate_data.group_id)?;
 
-                    Ok(String::from("Airdropped supply transfer crate unpacked"))
+                    // Get objective name for message (without holding a borrow)
+                    let obj_name = self.persisted.objectives.get(&oid)
+                        .map(|o| o.name.clone())
+                        .unwrap_or_else(|| String::from("Unknown"));
+
+                    let msg = if added_items.is_empty() {
+                        String::from(format!("Supply transfer crate delivered to {} (warehouse full)", obj_name))
+                    } else {
+                        String::from(format!("Supply transfer crate delivered to {}: {}", obj_name, added_items.join(", ")))
+                    };
+
+                    info!("[SUPPLY_TRANSFER] {}", msg);
+                    Ok(msg)
                 } else {
                     bail!("No friendly objectives found for supply transfer")
                 }

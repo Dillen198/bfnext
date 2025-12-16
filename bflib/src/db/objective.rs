@@ -46,7 +46,6 @@ use dcso3::{
     coord::Coord,
     cvt_err,
     env::miz::{GroupKind, MizIndex},
-    group::Group,
     land::Land,
     net::Ucid,
     object::DcsObject,
@@ -955,10 +954,23 @@ impl Db {
                 obj.enabled = spawn;
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
-                        let group = match Group::get_instance(lua, oid) {
-                            Ok(group) => group,
+                        // Convert Object oid to Group by getting the Object, converting to Unit, then getting Group
+                        let group = match dcso3::object::Object::get_instance(lua, oid) {
+                            Ok(obj) => match obj.as_unit() {
+                                Ok(unit) => match unit.get_group() {
+                                    Ok(group) => group,
+                                    Err(e) => {
+                                        warn!("could not get group from unit {gid} {e:?}");
+                                        continue;
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!("object is not a unit {gid} {e:?}");
+                                    continue;
+                                }
+                            },
                             Err(e) => {
-                                warn!("could not get group {gid} {e:?}");
+                                warn!("could not get object {gid} {e:?}");
                                 continue;
                             }
                         };

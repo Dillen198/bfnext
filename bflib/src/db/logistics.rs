@@ -220,7 +220,7 @@ pub struct Warehouse {
     pub(super) destination: SetS<ObjectiveId>,
 }
 
-fn sync_obj_to_warehouse(obj: &Objective, warehouse: &warehouse::Warehouse) -> Result<()> {
+pub(super) fn sync_obj_to_warehouse(obj: &Objective, warehouse: &warehouse::Warehouse) -> Result<()> {
     let perf = unsafe { Perf::get_mut() };
     let perf = Arc::make_mut(&mut perf.inner);
     for (item, inv) in &obj.warehouse.equipment {
@@ -1040,58 +1040,29 @@ impl Db {
 
         debug!("[SUPPLY_TRANSFER] Starting transfer from {:?} to {:?}, size: {}%", from, to, transfer_size_percent);
 
-        // Only transfer weapons (equipment), not airframes
-        // Weapons have names like "weapons.shells", "weapons.missiles", etc.
-        // Airframes have names like "M-2000C", "F-16C_50", etc.
+        // Transfer all equipment EXCEPT airframes
+        // Airframes are listed in the warehouse config's exempt_airframes list
+        let exempt_airframes = self.ephemeral.cfg.warehouse
+            .as_ref()
+            .map(|wh| &wh.exempt_airframes)
+            .cloned()
+            .unwrap_or_default();
+
         for (name, inv) in &from_obj.warehouse.equipment {
-            // Check if this is a weapon (not an airframe)
-            // Weapons typically have "weapons." prefix or contain common weapon keywords
-            let is_weapon = name.starts_with("weapons.")
-                || name.to_lowercase().contains("shell")
-                || name.to_lowercase().contains("missile")
-                || name.to_lowercase().contains("rocket")
-                || name.to_lowercase().contains("bomb")
-                || name.to_lowercase().contains("gun")
-                || name.to_lowercase().contains("chaff")
-                || name.to_lowercase().contains("flare");
-
-            if is_weapon {
-                if inv.stored > 0 {
-                    let needed = match to_obj.warehouse.equipment.get(name) {
-                        None => 0,
-                        Some(inv) => {
-                            if inv.capacity >= inv.stored {
-                                inv.capacity - inv.stored
-                            } else {
-                                0
-                            }
-                        }
-                    };
-                    let amount = min(needed, max(1, (inv.stored as f32 * size) as u32));
-                    if amount > 0 {
-                        debug!("[SUPPLY_TRANSFER] Transferring weapon: {} amount: {} (stored: {}, needed: {})",
-                            name, amount, inv.stored, needed);
-                        transfers.push(Transfer {
-                            amount,
-                            source: from,
-                            target: to,
-                            item: TransferItem::Equipment(name.clone()),
-                        });
-                    }
-                }
-            } else {
+            // Skip airframes - they should not be transferred
+            if exempt_airframes.contains(name.as_str()) {
                 debug!("[SUPPLY_TRANSFER] Skipping airframe: {} (stored: {})", name, inv.stored);
+                continue;
             }
-        }
 
-        // Transfer all liquids (fuel)
-        for (name, inv) in &from_obj.warehouse.liquids {
+            // Transfer everything else (weapons, vehicles, deployables, etc.)
             if inv.stored > 0 {
-                let needed = match to_obj.warehouse.liquids.get(name) {
-                    None => 0,
-                    Some(inv) => {
-                        if inv.capacity >= inv.stored {
-                            inv.capacity - inv.stored
+                let needed = match to_obj.warehouse.equipment.get(name) {
+                    // If destination doesn't have this equipment type, transfer based on source inventory
+                    None => inv.stored,
+                    Some(dest_inv) => {
+                        if dest_inv.capacity >= dest_inv.stored {
+                            dest_inv.capacity - dest_inv.stored
                         } else {
                             0
                         }
@@ -1099,7 +1070,38 @@ impl Db {
                 };
                 let amount = min(needed, max(1, (inv.stored as f32 * size) as u32));
                 if amount > 0 {
-                    debug!("[SUPPLY_TRANSFER] Transferring liquid: {:?} amount: {} (stored: {}, needed: {})",
+                    debug!("[SUPPLY_TRANSFER] Transferring equipment: {} amount: {} (from stored: {}, dest needed: {})",
+                        name, amount, inv.stored, needed);
+                    transfers.push(Transfer {
+                        amount,
+                        source: from,
+                        target: to,
+                        item: TransferItem::Equipment(name.clone()),
+                    });
+                } else {
+                    debug!("[SUPPLY_TRANSFER] Skipping {}: destination full or no need (from stored: {}, dest needed: {})",
+                        name, inv.stored, needed);
+                }
+            }
+        }
+
+        // Transfer all liquids (fuel)
+        for (name, inv) in &from_obj.warehouse.liquids {
+            if inv.stored > 0 {
+                let needed = match to_obj.warehouse.liquids.get(name) {
+                    // If destination doesn't have this liquid type, transfer based on source inventory
+                    None => inv.stored,
+                    Some(dest_inv) => {
+                        if dest_inv.capacity >= dest_inv.stored {
+                            dest_inv.capacity - dest_inv.stored
+                        } else {
+                            0
+                        }
+                    }
+                };
+                let amount = min(needed, max(1, (inv.stored as f32 * size) as u32));
+                if amount > 0 {
+                    debug!("[SUPPLY_TRANSFER] Transferring liquid: {:?} amount: {} (from stored: {}, dest needed: {})",
                         name, amount, inv.stored, needed);
                     transfers.push(Transfer {
                         amount,
