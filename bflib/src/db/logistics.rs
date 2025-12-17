@@ -140,6 +140,20 @@ pub struct Transfer {
 
 impl Transfer {
     fn execute(&self, db: &mut Persisted, to_bg: &Option<UnboundedSender<Task>>) -> Result<()> {
+        // Get source capacity for initializing destination if needed
+        let src_capacity = match &self.item {
+            TransferItem::Equipment(name) => {
+                db.objectives.get(&self.source)
+                    .and_then(|src| src.warehouse.equipment.get(name))
+                    .map(|inv| inv.capacity)
+            }
+            TransferItem::Liquid(name) => {
+                db.objectives.get(&self.source)
+                    .and_then(|src| src.warehouse.liquids.get(name))
+                    .map(|inv| inv.capacity)
+            }
+        };
+
         let src = db
             .objectives
             .get_mut_cow(&self.source)
@@ -174,28 +188,39 @@ impl Transfer {
             .ok_or_else(|| anyhow!("no such objective {:?}", self.target))?;
         match &self.item {
             TransferItem::Equipment(name) => {
-                let d = &mut dst
+                let inv = dst
                     .warehouse
                     .equipment
-                    .get_or_default_cow(name.clone())
-                    .stored;
-                *d += self.amount;
+                    .get_or_default_cow(name.clone());
+                // If destination has 0 capacity, initialize from source
+                if inv.capacity == 0 {
+                    if let Some(cap) = src_capacity {
+                        inv.capacity = cap;
+                    }
+                }
+                inv.stored += self.amount;
                 if let Some(to_bg) = to_bg.as_ref() {
                     let _ = to_bg.send(Task::Stat(Stat::EquipmentInventory {
                         id: dst.id,
                         item: name.clone(),
-                        amount: *d,
+                        amount: inv.stored,
                     }));
                 }
             }
             TransferItem::Liquid(name) => {
-                let d = &mut dst.warehouse.liquids.get_or_default_cow(*name).stored;
-                *d += self.amount;
+                let inv = dst.warehouse.liquids.get_or_default_cow(*name);
+                // If destination has 0 capacity, initialize from source
+                if inv.capacity == 0 {
+                    if let Some(cap) = src_capacity {
+                        inv.capacity = cap;
+                    }
+                }
+                inv.stored += self.amount;
                 if let Some(to_bg) = to_bg.as_ref() {
                     let _ = to_bg.send(Task::Stat(Stat::LiquidInventory {
                         id: dst.id,
                         item: *name,
-                        amount: *d,
+                        amount: inv.stored,
                     }));
                 }
             }
@@ -1041,7 +1066,7 @@ impl Db {
         debug!("[SUPPLY_TRANSFER] Starting transfer from {:?} to {:?}, size: {}%", from, to, transfer_size_percent);
 
         // Transfer all equipment EXCEPT airframes
-        // Airframes are listed in the warehouse config's exempt_airframes list
+        // Airframes don't have prefixes like "weapons.", "vehicles." - they're just aircraft type names
         let exempt_airframes = self.ephemeral.cfg.warehouse
             .as_ref()
             .map(|wh| &wh.exempt_airframes)
@@ -1049,18 +1074,49 @@ impl Db {
             .unwrap_or_default();
 
         for (name, inv) in &from_obj.warehouse.equipment {
-            // Skip airframes - they should not be transferred
-            if exempt_airframes.contains(name.as_str()) {
+            // Skip airframes - they should never be transferred via supply crates
+            // Airframes don't have prefixes like "weapons.", "vehicles." - they're just aircraft type names
+            let is_airframe = !name.starts_with("weapons.")
+                && !name.starts_with("vehicles.")
+                && !name.starts_with("Fortifications.");
+
+            if is_airframe || exempt_airframes.contains(name.as_str()) {
                 debug!("[SUPPLY_TRANSFER] Skipping airframe: {} (stored: {})", name, inv.stored);
                 continue;
             }
 
             // Transfer everything else (weapons, vehicles, deployables, etc.)
             if inv.stored > 0 {
+                // Calculate how much the destination can accept
                 let needed = match to_obj.warehouse.equipment.get(name) {
-                    // If destination doesn't have this equipment type, transfer based on source inventory
-                    None => inv.stored,
+                    // If destination doesn't have this equipment type, use source capacity as template
+                    None => {
+                        let amount = max(1, (inv.stored as f32 * size) as u32);
+                        debug!("[SUPPLY_TRANSFER] Transferring equipment (new): {} amount: {} (from stored: {}, dest has no capacity - will initialize)",
+                            name, amount, inv.stored);
+                        transfers.push(Transfer {
+                            amount,
+                            source: from,
+                            target: to,
+                            item: TransferItem::Equipment(name.clone()),
+                        });
+                        continue;
+                    }
                     Some(dest_inv) => {
+                        // If destination has 0 capacity, initialize it from source
+                        if dest_inv.capacity == 0 {
+                            let amount = max(1, (inv.stored as f32 * size) as u32);
+                            debug!("[SUPPLY_TRANSFER] Transferring equipment (init capacity): {} amount: {} (from stored: {}, dest capacity=0 - will initialize from source capacity={})",
+                                name, amount, inv.stored, inv.capacity);
+                            transfers.push(Transfer {
+                                amount,
+                                source: from,
+                                target: to,
+                                item: TransferItem::Equipment(name.clone()),
+                            });
+                            continue;
+                        }
+                        // Normal case: destination has capacity
                         if dest_inv.capacity >= dest_inv.stored {
                             dest_inv.capacity - dest_inv.stored
                         } else {
@@ -1121,6 +1177,7 @@ impl Db {
         sync_obj_to_warehouse(objective!(self, to)?, &to_wh)?;
         self.update_supply_status()
             .context("updating supply status")?;
+        self.ephemeral.dirty();
         Ok(())
     }
 

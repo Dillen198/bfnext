@@ -1456,21 +1456,24 @@ impl Db {
         let ucid = maybe!(self.ephemeral.players_by_slot, *slot, "no such player")?.clone();
         let dep_idx = self.deployable_idx(side)?;
 
-        // Get crate definition (either from deployable or supply transfer)
-        let (crate_def, crate_type) = if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-            debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-            (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
-        } else if let Some(whcfg) = &self.ephemeral.cfg.warehouse {
+        // Get crate definition (check supply transfer FIRST to avoid name conflicts)
+        let (crate_def, crate_type) = if let Some(whcfg) = &self.ephemeral.cfg.warehouse {
             let supply_crate = &whcfg.supply_transfer_crate[&side];
             if supply_crate.name == crate_name {
                 debug!("[C130_CARGO] Found supply transfer crate: {}, weight={}kg", crate_name, supply_crate.weight);
                 (supply_crate.clone(), C130CargoType::SupplyTransfer)
+            } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+                debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+                (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
             } else {
                 error!("[C130_CARGO] Crate not found: {}", crate_name);
                 bail!("crate {} not found", crate_name)
             }
+        } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+            debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+            (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
         } else {
-            error!("[C130_CARGO] Warehouse not configured, crate {} not found", crate_name);
+            error!("[C130_CARGO] Crate not found: {}", crate_name);
             bail!("crate {} not found", crate_name)
         };
 
@@ -1742,20 +1745,26 @@ impl Db {
             // State machine for crate tracking
             match crate_data.state {
                 C130CargoState::Spawned | C130CargoState::Loaded => {
-                    // If crate is moving fast, it's been airdropped
+                    // If crate is moving VERY fast, it's been airdropped
+                    // Use high threshold (50 m/s ~= 97 knots) to avoid false positives from C-130 taxiing/slow flight
                     // Note: Static objects report in_air=false even when falling, so check speed only
-                    if speed > 5.0 {
+                    if speed > 50.0 {
                         info!("[C130_CARGO] Crate '{}' transitioned to Airborne (speed={:.2}m/s)", crate_name, speed);
                         crate_data.state = C130CargoState::Airborne;
                         crate_data.airborne_time = Some(Utc::now());
                     }
                 }
                 C130CargoState::Airborne => {
-                    // If crate has landed (low speed)
+                    // If crate has landed (low speed) and been airborne for at least 3 seconds
                     if speed < 1.0 {
-                        info!("[C130_CARGO] Crate '{}' transitioned to Landed (speed={:.2}m/s) - queuing for auto-unpack", crate_name, speed);
-                        crate_data.state = C130CargoState::Landed;
-                        to_unpack.push(crate_name.clone());
+                        if let Some(airborne_time) = crate_data.airborne_time {
+                            let airborne_duration = Utc::now().signed_duration_since(airborne_time);
+                            if airborne_duration.num_seconds() >= 3 {
+                                info!("[C130_CARGO] Crate '{}' transitioned to Landed (speed={:.2}m/s) - queuing for auto-unpack", crate_name, speed);
+                                crate_data.state = C130CargoState::Landed;
+                                to_unpack.push(crate_name.clone());
+                            }
+                        }
                     }
                 }
                 C130CargoState::Landed => {
@@ -1959,20 +1968,52 @@ impl Db {
                         (whcfg.supply_transfer_size, whcfg.exempt_airframes.clone())
                     };
 
-                    // Sync warehouse to get current state
+                    // Get source objective warehouse to copy capacities (optional - may not exist)
+                    let source_warehouse = self.persisted.objectives.get(&crate_data.origin)
+                        .map(|obj| obj.warehouse.clone());
+
+                    // Sync destination warehouse to get current state
                     let (obj_mut, wh) = self.sync_warehouse_to_objective(lua, oid)
                         .context("syncing warehouse for supply transfer")?;
 
                     // Add supplies directly to warehouse (transfer_amount% of capacity for each item)
                     let mut added_items = Vec::new();
 
+                    debug!("[SUPPLY_TRANSFER] Objective {:?} has {} equipment types and {} liquid types",
+                        oid, obj_mut.warehouse.equipment.len(), obj_mut.warehouse.liquids.len());
+
                     // Add equipment (non-exempt items)
                     for (name, inv) in obj_mut.warehouse.equipment.iter_mut_cow() {
-                        if exempt_airframes.contains(name.as_str()) {
-                            continue; // Skip airframes
+                        // Skip airframes - they should never be transferred via supply crates
+                        // Airframes don't have prefixes like "weapons.", "vehicles." - they're just aircraft type names
+                        let is_airframe = !name.starts_with("weapons.")
+                            && !name.starts_with("vehicles.")
+                            && !name.starts_with("Fortifications.");
+
+                        if is_airframe || exempt_airframes.contains(name.as_str()) {
+                            debug!("[SUPPLY_TRANSFER] Skipping airframe: {}", name);
+                            continue;
                         }
 
-                        if inv.capacity > inv.stored {
+                        debug!("[SUPPLY_TRANSFER] Checking {}: capacity={}, stored={}", name, inv.capacity, inv.stored);
+
+                        // If capacity is 0, copy it from source objective (but only for non-airframes)
+                        if inv.capacity == 0 {
+                            if let Some(ref src_wh) = source_warehouse {
+                                if let Some(source_inv) = src_wh.equipment.get(name) {
+                                    // Should already be filtered above, but double-check
+                                    if source_inv.capacity > 0 {
+                                        inv.capacity = source_inv.capacity;
+                                        // Add transfer_amount% of capacity
+                                        let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
+                                        inv.stored = amount;
+                                        added_items.push(format!("{}: +{} (capacity initialized from source)", name, amount));
+                                        info!("[SUPPLY_TRANSFER] Initialized {} with capacity {} from source, added {}",
+                                            name, inv.capacity, amount);
+                                    }
+                                }
+                            }
+                        } else if inv.capacity > inv.stored {
                             let available_space = inv.capacity - inv.stored;
                             let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
                             let to_add = amount.min(available_space);
@@ -1987,7 +2028,22 @@ impl Db {
 
                     // Add liquids (fuel)
                     for (liq_type, inv) in obj_mut.warehouse.liquids.iter_mut_cow() {
-                        if inv.capacity > inv.stored {
+                        // If capacity is 0, copy it from source objective
+                        if inv.capacity == 0 {
+                            if let Some(ref src_wh) = source_warehouse {
+                                if let Some(source_inv) = src_wh.liquids.get(liq_type) {
+                                    if source_inv.capacity > 0 {
+                                        inv.capacity = source_inv.capacity;
+                                        // Add transfer_amount% of capacity
+                                        let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
+                                        inv.stored = amount;
+                                        added_items.push(format!("{:?}: +{} (capacity initialized from source)", liq_type, amount));
+                                        info!("[SUPPLY_TRANSFER] Initialized {:?} with capacity {} from source, added {}",
+                                            liq_type, inv.capacity, amount);
+                                    }
+                                }
+                            }
+                        } else if inv.capacity > inv.stored {
                             let available_space = inv.capacity - inv.stored;
                             let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
                             let to_add = amount.min(available_space);
@@ -2004,6 +2060,12 @@ impl Db {
                     use crate::db::logistics::sync_obj_to_warehouse;
                     sync_obj_to_warehouse(&obj_mut, &wh)?;
 
+                    // Mark database as changed
+                    self.ephemeral.dirty();
+
+                    // Remove from tracking map
+                    self.ephemeral.c130_crates.remove(crate_name);
+
                     // Delete the physical crate
                     self.delete_group(&crate_data.group_id)?;
 
@@ -2015,7 +2077,7 @@ impl Db {
                     let msg = if added_items.is_empty() {
                         String::from(format!("Supply transfer crate delivered to {} (warehouse full)", obj_name))
                     } else {
-                        String::from(format!("Supply transfer crate delivered to {}: {}", obj_name, added_items.join(", ")))
+                        String::from(format!("Supply transfer crate delivered to {}", obj_name))
                     };
 
                     info!("[SUPPLY_TRANSFER] {}", msg);
