@@ -25,6 +25,7 @@ use dcso3::{
     world::World,
 };
 use fxhash::FxHashMap;
+use log::info;
 use std::sync::Arc;
 
 fn run_action(
@@ -119,7 +120,10 @@ fn do_pos_action(
         | ActionKind::FighersWaypoint
         | ActionKind::DroneWaypoint
         | ActionKind::AttackersWaypoint
-        | ActionKind::SeadWaypoint => bail!("invalid action type for this menu item"),
+        | ActionKind::SeadWaypoint
+        | ActionKind::CarrierWaypoint
+        | ActionKind::CarrierRepair
+        | ActionKind::CarrierRespawn => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
@@ -241,6 +245,11 @@ fn do_pos_group_action(
             pos,
             group,
         }),
+        ActionKind::CarrierWaypoint => ActionArgs::CarrierWaypoint(WithPosAndGroup {
+            cfg: (),
+            pos,
+            group,
+        }),
         ActionKind::Attackers(_)
         | ActionKind::Sead(_)
         | ActionKind::Awacs(_)
@@ -253,7 +262,9 @@ fn do_pos_group_action(
         | ActionKind::Nuke(_)
         | ActionKind::Bomber(_)
         | ActionKind::LogisticsTransfer(_)
-        | ActionKind::LogisticsRepair(_) => bail!("invalid action type for this menu item"),
+        | ActionKind::LogisticsRepair(_)
+        | ActionKind::CarrierRepair
+        | ActionKind::CarrierRespawn => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
@@ -331,7 +342,10 @@ fn do_objective_action(
         | ActionKind::LogisticsTransfer(_)
         | ActionKind::Rtb
         | ActionKind::Move(_)
-        | ActionKind::SeadWaypoint => bail!("invalid action type for this menu item"),
+        | ActionKind::SeadWaypoint
+        | ActionKind::CarrierWaypoint
+        | ActionKind::CarrierRepair
+        | ActionKind::CarrierRespawn => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, None, cmd)
@@ -428,8 +442,23 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
         Ok(())
     };
     let add_pos_group = |mut root: GroupSubMenu, name: String, action: bool| -> Result<()> {
+        // Collect carrier group IDs if we're processing actions (e.g., CarrierWaypoint)
+        // by checking objectives_by_group to see which groups belong to carrier objectives
+        let mut carrier_group_ids: Vec<DbGid> = Vec::new();
+        if action {
+            info!("[ACTION_MENU] Collecting carrier groups for action '{}'. Total carrier objectives: {}",
+                  name, ctx.db.persisted.carrier_groups.len());
+            for (gid, oid) in ctx.db.persisted.objectives_by_group.into_iter() {
+                if ctx.db.persisted.carrier_groups.contains(oid) {
+                    carrier_group_ids.push(*gid);
+                    info!("[ACTION_MENU] Added carrier group {:?} from objective {:?} for action '{}'", gid, oid, name);
+                }
+            }
+            info!("[ACTION_MENU] Found {} carrier groups total for action '{}'", carrier_group_ids.len(), name);
+        }
+
         let iter: Box<dyn Iterator<Item = &DbGid>> = if action {
-            Box::new(ctx.db.persisted.actions.into_iter())
+            Box::new(ctx.db.persisted.actions.into_iter().chain(carrier_group_ids.iter()))
         } else {
             Box::new(
                 ctx.db
@@ -467,6 +496,23 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 DeployKind::Troop { spec, .. } => {
                     if !action {
                         Some(format_compact!("{} Troop", spec.name).into())
+                    } else {
+                        None
+                    }
+                }
+                DeployKind::Objective { .. } | DeployKind::ObjectiveDeprecated if action => {
+                    // Check if this is a carrier group for CarrierWaypoint action
+                    if let Some(origin_id) = ctx.db.persisted.objectives_by_group.get(gid) {
+                        if let Ok(obj) = ctx.db.objective(origin_id) {
+                            // Check if this objective is a carrier group
+                            if ctx.db.persisted.carrier_groups.contains(origin_id) {
+                                Some(format_compact!("{} Carrier", obj.name).into())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -545,7 +591,8 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             | ActionKind::CruiseMissileWaypoint
             | ActionKind::FighersWaypoint
             | ActionKind::TankerWaypoint
-            | ActionKind::DroneWaypoint => {
+            | ActionKind::DroneWaypoint
+            | ActionKind::CarrierWaypoint => {
                 let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
                 add_pos_group(root.clone(), name.clone(), true)?
             }
@@ -565,6 +612,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             | ActionKind::Nuke(_) => {
                 let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
                 add_pos(root.clone(), name.clone())?
+            }
+            ActionKind::CarrierRepair | ActionKind::CarrierRespawn => {
+                let _root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                // Carrier repair/respawn actions handled via objective-based menus
             }
             ActionKind::LogisticsRepair(_) => {
                 let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;

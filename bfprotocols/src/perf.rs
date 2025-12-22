@@ -53,6 +53,7 @@ pub struct PerfStat {
     pub logistics_transfer: HistStat,
     pub logistics_sync_from: HistStat,
     pub logistics_sync_to: HistStat,
+    pub logistics_convoy: HistStat,
     pub logistics_items: u64,
 }
 
@@ -86,6 +87,7 @@ impl Default for PerfStat {
             logistics_transfer: HistStat::empty("logistics_transfer", false),
             logistics_sync_from: HistStat::empty("logistics_sync_from", false),
             logistics_sync_to: HistStat::empty("logistics_sync_to", false),
+            logistics_convoy: HistStat::empty("logistics_convoy", false),
             logistics_items: 0,
         }
     }
@@ -121,6 +123,7 @@ impl PerfStat {
             logistics_transfer,
             logistics_sync_from,
             logistics_sync_to,
+            logistics_convoy,
             logistics_items,
         } = self;
         let stats = [
@@ -151,6 +154,7 @@ impl PerfStat {
             logistics_transfer,
             logistics_sync_from,
             logistics_sync_to,
+            logistics_convoy,
         ];
         let max_len = stats
             .iter()
@@ -190,6 +194,7 @@ pub struct PerfInner {
     pub logistics_transfer: HistogramSer,
     pub logistics_sync_from: HistogramSer,
     pub logistics_sync_to: HistogramSer,
+    pub logistics_convoy: HistogramSer,
     // CR evilkipper: remove this once the warehouse client/server desync bug is fixed
     pub logistics_items: FxHashSet<(String, ObjectiveId)>,
 }
@@ -223,6 +228,7 @@ impl PerfInner {
             logistics_transfer,
             logistics_sync_from,
             logistics_sync_to,
+            logistics_convoy,
             logistics_items,
         } = self;
         PerfStat {
@@ -265,6 +271,7 @@ impl PerfInner {
             logistics_transfer: HistStat::new(logistics_transfer, "logistics_transfer", false),
             logistics_sync_from: HistStat::new(logistics_sync_from, "logistics_sync_from", false),
             logistics_sync_to: HistStat::new(logistics_sync_to, "logistics_sync_to", false),
+            logistics_convoy: HistStat::new(logistics_convoy, "logistics_convoy", false),
             logistics_items: logistics_items.len() as u64,
         }
     }

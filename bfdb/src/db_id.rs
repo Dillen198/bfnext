@@ -52,10 +52,6 @@ macro_rules! db_id {
                 pub fn new(db: &sled::Db) -> anyhow::Result<Self> {
                     Ok(Self(db.generate_id()?))
                 }
-
-                pub fn inner(&self) -> u64 {
-                    self.0
-                }
             }
         }
     }

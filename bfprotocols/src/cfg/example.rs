@@ -1252,13 +1252,13 @@ fn default_repair_crate() -> FxHashMap<Side, Crate> {
     ])
 }
 
-fn default_supply_transfer_crate() -> FxHashMap<Side, Crate> {
+fn default_carrier_repair_crate() -> FxHashMap<Side, Crate> {
     FxHashMap::from_iter([
         (
             Side::Blue,
             Crate {
-                name: "Supply Transfer".into(),
-                weight: 1500,
+                name: "Carrier Repair".into(),
+                weight: 1200,
                 required: 1,
                 pos_unit: None,
                 max_drop_height_agl: 10,
@@ -1268,7 +1268,7 @@ fn default_supply_transfer_crate() -> FxHashMap<Side, Crate> {
         (
             Side::Red,
             Crate {
-                name: "Supply Transfer".into(),
+                name: "Carrier Repair".into(),
                 weight: 2000,
                 required: 1,
                 pos_unit: None,
@@ -1898,19 +1898,23 @@ impl Default for Cfg {
                 weapon_cost: FxHashMap::default(),
                 strict: false,
                 periodic_point_gain: (0, 0),
+                award_kill_points: true,
             }),
             warehouse: Some(WarehouseConfig {
                 hub_max: 25,
                 airbase_max: 5,
                 tick: 10,
                 ticks_per_delivery: 6,
-                supply_transfer_crate: default_supply_transfer_crate(),
+                supply_transfer_fuel_crate: FxHashMap::default(),
+                supply_transfer_weapons_crate: FxHashMap::default(),
                 supply_transfer_size: 25,
+                carrier_repair_crate: default_carrier_repair_crate(),
                 supply_source: FxHashMap::from_iter([
                     (Side::Blue, "BINVENTORY".into()),
                     (Side::Red, "RINVENTORY".into()),
                 ]),
                 exempt_airframes: FxHashSet::from_iter(["Su-30SM".into()]),
+                convoy: None,
             }),
             weapon_target_exclusions: FxHashSet::default(),
             logistics_exclusion: 10000,
@@ -1976,6 +1980,18 @@ impl Default for Cfg {
             extra_fixed_wing_objectives: FxHashSet::default(),
             ewr_mode: EwrMode::Original,
             ewr_delay: 60,
+            frontline: None,
+            factory: Some(FactoryCfg {
+                production_rate: 100,
+                production_interval: 600, // 10 minutes
+            }),
+            carrier: Some(CarrierCfg {
+                repair_cost: 5000,
+                respawn_cost: 15000,
+                movement_speed: 5.0, // ~10 knots
+                repair_time: 600,     // 10 minutes
+                groups: vec![],       // Carrier groups defined here, or auto-detected by BCARRIER/RCARRIER prefix
+            }),
         }
     }
 }

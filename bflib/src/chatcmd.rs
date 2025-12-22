@@ -437,6 +437,9 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
                 "{name}: <group> <key> | Move a tanker to key. Group is the tanker group. cost {}",
                 action.cost
             )),
+            ActionKind::CarrierWaypoint => None,
+            ActionKind::CarrierRepair => None,
+            ActionKind::CarrierRespawn => None,
         };
         if let Some(msg) = msg {
             ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg)

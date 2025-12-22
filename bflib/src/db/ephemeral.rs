@@ -51,6 +51,7 @@ use dcso3::{
     coalition::Side,
     controller::MissionPoint,
     env::miz::{self, GroupKind, Miz, MizIndex},
+    group::Group,
     net::{SlotId, Ucid},
     object::{ClassObject, DcsObject, DcsOid},
     perf::record_perf,
@@ -114,6 +115,12 @@ pub struct Ephemeral {
     pub(super) c130_crates: FxHashMap<String, C130Cargo>,
     /// Queue for staggered crate spawning: (spawn_time, crate_data with index for positioning)
     pub(super) c130_spawn_queue: BTreeMap<DateTime<Utc>, Vec<(Side, String, ObjectiveId, Ucid, Crate, usize)>>,
+    /// Supply convoy tracking: convoy_id -> SupplyConvoy
+    pub(super) active_convoys: FxHashMap<super::logistics::ConvoyId, super::logistics::SupplyConvoy>,
+    /// Track last convoy spawn time per side to throttle spawning
+    pub(super) last_convoy_spawn: FxHashMap<Side, DateTime<Utc>>,
+    /// Counter for generating unique convoy IDs
+    pub(super) convoy_counter: u32,
     pub(super) deployable_idx: FxHashMap<Side, Arc<DeployableIndex>>,
     pub(super) group_marks: FxHashMap<GroupId, MarkId>,
     objective_markup: FxHashMap<ObjectiveId, ObjectiveMarkup>,
@@ -155,6 +162,9 @@ impl Default for Ephemeral {
             cargo: FxHashMap::default(),
             c130_crates: FxHashMap::default(),
             c130_spawn_queue: BTreeMap::default(),
+            active_convoys: FxHashMap::default(),
+            last_convoy_spawn: FxHashMap::default(),
+            convoy_counter: 0,
             deployable_idx: FxHashMap::default(),
             group_marks: FxHashMap::default(),
             objective_markup: FxHashMap::default(),
@@ -393,15 +403,24 @@ impl Ephemeral {
         idx.crates_by_name
             .insert(repair_crate.name.clone(), repair_crate);
         if let Some(whcfg) = whcfg.as_ref() {
-            match whcfg.supply_transfer_crate.get(&side) {
-                None => bail!("missing supply transfer crate for {side}"),
-                Some(cr) => match idx.crates_by_name.entry(cr.name.clone()) {
-                    Entry::Occupied(_) => bail!("multiple {} crates for side {side}", cr.name),
+            // Register fuel transfer crate
+            if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(&side) {
+                match idx.crates_by_name.entry(fuel_cr.name.clone()) {
+                    Entry::Occupied(_) => bail!("multiple {} crates for side {side}", fuel_cr.name),
                     Entry::Vacant(e) => {
-                        e.insert(cr.clone());
+                        e.insert(fuel_cr.clone());
                     }
-                },
-            };
+                }
+            }
+            // Register weapons transfer crate
+            if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(&side) {
+                match idx.crates_by_name.entry(weapons_cr.name.clone()) {
+                    Entry::Occupied(_) => bail!("multiple {} crates for side {side}", weapons_cr.name),
+                    Entry::Vacant(e) => {
+                        e.insert(weapons_cr.clone());
+                    }
+                }
+            }
         }
         for dep in deployables.iter() {
             if let DeployableKind::Group { template } = &dep.kind {
@@ -822,7 +841,10 @@ impl Ephemeral {
                     | ActionKind::SeadWaypoint
                     | ActionKind::Move(_)
                     | ActionKind::Rtb
-                    | ActionKind::Nuke(_) => (),
+                    | ActionKind::Nuke(_)
+                    | ActionKind::CarrierWaypoint
+                    | ActionKind::CarrierRepair
+                    | ActionKind::CarrierRespawn => (),
                 }
             }
         }
@@ -840,6 +862,38 @@ impl Ephemeral {
         mission: Vec<MissionPoint<'lua>>,
     ) -> Result<Option<Spawned<'lua>>> {
         let ts = Utc::now();
+
+        // Check if this is a carrier group defined in config, or falls back to prefix matching
+        // For carrier groups, use Group.activate() instead of spawning a copy.
+        // This preserves the original unit IDs and thus the warehouse dynamicSpawn setting.
+        // DCS creates new warehouses for spawned groups with default settings (dynamicSpawn=false),
+        // but activating the existing late-activated group keeps the mission file's warehouse settings.
+        let carrier_cfg = self.cfg.carrier.as_ref()
+            .and_then(|c| c.groups.iter().find(|g| g.template.as_str() == group.template_name.as_str()));
+
+        let is_carrier_group = carrier_cfg.is_some()
+            || group.template_name.starts_with("BCARRIER")
+            || group.template_name.starts_with("RCARRIER")
+            || group.template_name.starts_with("NCARRIER");
+
+        if is_carrier_group {
+            // Activate the existing late-activated group instead of spawning a copy
+            let display_name = carrier_cfg
+                .map(|c| c.display_name.clone())
+                .unwrap_or_else(|| group.template_name.clone());
+            info!("[CARRIER_SPAWN] Activating carrier group {} (template: {}, display: {})",
+                  group.name, group.template_name, display_name);
+            let dcs_group = Group::get_by_name(spctx.lua(), &group.template_name)
+                .with_context(|| format_compact!("getting carrier group {}", group.template_name))?;
+            dcs_group.activate()
+                .with_context(|| format_compact!("activating carrier group {}", group.template_name))?;
+            let oid = dcs_group.object_id()?.erased();
+            self.object_id_by_gid.insert(group.id, oid.clone());
+            self.gid_by_object_id.insert(oid, group.id);
+            record_perf(&mut perf.spawn, ts);
+            return Ok(Some(Spawned::Group(dcs_group)));
+        }
+
         let template = spctx
             .get_template(
                 idx,
@@ -850,6 +904,7 @@ impl Ephemeral {
             .with_context(|| format_compact!("getting template {}", group.template_name))?;
         template.group.set("lateActivation", false)?;
         template.group.set("hidden", false)?;
+        template.group.set("visible", true)?;
         template.group.set_name(group.name.clone())?;
         if mission.len() > 0 {
             template

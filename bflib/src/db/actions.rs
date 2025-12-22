@@ -38,11 +38,12 @@ use dcso3::{
     net::Ucid,
     pointing_towards2,
     trigger::{MarkId, Modulation, Trigger},
+    unit::Unit,
     world::World,
 };
 use enumflags2::BitFlags;
 use fxhash::FxHashSet;
-use log::error;
+use log::{error, info};
 use rand::{Rng, thread_rng};
 use smallvec::{SmallVec, smallvec};
 use std::{cmp::max, f64, vec};
@@ -103,6 +104,9 @@ pub enum ActionArgs {
     LogisticsTransfer(WithFromTo<AiPlaneCfg>),
     Move(WithPosAndGroup<MoveCfg>),
     Rtb(WithPosAndGroup<()>),
+    CarrierWaypoint(WithPosAndGroup<()>),
+    CarrierRepair(WithObj<()>),
+    CarrierRespawn(WithObj<()>),
 }
 
 impl ActionArgs {
@@ -270,6 +274,9 @@ impl ActionArgs {
                 (),
                 s,
             )?)),
+            ActionKind::CarrierWaypoint => Ok(Self::CarrierWaypoint(pos_group(db, lua, side, (), s)?)),
+            ActionKind::CarrierRepair => Ok(Self::CarrierRepair(obj(db, (), s)?)),
+            ActionKind::CarrierRespawn => Ok(Self::CarrierRespawn(obj(db, (), s)?)),
         }
     }
 
@@ -297,6 +304,9 @@ impl ActionArgs {
             Self::Paratrooper(c) => Some(c.pos),
             Self::Tanker(c) => Some(c.pos),
             Self::TankerWaypoint(c) => Some(c.pos),
+            Self::CarrierWaypoint(c) => Some(c.pos),
+            Self::CarrierRepair(_) => None,
+            Self::CarrierRespawn(_) => None,
         }
     }
 }
@@ -524,6 +534,15 @@ impl Db {
                 self.move_ai_sead(spctx, side, ucid.clone(), args)?
             }
             ActionArgs::Rtb(args) => self.rtb(spctx, args).context("rtbing unit")?,
+            ActionArgs::CarrierWaypoint(args) => self
+                .carrier_waypoint(lua, args)
+                .context("setting carrier waypoint")?,
+            ActionArgs::CarrierRepair(args) => self
+                .carrier_repair(args)
+                .context("repairing carrier")?,
+            ActionArgs::CarrierRespawn(args) => self
+                .carrier_respawn(lua, spctx, idx, args)
+                .context("respawning carrier")?,
             ActionArgs::Drone(args) => self
                 .drone(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
                 .context("calling drone")?,
@@ -1230,6 +1249,153 @@ impl Db {
             .context("generate rtb mission")?;
         self.set_ai_mission(spctx, gid, mission)?;
         Ok(Some(gid))
+    }
+
+    fn carrier_waypoint(&mut self, lua: MizLua, args: WithPosAndGroup<()>) -> Result<Option<GroupId>> {
+        info!("[CARRIER_WAYPOINT] Received waypoint command for group {:?} to position {:?}", args.group, args.pos);
+
+        // Find carrier objective by group ID
+        let mut carrier_info: Option<(ObjectiveId, dcso3::String)> = None;
+        for (id, obj) in &self.persisted.objectives {
+            if let ObjectiveKind::CarrierGroup { carrier_template: template, .. } = &obj.kind {
+                info!("[CARRIER_WAYPOINT] Checking carrier group {} with template {}", obj.name, template);
+                info!("[CARRIER_WAYPOINT] Objective owner: {:?}, all groups: {:?}", obj.owner, obj.groups);
+                if !template.is_empty() {
+                    if let Some(groups) = obj.groups.get(&obj.owner) {
+                        info!("[CARRIER_WAYPOINT] Carrier has groups: {:?}", groups);
+                        if groups.contains(&args.group) {
+                            info!("[CARRIER_WAYPOINT] MATCH! Found carrier group for {:?}", args.group);
+                            carrier_info = Some((*id, template.clone()));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some((obj_id, template)) = carrier_info {
+            info!("[CARRIER_WAYPOINT] Setting waypoint for carrier template: {}", template);
+            // Update waypoint in database
+            if let Some(obj) = self.persisted.objectives.get_mut_cow(&obj_id) {
+                if let ObjectiveKind::CarrierGroup { waypoint, .. } = &mut obj.kind {
+                    *waypoint = Some(args.pos);
+                }
+            }
+
+            // Command carrier group to move
+            // When using Group.activate(), the unit keeps its original name (e.g. "BCARRIER-1")
+            // Try to get the group directly by the template name first (for activated groups),
+            // then fall back to getting unit by name (for spawned groups)
+            let speed = self.ephemeral.cfg.carrier.as_ref().map(|c| c.movement_speed).unwrap_or(5.0);
+
+            // First try to get group directly by template name (works for activated carriers)
+            let group_result = Group::get_by_name(lua, &template)
+                .or_else(|_| {
+                    // Fall back to getting unit then group (works for spawned carriers)
+                    Unit::get_by_name(lua, &template)
+                        .and_then(|u| u.get_group())
+                });
+
+            match group_result {
+                Result::Ok(group) => {
+                    info!("[CARRIER_WAYPOINT] Found group {}, commanding move to {:?} at speed {}", template, args.pos, speed);
+                    let controller = group.get_controller()?;
+                    controller.set_task(Task::Mission {
+                        route: vec![MissionPoint {
+                            action: None,
+                            airdrome_id: None,
+                            helipad: None,
+                            typ: PointType::TurningPoint,
+                            time_re_fu_ar: None,
+                            link_unit: None,
+                            pos: LuaVec2(args.pos),
+                            alt: 0.,
+                            alt_typ: None,
+                            speed,
+                            speed_locked: None,
+                            eta: None,
+                            eta_locked: None,
+                            name: Some(dcso3::String::from("waypoint")),
+                            task: Box::new(Task::ComboTask(vec![])),
+                        }],
+                        airborne: Some(false),
+                    })?;
+                    info!("[CARRIER_WAYPOINT] Successfully set waypoint task for carrier group");
+                }
+                Result::Err(e) => {
+                    error!("[CARRIER_WAYPOINT] Failed to get group {}: {:?}", template, e);
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn carrier_repair(&mut self, args: WithObj<()>) -> Result<Option<GroupId>> {
+        // First collect all needed info without borrowing
+        let (nb_id, repair_cost, available) = {
+            let cg = objective!(self, &args.oid)?;
+            match &cg.kind {
+                ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. } => {
+                    let repair_cost = self.ephemeral.cfg.carrier.as_ref().map(|c| c.repair_cost).unwrap_or(5000);
+                    let nb = objective!(self, nb_id)?;
+                    let available = nb.warehouse.equipment.get("SUPPLIES").map(|inv| inv.stored).unwrap_or(0);
+                    (*nb_id, repair_cost, available)
+                }
+                _ => bail!("Objective is not a carrier group")
+            }
+        };
+
+        if available >= repair_cost {
+            // Now mutate
+            if let Some(nb_mut) = self.persisted.objectives.get_mut_cow(&nb_id) {
+                if let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow("SUPPLIES") {
+                    inv.stored -= repair_cost;
+                }
+            }
+            if let Some(cg_mut) = self.persisted.objectives.get_mut_cow(&args.oid) {
+                cg_mut.warehouse.damaged = false;
+                cg_mut.health = 100;
+            }
+        } else {
+            bail!("Not enough supplies at Naval Base to repair carrier (need {}, have {})", repair_cost, available);
+        }
+        Ok(None)
+    }
+
+    fn carrier_respawn(&mut self, _lua: MizLua, _spctx: &SpawnCtx, _idx: &MizIndex, args: WithObj<()>) -> Result<Option<GroupId>> {
+        // First collect all needed info without borrowing
+        let (nb_id, respawn_cost, available, health) = {
+            let cg = objective!(self, &args.oid)?;
+            match &cg.kind {
+                ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. } => {
+                    let respawn_cost = self.ephemeral.cfg.carrier.as_ref().map(|c| c.respawn_cost).unwrap_or(15000);
+                    let nb = objective!(self, nb_id)?;
+                    let available = nb.warehouse.equipment.get("SUPPLIES").map(|inv| inv.stored).unwrap_or(0);
+                    (*nb_id, respawn_cost, available, cg.health)
+                }
+                _ => bail!("Objective is not a carrier group")
+            }
+        };
+
+        if health > 0 {
+            bail!("Carrier is not destroyed (health: {}%)", health);
+        }
+
+        if available >= respawn_cost {
+            // Now mutate
+            if let Some(nb_mut) = self.persisted.objectives.get_mut_cow(&nb_id) {
+                if let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow("SUPPLIES") {
+                    inv.stored -= respawn_cost;
+                }
+            }
+            if let Some(cg_mut) = self.persisted.objectives.get_mut_cow(&args.oid) {
+                cg_mut.health = 100;
+                cg_mut.warehouse.damaged = false;
+            }
+        } else {
+            bail!("Not enough supplies at Naval Base to respawn carrier (need {}, have {})", respawn_cost, available);
+        }
+        Ok(None)
     }
 
     fn tanker_mission<'lua>(
@@ -2033,7 +2199,10 @@ impl Db {
                     | ActionKind::Bomber(_)
                     | ActionKind::Nuke(_)
                     | ActionKind::LogisticsRepair(_)
-                    | ActionKind::LogisticsTransfer(_) => bail!("not a race tracker"),
+                    | ActionKind::LogisticsTransfer(_)
+                    | ActionKind::CarrierWaypoint
+                    | ActionKind::CarrierRepair
+                    | ActionKind::CarrierRespawn => bail!("not a race tracker"),
                 }
             }
             DeployKind::Crate { .. }
@@ -2631,7 +2800,10 @@ impl Db {
                     | ActionKind::CruiseMissileWaypoint
                     | ActionKind::TankerWaypoint
                     | ActionKind::DroneWaypoint
-                    | ActionKind::Nuke(_) => {
+                    | ActionKind::Nuke(_)
+                    | ActionKind::CarrierWaypoint
+                    | ActionKind::CarrierRepair
+                    | ActionKind::CarrierRespawn => {
                         bail!("should not be a group")
                     }
                 }

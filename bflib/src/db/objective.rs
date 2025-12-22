@@ -53,7 +53,7 @@ use dcso3::{
 };
 use enumflags2::BitFlags;
 use fxhash::{FxHashMap, FxHashSet};
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use mlua::{Value, prelude::*};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
@@ -68,6 +68,7 @@ pub enum ObjGroupClass {
     Sr,
     Armor,
     Services,
+    Naval,
     Other,
 }
 
@@ -75,7 +76,7 @@ impl ObjGroupClass {
     pub fn is_services(&self) -> bool {
         match self {
             Self::Services => true,
-            Self::Logi | Self::Aaa | Self::Lr | Self::Mr | Self::Sr | Self::Armor | Self::Other => {
+            Self::Logi | Self::Aaa | Self::Lr | Self::Mr | Self::Sr | Self::Armor | Self::Naval | Self::Other => {
                 false
             }
         }
@@ -90,6 +91,7 @@ impl ObjGroupClass {
             | Self::Mr
             | Self::Sr
             | Self::Armor
+            | Self::Naval
             | Self::Other => false,
         }
     }
@@ -141,6 +143,20 @@ impl From<&str> for ObjGroupClass {
             || s.starts_with("ARMOR")
         {
             ObjGroupClass::Armor
+        } else if s.starts_with("BCARRIER")
+            || s.starts_with("RCARRIER")
+            || s.starts_with("NCARRIER")
+            || s.starts_with("CARRIER")
+            || s.starts_with("BESCORT")
+            || s.starts_with("RESCORT")
+            || s.starts_with("NESCORT")
+            || s.starts_with("ESCORT")
+            || s.starts_with("BNAVALAA")
+            || s.starts_with("RNAVALAA")
+            || s.starts_with("NNAVALAA")
+            || s.starts_with("NAVALAA")
+        {
+            ObjGroupClass::Naval
         } else {
             ObjGroupClass::Other
         }
@@ -327,14 +343,14 @@ impl Objective {
     pub fn is_farp(&self) -> bool {
         match &self.kind {
             ObjectiveKind::Farp { .. } => true,
-            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics => false,
+            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Factory { .. } => false,
         }
     }
 
     pub fn is_airbase(&self) -> bool {
         match &self.kind {
             ObjectiveKind::Airbase => true,
-            ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Logistics => false,
+            ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Factory { .. } => false,
         }
     }
 
@@ -352,6 +368,10 @@ impl Objective {
             .get(name)
             .map(|i| *i)
             .unwrap_or_default()
+    }
+
+    pub fn pos(&self) -> Vector2 {
+        self.zone.pos()
     }
 }
 
@@ -396,6 +416,9 @@ impl Db {
                 let mut alive = 0;
                 let mut logi_total = 0;
                 let mut logi_alive = 0;
+                let mut has_supply_ship = false;
+                let mut supply_ship_alive = false;
+
                 for gid in groups {
                     let group = group!(self, gid)?;
                     let logi = match &group.class {
@@ -404,6 +427,17 @@ impl Db {
                     };
                     for uid in &group.units {
                         let unit = unit!(self, uid)?;
+
+                        // Check if this is a supply ship (for carrier groups)
+                        if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
+                            if group.name.contains("SUPPLY") || unit.name.contains("SUPPLY") {
+                                has_supply_ship = true;
+                                if !unit.dead {
+                                    supply_ship_alive = true;
+                                }
+                            }
+                        }
+
                         if !unit.tags.contains(UnitTag::Invincible) {
                             total += 1;
                             if logi {
@@ -418,8 +452,17 @@ impl Db {
                         }
                     }
                 }
+
                 let health = ((alive as f32 / total as f32) * 100.).trunc() as u8;
-                let logi = ((logi_alive as f32 / logi_total as f32) * 100.).trunc() as u8;
+                let mut logi = ((logi_alive as f32 / logi_total as f32) * 100.).trunc() as u8;
+
+                // For carrier groups with supply ships, logi becomes 0 if supply ship is dead
+                if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
+                    if has_supply_ship && !supply_ship_alive {
+                        logi = 0;
+                    }
+                }
+
                 Ok((health, logi))
             })
             .unwrap_or(Ok((0, 0)))
@@ -670,15 +713,17 @@ impl Db {
         self.init_farp_warehouse(&oid)
             .context("initializing farp warehouse")?;
         self.setup_supply_lines().context("setup supply lines")?;
+        let now = chrono::Utc::now();
         let trs = self
-            .deliver_supplies_from_logistics_hubs()
+            .deliver_supplies_from_logistics_hubs(lua, now)
             .context("distributing supplies")?;
         match &mut self.ephemeral.logistics_stage {
             LogiStage::ExecuteTransfers { transfers } => transfers.extend(trs),
             stage @ (LogiStage::Complete { .. }
             | LogiStage::Init
             | LogiStage::SyncFromWarehouses { .. }
-            | LogiStage::SyncToWarehouses { .. }) => {
+            | LogiStage::SyncToWarehouses { .. }
+            | LogiStage::ManageConvoys { .. }) => {
                 *stage = LogiStage::ExecuteTransfers { transfers: trs };
             }
         }
@@ -693,14 +738,24 @@ impl Db {
         oid: &ObjectiveId,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        let (kind, health, logi) = {
+        let (kind, health, logi, prev_logi) = {
             let obj = objective!(self, oid)?;
+            let prev_logi = obj.logi;
             let (health, logi) = self.compute_objective_status(obj)?;
             let obj = objective_mut!(self, oid)?;
             obj.health = health;
             obj.logi = logi;
             obj.last_change_ts = now;
-            (obj.kind.clone(), health, logi)
+
+            // For carrier groups, mark warehouse as damaged if supply ship is destroyed (logi drops to 0)
+            if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
+                if prev_logi > 0 && logi == 0 {
+                    obj.warehouse.damaged = true;
+                    info!("[CARRIER_SUPPLY] {} warehouse disabled - supply ship destroyed", obj.name);
+                }
+            }
+
+            (obj.kind.clone(), health, logi, prev_logi)
         };
         self.ephemeral.stat(Stat::ObjectiveHealth {
             id: *oid,
@@ -1221,7 +1276,7 @@ impl Db {
                 self.capture_warehouse(lua, oid)
                     .context("capturing warehouse")?;
                 self.setup_supply_lines().context("setup supply lines")?;
-                self.deliver_supplies_from_logistics_hubs()
+                self.deliver_supplies_from_logistics_hubs(lua, now)
                     .context("delivering supplies")?;
                 let mut ucids: SmallVec<[Ucid; 1]> = smallvec![];
                 for (_, ucid, troop_origin, gid) in gids {
@@ -1273,6 +1328,7 @@ impl Db {
     pub fn update_objectives_markup(&mut self) -> Result<()> {
         let mut pos_update: SmallVec<[(ObjectiveId, String); 8]> = smallvec![];
         for (id, obj) in &self.persisted.objectives {
+            // Track mobile FARPs
             if let ObjectiveKind::Farp {
                 mobile: true,
                 pad_template,
@@ -1282,11 +1338,18 @@ impl Db {
             {
                 pos_update.push((*id, pad_template.clone()))
             }
+            // Track Carrier Groups
+            if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &obj.kind
+                && !carrier_template.is_empty()
+                && let Zone::Circle { .. } = &obj.zone
+            {
+                pos_update.push((*id, carrier_template.clone()))
+            }
         }
         let mut moved: SmallVec<[ObjectiveId; 8]> = smallvec![];
-        for (oid, pad) in pos_update {
+        for (oid, template) in pos_update {
             let obj = objective_mut!(self, oid)?;
-            if let Some(uid) = self.persisted.units_by_name.get(&pad)
+            if let Some(uid) = self.persisted.units_by_name.get(&template)
                 && let Some(unit) = self.persisted.units.get(uid)
                 && let Zone::Circle { pos, .. } = &mut obj.zone
                 && pos != &unit.pos
@@ -1300,5 +1363,136 @@ impl Db {
                 .update_objective_markup(&self.persisted, obj, &moved)
         }
         Ok(())
+    }
+
+    pub fn check_carrier_repairs(&mut self, now: DateTime<Utc>) -> Result<Vec<(ObjectiveId, String)>> {
+        let repair_time_secs = self.ephemeral.cfg.carrier
+            .as_ref()
+            .map(|c| c.repair_time as i64)
+            .unwrap_or(600);
+
+        let mut completed_repairs: Vec<(ObjectiveId, String)> = Vec::new();
+
+        for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
+            if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut obj.kind {
+                if let Some(start_time) = repair_start_time {
+                    let elapsed = (now - *start_time).num_seconds();
+
+                    if elapsed >= repair_time_secs {
+                        // Repair complete! Resurrect all dead units and respawn groups
+                        obj.health = 100;
+                        obj.logi = 100;
+                        obj.warehouse.damaged = false;
+                        *repair_start_time = None;
+
+                        completed_repairs.push((*oid, obj.name.clone().into()));
+                        info!("[CARRIER_REPAIR] {} fully repaired - resurrecting units", obj.name);
+                        self.ephemeral.dirty();
+                    } else {
+                        // Log progress at certain intervals
+                        let progress_pct = (elapsed as f64 / repair_time_secs as f64 * 100.0) as u8;
+                        if elapsed % 300 == 0 && elapsed > 0 {  // Every 5 minutes
+                            let remaining = repair_time_secs - elapsed;
+                            debug!("[CARRIER_REPAIR] {} repair progress: {}% ({} minutes remaining)",
+                                  obj.name, progress_pct, remaining / 60);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Resurrect and respawn units for completed repairs
+        for (oid, _) in &completed_repairs {
+            let obj = objective!(self, oid)?;
+            if let Some(groups) = obj.groups.get(&obj.owner) {
+                for gid in groups {
+                    let group = group!(self, gid)?;
+                    info!("[CARRIER_REPAIR] Repairing group {} in objective {}", group.name, obj.name);
+
+                    // Resurrect all dead units
+                    for uid in &group.units {
+                        let unit = unit_mut!(self, uid)?;
+                        if unit.dead {
+                            info!("[CARRIER_REPAIR] Resurrecting unit {}", unit.name);
+                            unit.dead = false;
+                        }
+                    }
+
+                    // Queue group for respawning
+                    info!("[CARRIER_REPAIR] Queueing group {} for respawn", group.name);
+                    self.ephemeral.push_spawn(*gid);
+                }
+            }
+        }
+
+        Ok(completed_repairs)
+    }
+
+    pub fn check_carrier_group_capture(&mut self, now: DateTime<Utc>) -> Result<Vec<(ObjectiveId, Side, Side)>> {
+        let mut captures: Vec<(ObjectiveId, Side, Side)> = Vec::new();
+
+        for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
+            if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
+                // Carrier groups can be captured when health reaches 0
+                if obj.health == 0 && obj.logi == 0 {
+                    // Find the closest enemy group to determine new owner
+                    let carrier_pos = obj.zone.pos();
+                    let mut closest_enemy: Option<(Side, f64)> = None;
+
+                    for (uid, unit) in &self.persisted.units {
+                        if unit.side != obj.owner && !unit.dead {
+                            let dist_sq = na::distance_squared(&carrier_pos.into(), &unit.pos.into());
+                            if dist_sq <= (10000.0_f64).powi(2) {  // Within 10km
+                                if let Some((_, best_dist)) = closest_enemy {
+                                    if dist_sq < best_dist {
+                                        closest_enemy = Some((unit.side, dist_sq));
+                                    }
+                                } else {
+                                    closest_enemy = Some((unit.side, dist_sq));
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some((new_owner, _)) = closest_enemy {
+                        if new_owner != obj.owner {
+                            let old_owner = obj.owner;
+                            obj.owner = new_owner;
+                            obj.health = 50;  // Captured carrier starts at 50% health
+                            obj.logi = 100;   // Full logistics
+                            obj.last_change_ts = now;
+
+                            // IMPORTANT: Keep warehouse inventory! When Red captures a US carrier,
+                            // they inherit Blue aircraft (F/A-18, F-14, etc.). This creates strategic
+                            // value in capturing enemy carriers.
+                            obj.warehouse.damaged = false;
+
+                            // Transfer all groups to new owner
+                            if let Some(old_groups) = obj.groups.remove_cow(&old_owner) {
+                                for gid in &old_groups {
+                                    if let Some(group) = self.persisted.groups.get_mut_cow(gid) {
+                                        group.side = new_owner;
+                                        // Mark all units as alive for new owner
+                                        for uid in &group.units {
+                                            if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
+                                                unit.dead = false;
+                                                unit.side = new_owner;
+                                            }
+                                        }
+                                    }
+                                }
+                                obj.groups.insert_cow(new_owner, old_groups);
+                            }
+
+                            captures.push((*oid, old_owner, new_owner));
+                            info!("[CARRIER_CAPTURE] {} captured by {:?} from {:?}, warehouse aircraft transferred intact", obj.name, new_owner, old_owner);
+                            self.ephemeral.dirty();
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(captures)
     }
 }

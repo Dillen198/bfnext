@@ -47,6 +47,7 @@ pub(super) struct ObjectiveMarkup {
     label: MarkId,
     pos: Vector2,
     supply_connections: FxHashMap<ObjectiveId, MarkId>,
+    status_box: MarkId,
 }
 
 fn text_color(side: Side, a: f32) -> Color {
@@ -67,6 +68,24 @@ fn objective_label(name: &str, obj: &Objective) -> CompactString {
         obj.fuel,
         obj.points
     )
+}
+
+fn health_status_color(health: u8) -> Color {
+    match health {
+        80..=100 => Color::green(0.8),
+        40..=79 => Color::yellow(0.8),
+        1..=39 => Color::red(0.8),
+        0 => Color::gray(0.8),
+        _ => Color::white(0.8),
+    }
+}
+
+fn supply_status_color(supply: u8) -> Color {
+    match supply {
+        70..=100 => Color::green(0.8),
+        30..=69 => Color::yellow(0.8),
+        _ => Color::red(0.8),
+    }
 }
 
 fn arrow_coords(obj: &Objective, dst: &Objective) -> (Vector2, Vector2) {
@@ -96,11 +115,13 @@ impl ObjectiveMarkup {
             threatened_ring,
             supply_connections,
             label,
+            status_box,
         } = self;
         msgq.delete_mark(owner_ring);
         msgq.delete_mark(threatened_ring);
         msgq.delete_mark(capturable_ring);
         msgq.delete_mark(label);
+        msgq.delete_mark(status_box);
         for (_, id) in supply_connections {
             msgq.delete_mark(id)
         }
@@ -176,10 +197,10 @@ impl ObjectiveMarkup {
     pub(super) fn new(cfg: &Cfg, msgq: &mut MsgQ, obj: &Objective, persisted: &Persisted) -> Self {
         let text_color = |a| text_color(obj.owner, a);
         let all_spec = match obj.kind {
-            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics => {
+            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. } => {
                 SideFilter::All
             }
-            ObjectiveKind::Farp { .. } => obj.owner.into(),
+            ObjectiveKind::Farp { .. } | ObjectiveKind::CarrierGroup { .. } => obj.owner.into(),
         };
         let mut t = ObjectiveMarkup::default();
         t.side = obj.owner;
@@ -310,8 +331,9 @@ impl ObjectiveMarkup {
                 text: objective_label(&t.name, obj).into(),
             },
         );
+
         match obj.kind {
-            ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob => (),
+            ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Factory { .. } | ObjectiveKind::CarrierGroup { .. } => (),
             ObjectiveKind::Logistics => {
                 for oid in &obj.warehouse.destination {
                     let id = MarkId::new();
@@ -335,6 +357,29 @@ impl ObjectiveMarkup {
                         None,
                     );
                     t.supply_connections.insert(*oid, id);
+                }
+            }
+            ObjectiveKind::NavalBase => {
+                for oid in &obj.warehouse.destination {
+                    let dst_obj = &persisted.objectives[oid];
+                    if let ObjectiveKind::CarrierGroup { .. } = dst_obj.kind {
+                        let id = MarkId::new();
+                        let (spos, dpos) = arrow_coords(obj, dst_obj);
+                        msgq.arrow_to(
+                            dst_obj.owner.into(),
+                            id,
+                            ArrowSpec {
+                                start: LuaVec3(Vector3::new(dpos.x, 0., dpos.y)),
+                                end: LuaVec3(Vector3::new(spos.x, 0., spos.y)),
+                                color: Color::gray(0.5),
+                                fill_color: Color::gray(0.5),
+                                line_type: LineType::NoLine,
+                                read_only: true,
+                            },
+                            None,
+                        );
+                        t.supply_connections.insert(*oid, id);
+                    }
                 }
             }
         }

@@ -19,6 +19,7 @@ mod bg;
 mod chatcmd;
 mod db;
 mod ewr;
+mod frontline;
 mod jtac;
 mod landcache;
 mod menu;
@@ -262,6 +263,8 @@ struct Context {
     landcache: LandCache,
     ewr: Ewr,
     jtac: Jtacs,
+    frontline: Option<frontline::FrontLine>,
+    last_frontline_update: DateTime<Utc>,
 }
 
 impl Context {
@@ -822,8 +825,10 @@ fn advise_captureable(ctx: &mut Context) -> Result<()> {
     Ok(())
 }
 
-fn advise_captured(ctx: &mut Context, lua: MizLua, ts: DateTime<Utc>) -> Result<()> {
+fn advise_captured(ctx: &mut Context, lua: MizLua, ts: DateTime<Utc>) -> Result<bool> {
+    let mut has_captures = false;
     for (side, oid) in ctx.db.check_capture(lua, ts)? {
+        has_captures = true;
         let name = ctx.db.objective(&oid)?.name();
         let mcap = format_compact!("our forces have captured {}", name);
         let mlost = format_compact!("we have lost {}", name);
@@ -831,7 +836,7 @@ fn advise_captured(ctx: &mut Context, lua: MizLua, ts: DateTime<Utc>) -> Result<
         ctx.db.ephemeral.msgs().panel_to_side(15, false, side.opposite(), mlost);
         ctx.captureable.remove(&oid);
     }
-    Ok(())
+    Ok(has_captures)
 }
 
 fn generate_ewr_reports(ctx: &mut Context, now: DateTime<Utc>) -> Result<()> {
@@ -1017,6 +1022,44 @@ fn award_periodic_points(ctx: &mut Context, ts: DateTime<Utc>) {
     }
 }
 
+fn update_frontline(ctx: &mut Context, ts: DateTime<Utc>, force_update: bool) {
+    // Check if frontline feature is enabled
+    let frontline_cfg = match &ctx.db.ephemeral.cfg.frontline {
+        Some(cfg) if cfg.enabled => cfg.clone(),
+        _ => {
+            // If disabled and we have a frontline instance, remove it
+            if let Some(fl) = ctx.frontline.take() {
+                info!("Frontline disabled, removing markers");
+                fl.remove(ctx.db.ephemeral.msgs());
+            }
+            return;
+        }
+    };
+
+    // Initialize frontline if not already present
+    if ctx.frontline.is_none() {
+        info!("Initializing dynamic frontline system");
+        ctx.frontline = Some(frontline::FrontLine::new(frontline_cfg.clone()));
+    }
+
+    // Only update when forced (on objective change) since update_on_objective_change_only is always enabled
+    if !force_update {
+        return;
+    }
+
+    ctx.last_frontline_update = ts;
+
+    // Update the frontline drawing
+    if let Some(fl) = &mut ctx.frontline {
+        // Collect current unit positions for pressure calculation
+        fl.collect_unit_pressure(&ctx.db.persisted, ts);
+
+        if fl.update(&ctx.db.persisted, ctx.db.ephemeral.msgs(), ts) {
+            info!("Frontline updated successfully");
+        }
+    }
+}
+
 fn run_slow_timed_events(
     lua: MizLua,
     ctx: &mut Context,
@@ -1119,6 +1162,42 @@ fn run_slow_timed_events(
         }
         record_perf(&mut perf.remark_objectives, ts);
         let ts = Utc::now();
+        if let Err(e) = ctx.db.run_factory_production(ts) {
+            error!("could not run factory production {e}")
+        }
+        record_perf(&mut perf.slow_timed, ts);
+        let ts = Utc::now();
+        match ctx.db.check_carrier_repairs(ts) {
+            Ok(completed) => {
+                for (oid, name) in completed {
+                    if let Ok(obj) = ctx.db.objective(&oid) {
+                        let owner = obj.owner();
+                        let msg = format_compact!("{} has been fully repaired and is operational", name);
+                        ctx.db.ephemeral.msgs().panel_to_side(15, false, owner, msg);
+                    }
+                }
+            }
+            Err(e) => error!("could not check carrier repairs {e}")
+        }
+        record_perf(&mut perf.slow_timed, ts);
+        let ts = Utc::now();
+        match ctx.db.check_carrier_group_capture(ts) {
+            Ok(captures) => {
+                for (oid, old_owner, new_owner) in captures {
+                    if let Ok(obj) = ctx.db.objective(&oid) {
+                        let msg_old = format_compact!("{} has been captured by the enemy!", obj.name());
+                        let msg_new = format_compact!("You have captured {} with its aircraft! Carrier at 50% health", obj.name());
+                        ctx.db.ephemeral.msgs().panel_to_side(20, true, old_owner, msg_old);
+                        ctx.db.ephemeral.msgs().panel_to_side(20, true, new_owner, msg_new);
+                    }
+                }
+            }
+            Err(e) => error!("could not check carrier captures {e}")
+        }
+        record_perf(&mut perf.slow_timed, ts);
+        let ts = Utc::now();
+        update_frontline(ctx, ts, false);
+        let ts = Utc::now();
         update_jtac_contacts(ctx, lua);
         record_perf(&mut perf.update_jtac_contacts, ts);
         let now = Utc::now();
@@ -1191,10 +1270,19 @@ fn run_timed_events(
     }
     record_perf(&mut perf.spawn_queue, now);
     let now = Utc::now();
-    if let Err(e) = advise_captured(ctx, lua, ts) {
-        error!("error advise captured {:?}", e)
-    }
+    let has_captures = match advise_captured(ctx, lua, ts) {
+        Ok(captures) => captures,
+        Err(e) => {
+            error!("error advise captured {:?}", e);
+            false
+        }
+    };
     record_perf(&mut perf.advise_captured, now);
+
+    // Update frontline when objectives are captured
+    if has_captures {
+        update_frontline(ctx, ts, true);
+    }
     let now = Utc::now();
     if let Err(e) = advise_captureable(ctx) {
         error!("error advise capturable {:?}", e)
@@ -1330,6 +1418,18 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
     }));
     info!("spawning units");
     ctx.respawn_groups(lua, &miz).context("setting up the mission after load")?;
+
+    // Initialize dynamic frontline system if frontline is enabled
+    if let Some(frontline_cfg) = &ctx.db.ephemeral.cfg.frontline {
+        if frontline_cfg.enabled {
+            info!("Initializing dynamic frontline system");
+            let frontline = frontline::FrontLine::new(frontline_cfg.clone());
+            ctx.frontline = Some(frontline);
+            // Perform initial frontline calculation
+            update_frontline(ctx, Utc::now(), true);
+        }
+    }
+
     info!("starting timed events");
     start_timed_events(ctx, lua, path).context("starting the timed events loop")?;
     Ok(())

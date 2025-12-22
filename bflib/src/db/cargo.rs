@@ -147,8 +147,12 @@ pub enum C130CargoState {
 pub enum C130CargoType {
     /// Deployable crate (name maps to deployable)
     Deployable { name: String },
-    /// Supply transfer crate
-    SupplyTransfer,
+    /// Supply transfer crate for fuel
+    SupplyTransferFuel,
+    /// Supply transfer crate for weapons/equipment
+    SupplyTransferWeapons,
+    /// Carrier repair crate
+    CarrierRepair,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -618,10 +622,17 @@ impl Db {
             nearby: &SmallVec<[Cifo; 8]>,
         ) -> SmallVec<[(GroupId, Cifo); 2]> {
             if let Some(whcfg) = db.ephemeral.cfg.warehouse.as_ref() {
-                let cr = &whcfg.supply_transfer_crate[&side];
+                // Check both fuel and weapons transfer crates
+                let mut valid_names = Vec::new();
+                if let Some(fuel_crate) = whcfg.supply_transfer_fuel_crate.get(&side) {
+                    valid_names.push(&fuel_crate.name);
+                }
+                if let Some(weapons_crate) = whcfg.supply_transfer_weapons_crate.get(&side) {
+                    valid_names.push(&weapons_crate.name);
+                }
                 nearby
                     .iter()
-                    .filter(|ci| ci.crate_def.name == cr.name)
+                    .filter(|ci| valid_names.contains(&&ci.crate_def.name))
                     .map(|ci| (ci.group, ci.clone()))
                     .collect()
             } else {
@@ -1456,12 +1467,86 @@ impl Db {
         let ucid = maybe!(self.ephemeral.players_by_slot, *slot, "no such player")?.clone();
         let dep_idx = self.deployable_idx(side)?;
 
-        // Get crate definition (check supply transfer FIRST to avoid name conflicts)
+        // Get crate definition (check supply transfer and carrier repair FIRST to avoid name conflicts)
         let (crate_def, crate_type) = if let Some(whcfg) = &self.ephemeral.cfg.warehouse {
-            let supply_crate = &whcfg.supply_transfer_crate[&side];
-            if supply_crate.name == crate_name {
-                debug!("[C130_CARGO] Found supply transfer crate: {}, weight={}kg", crate_name, supply_crate.weight);
-                (supply_crate.clone(), C130CargoType::SupplyTransfer)
+            // Check fuel transfer crate
+            if let Some(fuel_crate) = whcfg.supply_transfer_fuel_crate.get(&side) {
+                if fuel_crate.name == crate_name {
+                    debug!("[C130_CARGO] Found fuel transfer crate: {}, weight={}kg", crate_name, fuel_crate.weight);
+                    (fuel_crate.clone(), C130CargoType::SupplyTransferFuel)
+                } else if let Some(weapons_crate) = whcfg.supply_transfer_weapons_crate.get(&side) {
+                    if weapons_crate.name == crate_name {
+                        debug!("[C130_CARGO] Found weapons transfer crate: {}, weight={}kg", crate_name, weapons_crate.weight);
+                        (weapons_crate.clone(), C130CargoType::SupplyTransferWeapons)
+                    } else if let Some(carrier_repair_crate) = whcfg.carrier_repair_crate.get(&side) {
+                        if carrier_repair_crate.name == crate_name {
+                            debug!("[C130_CARGO] Found carrier repair crate: {}, weight={}kg", crate_name, carrier_repair_crate.weight);
+                            (carrier_repair_crate.clone(), C130CargoType::CarrierRepair)
+                        } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+                            debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+                            (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
+                        } else {
+                            error!("[C130_CARGO] Crate not found: {}", crate_name);
+                            bail!("crate {} not found", crate_name)
+                        }
+                    } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+                        debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+                        (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
+                    } else {
+                        error!("[C130_CARGO] Crate not found: {}", crate_name);
+                        bail!("crate {} not found", crate_name)
+                    }
+                } else if let Some(carrier_repair_crate) = whcfg.carrier_repair_crate.get(&side) {
+                    if carrier_repair_crate.name == crate_name {
+                        debug!("[C130_CARGO] Found carrier repair crate: {}, weight={}kg", crate_name, carrier_repair_crate.weight);
+                        (carrier_repair_crate.clone(), C130CargoType::CarrierRepair)
+                    } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+                        debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+                        (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
+                    } else {
+                        error!("[C130_CARGO] Crate not found: {}", crate_name);
+                        bail!("crate {} not found", crate_name)
+                    }
+                } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+                    debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+                    (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
+                } else {
+                    error!("[C130_CARGO] Crate not found: {}", crate_name);
+                    bail!("crate {} not found", crate_name)
+                }
+            } else if let Some(weapons_crate) = whcfg.supply_transfer_weapons_crate.get(&side) {
+                if weapons_crate.name == crate_name {
+                    debug!("[C130_CARGO] Found weapons transfer crate: {}, weight={}kg", crate_name, weapons_crate.weight);
+                    (weapons_crate.clone(), C130CargoType::SupplyTransferWeapons)
+                } else if let Some(carrier_repair_crate) = whcfg.carrier_repair_crate.get(&side) {
+                    if carrier_repair_crate.name == crate_name {
+                        debug!("[C130_CARGO] Found carrier repair crate: {}, weight={}kg", crate_name, carrier_repair_crate.weight);
+                        (carrier_repair_crate.clone(), C130CargoType::CarrierRepair)
+                    } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+                        debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+                        (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
+                    } else {
+                        error!("[C130_CARGO] Crate not found: {}", crate_name);
+                        bail!("crate {} not found", crate_name)
+                    }
+                } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+                    debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+                    (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
+                } else {
+                    error!("[C130_CARGO] Crate not found: {}", crate_name);
+                    bail!("crate {} not found", crate_name)
+                }
+            } else if let Some(carrier_repair_crate) = whcfg.carrier_repair_crate.get(&side) {
+                if carrier_repair_crate.name == crate_name {
+                    debug!("[C130_CARGO] Found carrier repair crate: {}, weight={}kg", crate_name, carrier_repair_crate.weight);
+                    (carrier_repair_crate.clone(), C130CargoType::CarrierRepair)
+                } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+                    debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+                    (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
+                } else {
+                    error!("[C130_CARGO] Crate not found: {}", crate_name);
+                    bail!("crate {} not found", crate_name)
+                }
             } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
                 debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
                 (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
@@ -1469,12 +1554,15 @@ impl Db {
                 error!("[C130_CARGO] Crate not found: {}", crate_name);
                 bail!("crate {} not found", crate_name)
             }
-        } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-            debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-            (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
         } else {
-            error!("[C130_CARGO] Crate not found: {}", crate_name);
-            bail!("crate {} not found", crate_name)
+            // No warehouse config, just try deployable
+            if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+                debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+                (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
+            } else {
+                error!("[C130_CARGO] Crate not found: {}", crate_name);
+                bail!("crate {} not found", crate_name)
+            }
         };
 
         // Get player position and direction (using same method as regular cargo system)
@@ -1622,8 +1710,12 @@ impl Db {
                         None => continue,
                     };
 
-                    let crate_type = if crate_name.contains("Supply Transfer") {
-                        C130CargoType::SupplyTransfer
+                    let crate_type = if crate_name.contains("Fuel Transfer") {
+                        C130CargoType::SupplyTransferFuel
+                    } else if crate_name.contains("Weapons Transfer") {
+                        C130CargoType::SupplyTransferWeapons
+                    } else if crate_name.contains("Carrier Repair") {
+                        C130CargoType::CarrierRepair
                     } else {
                         C130CargoType::Deployable { name: crate_name.clone() }
                     };
@@ -1938,8 +2030,8 @@ impl Db {
                     }
                 }
             }
-            C130CargoType::SupplyTransfer => {
-                // Handle supply transfer - find nearest objective and add supplies directly
+            C130CargoType::SupplyTransferFuel => {
+                // Handle fuel-only transfer
                 let objectives: Vec<(ObjectiveId, Vector2)> = self.persisted
                     .objectives
                     .into_iter()
@@ -1961,85 +2053,29 @@ impl Db {
                     .map(|(oid, _)| *oid);
 
                 if let Some(oid) = nearest_oid {
-                    // Get warehouse config and extract needed data before mutable borrows
-                    let (transfer_amount, exempt_airframes) = {
-                        let whcfg = self.ephemeral.cfg.warehouse.as_ref()
-                            .ok_or_else(|| anyhow!("Warehouse not configured"))?;
-                        (whcfg.supply_transfer_size, whcfg.exempt_airframes.clone())
-                    };
+                    let transfer_amount = self.ephemeral.cfg.warehouse.as_ref()
+                        .ok_or_else(|| anyhow!("Warehouse not configured"))?
+                        .supply_transfer_size;
 
-                    // Get source objective warehouse to copy capacities (optional - may not exist)
                     let source_warehouse = self.persisted.objectives.get(&crate_data.origin)
                         .map(|obj| obj.warehouse.clone());
 
-                    // Sync destination warehouse to get current state
                     let (obj_mut, wh) = self.sync_warehouse_to_objective(lua, oid)
-                        .context("syncing warehouse for supply transfer")?;
+                        .context("syncing warehouse for fuel transfer")?;
 
-                    // Add supplies directly to warehouse (transfer_amount% of capacity for each item)
                     let mut added_items = Vec::new();
 
-                    debug!("[SUPPLY_TRANSFER] Objective {:?} has {} equipment types and {} liquid types",
-                        oid, obj_mut.warehouse.equipment.len(), obj_mut.warehouse.liquids.len());
-
-                    // Add equipment (non-exempt items)
-                    for (name, inv) in obj_mut.warehouse.equipment.iter_mut_cow() {
-                        // Skip airframes - they should never be transferred via supply crates
-                        // Airframes don't have prefixes like "weapons.", "vehicles." - they're just aircraft type names
-                        let is_airframe = !name.starts_with("weapons.")
-                            && !name.starts_with("vehicles.")
-                            && !name.starts_with("Fortifications.");
-
-                        if is_airframe || exempt_airframes.contains(name.as_str()) {
-                            debug!("[SUPPLY_TRANSFER] Skipping airframe: {}", name);
-                            continue;
-                        }
-
-                        debug!("[SUPPLY_TRANSFER] Checking {}: capacity={}, stored={}", name, inv.capacity, inv.stored);
-
-                        // If capacity is 0, copy it from source objective (but only for non-airframes)
-                        if inv.capacity == 0 {
-                            if let Some(ref src_wh) = source_warehouse {
-                                if let Some(source_inv) = src_wh.equipment.get(name) {
-                                    // Should already be filtered above, but double-check
-                                    if source_inv.capacity > 0 {
-                                        inv.capacity = source_inv.capacity;
-                                        // Add transfer_amount% of capacity
-                                        let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
-                                        inv.stored = amount;
-                                        added_items.push(format!("{}: +{} (capacity initialized from source)", name, amount));
-                                        info!("[SUPPLY_TRANSFER] Initialized {} with capacity {} from source, added {}",
-                                            name, inv.capacity, amount);
-                                    }
-                                }
-                            }
-                        } else if inv.capacity > inv.stored {
-                            let available_space = inv.capacity - inv.stored;
-                            let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
-                            let to_add = amount.min(available_space);
-
-                            if to_add > 0 {
-                                inv.stored += to_add;
-                                added_items.push(format!("{}: +{}", name, to_add));
-                                info!("[SUPPLY_TRANSFER] Added {} x{} to {:?}", name, to_add, oid);
-                            }
-                        }
-                    }
-
-                    // Add liquids (fuel)
+                    // ONLY add liquids (fuel)
                     for (liq_type, inv) in obj_mut.warehouse.liquids.iter_mut_cow() {
-                        // If capacity is 0, copy it from source objective
                         if inv.capacity == 0 {
                             if let Some(ref src_wh) = source_warehouse {
                                 if let Some(source_inv) = src_wh.liquids.get(liq_type) {
                                     if source_inv.capacity > 0 {
                                         inv.capacity = source_inv.capacity;
-                                        // Add transfer_amount% of capacity
                                         let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
                                         inv.stored = amount;
-                                        added_items.push(format!("{:?}: +{} (capacity initialized from source)", liq_type, amount));
-                                        info!("[SUPPLY_TRANSFER] Initialized {:?} with capacity {} from source, added {}",
-                                            liq_type, inv.capacity, amount);
+                                        added_items.push(format!("{:?}: +{}", liq_type, amount));
+                                        info!("[FUEL_TRANSFER] Initialized {:?} with capacity {}, added {}", liq_type, inv.capacity, amount);
                                     }
                                 }
                             }
@@ -2051,14 +2087,179 @@ impl Db {
                             if to_add > 0 {
                                 inv.stored += to_add;
                                 added_items.push(format!("{:?}: +{}", liq_type, to_add));
-                                info!("[SUPPLY_TRANSFER] Added {:?} x{} to {:?}", liq_type, to_add, oid);
+                                info!("[FUEL_TRANSFER] Added {:?} x{} to {:?}", liq_type, to_add, oid);
                             }
                         }
                     }
 
-                    // Sync back to DCS warehouse
                     use crate::db::logistics::sync_obj_to_warehouse;
                     sync_obj_to_warehouse(&obj_mut, &wh)?;
+                    self.ephemeral.dirty();
+                    self.ephemeral.c130_crates.remove(crate_name);
+                    self.delete_group(&crate_data.group_id)?;
+
+                    let obj_name = self.persisted.objectives.get(&oid)
+                        .map(|o| o.name.clone())
+                        .unwrap_or_else(|| String::from("Unknown"));
+
+                    let msg = if added_items.is_empty() {
+                        String::from(format!("Fuel transfer crate delivered to {} (tanks full)", obj_name))
+                    } else {
+                        String::from(format!("Fuel transfer crate delivered to {}", obj_name))
+                    };
+
+                    info!("[FUEL_TRANSFER] {}", msg);
+                    Ok(msg)
+                } else {
+                    bail!("No friendly objectives found for fuel transfer")
+                }
+            }
+            C130CargoType::SupplyTransferWeapons => {
+                // Handle weapons/equipment-only transfer
+                let objectives: Vec<(ObjectiveId, Vector2)> = self.persisted
+                    .objectives
+                    .into_iter()
+                    .filter_map(|(oid, obj)| {
+                        if obj.owner == crate_data.side {
+                            Some((*oid, obj.zone.pos()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                let nearest_oid = objectives
+                    .iter()
+                    .min_by_key(|(_, pos)| {
+                        let dist = na::distance(&(*pos).into(), &crate_data.last_pos.into());
+                        (dist * 1000.0) as i64
+                    })
+                    .map(|(oid, _)| *oid);
+
+                if let Some(oid) = nearest_oid {
+                    let (transfer_amount, exempt_airframes) = {
+                        let whcfg = self.ephemeral.cfg.warehouse.as_ref()
+                            .ok_or_else(|| anyhow!("Warehouse not configured"))?;
+                        (whcfg.supply_transfer_size, whcfg.exempt_airframes.clone())
+                    };
+
+                    let source_warehouse = self.persisted.objectives.get(&crate_data.origin)
+                        .map(|obj| obj.warehouse.clone());
+
+                    let (obj_mut, wh) = self.sync_warehouse_to_objective(lua, oid)
+                        .context("syncing warehouse for weapons transfer")?;
+
+                    let mut added_items = Vec::new();
+
+                    // ONLY add equipment (non-exempt items, no airframes)
+                    for (name, inv) in obj_mut.warehouse.equipment.iter_mut_cow() {
+                        let is_airframe = !name.starts_with("weapons.")
+                            && !name.starts_with("vehicles.")
+                            && !name.starts_with("Fortifications.");
+
+                        if is_airframe || exempt_airframes.contains(name.as_str()) {
+                            continue;
+                        }
+
+                        if inv.capacity == 0 {
+                            if let Some(ref src_wh) = source_warehouse {
+                                if let Some(source_inv) = src_wh.equipment.get(name) {
+                                    if source_inv.capacity > 0 {
+                                        inv.capacity = source_inv.capacity;
+                                        let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
+                                        inv.stored = amount;
+                                        added_items.push(format!("{}: +{}", name, amount));
+                                        info!("[WEAPONS_TRANSFER] Initialized {} with capacity {}, added {}", name, inv.capacity, amount);
+                                    }
+                                }
+                            }
+                        } else if inv.capacity > inv.stored {
+                            let available_space = inv.capacity - inv.stored;
+                            let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
+                            let to_add = amount.min(available_space);
+
+                            if to_add > 0 {
+                                inv.stored += to_add;
+                                added_items.push(format!("{}: +{}", name, to_add));
+                                info!("[WEAPONS_TRANSFER] Added {} x{} to {:?}", name, to_add, oid);
+                            }
+                        }
+                    }
+
+                    use crate::db::logistics::sync_obj_to_warehouse;
+                    sync_obj_to_warehouse(&obj_mut, &wh)?;
+                    self.ephemeral.dirty();
+                    self.ephemeral.c130_crates.remove(crate_name);
+                    self.delete_group(&crate_data.group_id)?;
+
+                    let obj_name = self.persisted.objectives.get(&oid)
+                        .map(|o| o.name.clone())
+                        .unwrap_or_else(|| String::from("Unknown"));
+
+                    let msg = if added_items.is_empty() {
+                        String::from(format!("Weapons transfer crate delivered to {} (warehouse full)", obj_name))
+                    } else {
+                        String::from(format!("Weapons transfer crate delivered to {}", obj_name))
+                    };
+
+                    info!("[WEAPONS_TRANSFER] {}", msg);
+                    Ok(msg)
+                } else {
+                    bail!("No friendly objectives found for weapons transfer")
+                }
+            }
+            C130CargoType::CarrierRepair => {
+                use bfprotocols::db::objective::ObjectiveKind;
+
+                // Find nearest carrier group
+                let carriers: Vec<(ObjectiveId, Vector2)> = self.persisted
+                    .objectives
+                    .into_iter()
+                    .filter_map(|(oid, obj)| {
+                        if obj.owner == crate_data.side {
+                            if let ObjectiveKind::CarrierGroup { .. } = obj.kind {
+                                Some((*oid, obj.zone.pos()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                let nearest_carrier = carriers
+                    .iter()
+                    .min_by_key(|(_, pos)| {
+                        let dist = na::distance(&(*pos).into(), &crate_data.last_pos.into());
+                        (dist * 1000.0) as i64
+                    })
+                    .map(|(oid, _)| *oid);
+
+                if let Some(carrier_id) = nearest_carrier {
+                    use chrono::Utc;
+
+                    // Get carrier name before mutation
+                    let carrier_name = self.persisted.objectives.get(&carrier_id)
+                        .map(|o| o.name.clone())
+                        .unwrap_or_else(|| String::from("Unknown"));
+
+                    let now = Utc::now();
+                    let repair_time_secs = self.ephemeral.cfg.carrier
+                        .as_ref()
+                        .map(|c| c.repair_time)
+                        .unwrap_or(600);
+
+                    // Start the repair process
+                    if let Some(carrier_obj) = self.persisted.objectives.get_mut_cow(&carrier_id) {
+                        if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut carrier_obj.kind {
+                            *repair_start_time = Some(now);
+                            info!("[CARRIER_REPAIR] Started repairing {} - will complete in {} seconds ({} minutes)",
+                                  carrier_name, repair_time_secs, repair_time_secs / 60);
+                        }
+                    } else {
+                        bail!("Carrier objective not found")
+                    }
 
                     // Mark database as changed
                     self.ephemeral.dirty();
@@ -2069,21 +2270,15 @@ impl Db {
                     // Delete the physical crate
                     self.delete_group(&crate_data.group_id)?;
 
-                    // Get objective name for message (without holding a borrow)
-                    let obj_name = self.persisted.objectives.get(&oid)
-                        .map(|o| o.name.clone())
-                        .unwrap_or_else(|| String::from("Unknown"));
-
-                    let msg = if added_items.is_empty() {
-                        String::from(format!("Supply transfer crate delivered to {} (warehouse full)", obj_name))
-                    } else {
-                        String::from(format!("Supply transfer crate delivered to {}", obj_name))
-                    };
-
-                    info!("[SUPPLY_TRANSFER] {}", msg);
+                    let msg = String::from(format!(
+                        "Carrier repair crate delivered to {} - repair in progress ({}m)",
+                        carrier_name,
+                        repair_time_secs / 60
+                    ));
+                    info!("[CARRIER_REPAIR] {}", msg);
                     Ok(msg)
                 } else {
-                    bail!("No friendly objectives found for supply transfer")
+                    bail!("No friendly carrier groups found for repair")
                 }
             }
         }

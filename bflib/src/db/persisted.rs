@@ -49,6 +49,12 @@ pub struct Persisted {
     #[serde(default)]
     pub logistics_hubs: SetS<ObjectiveId>,
     #[serde(default)]
+    pub naval_bases: SetS<ObjectiveId>,
+    #[serde(default)]
+    pub carrier_groups: SetS<ObjectiveId>,
+    #[serde(default)]
+    pub factories: SetS<ObjectiveId>,
+    #[serde(default)]
     pub nukes_used: u32,
     #[serde(default)]
     pub logistics_ticks_since_delivery: u32,

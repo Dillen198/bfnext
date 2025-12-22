@@ -373,17 +373,32 @@ pub(super) fn add_cargo_menu_for_group(
         },
     )?;
     if let Some(whcfg) = &cfg.warehouse {
-        let cr = &whcfg.supply_transfer_crate[&side];
-        mc.add_command_for_group(
-            group,
-            cr.name.clone(),
-            Some(logi.clone()),
-            spawn_crate,
-            ArgTuple {
-                fst: group,
-                snd: cr.name.clone(),
-            },
-        )?;
+        // Add fuel transfer crate menu item
+        if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(&side) {
+            mc.add_command_for_group(
+                group,
+                fuel_cr.name.clone(),
+                Some(logi.clone()),
+                spawn_crate,
+                ArgTuple {
+                    fst: group,
+                    snd: fuel_cr.name.clone(),
+                },
+            )?;
+        }
+        // Add weapons transfer crate menu item
+        if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(&side) {
+            mc.add_command_for_group(
+                group,
+                weapons_cr.name.clone(),
+                Some(logi.clone()),
+                spawn_crate,
+                ArgTuple {
+                    fst: group,
+                    snd: weapons_cr.name.clone(),
+                },
+            )?;
+        }
     }
     let mut created_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
@@ -449,20 +464,52 @@ pub(super) fn add_c130_cargo_menu_for_group(
 
     let crates_menu = mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
 
-    // Add logistics submenu (supply transfer)
+    // Add logistics submenu (supply transfer and carrier repair)
     if let Some(whcfg) = &cfg.warehouse {
         let logi = mc.add_submenu_for_group(group, "Logistics".into(), Some(crates_menu.clone()))?;
-        let cr = &whcfg.supply_transfer_crate[&side];
-        mc.add_command_for_group(
-            group,
-            cr.name.clone(),
-            Some(logi.clone()),
-            spawn_c130_crate,
-            ArgTuple {
-                fst: group,
-                snd: cr.name.clone(),
-            },
-        )?;
+
+        // Fuel transfer crate
+        if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(side) {
+            mc.add_command_for_group(
+                group,
+                fuel_cr.name.clone(),
+                Some(logi.clone()),
+                spawn_c130_crate,
+                ArgTuple {
+                    fst: group,
+                    snd: fuel_cr.name.clone(),
+                },
+            )?;
+        }
+
+        // Weapons transfer crate
+        if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(side) {
+            mc.add_command_for_group(
+                group,
+                weapons_cr.name.clone(),
+                Some(logi.clone()),
+                spawn_c130_crate,
+                ArgTuple {
+                    fst: group,
+                    snd: weapons_cr.name.clone(),
+                },
+            )?;
+        }
+
+        // Carrier repair crate
+        if !whcfg.carrier_repair_crate.is_empty() {
+            let cr = &whcfg.carrier_repair_crate[&side];
+            mc.add_command_for_group(
+                group,
+                cr.name.clone(),
+                Some(logi.clone()),
+                spawn_c130_crate,
+                ArgTuple {
+                    fst: group,
+                    snd: cr.name.clone(),
+                },
+            )?;
+        }
     }
 
     // Add all deployable crates (organized by path, excluding repair crates)

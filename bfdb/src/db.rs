@@ -122,7 +122,6 @@ pub(crate) struct Objective {
 
 #[derive(Clone)]
 struct Pilots {
-    db: Db,
     pilots: Tree<Ucid, Pilot>,
     aggregates: Tree<(Ucid, Vehicle, RoundId), Aggregates>,
     by_name: Tree<String, ArrayVec<Ucid, 8>>,
@@ -134,7 +133,6 @@ struct Pilots {
 impl Pilots {
     fn new(db: &Db) -> Result<Self> {
         Ok(Self {
-            db: db.clone(),
             pilots: Tree::open(db, "pilots")?,
             aggregates: Tree::open(db, "aggregates")?,
             by_name: Tree::open(db, "by_name")?,
@@ -311,6 +309,7 @@ struct StatCtxInner {
 struct StatCtx(Option<StatCtxInner>);
 
 impl StatCtx {
+    #[allow(dead_code)]
     fn get(&self) -> Result<&StatCtxInner> {
         match &self.0 {
             Some(t) => Ok(t),

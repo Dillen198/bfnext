@@ -494,10 +494,17 @@ pub struct WarehouseConfig {
     /// How many logistics ticks does it take before supplies are delivered
     /// from outside
     pub ticks_per_delivery: u32,
-    /// The supply transfer crate
-    pub supply_transfer_crate: FxHashMap<Side, Crate>,
+    /// The supply transfer crate for fuel
+    #[serde(default)]
+    pub supply_transfer_fuel_crate: FxHashMap<Side, Crate>,
+    /// The supply transfer crate for weapons/equipment
+    #[serde(default)]
+    pub supply_transfer_weapons_crate: FxHashMap<Side, Crate>,
     /// The percentage of supply that is transfered by a transfer crate
     pub supply_transfer_size: u8,
+    /// The carrier repair crate
+    #[serde(default)]
+    pub carrier_repair_crate: FxHashMap<Side, Crate>,
     /// The name of the warehouse that is the source of supply every
     /// restart
     pub supply_source: FxHashMap<Side, String>,
@@ -505,6 +512,9 @@ pub struct WarehouseConfig {
     /// warehouse check
     #[serde(default)]
     pub exempt_airframes: FxHashSet<String>,
+    /// Convoy system configuration (optional, defaults to disabled)
+    #[serde(default)]
+    pub convoy: Option<ConvoyConfig>,
 }
 
 impl WarehouseConfig {
@@ -517,8 +527,59 @@ impl WarehouseConfig {
     }
 }
 
+/// Configuration for supply convoy system
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConvoyConfig {
+    /// Enable convoy system. If false, LOGISTICS_DETACHED objectives get no automatic supplies.
+    pub enabled: bool,
+    /// Truck unit type per side (e.g., "M939" for Blue, "Ural-375" for Red)
+    pub truck_template: FxHashMap<Side, String>,
+    /// How many trucks per convoy
+    pub trucks_per_convoy: u32,
+    /// Convoy speed in km/h
+    pub speed_kph: f64,
+    /// How often to spawn convoys (in logistics ticks)
+    pub spawn_interval_ticks: u32,
+    /// Maximum convoys that can be in transit at once per side
+    pub max_concurrent_convoys: u32,
+    /// Minimum distance from destination to consider "delivered" (meters)
+    #[serde(default = "default_convoy_delivery_distance")]
+    pub delivery_distance: f64,
+    /// How often to check convoy status (in seconds)
+    #[serde(default = "default_convoy_check_interval")]
+    pub check_interval_secs: u32,
+}
+
+fn default_convoy_delivery_distance() -> f64 {
+    500.0
+}
+
+fn default_convoy_check_interval() -> u32 {
+    10
+}
+
+impl Default for ConvoyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            truck_template: FxHashMap::default(),
+            trucks_per_convoy: 5,
+            speed_kph: 60.0,
+            spawn_interval_ticks: 2,
+            max_concurrent_convoys: 10,
+            delivery_distance: default_convoy_delivery_distance(),
+            check_interval_secs: default_convoy_check_interval(),
+        }
+    }
+}
+
 fn default_tk_window() -> u32 {
     24
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -569,6 +630,10 @@ pub struct PointsCfg {
     /// interval must be positive. The default is (0, 0)
     #[serde(default)]
     pub periodic_point_gain: (i32, u32),
+    /// Whether to award points for kills. If false, no points are awarded
+    /// for air or ground kills. Default is true.
+    #[serde(default = "default_true")]
+    pub award_kill_points: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -660,6 +725,9 @@ pub enum ActionKind {
     LogisticsTransfer(AiPlaneCfg),
     Move(MoveCfg),
     Rtb,
+    CarrierWaypoint,
+    CarrierRepair,
+    CarrierRespawn,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -777,6 +845,82 @@ fn default_ewr_delay() -> u32 {
     60
 }
 
+fn default_frontline_on_change_only() -> bool {
+    true
+}
+
+fn default_frontline_samples() -> usize {
+    100
+}
+
+fn default_territory_zone_alpha() -> f32 {
+    0.15  // 15% opacity for subtle territory shading
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrontLineConfig {
+    /// Enable territory zone drawing on F10 map
+    pub enabled: bool,
+    /// Update only when objectives change ownership (recommended for best performance)
+    #[serde(default = "default_frontline_on_change_only")]
+    pub update_on_objective_change_only: bool,
+    /// Number of sample points for Voronoi grid calculation (higher = finer detail but slower)
+    /// Range: 50-200 recommended
+    #[serde(default = "default_frontline_samples")]
+    pub samples_per_boundary: usize,
+    /// Transparency for filled territory zones (0.0-1.0, where 1.0 is opaque)
+    /// Recommended: 0.1-0.3 for subtle shading
+    #[serde(default = "default_territory_zone_alpha")]
+    pub territory_zone_alpha: f32,
+}
+
+impl Default for FrontLineConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            update_on_objective_change_only: default_frontline_on_change_only(),
+            samples_per_boundary: default_frontline_samples(),
+            territory_zone_alpha: default_territory_zone_alpha(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryCfg {
+    pub production_rate: u32,
+    pub production_interval: u32,
+}
+
+/// Configuration for a carrier group
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CarrierGroupCfg {
+    /// The template name in the mission file (e.g., "BCARRIER", "RCARRIER")
+    pub template: String,
+    /// The display name for this carrier group (e.g., "CVN-73 Washington")
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CarrierCfg {
+    pub repair_cost: u32,
+    pub respawn_cost: u32,
+    pub movement_speed: f64,
+    /// Time in seconds to complete carrier repair (default: 600 = 10 minutes)
+    #[serde(default = "default_carrier_repair_time")]
+    pub repair_time: u32,
+    /// Carrier group definitions - maps template names to display names
+    /// If not specified, carriers are detected by BCARRIER/RCARRIER/NCARRIER prefix
+    #[serde(default)]
+    pub groups: Vec<CarrierGroupCfg>,
+}
+
+fn default_carrier_repair_time() -> u32 {
+    600
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -911,6 +1055,15 @@ pub struct Cfg {
     /// EWR track update delay in seconds (only used when ewr_mode is Delayed)
     #[serde(default = "default_ewr_delay")]
     pub ewr_delay: u32,
+    /// Front line drawing configuration
+    #[serde(default)]
+    pub frontline: Option<FrontLineConfig>,
+    /// Factory production configuration
+    #[serde(default)]
+    pub factory: Option<FactoryCfg>,
+    /// Carrier group configuration
+    #[serde(default)]
+    pub carrier: Option<CarrierCfg>,
 }
 
 impl Cfg {
