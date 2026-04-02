@@ -14,7 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{Db, ephemeral::DeployableIndex, group::SpawnedGroup, objective::Objective};
+use super::{Db, ephemeral::DeployableIndex, group::{SpawnedGroup, SpawnedUnit}, objective::Objective};
 use anyhow::Context as _;
 use crate::{
     db::group::DeployKind,
@@ -24,7 +24,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{CargoConfig, Crate, Deployable, DeployableKind, LimitEnforceTyp, Troop, Vehicle},
+    cfg::{C130Vehicle, CargoConfig, Crate, Deployable, DeployableKind, LimitEnforceTyp, Troop, Vehicle},
     db::{
         group::GroupId,
         objective::{ObjectiveId, ObjectiveKind},
@@ -42,6 +42,7 @@ use dcso3::{
     object::DcsObject,
     radians_to_degrees,
     trigger::Trigger,
+    unit::Unit,
 };
 use enumflags2::BitFlags;
 use fxhash::FxHashMap;
@@ -153,6 +154,8 @@ pub enum C130CargoType {
     SupplyTransferWeapons,
     /// Carrier repair crate
     CarrierRepair,
+    /// Vehicle that can be loaded and airdropped
+    Vehicle { name: String, template: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,8 +180,10 @@ pub struct C130Cargo {
     pub spawn_time: DateTime<Utc>,
     /// Time when crate entered airborne state (for tracking)
     pub airborne_time: Option<DateTime<Utc>>,
-    /// The actual crate definition from config
+    /// The actual crate definition from config (for crates)
     pub crate_def: Crate,
+    /// The vehicle definition from config (for vehicles)
+    pub vehicle_def: Option<C130Vehicle>,
 }
 
 impl C130Cargo {
@@ -204,9 +209,36 @@ impl C130Cargo {
             spawn_time: Utc::now(),
             airborne_time: None,
             crate_def,
+            vehicle_def: None,
         }
     }
 
+    pub fn new_vehicle(
+        name: String,
+        group_id: GroupId,
+        crate_type: C130CargoType,
+        origin: ObjectiveId,
+        player: Ucid,
+        side: Side,
+        pos: Vector2,
+        crate_def: Crate,
+        vehicle_def: C130Vehicle,
+    ) -> Self {
+        Self {
+            name,
+            group_id,
+            crate_type,
+            state: C130CargoState::Spawned,
+            origin,
+            player,
+            side,
+            last_pos: pos,
+            spawn_time: Utc::now(),
+            airborne_time: None,
+            crate_def,
+            vehicle_def: Some(vehicle_def),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -275,8 +307,9 @@ impl Db {
         slot: &SlotId,
         name: &str,
     ) -> Result<SlotStats> {
-        debug!("db spawning crate");
+        info!("[CRATE_SPAWN] Spawning crate '{}' for slot {:?}", name, slot);
         let st = SlotStats::get(self, lua, slot)?;
+        info!("[CRATE_SPAWN] Player pos=({:.0},{:.0}), side={:?}, in_air={}", st.point.x, st.point.y, st.side, st.in_air);
         if st.in_air {
             bail!("you must land to spawn crates")
         }
@@ -296,7 +329,18 @@ impl Db {
                 crates.into_iter().next().map(|id| *id)
             }
         });
-        let (oid, _) = self.point_near_logistics(st.side, st.point)?;
+        let (oid, _) = self.point_near_logistics(st.side, st.point)
+            .map_err(|e| {
+                // Log nearby objectives for debugging
+                for (oid, obj) in &self.persisted.objectives {
+                    let dist = na::distance(&st.point.into(), &obj.zone.pos().into());
+                    if dist < 10000.0 {
+                        info!("[CRATE_SPAWN] Nearby objective {:?} '{}' owner={:?} logi={} dist={:.0}m contains={}",
+                              oid, obj.name, obj.owner, obj.logi(), dist, obj.zone.contains(st.point));
+                    }
+                }
+                e
+            })?;
         let dep_idx = self
             .ephemeral
             .deployable_idx
@@ -345,7 +389,10 @@ impl Db {
         if let Some(gid) = to_delete {
             self.delete_group(&gid)?;
         }
-        self.add_and_queue_group(
+        // Check if player is on a carrier - if so, link the crate to the carrier unit
+        let carrier_link = self.find_carrier_unit_at_position(lua, st.point, st.side)?;
+        info!("[CRATE_SPAWN] Carrier link result: {:?}", carrier_link);
+        let group_id = self.add_and_queue_group(
             &SpawnCtx::new(lua)?,
             idx,
             st.side,
@@ -355,6 +402,13 @@ impl Db {
             BitFlags::empty(),
             None,
         )?;
+        info!("[CRATE_SPAWN] Crate group created: {:?}, template='{}'", group_id, template);
+        if let Some(link_name) = carrier_link {
+            info!("[CRATE_SPAWN] Linking crate {:?} to carrier unit '{}'", group_id, link_name);
+            self.ephemeral.carrier_linked_groups.insert(group_id, link_name);
+        } else {
+            info!("[CRATE_SPAWN] No carrier detected, crate will spawn without ship link");
+        }
         Ok(st)
     }
 
@@ -1451,6 +1505,65 @@ impl Db {
         Ok(si.objective)
     }
 
+    /// Find the carrier unit at a given position if the position is near a carrier group.
+    /// Returns the DCS unit name of the nearest carrier unit if found within range.
+    /// This is used to link static objects (like crates) to the carrier so they move with it.
+    ///
+    /// Uses actual tracked unit positions instead of the static objective zone,
+    /// so it works correctly even after the carrier has moved from its initial position.
+    fn find_carrier_unit_at_position(&self, lua: MizLua, pos: Vector2, side: Side) -> Result<Option<String>> {
+        // Maximum distance from a carrier unit to consider the player "on" the carrier.
+        // Carrier decks are ~300m long, so 500m gives comfortable margin.
+        const MAX_CARRIER_DISTANCE: f64 = 500.0;
+
+        for (_, obj) in &self.persisted.objectives {
+            if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &obj.kind {
+                if obj.owner != side || carrier_template.is_empty() {
+                    continue;
+                }
+
+                // Find carrier groups matching this template and check actual unit positions
+                for (_, group) in &self.persisted.groups {
+                    if group.template_name.starts_with(carrier_template.as_str()) && group.side == side {
+                        // Check if any live unit in this group is near the given position
+                        let mut nearest: Option<(f64, &SpawnedUnit)> = None;
+                        for uid in group.units.into_iter() {
+                            if let Some(unit) = self.persisted.units.get(uid) {
+                                if !unit.dead {
+                                    // Use the tracked unit position (updated every tick)
+                                    let dist = na::distance(&pos.into(), &unit.pos.into());
+                                    if dist <= MAX_CARRIER_DISTANCE {
+                                        if nearest.is_none() || dist < nearest.unwrap().0 {
+                                            nearest = Some((dist, unit));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some((dist, unit)) = nearest {
+                            info!("[CARRIER_LINK] Position is {:.0}m from carrier unit '{}' in group '{}' (template: '{}')",
+                                  dist, unit.template_name, group.name, group.template_name);
+                            // Try template_name first (original miz name), then bflib name
+                            if Unit::get_by_name(lua, &unit.template_name).is_ok() {
+                                info!("[CARRIER_LINK] Found carrier unit '{}' via template_name", unit.template_name);
+                                return Ok(Some(unit.template_name.clone()));
+                            }
+                            if Unit::get_by_name(lua, &unit.name).is_ok() {
+                                info!("[CARRIER_LINK] Found carrier unit '{}' via bflib name", unit.name);
+                                return Ok(Some(unit.name.clone()));
+                            }
+                            info!("[CARRIER_LINK] Unit '{}' (bflib '{}') not found in DCS by either name — carrier may not be spawned yet",
+                                  unit.template_name, unit.name);
+                        }
+                    }
+                }
+            }
+        }
+        info!("[CARRIER_LINK] No carrier found near position ({:.0},{:.0}) for side {:?}", pos.x, pos.y, side);
+        Ok(None)
+    }
+
     /// Spawn a single physical crate near the player's aircraft
     pub fn spawn_c130_crate(
         &mut self,
@@ -1600,6 +1713,12 @@ impl Db {
         debug!("[C130_CARGO] Spawning with template='{}', dir=({:.2}, {:.2})",
                template, dir.x, dir.y);
 
+        // Check if player is on a carrier - if so, link the crate to the carrier unit
+        let carrier_link_id = self.find_carrier_unit_at_position(lua, point, side)?;
+        if carrier_link_id.is_some() {
+            debug!("[C130_CARGO] Player is on carrier, will link crate to carrier unit");
+        }
+
         let group_id = self.add_and_queue_group(
             &SpawnCtx::new(lua)?,
             idx,
@@ -1610,6 +1729,12 @@ impl Db {
             BitFlags::empty(),
             None,
         )?;
+
+        // Register carrier link if spawning on a carrier
+        if let Some(link_id) = carrier_link_id {
+            debug!("[C130_CARGO] Registering carrier link for group {:?} to unit {}", group_id, link_id);
+            self.ephemeral.carrier_linked_groups.insert(group_id, link_id);
+        }
 
         debug!("[C130_CARGO] Crate spawned successfully: group_id={:?}", group_id);
 
@@ -1639,6 +1764,163 @@ impl Db {
             group_name, group_id, self.ephemeral.c130_crates.len());
 
         Ok(String::from(format!("Spawned {} crate. Use DCS cargo menu (F8 -> Ground Crew -> Cargo) to load it.", crate_name)))
+    }
+
+    /// Spawn a vehicle as physical cargo near the player's aircraft
+    /// Vehicles can be loaded using DCS's F8 Ground Crew cargo menu
+    pub fn spawn_c130_vehicle(
+        &mut self,
+        lua: MizLua,
+        idx: &MizIndex,
+        slot: &SlotId,
+        vehicle_name: String,
+        side: Side,
+        origin: ObjectiveId,
+    ) -> Result<String> {
+        debug!("[C130_CARGO] spawn_c130_vehicle called: vehicle={}, side={:?}, origin={:?}, slot={:?}",
+            vehicle_name, side, origin, slot);
+
+        // Get player UCID
+        let ucid = maybe!(self.ephemeral.players_by_slot, *slot, "no such player")?.clone();
+
+        // Get vehicle configuration from c130_cargo.loadable_vehicles
+        let vehicle_cfg = self.ephemeral.cfg.c130_cargo
+            .as_ref()
+            .ok_or_else(|| anyhow!("C-130 cargo not configured"))?
+            .loadable_vehicles
+            .get(&side)
+            .ok_or_else(|| anyhow!("No loadable vehicles configured for {:?}", side))?
+            .iter()
+            .find(|v| v.name == vehicle_name)
+            .ok_or_else(|| anyhow!("Vehicle {} not found in loadable vehicles", vehicle_name))?
+            .clone();
+
+        debug!("[C130_CARGO] Found vehicle config: {}, template={}, weight={}kg",
+            vehicle_cfg.name, vehicle_cfg.template, vehicle_cfg.weight);
+
+        // Check points cost if enabled
+        if self.ephemeral.cfg.points.is_some() && vehicle_cfg.cost > 0 {
+            if let Some(player) = self.persisted.players.get(&ucid) {
+                if let Some(obj) = self.persisted.objectives.get(&origin) {
+                    let points = max(0, player.points) + obj.points;
+                    if points < vehicle_cfg.cost as i32 {
+                        bail!("Insufficient points. Need {} points, have {}", vehicle_cfg.cost, points);
+                    }
+                }
+            }
+        }
+
+        // Get player position and direction (same method as regular cargo system)
+        let unit = self.ephemeral.slot_instance_unit(lua, slot)?;
+        let pos = unit.get_position()?;
+        let point = Vector2::new(pos.p.x, pos.p.z);
+        let dir = Vector2::new(pos.x.x, pos.x.z);
+        debug!("[C130_CARGO] Player position: x={:.2}, z={:.2}, dir=({:.2}, {:.2})",
+               point.x, point.y, dir.x, dir.y);
+
+        // Spawn the vehicle using C-130 cargo template (static cargo object for DCS loading)
+        let template = self
+            .ephemeral
+            .cfg
+            .c130_cargo_template
+            .get(&side)
+            .ok_or_else(|| anyhow!("missing c130_cargo_template for {:?}", side))?
+            .clone();
+
+        let spawnpos = SpawnLoc::AtPos {
+            pos: point,
+            offset_direction: dir,
+            group_heading: azumith2d(dir),
+        };
+
+        // Create a dummy crate for tracking (weight matches vehicle)
+        let dummy_crate = Crate {
+            name: vehicle_cfg.name.clone().into(),
+            weight: vehicle_cfg.weight,
+            required: 1,
+            pos_unit: None,
+            max_drop_height_agl: 1000,
+            max_drop_speed: 150,
+        };
+
+        let dk = DeployKind::Crate {
+            origin,
+            player: ucid.clone(),
+            spec: dummy_crate.clone(),
+        };
+
+        debug!("[C130_CARGO] Spawning vehicle cargo with template='{}'", template);
+
+        // Check if player is on a carrier - if so, link the cargo to the carrier unit
+        let carrier_link_id = self.find_carrier_unit_at_position(lua, point, side)?;
+        if carrier_link_id.is_some() {
+            debug!("[C130_CARGO] Player is on carrier, will link vehicle cargo to carrier unit");
+        }
+
+        let group_id = self.add_and_queue_group(
+            &SpawnCtx::new(lua)?,
+            idx,
+            side,
+            spawnpos,
+            &template,
+            dk,
+            BitFlags::empty(),
+            None,
+        )?;
+
+        // Register carrier link if spawning on a carrier
+        if let Some(link_id) = carrier_link_id {
+            debug!("[C130_CARGO] Registering carrier link for vehicle group {:?} to unit {}", group_id, link_id);
+            self.ephemeral.carrier_linked_groups.insert(group_id, link_id);
+        }
+
+        debug!("[C130_CARGO] Vehicle cargo spawned successfully: group_id={:?}", group_id);
+
+        // Get the group name for tracking
+        let group_name = match self.persisted.groups.get(&group_id) {
+            Some(g) => g.name.clone(),
+            None => {
+                error!("[C130_CARGO] Failed to get group name for {:?}", group_id);
+                bail!("Failed to get group name for spawned vehicle cargo")
+            }
+        };
+
+        // Create C130Cargo tracking entry with Vehicle type
+        let crate_type = C130CargoType::Vehicle {
+            name: vehicle_cfg.name.clone(),
+            template: vehicle_cfg.template.clone(),
+        };
+
+        let c130_cargo = C130Cargo::new_vehicle(
+            group_name.clone(),
+            group_id,
+            crate_type,
+            origin,
+            ucid.clone(),
+            side,
+            point,
+            dummy_crate,
+            vehicle_cfg.clone(),
+        );
+
+        self.ephemeral.c130_crates.insert(group_name.clone(), c130_cargo);
+        debug!("[C130_CARGO] Vehicle tracking added: name='{}', group_id={:?}, total_tracked={}",
+            group_name, group_id, self.ephemeral.c130_crates.len());
+
+        // Charge points if enabled
+        if self.ephemeral.cfg.points.is_some() && vehicle_cfg.cost > 0 {
+            self.charge_for_item(
+                &ucid,
+                origin,
+                vehicle_cfg.cost,
+                &format_compact!("for {} vehicle", vehicle_cfg.name),
+            );
+        }
+
+        Ok(String::from(format!(
+            "Spawned {} vehicle cargo. Use DCS cargo menu (F8 -> Ground Crew -> Cargo) to load it.",
+            vehicle_cfg.name
+        )))
     }
 
     /// Queue multiple crates for staggered spawning (used by "Spawn All" command)
@@ -1888,6 +2170,8 @@ impl Db {
                         error!("[C130_CARGO] Failed to auto-unpack physical crate '{}': {}", crate_name, e);
                     }
                 }
+            } else {
+                debug!("[C130_CARGO] Crate '{}' already consumed by a previous deployment in this batch, skipping", crate_name);
             }
         }
 
@@ -1997,22 +2281,38 @@ impl Db {
                         ) {
                             Ok(_) => {
                                 // Delete all the crates used for this deployable
-                                let mut crates_to_delete = Vec::new();
+                                let mut crates_to_delete: Vec<String> = Vec::new();
                                 for req in &deployable.crates {
                                     if let Some(crate_names) = nearby_crates.get(&req.name) {
-                                        for (i, crate_name) in crate_names.iter().enumerate() {
+                                        info!("[C130_CARGO] Crate type '{}': need {}, found {} nearby: {:?}",
+                                              req.name, req.required, crate_names.len(), crate_names);
+                                        for (i, cn) in crate_names.iter().enumerate() {
                                             if i < req.required as usize {
-                                                crates_to_delete.push(crate_name.clone());
+                                                crates_to_delete.push(cn.clone());
                                             }
                                         }
                                     }
                                 }
 
-                                for crate_name in &crates_to_delete {
-                                    if let Some(crate_to_delete) = self.ephemeral.c130_crates.remove(crate_name) {
+                                // Ensure the trigger crate itself is also in the deletion list
+                                // (it should already be, but this guarantees it in edge cases)
+                                if !crates_to_delete.iter().any(|n| n.as_str() == crate_name) {
+                                    info!("[C130_CARGO] Adding trigger crate '{}' to deletion list (was not in nearby_crates)", crate_name);
+                                    crates_to_delete.push(String::from(crate_name));
+                                }
+
+                                info!("[C130_CARGO] Deleting {} crates for deployment: {:?}", crates_to_delete.len(), crates_to_delete);
+
+                                for cn in &crates_to_delete {
+                                    if let Some(crate_to_delete) = self.ephemeral.c130_crates.remove(cn) {
+                                        info!("[C130_CARGO] Removing crate '{}' (group_id={:?}) from tracking and despawning",
+                                              cn, crate_to_delete.group_id);
                                         if let Err(e) = self.delete_group(&crate_to_delete.group_id) {
-                                            error!("[C130_CARGO] Failed to delete crate '{}': {:?}", crate_name, e);
+                                            error!("[C130_CARGO] Failed to delete crate group '{}' (group_id={:?}): {:?}",
+                                                   cn, crate_to_delete.group_id, e);
                                         }
+                                    } else {
+                                        debug!("[C130_CARGO] Crate '{}' already removed from tracking (likely processed by earlier crate in batch)", cn);
                                     }
                                 }
 
@@ -2279,6 +2579,74 @@ impl Db {
                     Ok(msg)
                 } else {
                     bail!("No friendly carrier groups found for repair")
+                }
+            }
+            C130CargoType::Vehicle { name, template } => {
+                info!("[C130_CARGO] Processing landed vehicle cargo: {} (template: {})", name, template);
+
+                // Get vehicle config from the cargo data
+                let vehicle_cfg = crate_data.vehicle_def.clone()
+                    .ok_or_else(|| anyhow!("Vehicle config not found for {}", name))?;
+
+                // Spawn location for the vehicle
+                let spawnpos = SpawnLoc::AtPos {
+                    pos: crate_data.last_pos,
+                    offset_direction: Vector2::new(0., 0.),
+                    group_heading: 0.,
+                };
+
+                // Create a synthetic deployable for tracking
+                let synthetic_deployable = Deployable {
+                    path: vehicle_cfg.path.clone(),
+                    kind: DeployableKind::Group { template: template.clone() },
+                    persist: bfprotocols::cfg::PersistTyp::Forever,
+                    limit: vehicle_cfg.limit,
+                    limit_enforce: vehicle_cfg.limit_enforce.clone(),
+                    crates: vec![],
+                    repair_crate: None,
+                    repair_cost: 0,
+                    cost: vehicle_cfg.cost,
+                    jtac: None,
+                    ewr: None,
+                    deprecated_template: None,
+                    deprecated_logistics: None,
+                };
+
+                let dk = DeployKind::Deployed {
+                    player: crate_data.player,
+                    moved_by: None,
+                    spec: synthetic_deployable,
+                    cost_fraction: 1.0,
+                    origin: Some(crate_data.origin),
+                };
+
+                match self.add_and_queue_group(
+                    &SpawnCtx::new(lua)?,
+                    idx,
+                    crate_data.side,
+                    spawnpos,
+                    &template,
+                    dk,
+                    BitFlags::empty(),
+                    None,
+                ) {
+                    Ok(gid) => {
+                        info!("[C130_CARGO] Vehicle {} spawned successfully as group {:?}", name, gid);
+
+                        // Remove the cargo tracking entry
+                        self.ephemeral.c130_crates.remove(crate_name);
+
+                        // Delete the physical cargo crate
+                        if let Err(e) = self.delete_group(&crate_data.group_id) {
+                            error!("[C130_CARGO] Failed to delete cargo crate for vehicle '{}': {:?}", name, e);
+                        }
+
+                        Ok(String::from(format!("Vehicle {} airdropped and deployed", name)))
+                    }
+                    Err(e) => {
+                        error!("[C130_CARGO] Failed to spawn vehicle '{}' from template '{}': {:?}", name, template, e);
+                        Err(anyhow!("Failed to spawn vehicle: {:?}", e))
+                    }
                 }
             }
         }

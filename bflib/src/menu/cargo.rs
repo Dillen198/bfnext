@@ -275,6 +275,23 @@ fn spawn_c130_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     Ok(())
 }
 
+fn spawn_c130_vehicle(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let origin = ctx.db.player_current_objective_id(&slot)?;
+
+    match ctx.db.spawn_c130_vehicle(lua, &ctx.idx, &slot, arg.snd.clone(), side, origin) {
+        Ok(msg) => {
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
+        }
+        Err(e) => {
+            let msg = format_compact!("Failed to spawn vehicle: {}", e);
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
+        }
+    }
+    Ok(())
+}
+
 fn spawn_all_c130_crates_for_deployable(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
@@ -570,6 +587,61 @@ pub(super) fn add_c130_cargo_menu_for_group(
                     snd: cr.name.clone(),
                 },
             )?;
+        }
+    }
+
+    // Add Vehicles submenu for loadable vehicles (if configured)
+    if let Some(c130_cfg) = &cfg.c130_cargo {
+        if let Some(vehicles) = c130_cfg.loadable_vehicles.get(side) {
+            if !vehicles.is_empty() {
+                let vehicles_menu = mc.add_submenu_for_group(group, "Vehicles".into(), Some(root.clone()))?;
+
+                // Track created vehicle path menus to organize by path
+                let mut vehicle_path_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
+
+                for vehicle in vehicles {
+                    // Determine which menu to add this vehicle to
+                    let target_menu = if vehicle.path.is_empty() {
+                        vehicles_menu.clone()
+                    } else {
+                        // Build nested menu structure, creating menus as needed
+                        let mut current_menu = vehicles_menu.clone();
+                        for path_part in &vehicle.path {
+                            let menu_key: String = path_part.clone().into();
+                            if let Some(existing) = vehicle_path_menus.get(&menu_key) {
+                                current_menu = existing.clone();
+                            } else {
+                                let new_menu = mc.add_submenu_for_group(
+                                    group,
+                                    menu_key.clone(),
+                                    Some(current_menu),
+                                )?;
+                                vehicle_path_menus.insert(menu_key, new_menu.clone());
+                                current_menu = new_menu;
+                            }
+                        }
+                        current_menu
+                    };
+
+                    // Create menu item with cost if applicable
+                    let title = if vehicle.cost > 0 {
+                        String::from(format_compact!("{} ({} pts)", vehicle.name, vehicle.cost))
+                    } else {
+                        String::from(vehicle.name.clone())
+                    };
+
+                    mc.add_command_for_group(
+                        group,
+                        title,
+                        Some(target_menu),
+                        spawn_c130_vehicle,
+                        ArgTuple {
+                            fst: group,
+                            snd: String::from(vehicle.name.clone()),
+                        },
+                    )?;
+                }
+            }
         }
     }
 

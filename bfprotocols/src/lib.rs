@@ -1,5 +1,6 @@
-pub mod stats;
-pub mod db;
+pub mod api;
 pub mod cfg;
-pub mod shots;
+pub mod db;
 pub mod perf;
+pub mod shots;
+pub mod stats;

@@ -363,6 +363,7 @@ impl Deref for StatsDb {
 }
 
 
+#[allow(dead_code)]
 fn txn_err(e: TransactionError<anyhow::Error>) -> anyhow::Error {
     match e {
         TransactionError::Abort(e) => e,

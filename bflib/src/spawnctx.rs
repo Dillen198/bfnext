@@ -26,10 +26,11 @@ use dcso3::{
     land::Land,
     object::{ClassObject, DcsObject, DcsOid, ObjectCategory},
     perf::record_perf,
+    unit::Unit,
     world::{SearchVolume, World},
 };
 use fxhash::FxHashMap;
-use log::info;
+use log::{info, warn};
 use mlua::Value;
 use serde_derive::{Deserialize, Serialize};
 
@@ -100,6 +101,9 @@ pub struct SpawnCtx<'lua> {
 pub enum Despawn {
     Group(DcsOid<ClassObject>),
     Static(String),
+    /// Destroy a static object by its DCS object ID. Used when the DCS name may
+    /// differ from the bflib name (e.g. after C-130 cargo load/drop renames).
+    StaticObject(DcsOid<ClassObject>),
 }
 
 #[derive(Debug, Clone)]
@@ -183,6 +187,13 @@ impl<'lua> SpawnCtx<'lua> {
     }
 
     pub fn spawn(&self, template: GroupInfo<'lua>) -> Result<Spawned<'lua>> {
+        self.spawn_with_link(template, None)
+    }
+
+    /// Spawn a group/static with optional linking to a ship unit.
+    /// If link_unit_id is provided and the template is a static object,
+    /// the static will be linked to that ship and move with it.
+    pub fn spawn_with_link(&self, template: GroupInfo<'lua>, link_unit_name: Option<String>) -> Result<Spawned<'lua>> {
         match GroupCategory::from_kind(template.category) {
             Some(category) => Ok(Spawned::Group(
                 self.coalition
@@ -200,6 +211,33 @@ impl<'lua> SpawnCtx<'lua> {
                     .first()
                     .context("getting first unit in static group")?
                     .clone();
+                // If linking to a ship, compute the offset from the carrier's position
+                // to the crate's intended position, then set the linkUnit field.
+                // This is non-fatal: if linking fails, we still spawn the crate at its
+                // world position so it's visible to the player.
+                if let Some(ref name) = link_unit_name {
+                    let link_result = (|| -> Result<()> {
+                        let crate_pos = unit.pos().context("getting crate template position")?;
+                        let carrier_unit = Unit::get_by_name(self.lua, name)
+                            .with_context(|| format_compact!("getting carrier unit '{}'", name))?;
+                        let carrier_pos_3d = carrier_unit.get_point()
+                            .context("getting carrier unit position")?;
+                        // DCS 3D (x,y,z) -> miz 2D (x,y): miz.x = 3d.x, miz.y = 3d.z
+                        let offset_x = crate_pos.x - carrier_pos_3d.0.x;
+                        let offset_y = crate_pos.y - carrier_pos_3d.0.z;
+                        info!("[CARRIER_LINK] Linking static to ship '{}' (crate pos: {:.0},{:.0}, carrier pos: {:.0},{:.0}, offset: {:.1},{:.1})",
+                              name, crate_pos.x, crate_pos.y, carrier_pos_3d.0.x, carrier_pos_3d.0.z, offset_x, offset_y);
+                        unit.set_link_unit(name, offset_x, offset_y)
+                            .context("setting linkUnit")?;
+                        Ok(())
+                    })();
+                    match link_result {
+                        Ok(()) => {},
+                        Err(e) => {
+                            warn!("[CARRIER_LINK] Failed to link static to carrier '{}': {:#}. Spawning without link.", name, e);
+                        }
+                    }
+                }
                 self.coalition
                     .add_static_object(template.country, unit)
                     .with_context(|| {
@@ -237,6 +275,14 @@ impl<'lua> SpawnCtx<'lua> {
                     Ok(Static::Airbase(obj)) => obj.destroy()?,
                     Ok(Static::Static(obj)) => obj.destroy()?,
                     Err(e) => info!("attempt to despawn unknown static {} {}", name, e),
+                }
+                record_perf(&mut perf.despawn, ts);
+                Ok(())
+            }
+            Despawn::StaticObject(oid) => {
+                match dcso3::object::Object::get_instance(self.lua, &oid) {
+                    Ok(obj) => obj.destroy()?,
+                    Err(e) => info!("attempt to despawn static by oid {:?} {}", oid, e),
                 }
                 record_perf(&mut perf.despawn, ts);
                 Ok(())

@@ -70,6 +70,7 @@ fn objective_label(name: &str, obj: &Objective) -> CompactString {
     )
 }
 
+#[allow(dead_code)]
 fn health_status_color(health: u8) -> Color {
     match health {
         80..=100 => Color::green(0.8),
@@ -80,6 +81,7 @@ fn health_status_color(health: u8) -> Color {
     }
 }
 
+#[allow(dead_code)]
 fn supply_status_color(supply: u8) -> Color {
     match supply {
         70..=100 => Color::green(0.8),

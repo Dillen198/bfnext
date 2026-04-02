@@ -198,6 +198,30 @@ impl<'lua> Unit<'lua> {
     pub fn skill(&self) -> Result<Skill> {
         Ok(self.raw_get("skill")?)
     }
+
+    /// Set the linkUnit and linkOffset fields to link this static object to a ship/carrier unit.
+    /// When set, the static object will move with the linked unit.
+    /// The link_unit_name should be the DCS unit name of the ship to link to (e.g. "CVN73").
+    /// linkOffset = true tells DCS that the x/y coordinates are relative offsets from the ship,
+    /// not absolute world coordinates. The offset_x/offset_y specify where to place the object
+    /// relative to the ship's position (in meters).
+    pub fn set_link_unit(&self, link_unit_name: &str, offset_x: f64, offset_y: f64) -> Result<()> {
+        self.raw_set("linkUnit", link_unit_name)?;
+        self.raw_set("linkOffset", true)?;
+        self.raw_set("x", offset_x)?;
+        self.raw_set("y", offset_y)?;
+        Ok(())
+    }
+
+    /// Clear the linkUnit field (unlink from any ship)
+    pub fn clear_link_unit(&self) -> Result<()> {
+        Ok(self.raw_set("linkUnit", Value::Nil)?)
+    }
+
+    /// Get the linkUnit field if set (unit name string)
+    pub fn link_unit(&self) -> Result<Option<String>> {
+        Ok(self.raw_get("linkUnit")?)
+    }
 }
 
 wrapped_table!(Group, None);

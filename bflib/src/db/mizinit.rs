@@ -505,7 +505,12 @@ impl Db {
                 }
             }
 
-            info!("[CARRIER_INIT] {} initialized with {} naval groups (owner: {:?})",
+            // Mark the carrier group as spawned so that cull_or_respawn_objectives
+            // doesn't try to re-spawn it (spawned is #[serde(skip)] so defaults to false on load)
+            let obj = objective_mut!(self, cg_id)?;
+            obj.spawned = true;
+
+            info!("[CARRIER_INIT] {} initialized with {} naval groups (owner: {:?}), marked as spawned",
                   cg_name,
                   matching_groups.len(),
                   cg_owner);
@@ -671,7 +676,7 @@ impl Db {
             }
         }
         for side in Side::ALL {
-            let coa = miz.coalition(side)?;
+            let _coa = miz.coalition(side)?;
             for zone in miz.triggers()? {
                 let zone = zone?;
                 let name = zone.name()?;
@@ -786,6 +791,20 @@ impl Db {
                 bail!("extra_fixed_wing_objectives {name} does not match any objective")
             }
         }
+        // Initialize and spawn carriers FIRST so they exist in DCS before crates/troops
+        // that need to be linked to them. Without this, carrier-linked crates fail to
+        // re-establish their linkUnit because Unit::get_by_name() can't find the carrier.
+        info!("[CARRIER_LOAD] Re-indexing carrier template groups after load");
+        self.init_carrier_template_groups(spctx, idx, miz, lua, false)
+            .context("re-initializing carrier template groups")?;
+        self.init_carrier_groups()
+            .context("re-initializing carrier groups")?;
+        info!("[CARRIER_LOAD] Spawning carrier groups before other entities");
+        while self.ephemeral.spawnq_len() > 0 {
+            self.ephemeral.process_spawn_queue(perf, &self.persisted, Utc::now(), idx, spctx)?
+        }
+        info!("[CARRIER_LOAD] Carrier groups spawned, now spawning deployed/logistics/crates");
+
         let mut spawn_deployed_and_logistics = || -> Result<()> {
             debug!("queue respawn deployables");
             let land = Land::singleton(spctx.lua())?;
@@ -848,13 +867,6 @@ impl Db {
             Ok(())
         };
         spawn_deployed_and_logistics().context("spawning deployed and logistics")?;
-
-        // Re-initialize carrier template groups from miz file (they're not persisted, but objectives are)
-        info!("[CARRIER_LOAD] Re-indexing carrier template groups after load");
-        self.init_carrier_template_groups(spctx, idx, miz, lua, false)
-            .context("re-initializing carrier template groups")?;
-        self.init_carrier_groups()
-            .context("re-initializing carrier groups")?;
 
         // spawn everything before setting up warehouses, so that ship warehouses will also be set up correctly
         while self.ephemeral.spawnq_len() > 0 {

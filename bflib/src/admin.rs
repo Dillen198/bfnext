@@ -24,11 +24,16 @@ use crate::{
 };
 use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
 use bfprotocols::{
+    api::{
+        CampaignState, GroupInfo, LogisticsInfo, ObjectiveDetails, ObjectiveInfo,
+        PlayerInfo, UnitInfo, WarehouseInfo,
+    },
     cfg::{Cfg, DeployableKind},
     db::{group::GroupId, objective::ObjectiveId},
     perf::Perf,
     stats::Stat,
 };
+use std::collections::HashMap;
 use chrono::prelude::*;
 use compact_str::format_compact;
 use dcso3::{
@@ -160,6 +165,51 @@ pub enum AdminCommand {
         winner: Option<Side>,
     },
     Shutdown,
+    // Query API commands
+    QueryObjectives,
+    QueryObjective {
+        name: String,
+    },
+    QueryPlayers,
+    QueryPlayer {
+        player: String,
+    },
+    QueryGroups {
+        side: Option<Side>,
+    },
+    QueryGroup {
+        id: GroupId,
+    },
+    QueryUnits {
+        group: GroupId,
+    },
+    QueryWarehouse {
+        objective: String,
+    },
+    QueryLogistics,
+    QueryCampaignState,
+    // Action API commands
+    SpawnDeployable {
+        side: Side,
+        name: String,
+        pos: Vector2,
+        heading: f64,
+    },
+    SpawnTroop {
+        side: Side,
+        name: String,
+        pos: Vector2,
+        heading: f64,
+    },
+    MoveGroup {
+        id: GroupId,
+        pos: Vector2,
+    },
+    AddPoints {
+        player: String,
+        amount: i32,
+        reason: String,
+    },
 }
 
 impl AdminCommand {
@@ -823,6 +873,487 @@ fn remark(ctx: &mut Context, objective: &String) -> Result<()> {
     Ok(())
 }
 
+// ==================== Query API Functions ====================
+
+fn query_objectives(ctx: &Context) -> Vec<ObjectiveInfo> {
+    ctx.db
+        .objectives()
+        .map(|(_, obj)| {
+            let mut group_count = HashMap::new();
+            for (side, groups) in obj.groups() {
+                group_count.insert(format!("{:?}", side), groups.len());
+            }
+            ObjectiveInfo {
+                id: obj.id,
+                name: obj.name.to_string(),
+                kind: obj.kind().name().to_string(),
+                owner: obj.owner,
+                pos: (obj.pos().x, obj.pos().y),
+                health: obj.health(),
+                logi: obj.logi(),
+                supply: obj.supply(),
+                fuel: obj.fuel(),
+                threatened: obj.threatened(),
+                group_count,
+            }
+        })
+        .collect()
+}
+
+fn query_objective_details(ctx: &Context, name: &str) -> Result<ObjectiveDetails> {
+    let oid = get_airbase(&ctx.db, name)?;
+    let obj = ctx
+        .db
+        .persisted
+        .objectives
+        .get(&oid)
+        .ok_or_else(|| anyhow!("no such objective {oid}"))?;
+
+    let mut group_count = HashMap::new();
+    for (side, groups) in obj.groups() {
+        group_count.insert(format!("{:?}", side), groups.len());
+    }
+
+    let mut equipment = HashMap::new();
+    for (item, inv) in obj.warehouse().equipment() {
+        equipment.insert(item.to_string(), inv.stored);
+    }
+
+    let mut liquids = HashMap::new();
+    for (liquid_type, inv) in obj.warehouse().liquids() {
+        liquids.insert(format!("{:?}", liquid_type), inv.stored);
+    }
+
+    Ok(ObjectiveDetails {
+        info: ObjectiveInfo {
+            id: obj.id,
+            name: obj.name.to_string(),
+            kind: obj.kind().name().to_string(),
+            owner: obj.owner,
+            pos: (obj.pos().x, obj.pos().y),
+            health: obj.health(),
+            logi: obj.logi(),
+            supply: obj.supply(),
+            fuel: obj.fuel(),
+            threatened: obj.threatened(),
+            group_count,
+        },
+        equipment,
+        liquids,
+        points: obj.points(),
+    })
+}
+
+fn query_players(ctx: &Context) -> Vec<PlayerInfo> {
+    ctx.db
+        .persisted
+        .players()
+        .into_iter()
+        .map(|(ucid, player)| {
+            let mut lives = HashMap::new();
+            for (life_type, (_, count)) in &player.lives {
+                lives.insert(format!("{:?}", life_type), *count);
+            }
+
+            let (current_slot, current_unit_type, in_air, position) =
+                match &player.current_slot {
+                    Some((slot, Some(instanced))) => (
+                        Some(slot.to_string()),
+                        Some(instanced.typ.to_string()),
+                        instanced.in_air,
+                        Some((instanced.position.p.0.x, instanced.position.p.0.z)),
+                    ),
+                    Some((slot, None)) => (Some(slot.to_string()), None, false, None),
+                    None => (None, None, false, None),
+                };
+
+            PlayerInfo {
+                ucid: ucid.clone(),
+                name: player.name.to_string(),
+                side: player.side,
+                points: player.points,
+                lives,
+                current_slot,
+                current_unit_type,
+                in_air,
+                position,
+            }
+        })
+        .collect()
+}
+
+fn query_player_details(ctx: &Context, name: &str) -> Result<PlayerInfo> {
+    let ucid = get_player_ucid(ctx, name)?;
+    let player = ctx
+        .db
+        .player(&ucid)
+        .ok_or_else(|| anyhow!("no such player {name}"))?;
+
+    let mut lives = HashMap::new();
+    for (life_type, (_, count)) in &player.lives {
+        lives.insert(format!("{:?}", life_type), *count);
+    }
+
+    let (current_slot, current_unit_type, in_air, position) = match &player.current_slot {
+        Some((slot, Some(instanced))) => (
+            Some(slot.to_string()),
+            Some(instanced.typ.to_string()),
+            instanced.in_air,
+            Some((instanced.position.p.0.x, instanced.position.p.0.z)),
+        ),
+        Some((slot, None)) => (Some(slot.to_string()), None, false, None),
+        None => (None, None, false, None),
+    };
+
+    Ok(PlayerInfo {
+        ucid,
+        name: player.name.to_string(),
+        side: player.side,
+        points: player.points,
+        lives,
+        current_slot,
+        current_unit_type,
+        in_air,
+        position,
+    })
+}
+
+fn query_groups(ctx: &Context, side_filter: Option<Side>) -> Vec<GroupInfo> {
+    ctx.db
+        .persisted
+        .groups
+        .into_iter()
+        .filter(|(_, group)| side_filter.map_or(true, |s| group.side == s))
+        .map(|(_, group)| {
+            let alive_count = group
+                .units
+                .into_iter()
+                .filter(|uid| {
+                    ctx.db
+                        .persisted
+                        .units
+                        .get(uid)
+                        .map_or(false, |u| !u.dead)
+                })
+                .count();
+
+            let center = ctx.db.group_center(&group.id).ok().map(|c| (c.x, c.y));
+
+            let (origin_type, deployed_by) = match &group.origin {
+                DeployKind::Objective { .. } | DeployKind::ObjectiveDeprecated => {
+                    ("Objective".to_string(), None)
+                }
+                DeployKind::Deployed { player, .. } => {
+                    ("Deployed".to_string(), Some(player.clone()))
+                }
+                DeployKind::Troop { player, .. } => ("Troop".to_string(), Some(player.clone())),
+                DeployKind::Crate { player, .. } => ("Crate".to_string(), Some(player.clone())),
+                DeployKind::Action { player, .. } => ("Action".to_string(), player.clone()),
+            };
+
+            GroupInfo {
+                id: group.id,
+                name: group.name.to_string(),
+                side: group.side,
+                kind: group.kind.map(|k| format!("{:?}", k)),
+                class: format!("{:?}", group.class),
+                origin_type,
+                deployed_by,
+                alive_count,
+                total_count: group.units.len(),
+                center,
+            }
+        })
+        .collect()
+}
+
+fn query_group_details(ctx: &Context, id: &GroupId) -> Result<GroupInfo> {
+    let group = ctx.db.group(id)?;
+    let alive_count = group
+        .units
+        .into_iter()
+        .filter(|uid| {
+            ctx.db
+                .persisted
+                .units
+                .get(uid)
+                .map_or(false, |u| !u.dead)
+        })
+        .count();
+
+    let center = ctx.db.group_center(&group.id).ok().map(|c| (c.x, c.y));
+
+    let (origin_type, deployed_by) = match &group.origin {
+        DeployKind::Objective { .. } | DeployKind::ObjectiveDeprecated => {
+            ("Objective".to_string(), None)
+        }
+        DeployKind::Deployed { player, .. } => ("Deployed".to_string(), Some(player.clone())),
+        DeployKind::Troop { player, .. } => ("Troop".to_string(), Some(player.clone())),
+        DeployKind::Crate { player, .. } => ("Crate".to_string(), Some(player.clone())),
+        DeployKind::Action { player, .. } => ("Action".to_string(), player.clone()),
+    };
+
+    Ok(GroupInfo {
+        id: group.id,
+        name: group.name.to_string(),
+        side: group.side,
+        kind: group.kind.map(|k| format!("{:?}", k)),
+        class: format!("{:?}", group.class),
+        origin_type,
+        deployed_by,
+        alive_count,
+        total_count: group.units.len(),
+        center,
+    })
+}
+
+fn query_units(ctx: &Context, group_id: &GroupId) -> Result<Vec<UnitInfo>> {
+    let group = ctx.db.group(group_id)?;
+    let units: Vec<UnitInfo> = group
+        .units
+        .into_iter()
+        .filter_map(|uid| ctx.db.persisted.units.get(uid))
+        .map(|unit| UnitInfo {
+            id: unit.id,
+            group_id: unit.group,
+            name: unit.name.to_string(),
+            typ: unit.typ.to_string(),
+            side: unit.side,
+            pos: (unit.pos.x, unit.pos.y),
+            heading: unit.heading,
+            alive: !unit.dead,
+        })
+        .collect();
+    Ok(units)
+}
+
+fn query_warehouse(ctx: &Context, objective_name: &str) -> Result<WarehouseInfo> {
+    let oid = get_airbase(&ctx.db, objective_name)?;
+    let obj = ctx
+        .db
+        .persisted
+        .objectives
+        .get(&oid)
+        .ok_or_else(|| anyhow!("no such objective {oid}"))?;
+
+    let mut equipment = HashMap::new();
+    for (item, inv) in obj.warehouse().equipment() {
+        equipment.insert(item.to_string(), inv.stored);
+    }
+
+    let mut liquids = HashMap::new();
+    for (liquid_type, inv) in obj.warehouse().liquids() {
+        liquids.insert(format!("{:?}", liquid_type), inv.stored);
+    }
+
+    Ok(WarehouseInfo {
+        objective_id: oid,
+        objective_name: obj.name.to_string(),
+        equipment,
+        liquids,
+    })
+}
+
+fn query_logistics(ctx: &Context) -> LogisticsInfo {
+    let stage = format!("{:?}", ctx.db.ephemeral.logistics_stage());
+    LogisticsInfo {
+        stage,
+        next_tick_seconds: None, // Could be computed from logistics timing if needed
+        pending_transfers: vec![], // Would need to track pending transfers
+    }
+}
+
+fn query_campaign_state(ctx: &Context) -> CampaignState {
+    let mut objectives_by_side: HashMap<std::string::String, usize> = HashMap::new();
+    let mut players_by_side: HashMap<std::string::String, usize> = HashMap::new();
+    let mut points_by_side: HashMap<std::string::String, i64> = HashMap::new();
+
+    for (_, obj) in ctx.db.objectives() {
+        *objectives_by_side
+            .entry(format!("{:?}", obj.owner))
+            .or_insert(0) += 1;
+    }
+
+    for (_, player) in ctx.db.persisted.players() {
+        *players_by_side
+            .entry(format!("{:?}", player.side))
+            .or_insert(0) += 1;
+        *points_by_side
+            .entry(format!("{:?}", player.side))
+            .or_insert(0) += player.points as i64;
+    }
+
+    CampaignState {
+        objectives_by_side,
+        players_by_side,
+        points_by_side,
+    }
+}
+
+// ==================== Action API Functions ====================
+
+fn api_spawn_deployable(
+    ctx: &mut Context,
+    lua: MizLua,
+    side: Side,
+    name: &str,
+    pos: Vector2,
+    heading: f64,
+) -> Result<GroupId> {
+    let spctx = SpawnCtx::new(lua)?;
+    let specs = ctx
+        .db
+        .ephemeral
+        .cfg
+        .deployables
+        .get(&side)
+        .ok_or_else(|| anyhow!("no deployables on {side}"))?;
+
+    let spec = specs
+        .iter()
+        .find(|dp| dp.path.iter().any(|p| p.as_str() == name))
+        .ok_or_else(|| anyhow!("no deployable called {name} on {side}"))?
+        .clone();
+
+    let loc = SpawnLoc::AtPos {
+        pos,
+        offset_direction: pointing_towards2(heading),
+        group_heading: heading,
+    };
+
+    match &spec.kind {
+        DeployableKind::Objective(_) => {
+            bail!("cannot spawn objective deployables via API, use spawn-troop or spawn mark")
+        }
+        DeployableKind::Group { template } => {
+            let origin = DeployKind::Deployed {
+                player: Ucid::default(),
+                moved_by: None,
+                spec: spec.clone(),
+                origin: None,
+                cost_fraction: 1.,
+            };
+            let gid = ctx.db.add_and_queue_group(
+                &spctx,
+                &ctx.idx,
+                side,
+                loc,
+                template,
+                origin,
+                BitFlags::empty(),
+                None,
+            )?;
+            Ok(gid)
+        }
+    }
+}
+
+fn api_spawn_troop(
+    ctx: &mut Context,
+    lua: MizLua,
+    side: Side,
+    name: &str,
+    pos: Vector2,
+    heading: f64,
+) -> Result<GroupId> {
+    let spctx = SpawnCtx::new(lua)?;
+    let specs = ctx
+        .db
+        .ephemeral
+        .cfg
+        .troops
+        .get(&side)
+        .ok_or_else(|| anyhow!("no troops on {side}"))?;
+
+    let spec = specs
+        .iter()
+        .find(|tr| tr.name.as_str() == name)
+        .ok_or_else(|| anyhow!("no troop called {name} on {side}"))?
+        .clone();
+
+    let loc = SpawnLoc::AtPos {
+        pos,
+        offset_direction: pointing_towards2(heading),
+        group_heading: heading,
+    };
+
+    let origin = DeployKind::Troop {
+        player: Ucid::default(),
+        moved_by: None,
+        spec: spec.clone(),
+        origin: None,
+        cost_fraction: 1.,
+    };
+
+    let gid = ctx.db.add_and_queue_group(
+        &spctx,
+        &ctx.idx,
+        side,
+        loc,
+        &spec.template,
+        origin,
+        BitFlags::empty(),
+        None,
+    )?;
+    Ok(gid)
+}
+
+fn api_move_group(ctx: &mut Context, lua: MizLua, id: &GroupId, pos: Vector2) -> Result<()> {
+    use dcso3::controller::{MissionPoint, PointType, ActionTyp, AltType, Task, VehicleFormation};
+    use dcso3::group::Group;
+    use dcso3::LuaVec2;
+
+    let group = ctx.db.group(id)?;
+    let dcs_group = Group::get_by_name(lua, group.name.as_str())?;
+    let controller = dcs_group.get_controller()?;
+
+    // Create a simple move waypoint for ground units
+    let waypoint = MissionPoint {
+        typ: PointType::TurningPoint,
+        airdrome_id: None,
+        time_re_fu_ar: None,
+        helipad: None,
+        link_unit: None,
+        action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+        pos: LuaVec2(pos),
+        alt: 0., // Ground level
+        alt_typ: Some(AltType::RADIO),
+        speed: 10., // 10 m/s default
+        speed_locked: Some(false),
+        eta: None,
+        eta_locked: None,
+        name: None,
+        task: Box::new(Task::Hold),
+    };
+
+    let task = Task::Mission {
+        airborne: Some(false),
+        route: vec![waypoint],
+    };
+    controller.set_task(task)?;
+    Ok(())
+}
+
+fn api_add_points(ctx: &mut Context, player: &str, amount: i32, reason: &str) -> Result<()> {
+    let ucid = get_player_ucid(ctx, player)?;
+    let player_data = ctx
+        .db
+        .player_mut(&ucid)
+        .ok_or_else(|| anyhow!("no such player {player}"))?;
+
+    player_data.points += amount;
+    ctx.db.ephemeral.dirty();
+
+    // Log the points change
+    ctx.db.ephemeral.stat(Stat::Points {
+        id: ucid,
+        points: amount,
+        reason: String::from(reason),
+    });
+
+    Ok(())
+}
+
 #[derive(Debug)]
 pub(super) enum Caller {
     Player(PlayerId),
@@ -1036,6 +1567,116 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 }
                 Err(e) => reply_err!("the state could not be reset {e:?}"),
             },
+            // Query API commands
+            AdminCommand::QueryObjectives => {
+                let objectives = query_objectives(ctx);
+                match serde_json::to_string(&objectives) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize objectives: {e:?}"),
+                }
+            }
+            AdminCommand::QueryObjective { name } => {
+                match query_objective_details(ctx, &name) {
+                    Ok(details) => match serde_json::to_string(&details) {
+                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize objective: {e:?}"),
+                    },
+                    Err(e) => reply_err!("failed to query objective: {e:?}"),
+                }
+            }
+            AdminCommand::QueryPlayers => {
+                let players = query_players(ctx);
+                match serde_json::to_string(&players) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize players: {e:?}"),
+                }
+            }
+            AdminCommand::QueryPlayer { player } => {
+                match query_player_details(ctx, &player) {
+                    Ok(details) => match serde_json::to_string(&details) {
+                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize player: {e:?}"),
+                    },
+                    Err(e) => reply_err!("failed to query player: {e:?}"),
+                }
+            }
+            AdminCommand::QueryGroups { side } => {
+                let groups = query_groups(ctx, side);
+                match serde_json::to_string(&groups) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize groups: {e:?}"),
+                }
+            }
+            AdminCommand::QueryGroup { id } => {
+                match query_group_details(ctx, &id) {
+                    Ok(details) => match serde_json::to_string(&details) {
+                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize group: {e:?}"),
+                    },
+                    Err(e) => reply_err!("failed to query group: {e:?}"),
+                }
+            }
+            AdminCommand::QueryUnits { group } => {
+                match query_units(ctx, &group) {
+                    Ok(units) => match serde_json::to_string(&units) {
+                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize units: {e:?}"),
+                    },
+                    Err(e) => reply_err!("failed to query units: {e:?}"),
+                }
+            }
+            AdminCommand::QueryWarehouse { objective } => {
+                match query_warehouse(ctx, &objective) {
+                    Ok(warehouse) => match serde_json::to_string(&warehouse) {
+                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize warehouse: {e:?}"),
+                    },
+                    Err(e) => reply_err!("failed to query warehouse: {e:?}"),
+                }
+            }
+            AdminCommand::QueryLogistics => {
+                let logistics = query_logistics(ctx);
+                match serde_json::to_string(&logistics) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize logistics: {e:?}"),
+                }
+            }
+            AdminCommand::QueryCampaignState => {
+                let state = query_campaign_state(ctx);
+                match serde_json::to_string(&state) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize campaign state: {e:?}"),
+                }
+            }
+            // Action API commands
+            AdminCommand::SpawnDeployable { side, name, pos, heading } => {
+                match api_spawn_deployable(ctx, lua, side, &name, pos, heading) {
+                    Ok(gid) => reply_ok!("{{\"success\":true,\"group_id\":{}}}", gid),
+                    Err(e) => reply_err!("failed to spawn deployable: {e:?}"),
+                }
+            }
+            AdminCommand::SpawnTroop { side, name, pos, heading } => {
+                match api_spawn_troop(ctx, lua, side, &name, pos, heading) {
+                    Ok(gid) => reply_ok!("{{\"success\":true,\"group_id\":{}}}", gid),
+                    Err(e) => reply_err!("failed to spawn troop: {e:?}"),
+                }
+            }
+            AdminCommand::MoveGroup { id, pos } => {
+                match api_move_group(ctx, lua, &id, pos) {
+                    Ok(()) => reply_ok!("{{\"success\":true}}"),
+                    Err(e) => reply_err!("failed to move group: {e:?}"),
+                }
+            }
+            AdminCommand::AddPoints { player, amount, reason } => {
+                match api_add_points(ctx, &player, amount, &reason) {
+                    Ok(()) => {
+                        let new_balance = ctx.db.player(&get_player_ucid(ctx, &player).unwrap_or_default())
+                            .map_or(0, |p| p.points);
+                        reply_ok!("{{\"success\":true,\"new_balance\":{}}}", new_balance)
+                    },
+                    Err(e) => reply_err!("failed to add points: {e:?}"),
+                }
+            }
         }
         match caller {
             Caller::Player(_) => (),

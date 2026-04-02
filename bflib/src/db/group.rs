@@ -412,9 +412,17 @@ impl Db {
         self.ephemeral.dirty();
         match group.kind {
             None => {
-                // it's a static, we have to get it's units
-                for unit in &units {
-                    self.ephemeral.push_despawn(*gid, Despawn::Static(unit.clone()))
+                // it's a static. Prefer using the object_id if we have one (e.g. for
+                // C-130 crates whose DCS name may differ from the bflib name after
+                // cargo load/drop renames). Fall back to name-based lookup.
+                if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
+                    self.ephemeral
+                        .push_despawn(*gid, Despawn::StaticObject(oid.clone()));
+                } else {
+                    for unit in &units {
+                        self.ephemeral
+                            .push_despawn(*gid, Despawn::Static(unit.clone()))
+                    }
                 }
             }
             Some(_) => {
@@ -835,16 +843,26 @@ impl Db {
     ) -> Result<BirthRes> {
         let id = unit.object_id()?;
         let name = unit.get_name()?;
-        if let Some(uid) = self.persisted.units_by_name.get(name.as_str()) {
+        // First try direct name lookup, then try template_name lookup for activated carrier units
+        // Carrier groups use Group.activate() which keeps the original DCS unit names (e.g., "BCARRIER-1")
+        // but bflib stores units with names like "{group_name}-{uid}"
+        let uid_lookup = self.persisted.units_by_name.get(name.as_str()).copied()
+            .or_else(|| {
+                // Try finding by template_name for activated carriers
+                self.persisted.units.into_iter()
+                    .find(|(_, u)| u.template_name == name)
+                    .map(|(uid, _)| *uid)
+            });
+        if let Some(uid) = uid_lookup {
             let unit = unit!(self, uid)?;
-            self.ephemeral.uid_by_object_id.insert(id.clone(), *uid);
-            self.ephemeral.object_id_by_uid.insert(*uid, id.clone());
-            self.ephemeral.units_potentially_close_to_enemies.insert(*uid);
-            if unit.tags.contains(UnitTag::Driveable) {
-                self.ephemeral.units_able_to_move.insert(*uid);
+            self.ephemeral.uid_by_object_id.insert(id.clone(), uid);
+            self.ephemeral.object_id_by_uid.insert(uid, id.clone());
+            self.ephemeral.units_potentially_close_to_enemies.insert(uid);
+            if unit.tags.contains(UnitTag::Driveable) || unit.tags.contains(UnitTag::Boat) {
+                self.ephemeral.units_able_to_move.insert(uid);
             }
             self.ephemeral.stat(Stat::Unit {
-                id: EnId::Unit(*uid),
+                id: EnId::Unit(uid),
                 gid: Some(unit.group),
                 owner: unit.side,
                 typ: stats::Unit { typ: unit.typ.clone(), tags: unit.tags },

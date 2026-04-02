@@ -16,12 +16,13 @@ for more details.
 
 use super::{
     cargo::{Cargo, C130Cargo},
-    group::{SpawnedGroup, SpawnedUnit},
+    group::{DeployKind, SpawnedGroup, SpawnedUnit},
     logistics::LogiStage,
     markup::ObjectiveMarkup,
     objective::Objective,
     persisted::Persisted,
 };
+use bfprotocols::db::objective::ObjectiveKind;
 use crate::{
     bg::Task,
     maybe,
@@ -45,11 +46,11 @@ use bfprotocols::{
 use chrono::prelude::*;
 use compact_str::format_compact;
 use dcso3::{
-    MizLua, Position3, String, Vector2,
+    LuaVec2, MizLua, Position3, String, Vector2,
     airbase::ClassAirbase,
     centroid2d,
     coalition::Side,
-    controller::MissionPoint,
+    controller::{MissionPoint, PointType},
     env::miz::{self, GroupKind, Miz, MizIndex},
     group::Group,
     net::{SlotId, Ucid},
@@ -62,7 +63,7 @@ use dcso3::{
 };
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use indexmap::{IndexMap, IndexSet};
-use log::{error, info};
+use log::{error, info, warn};
 use mlua::prelude::*;
 use smallvec::{SmallVec, smallvec};
 use std::{
@@ -147,6 +148,9 @@ pub struct Ephemeral {
     pub(super) logistics_stage: LogiStage,
     spawnq: VecDeque<GroupId>,
     despawnq: VecDeque<(GroupId, Despawn)>,
+    /// Groups that should be linked to a carrier unit when spawned.
+    /// Maps GroupId to DCS unit ID of the carrier to link to.
+    pub(super) carrier_linked_groups: FxHashMap<GroupId, String>,
     sync_warehouse: Vec<(ObjectiveId, Vehicle)>,
     pub(super) msgs: MsgQ,
     pub(super) victory: Option<(DateTime<Utc>, Side)>,
@@ -190,6 +194,7 @@ impl Default for Ephemeral {
             awacs_stn: 0o77777,
             spawnq: VecDeque::default(),
             despawnq: VecDeque::default(),
+            carrier_linked_groups: FxHashMap::default(),
             sync_warehouse: Vec::default(),
             msgs: MsgQ::default(),
             logistics_stage: LogiStage::default(),
@@ -322,10 +327,13 @@ impl Ephemeral {
         if dlen > 0 {
             for _ in 0..max(1, dlen >> 4) {
                 if let Some((gid, despawn)) = self.despawnq.pop_front() {
+                    // Always clean up gid tracking (delete_group may have already
+                    // removed the group from persisted, but object_id_by_gid still
+                    // needs cleanup)
+                    if let Some(id) = self.object_id_by_gid.remove(&gid) {
+                        self.gid_by_object_id.remove(&id);
+                    }
                     if let Some(group) = persisted.groups.get(&gid) {
-                        if let Some(id) = self.object_id_by_gid.remove(&gid) {
-                            self.gid_by_object_id.remove(&id);
-                        }
                         for uid in &group.units {
                             self.units_able_to_move.swap_remove(uid);
                             self.units_potentially_close_to_enemies.remove(uid);
@@ -387,6 +395,10 @@ impl Ephemeral {
 
     pub fn get_object_id_by_slot(&self, id: &SlotId) -> Option<&DcsOid<ClassUnit>> {
         self.object_id_by_slot.get(id)
+    }
+
+    pub fn logistics_stage(&self) -> &LogiStage {
+        &self.logistics_stage
     }
 
     fn index_deployables_for_side(
@@ -877,12 +889,87 @@ impl Ephemeral {
             || group.template_name.starts_with("NCARRIER");
 
         if is_carrier_group {
-            // Activate the existing late-activated group instead of spawning a copy
+            // Activate the carrier group using Group.activate() to preserve warehouse dynamicSpawn
+            // settings. Before activating, modify the unit positions directly in the original
+            // env.mission data so DCS activates them at the saved positions instead of the
+            // mission editor positions.
             let display_name = carrier_cfg
                 .map(|c| c.display_name.clone())
                 .unwrap_or_else(|| group.template_name.clone());
             info!("[CARRIER_SPAWN] Activating carrier group {} (template: {}, display: {})",
                   group.name, group.template_name, display_name);
+
+            // Build map of template_name -> persisted unit data for position lookup
+            let by_tname: FxHashMap<&str, &SpawnedUnit> = group
+                .units
+                .into_iter()
+                .filter_map(|uid| {
+                    persisted.units.get(uid).and_then(|u| {
+                        if u.dead {
+                            None
+                        } else {
+                            Some((u.template_name.as_str(), u))
+                        }
+                    })
+                })
+                .collect();
+
+            // Modify unit positions in the ORIGINAL miz data (not a deep clone).
+            // Group.activate() reads from env.mission, so modifying the source data
+            // should make DCS activate the group at the correct positions.
+            // Also modify the group's route first waypoint to match.
+            {
+                let miz_template = spctx
+                    .get_template_ref(idx, GroupKind::Any, group.side, group.template_name.as_str())
+                    .with_context(|| format_compact!("getting carrier miz template {}", group.template_name))?;
+
+                // Modify each unit's position in the original miz data
+                let units = miz_template.group.units().context("getting carrier miz units")?;
+                let mut centroid_x = 0.0f64;
+                let mut centroid_y = 0.0f64;
+                let mut count = 0u32;
+                for i in 1..=(units.len() as i64) {
+                    if let Ok(unit) = units.get(i) {
+                        let unit_name = unit.name()?;
+                        if let Some(su) = by_tname.get(unit_name.as_str()) {
+                            let dist = na::distance(&su.pos.into(), &su.spawn_pos.into());
+                            info!("[CARRIER_SPAWN] Modifying miz unit '{}' position: ({:.0}, {:.0}) -> ({:.0}, {:.0}), dist={:.0}m",
+                                  unit_name, su.spawn_pos.x, su.spawn_pos.y, su.pos.x, su.pos.y, dist);
+                            unit.set_pos(su.pos)?;
+                            unit.set_heading(su.heading)?;
+                            centroid_x += su.pos.x;
+                            centroid_y += su.pos.y;
+                            count += 1;
+                        }
+                    }
+                }
+
+                // Update the group position and the route's first waypoint
+                if count > 0 {
+                    let cx = centroid_x / count as f64;
+                    let cy = centroid_y / count as f64;
+                    miz_template.group.set_pos(Vector2::new(cx, cy))?;
+                    info!("[CARRIER_SPAWN] Updated miz group position to ({:.0}, {:.0})", cx, cy);
+
+                    // Update ALL route waypoints to the carrier's position.
+                    // This prevents the carrier from circling to old ME waypoints
+                    // if DCS reads them before our StopRoute command takes effect.
+                    if let Ok(route) = miz_template.group.raw_get::<_, mlua::Table>("route") {
+                        if let Ok(points) = route.raw_get::<_, mlua::Table>("points") {
+                            let num_points = points.raw_len();
+                            for i in 1..=(num_points as i64) {
+                                if let Ok(point) = points.raw_get::<_, mlua::Table>(i) {
+                                    point.raw_set("x", cx)?;
+                                    point.raw_set("y", cy)?;
+                                }
+                            }
+                            info!("[CARRIER_SPAWN] Updated all {} route waypoints to ({:.0}, {:.0})", num_points, cx, cy);
+                        }
+                    }
+                }
+            }
+
+            // Now activate the group - DCS should read the modified positions
             let dcs_group = Group::get_by_name(spctx.lua(), &group.template_name)
                 .with_context(|| format_compact!("getting carrier group {}", group.template_name))?;
             dcs_group.activate()
@@ -890,6 +977,178 @@ impl Ephemeral {
             let oid = dcs_group.object_id()?.erased();
             self.object_id_by_gid.insert(group.id, oid.clone());
             self.gid_by_object_id.insert(oid, group.id);
+
+            // Manually register each unit's DCS object ID mappings.
+            // DCS does NOT fire S_EVENT_BIRTH for Group.activate(), so we must do this here.
+            info!("[CARRIER_SPAWN] Registering units from activated group {} ({} persisted units)",
+                  group.template_name, group.units.len());
+            match dcs_group.get_units() {
+                Ok(dcs_units) => {
+                    for dcs_unit_res in dcs_units {
+                        let dcs_unit = match dcs_unit_res {
+                            Ok(u) => u,
+                            Err(e) => {
+                                error!("[CARRIER_SPAWN] Failed to get DCS unit from sequence: {:?}", e);
+                                continue;
+                            }
+                        };
+                        match dcs_unit.get_name() {
+                            Ok(dcs_unit_name) => {
+                                // Log actual DCS position after activation to verify position fix
+                                match dcs_unit.get_ground_position() {
+                                    Ok(pos) => info!("[CARRIER_SPAWN] DCS unit '{}' activated at position ({:.0}, {:.0})",
+                                                     dcs_unit_name, pos.0.x, pos.0.y),
+                                    Err(e) => info!("[CARRIER_SPAWN] Could not read position for '{}': {:?}",
+                                                    dcs_unit_name, e),
+                                }
+                                let uid_match = group.units.into_iter().find_map(|uid| {
+                                    persisted.units.get(uid).and_then(|u| {
+                                        if !u.dead && u.template_name.as_str() == dcs_unit_name.as_str() {
+                                            Some((*uid, u))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                });
+                                if let Some((uid, unit)) = uid_match {
+                                    match dcs_unit.object_id() {
+                                        Ok(unit_oid) => {
+                                            info!("[CARRIER_SPAWN] Registering carrier unit '{}' (uid={:?}) with DCS object_id {:?}",
+                                                  unit.name, uid, unit_oid);
+                                            self.uid_by_object_id.insert(unit_oid.clone(), uid);
+                                            self.object_id_by_uid.insert(uid, unit_oid.clone());
+                                            self.units_potentially_close_to_enemies.insert(uid);
+                                            if unit.tags.contains(UnitTag::Driveable) || unit.tags.contains(UnitTag::Boat) {
+                                                self.units_able_to_move.insert(uid);
+                                                info!("[CARRIER_SPAWN] Added carrier unit '{}' to units_able_to_move",
+                                                      unit.name);
+                                            }
+                                            // Teleport unit to persisted position if DCS activated it
+                                            // at the wrong location (Group.activate() reads from internal
+                                            // C++ data, not the Lua env.mission table we modified).
+                                            match dcs_unit.get_ground_position() {
+                                                Ok(actual) => {
+                                                    let expected = unit.pos;
+                                                    let dist = na::distance(
+                                                        &na::Point2::new(actual.0.x, actual.0.y),
+                                                        &na::Point2::new(expected.x, expected.y),
+                                                    );
+                                                    info!("[CARRIER_TELEPORT] Unit '{}': actual=({:.0},{:.0}) expected=({:.0},{:.0}) dist={:.0}m",
+                                                          unit.name, actual.0.x, actual.0.y, expected.x, expected.y, dist);
+                                                    if dist > 100.0 {
+                                                        info!("[CARRIER_TELEPORT] Teleporting '{}' {:.0}m to persisted position ({:.0},{:.0})",
+                                                              unit.name, dist, expected.x, expected.y);
+                                                        match dcs_unit.as_object() {
+                                                            Ok(obj) => {
+                                                                if let Err(e) = obj.set_position(unit.position) {
+                                                                    error!("[CARRIER_TELEPORT] Failed to teleport '{}': {:?}", unit.name, e);
+                                                                } else {
+                                                                    match dcs_unit.get_ground_position() {
+                                                                        Ok(after) => info!("[CARRIER_TELEPORT] '{}' now at ({:.0},{:.0}) after teleport",
+                                                                                          unit.name, after.0.x, after.0.y),
+                                                                        Err(e) => warn!("[CARRIER_TELEPORT] Could not verify position after teleport for '{}': {:?}",
+                                                                                       unit.name, e),
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(e) => error!("[CARRIER_TELEPORT] Failed to get Object for '{}': {:?}", unit.name, e),
+                                                        }
+                                                    } else {
+                                                        info!("[CARRIER_TELEPORT] '{}' already at correct position (dist={:.0}m), no teleport needed",
+                                                              unit.name, dist);
+                                                    }
+                                                }
+                                                Err(e) => warn!("[CARRIER_TELEPORT] Could not read position for '{}' to check teleport: {:?}",
+                                                               unit.name, e),
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("[CARRIER_SPAWN] Failed to get object_id for '{}': {:?}",
+                                                   dcs_unit_name, e);
+                                        }
+                                    }
+                                } else {
+                                    info!("[CARRIER_SPAWN] DCS unit '{}' not matched to any persisted unit",
+                                           dcs_unit_name);
+                                }
+                            }
+                            Err(e) => {
+                                error!("[CARRIER_SPAWN] Failed to get name for DCS unit: {:?}", e);
+                            }
+                        }
+                    }
+                    info!("[CARRIER_SPAWN] Carrier unit registration complete for {} - units_able_to_move has {} entries",
+                          group.name, self.units_able_to_move.len());
+                }
+                Err(e) => {
+                    error!("[CARRIER_SPAWN] Failed to get units from activated carrier group {}: {:?}",
+                           group.template_name, e);
+                }
+            }
+
+            // Immediately stop the carrier from following its mission editor route.
+            // Without this, the carrier will circle through ME waypoints after activation.
+            let controller = dcs_group.get_controller()
+                .context("getting carrier controller after activation")?;
+            controller.set_command(dcso3::controller::Command::StopRoute(true))
+                .context("issuing StopRoute to carrier")?;
+            controller.reset_task()
+                .context("resetting carrier tasks")?;
+            info!("[CARRIER_SPAWN] Issued StopRoute and resetTask for {} to prevent circling", group.template_name);
+
+            // If carrier had a commanded waypoint destination, issue movement command
+            // to continue traveling there (starting from the correct activated position).
+            let waypoint_pos = persisted.objectives_by_group.get(&group.id)
+                .and_then(|oid| {
+                    info!("[CARRIER_SPAWN] Group {} is linked to objective {:?}", group.template_name, oid);
+                    persisted.objectives.get(oid)
+                })
+                .and_then(|obj| {
+                    match &obj.kind {
+                        ObjectiveKind::CarrierGroup { waypoint, .. } => {
+                            info!("[CARRIER_SPAWN] Objective is CarrierGroup, waypoint={:?}", waypoint);
+                            waypoint.as_ref().map(|wp| *wp)
+                        }
+                        other => {
+                            info!("[CARRIER_SPAWN] Objective is not CarrierGroup: {:?}", mem::discriminant(other));
+                            None
+                        }
+                    }
+                });
+
+            if let Some(target) = waypoint_pos {
+                let speed = self.cfg.carrier.as_ref().map(|c| c.movement_speed).unwrap_or(5.0);
+                info!("[CARRIER_SPAWN] Commanding carrier {} to continue to waypoint ({:.0}, {:.0}) at speed {:.1}",
+                      group.template_name, target.x, target.y, speed);
+                // Re-enable route following and set the new destination
+                controller.set_command(dcso3::controller::Command::StopRoute(false))
+                    .context("re-enabling carrier route")?;
+                controller.set_task(dcso3::controller::Task::Mission {
+                    route: vec![MissionPoint {
+                        action: None,
+                        airdrome_id: None,
+                        helipad: None,
+                        typ: PointType::TurningPoint,
+                        time_re_fu_ar: None,
+                        link_unit: None,
+                        pos: LuaVec2(target),
+                        alt: 0.,
+                        alt_typ: None,
+                        speed,
+                        speed_locked: None,
+                        eta: None,
+                        eta_locked: None,
+                        name: Some(dcso3::String::from("restore_waypoint")),
+                        task: Box::new(dcso3::controller::Task::ComboTask(vec![])),
+                    }],
+                    airborne: Some(false),
+                }).context("setting carrier waypoint restore task")?;
+                info!("[CARRIER_SPAWN] Waypoint task set successfully for {}", group.template_name);
+            } else {
+                info!("[CARRIER_SPAWN] Carrier {} activated at saved position with StopRoute, no active waypoint",
+                      group.template_name);
+            }
+
             record_perf(&mut perf.spawn, ts);
             return Ok(Some(Spawned::Group(dcs_group)));
         }
@@ -971,8 +1230,50 @@ impl Ephemeral {
                 format_compact!("removing junk before spawn of {}", group.template_name)
             })?;
             */
+            // Check if this group should be linked to a carrier
+            // First, re-establish carrier link for crates that originated from carrier objectives
+            // (this link is lost on save/load since carrier_linked_groups is ephemeral)
+            if !self.carrier_linked_groups.contains_key(&group.id) {
+                if let DeployKind::Crate { origin, .. } = &group.origin {
+                    // Check if the origin objective is a carrier group
+                    if let Some(obj) = persisted.objectives.get(origin) {
+                        if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &obj.kind {
+                            if !carrier_template.is_empty() {
+                                // carrier_template is the GROUP template name (e.g., "RCARRIER").
+                                // Unit template_names are mission editor names (e.g., "Kurznetsov"),
+                                // which don't necessarily start with the group name.
+                                // Match by GROUP membership instead: find groups matching carrier_template,
+                                // then look at their units.
+                                'carrier_search: for (_, cg) in &persisted.groups {
+                                    if cg.template_name.starts_with(carrier_template.as_str()) && cg.side == group.side {
+                                        for uid in cg.units.into_iter() {
+                                            if let Some(cu) = persisted.units.get(uid) {
+                                                if !cu.dead {
+                                                    if Unit::get_by_name(spctx.lua(), &cu.template_name).is_ok() {
+                                                        info!("[CARRIER_LINK] Re-establishing link for crate {:?} to carrier '{}'",
+                                                              group.id, cu.template_name);
+                                                        self.carrier_linked_groups.insert(group.id, cu.template_name.clone());
+                                                        break 'carrier_search;
+                                                    }
+                                                    if Unit::get_by_name(spctx.lua(), &cu.name).is_ok() {
+                                                        info!("[CARRIER_LINK] Re-establishing link for crate {:?} to carrier '{}' (bflib name)",
+                                                              group.id, cu.name);
+                                                        self.carrier_linked_groups.insert(group.id, cu.name.clone());
+                                                        break 'carrier_search;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let carrier_link_id = self.carrier_linked_groups.remove(&group.id);
             let spawned = spctx
-                .spawn(template)
+                .spawn_with_link(template, carrier_link_id)
                 .with_context(|| format_compact!("spawning template {}", group.template_name))?;
             match &spawned {
                 Spawned::Static => (),

@@ -373,6 +373,34 @@ impl Objective {
     pub fn pos(&self) -> Vector2 {
         self.zone.pos()
     }
+
+    pub fn groups(&self) -> &MapS<Side, Set<GroupId>> {
+        &self.groups
+    }
+
+    pub fn supply(&self) -> u8 {
+        self.supply
+    }
+
+    pub fn fuel(&self) -> u8 {
+        self.fuel
+    }
+
+    pub fn threatened(&self) -> bool {
+        self.threatened
+    }
+
+    pub fn warehouse(&self) -> &Warehouse {
+        &self.warehouse
+    }
+
+    pub fn points(&self) -> i32 {
+        self.points
+    }
+
+    pub fn kind(&self) -> &ObjectiveKind {
+        &self.kind
+    }
 }
 
 impl Db {
@@ -738,7 +766,7 @@ impl Db {
         oid: &ObjectiveId,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        let (kind, health, logi, prev_logi) = {
+        let (kind, health, logi, _prev_logi) = {
             let obj = objective!(self, oid)?;
             let prev_logi = obj.logi;
             let (health, logi) = self.compute_objective_status(obj)?;
@@ -963,15 +991,20 @@ impl Db {
             }
             if !obj.spawned && spawn {
                 obj.spawned = true;
+                let is_mobile = obj.kind.is_carrier_group();
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     let group = group!(self, gid)?;
                     let farp = obj.kind.is_farp();
                     if !farp && !group.class.is_services() {
-                        for uid in &group.units {
-                            let unit = unit_mut!(self, uid)?;
-                            if !obj.zone.contains(unit.pos) {
-                                unit.pos = unit.spawn_pos;
-                                unit.position = unit.spawn_position;
+                        // Don't reset positions for mobile objectives like carrier groups -
+                        // their units naturally move outside the original zone
+                        if !is_mobile {
+                            for uid in &group.units {
+                                let unit = unit_mut!(self, uid)?;
+                                if !obj.zone.contains(unit.pos) {
+                                    unit.pos = unit.spawn_pos;
+                                    unit.position = unit.spawn_position;
+                                }
                             }
                         }
                         self.ephemeral.push_spawn(*gid);
@@ -982,6 +1015,11 @@ impl Db {
                 && !obj.threatened
                 && now - obj.last_activate >= Duration::seconds(cfg.cull_after as i64)
             {
+                // Don't cull carrier groups - they use Group.activate() and destroying
+                // them is permanent (they can't be re-activated after destroy)
+                if obj.kind.is_carrier_group() {
+                    continue;
+                }
                 obj.spawned = false;
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     let group = group!(self, gid)?;
@@ -1006,6 +1044,12 @@ impl Db {
                     }
                 }
             } else if spawn != obj.enabled {
+                // Don't toggle AI for carrier groups - they need to keep navigating
+                // even when no players are nearby
+                if obj.kind.is_carrier_group() {
+                    obj.enabled = spawn;
+                    continue;
+                }
                 obj.enabled = spawn;
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
@@ -1326,7 +1370,17 @@ impl Db {
     }
 
     pub fn update_objectives_markup(&mut self) -> Result<()> {
-        let mut pos_update: SmallVec<[(ObjectiveId, String); 8]> = smallvec![];
+        // Collect objectives that need position tracking.
+        // For carrier groups, collect the group IDs that belong to the carrier so we can
+        // find live units by group membership (more reliable than template_name prefix matching,
+        // which breaks if DCS unit names don't follow the "GROUPNAME-N" convention).
+        enum PosLookup {
+            /// FARP: look up unit by name directly
+            ByName(String),
+            /// Carrier: find any live unit belonging to these groups
+            ByGroup(Set<GroupId>),
+        }
+        let mut pos_update: SmallVec<[(ObjectiveId, PosLookup); 8]> = smallvec![];
         for (id, obj) in &self.persisted.objectives {
             // Track mobile FARPs
             if let ObjectiveKind::Farp {
@@ -1336,26 +1390,55 @@ impl Db {
             } = &obj.kind
                 && let Zone::Circle { .. } = &obj.zone
             {
-                pos_update.push((*id, pad_template.clone()))
+                pos_update.push((*id, PosLookup::ByName(pad_template.clone())))
             }
             // Track Carrier Groups
-            if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &obj.kind
-                && !carrier_template.is_empty()
+            if let ObjectiveKind::CarrierGroup { .. } = &obj.kind
                 && let Zone::Circle { .. } = &obj.zone
             {
-                pos_update.push((*id, carrier_template.clone()))
+                // Clone the carrier's group set so we can look up units by group membership
+                let groups = obj.groups.get(&obj.owner).cloned().unwrap_or_default();
+                info!("[CARRIER_POS] Carrier objective {:?} '{}' owner={:?}, groups len={}, all_groups={:?}",
+                      id, obj.name, obj.owner, groups.len(), obj.groups);
+                if groups.len() > 0 {
+                    pos_update.push((*id, PosLookup::ByGroup(groups)))
+                }
             }
         }
         let mut moved: SmallVec<[ObjectiveId; 8]> = smallvec![];
-        for (oid, template) in pos_update {
-            let obj = objective_mut!(self, oid)?;
-            if let Some(uid) = self.persisted.units_by_name.get(&template)
-                && let Some(unit) = self.persisted.units.get(uid)
-                && let Zone::Circle { pos, .. } = &mut obj.zone
-                && pos != &unit.pos
-            {
-                *pos = unit.pos;
-                moved.push(oid)
+        for (oid, lookup) in pos_update {
+            // Find the unit position
+            let unit_pos = match &lookup {
+                PosLookup::ByGroup(groups) => {
+                    // For carriers: find any live unit belonging to the carrier's groups
+                    // Always track the actual DCS position so markers follow the carrier
+                    let found = self.persisted.units.into_iter()
+                        .find(|(_, unit)| !unit.dead && groups.contains(&unit.group));
+                    if found.is_none() {
+                        info!("[CARRIER_POS] No live unit found in carrier groups for objective {:?}, groups: {:?}", oid, groups);
+                    }
+                    found.map(|(_, unit)| unit.pos)
+                }
+                PosLookup::ByName(template) => {
+                    // For FARPs: use direct name lookup (they keep template names)
+                    self.persisted.units_by_name.get(template)
+                        .and_then(|uid| self.persisted.units.get(uid))
+                        .filter(|unit| !unit.dead)
+                        .map(|unit| unit.pos)
+                }
+            };
+
+            if let Some(unit_pos) = unit_pos {
+                let obj = objective_mut!(self, oid)?;
+                if let Zone::Circle { pos, .. } = &mut obj.zone
+                    && pos != &unit_pos
+                {
+                    info!("[CARRIER_POS] Updating objective {:?} zone pos from ({:.0}, {:.0}) to ({:.0}, {:.0})",
+                           oid, pos.x, pos.y, unit_pos.x, unit_pos.y);
+                    *pos = unit_pos;
+                    moved.push(oid);
+                    self.ephemeral.dirty();
+                }
             }
         }
         for (_, obj) in &self.persisted.objectives {
@@ -1439,7 +1522,7 @@ impl Db {
                     let carrier_pos = obj.zone.pos();
                     let mut closest_enemy: Option<(Side, f64)> = None;
 
-                    for (uid, unit) in &self.persisted.units {
+                    for (_uid, unit) in &self.persisted.units {
                         if unit.side != obj.owner && !unit.dead {
                             let dist_sq = na::distance_squared(&carrier_pos.into(), &unit.pos.into());
                             if dist_sq <= (10000.0_f64).powi(2) {  // Within 10km

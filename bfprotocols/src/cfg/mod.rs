@@ -281,10 +281,11 @@ pub enum PersistTyp {
     Restarts(u32),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum LimitEnforceTyp {
     /// Handle the limit by removing the oldest instance of the deployable when
     /// a new one is unpacked. (lifo)
+    #[default]
     DeleteOldest,
     /// Handle the limit by refusing to spawn new construction crates for
     /// the deployable
@@ -448,6 +449,34 @@ pub struct Troop {
     pub jtac: Option<DeployableJtac>,
 }
 
+/// Configuration for vehicles that can be loaded into C-130 cargo
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct C130Vehicle {
+    /// The display name of the vehicle in the menu
+    pub name: String,
+    /// The name of the template used to spawn the vehicle group
+    pub template: String,
+    /// How much weight does the vehicle add to the carrier unit (kg)
+    pub weight: u32,
+    /// How many simultaneous instances of the vehicle are allowed
+    #[serde(default = "default_c130_vehicle_limit")]
+    pub limit: u32,
+    /// How to deal with it when the max number of instances are deployed
+    #[serde(default)]
+    pub limit_enforce: LimitEnforceTyp,
+    /// How many points does this vehicle cost
+    #[serde(default)]
+    pub cost: u32,
+    /// Menu path for organizing vehicles (e.g., ["Light Vehicles"] or ["APCs"])
+    #[serde(default)]
+    pub path: Vec<String>,
+}
+
+fn default_c130_vehicle_limit() -> u32 {
+    10
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CargoConfig {
@@ -472,6 +501,9 @@ pub struct C130CargoConfig {
     /// Maximum number of crates that can be spawned at once with "Spawn All"
     #[serde(default = "default_c130_max_spawn")]
     pub max_spawn_all: u32,
+    /// Vehicles that can be loaded into C-130 cargo for each side
+    #[serde(default)]
+    pub loadable_vehicles: FxHashMap<Side, Vec<C130Vehicle>>,
 }
 
 fn default_c130_spawn_delay() -> u32 {

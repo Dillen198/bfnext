@@ -67,6 +67,7 @@ pub enum LogiStage {
         transfers: Vec<Transfer>,
     },
     ManageConvoys {
+        #[allow(dead_code)]
         convoys: Vec<SupplyConvoy>,
     },
     Init,
@@ -369,6 +370,16 @@ pub struct Warehouse {
     pub(super) damaged: bool,
 }
 
+impl Warehouse {
+    pub fn equipment(&self) -> &Map<String, Inventory> {
+        &self.equipment
+    }
+
+    pub fn liquids(&self) -> &MapS<LiquidType, Inventory> {
+        &self.liquids
+    }
+}
+
 pub(super) fn sync_obj_to_warehouse(obj: &Objective, warehouse: &warehouse::Warehouse) -> Result<()> {
     let perf = unsafe { Perf::get_mut() };
     let perf = Arc::make_mut(&mut perf.inner);
@@ -594,6 +605,7 @@ impl Db {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn reinit_objective_warehouse(&mut self, oid: ObjectiveId) -> Result<()> {
         let whcfg = match self.ephemeral.cfg.warehouse.as_ref() {
             Some(cfg) => cfg,

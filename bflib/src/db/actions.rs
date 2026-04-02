@@ -36,6 +36,7 @@ use dcso3::{
     group::Group,
     land::Land,
     net::Ucid,
+    object::DcsObject,
     pointing_towards2,
     trigger::{MarkId, Modulation, Trigger},
     unit::Unit,
@@ -1297,9 +1298,59 @@ impl Db {
                 });
 
             match group_result {
-                Result::Ok(group) => {
+                Result::Ok(dcs_group) => {
+                    // Ensure carrier units are registered for position tracking.
+                    // The spawn-time registration may not have worked (e.g. units not ready
+                    // immediately after Group.activate()), so register them now.
+                    if let Some(group) = self.persisted.groups.get(&args.group) {
+                        match dcs_group.get_units() {
+                            Result::Ok(dcs_units) => {
+                                for dcs_unit_res in dcs_units {
+                                    let dcs_unit = match dcs_unit_res {
+                                        Result::Ok(u) => u,
+                                        Result::Err(_) => continue,
+                                    };
+                                    let dcs_unit_name = match dcs_unit.get_name() {
+                                        Result::Ok(n) => n,
+                                        Result::Err(_) => continue,
+                                    };
+                                    let uid_match = group.units.into_iter().find_map(|uid| {
+                                        self.persisted.units.get(uid).and_then(|u| {
+                                            if !u.dead && u.template_name.as_str() == dcs_unit_name.as_str() {
+                                                Some((*uid, u))
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                    });
+                                    if let Some((uid, unit)) = uid_match {
+                                        match dcs_unit.object_id() {
+                                            Result::Ok(unit_oid) => {
+                                                if !self.ephemeral.object_id_by_uid.contains_key(&uid) {
+                                                    info!("[CARRIER_WAYPOINT] Registering carrier unit '{}' (uid={:?}) with object_id {:?}",
+                                                          unit.name, uid, unit_oid);
+                                                    self.ephemeral.uid_by_object_id.insert(unit_oid.clone(), uid);
+                                                    self.ephemeral.object_id_by_uid.insert(uid, unit_oid);
+                                                }
+                                                self.ephemeral.units_able_to_move.insert(uid);
+                                                self.ephemeral.units_potentially_close_to_enemies.insert(uid);
+                                            }
+                                            Result::Err(_) => {}
+                                        }
+                                    }
+                                }
+                            }
+                            Result::Err(_) => {
+                                // Fallback: just add to units_able_to_move without object_id registration
+                                for uid in &group.units {
+                                    self.ephemeral.units_able_to_move.insert(*uid);
+                                }
+                            }
+                        }
+                    }
+
                     info!("[CARRIER_WAYPOINT] Found group {}, commanding move to {:?} at speed {}", template, args.pos, speed);
-                    let controller = group.get_controller()?;
+                    let controller = dcs_group.get_controller()?;
                     controller.set_task(Task::Mission {
                         route: vec![MissionPoint {
                             action: None,
@@ -2779,7 +2830,7 @@ impl Db {
                                                         .swap_remove(uid);
                                                 }
                                                 Some(unit) => {
-                                                    if !unit.tags.contains(UnitTag::Driveable) {
+                                                    if !unit.tags.contains(UnitTag::Driveable) && !unit.tags.contains(UnitTag::Boat) {
                                                         self.ephemeral
                                                             .units_able_to_move
                                                             .swap_remove(uid);
