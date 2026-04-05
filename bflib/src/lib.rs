@@ -397,7 +397,7 @@ fn on_player_try_send_chat(
     id: PlayerId,
     msg: String,
     all: bool,
-) -> Result<String> {
+) -> Result<Option<String>> {
     let start_ts = Utc::now();
     let ctx = unsafe { Context::get_mut() };
     let perf = &mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_hooks;
@@ -405,10 +405,10 @@ fn on_player_try_send_chat(
     let r = chatcmd::process(ctx, lua, start_ts, id, msg);
     record_perf(perf, start_ts);
     match r {
-        Ok(s) => Ok(s),
+        Ok(_) => Ok(None),
         Err(e) => {
             ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), format_compact!("{e}"));
-            Ok("".into())
+            Ok(Some("".into()))
         }
     }
 }

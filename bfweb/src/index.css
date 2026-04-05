@@ -1,0 +1,202 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; padding: 0; }
+
+body {
+  background: #020810;
+  color: #c9d1d9;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1a3358; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #254d80; }
+
+/* ── Leaflet overrides ── */
+.leaflet-container {
+  background: #060d18 !important;
+  font-family: inherit;
+}
+.leaflet-popup-content-wrapper {
+  background: #0a1628 !important;
+  color: #c9d1d9 !important;
+  border: 1px solid #1e3a5f !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.7) !important;
+}
+.leaflet-popup-tip { background: #0a1628 !important; }
+.leaflet-popup-close-button { color: #64748b !important; }
+.leaflet-control-zoom a {
+  background: #0a1628 !important;
+  color: #64748b !important;
+  border-color: #1e3a5f !important;
+}
+.leaflet-control-zoom a:hover { color: #3b82f6 !important; }
+.leaflet-control-attribution {
+  background: rgba(2,8,16,0.8) !important;
+  color: #374151 !important;
+}
+.leaflet-control-attribution a { color: #4b5563 !important; }
+
+/* Transparent objective name labels */
+.obj-label {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.obj-label::before { display: none !important; }
+
+/* ── Animations ── */
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+.scanline::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 49%, rgba(0,180,255,0.015) 50%, transparent 51%);
+  pointer-events: none;
+  animation: scanline 10s linear infinite;
+  z-index: 1;
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px currentColor; }
+  50% { opacity: 0.5; box-shadow: none; }
+}
+.glow-pulse { animation: glow-pulse 2s ease-in-out infinite; }
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in-up { animation: fade-in-up 0.3s ease-out forwards; }
+
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.radar-sweep { animation: radar-sweep 4s linear infinite; transform-origin: center; }
+
+/* ── Grid bg (subtle tactical grid) ── */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(30,58,95,0.10) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30,58,95,0.10) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* ── Tactical card (glowing top border) ── */
+.tac-card {
+  position: relative;
+  background: linear-gradient(145deg, #070e1c 0%, #050c18 100%);
+  border: 1px solid rgba(30,58,95,0.7);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.tac-card::before {
+  content: '';
+  position: absolute;
+  inset-x: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(59,130,246,0.5), transparent);
+}
+
+/* KPI card variants */
+.tac-card-red::before  { background: linear-gradient(to right, transparent, rgba(239,68,68,0.5), transparent); }
+.tac-card-blue::before { background: linear-gradient(to right, transparent, rgba(59,130,246,0.5), transparent); }
+.tac-card-cyan::before { background: linear-gradient(to right, transparent, rgba(6,182,212,0.5), transparent); }
+.tac-card-amber::before { background: linear-gradient(to right, transparent, rgba(245,158,11,0.5), transparent); }
+.tac-card-green::before { background: linear-gradient(to right, transparent, rgba(34,197,94,0.5), transparent); }
+.tac-card-purple::before { background: linear-gradient(to right, transparent, rgba(139,92,246,0.5), transparent); }
+
+/* ── Tactical bracket corners ── */
+.tac-brackets {
+  position: relative;
+}
+.tac-brackets::before, .tac-brackets::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+}
+.tac-brackets::before {
+  top: 0; left: 0;
+  border-top: 1px solid rgba(0,180,255,0.5);
+  border-left: 1px solid rgba(0,180,255,0.5);
+}
+.tac-brackets::after {
+  bottom: 0; right: 0;
+  border-bottom: 1px solid rgba(0,180,255,0.5);
+  border-right: 1px solid rgba(0,180,255,0.5);
+}
+
+/* ── Kill row hover ── */
+.kill-row:hover {
+  background: rgba(59,130,246,0.04);
+}
+
+/* ── Health bar ── */
+.health-fill {
+  transition: width 0.5s ease;
+}
+
+/* ── Rank badges ── */
+.rank-gold   { color: #fbbf24; text-shadow: 0 0 8px rgba(251,191,36,0.6); }
+.rank-silver { color: #94a3b8; text-shadow: 0 0 8px rgba(148,163,184,0.4); }
+.rank-bronze { color: #d97706; text-shadow: 0 0 8px rgba(217,119,6,0.4); }
+
+/* ── Status pill ── */
+.status-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #4ade80;
+  background: rgba(74,222,128,0.1);
+  border: 1px solid rgba(74,222,128,0.25);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+.status-offline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #4b5563;
+  background: rgba(75,85,99,0.1);
+  border: 1px solid rgba(75,85,99,0.2);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
+/* ── Objective type icons ── */
+.obj-icon {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
