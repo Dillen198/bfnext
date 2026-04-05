@@ -23,6 +23,29 @@ use dcso3::{
     Color, LuaVec3, Vector2, Vector3,
 };
 use log::*;
+use rstar::{RTree, RTreeObject, AABB, PointDistance};
+
+/// Point wrapper for R-tree spatial indexing of objectives
+#[derive(Debug, Clone, Copy)]
+struct ObjectivePoint {
+    pos: [f64; 2],
+    side: Side,
+}
+
+impl RTreeObject for ObjectivePoint {
+    type Envelope = AABB<[f64; 2]>;
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_point(self.pos)
+    }
+}
+
+impl PointDistance for ObjectivePoint {
+    fn distance_2(&self, point: &[f64; 2]) -> f64 {
+        let dx = self.pos[0] - point[0];
+        let dy = self.pos[1] - point[1];
+        dx * dx + dy * dy
+    }
+}
 
 /// Stores front line drawing state
 #[derive(Debug, Clone)]
@@ -92,32 +115,36 @@ impl FrontLine {
         (min, max)
     }
 
-    /// Build Voronoi tessellation grid
+    /// Build Voronoi tessellation grid using R-tree for O(log n) nearest-neighbor lookups
     fn build_voronoi_grid(&self, objectives: &[(Vector2, Side)], min: Vector2, max: Vector2) -> Vec<Vec<Side>> {
         // Adaptive resolution based on config
         let grid_size = self.config.samples_per_boundary.clamp(50, 200);
         let cell_width = (max.x - min.x) / grid_size as f64;
         let cell_height = (max.y - min.y) / grid_size as f64;
 
-        info!("Frontline: Building {}x{} Voronoi grid (cell: {:.0}m x {:.0}m)",
+        info!("Frontline: Building {}x{} Voronoi grid (cell: {:.0}m x {:.0}m) using R-tree",
               grid_size, grid_size, cell_width, cell_height);
+
+        // Build R-tree from objectives for O(log n) nearest-neighbor queries
+        let points: Vec<ObjectivePoint> = objectives.iter()
+            .map(|(pos, side)| ObjectivePoint {
+                pos: [pos.x, pos.y],
+                side: *side,
+            })
+            .collect();
+        let rtree = RTree::bulk_load(points);
 
         let mut grid = vec![vec![Side::Neutral; grid_size]; grid_size];
 
-        // For each grid cell, find nearest objective (Voronoi assignment)
+        // For each grid cell, find nearest objective via R-tree (O(log n) per query)
         for i in 0..grid_size {
             for j in 0..grid_size {
                 let x = min.x + (j as f64 + 0.5) * cell_width;
                 let y = min.y + (i as f64 + 0.5) * cell_height;
-                let pos = Vector2::new(x, y);
 
-                // Find closest objective
-                let (_, owner) = objectives.iter()
-                    .map(|(obj_pos, side)| ((*obj_pos - pos).magnitude_squared(), side))
-                    .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
-                    .unwrap();
-
-                grid[i][j] = *owner;
+                if let Some(nearest) = rtree.nearest_neighbor(&[x, y]) {
+                    grid[i][j] = nearest.side;
+                }
             }
         }
 

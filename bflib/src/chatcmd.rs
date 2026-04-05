@@ -197,6 +197,39 @@ fn balance_command(ctx: &mut Context, id: PlayerId) {
     }
 }
 
+fn status_command(ctx: &mut Context, id: PlayerId) {
+    use std::fmt::Write;
+    let Some(ifo) = ctx.connected.get(&id) else { return };
+    let Some(player) = ctx.db.player(&ifo.ucid) else { return };
+    let side = player.side;
+    let points = player.points;
+    let streak = player.kill_streak;
+    let total_kills = player.total_kills;
+
+    // Count objective ownership for both sides
+    let (mut blue_owned, mut red_owned) = (0u32, 0u32);
+    for (_, obj) in ctx.db.objectives() {
+        match obj.owner {
+            dcso3::coalition::Side::Blue => blue_owned += 1,
+            dcso3::coalition::Side::Red => red_owned += 1,
+            _ => {}
+        }
+    }
+
+    // Count active convoys for the player's side
+    let convoy_count = ctx.db.convoy_count_for_side(side);
+
+    let mut msg = CompactString::new("");
+    let _ = write!(
+        msg,
+        "=== CAMPAIGN STATUS ===\nSide: {:?} | Points: {} | Streak: {} | Career Kills: {}\nObjectives — Blue: {} | Red: {}\nActive {:?} Convoys: {}",
+        side, points, streak, total_kills,
+        blue_owned, red_owned,
+        side, convoy_count
+    );
+    ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
+}
+
 fn transfer_command(ctx: &mut Context, id: PlayerId, s: &str) {
     macro_rules! reply {
         ($msg:tt) => {
@@ -305,6 +338,9 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                                 }
                             },
                         }
+                    }
+                    DeployKind::DownedPilot { .. } => {
+                        reply!("can't delete a downed pilot this way")
                     }
                     DeployKind::Troop {
                         player,
@@ -440,6 +476,7 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
             ActionKind::CarrierWaypoint => None,
             ActionKind::CarrierRepair => None,
             ActionKind::CarrierRespawn => None,
+            ActionKind::NavalCruiseMissileStrike(_) => None,
         };
         if let Some(msg) = msg {
             ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg)
@@ -745,6 +782,7 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
         " -lives: display your current lives",
         " -time: how long until server restart",
         " -balance: show your points balance",
+        " -status: show campaign status (objectives, convoys, streak)",
         " -transfer <amount> [<player> | objective:<objective>]: transfer points to another player or objective",
         " -delete <groupid>: delete a group you deployed for a partial refund",
         " -action <name> <args>: perform an action, -action help for a list of actions",
@@ -789,6 +827,9 @@ pub(super) fn process(
         Ok("".into())
     } else if msg.starts_with("-balance") {
         balance_command(ctx, id);
+        Ok("".into())
+    } else if msg.starts_with("-status") {
+        status_command(ctx, id);
         Ok("".into())
     } else if let Some(s) = msg.strip_prefix("-transfer ") {
         transfer_command(ctx, id, s);

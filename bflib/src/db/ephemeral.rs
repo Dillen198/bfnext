@@ -52,7 +52,6 @@ use dcso3::{
     coalition::Side,
     controller::{MissionPoint, PointType},
     env::miz::{self, GroupKind, Miz, MizIndex},
-    group::Group,
     net::{SlotId, Ucid},
     object::{ClassObject, DcsObject, DcsOid},
     perf::record_perf,
@@ -122,6 +121,18 @@ pub struct Ephemeral {
     pub(super) last_convoy_spawn: FxHashMap<Side, DateTime<Utc>>,
     /// Counter for generating unique convoy IDs
     pub(super) convoy_counter: u32,
+    /// Air logistics route tracking: route_id -> AirLogisticsRoute
+    pub(super) active_air_routes: FxHashMap<super::logistics::LogiRouteId, super::logistics::AirLogisticsRoute>,
+    /// Track last air route spawn time per side to throttle spawning
+    pub(super) last_air_route_spawn: FxHashMap<Side, DateTime<Utc>>,
+    /// Counter for generating unique air route IDs
+    pub(super) air_route_counter: u32,
+    /// Sea logistics route tracking: route_id -> SeaLogisticsRoute
+    pub(super) active_sea_routes: FxHashMap<super::logistics::LogiRouteId, super::logistics::SeaLogisticsRoute>,
+    /// Track last sea route spawn time per side to throttle spawning
+    pub(super) last_sea_route_spawn: FxHashMap<Side, DateTime<Utc>>,
+    /// Counter for generating unique sea route IDs
+    pub(super) sea_route_counter: u32,
     pub(super) deployable_idx: FxHashMap<Side, Arc<DeployableIndex>>,
     pub(super) group_marks: FxHashMap<GroupId, MarkId>,
     objective_markup: FxHashMap<ObjectiveId, ObjectiveMarkup>,
@@ -154,6 +165,28 @@ pub struct Ephemeral {
     sync_warehouse: Vec<(ObjectiveId, Vehicle)>,
     pub(super) msgs: MsgQ,
     pub(super) victory: Option<(DateTime<Utc>, Side)>,
+    /// Active mission plans created by players
+    pub(super) planned_missions: Vec<bfprotocols::db::mission::PlannedMission>,
+    /// Downed pilots that have already fired their approach flare (reset on restart)
+    pub(super) csar_flared: FxHashSet<GroupId>,
+    /// Downed pilots currently moving toward a helicopter: gid -> last move order time
+    pub(super) csar_moving: FxHashMap<GroupId, DateTime<Utc>>,
+    /// Downed pilots for which the all-helicopter-pilots notification has already been sent
+    pub(super) csar_notified: FxHashSet<GroupId>,
+    /// Per-pilot last renotify broadcast time (bearing/distance reminder to helo pilots)
+    pub(super) csar_last_renotify: FxHashMap<GroupId, DateTime<Utc>>,
+    /// Per-pilot last smoke request time (for cooldown enforcement)
+    pub(crate) csar_smoke_cooldown: FxHashMap<GroupId, DateTime<Utc>>,
+    /// Set of objective IDs for which a "supply critical" alert has been broadcast.
+    /// Cleared when the objective's supply recovers above the threshold.
+    pub(super) supply_warned: FxHashSet<ObjectiveId>,
+    /// Tracks when enemy troops first entered an objective zone (for capture momentum timer).
+    /// Maps ObjectiveId -> (capturing Side, entry DateTime). Cleared if troops leave.
+    pub(super) capture_progress: FxHashMap<ObjectiveId, (dcso3::coalition::Side, DateTime<Utc>)>,
+    /// Last time treasury income was deposited (Smart Commander).
+    pub(crate) last_treasury_income: DateTime<Utc>,
+    /// Last time objectives were funded (Smart Commander).
+    pub(crate) last_objective_fund: DateTime<Utc>,
 }
 
 impl Default for Ephemeral {
@@ -169,6 +202,12 @@ impl Default for Ephemeral {
             active_convoys: FxHashMap::default(),
             last_convoy_spawn: FxHashMap::default(),
             convoy_counter: 0,
+            active_air_routes: FxHashMap::default(),
+            last_air_route_spawn: FxHashMap::default(),
+            air_route_counter: 0,
+            active_sea_routes: FxHashMap::default(),
+            last_sea_route_spawn: FxHashMap::default(),
+            sea_route_counter: 0,
             deployable_idx: FxHashMap::default(),
             group_marks: FxHashMap::default(),
             objective_markup: FxHashMap::default(),
@@ -199,6 +238,16 @@ impl Default for Ephemeral {
             msgs: MsgQ::default(),
             logistics_stage: LogiStage::default(),
             victory: None,
+            planned_missions: Vec::default(),
+            csar_flared: FxHashSet::default(),
+            csar_moving: FxHashMap::default(),
+            csar_notified: FxHashSet::default(),
+            csar_last_renotify: FxHashMap::default(),
+            csar_smoke_cooldown: FxHashMap::default(),
+            supply_warned: FxHashSet::default(),
+            capture_progress: FxHashMap::default(),
+            last_treasury_income: DateTime::<Utc>::default(),
+            last_objective_fund: DateTime::<Utc>::default(),
         }
     }
 }
@@ -208,7 +257,7 @@ impl Ephemeral {
         if let Some(to_bg) = &self.to_bg {
             match to_bg.send(task) {
                 Ok(()) => (),
-                Err(_) => panic!("background thread is dead"),
+                Err(e) => log::error!("background thread is dead, task dropped: {e}"),
             }
         }
     }
@@ -379,6 +428,15 @@ impl Ephemeral {
 
     pub fn msgs(&mut self) -> &mut MsgQ {
         &mut self.msgs
+    }
+
+    pub fn planned_missions(&self) -> &[bfprotocols::db::mission::PlannedMission] {
+        &self.planned_missions
+    }
+
+    #[allow(dead_code)]
+    pub fn planned_missions_mut(&mut self) -> &mut Vec<bfprotocols::db::mission::PlannedMission> {
+        &mut self.planned_missions
     }
 
     pub fn get_uid_by_object_id(&self, id: &DcsOid<ClassUnit>) -> Option<&UnitId> {
@@ -856,7 +914,8 @@ impl Ephemeral {
                     | ActionKind::Nuke(_)
                     | ActionKind::CarrierWaypoint
                     | ActionKind::CarrierRepair
-                    | ActionKind::CarrierRespawn => (),
+                    | ActionKind::CarrierRespawn
+                    | ActionKind::NavalCruiseMissileStrike(_) => (),
                 }
             }
         }
@@ -876,10 +935,8 @@ impl Ephemeral {
         let ts = Utc::now();
 
         // Check if this is a carrier group defined in config, or falls back to prefix matching
-        // For carrier groups, use Group.activate() instead of spawning a copy.
-        // This preserves the original unit IDs and thus the warehouse dynamicSpawn setting.
-        // DCS creates new warehouses for spawned groups with default settings (dynamicSpawn=false),
-        // but activating the existing late-activated group keeps the mission file's warehouse settings.
+        // For carrier groups, spawn via coalition.addGroup() with positions set to the saved
+        // state so the carrier appears directly at its last known location.
         let carrier_cfg = self.cfg.carrier.as_ref()
             .and_then(|c| c.groups.iter().find(|g| g.template.as_str() == group.template_name.as_str()));
 
@@ -889,10 +946,6 @@ impl Ephemeral {
             || group.template_name.starts_with("NCARRIER");
 
         if is_carrier_group {
-            // Activate the carrier group using Group.activate() to preserve warehouse dynamicSpawn
-            // settings. Before activating, modify the unit positions directly in the original
-            // env.mission data so DCS activates them at the saved positions instead of the
-            // mission editor positions.
             let display_name = carrier_cfg
                 .map(|c| c.display_name.clone())
                 .unwrap_or_else(|| group.template_name.clone());
@@ -914,16 +967,19 @@ impl Ephemeral {
                 })
                 .collect();
 
-            // Modify unit positions in the ORIGINAL miz data (not a deep clone).
-            // Group.activate() reads from env.mission, so modifying the source data
-            // should make DCS activate the group at the correct positions.
-            // Also modify the group's route first waypoint to match.
-            {
-                let miz_template = spctx
-                    .get_template_ref(idx, GroupKind::Any, group.side, group.template_name.as_str())
-                    .with_context(|| format_compact!("getting carrier miz template {}", group.template_name))?;
+            // Deep-clone the template so we can modify positions without touching the
+            // original miz data, then spawn via coalition.addGroup() which reads directly
+            // from the Lua table — so the carrier spawns at the saved positions.
+            let miz_template = spctx
+                .get_template(idx, GroupKind::Any, group.side, group.template_name.as_str())
+                .with_context(|| format_compact!("getting carrier miz template {}", group.template_name))?;
 
-                // Modify each unit's position in the original miz data
+            // Must disable lateActivation in the clone so coalition.addGroup() spawns it immediately.
+            miz_template.group.set("lateActivation", false)?;
+
+            // Set each unit's position in the cloned template to the saved position.
+            // Also update the group centroid and route waypoints to prevent circling.
+            {
                 let units = miz_template.group.units().context("getting carrier miz units")?;
                 let mut centroid_x = 0.0f64;
                 let mut centroid_y = 0.0f64;
@@ -933,7 +989,7 @@ impl Ephemeral {
                         let unit_name = unit.name()?;
                         if let Some(su) = by_tname.get(unit_name.as_str()) {
                             let dist = na::distance(&su.pos.into(), &su.spawn_pos.into());
-                            info!("[CARRIER_SPAWN] Modifying miz unit '{}' position: ({:.0}, {:.0}) -> ({:.0}, {:.0}), dist={:.0}m",
+                            info!("[CARRIER_SPAWN] Setting unit '{}' position: ({:.0}, {:.0}) -> ({:.0}, {:.0}), dist={:.0}m",
                                   unit_name, su.spawn_pos.x, su.spawn_pos.y, su.pos.x, su.pos.y, dist);
                             unit.set_pos(su.pos)?;
                             unit.set_heading(su.heading)?;
@@ -944,16 +1000,14 @@ impl Ephemeral {
                     }
                 }
 
-                // Update the group position and the route's first waypoint
                 if count > 0 {
                     let cx = centroid_x / count as f64;
                     let cy = centroid_y / count as f64;
                     miz_template.group.set_pos(Vector2::new(cx, cy))?;
-                    info!("[CARRIER_SPAWN] Updated miz group position to ({:.0}, {:.0})", cx, cy);
+                    info!("[CARRIER_SPAWN] Set group position to ({:.0}, {:.0})", cx, cy);
 
-                    // Update ALL route waypoints to the carrier's position.
-                    // This prevents the carrier from circling to old ME waypoints
-                    // if DCS reads them before our StopRoute command takes effect.
+                    // Override all route waypoints to the carrier's saved position so DCS
+                    // doesn't send it circling to old ME waypoints before StopRoute takes effect.
                     if let Ok(route) = miz_template.group.raw_get::<_, mlua::Table>("route") {
                         if let Ok(points) = route.raw_get::<_, mlua::Table>("points") {
                             let num_points = points.raw_len();
@@ -963,25 +1017,28 @@ impl Ephemeral {
                                     point.raw_set("y", cy)?;
                                 }
                             }
-                            info!("[CARRIER_SPAWN] Updated all {} route waypoints to ({:.0}, {:.0})", num_points, cx, cy);
+                            info!("[CARRIER_SPAWN] Set all {} route waypoints to ({:.0}, {:.0})", num_points, cx, cy);
                         }
                     }
                 }
             }
 
-            // Now activate the group - DCS should read the modified positions
-            let dcs_group = Group::get_by_name(spctx.lua(), &group.template_name)
-                .with_context(|| format_compact!("getting carrier group {}", group.template_name))?;
-            dcs_group.activate()
-                .with_context(|| format_compact!("activating carrier group {}", group.template_name))?;
+            // Spawn via coalition.addGroup() — the carrier appears directly at the saved positions.
+            let dcs_group = match spctx.spawn(miz_template)
+                .with_context(|| format_compact!("spawning carrier group {}", group.template_name))? {
+                Spawned::Group(g) => g,
+                other => bail!("[CARRIER_SPAWN] Expected Group from carrier spawn of {}, got {:?}",
+                               group.template_name, other),
+            };
             let oid = dcs_group.object_id()?.erased();
             self.object_id_by_gid.insert(group.id, oid.clone());
             self.gid_by_object_id.insert(oid, group.id);
 
             // Manually register each unit's DCS object ID mappings.
-            // DCS does NOT fire S_EVENT_BIRTH for Group.activate(), so we must do this here.
+            // DCS does NOT fire S_EVENT_BIRTH for coalition.addGroup(), so we must do this here.
             info!("[CARRIER_SPAWN] Registering units from activated group {} ({} persisted units)",
                   group.template_name, group.units.len());
+            let mut needs_repositioning = false;
             match dcs_group.get_units() {
                 Ok(dcs_units) => {
                     for dcs_unit_res in dcs_units {
@@ -1023,9 +1080,9 @@ impl Ephemeral {
                                                 info!("[CARRIER_SPAWN] Added carrier unit '{}' to units_able_to_move",
                                                       unit.name);
                                             }
-                                            // Teleport unit to persisted position if DCS activated it
-                                            // at the wrong location (Group.activate() reads from internal
-                                            // C++ data, not the Lua env.mission table we modified).
+                                            // Verify unit spawned at the expected position.
+                                            // With coalition.addGroup() this should always be correct,
+                                            // but setPosition is attempted as a fallback if not.
                                             match dcs_unit.get_ground_position() {
                                                 Ok(actual) => {
                                                     let expected = unit.pos;
@@ -1036,6 +1093,7 @@ impl Ephemeral {
                                                     info!("[CARRIER_TELEPORT] Unit '{}': actual=({:.0},{:.0}) expected=({:.0},{:.0}) dist={:.0}m",
                                                           unit.name, actual.0.x, actual.0.y, expected.x, expected.y, dist);
                                                     if dist > 100.0 {
+                                                        needs_repositioning = true;
                                                         info!("[CARRIER_TELEPORT] Teleporting '{}' {:.0}m to persisted position ({:.0},{:.0})",
                                                               unit.name, dist, expected.x, expected.y);
                                                         match dcs_unit.as_object() {
@@ -1117,9 +1175,16 @@ impl Ephemeral {
                 });
 
             if let Some(target) = waypoint_pos {
-                let speed = self.cfg.carrier.as_ref().map(|c| c.movement_speed).unwrap_or(5.0);
-                info!("[CARRIER_SPAWN] Commanding carrier {} to continue to waypoint ({:.0}, {:.0}) at speed {:.1}",
-                      group.template_name, target.x, target.y, speed);
+                let speed = if needs_repositioning {
+                    self.cfg.carrier.as_ref()
+                        .map(|c| c.spawn_repositioning_speed)
+                        .unwrap_or(100.0)
+                } else {
+                    self.cfg.carrier.as_ref().map(|c| c.movement_speed).unwrap_or(5.0)
+                };
+                info!("[CARRIER_SPAWN] Commanding carrier {} to continue to waypoint ({:.0}, {:.0}) at speed {:.1}{}",
+                      group.template_name, target.x, target.y, speed,
+                      if needs_repositioning { " (repositioning speed)" } else { "" });
                 // Re-enable route following and set the new destination
                 controller.set_command(dcso3::controller::Command::StopRoute(false))
                     .context("re-enabling carrier route")?;

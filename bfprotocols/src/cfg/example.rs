@@ -29,6 +29,7 @@ fn default_red_troops() -> Vec<Troop> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -43,6 +44,7 @@ fn default_red_troops() -> Vec<Troop> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -57,6 +59,7 @@ fn default_red_troops() -> Vec<Troop> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -87,6 +90,7 @@ fn default_blue_troops() -> Vec<Troop> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -101,6 +105,7 @@ fn default_blue_troops() -> Vec<Troop> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -115,6 +120,7 @@ fn default_blue_troops() -> Vec<Troop> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -129,6 +135,7 @@ fn default_blue_troops() -> Vec<Troop> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -421,6 +428,7 @@ fn default_red_deployables() -> Vec<Deployable> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             deprecated_logistics: None,
             deprecated_template: None,
@@ -448,6 +456,7 @@ fn default_red_deployables() -> Vec<Deployable> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             deprecated_logistics: None,
             deprecated_template: None,
@@ -762,6 +771,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             deprecated_logistics: None,
             deprecated_template: None,
@@ -789,6 +799,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
             jtac: Some(DeployableJtac {
                 range: 8000,
                 nolos: false,
+                default_laser_code: 1688,
             }),
             deprecated_logistics: None,
             deprecated_template: None,
@@ -927,6 +938,7 @@ fn default_cargo() -> FxHashMap<Vehicle, CargoConfig> {
                 troop_slots: 1,
                 crate_slots: 1,
                 total_slots: 2,
+                pilot_slots: 2,
             },
         ),
         (
@@ -935,6 +947,7 @@ fn default_cargo() -> FxHashMap<Vehicle, CargoConfig> {
                 troop_slots: 2,
                 crate_slots: 1,
                 total_slots: 2,
+                pilot_slots: 3,
             },
         ),
         (
@@ -943,6 +956,7 @@ fn default_cargo() -> FxHashMap<Vehicle, CargoConfig> {
                 troop_slots: 1,
                 crate_slots: 1,
                 total_slots: 1,
+                pilot_slots: 1,
             },
         ),
         (
@@ -951,6 +965,7 @@ fn default_cargo() -> FxHashMap<Vehicle, CargoConfig> {
                 troop_slots: 1,
                 crate_slots: 1,
                 total_slots: 1,
+                pilot_slots: 1,
             },
         ),
         (
@@ -959,6 +974,7 @@ fn default_cargo() -> FxHashMap<Vehicle, CargoConfig> {
                 troop_slots: 1,
                 crate_slots: 1,
                 total_slots: 1,
+                pilot_slots: 1,
             },
         ),
     ])
@@ -1360,6 +1376,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                     jtac: DeployableJtac {
                         range: 16000,
                         nolos: true,
+                        default_laser_code: 1688,
                     },
                 }),
             },
@@ -1659,6 +1676,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                     jtac: DeployableJtac {
                         range: 16000,
                         nolos: true,
+                        default_laser_code: 1688,
                     },
                 }),
             },
@@ -1899,6 +1917,8 @@ impl Default for Cfg {
                 strict: false,
                 periodic_point_gain: (0, 0),
                 award_kill_points: true,
+                convoy_interdiction_points: 10,
+                kill_streak_bonuses: vec![],
             }),
             warehouse: Some(WarehouseConfig {
                 hub_max: 25,
@@ -1915,6 +1935,8 @@ impl Default for Cfg {
                 ]),
                 exempt_airframes: FxHashSet::from_iter(["Su-30SM".into()]),
                 convoy: None,
+                air_logistics: None,
+                sea_logistics: None,
             }),
             weapon_target_exclusions: FxHashSet::default(),
             logistics_exclusion: 10000,
@@ -1966,6 +1988,7 @@ impl Default for Cfg {
                     DeployableJtac {
                         range: 16000,
                         nolos: true,
+                        default_laser_code: 1688,
                     },
                 ),
                 (
@@ -1973,6 +1996,7 @@ impl Default for Cfg {
                     DeployableJtac {
                         range: 16000,
                         nolos: true,
+                        default_laser_code: 1688,
                     },
                 ),
             ]),
@@ -1988,9 +2012,26 @@ impl Default for Cfg {
             carrier: Some(CarrierCfg {
                 repair_cost: 5000,
                 respawn_cost: 15000,
-                movement_speed: 5.0, // ~10 knots
-                repair_time: 600,     // 10 minutes
-                groups: vec![],       // Carrier groups defined here, or auto-detected by BCARRIER/RCARRIER prefix
+                movement_speed: 5.0,               // ~10 knots
+                spawn_repositioning_speed: 100.0,  // ~194 knots, used to quickly navigate back to last position after restart
+                repair_time: 600,                  // 10 minutes
+                groups: vec![],                    // Carrier groups defined here, or auto-detected by BCARRIER/RCARRIER prefix
+            }),
+            weather_effects: None,
+            time_of_day_effects: None,
+            campaign_events: None,
+            pilot_experience: None,
+            csar: None,
+            supply_alert_threshold: 20,
+            smart_commander: Some(SmartCommanderCfg {
+                tick_period_secs: 60,
+                treasury_start: 2000,
+                treasury_income_amount: 500,
+                treasury_income_period_secs: 300,
+                objective_fund_max_per_tick: 200,
+                objective_fund_period_secs: 120,
+                holding_bonus_per_objective: 5,
+                mission_rewards: MissionRewardCfg::default(),
             }),
         }
     }

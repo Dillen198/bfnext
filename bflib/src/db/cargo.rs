@@ -24,7 +24,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{C130Vehicle, CargoConfig, Crate, Deployable, DeployableKind, LimitEnforceTyp, Troop, Vehicle},
+    cfg::{C130Vehicle, CargoConfig, Crate, Deployable, DeployableKind, LifeType, LimitEnforceTyp, Troop, Vehicle},
     db::{
         group::GroupId,
         objective::{ObjectiveId, ObjectiveKind},
@@ -34,14 +34,17 @@ use bfprotocols::{
 use chrono::prelude::*;
 use compact_str::{CompactString, format_compact};
 use dcso3::{
-    LuaVec2, MizLua, Position3, String, Vector2, azumith2d, azumith2d_to, azumith3d, centroid2d,
+    LuaVec2, LuaVec3, MizLua, Position3, String, Vector2, Vector3, azumith2d, azumith2d_to,
+    azumith3d, centroid2d,
     coalition::Side,
+    controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation},
     env::miz::MizIndex,
+    group::Group,
     land::Land,
     net::{SlotId, Ucid},
     object::DcsObject,
     radians_to_degrees,
-    trigger::Trigger,
+    trigger::{FlareColor, Trigger},
     unit::Unit,
 };
 use enumflags2::BitFlags;
@@ -101,10 +104,19 @@ pub struct InternalTroop {
     pub troop: Troop,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InternalPilot {
+    pub ucid: Ucid,
+    pub name: String,
+    pub life_type: LifeType,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Cargo {
     pub troops: SmallVec<[InternalTroop; 2]>,
     pub crates: SmallVec<[(ObjectiveId, Crate); 1]>,
+    #[serde(default)]
+    pub pilots: SmallVec<[InternalPilot; 1]>,
 }
 
 impl Cargo {
@@ -116,8 +128,12 @@ impl Cargo {
         self.crates.len()
     }
 
+    pub fn num_pilots(&self) -> usize {
+        self.pilots.len()
+    }
+
     pub fn num_total(&self) -> usize {
-        self.num_crates() + self.num_troops()
+        self.num_crates() + self.num_troops() + self.num_pilots()
     }
 
     pub fn weight(&self) -> i64 {
@@ -430,7 +446,8 @@ impl Db {
                 | DeployKind::Troop { .. }
                 | DeployKind::Objective { .. }
                 | DeployKind::ObjectiveDeprecated
-                | DeployKind::Action { .. } => {
+                | DeployKind::Action { .. }
+                | DeployKind::DownedPilot { .. } => {
                     bail!("group {:?} is listed in crates but isn't a crate", gid)
                 }
             };
@@ -728,7 +745,8 @@ impl Db {
                             | DeployKind::Objective { .. }
                             | DeployKind::ObjectiveDeprecated
                             | DeployKind::Troop { .. }
-                            | DeployKind::Action { .. } => (),
+                            | DeployKind::Action { .. }
+                            | DeployKind::DownedPilot { .. } => (),
                         }
                     }
                     if let Some(gid) = group_to_repair {
@@ -900,7 +918,9 @@ impl Db {
                     reasons.push("objective logistics are completely repaired".into());
                 } else {
                     self.repair_one_logi_step(st.side, Utc::now(), oid)?;
-                    self.delete_group(base_repairs.keys().next().unwrap())?;
+                    let gid = base_repairs.keys().next()
+                        .ok_or_else(|| anyhow!("no base repair crates found"))?;
+                    self.delete_group(gid)?;
                     self.ephemeral.stat(Stat::Repair {
                         id: oid,
                         by: st.ucid,
@@ -927,7 +947,8 @@ impl Db {
                 supply_transfer.iter().map(|(_, c)| c)
             });
             if let Some(to) = oid {
-                let (gid, _) = supply_transfer.into_iter().next().unwrap();
+                let (gid, _) = supply_transfer.into_iter().next()
+                    .ok_or_else(|| anyhow!("no supply transfer crates found"))?;
                 if let DeployKind::Crate {
                     origin: from,
                     player: _,
@@ -962,7 +983,8 @@ impl Db {
         match buildable(&nearby, &didx) {
             Err(mut build_reasons) => reasons.append(&mut build_reasons),
             Ok(mut candidates) => {
-                let (dep, have) = candidates.drain().next().unwrap();
+                let (dep, have) = candidates.drain().next()
+                    .ok_or_else(|| anyhow!("no deployable candidates found"))?;
                 let spec = maybe!(didx.deployables_by_name, dep, "deployable")?.clone();
                 let centroid = centroid2d(have.values().flat_map(|c| c.iter()).map(|c| c.pos));
                 let too_close =
@@ -1064,7 +1086,8 @@ impl Db {
         match repairable(self, &nearby, &didx, max_dist) {
             Err(mut rep_reasons) => reasons.append(&mut rep_reasons),
             Ok(mut candidates) => {
-                let (dep, (gid, have)) = candidates.drain().next().unwrap();
+                let (dep, (gid, have)) = candidates.drain().next()
+                    .ok_or_else(|| anyhow!("no repairable candidates found"))?;
                 let spec = maybe!(didx.deployables_by_name, dep, "deployable")?.clone();
                 let player = maybe!(self.persisted.players, &st.ucid, "player")?;
                 let centroid = centroid2d(have.iter().map(|c| c.pos));
@@ -1119,8 +1142,10 @@ impl Db {
         if cargo.map(|c| c.crates.is_empty()).unwrap_or(true) {
             bail!("no crates onboard")
         }
-        let cargo = self.ephemeral.cargo.get_mut(slot).unwrap();
-        let (oid, crate_cfg) = cargo.crates.pop().unwrap();
+        let cargo = self.ephemeral.cargo.get_mut(slot)
+            .ok_or_else(|| anyhow!("no cargo state for slot"))?;
+        let (oid, crate_cfg) = cargo.crates.pop()
+            .ok_or_else(|| anyhow!("no crates onboard"))?;
         let weight = cargo.weight();
         if st.in_air && st.speed > crate_cfg.max_drop_speed as f64 {
             let max_sp = (crate_cfg.max_drop_speed * 3600) / 1000;
@@ -1173,12 +1198,9 @@ impl Db {
             BitFlags::empty(),
             None,
         ) {
-            self.ephemeral
-                .cargo
-                .get_mut(slot)
-                .unwrap()
-                .crates
-                .push((oid, crate_cfg));
+            if let Some(cargo) = self.ephemeral.cargo.get_mut(slot) {
+                cargo.crates.push((oid, crate_cfg));
+            }
             return Err(e);
         }
         Ok(crate_cfg)
@@ -1213,13 +1235,15 @@ impl Db {
                     self.ephemeral.cfg.crate_load_distance
                 );
             }
-            let the_crate = nearby.first().unwrap();
+            let the_crate = nearby.first()
+                .ok_or_else(|| anyhow!("no nearby crates found"))?;
             let gid = the_crate.group.id;
             let crate_def = the_crate.crate_def.clone();
             let oid = the_crate.origin;
             (gid, oid, crate_def)
         };
-        let cargo = self.ephemeral.cargo.get_mut(slot).unwrap();
+        let cargo = self.ephemeral.cargo.get_mut(slot)
+            .ok_or_else(|| anyhow!("no cargo state for slot"))?;
         cargo.crates.push((oid, crate_def.clone()));
         let weight = cargo.weight();
         self.delete_group(&gid)?;
@@ -1324,8 +1348,10 @@ impl Db {
             }
             Ok(_) | Err(_) => (),
         }
-        let cargo = self.ephemeral.cargo.get(slot).unwrap();
-        let it = cargo.troops.last().unwrap();
+        let cargo = self.ephemeral.cargo.get(slot)
+            .ok_or_else(|| anyhow!("no cargo state for slot"))?;
+        let it = cargo.troops.last()
+            .ok_or_else(|| anyhow!("no troops onboard"))?;
         let (n, oldest) = self.number_troops_deployed(side, it.troop.name.as_str())?;
         let to_delete = if n < it.troop.limit as usize {
             None
@@ -1340,8 +1366,10 @@ impl Db {
                 }
             }
         };
-        let cargo = self.ephemeral.cargo.get_mut(slot).unwrap();
-        let it = cargo.troops.pop().unwrap();
+        let cargo = self.ephemeral.cargo.get_mut(slot)
+            .ok_or_else(|| anyhow!("no cargo state for slot"))?;
+        let it = cargo.troops.pop()
+            .ok_or_else(|| anyhow!("no troops onboard"))?;
         Trigger::singleton(lua)?
             .action()?
             .set_unit_internal_cargo(unit_name, cargo.weight())?;
@@ -1380,7 +1408,9 @@ impl Db {
                 Ok((it.troop, gid, oid))
             }
             Err(e) => {
-                self.ephemeral.cargo.get_mut(slot).unwrap().troops.push(it);
+                if let Some(cargo) = self.ephemeral.cargo.get_mut(slot) {
+                    cargo.troops.push(it);
+                }
                 Err(e)
             }
         }
@@ -1406,8 +1436,10 @@ impl Db {
         if self.point_near_logistics(side, point).is_err() {
             bail!("you are not close enough to friendly logistics to return troops")
         }
-        let cargo = self.ephemeral.cargo.get_mut(slot).unwrap();
-        let it = cargo.troops.pop().unwrap();
+        let cargo = self.ephemeral.cargo.get_mut(slot)
+            .ok_or_else(|| anyhow!("no cargo state for slot"))?;
+        let it = cargo.troops.pop()
+            .ok_or_else(|| anyhow!("no troops onboard"))?;
         Trigger::singleton(lua)?
             .action()?
             .set_unit_internal_cargo(unit_name, cargo.weight())?;
@@ -1485,6 +1517,698 @@ impl Db {
         Ok(troop_cfg)
     }
 
+    // ===== CSAR System =====
+
+    pub fn spawn_downed_pilot(
+        &mut self,
+        lua: MizLua,
+        idx: &MizIndex,
+        ucid: Ucid,
+        name: String,
+        side: Side,
+        life_type: LifeType,
+        pos: Vector2,
+    ) -> Result<GroupId> {
+        let template = self
+            .ephemeral
+            .cfg
+            .csar
+            .as_ref()
+            .ok_or_else(|| anyhow!("CSAR is not configured"))?
+            .pilot_template
+            .get(&side)
+            .cloned()
+            .ok_or_else(|| anyhow!("CSAR pilot_template not configured for side {:?}", side))?;
+        let spawnpos = SpawnLoc::AtPos {
+            pos,
+            offset_direction: Vector2::new(1., 0.),
+            group_heading: 0.,
+        };
+        let dk = DeployKind::DownedPilot {
+            ucid,
+            name: name.into(),
+            life_type,
+        };
+        let spctx = SpawnCtx::new(lua)?;
+        let gid = self.add_and_queue_group(
+            &spctx,
+            idx,
+            side,
+            spawnpos,
+            &*template,
+            dk,
+            BitFlags::empty(),
+            None,
+        )?;
+        self.persisted.downed_pilots.insert_cow(gid);
+        self.persisted
+            .downed_pilot_spawn_times
+            .insert_cow(gid, Utc::now());
+
+        // Spawn enemy search parties if configured
+        let enemy_side = match side {
+            Side::Blue => Side::Red,
+            Side::Red => Side::Blue,
+            Side::Neutral => Side::Neutral,
+        };
+        let (search_template, search_count) = {
+            let c = self.ephemeral.cfg.csar.as_ref();
+            let tmpl = c
+                .and_then(|c| c.search_party_template.get(&enemy_side).cloned())
+                .unwrap_or_default();
+            let count = c.map(|c| c.search_party_size).unwrap_or(0);
+            (tmpl, count)
+        };
+        if search_count > 0 && !search_template.is_empty() {
+            // Find the nearest enemy objective to use as the origin
+            let origin_oid = self
+                .persisted
+                .objectives
+                .into_iter()
+                .filter_map(|(oid, obj)| {
+                    if obj.owner != enemy_side {
+                        return None;
+                    }
+                    let dx = obj.pos().x - pos.x;
+                    let dy = obj.pos().y - pos.y;
+                    Some((*oid, dx * dx + dy * dy))
+                })
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                .map(|(oid, _)| oid);
+            if let Some(origin) = origin_oid {
+                // Spawn each search party at an offset from the pilot so they approach from different angles
+                for i in 0..search_count {
+                    let angle = (i as f64) * std::f64::consts::TAU / (search_count as f64);
+                    let offset_dist = 500.0 + (i as f64) * 100.0;
+                    let search_pos = Vector2::new(
+                        pos.x + angle.sin() * offset_dist,
+                        pos.y + angle.cos() * offset_dist,
+                    );
+                    let spawn = SpawnLoc::AtPos {
+                        pos: search_pos,
+                        offset_direction: Vector2::new(1., 0.),
+                        group_heading: 0.,
+                    };
+                    if let Err(e) = self.add_and_queue_group(
+                        &spctx,
+                        idx,
+                        enemy_side,
+                        spawn,
+                        &*search_template,
+                        DeployKind::Objective { origin },
+                        BitFlags::empty(),
+                        None,
+                    ) {
+                        error!("csar: failed to spawn search party {i}: {e:?}");
+                    }
+                }
+            }
+        }
+
+        Ok(gid)
+    }
+
+    pub fn pickup_pilot(&mut self, lua: MizLua, slot: &SlotId) -> Result<String> {
+        let (cargo_capacity, side, unit_name) = self.unit_cargo_cfg(slot)?;
+        if cargo_capacity.pilot_slots == 0 {
+            bail!("this aircraft cannot carry downed pilots")
+        }
+        let pos = self.ephemeral.slot_instance_pos(lua, slot)?;
+        let point = Vector2::new(pos.p.x, pos.p.z);
+        let max_dist = (self.ephemeral.cfg.crate_load_distance as f64).powi(2);
+        let unit = self.ephemeral.slot_instance_unit(lua, slot)?;
+        if unit.in_air()? {
+            bail!("you must land to pick up a downed pilot")
+        }
+        let (gid, pilot) = self
+            .persisted
+            .downed_pilots
+            .into_iter()
+            .filter_map(|gid| self.persisted.groups.get(gid).map(|g| (*gid, g)))
+            .find_map(|(gid, g)| {
+                if g.side == side {
+                    let in_range = g
+                        .units
+                        .into_iter()
+                        .filter_map(|uid| self.persisted.units.get(uid))
+                        .any(|u| {
+                            na::distance_squared(&u.pos.into(), &point.into()) <= max_dist
+                        });
+                    if in_range {
+                        if let DeployKind::DownedPilot { ucid, name, life_type } = &g.origin {
+                            return Some((
+                                gid,
+                                InternalPilot {
+                                    ucid: *ucid,
+                                    name: name.clone().into(),
+                                    life_type: *life_type,
+                                },
+                            ));
+                        }
+                    }
+                }
+                None
+            })
+            .ok_or_else(|| anyhow!("no downed pilots in range"))?;
+        let cargo = self.ephemeral.cargo.entry(slot.clone()).or_default();
+        if cargo_capacity.pilot_slots as usize <= cargo.num_pilots()
+            || cargo_capacity.total_slots as usize <= cargo.num_total()
+        {
+            bail!("you already have a full load onboard")
+        }
+        let pilot_name = pilot.name.clone();
+        cargo.pilots.push(pilot);
+        Trigger::singleton(lua)?
+            .action()?
+            .set_unit_internal_cargo(unit_name, cargo.weight() as i64)?;
+        self.delete_group(&gid)?;
+        Ok(pilot_name)
+    }
+
+    pub fn deliver_pilots(&mut self, lua: MizLua, slot: &SlotId) -> Result<Vec<InternalPilot>> {
+        let cargo = self.ephemeral.cargo.get(slot);
+        if cargo.map(|c| c.pilots.is_empty()).unwrap_or(true) {
+            bail!("no downed pilots onboard")
+        }
+        let unit = self.ephemeral.slot_instance_unit(lua, slot)?;
+        if unit.in_air()? {
+            bail!("you must land to deliver pilots")
+        }
+        let unit_name = unit.get_name()?;
+        let pos = unit.get_position()?;
+        let point = Vector2::new(pos.p.x, pos.p.z);
+        let side = self
+            .ephemeral
+            .get_slot_info(slot)
+            .ok_or_else(|| anyhow!("no slot info for {slot:?}"))?
+            .side;
+        self.persisted
+            .objectives
+            .into_iter()
+            .find(|(_, o)| o.owner == side && o.zone.contains(point))
+            .ok_or_else(|| anyhow!("you must be at a friendly objective to deliver pilots"))?;
+        let cargo = self.ephemeral.cargo.get_mut(slot)
+            .ok_or_else(|| anyhow!("no cargo state for slot"))?;
+        let pilots: Vec<InternalPilot> = cargo.pilots.drain(..).collect();
+        Trigger::singleton(lua)?
+            .action()?
+            .set_unit_internal_cargo(unit_name, cargo.weight())?;
+        Ok(pilots)
+    }
+
+    fn move_pilot_toward(&self, lua: MizLua, gid: &GroupId, target: Vector2) -> Result<()> {
+        let group = match self.persisted.groups.get(gid) {
+            None => return Ok(()),
+            Some(g) => g,
+        };
+        let dcs_group = Group::get_by_name(lua, group.name.as_str())?;
+        let controller = dcs_group.get_controller()?;
+        let land = Land::singleton(lua)?;
+        let alt = land.get_height(LuaVec2(target)).unwrap_or(0.);
+        let task = Task::Mission {
+            airborne: Some(false),
+            route: vec![MissionPoint {
+                typ: PointType::TurningPoint,
+                airdrome_id: None,
+                time_re_fu_ar: None,
+                helipad: None,
+                link_unit: None,
+                action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
+                pos: LuaVec2(target),
+                alt,
+                alt_typ: Some(AltType::BARO),
+                speed: 3.5, // ~12 km/h — running pace for infantry
+                speed_locked: Some(true),
+                eta: None,
+                eta_locked: None,
+                name: None,
+                task: Box::new(Task::Hold),
+            }],
+        };
+        controller.set_task(task)?;
+        Ok(())
+    }
+
+    /// Main CSAR tick — called every second from run_timed_events.
+    /// Handles: flare on approach, AI movement, auto-board, auto-deliver.
+    pub fn tick_csar(&mut self, lua: MizLua) -> Result<()> {
+        let csar = match self.ephemeral.cfg.csar.as_ref() {
+            Some(c) if c.enabled => c.clone(),
+            _ => return Ok(()),
+        };
+        let pickup_r2 = (csar.pickup_radius as f64).powi(2);
+        let board_r2 = (csar.board_radius as f64).powi(2);
+        let enemy_cap_r2 = if csar.enemy_capture_radius > 0 {
+            Some((csar.enemy_capture_radius as f64).powi(2))
+        } else {
+            None
+        };
+        let capture_timeout = if csar.capture_timer > 0 {
+            Some(chrono::Duration::minutes(csar.capture_timer as i64))
+        } else {
+            None
+        };
+        let renotify_interval = if csar.renotify_interval > 0 {
+            Some(chrono::Duration::minutes(csar.renotify_interval as i64))
+        } else {
+            None
+        };
+        let rescue_reward = csar.rescue_reward;
+        let now = Utc::now();
+        let move_interval = chrono::Duration::seconds(3);
+
+        // ---- Collect ALL helicopters with pilot slots (airborne + ground) ----
+        // Used for: flare proximity and new-pilot notifications.
+        // (ucid, slot, position, side)
+        let mut all_helos: Vec<(Ucid, SlotId, Vector2, Side)> = vec![];
+        for (slot, ucid) in &self.ephemeral.players_by_slot {
+            let ucid = *ucid;
+            let player = match self.persisted.players.get(&ucid) {
+                None => continue,
+                Some(p) => p,
+            };
+            let inst = match player.current_slot.as_ref().and_then(|(_, i)| i.as_ref()) {
+                None => continue,
+                Some(i) => i,
+            };
+            let cargo_cfg = match self.ephemeral.cfg.cargo.get(&inst.typ) {
+                None => continue,
+                Some(c) => *c,
+            };
+            if cargo_cfg.pilot_slots == 0 {
+                continue;
+            }
+            let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
+            all_helos.push((ucid, slot.clone(), pos, player.side));
+        }
+
+        // ---- Collect on-ground helicopters with available pilot capacity ----
+        // (ucid, slot, position, available_pilot_slots_remaining)
+        let mut helo_candidates: Vec<(Ucid, SlotId, Vector2, usize)> = vec![];
+        for (slot, ucid) in &self.ephemeral.players_by_slot {
+            let ucid = *ucid;
+            let player = match self.persisted.players.get(&ucid) {
+                None => continue,
+                Some(p) => p,
+            };
+            let inst = match player.current_slot.as_ref().and_then(|(_, i)| i.as_ref()) {
+                None => continue,
+                Some(i) => i,
+            };
+            if inst.in_air {
+                continue;
+            }
+            let cargo_cfg = match self.ephemeral.cfg.cargo.get(&inst.typ) {
+                None => continue,
+                Some(c) => *c,
+            };
+            if cargo_cfg.pilot_slots == 0 {
+                continue;
+            }
+            let cargo = self.ephemeral.cargo.entry(slot.clone()).or_default();
+            let available = cargo_cfg.pilot_slots as usize - cargo.num_pilots();
+            let total_available = cargo_cfg.total_slots as usize - cargo.num_total();
+            if available == 0 || total_available == 0 {
+                continue;
+            }
+            let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
+            helo_candidates.push((ucid, slot.clone(), pos, available.min(total_available)));
+        }
+
+        // ---- Auto-deliver pilots at friendly objectives ----
+        let slots_to_deliver: Vec<SlotId> = self
+            .ephemeral
+            .players_by_slot
+            .keys()
+            .filter(|slot| {
+                self.ephemeral
+                    .cargo
+                    .get(*slot)
+                    .map(|c| !c.pilots.is_empty())
+                    .unwrap_or(false)
+            })
+            .filter(|slot| {
+                let ucid = match self.ephemeral.players_by_slot.get(*slot) {
+                    None => return false,
+                    Some(u) => u,
+                };
+                let player = match self.persisted.players.get(ucid) {
+                    None => return false,
+                    Some(p) => p,
+                };
+                let inst = match player.current_slot.as_ref().and_then(|(_, i)| i.as_ref()) {
+                    None => return false,
+                    Some(i) => i,
+                };
+                !inst.in_air && inst.landed_at_objective.is_some()
+            })
+            .cloned()
+            .collect();
+
+        for slot in slots_to_deliver {
+            let ucid_rescuer = self.ephemeral.players_by_slot.get(&slot).cloned();
+            let rescuer_name = ucid_rescuer
+                .as_ref()
+                .and_then(|u| self.persisted.players.get(u))
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| String::from("unknown"));
+            let side = ucid_rescuer
+                .as_ref()
+                .and_then(|u| self.persisted.players.get(u))
+                .map(|p| p.side)
+                .unwrap_or(Side::Blue);
+            let pilots: Vec<InternalPilot> = match self.ephemeral.cargo.get_mut(&slot) {
+                None => continue,
+                Some(c) => c.pilots.drain(..).collect(),
+            };
+            for pilot in &pilots {
+                if let Some(new_count) = self.restore_life(&pilot.ucid, pilot.life_type) {
+                    let msg = format_compact!(
+                        "your pilot was rescued by {rescuer_name} and delivered — you have {new_count} {} lives",
+                        pilot.life_type,
+                    );
+                    self.ephemeral.panel_to_player(&self.persisted, 15, &pilot.ucid, msg);
+                }
+                if rescue_reward > 0 {
+                    if let Some(ucid) = &ucid_rescuer {
+                        self.adjust_points(
+                            ucid,
+                            rescue_reward as i32,
+                            &format_compact!("CSAR rescue of {}", pilot.name),
+                        );
+                    }
+                }
+            }
+            let n = pilots.len();
+            let msg = format_compact!(
+                "{rescuer_name} auto-delivered {n} rescued pilot{} at base",
+                if n == 1 { "" } else { "s" }
+            );
+            self.ephemeral.msgs().panel_to_side(10, false, side, msg);
+        }
+
+        // ---- Process each downed pilot ----
+        let pilot_gids: Vec<GroupId> =
+            self.persisted.downed_pilots.into_iter().copied().collect();
+        let act = Trigger::singleton(lua)?.action()?;
+        let land = Land::singleton(lua)?;
+
+        for gid in pilot_gids {
+            // Get pilot centroid position
+            let pilot_pos = {
+                let group = match self.persisted.groups.get(&gid) {
+                    None => continue,
+                    Some(g) => g,
+                };
+                let positions: Vec<Vector2> = group
+                    .units
+                    .into_iter()
+                    .filter_map(|uid| self.persisted.units.get(uid))
+                    .filter(|u| !u.dead)
+                    .map(|u| u.pos)
+                    .collect();
+                if positions.is_empty() {
+                    continue;
+                }
+                centroid2d(positions.into_iter())
+            };
+            let (pilot_side, pilot_name) = match self.persisted.groups.get(&gid) {
+                None => continue,
+                Some(g) => {
+                    let name = match &g.origin {
+                        DeployKind::DownedPilot { name, .. } => name.clone(),
+                        _ => continue,
+                    };
+                    (g.side, name)
+                }
+            };
+
+            // ---- Capture timer: auto-capture if unrescued too long ----
+            if let Some(timeout) = capture_timeout {
+                let spawn_time = self
+                    .persisted
+                    .downed_pilot_spawn_times
+                    .get(&gid)
+                    .copied()
+                    .unwrap_or(now);
+                if now - spawn_time >= timeout {
+                    // Notify downed player
+                    if let Some(DeployKind::DownedPilot { ucid, life_type, .. }) =
+                        self.persisted.groups.get(&gid).map(|g| g.origin.clone())
+                    {
+                        let msg = format_compact!(
+                            "Your downed pilot was captured — no {} life restored",
+                            life_type
+                        );
+                        self.ephemeral.panel_to_player(&self.persisted, 20, &ucid, msg);
+                        let side_msg = format_compact!(
+                            "CSAR: {pilot_name} was captured — rescue window expired"
+                        );
+                        self.ephemeral
+                            .msgs()
+                            .panel_to_side(15, false, pilot_side, side_msg);
+                    }
+                    self.delete_group(&gid)?;
+                    continue;
+                }
+            }
+
+            // ---- Enemy proximity: capture if enemy unit is close ----
+            if let Some(cap_r2) = enemy_cap_r2 {
+                let enemy_side = match pilot_side {
+                    Side::Blue => Side::Red,
+                    Side::Red => Side::Blue,
+                    Side::Neutral => Side::Neutral,
+                };
+                let captured = self
+                    .persisted
+                    .groups_by_side
+                    .get(&enemy_side)
+                    .into_iter()
+                    .flat_map(|s| s.into_iter())
+                    .filter_map(|gid2| self.persisted.groups.get(gid2))
+                    .flat_map(|g| g.units.into_iter())
+                    .filter_map(|uid| self.persisted.units.get(uid))
+                    .filter(|u| !u.dead)
+                    .any(|u| {
+                        let dx = pilot_pos.x - u.pos.x;
+                        let dy = pilot_pos.y - u.pos.y;
+                        dx * dx + dy * dy <= cap_r2
+                    });
+                if captured {
+                    if let Some(DeployKind::DownedPilot { ucid, life_type, .. }) =
+                        self.persisted.groups.get(&gid).map(|g| g.origin.clone())
+                    {
+                        let msg = format_compact!(
+                            "Your downed pilot was captured by enemy forces — no {} life restored",
+                            life_type
+                        );
+                        self.ephemeral.panel_to_player(&self.persisted, 20, &ucid, msg);
+                        let side_msg = format_compact!(
+                            "CSAR: {pilot_name} was captured by enemy forces!"
+                        );
+                        self.ephemeral
+                            .msgs()
+                            .panel_to_side(15, false, pilot_side, side_msg);
+                    }
+                    self.delete_group(&gid)?;
+                    continue;
+                }
+            }
+
+            // ---- Broadcast helper: send bearing/distance to all friendly helo pilots ----
+            let broadcast_pilot_location = |helos: &[(Ucid, SlotId, Vector2, Side)]| {
+                helos
+                    .iter()
+                    .filter(|(_, _, _, hside)| *hside == pilot_side)
+                    .map(|(hucid, _, hpos, _)| {
+                        let dx = pilot_pos.x - hpos.x;
+                        let dy = pilot_pos.y - hpos.y;
+                        let dist = (dx * dx + dy * dy).sqrt() as u32;
+                        let bearing = ((dx.atan2(dy).to_degrees() + 360.) % 360.) as u32;
+                        (*hucid, dist, bearing)
+                    })
+                    .collect::<Vec<_>>()
+            };
+
+            // ---- Initial notification: tell all friendly helo pilots about this downed pilot ----
+            if !self.ephemeral.csar_notified.contains(&gid) {
+                for (hucid, dist, bearing) in broadcast_pilot_location(&all_helos) {
+                    let msg = format_compact!(
+                        "CSAR: {pilot_name} is down — bearing {bearing}°, {dist}m"
+                    );
+                    self.ephemeral.panel_to_player(&self.persisted, 20, &hucid, msg);
+                }
+                self.ephemeral.csar_notified.insert(gid);
+                self.ephemeral.csar_last_renotify.insert(gid, now);
+            }
+
+            // ---- Periodic renotify: remind helo pilots of still-active downed pilots ----
+            if let Some(interval) = renotify_interval {
+                let last = self
+                    .ephemeral
+                    .csar_last_renotify
+                    .get(&gid)
+                    .copied()
+                    .unwrap_or(now);
+                if now - last >= interval {
+                    for (hucid, dist, bearing) in broadcast_pilot_location(&all_helos) {
+                        let msg = format_compact!(
+                            "CSAR reminder: {pilot_name} still down — bearing {bearing}°, {dist}m"
+                        );
+                        self.ephemeral.panel_to_player(&self.persisted, 20, &hucid, msg);
+                    }
+                    self.ephemeral.csar_last_renotify.insert(gid, now);
+                }
+            }
+
+            // ---- Fire approach flare when any friendly helo (airborne or ground) is within pickup_radius ----
+            if !self.ephemeral.csar_flared.contains(&gid) {
+                let any_helo_close = all_helos.iter().any(|(_, _, hpos, hside)| {
+                    *hside == pilot_side && {
+                        let dx = pilot_pos.x - hpos.x;
+                        let dy = pilot_pos.y - hpos.y;
+                        dx * dx + dy * dy <= pickup_r2
+                    }
+                });
+                if any_helo_close {
+                    let alt = land.get_height(LuaVec2(pilot_pos)).unwrap_or(0.);
+                    let flare_pos = LuaVec3(Vector3::new(pilot_pos.x, alt + 10., pilot_pos.y));
+                    if let Err(e) = act.signal_flare(flare_pos, FlareColor::Green, 90) {
+                        error!("csar: signal_flare failed: {e:?}");
+                    }
+                    self.ephemeral.csar_flared.insert(gid);
+                }
+            }
+
+            // Find the closest suitable on-ground helicopter within pickup_radius
+            let closest = helo_candidates
+                .iter()
+                .filter(|(_, _, _, avail)| *avail > 0)
+                .filter(|(_, _, hpos, _)| {
+                    let dx = pilot_pos.x - hpos.x;
+                    let dy = pilot_pos.y - hpos.y;
+                    dx * dx + dy * dy <= pickup_r2
+                })
+                .min_by(|a, b| {
+                    let da = {
+                        let dx = pilot_pos.x - a.2.x;
+                        let dy = pilot_pos.y - a.2.y;
+                        dx * dx + dy * dy
+                    };
+                    let db = {
+                        let dx = pilot_pos.x - b.2.x;
+                        let dy = pilot_pos.y - b.2.y;
+                        dx * dx + dy * dy
+                    };
+                    da.partial_cmp(&db).unwrap()
+                });
+
+            if let Some((helo_ucid, helo_slot, helo_pos, _)) = closest {
+                let helo_slot = helo_slot.clone();
+                let helo_ucid = *helo_ucid;
+                let helo_pos = *helo_pos;
+
+                let dx = pilot_pos.x - helo_pos.x;
+                let dy = pilot_pos.y - helo_pos.y;
+                let dist2 = dx * dx + dy * dy;
+
+                if dist2 <= board_r2 {
+                    // Auto-board
+                    let cargo = self.ephemeral.cargo.entry(helo_slot.clone()).or_default();
+                    let pilot_info = match self.persisted.groups.get(&gid) {
+                        None => continue,
+                        Some(g) => match &g.origin {
+                            DeployKind::DownedPilot { ucid, name, life_type } => InternalPilot {
+                                ucid: *ucid,
+                                name: name.clone().into(),
+                                life_type: *life_type,
+                            },
+                            _ => continue,
+                        },
+                    };
+                    let helo_cfg = self
+                        .ephemeral
+                        .cfg
+                        .cargo
+                        .get(
+                            &self
+                                .persisted
+                                .players
+                                .get(&helo_ucid)
+                                .and_then(|p| {
+                                    p.current_slot
+                                        .as_ref()
+                                        .and_then(|(_, i)| i.as_ref())
+                                        .map(|i| i.typ.clone())
+                                })
+                                .unwrap_or_default(),
+                        )
+                        .copied();
+                    let (pilot_cap, total_cap) = match helo_cfg {
+                        None => continue,
+                        Some(c) => (c.pilot_slots as usize, c.total_slots as usize),
+                    };
+                    if cargo.num_pilots() < pilot_cap
+                        && cargo.num_total() < total_cap
+                    {
+                        let pilot_name = pilot_info.name.clone();
+                        cargo.pilots.push(pilot_info);
+                        // Update internal cargo weight display
+                        let weight = cargo.weight();
+                        if let Some(unit_name) = self
+                            .ephemeral
+                            .slot_info
+                            .get(&helo_slot)
+                            .map(|s| s.unit_name.clone())
+                        {
+                            if let Err(e) = act
+                                .set_unit_internal_cargo(unit_name.as_str().into(), weight)
+                            {
+                                error!("csar auto-board: set_unit_internal_cargo: {e:?}");
+                            }
+                        }
+                        self.delete_group(&gid)?;
+                        self.ephemeral.csar_flared.remove(&gid);
+                        self.ephemeral.csar_moving.remove(&gid);
+                        self.ephemeral.csar_notified.remove(&gid);
+                        // Decrement availability for subsequent pilots this tick
+                        if let Some(cand) = helo_candidates.iter_mut().find(|(_, s, _, _)| *s == helo_slot) {
+                            cand.3 = cand.3.saturating_sub(1);
+                        }
+                        let side = pilot_side;
+                        let rescuer_name = self
+                            .persisted
+                            .players
+                            .get(&helo_ucid)
+                            .map(|p| p.name.clone())
+                            .unwrap_or_else(|| String::from("unknown"));
+                        let msg = format_compact!(
+                            "{rescuer_name} picked up downed pilot {pilot_name} — auto-boarding!"
+                        );
+                        self.ephemeral.msgs().panel_to_side(10, false, side, msg);
+                    }
+                } else {
+                    // Issue movement order toward helicopter (rate-limited)
+                    let should_move = self
+                        .ephemeral
+                        .csar_moving
+                        .get(&gid)
+                        .map(|last| now - *last >= move_interval)
+                        .unwrap_or(true);
+                    if should_move {
+                        if let Err(e) = self.move_pilot_toward(lua, &gid, helo_pos) {
+                            error!("csar: move_pilot_toward: {e:?}");
+                        } else {
+                            self.ephemeral.csar_moving.insert(gid, now);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     // ===== C-130 Physical Cargo System =====
 
     /// Helper method to get deployable index for a side
@@ -1533,7 +2257,7 @@ impl Db {
                                     // Use the tracked unit position (updated every tick)
                                     let dist = na::distance(&pos.into(), &unit.pos.into());
                                     if dist <= MAX_CARRIER_DISTANCE {
-                                        if nearest.is_none() || dist < nearest.unwrap().0 {
+                                        if nearest.as_ref().map_or(true, |(d, _)| dist < *d) {
                                             nearest = Some((dist, unit));
                                         }
                                     }

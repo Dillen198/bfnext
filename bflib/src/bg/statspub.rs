@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use arcstr::ArcStr;
 use bfprotocols::stats::{PATH, Stat};
+use dcso3::String as LuaString;
 use chrono::prelude::*;
 use netidx::{
     chars::Chars,
@@ -25,6 +26,8 @@ pub(super) struct Statspub {
     id: Id,
     log: ArchiveCollectionWriter,
     _recorder: Recorder,
+    last_rotate: DateTime<Utc>,
+    sortie: LuaString,
 }
 
 impl Statspub {
@@ -33,6 +36,7 @@ impl Statspub {
         cfg: &Config,
         write_dir: PathBuf,
         base: Path,
+        sortie: LuaString,
     ) -> Result<Self> {
         let shard = ArcStr::from("0");
         let config = ConfigBuilder::default()
@@ -87,11 +91,18 @@ impl Statspub {
                     .ok_or_else(|| anyhow!("no id after adding id"))?
             }
         };
-        Ok(Self {
+        let now = Utc::now();
+        let mut t = Self {
             id,
             log,
             _recorder: recorder,
-        })
+            last_rotate: now,
+            sortie,
+        };
+        // Write NewRound at the start of the first file so bfdb has context
+        // from the very beginning, not just after the first rotation.
+        t.append(now, &Stat::NewRound { sortie: t.sortie.clone() })?;
+        Ok(t)
     }
 
     /// This will not block
@@ -100,7 +111,20 @@ impl Statspub {
             let mut batch = BATCH_POOL.take();
             let buf = Chars::from_bytes(encode(&stat)?.freeze())?;
             batch.push(BatchItem(self.id, Event::Update(Value::String(buf))));
-            self.log.add_batch(false, ts, &batch)
+            self.log.add_batch(false, ts, &batch)?;
+            // Rotate every 60 seconds so bfdb can read completed historical files
+            if (ts - self.last_rotate).num_seconds() >= 60 {
+                self.last_rotate = ts;
+                self.log.flush_current()?;
+                self.log.rotate(ts)?;
+                // Write NewRound at the start of the new file so bfdb has context
+                let new_round = Stat::NewRound { sortie: self.sortie.clone() };
+                let buf = Chars::from_bytes(encode(&new_round)?.freeze())?;
+                let mut batch = BATCH_POOL.take();
+                batch.push(BatchItem(self.id, Event::Update(Value::String(buf))));
+                self.log.add_batch(false, ts, &batch)?;
+            }
+            Ok(())
         })
     }
 

@@ -718,7 +718,8 @@ pub(super) fn add_menu_for_jtac(
                 },
                 DeployKind::Objective { .. }
                 | DeployKind::ObjectiveDeprecated
-                | DeployKind::Crate { .. } => format_compact!("{gid}"),
+                | DeployKind::Crate { .. }
+                | DeployKind::DownedPilot { .. } => format_compact!("{gid}"),
             },
         },
         JtId::Slot(sl) => {

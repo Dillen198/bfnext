@@ -215,4 +215,39 @@ pub enum Stat {
         id: Ucid,
         token: String,
     },
+    ConvoyDestroyed {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+        killer: Option<Ucid>,
+    },
+    AirRouteDelivered {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    AirRouteDestroyed {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    SeaRouteDelivered {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    SeaRouteDestroyed {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    CampaignEvent {
+        event_type: String,
+        side: Side,
+    },
+    PilotXp {
+        id: Ucid,
+        xp: u32,
+        reason: String,
+    },
 }

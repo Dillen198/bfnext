@@ -12,7 +12,8 @@ use anyhow::{Context, Ok, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{
         Action, ActionGeoLimit, ActionKind, AiPlaneCfg, AiPlaneKind, AwacsCfg, BomberCfg,
-        DeployableCfg, DeployableKind, DroneCfg, LimitEnforceTyp, MoveCfg, NukeCfg, UnitTag,
+        DeployableCfg, DeployableKind, DroneCfg, LimitEnforceTyp, MoveCfg, NavalCruiseMissileCfg,
+        NukeCfg, UnitTag,
     },
     db::{
         group::GroupId,
@@ -29,8 +30,8 @@ use dcso3::{
     centroid2d, change_heading,
     coalition::Side,
     controller::{
-        ActionTyp, AiOption, AlarmState, AltType, Command, GroundOption, MissionPoint,
-        OrbitPattern, PointType, Task, TurnMethod, VehicleFormation,
+        ActionTyp, AiOption, AlarmState, AltType, AttackParams, Command, GroundOption,
+        MissionPoint, OrbitPattern, PointType, Task, TurnMethod, VehicleFormation, WeaponExpend,
     },
     env::miz::MizIndex,
     group::Group,
@@ -108,6 +109,7 @@ pub enum ActionArgs {
     CarrierWaypoint(WithPosAndGroup<()>),
     CarrierRepair(WithObj<()>),
     CarrierRespawn(WithObj<()>),
+    NavalCruiseMissileStrike(WithObj<NavalCruiseMissileCfg>),
 }
 
 impl ActionArgs {
@@ -278,6 +280,7 @@ impl ActionArgs {
             ActionKind::CarrierWaypoint => Ok(Self::CarrierWaypoint(pos_group(db, lua, side, (), s)?)),
             ActionKind::CarrierRepair => Ok(Self::CarrierRepair(obj(db, (), s)?)),
             ActionKind::CarrierRespawn => Ok(Self::CarrierRespawn(obj(db, (), s)?)),
+            ActionKind::NavalCruiseMissileStrike(c) => Ok(Self::NavalCruiseMissileStrike(obj(db, c, s)?)),
         }
     }
 
@@ -308,6 +311,7 @@ impl ActionArgs {
             Self::CarrierWaypoint(c) => Some(c.pos),
             Self::CarrierRepair(_) => None,
             Self::CarrierRespawn(_) => None,
+            Self::NavalCruiseMissileStrike(_) => None,
         }
     }
 }
@@ -544,6 +548,9 @@ impl Db {
             ActionArgs::CarrierRespawn(args) => self
                 .carrier_respawn(lua, spctx, idx, args)
                 .context("respawning carrier")?,
+            ActionArgs::NavalCruiseMissileStrike(args) => self
+                .naval_cruise_missile_strike(lua, side, args)
+                .context("naval cruise missile strike")?,
             ActionArgs::Drone(args) => self
                 .drone(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
                 .context("calling drone")?,
@@ -1165,7 +1172,8 @@ impl Db {
                 | DeployKind::Objective { .. }
                 | DeployKind::ObjectiveDeprecated
                 | DeployKind::Troop { .. }
-                | DeployKind::Deployed { .. } => (),
+                | DeployKind::Deployed { .. }
+                | DeployKind::DownedPilot { .. } => (),
             }
         }
         let land = Land::singleton(spctx.lua())?;
@@ -1446,6 +1454,136 @@ impl Db {
         } else {
             bail!("Not enough supplies at Naval Base to respawn carrier (need {}, have {})", respawn_cost, available);
         }
+        Ok(None)
+    }
+
+    fn naval_cruise_missile_strike(
+        &mut self,
+        lua: MizLua,
+        side: Side,
+        args: WithObj<NavalCruiseMissileCfg>,
+    ) -> Result<Option<GroupId>> {
+        // 1. Validate target is enemy objective, get target position
+        let target_pos = {
+            let target_obj = objective!(self, &args.oid)?;
+            if target_obj.owner == side {
+                bail!("Cannot strike a friendly objective");
+            }
+            target_obj.zone.pos()
+        };
+
+        // 2. Find nearest friendly carrier group in range with ammo
+        let mut best_carrier: Option<(ObjectiveId, f64, dcso3::String)> = None;
+        for cg_id in &self.persisted.carrier_groups {
+            let cg = objective!(self, cg_id)?;
+            if cg.owner != side || cg.health == 0 {
+                continue;
+            }
+            if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &cg.kind {
+                let dist = na::distance(&cg.zone.pos().into(), &target_pos.into());
+                if dist <= args.cfg.max_range as f64 {
+                    match &best_carrier {
+                        None => best_carrier = Some((*cg_id, dist, carrier_template.clone())),
+                        Some((_, best_dist, _)) if dist < *best_dist => {
+                            best_carrier = Some((*cg_id, dist, carrier_template.clone()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let (carrier_oid, _dist, template) = best_carrier
+            .ok_or_else(|| anyhow!("No friendly carrier group in range"))?;
+
+        // 3. Get the DCS group and check ammo
+        let dcs_group = Group::get_by_name(lua, &template)
+            .or_else(|_| {
+                Unit::get_by_name(lua, &template)
+                    .and_then(|u| u.get_group())
+            })?;
+
+        let mut available_missiles: u8 = 0;
+        for unit_res in dcs_group.get_units()? {
+            let dcs_unit = unit_res?;
+            let first = dcs_unit.get_ammo()?.first();
+            match first {
+                std::result::Result::Ok(ammo) => {
+                    available_missiles = ammo.count()? as u8;
+                    break;
+                }
+                std::result::Result::Err(_) => continue,
+            }
+        }
+
+        if available_missiles < args.cfg.missiles_per_strike {
+            bail!(
+                "Carrier has only {} missiles remaining, need {} for strike",
+                available_missiles,
+                args.cfg.missiles_per_strike
+            );
+        }
+
+        // 4. Deduct supply cost from parent naval base
+        let parent_nb = {
+            let cg = objective!(self, &carrier_oid)?;
+            match &cg.kind {
+                ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. } => *nb_id,
+                _ => bail!("Carrier has no parent naval base"),
+            }
+        };
+        let available_supplies = {
+            let nb = objective!(self, &parent_nb)?;
+            nb.warehouse.equipment.get("SUPPLIES").map(|inv| inv.stored).unwrap_or(0)
+        };
+        if available_supplies < args.cfg.supply_cost {
+            bail!(
+                "Not enough supplies at Naval Base for strike (need {}, have {})",
+                args.cfg.supply_cost,
+                available_supplies
+            );
+        }
+        if let Some(nb_mut) = self.persisted.objectives.get_mut_cow(&parent_nb) {
+            if let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow("SUPPLIES") {
+                inv.stored -= args.cfg.supply_cost;
+            }
+        }
+
+        // 5. Build Task::Bombing and command the carrier group
+        let expend = match args.cfg.missiles_per_strike {
+            1 => WeaponExpend::One,
+            2 => WeaponExpend::Two,
+            4 => WeaponExpend::Four,
+            _ => WeaponExpend::Two,
+        };
+        let attack_params = AttackParams {
+            altitude: Some(9000.),
+            attack_qty: Some(1),
+            direction: None,
+            expend: Some(expend),
+            group_attack: Some(false),
+            weapon_type: Some(2097152),
+            attack_qty_limit: None,
+            altitude_enabled: Some(false),
+            direction_enabled: Some(false),
+            point: None,
+            x: Some(target_pos.x),
+            y: Some(target_pos.y),
+        };
+
+        let task = Task::Bombing {
+            point: LuaVec2(target_pos),
+            params: attack_params,
+        };
+
+        let controller = dcs_group.get_controller()?;
+        controller.push_task(task)?;
+
+        info!(
+            "Naval cruise missile strike: carrier {:?} firing {} missiles at objective {:?}",
+            carrier_oid, args.cfg.missiles_per_strike, args.oid
+        );
+
         Ok(None)
     }
 
@@ -2253,14 +2391,16 @@ impl Db {
                     | ActionKind::LogisticsTransfer(_)
                     | ActionKind::CarrierWaypoint
                     | ActionKind::CarrierRepair
-                    | ActionKind::CarrierRespawn => bail!("not a race tracker"),
+                    | ActionKind::CarrierRespawn
+                    | ActionKind::NavalCruiseMissileStrike(_) => bail!("not a race tracker"),
                 }
             }
             DeployKind::Crate { .. }
             | DeployKind::Deployed { .. }
             | DeployKind::Objective { .. }
             | DeployKind::ObjectiveDeprecated
-            | DeployKind::Troop { .. } => bail!("not a race tracker"),
+            | DeployKind::Troop { .. }
+            | DeployKind::DownedPilot { .. } => bail!("not a race tracker"),
         };
         let responsible = player
             .as_ref()
@@ -2349,10 +2489,11 @@ impl Db {
                 ])
             }
             OrbitPattern::RaceTrack => {
+                let pt2 = point2.ok_or_else(|| anyhow!("racetrack requires point2"))?;
                 let mut tlist = vec![Task::Orbit {
                     pattern: OrbitPattern::RaceTrack,
                     point: Some(LuaVec2(point1)),
-                    point2: Some(LuaVec2(point2.unwrap())),
+                    point2: Some(LuaVec2(pt2)),
                     speed: Some(speed),
                     altitude: Some(altitude),
                 }];
@@ -2362,7 +2503,7 @@ impl Db {
                 Ok(vec![
                     wpt!("ip", spawn_point, init_task()),
                     wpt!("point1", point1, Task::ComboTask(tlist.clone())),
-                    wpt!("point2", point2.unwrap(), Task::ComboTask(tlist)),
+                    wpt!("point2", pt2, Task::ComboTask(tlist)),
                 ])
             }
             OrbitPattern::Custom(x) => bail!("invalid orbit pattern {x}"),
@@ -2532,7 +2673,8 @@ impl Db {
                 self.ephemeral.stat(Stat::DeployFarp {
                     by: ucid,
                     oid,
-                    deployable: spec.path.last().unwrap().clone(),
+                    deployable: spec.path.last()
+                        .ok_or_else(|| anyhow!("deployable has empty path"))?.clone(),
                 });
                 Ok(())
             }
@@ -2854,7 +2996,8 @@ impl Db {
                     | ActionKind::Nuke(_)
                     | ActionKind::CarrierWaypoint
                     | ActionKind::CarrierRepair
-                    | ActionKind::CarrierRespawn => {
+                    | ActionKind::CarrierRespawn
+                    | ActionKind::NavalCruiseMissileStrike(_) => {
                         bail!("should not be a group")
                     }
                 }

@@ -105,6 +105,12 @@ pub struct Player {
     pub ai_team_kills: SetS<DateTime<Utc>>,
     #[serde(default)]
     pub player_team_kills: MapS<DateTime<Utc>, Ucid>,
+    /// Kills in the current sortie (resets on death)
+    #[serde(default)]
+    pub kill_streak: u8,
+    /// Total career kills
+    #[serde(default)]
+    pub total_kills: u32,
     #[serde(skip)]
     pub current_slot: Option<(SlotId, Option<InstancedPlayer>)>,
     #[serde(skip)]
@@ -258,7 +264,8 @@ impl Db {
                             DeployKind::Action { player, .. } => player.clone(),
                             DeployKind::Crate { .. }
                             | DeployKind::Objective { .. }
-                            | DeployKind::ObjectiveDeprecated => None,
+                            | DeployKind::ObjectiveDeprecated
+                            | DeployKind::DownedPilot { .. } => None,
                         })
                 }
             }
@@ -342,6 +349,7 @@ impl Db {
             return Ok(TakeoffRes::OutOfPoints);
         } else if !self.ephemeral.cfg.limited_lives {
             player.airborne = Some(life_type);
+            player.kill_streak = 0; // reset streak on new sortie
             self.ephemeral.dirty();
             Ok(TakeoffRes::NoLifeTaken)
         } else if owned_objective.is_some() {
@@ -350,6 +358,7 @@ impl Db {
                 return Ok(TakeoffRes::OutOfLives);
             } else {
                 player.airborne = Some(life_type);
+                player.kill_streak = 0; // reset streak on new sortie
                 *player_lives -= 1;
                 self.ephemeral.stat(Stat::Life {
                     id: ucid,
@@ -492,6 +501,30 @@ impl Db {
         } else {
             None
         }
+    }
+
+    /// Restore one life of the given type to a player (e.g. after CSAR delivery).
+    /// Capped at the configured default max. Returns the new life count, or None if
+    /// limited_lives is off or the player is already at max lives.
+    pub fn restore_life(&mut self, ucid: &Ucid, life_type: LifeType) -> Option<u8> {
+        if !self.ephemeral.cfg.limited_lives {
+            return None;
+        }
+        let max_lives = self.ephemeral.cfg.default_lives.get(&life_type).map(|(n, _)| *n)?;
+        let player = self.persisted.players.get_mut_cow(ucid)?;
+        // No entry in lives means player is already at max; nothing to restore
+        let new_count = match player.lives.get_mut_cow(&life_type) {
+            None => return None,
+            Some((_, count)) => {
+                *count = (*count + 1).min(max_lives);
+                *count
+            }
+        };
+        if new_count >= max_lives {
+            player.lives.remove_cow(&life_type);
+        }
+        self.ephemeral.dirty();
+        Some(new_count)
     }
 
     pub fn maybe_reset_lives(&mut self, ucid: &Ucid, now: DateTime<Utc>) -> Result<()> {
@@ -719,6 +752,8 @@ impl Db {
                         jtac_or_spectators: true,
                         ai_team_kills: SetS::new(),
                         player_team_kills: MapS::new(),
+                        kill_streak: 0,
+                        total_kills: 0,
                     },
                 );
                 self.ephemeral.stat(Stat::Register {
@@ -1221,7 +1256,7 @@ impl Db {
             }
         }
         if !hit_by.is_empty() {
-            let total_points = (&dead.shots)
+            let base_points = (&dead.shots)
                 .into_iter()
                 .find(|s| s.target_typ.trim() != "")
                 .map(|s| &s.target_typ)
@@ -1237,6 +1272,23 @@ impl Db {
                     }
                 })
                 .unwrap_or(cfg.ground_kill);
+            // Apply night kill bonus if configured
+            let total_points = if let Some(tod_cfg) = self.ephemeral.cfg.time_of_day_effects.as_ref() {
+                let hour = dead.time.hour() as u8;
+                let is_night = if tod_cfg.night_start_hour > tod_cfg.night_end_hour {
+                    // Wraps midnight (e.g. 22-06)
+                    hour >= tod_cfg.night_start_hour || hour < tod_cfg.night_end_hour
+                } else {
+                    hour >= tod_cfg.night_start_hour && hour < tod_cfg.night_end_hour
+                };
+                if is_night {
+                    (base_points as f64 * tod_cfg.night_kill_bonus).ceil() as u32
+                } else {
+                    base_points
+                }
+            } else {
+                base_points
+            };
             let pps = (total_points as f32 / hit_by.len() as f32).ceil() as i32;
             let victim_info = match &dead.victim {
                 Who::Player { ucid, .. } => self.persisted.players.get(ucid).map(|p| VictimInfo {
@@ -1260,24 +1312,40 @@ impl Db {
                     let msg = if player.side == *dead.victim.side() {
                         self.apply_teamkill_penalty(ucid, total_points, &victim_info)
                     } else {
+                        // Apply kill streak bonus
+                        let streak_mult = cfg.kill_streak_bonuses
+                            .iter()
+                            .rev()
+                            .find(|(min_streak, _)| player.kill_streak >= *min_streak)
+                            .map(|(_, mult)| *mult)
+                            .unwrap_or(1.0);
+                        let pps_with_streak = (pps as f64 * streak_mult).ceil() as i32;
                         let tp = if provisional {
-                            player.provisional_points += pps;
+                            player.provisional_points += pps_with_streak;
                             player.provisional_points
                         } else {
-                            player.points += pps;
+                            player.points += pps_with_streak;
                             player.points
                         };
+                        // Increment streak and total kills
+                        player.kill_streak = player.kill_streak.saturating_add(1);
+                        player.total_kills = player.total_kills.saturating_add(1);
                         let pm = if provisional { " provisional" } else { "" };
+                        let streak_msg = if streak_mult > 1.0 {
+                            format_compact!(" [x{:.1} streak]", streak_mult)
+                        } else {
+                            format_compact!("")
+                        };
                         match &victim_info {
-                            None => format_compact!("{tp}(+{pps}){pm} points"),
+                            None => format_compact!("{tp}(+{pps_with_streak}){pm}{streak_msg} points"),
                             Some(vi) => {
                                 if vi.ai_deployable {
                                     format_compact!(
-                                        "{tp}(+{pps}){pm} points, killed {}'s deployed ai unit",
+                                        "{tp}(+{pps_with_streak}){pm}{streak_msg} points, killed {}'s deployed ai unit",
                                         vi.name
                                     )
                                 } else {
-                                    format_compact!("{tp}(+{pps}){pm} points, killed {}", vi.name)
+                                    format_compact!("{tp}(+{pps_with_streak}){pm}{streak_msg} points, killed {}", vi.name)
                                 }
                             }
                         }

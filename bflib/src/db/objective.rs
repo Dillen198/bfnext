@@ -751,7 +751,9 @@ impl Db {
             | LogiStage::Init
             | LogiStage::SyncFromWarehouses { .. }
             | LogiStage::SyncToWarehouses { .. }
-            | LogiStage::ManageConvoys { .. }) => {
+            | LogiStage::ManageConvoys { .. }
+            | LogiStage::ManageAirRoutes { .. }
+            | LogiStage::ManageSeaRoutes { .. }) => {
                 *stage = LogiStage::ExecuteTransfers { transfers: trs };
             }
         }
@@ -1268,16 +1270,62 @@ impl Db {
                         | DeployKind::Objective { .. }
                         | DeployKind::ObjectiveDeprecated
                         | DeployKind::Action { .. }
-                        | DeployKind::Troop { .. } => (),
+                        | DeployKind::Troop { .. }
+                        | DeployKind::DownedPilot { .. } => (),
                     }
                 }
             }
         }
         let mut actually_captured = smallvec![];
         let mut to_mark: SmallVec<[GroupId; 32]> = smallvec![];
+        // Keep track of which objectives currently have troops in zone (for cleanup)
+        let mut in_zone_objectives: FxHashSet<ObjectiveId> = FxHashSet::default();
         for (oid, gids) in captured {
             let (side, _, _, _) = gids.first().ok_or_else(|| anyhow!("no guid"))?;
             if gids.iter().all(|(s, _, _, _)| side == s) {
+                in_zone_objectives.insert(oid);
+                let capture_secs = self
+                    .ephemeral
+                    .cfg
+                    .campaign_events
+                    .as_ref()
+                    .map(|c| c.capture_time_secs)
+                    .unwrap_or(0) as i64;
+
+                if capture_secs > 0 {
+                    // Momentum timer: record OR reset entry time.
+                    // Pre-collect messages before mutably borrowing capture_progress.
+                    let is_new = !self.ephemeral.capture_progress.contains_key(&oid);
+                    if is_new {
+                        let obj_name = self.persisted.objectives.get(&oid)
+                            .map(|o| o.name.clone())
+                            .unwrap_or_else(|| "unknown".into());
+                        let enemy = side.opposite();
+                        self.ephemeral.msgs().panel_to_side(
+                            15, false, *side,
+                            format_compact!("⚔ Capturing {}… hold position! ({} sec)", obj_name, capture_secs),
+                        );
+                        self.ephemeral.msgs().panel_to_side(
+                            15, false, enemy,
+                            format_compact!("⚠ {} is being captured! Eliminate enemy troops!", obj_name),
+                        );
+                    }
+                    let entry = self.ephemeral.capture_progress
+                        .entry(oid)
+                        .or_insert((*side, now));
+                    // If a different side now has troops (shouldn't happen given the all-same-side
+                    // check above), reset the timer
+                    if entry.0 != *side {
+                        *entry = (*side, now);
+                    }
+                    let elapsed = (now - entry.1).num_seconds();
+                    if elapsed < capture_secs {
+                        // Not enough time yet — skip capture this tick
+                        continue;
+                    }
+                    // Timer elapsed — proceed with capture below
+                }
+
                 let obj = objective_mut!(self, oid)?;
                 let name = obj.name.clone();
                 let previous_owner = obj.owner;
@@ -1287,6 +1335,7 @@ impl Db {
                 obj.last_threatened_ts = now;
                 obj.last_activate = now;
                 obj.owner = new_owner;
+                self.ephemeral.capture_progress.remove(&oid);
                 actually_captured.push((*side, oid));
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     to_mark.push(*gid);
@@ -1348,6 +1397,8 @@ impl Db {
                 self.ephemeral.dirty();
             }
         }
+        // Clear capture progress for objectives where troops are no longer present
+        self.ephemeral.capture_progress.retain(|oid, _| in_zone_objectives.contains(oid));
         if actually_captured.len() > 0 {
             self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses {
                 objectives: self
@@ -1509,6 +1560,78 @@ impl Db {
         }
 
         Ok(completed_repairs)
+    }
+
+    /// Check carrier health and auto-initiate repair if near naval base with supplies.
+    /// Returns messages about carrier status changes.
+    pub fn check_carrier_auto_repair(&mut self, now: DateTime<Utc>) -> Result<Vec<(Side, compact_str::CompactString)>> {
+        let repair_cost = self.ephemeral.cfg.carrier
+            .as_ref()
+            .map(|c| c.repair_cost)
+            .unwrap_or(5000);
+
+        let mut messages = Vec::new();
+
+        // Collect carrier states first to avoid borrow issues
+        let carriers: Vec<_> = self.persisted.objectives.into_iter()
+            .filter_map(|(oid, obj)| {
+                if let ObjectiveKind::CarrierGroup { repair_start_time, parent_naval_base, .. } = &obj.kind {
+                    if repair_start_time.is_none() && obj.health > 0 && obj.health < 75 {
+                        Some((*oid, obj.owner, obj.health, obj.name.clone(), parent_naval_base.clone()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (oid, owner, health, name, parent_base) in carriers {
+            if let Some(base_oid) = parent_base {
+                // Check if naval base has enough supplies
+                let base_obj = match self.persisted.objectives.get(&base_oid) {
+                    Some(o) => o,
+                    None => continue,
+                };
+                if base_obj.owner != owner {
+                    continue;
+                }
+                let base_supplies = base_obj.warehouse.equipment
+                    .get(&dcso3::String::from("SUPPLIES"))
+                    .map(|inv| inv.stored)
+                    .unwrap_or(0);
+                if base_supplies >= repair_cost {
+                    // Auto-initiate repair
+                    if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+                        if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut obj.kind {
+                            *repair_start_time = Some(now);
+                            self.ephemeral.dirty();
+                            info!("[CARRIER_AUTO_REPAIR] {} auto-repair initiated (health: {}%)", name, health);
+                            messages.push((
+                                owner,
+                                compact_str::format_compact!(
+                                    "NAVAL: {} auto-repair initiated ({}% health). Supplies deducted from naval base.",
+                                    name,
+                                    health,
+                                ),
+                            ));
+                        }
+                    }
+                } else if health <= 25 {
+                    messages.push((
+                        owner,
+                        compact_str::format_compact!(
+                            "WARNING: {} critically damaged ({}% health)! Insufficient supplies at naval base for auto-repair.",
+                            name,
+                            health,
+                        ),
+                    ));
+                }
+            }
+        }
+
+        Ok(messages)
     }
 
     pub fn check_carrier_group_capture(&mut self, now: DateTime<Utc>) -> Result<Vec<(ObjectiveId, Side, Side)>> {

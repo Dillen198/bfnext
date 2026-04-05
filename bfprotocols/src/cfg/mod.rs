@@ -357,6 +357,13 @@ pub struct DeployableJtac {
     /// see every unit in range regardless of terrain or cover
     #[serde(default)]
     pub nolos: bool,
+    /// default laser code for this JTAC (1111-1788), defaults to 1688
+    #[serde(default = "default_laser_code")]
+    pub default_laser_code: u16,
+}
+
+fn default_laser_code() -> u16 {
+    1688
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -488,6 +495,76 @@ pub struct CargoConfig {
     /// e.g. if troop_slots is 1, crate_slots is 1, and total_slots is 1
     /// then the vehicle can carry either a troop or a crate but not both.
     pub total_slots: u16,
+    /// How many downed pilots this vehicle can carry for CSAR missions.
+    /// Pilots count against total_slots.
+    #[serde(default)]
+    pub pilot_slots: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsarConfig {
+    /// If false, no downed pilots will be spawned and CSAR is disabled
+    #[serde(default = "default_csar_enabled")]
+    pub enabled: bool,
+    /// The DCS unit template name used to spawn the downed pilot ground marker, per side
+    pub pilot_template: FxHashMap<Side, String>,
+    /// Points awarded to the rescuing player on delivery
+    #[serde(default)]
+    pub rescue_reward: u32,
+    /// Radius in meters within which a landed helicopter triggers the downed pilot
+    /// to walk toward it and fire a flare (default 100m)
+    #[serde(default = "default_csar_pickup_radius")]
+    pub pickup_radius: u32,
+    /// Radius in meters within which the downed pilot auto-boards the helicopter
+    /// (default 20m)
+    #[serde(default = "default_csar_board_radius")]
+    pub board_radius: u32,
+    /// Minutes after which an unrescued downed pilot is auto-captured (0 = never, default 15)
+    #[serde(default = "default_csar_capture_timer")]
+    pub capture_timer: u32,
+    /// Radius in meters within which an enemy unit captures/eliminates the downed pilot (0 = disabled, default 50)
+    #[serde(default = "default_csar_enemy_capture_radius")]
+    pub enemy_capture_radius: u32,
+    /// DCS unit template name for enemy search-party infantry per side (empty map = disabled)
+    #[serde(default)]
+    pub search_party_template: FxHashMap<Side, String>,
+    /// Number of enemy search-party groups spawned when a pilot goes down (0 = disabled, default 0)
+    #[serde(default)]
+    pub search_party_size: u8,
+    /// How often (minutes) to re-broadcast downed pilot location to all friendly helo pilots (0 = never, default 5)
+    #[serde(default = "default_csar_renotify_interval")]
+    pub renotify_interval: u32,
+    /// Cooldown in seconds before the same pilot can pop smoke again via the menu (default 300)
+    #[serde(default = "default_csar_smoke_cooldown")]
+    pub smoke_cooldown: u32,
+}
+
+fn default_csar_enabled() -> bool {
+    true
+}
+
+fn default_csar_pickup_radius() -> u32 {
+    100
+}
+
+fn default_csar_board_radius() -> u32 {
+    20
+}
+
+fn default_csar_capture_timer() -> u32 {
+    15
+}
+
+fn default_csar_enemy_capture_radius() -> u32 {
+    50
+}
+
+fn default_csar_renotify_interval() -> u32 {
+    5
+}
+
+fn default_csar_smoke_cooldown() -> u32 {
+    300
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -547,6 +624,12 @@ pub struct WarehouseConfig {
     /// Convoy system configuration (optional, defaults to disabled)
     #[serde(default)]
     pub convoy: Option<ConvoyConfig>,
+    /// Air logistics configuration (optional, defaults to disabled)
+    #[serde(default)]
+    pub air_logistics: Option<AirLogisticsConfig>,
+    /// Sea logistics configuration (optional, defaults to disabled)
+    #[serde(default)]
+    pub sea_logistics: Option<SeaLogisticsConfig>,
 }
 
 impl WarehouseConfig {
@@ -606,12 +689,130 @@ impl Default for ConvoyConfig {
     }
 }
 
+/// Configuration for automated AI air logistics routes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AirLogisticsConfig {
+    /// Enable air logistics. When enabled, AI cargo aircraft fly from logistics hubs to
+    /// understocked destinations instead of instant warehouse transfers.
+    pub enabled: bool,
+    /// Cargo aircraft group template name per side (must be a Plane group in the miz file)
+    pub aircraft_template: FxHashMap<Side, String>,
+    /// Cruise altitude in meters (BARO)
+    #[serde(default = "default_air_altitude")]
+    pub altitude_m: f64,
+    /// Cruise speed in km/h
+    pub speed_kph: f64,
+    /// How often to spawn new air routes (in logistics ticks)
+    pub spawn_interval_ticks: u32,
+    /// Maximum simultaneous air routes in transit per side
+    pub max_concurrent_routes: u32,
+    /// Distance in meters from destination to trigger delivery
+    #[serde(default = "default_air_delivery_distance")]
+    pub delivery_distance: f64,
+    /// How often to check route status (in seconds)
+    #[serde(default = "default_air_check_interval")]
+    pub check_interval_secs: u32,
+    /// Supply % threshold below which a destination qualifies for an air run (0–100)
+    #[serde(default = "default_air_supply_threshold")]
+    pub supply_threshold: u8,
+}
+
+fn default_air_altitude() -> f64 {
+    2500.0
+}
+
+fn default_air_delivery_distance() -> f64 {
+    2000.0
+}
+
+fn default_air_check_interval() -> u32 {
+    15
+}
+
+fn default_air_supply_threshold() -> u8 {
+    50
+}
+
+impl Default for AirLogisticsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            aircraft_template: FxHashMap::default(),
+            altitude_m: default_air_altitude(),
+            speed_kph: 400.0,
+            spawn_interval_ticks: 3,
+            max_concurrent_routes: 6,
+            delivery_distance: default_air_delivery_distance(),
+            check_interval_secs: default_air_check_interval(),
+            supply_threshold: default_air_supply_threshold(),
+        }
+    }
+}
+
+/// Configuration for automated AI sea logistics routes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeaLogisticsConfig {
+    /// Enable sea logistics. When enabled, AI ships transport supplies from naval bases
+    /// to carrier groups.
+    pub enabled: bool,
+    /// Ship group template name per side (must be a Ship group in the miz file)
+    pub ship_template: FxHashMap<Side, String>,
+    /// Ship speed in km/h
+    pub speed_kph: f64,
+    /// How often to spawn new sea routes (in logistics ticks)
+    pub spawn_interval_ticks: u32,
+    /// Maximum simultaneous sea routes in transit per side
+    pub max_concurrent_routes: u32,
+    /// Distance in meters from destination to trigger delivery
+    #[serde(default = "default_sea_delivery_distance")]
+    pub delivery_distance: f64,
+    /// How often to check route status (in seconds)
+    #[serde(default = "default_sea_check_interval")]
+    pub check_interval_secs: u32,
+    /// Supply % threshold below which a carrier group qualifies for a sea run (0–100)
+    #[serde(default = "default_sea_supply_threshold")]
+    pub supply_threshold: u8,
+}
+
+fn default_sea_delivery_distance() -> f64 {
+    1500.0
+}
+
+fn default_sea_check_interval() -> u32 {
+    20
+}
+
+fn default_sea_supply_threshold() -> u8 {
+    50
+}
+
+impl Default for SeaLogisticsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ship_template: FxHashMap::default(),
+            speed_kph: 30.0,
+            spawn_interval_ticks: 3,
+            max_concurrent_routes: 4,
+            delivery_distance: default_sea_delivery_distance(),
+            check_interval_secs: default_sea_check_interval(),
+            supply_threshold: default_sea_supply_threshold(),
+        }
+    }
+}
+
 fn default_tk_window() -> u32 {
     24
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_convoy_interdiction() -> u32 {
+    10
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -666,6 +867,15 @@ pub struct PointsCfg {
     /// for air or ground kills. Default is true.
     #[serde(default = "default_true")]
     pub award_kill_points: bool,
+    /// Points awarded for destroying an enemy supply convoy unit. Default: 10.
+    #[serde(default = "default_convoy_interdiction")]
+    pub convoy_interdiction_points: u32,
+    /// Kill streak bonus thresholds. Each entry is (minimum_streak, bonus_multiplier).
+    /// e.g. [(3, 1.5), (5, 2.0)] means after 3 kills in a single sortie the base points
+    /// are multiplied by 1.5, and after 5 kills by 2.0. Streak resets on death.
+    /// Default: empty (no bonus).
+    #[serde(default)]
+    pub kill_streak_bonuses: Vec<(u8, f64)>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -734,6 +944,16 @@ pub struct MoveCfg {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NavalCruiseMissileCfg {
+    /// number of missiles to fire per strike
+    pub missiles_per_strike: u8,
+    /// maximum range in meters from carrier to target
+    pub max_range: u32,
+    /// supply cost deducted from parent naval base
+    pub supply_cost: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActionKind {
     Tanker(AiPlaneCfg),
     Awacs(AwacsCfg),
@@ -760,6 +980,7 @@ pub enum ActionKind {
     CarrierWaypoint,
     CarrierRepair,
     CarrierRespawn,
+    NavalCruiseMissileStrike(NavalCruiseMissileCfg),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -941,6 +1162,11 @@ pub struct CarrierCfg {
     pub repair_cost: u32,
     pub respawn_cost: u32,
     pub movement_speed: f64,
+    /// Speed in m/s to use when repositioning carrier to last saved position after restart.
+    /// Carriers always spawn at mission editor position; this speed controls how fast they
+    /// navigate back to where they were. Default: 100.0 m/s (~194 knots, ~6 min for 38km)
+    #[serde(default = "default_carrier_spawn_repositioning_speed")]
+    pub spawn_repositioning_speed: f64,
     /// Time in seconds to complete carrier repair (default: 600 = 10 minutes)
     #[serde(default = "default_carrier_repair_time")]
     pub repair_time: u32,
@@ -950,8 +1176,265 @@ pub struct CarrierCfg {
     pub groups: Vec<CarrierGroupCfg>,
 }
 
+fn default_carrier_spawn_repositioning_speed() -> f64 {
+    100.0
+}
+
 fn default_carrier_repair_time() -> u32 {
     600
+}
+
+/// Weather effects on logistics and operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeatherEffectsCfg {
+    /// Convoy speed multiplier in rain (0.0-1.0)
+    #[serde(default = "default_rain_speed_mult")]
+    pub rain_speed_multiplier: f64,
+    /// Convoy speed multiplier in thunderstorm (0.0-1.0)
+    #[serde(default = "default_storm_speed_mult")]
+    pub thunderstorm_speed_multiplier: f64,
+    /// Convoy speed multiplier in snow (0.0-1.0)
+    #[serde(default = "default_snow_speed_mult")]
+    pub snow_speed_multiplier: f64,
+    /// Minimum visibility (meters) for fixed-wing takeoff
+    #[serde(default = "default_min_vis_fixed_wing")]
+    pub min_visibility_fixed_wing: f64,
+    /// Disable helicopter operations in thunderstorms
+    #[serde(default = "default_true")]
+    pub no_helo_in_thunderstorm: bool,
+    /// EWR detection range multiplier in bad weather (0.0-1.0)
+    #[serde(default = "default_ewr_weather_mult")]
+    pub ewr_weather_range_multiplier: f64,
+}
+
+fn default_rain_speed_mult() -> f64 { 0.8 }
+fn default_storm_speed_mult() -> f64 { 0.6 }
+fn default_snow_speed_mult() -> f64 { 0.5 }
+fn default_min_vis_fixed_wing() -> f64 { 800.0 }
+fn default_ewr_weather_mult() -> f64 { 0.85 }
+
+impl Default for WeatherEffectsCfg {
+    fn default() -> Self {
+        Self {
+            rain_speed_multiplier: default_rain_speed_mult(),
+            thunderstorm_speed_multiplier: default_storm_speed_mult(),
+            snow_speed_multiplier: default_snow_speed_mult(),
+            min_visibility_fixed_wing: default_min_vis_fixed_wing(),
+            no_helo_in_thunderstorm: true,
+            ewr_weather_range_multiplier: default_ewr_weather_mult(),
+        }
+    }
+}
+
+/// Time-of-day effects on gameplay
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimeOfDayEffectsCfg {
+    /// Points multiplier for kills during night hours (e.g. 1.5 = 50% bonus)
+    #[serde(default = "default_night_kill_bonus")]
+    pub night_kill_bonus: f64,
+    /// Hour when night begins (0-23, local mission time)
+    #[serde(default = "default_night_start")]
+    pub night_start_hour: u8,
+    /// Hour when night ends (0-23, local mission time)
+    #[serde(default = "default_night_end")]
+    pub night_end_hour: u8,
+}
+
+fn default_night_kill_bonus() -> f64 { 1.5 }
+fn default_night_start() -> u8 { 22 }
+fn default_night_end() -> u8 { 6 }
+
+impl Default for TimeOfDayEffectsCfg {
+    fn default() -> Self {
+        Self {
+            night_kill_bonus: default_night_kill_bonus(),
+            night_start_hour: default_night_start(),
+            night_end_hour: default_night_end(),
+        }
+    }
+}
+
+/// Dynamic campaign events configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignEventsCfg {
+    /// Enable the dynamic events system
+    #[serde(default)]
+    pub enabled: bool,
+    /// Minimum seconds between event checks
+    #[serde(default = "default_event_check_interval")]
+    pub check_interval_secs: u32,
+    /// Probability (0.0-1.0) of spawning an event per check
+    #[serde(default = "default_event_probability")]
+    pub event_probability: f64,
+    /// Maximum number of concurrent active events
+    #[serde(default = "default_max_events")]
+    pub max_concurrent_events: u32,
+    /// Points awarded for destroying a high-value target
+    #[serde(default = "default_hvt_reward")]
+    pub hvt_reward_points: i32,
+    /// Duration in seconds for high-value target events
+    #[serde(default = "default_hvt_duration")]
+    pub hvt_duration_secs: u32,
+    /// Points awarded for successful VIP extraction
+    #[serde(default = "default_vip_reward")]
+    pub vip_reward_points: i32,
+    /// Points per civilian evacuated
+    #[serde(default = "default_evac_reward")]
+    pub evacuation_reward_per_civilian: i32,
+    /// Enable reinforcement wave events
+    #[serde(default = "default_true")]
+    pub reinforcement_waves_enabled: bool,
+    /// Enable counter-offensive events
+    #[serde(default)]
+    pub counter_offensives_enabled: bool,
+    /// Enable artillery barrage events
+    #[serde(default = "default_true")]
+    pub barrage_enabled: bool,
+    /// Duration in seconds of a barrage event
+    #[serde(default = "default_barrage_duration")]
+    pub barrage_duration_secs: u32,
+    /// Enable convoy ambush events
+    #[serde(default = "default_true")]
+    pub ambush_enabled: bool,
+    /// Duration in seconds before an ambush expires without contact
+    #[serde(default = "default_ambush_duration")]
+    pub ambush_duration_secs: u32,
+    /// Enable escalation chains (reinforcement arrival → counter-offensive, HVT kill → revenge)
+    #[serde(default = "default_true")]
+    pub escalation_enabled: bool,
+    /// Seconds after a reinforcement wave arrives before the counter-offensive escalation triggers
+    #[serde(default = "default_escalation_delay")]
+    pub escalation_delay_secs: u32,
+    /// Seconds after an HVT is killed before the revenge counter-offensive triggers
+    #[serde(default = "default_revenge_delay")]
+    pub revenge_delay_secs: u32,
+    /// Enable automatic enemy CAP intercept spawns when players are deep in enemy territory
+    #[serde(default)]
+    pub enemy_cap_enabled: bool,
+    /// Template name prefix for enemy CAP aircraft (e.g. "RCAP" for red, "BCAP" for blue).
+    /// The system appends the side prefix automatically.
+    #[serde(default = "default_cap_template_red")]
+    pub cap_template_red: String,
+    #[serde(default = "default_cap_template_blue")]
+    pub cap_template_blue: String,
+    /// How long (seconds) a CAP orbit lasts before despawning. Default: 600.
+    #[serde(default = "default_cap_duration")]
+    pub cap_duration_secs: u32,
+    /// Distance from an objective (metres) within which a CAP orbit is placed. Default: 15000.
+    #[serde(default = "default_cap_orbit_radius")]
+    pub cap_orbit_radius_m: f64,
+    /// Probability that a CAP event is spawned on each slow-events check (0.0–1.0). Default: 0.35.
+    #[serde(default = "default_cap_probability")]
+    pub cap_probability: f64,
+    /// Seconds a troop must continuously occupy an objective before it is captured.
+    /// Set to 0 to disable momentum (instant capture). Default: 60.
+    #[serde(default = "default_capture_time")]
+    pub capture_time_secs: u32,
+}
+
+fn default_event_check_interval() -> u32 { 300 }
+fn default_event_probability() -> f64 { 0.15 }
+fn default_max_events() -> u32 { 3 }
+fn default_hvt_reward() -> i32 { 500 }
+fn default_hvt_duration() -> u32 { 1800 }
+fn default_vip_reward() -> i32 { 300 }
+fn default_evac_reward() -> i32 { 50 }
+fn default_barrage_duration() -> u32 { 300 }
+fn default_ambush_duration() -> u32 { 600 }
+fn default_escalation_delay() -> u32 { 600 }
+fn default_revenge_delay() -> u32 { 600 }
+fn default_cap_template_red() -> String { "RCAP".into() }
+fn default_cap_template_blue() -> String { "BCAP".into() }
+fn default_cap_duration() -> u32 { 600 }
+fn default_cap_orbit_radius() -> f64 { 15_000.0 }
+fn default_cap_probability() -> f64 { 0.35 }
+fn default_capture_time() -> u32 { 60 }
+
+impl Default for CampaignEventsCfg {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            check_interval_secs: default_event_check_interval(),
+            event_probability: default_event_probability(),
+            max_concurrent_events: default_max_events(),
+            hvt_reward_points: default_hvt_reward(),
+            hvt_duration_secs: default_hvt_duration(),
+            vip_reward_points: default_vip_reward(),
+            evacuation_reward_per_civilian: default_evac_reward(),
+            reinforcement_waves_enabled: true,
+            counter_offensives_enabled: false,
+            barrage_enabled: true,
+            barrage_duration_secs: default_barrage_duration(),
+            ambush_enabled: true,
+            ambush_duration_secs: default_ambush_duration(),
+            escalation_enabled: true,
+            escalation_delay_secs: default_escalation_delay(),
+            revenge_delay_secs: default_revenge_delay(),
+            enemy_cap_enabled: false,
+            cap_template_red: default_cap_template_red(),
+            cap_template_blue: default_cap_template_blue(),
+            cap_duration_secs: default_cap_duration(),
+            cap_orbit_radius_m: default_cap_orbit_radius(),
+            cap_probability: default_cap_probability(),
+            capture_time_secs: default_capture_time(),
+        }
+    }
+}
+
+/// Pilot experience and progression configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PilotExperienceCfg {
+    /// Enable the pilot experience system
+    #[serde(default)]
+    pub enabled: bool,
+    /// XP awarded per air kill
+    #[serde(default = "default_xp_air_kill")]
+    pub xp_per_air_kill: u32,
+    /// XP awarded per ground kill
+    #[serde(default = "default_xp_ground_kill")]
+    pub xp_per_ground_kill: u32,
+    /// XP awarded per successful sortie (land safely)
+    #[serde(default = "default_xp_sortie")]
+    pub xp_per_sortie: u32,
+    /// XP awarded per cargo delivery
+    #[serde(default = "default_xp_delivery")]
+    pub xp_per_delivery: u32,
+    /// XP thresholds for rank progression
+    #[serde(default = "default_rank_thresholds")]
+    pub rank_thresholds: Vec<(u32, String)>,
+}
+
+fn default_xp_air_kill() -> u32 { 100 }
+fn default_xp_ground_kill() -> u32 { 50 }
+fn default_xp_sortie() -> u32 { 25 }
+fn default_xp_delivery() -> u32 { 75 }
+fn default_rank_thresholds() -> Vec<(u32, String)> {
+    vec![
+        (0, "Cadet".into()),
+        (500, "2nd Lieutenant".into()),
+        (1500, "1st Lieutenant".into()),
+        (3000, "Captain".into()),
+        (6000, "Major".into()),
+        (10000, "Lieutenant Colonel".into()),
+        (20000, "Colonel".into()),
+    ]
+}
+
+impl Default for PilotExperienceCfg {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            xp_per_air_kill: default_xp_air_kill(),
+            xp_per_ground_kill: default_xp_ground_kill(),
+            xp_per_sortie: default_xp_sortie(),
+            xp_per_delivery: default_xp_delivery(),
+            rank_thresholds: default_rank_thresholds(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1096,6 +1579,126 @@ pub struct Cfg {
     /// Carrier group configuration
     #[serde(default)]
     pub carrier: Option<CarrierCfg>,
+    /// Weather effects on gameplay
+    #[serde(default)]
+    pub weather_effects: Option<WeatherEffectsCfg>,
+    /// Time-of-day effects on gameplay
+    #[serde(default)]
+    pub time_of_day_effects: Option<TimeOfDayEffectsCfg>,
+    /// Dynamic campaign events configuration
+    #[serde(default)]
+    pub campaign_events: Option<CampaignEventsCfg>,
+    /// Pilot experience and progression system
+    #[serde(default)]
+    pub pilot_experience: Option<PilotExperienceCfg>,
+    /// CSAR (Combat Search and Rescue) configuration
+    #[serde(default)]
+    pub csar: Option<CsarConfig>,
+    /// Supply percentage (0-100) at which an objective broadcasts a "supply critical" alert
+    /// to its owning side. Set to 0 to disable. Default: 20.
+    #[serde(default = "default_supply_alert_threshold")]
+    pub supply_alert_threshold: u8,
+    /// Smart Commander: automated treasury, objective funding, mission rewards,
+    /// and holding bonuses. Disabled if absent.
+    #[serde(default)]
+    pub smart_commander: Option<SmartCommanderCfg>,
+}
+
+fn default_supply_alert_threshold() -> u8 {
+    20
+}
+
+fn default_treasury_income_period() -> u32 {
+    300
+}
+fn default_treasury_income_amount() -> i64 {
+    500
+}
+fn default_obj_fund_period() -> u32 {
+    120
+}
+fn default_obj_fund_max() -> i32 {
+    200
+}
+fn default_commander_period() -> u32 {
+    60
+}
+fn default_holding_bonus() -> i32 {
+    5
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionRewardCfg {
+    pub strike: i32,
+    pub fighter_sweep: i32,
+    pub escort: i32,
+    pub sead: i32,
+    pub cap: i32,
+    pub reconnaissance: i32,
+    pub transport: i32,
+    pub refueling: i32,
+    pub cas: i32,
+}
+
+impl Default for MissionRewardCfg {
+    fn default() -> Self {
+        Self {
+            strike: 200,
+            fighter_sweep: 150,
+            escort: 100,
+            sead: 175,
+            cap: 100,
+            reconnaissance: 125,
+            transport: 75,
+            refueling: 75,
+            cas: 150,
+        }
+    }
+}
+
+impl MissionRewardCfg {
+    pub fn reward_for(&self, mt: crate::db::mission::MissionType) -> i32 {
+        use crate::db::mission::MissionType::*;
+        match mt {
+            Strike => self.strike,
+            FighterSweep => self.fighter_sweep,
+            Escort => self.escort,
+            Sead => self.sead,
+            Cap => self.cap,
+            Reconnaissance => self.reconnaissance,
+            Transport => self.transport,
+            Refueling => self.refueling,
+            Cas => self.cas,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartCommanderCfg {
+    /// Seconds between commander ticks (holding bonuses, objective funding).
+    #[serde(default = "default_commander_period")]
+    pub tick_period_secs: u32,
+    /// Starting treasury for each side on a fresh map. Default: 0.
+    #[serde(default)]
+    pub treasury_start: i64,
+    /// Points added to each side's treasury every `treasury_income_period_secs`.
+    #[serde(default = "default_treasury_income_amount")]
+    pub treasury_income_amount: i64,
+    /// Interval in seconds between treasury income deposits. Default: 300.
+    #[serde(default = "default_treasury_income_period")]
+    pub treasury_income_period_secs: u32,
+    /// Max points injected per objective per funding pass (scales with damage). Default: 200.
+    #[serde(default = "default_obj_fund_max")]
+    pub objective_fund_max_per_tick: i32,
+    /// Seconds between objective funding passes. Default: 120.
+    #[serde(default = "default_obj_fund_period")]
+    pub objective_fund_period_secs: u32,
+    /// Points per owned objective awarded to each connected player per tick. Default: 5.
+    #[serde(default = "default_holding_bonus")]
+    pub holding_bonus_per_objective: i32,
+    /// Per-mission-type completion rewards.
+    #[serde(default)]
+    pub mission_rewards: MissionRewardCfg,
 }
 
 impl Cfg {

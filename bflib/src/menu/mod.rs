@@ -18,6 +18,7 @@ pub mod action;
 pub mod cargo;
 mod ewr;
 pub mod jtac;
+pub mod mission;
 mod troop;
 
 use crate::{db::Db, Context};
@@ -265,27 +266,32 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
                 .ephemeral
                 .get_slot_info(slot)
                 .context("getting slot info")?;
-            mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["EWR".into()]))?;
-            mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["Cargo".into()]))?;
-            mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["C-130 Cargo".into()]))?;
-            mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["Troops".into()]))?;
-            mc.remove_submenu_for_group(si.miz_gid, GroupSubMenu::from(vec!["Actions".into()]))?;
-            ewr::add_ewr_menu_for_group(&mc, si.miz_gid)?;
-            let cap = CarryCap::from_typ(&cfg, si.typ.as_str());
+            // Copy values from si before mutable borrows of ctx
+            let miz_gid = si.miz_gid;
+            let si_side = si.side;
+            let si_typ = si.typ.clone();
+            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["EWR".into()]))?;
+            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Cargo".into()]))?;
+            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["C-130 Cargo".into()]))?;
+            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Troops".into()]))?;
+            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Actions".into()]))?;
+            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Missions".into()]))?;
+            ewr::add_ewr_menu_for_group(&mc, miz_gid)?;
+            let cap = CarryCap::from_typ(&cfg, si_typ.as_str());
 
             // Check if this is a C-130 for physical cargo system
             let is_c130 = ctx.db.ephemeral.cfg.c130_cargo
                 .as_ref()
-                .map(|c| c.enabled_vehicles.contains(&si.typ))
+                .map(|c| c.enabled_vehicles.contains(&si_typ))
                 .unwrap_or(false);
 
             if is_c130 && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si.side, si.miz_gid)?
+                cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
             } else if cap.crates && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                cargo::add_cargo_menu_for_group(&cfg, &mc, &si.side, si.miz_gid)?
+                cargo::add_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
             }
             if cap.troops && ctx.db.ephemeral.cfg.rules.troops.check(&ucid) {
-                troop::add_troops_menu_for_group(&cfg, &mc, &si.side, si.miz_gid)?
+                troop::add_troops_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
             }
             if ctx.db.ephemeral.cfg.rules.jtac.check(&ucid) {
                 jtac::init_jtac_menu_for_slot(ctx, lua, slot)?
@@ -293,6 +299,8 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             if ctx.db.ephemeral.cfg.rules.actions.check(&ucid) {
                 action::init_action_menu_for_slot(ctx, lua, slot, &ucid)?
             }
+            // Mission planning menu (available to all players)
+            mission::add_mission_menu_for_group(&mc, miz_gid, ucid)?;
             Ok(())
         }
     }

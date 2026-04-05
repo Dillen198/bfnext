@@ -70,6 +70,14 @@ pub enum LogiStage {
         #[allow(dead_code)]
         convoys: Vec<SupplyConvoy>,
     },
+    ManageAirRoutes {
+        #[allow(dead_code)]
+        routes: Vec<AirLogisticsRoute>,
+    },
+    ManageSeaRoutes {
+        #[allow(dead_code)]
+        routes: Vec<SeaLogisticsRoute>,
+    },
     Init,
 }
 
@@ -344,6 +352,145 @@ impl SupplyConvoy {
     }
 
     /// Execute all transfers for this convoy
+    pub fn execute_transfers(&self, db: &mut Persisted, to_bg: &Option<UnboundedSender<Task>>) -> Result<()> {
+        for transfer in &self.transfers {
+            transfer.execute(db, to_bg)?;
+        }
+        Ok(())
+    }
+}
+
+/// Unique identifier for air and sea logistics routes
+pub type LogiRouteId = CompactString;
+
+/// Current state of an air or sea logistics route
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum LogiRouteState {
+    InTransit,
+    Delivered,
+    Destroyed,
+}
+
+/// An AI cargo aircraft flying supplies from a logistics hub to a destination objective
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirLogisticsRoute {
+    pub id: LogiRouteId,
+    pub group_id: bfprotocols::db::group::GroupId,
+    pub origin: ObjectiveId,
+    pub destination: ObjectiveId,
+    pub cargo_type: ConvoyCargoType,
+    pub transfers: Vec<Transfer>,
+    pub spawn_time: DateTime<Utc>,
+    pub state: LogiRouteState,
+    pub side: Side,
+    pub last_pos: Vector2,
+    pub last_check: DateTime<Utc>,
+}
+
+impl AirLogisticsRoute {
+    pub fn check_status(&mut self, lua: MizLua, group_name: &str) -> LogiRouteState {
+        use dcso3::group::Group;
+        match Group::get_by_name(lua, group_name) {
+            Ok(group) => match group.get_units() {
+                Ok(units) => {
+                    if units.len() == 0 {
+                        self.state = LogiRouteState::Destroyed;
+                        LogiRouteState::Destroyed
+                    } else {
+                        if let Ok(unit) = units.get(1) {
+                            if let Ok(pos) = unit.get_point() {
+                                self.last_pos = Vector2::new(pos.x, pos.z);
+                            }
+                        }
+                        self.state
+                    }
+                }
+                Err(_) => {
+                    self.state = LogiRouteState::Destroyed;
+                    LogiRouteState::Destroyed
+                }
+            },
+            Err(_) => {
+                self.state = LogiRouteState::Destroyed;
+                LogiRouteState::Destroyed
+            }
+        }
+    }
+
+    pub fn check_delivery(&mut self, destination_pos: Vector2, delivery_distance: f64) -> bool {
+        let dist = (self.last_pos - destination_pos).norm();
+        if dist <= delivery_distance {
+            self.state = LogiRouteState::Delivered;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn execute_transfers(&self, db: &mut Persisted, to_bg: &Option<UnboundedSender<Task>>) -> Result<()> {
+        for transfer in &self.transfers {
+            transfer.execute(db, to_bg)?;
+        }
+        Ok(())
+    }
+}
+
+/// An AI ship transporting supplies from a naval base to a carrier group
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeaLogisticsRoute {
+    pub id: LogiRouteId,
+    pub group_id: bfprotocols::db::group::GroupId,
+    pub origin: ObjectiveId,
+    pub destination: ObjectiveId,
+    pub cargo_type: ConvoyCargoType,
+    pub transfers: Vec<Transfer>,
+    pub spawn_time: DateTime<Utc>,
+    pub state: LogiRouteState,
+    pub side: Side,
+    pub last_pos: Vector2,
+    pub last_check: DateTime<Utc>,
+}
+
+impl SeaLogisticsRoute {
+    pub fn check_status(&mut self, lua: MizLua, group_name: &str) -> LogiRouteState {
+        use dcso3::group::Group;
+        match Group::get_by_name(lua, group_name) {
+            Ok(group) => match group.get_units() {
+                Ok(units) => {
+                    if units.len() == 0 {
+                        self.state = LogiRouteState::Destroyed;
+                        LogiRouteState::Destroyed
+                    } else {
+                        if let Ok(unit) = units.get(1) {
+                            if let Ok(pos) = unit.get_point() {
+                                self.last_pos = Vector2::new(pos.x, pos.z);
+                            }
+                        }
+                        self.state
+                    }
+                }
+                Err(_) => {
+                    self.state = LogiRouteState::Destroyed;
+                    LogiRouteState::Destroyed
+                }
+            },
+            Err(_) => {
+                self.state = LogiRouteState::Destroyed;
+                LogiRouteState::Destroyed
+            }
+        }
+    }
+
+    pub fn check_delivery(&mut self, destination_pos: Vector2, delivery_distance: f64) -> bool {
+        let dist = (self.last_pos - destination_pos).norm();
+        if dist <= delivery_distance {
+            self.state = LogiRouteState::Delivered;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn execute_transfers(&self, db: &mut Persisted, to_bg: &Option<UnboundedSender<Task>>) -> Result<()> {
         for transfer in &self.transfers {
             transfer.execute(db, to_bg)?;
@@ -809,7 +956,9 @@ impl Db {
             | LogiStage::SyncFromWarehouses { .. }
             | LogiStage::SyncToWarehouses { .. }
             | LogiStage::ExecuteTransfers { .. }
-            | LogiStage::ManageConvoys { .. } => (),
+            | LogiStage::ManageConvoys { .. }
+            | LogiStage::ManageAirRoutes { .. }
+            | LogiStage::ManageSeaRoutes { .. } => (),
             LogiStage::Complete { last_tick } => {
                 *last_tick = DateTime::<Utc>::MIN_UTC;
             }
@@ -858,6 +1007,36 @@ impl Db {
                             error!("failed to sync objective {oid} from warehouse {:?}", e)
                         }
                         record_perf(&mut perf.logistics_sync_from, start_ts);
+                        // Supply critical alert check
+                        let threshold = self.ephemeral.cfg.supply_alert_threshold;
+                        if threshold > 0 {
+                            if let Some(obj) = self.persisted.objectives.get(&oid) {
+                                let is_low = obj.warehouse.equipment.into_iter().any(|(_, inv)| {
+                                    inv.capacity > 0
+                                        && inv
+                                            .percent()
+                                            .map(|p| p < threshold)
+                                            .unwrap_or(false)
+                                });
+                                let side = obj.owner;
+                                let name = obj.name.clone();
+                                if is_low && self.ephemeral.supply_warned.insert(oid) {
+                                    self.ephemeral.msgs().panel_to_side(
+                                        30,
+                                        false,
+                                        side,
+                                        format_compact!(
+                                            "⚠ SUPPLY CRITICAL: {} is below {}% — send a convoy!",
+                                            name,
+                                            threshold
+                                        ),
+                                    );
+                                } else if !is_low {
+                                    // Clear the warning so it can fire again if supply drops again
+                                    self.ephemeral.supply_warned.remove(&oid);
+                                }
+                            }
+                        }
                     }
                     None => {
                         let sts = Utc::now();
@@ -893,10 +1072,16 @@ impl Db {
                     let st = Utc::now();
                     self.balance_logistics_hubs()?;
 
-                    // Check if there are active convoys to manage
+                    // Chain through management stages: convoys → air routes → sea routes → sync
                     if !self.ephemeral.active_convoys.is_empty() {
                         let convoys = self.ephemeral.active_convoys.values().cloned().collect();
                         self.ephemeral.logistics_stage = LogiStage::ManageConvoys { convoys };
+                    } else if !self.ephemeral.active_air_routes.is_empty() {
+                        let routes = self.ephemeral.active_air_routes.values().cloned().collect();
+                        self.ephemeral.logistics_stage = LogiStage::ManageAirRoutes { routes };
+                    } else if !self.ephemeral.active_sea_routes.is_empty() {
+                        let routes = self.ephemeral.active_sea_routes.values().cloned().collect();
+                        self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes { routes };
                     } else {
                         let objectives = self
                             .persisted
@@ -1007,8 +1192,236 @@ impl Db {
                         }
                     }
 
-                    // Transition to next stage
+                    // Transition to next stage: convoys → air routes → sea routes → sync
                     if self.ephemeral.active_convoys.is_empty() {
+                        if !self.ephemeral.active_air_routes.is_empty() {
+                            let routes = self.ephemeral.active_air_routes.values().cloned().collect();
+                            self.ephemeral.logistics_stage = LogiStage::ManageAirRoutes { routes };
+                        } else if !self.ephemeral.active_sea_routes.is_empty() {
+                            let routes = self.ephemeral.active_sea_routes.values().cloned().collect();
+                            self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes { routes };
+                        } else {
+                            let objectives = self
+                                .persisted
+                                .objectives
+                                .into_iter()
+                                .map(|(id, _)| *id)
+                                .collect();
+                            self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
+                        }
+                    }
+
+                    record_perf(&mut perf.logistics_convoy, st);
+                }
+                LogiStage::ManageAirRoutes { routes: _ } => {
+                    let st = Utc::now();
+                    let (delivery_distance, check_interval_secs) = match self
+                        .ephemeral
+                        .cfg
+                        .warehouse
+                        .as_ref()
+                        .and_then(|w| w.air_logistics.as_ref())
+                    {
+                        Some(cfg) => (cfg.delivery_distance, cfg.check_interval_secs),
+                        None => {
+                            // Air logistics disabled/unconfigured — clear and move on
+                            self.ephemeral.active_air_routes.clear();
+                            let objectives = self
+                                .persisted
+                                .objectives
+                                .into_iter()
+                                .map(|(id, _)| *id)
+                                .collect();
+                            self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
+                            record_perf(&mut perf.logistics_air_routes, st);
+                            return Ok(());
+                        }
+                    };
+
+                    let mut completed = Vec::new();
+                    for route_id in self.ephemeral.active_air_routes.keys().cloned().collect::<Vec<_>>() {
+                        if let Some(route) = self.ephemeral.active_air_routes.get_mut(&route_id) {
+                            if (ts - route.last_check).num_seconds() < check_interval_secs as i64 {
+                                continue;
+                            }
+                            route.last_check = ts;
+
+                            let group_name = match group!(self, &route.group_id) {
+                                Ok(g) => g.name.clone(),
+                                Err(_) => {
+                                    warn!("Air route {} group not found in database", route.id);
+                                    route.state = LogiRouteState::Destroyed;
+                                    completed.push(route_id.clone());
+                                    continue;
+                                }
+                            };
+
+                            let status = route.check_status(lua, &group_name);
+                            match status {
+                                LogiRouteState::InTransit => {
+                                    let dest_pos = match self.persisted.objectives.get(&route.destination) {
+                                        Some(o) => o.pos(),
+                                        None => {
+                                            warn!("Air route {} destination no longer exists", route.id);
+                                            route.state = LogiRouteState::Destroyed;
+                                            completed.push(route_id.clone());
+                                            continue;
+                                        }
+                                    };
+                                    if route.check_delivery(dest_pos, delivery_distance) {
+                                        let dest_name = self.persisted.objectives.get(&route.destination)
+                                            .map(|o| o.name.clone()).unwrap_or_default();
+                                        info!("Air route {} delivered to {}", route.id, dest_name);
+                                        if let Err(e) = route.execute_transfers(&mut self.persisted, &self.ephemeral.to_bg) {
+                                            error!("Failed to execute air route transfers: {:?}", e);
+                                        }
+                                        if let Some(to_bg) = &self.ephemeral.to_bg {
+                                            let _ = to_bg.send(Task::Stat(Stat::AirRouteDelivered {
+                                                from: route.origin,
+                                                to: route.destination,
+                                                side: route.side,
+                                            }));
+                                        }
+                                        completed.push(route_id.clone());
+                                    }
+                                }
+                                LogiRouteState::Destroyed => {
+                                    info!("Air route {} destroyed en route", route.id);
+                                    if let Some(to_bg) = &self.ephemeral.to_bg {
+                                        let _ = to_bg.send(Task::Stat(Stat::AirRouteDestroyed {
+                                            from: route.origin,
+                                            to: route.destination,
+                                            side: route.side,
+                                        }));
+                                    }
+                                    completed.push(route_id.clone());
+                                }
+                                LogiRouteState::Delivered => {}
+                            }
+                        }
+
+                        if Utc::now() - st > Duration::milliseconds(6) {
+                            break;
+                        }
+                    }
+
+                    for route_id in completed {
+                        self.ephemeral.active_air_routes.remove(&route_id);
+                    }
+
+                    if self.ephemeral.active_air_routes.is_empty() {
+                        if !self.ephemeral.active_sea_routes.is_empty() {
+                            let routes = self.ephemeral.active_sea_routes.values().cloned().collect();
+                            self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes { routes };
+                        } else {
+                            let objectives = self
+                                .persisted
+                                .objectives
+                                .into_iter()
+                                .map(|(id, _)| *id)
+                                .collect();
+                            self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
+                        }
+                    }
+
+                    record_perf(&mut perf.logistics_air_routes, st);
+                }
+                LogiStage::ManageSeaRoutes { routes: _ } => {
+                    let st = Utc::now();
+                    let (delivery_distance, check_interval_secs) = match self
+                        .ephemeral
+                        .cfg
+                        .warehouse
+                        .as_ref()
+                        .and_then(|w| w.sea_logistics.as_ref())
+                    {
+                        Some(cfg) => (cfg.delivery_distance, cfg.check_interval_secs),
+                        None => {
+                            self.ephemeral.active_sea_routes.clear();
+                            let objectives = self
+                                .persisted
+                                .objectives
+                                .into_iter()
+                                .map(|(id, _)| *id)
+                                .collect();
+                            self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
+                            record_perf(&mut perf.logistics_sea_routes, st);
+                            return Ok(());
+                        }
+                    };
+
+                    let mut completed = Vec::new();
+                    for route_id in self.ephemeral.active_sea_routes.keys().cloned().collect::<Vec<_>>() {
+                        if let Some(route) = self.ephemeral.active_sea_routes.get_mut(&route_id) {
+                            if (ts - route.last_check).num_seconds() < check_interval_secs as i64 {
+                                continue;
+                            }
+                            route.last_check = ts;
+
+                            let group_name = match group!(self, &route.group_id) {
+                                Ok(g) => g.name.clone(),
+                                Err(_) => {
+                                    warn!("Sea route {} group not found in database", route.id);
+                                    route.state = LogiRouteState::Destroyed;
+                                    completed.push(route_id.clone());
+                                    continue;
+                                }
+                            };
+
+                            let status = route.check_status(lua, &group_name);
+                            match status {
+                                LogiRouteState::InTransit => {
+                                    let dest_pos = match self.persisted.objectives.get(&route.destination) {
+                                        Some(o) => o.pos(),
+                                        None => {
+                                            warn!("Sea route {} destination no longer exists", route.id);
+                                            route.state = LogiRouteState::Destroyed;
+                                            completed.push(route_id.clone());
+                                            continue;
+                                        }
+                                    };
+                                    if route.check_delivery(dest_pos, delivery_distance) {
+                                        let dest_name = self.persisted.objectives.get(&route.destination)
+                                            .map(|o| o.name.clone()).unwrap_or_default();
+                                        info!("Sea route {} delivered to {}", route.id, dest_name);
+                                        if let Err(e) = route.execute_transfers(&mut self.persisted, &self.ephemeral.to_bg) {
+                                            error!("Failed to execute sea route transfers: {:?}", e);
+                                        }
+                                        if let Some(to_bg) = &self.ephemeral.to_bg {
+                                            let _ = to_bg.send(Task::Stat(Stat::SeaRouteDelivered {
+                                                from: route.origin,
+                                                to: route.destination,
+                                                side: route.side,
+                                            }));
+                                        }
+                                        completed.push(route_id.clone());
+                                    }
+                                }
+                                LogiRouteState::Destroyed => {
+                                    info!("Sea route {} destroyed en route", route.id);
+                                    if let Some(to_bg) = &self.ephemeral.to_bg {
+                                        let _ = to_bg.send(Task::Stat(Stat::SeaRouteDestroyed {
+                                            from: route.origin,
+                                            to: route.destination,
+                                            side: route.side,
+                                        }));
+                                    }
+                                    completed.push(route_id.clone());
+                                }
+                                LogiRouteState::Delivered => {}
+                            }
+                        }
+
+                        if Utc::now() - st > Duration::milliseconds(6) {
+                            break;
+                        }
+                    }
+
+                    for route_id in completed {
+                        self.ephemeral.active_sea_routes.remove(&route_id);
+                    }
+
+                    if self.ephemeral.active_sea_routes.is_empty() {
                         let objectives = self
                             .persisted
                             .objectives
@@ -1018,7 +1431,7 @@ impl Db {
                         self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
                     }
 
-                    record_perf(&mut perf.logistics_convoy, st);
+                    record_perf(&mut perf.logistics_sea_routes, st);
                 }
                 LogiStage::SyncToWarehouses { objectives } => match objectives.pop() {
                     None => self.ephemeral.logistics_stage = LogiStage::Complete { last_tick: ts },
@@ -1257,13 +1670,26 @@ impl Db {
         let dest_name = dest_obj.name.clone();
 
         // Get truck template for this side and clone values we'll need
-        let (truck_template, speed_kph, trucks_per_convoy) = match convoy_cfg.truck_template.get(&side) {
+        let (truck_template, mut speed_kph, trucks_per_convoy) = match convoy_cfg.truck_template.get(&side) {
             Some(t) => (t.clone(), convoy_cfg.speed_kph, convoy_cfg.trucks_per_convoy),
             None => {
                 warn!("No truck template configured for side {:?}, skipping convoy spawn", side);
                 return Ok(());
             }
         };
+
+        // Apply weather effects to convoy speed if configured
+        if let Some(weather_cfg) = self.ephemeral.cfg.weather_effects.as_ref() {
+            // Use the most restrictive weather multiplier that's below 1.0
+            // (storm < snow < rain). The config author sets which apply.
+            let multiplier = weather_cfg.thunderstorm_speed_multiplier
+                .min(weather_cfg.snow_speed_multiplier)
+                .min(weather_cfg.rain_speed_multiplier);
+            if multiplier < 1.0 {
+                info!("Applying weather speed multiplier {:.2} to convoy", multiplier);
+                speed_kph *= multiplier;
+            }
+        }
 
         // Generate unique convoy ID
         let convoy_id = format_compact!(
@@ -1314,45 +1740,93 @@ impl Db {
         let origin_alt = land.get_height(LuaVec2(origin_pos))?;
         let dest_alt = land.get_height(LuaVec2(dest_pos))?;
 
-        // Create mission with route to destination
+        // Build route using road pathfinding when available
+        let speed_mps = speed_kph / 3.6;
+        let mut route_points = Vec::new();
+
+        // Start point
+        route_points.push(MissionPoint {
+            action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+            airdrome_id: None,
+            helipad: None,
+            typ: PointType::TurningPoint,
+            link_unit: None,
+            pos: LuaVec2(origin_pos),
+            alt: origin_alt,
+            alt_typ: Some(AltType::BARO),
+            time_re_fu_ar: None,
+            eta: Some(dcso3::Time(0.)),
+            eta_locked: Some(true),
+            speed: speed_mps,
+            speed_locked: Some(true),
+            name: None,
+            task: Box::new(Task::ComboTask(vec![])),
+        });
+
+        // Try to find road path for intermediate waypoints
+        match land.find_path_on_roads(
+            dcso3::land::RoadType::Road,
+            LuaVec2(origin_pos),
+            LuaVec2(dest_pos),
+        ) {
+            Ok(path) => {
+                // Add intermediate road waypoints (skip first/last as they're origin/dest)
+                let mut wp_count = 0;
+                for wp in path {
+                    if let Ok(wp) = wp {
+                        let alt = land.get_height(wp).unwrap_or(0.0);
+                        route_points.push(MissionPoint {
+                            action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+                            airdrome_id: None,
+                            helipad: None,
+                            typ: PointType::TurningPoint,
+                            link_unit: None,
+                            pos: wp,
+                            alt,
+                            alt_typ: Some(AltType::BARO),
+                            time_re_fu_ar: None,
+                            eta: None,
+                            eta_locked: None,
+                            speed: speed_mps,
+                            speed_locked: None,
+                            name: None,
+                            task: Box::new(Task::ComboTask(vec![])),
+                        });
+                        wp_count += 1;
+                    }
+                }
+                if wp_count > 0 {
+                    info!("Convoy {} using road path with {} waypoints", convoy_id, wp_count);
+                }
+            }
+            Err(e) => {
+                debug!("No road path found for convoy {}, using direct route: {}", convoy_id, e);
+            }
+        }
+
+        // Destination point (always added as final waypoint)
+        route_points.push(MissionPoint {
+            action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+            airdrome_id: None,
+            helipad: None,
+            typ: PointType::TurningPoint,
+            link_unit: None,
+            pos: LuaVec2(dest_pos),
+            alt: dest_alt,
+            alt_typ: Some(AltType::BARO),
+            time_re_fu_ar: None,
+            eta: None,
+            eta_locked: None,
+            speed: speed_mps,
+            speed_locked: None,
+            name: None,
+            task: Box::new(Task::ComboTask(vec![])),
+        });
+
+        // Create mission with route
         controller.set_task(Task::Mission {
             airborne: Some(false),
-            route: vec![
-                MissionPoint {
-                    action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
-                    airdrome_id: None,
-                    helipad: None,
-                    typ: PointType::TurningPoint,
-                    link_unit: None,
-                    pos: LuaVec2(origin_pos),
-                    alt: origin_alt,
-                    alt_typ: Some(AltType::BARO),
-                    time_re_fu_ar: None,
-                    eta: Some(dcso3::Time(0.)),
-                    eta_locked: Some(true),
-                    speed: speed_kph / 3.6, // convert km/h to m/s
-                    speed_locked: Some(true),
-                    name: None,
-                    task: Box::new(Task::ComboTask(vec![])),
-                },
-                MissionPoint {
-                    action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
-                    airdrome_id: None,
-                    helipad: None,
-                    typ: PointType::TurningPoint,
-                    link_unit: None,
-                    pos: LuaVec2(dest_pos),
-                    alt: dest_alt,
-                    alt_typ: Some(AltType::BARO),
-                    time_re_fu_ar: None,
-                    eta: None,
-                    eta_locked: None,
-                    speed: speed_kph / 3.6, // convert km/h to m/s
-                    speed_locked: None,
-                    name: None,
-                    task: Box::new(Task::ComboTask(vec![])),
-                },
-            ],
+            route: route_points,
         })?;
 
         // Create convoy tracking struct
@@ -1387,36 +1861,383 @@ impl Db {
         Ok(())
     }
 
+    /// Spawn an AI cargo aircraft to deliver supplies from a logistics hub to a destination
+    fn spawn_air_logistics_route(
+        &mut self,
+        lua: MizLua,
+        origin: ObjectiveId,
+        destination: ObjectiveId,
+        cargo_type: ConvoyCargoType,
+        transfers: Vec<Transfer>,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let cfg = match &self.ephemeral.cfg.warehouse {
+            Some(w) => w,
+            None => return Ok(()),
+        };
+
+        let air_cfg = match &cfg.air_logistics {
+            Some(c) if c.enabled => c,
+            _ => return Ok(()),
+        };
+
+        let origin_obj = objective!(self, &origin)?;
+        let dest_obj = objective!(self, &destination)?;
+        let side = origin_obj.owner;
+        let origin_pos = origin_obj.pos();
+        let dest_pos = dest_obj.pos();
+        let origin_name = origin_obj.name.clone();
+        let dest_name = dest_obj.name.clone();
+
+        let (aircraft_template, altitude_m, speed_kph) =
+            match air_cfg.aircraft_template.get(&side) {
+                Some(t) => (t.clone(), air_cfg.altitude_m, air_cfg.speed_kph),
+                None => {
+                    warn!(
+                        "No aircraft template configured for side {:?}, skipping air route spawn",
+                        side
+                    );
+                    return Ok(());
+                }
+            };
+
+        let route_id = format_compact!(
+            "AIR_{}_{}_{}",
+            side.to_str(),
+            self.ephemeral.air_route_counter,
+            now.timestamp()
+        );
+        self.ephemeral.air_route_counter += 1;
+
+        let delta = dest_pos - origin_pos;
+        let heading = delta.y.atan2(delta.x);
+        let speed_mps = speed_kph / 3.6;
+
+        use crate::db::group::DeployKind;
+        use crate::spawnctx::{SpawnCtx, SpawnLoc};
+        use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, TurnMethod};
+        use dcso3::env::miz::Miz;
+        use dcso3::LuaVec2;
+        use enumflags2::BitFlags;
+
+        let spawn_ctx = SpawnCtx::new(lua)?;
+        let miz = Miz::singleton(lua)?;
+        let idx = miz.index()?;
+
+        let group_id = self.add_group(
+            &spawn_ctx,
+            &idx,
+            side,
+            SpawnLoc::InAir {
+                pos: origin_pos,
+                heading,
+                altitude: altitude_m,
+                speed: speed_mps,
+            },
+            &aircraft_template,
+            DeployKind::Objective { origin },
+            BitFlags::empty(),
+        )?;
+
+        use dcso3::group::Group;
+        let group = Group::get_by_name(lua, &*self.persisted.groups[&group_id].name)?;
+        let controller = group.get_controller()?;
+
+        let route_points = vec![
+            MissionPoint {
+                action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
+                airdrome_id: None,
+                helipad: None,
+                typ: PointType::TurningPoint,
+                link_unit: None,
+                pos: LuaVec2(origin_pos),
+                alt: altitude_m,
+                alt_typ: Some(AltType::BARO),
+                time_re_fu_ar: None,
+                eta: Some(dcso3::Time(0.)),
+                eta_locked: Some(true),
+                speed: speed_mps,
+                speed_locked: Some(true),
+                name: None,
+                task: Box::new(Task::ComboTask(vec![])),
+            },
+            MissionPoint {
+                action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
+                airdrome_id: None,
+                helipad: None,
+                typ: PointType::TurningPoint,
+                link_unit: None,
+                pos: LuaVec2(dest_pos),
+                alt: altitude_m,
+                alt_typ: Some(AltType::BARO),
+                time_re_fu_ar: None,
+                eta: None,
+                eta_locked: None,
+                speed: speed_mps,
+                speed_locked: None,
+                name: None,
+                task: Box::new(Task::ComboTask(vec![])),
+            },
+        ];
+
+        controller.set_task(Task::Mission {
+            airborne: Some(true),
+            route: route_points,
+        })?;
+
+        let route = AirLogisticsRoute {
+            id: route_id.clone(),
+            group_id,
+            origin,
+            destination,
+            cargo_type,
+            transfers,
+            spawn_time: now,
+            state: LogiRouteState::InTransit,
+            side,
+            last_pos: origin_pos,
+            last_check: now,
+        };
+
+        self.ephemeral.active_air_routes.insert(route_id.clone(), route);
+        self.ephemeral.last_air_route_spawn.insert(side, now);
+
+        info!(
+            "Spawned {} air logistics route {} from {} to {}",
+            cargo_type.as_str(),
+            route_id,
+            origin_name,
+            dest_name
+        );
+
+        Ok(())
+    }
+
+    /// Spawn an AI ship to deliver supplies from a naval base to a carrier group
+    fn spawn_sea_logistics_route(
+        &mut self,
+        lua: MizLua,
+        origin: ObjectiveId,
+        destination: ObjectiveId,
+        cargo_type: ConvoyCargoType,
+        transfers: Vec<Transfer>,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let cfg = match &self.ephemeral.cfg.warehouse {
+            Some(w) => w,
+            None => return Ok(()),
+        };
+
+        let sea_cfg = match &cfg.sea_logistics {
+            Some(c) if c.enabled => c,
+            _ => return Ok(()),
+        };
+
+        let origin_obj = objective!(self, &origin)?;
+        let dest_obj = objective!(self, &destination)?;
+        let side = origin_obj.owner;
+        let origin_pos = origin_obj.pos();
+        let dest_pos = dest_obj.pos();
+        let origin_name = origin_obj.name.clone();
+        let dest_name = dest_obj.name.clone();
+
+        let (ship_template, speed_kph) = match sea_cfg.ship_template.get(&side) {
+            Some(t) => (t.clone(), sea_cfg.speed_kph),
+            None => {
+                warn!(
+                    "No ship template configured for side {:?}, skipping sea route spawn",
+                    side
+                );
+                return Ok(());
+            }
+        };
+
+        let route_id = format_compact!(
+            "SEA_{}_{}_{}",
+            side.to_str(),
+            self.ephemeral.sea_route_counter,
+            now.timestamp()
+        );
+        self.ephemeral.sea_route_counter += 1;
+
+        let delta = dest_pos - origin_pos;
+        let heading = delta.y.atan2(delta.x);
+        let speed_mps = speed_kph / 3.6;
+
+        use crate::db::group::DeployKind;
+        use crate::spawnctx::{SpawnCtx, SpawnLoc};
+        use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation};
+        use dcso3::env::miz::Miz;
+        use dcso3::LuaVec2;
+        use enumflags2::BitFlags;
+
+        let spawn_ctx = SpawnCtx::new(lua)?;
+        let miz = Miz::singleton(lua)?;
+        let idx = miz.index()?;
+
+        let group_id = self.add_group(
+            &spawn_ctx,
+            &idx,
+            side,
+            SpawnLoc::AtPos {
+                pos: origin_pos,
+                offset_direction: Vector2::new(0., 0.),
+                group_heading: heading,
+            },
+            &ship_template,
+            DeployKind::Objective { origin },
+            BitFlags::empty(),
+        )?;
+
+        use dcso3::group::Group;
+        let group = Group::get_by_name(lua, &*self.persisted.groups[&group_id].name)?;
+        let controller = group.get_controller()?;
+
+        let route_points = vec![
+            MissionPoint {
+                action: Some(ActionTyp::Ground(VehicleFormation::Vee)),
+                airdrome_id: None,
+                helipad: None,
+                typ: PointType::TurningPoint,
+                link_unit: None,
+                pos: LuaVec2(origin_pos),
+                alt: 0.,
+                alt_typ: Some(AltType::BARO),
+                time_re_fu_ar: None,
+                eta: Some(dcso3::Time(0.)),
+                eta_locked: Some(true),
+                speed: speed_mps,
+                speed_locked: Some(true),
+                name: None,
+                task: Box::new(Task::ComboTask(vec![])),
+            },
+            MissionPoint {
+                action: Some(ActionTyp::Ground(VehicleFormation::Vee)),
+                airdrome_id: None,
+                helipad: None,
+                typ: PointType::TurningPoint,
+                link_unit: None,
+                pos: LuaVec2(dest_pos),
+                alt: 0.,
+                alt_typ: Some(AltType::BARO),
+                time_re_fu_ar: None,
+                eta: None,
+                eta_locked: None,
+                speed: speed_mps,
+                speed_locked: None,
+                name: None,
+                task: Box::new(Task::ComboTask(vec![])),
+            },
+        ];
+
+        controller.set_task(Task::Mission {
+            airborne: Some(false),
+            route: route_points,
+        })?;
+
+        let route = SeaLogisticsRoute {
+            id: route_id.clone(),
+            group_id,
+            origin,
+            destination,
+            cargo_type,
+            transfers,
+            spawn_time: now,
+            state: LogiRouteState::InTransit,
+            side,
+            last_pos: origin_pos,
+            last_check: now,
+        };
+
+        self.ephemeral.active_sea_routes.insert(route_id.clone(), route);
+        self.ephemeral.last_sea_route_spawn.insert(side, now);
+
+        info!(
+            "Spawned {} sea logistics route {} from {} to {}",
+            cargo_type.as_str(),
+            route_id,
+            origin_name,
+            dest_name
+        );
+
+        Ok(())
+    }
+
     pub fn deliver_supplies_from_logistics_hubs(&mut self, lua: MizLua, now: DateTime<Utc>) -> Result<Vec<Transfer>> {
         self.update_supply_status()
             .context("updating supply status")?;
         let mut transfers: Vec<Transfer> = vec![];
 
-        // Check if convoy system is enabled
+        // Check which transport modes are enabled
         let convoy_enabled = self.ephemeral.cfg.warehouse
             .as_ref()
             .and_then(|w| w.convoy.as_ref())
             .map(|c| c.enabled)
             .unwrap_or(false);
 
+        let air_enabled = self.ephemeral.cfg.warehouse
+            .as_ref()
+            .and_then(|w| w.air_logistics.as_ref())
+            .map(|a| a.enabled)
+            .unwrap_or(false);
+
+        let sea_enabled = self.ephemeral.cfg.warehouse
+            .as_ref()
+            .and_then(|w| w.sea_logistics.as_ref())
+            .map(|s| s.enabled)
+            .unwrap_or(false);
+
         // Collect hub IDs to avoid borrowing issues
         let hub_ids: SmallVec<[ObjectiveId; 16]> = self.persisted.logistics_hubs.into_iter().copied().collect();
 
-        // Collect convoy spawn info to execute after we're done with objective references
-        struct ConvoySpawnInfo {
+        // Collect spawn info to execute after we're done with objective references
+        #[allow(dead_code)]
+        struct RouteSpawnInfo {
             origin: ObjectiveId,
             destination: ObjectiveId,
             cargo_type: ConvoyCargoType,
             transfers: Vec<Transfer>,
         }
-        let mut convoys_to_spawn: Vec<ConvoySpawnInfo> = Vec::new();
+        let mut convoys_to_spawn: Vec<RouteSpawnInfo> = Vec::new();
+        let mut air_routes_to_spawn: Vec<RouteSpawnInfo> = Vec::new();
 
         for lid in hub_ids {
             let logi = objective!(self, &lid)?;
+            let hub_side = logi.owner;
 
-            // Split destinations into instant transfer vs convoy required
+            // Split destinations into instant transfer, convoy, or air route
             let mut instant_needed: SmallVec<[Needed; 64]> = SmallVec::new();
             let mut convoy_needed: SmallVec<[Needed; 64]> = SmallVec::new();
+            let mut air_needed: SmallVec<[Needed; 64]> = SmallVec::new();
+
+            // Check air route throttle for this hub's side
+            let air_supply_threshold = self.ephemeral.cfg.warehouse
+                .as_ref()
+                .and_then(|w| w.air_logistics.as_ref())
+                .map(|a| a.supply_threshold)
+                .unwrap_or(50);
+            let air_max_concurrent = self.ephemeral.cfg.warehouse
+                .as_ref()
+                .and_then(|w| w.air_logistics.as_ref())
+                .map(|a| a.max_concurrent_routes as usize)
+                .unwrap_or(6);
+            let air_spawn_interval_ticks = self.ephemeral.cfg.warehouse
+                .as_ref()
+                .and_then(|w| w.air_logistics.as_ref())
+                .map(|a| a.spawn_interval_ticks)
+                .unwrap_or(3);
+            let tick_minutes = self.ephemeral.cfg.warehouse
+                .as_ref()
+                .map(|w| w.tick)
+                .unwrap_or(10);
+            let air_active_count = self.ephemeral.active_air_routes.values()
+                .filter(|r| r.side == hub_side)
+                .count();
+            let air_last_spawn = self.ephemeral.last_air_route_spawn.get(&hub_side).copied();
+            let air_spawn_interval = Duration::minutes(tick_minutes as i64 * air_spawn_interval_ticks as i64);
+            let air_can_spawn = air_enabled
+                && air_active_count < air_max_concurrent
+                && air_last_spawn.map(|t| now - t >= air_spawn_interval).unwrap_or(true);
 
             for oid in logi.warehouse.destination.into_iter() {
                 if let Some(obj) = self.persisted.objectives.get(oid) {
@@ -1428,10 +2249,14 @@ impl Db {
                             allocated: 0,
                         };
 
-                        // Check if this destination requires convoy
+                        // Route to appropriate transport mode
                         if convoy_enabled && obj.logistics_detached {
                             convoy_needed.push(needed);
+                        } else if air_can_spawn && (obj.supply < air_supply_threshold || obj.fuel < air_supply_threshold) {
+                            // Air eligible: below threshold and slot available
+                            air_needed.push(needed);
                         } else {
+                            // Instant transfer: air disabled, throttled, or above threshold
                             instant_needed.push(needed);
                         }
                     }
@@ -1601,7 +2426,7 @@ impl Db {
                 for (dest_oid, (equipment_transfers, fuel_transfers)) in convoy_transfers_by_dest {
                     // Add weapons convoy if there are equipment transfers
                     if !equipment_transfers.is_empty() {
-                        convoys_to_spawn.push(ConvoySpawnInfo {
+                        convoys_to_spawn.push(RouteSpawnInfo {
                             origin: lid,
                             destination: dest_oid,
                             cargo_type: ConvoyCargoType::Weapons,
@@ -1611,7 +2436,112 @@ impl Db {
 
                     // Add fuel convoy if there are fuel transfers
                     if !fuel_transfers.is_empty() {
-                        convoys_to_spawn.push(ConvoySpawnInfo {
+                        convoys_to_spawn.push(RouteSpawnInfo {
+                            origin: lid,
+                            destination: dest_oid,
+                            cargo_type: ConvoyCargoType::Fuel,
+                            transfers: fuel_transfers,
+                        });
+                    }
+                }
+            }
+
+            // Schedule air logistics routes for air-eligible destinations
+            if !air_needed.is_empty() {
+                let mut air_transfers_by_dest: FxHashMap<ObjectiveId, (Vec<Transfer>, Vec<Transfer>)> =
+                    FxHashMap::default();
+
+                let mut needed = air_needed;
+                for (name, inv) in &logi.warehouse.liquids {
+                    if inv.stored == 0 {
+                        continue;
+                    }
+                    needed.sort_by(|n0, n1| {
+                        n0.obj.get_liquids(name).stored.cmp(&n1.obj.get_liquids(name).stored)
+                    });
+                    let mut total_demanded = 0;
+                    for n in &mut needed {
+                        let inv = n.obj.get_liquids(name);
+                        let demanded =
+                            if inv.stored <= inv.capacity { inv.capacity - inv.stored } else { 0 };
+                        total_demanded += demanded;
+                        n.demanded = demanded;
+                        n.allocated = 0;
+                    }
+                    let mut have = inv.stored;
+                    let mut total_filled = 0;
+                    while have > 0 && total_filled < total_demanded {
+                        for n in &mut needed {
+                            if have == 0 { break; }
+                            let allocation = max(1, have >> 3);
+                            let amount = min(allocation, n.demanded - n.allocated);
+                            n.allocated += amount;
+                            total_filled += amount;
+                            have -= amount;
+                        }
+                    }
+                    for n in &needed {
+                        if n.allocated > 0 {
+                            air_transfers_by_dest.entry(*n.oid).or_default().1.push(Transfer {
+                                source: lid,
+                                target: *n.oid,
+                                amount: n.allocated,
+                                item: TransferItem::Liquid(name.clone()),
+                            });
+                        }
+                    }
+                }
+                for (name, inv) in &logi.warehouse.equipment {
+                    if inv.stored == 0 {
+                        continue;
+                    }
+                    needed.sort_by(|n0, n1| {
+                        n0.obj.get_equipment(name).stored.cmp(&n1.obj.get_equipment(name).stored)
+                    });
+                    let mut total_demanded = 0;
+                    for n in &mut needed {
+                        let inv = n.obj.get_equipment(name);
+                        let demanded =
+                            if inv.stored <= inv.capacity { inv.capacity - inv.stored } else { 0 };
+                        total_demanded += demanded;
+                        n.demanded = demanded;
+                        n.allocated = 0;
+                    }
+                    let mut have = inv.stored;
+                    let mut total_filled = 0;
+                    while have > 0 && total_filled < total_demanded {
+                        for n in &mut needed {
+                            if have == 0 { break; }
+                            let allocation = max(1, have >> 3);
+                            let amount = min(allocation, n.demanded - n.allocated);
+                            n.allocated += amount;
+                            total_filled += amount;
+                            have -= amount;
+                        }
+                    }
+                    for n in &needed {
+                        if n.allocated > 0 {
+                            air_transfers_by_dest.entry(*n.oid).or_default().0.push(Transfer {
+                                source: lid,
+                                target: *n.oid,
+                                amount: n.allocated,
+                                item: TransferItem::Equipment(name.clone()),
+                            });
+                        }
+                    }
+                }
+
+                for (dest_oid, (equipment_transfers, fuel_transfers)) in air_transfers_by_dest {
+                    if !equipment_transfers.is_empty() {
+                        air_routes_to_spawn.push(RouteSpawnInfo {
+                            origin: lid,
+                            destination: dest_oid,
+                            cargo_type: ConvoyCargoType::Weapons,
+                            transfers: equipment_transfers,
+                        });
+                    }
+                    if !fuel_transfers.is_empty() {
+                        air_routes_to_spawn.push(RouteSpawnInfo {
                             origin: lid,
                             destination: dest_oid,
                             cargo_type: ConvoyCargoType::Fuel,
@@ -1622,26 +2552,203 @@ impl Db {
             }
         }
 
-        // Now spawn all collected convoys (after we're done with objective references)
-        for convoy_info in convoys_to_spawn {
+        // Spawn all collected convoys (after we're done with objective references)
+        for route_info in convoys_to_spawn {
             // Deduct supplies from source immediately (convoy takes them)
-            for tr in &convoy_info.transfers {
+            for tr in &route_info.transfers {
                 if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
                     error!("Failed to deduct supplies for convoy: {:?}", e);
                 }
             }
-
-            // Spawn the convoy
             if let Err(e) = self.spawn_supply_convoy(
                 lua,
-                convoy_info.origin,
-                convoy_info.destination,
-                convoy_info.cargo_type,
-                convoy_info.transfers,
+                route_info.origin,
+                route_info.destination,
+                route_info.cargo_type,
+                route_info.transfers,
                 now,
             ) {
-                error!("Failed to spawn {:?} convoy from {} to {}: {:?}",
-                    convoy_info.cargo_type, convoy_info.origin, convoy_info.destination, e);
+                error!("Failed to spawn {:?} convoy: {:?}", route_info.cargo_type, e);
+            }
+        }
+
+        // Spawn all collected air routes
+        for route_info in air_routes_to_spawn {
+            for tr in &route_info.transfers {
+                if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
+                    error!("Failed to deduct supplies for air route: {:?}", e);
+                }
+            }
+            if let Err(e) = self.spawn_air_logistics_route(
+                lua,
+                route_info.origin,
+                route_info.destination,
+                route_info.cargo_type,
+                route_info.transfers,
+                now,
+            ) {
+                error!("Failed to spawn {:?} air route: {:?}", route_info.cargo_type, e);
+            }
+        }
+
+        // Dispatch sea logistics routes: NavalBase → CarrierGroup
+        if sea_enabled {
+            let sea_supply_threshold = self.ephemeral.cfg.warehouse
+                .as_ref()
+                .and_then(|w| w.sea_logistics.as_ref())
+                .map(|s| s.supply_threshold)
+                .unwrap_or(50);
+            let sea_max_concurrent = self.ephemeral.cfg.warehouse
+                .as_ref()
+                .and_then(|w| w.sea_logistics.as_ref())
+                .map(|s| s.max_concurrent_routes as usize)
+                .unwrap_or(4);
+            let sea_spawn_interval_ticks = self.ephemeral.cfg.warehouse
+                .as_ref()
+                .and_then(|w| w.sea_logistics.as_ref())
+                .map(|s| s.spawn_interval_ticks)
+                .unwrap_or(3);
+            let tick_minutes = self.ephemeral.cfg.warehouse
+                .as_ref()
+                .map(|w| w.tick)
+                .unwrap_or(10);
+
+            // Collect naval base → carrier group candidate pairs
+            // First pass: collect (nb_id, side, candidate_dest_ids) without nested borrow
+            let naval_hubs: Vec<(ObjectiveId, Side, Vec<ObjectiveId>)> = self
+                .persisted
+                .objectives
+                .into_iter()
+                .filter_map(|(nb_id, nb_obj)| {
+                    if !matches!(nb_obj.kind, ObjectiveKind::NavalBase) {
+                        return None;
+                    }
+                    let side = nb_obj.owner;
+                    if side == Side::Neutral {
+                        return None;
+                    }
+                    let dest_ids: Vec<ObjectiveId> =
+                        nb_obj.warehouse.destination.into_iter().copied().collect();
+                    Some((*nb_id, side, dest_ids))
+                })
+                .collect();
+
+            // Second pass: filter destinations to carrier groups below threshold
+            let mut naval_pairs: Vec<(ObjectiveId, ObjectiveId, Side)> = Vec::new();
+            for (nb_id, side, dest_ids) in &naval_hubs {
+                for dest_id in dest_ids {
+                    let dest = match self.persisted.objectives.get(dest_id) {
+                        Some(o) => o,
+                        None => continue,
+                    };
+                    if !matches!(dest.kind, ObjectiveKind::CarrierGroup { .. }) {
+                        continue;
+                    }
+                    if dest.owner != *side {
+                        continue;
+                    }
+                    if dest.supply >= sea_supply_threshold && dest.fuel >= sea_supply_threshold {
+                        continue;
+                    }
+                    naval_pairs.push((*nb_id, *dest_id, *side));
+                }
+            }
+
+            let mut sea_routes_to_spawn: Vec<RouteSpawnInfo> = Vec::new();
+            for (nb_id, dest_id, side) in naval_pairs {
+                let sea_active_count = self.ephemeral.active_sea_routes.values()
+                    .filter(|r| r.side == side)
+                    .count();
+                let sea_last_spawn = self.ephemeral.last_sea_route_spawn.get(&side).copied();
+                let sea_spawn_interval = Duration::minutes(
+                    tick_minutes as i64 * sea_spawn_interval_ticks as i64,
+                );
+                let can_spawn = sea_active_count < sea_max_concurrent
+                    && sea_last_spawn
+                        .map(|t| now - t >= sea_spawn_interval)
+                        .unwrap_or(true);
+                if !can_spawn {
+                    continue;
+                }
+
+                // Already have an active route for this pair?
+                let already_active = self.ephemeral.active_sea_routes.values()
+                    .any(|r| r.origin == nb_id && r.destination == dest_id);
+                if already_active {
+                    continue;
+                }
+
+                let nb_obj = match self.persisted.objectives.get(&nb_id) {
+                    Some(o) => o,
+                    None => continue,
+                };
+                let dest_obj = match self.persisted.objectives.get(&dest_id) {
+                    Some(o) => o,
+                    None => continue,
+                };
+
+                // Build transfers
+                let mut fuel_transfers: Vec<Transfer> = Vec::new();
+                let mut equip_transfers: Vec<Transfer> = Vec::new();
+                for (name, inv) in &nb_obj.warehouse.liquids {
+                    let dest_inv = dest_obj.get_liquids(name);
+                    if inv.stored > 0 && dest_inv.stored < dest_inv.capacity {
+                        let amount = min(inv.stored, dest_inv.capacity - dest_inv.stored);
+                        fuel_transfers.push(Transfer {
+                            source: nb_id,
+                            target: dest_id,
+                            amount,
+                            item: TransferItem::Liquid(name.clone()),
+                        });
+                    }
+                }
+                for (name, inv) in &nb_obj.warehouse.equipment {
+                    let dest_inv = dest_obj.get_equipment(name);
+                    if inv.stored > 0 && dest_inv.stored < dest_inv.capacity {
+                        let amount = min(inv.stored, dest_inv.capacity - dest_inv.stored);
+                        equip_transfers.push(Transfer {
+                            source: nb_id,
+                            target: dest_id,
+                            amount,
+                            item: TransferItem::Equipment(name.clone()),
+                        });
+                    }
+                }
+
+                if !equip_transfers.is_empty() {
+                    sea_routes_to_spawn.push(RouteSpawnInfo {
+                        origin: nb_id,
+                        destination: dest_id,
+                        cargo_type: ConvoyCargoType::Weapons,
+                        transfers: equip_transfers,
+                    });
+                }
+                if !fuel_transfers.is_empty() {
+                    sea_routes_to_spawn.push(RouteSpawnInfo {
+                        origin: nb_id,
+                        destination: dest_id,
+                        cargo_type: ConvoyCargoType::Fuel,
+                        transfers: fuel_transfers,
+                    });
+                }
+            }
+
+            for route_info in sea_routes_to_spawn {
+                for tr in &route_info.transfers {
+                    if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
+                        error!("Failed to deduct supplies for sea route: {:?}", e);
+                    }
+                }
+                if let Err(e) = self.spawn_sea_logistics_route(
+                    lua,
+                    route_info.origin,
+                    route_info.destination,
+                    route_info.cargo_type,
+                    route_info.transfers,
+                    now,
+                ) {
+                    error!("Failed to spawn {:?} sea route: {:?}", route_info.cargo_type, e);
+                }
             }
         }
 

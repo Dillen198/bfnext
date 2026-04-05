@@ -123,7 +123,8 @@ fn do_pos_action(
         | ActionKind::SeadWaypoint
         | ActionKind::CarrierWaypoint
         | ActionKind::CarrierRepair
-        | ActionKind::CarrierRespawn => bail!("invalid action type for this menu item"),
+        | ActionKind::CarrierRespawn
+        | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
@@ -264,7 +265,8 @@ fn do_pos_group_action(
         | ActionKind::LogisticsTransfer(_)
         | ActionKind::LogisticsRepair(_)
         | ActionKind::CarrierRepair
-        | ActionKind::CarrierRespawn => bail!("invalid action type for this menu item"),
+        | ActionKind::CarrierRespawn
+        | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
@@ -345,7 +347,8 @@ fn do_objective_action(
         | ActionKind::SeadWaypoint
         | ActionKind::CarrierWaypoint
         | ActionKind::CarrierRepair
-        | ActionKind::CarrierRespawn => bail!("invalid action type for this menu item"),
+        | ActionKind::CarrierRespawn
+        | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, None, cmd)
@@ -356,6 +359,64 @@ fn run_objective_action(lua: MizLua, arg: ArgTriple<Ucid, String, ObjectiveId>) 
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_objective_action(
+        ctx,
+        perf,
+        lua,
+        side,
+        slot,
+        arg.fst,
+        arg.snd.clone(),
+        arg.trd,
+        action,
+    ) {
+        Ok(()) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("action {} started", arg.snd),
+        ),
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("could not start {}, {e:?}", arg.snd),
+        ),
+    }
+    Ok(())
+}
+
+fn do_enemy_objective_action(
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    lua: MizLua,
+    side: Side,
+    slot: SlotId,
+    ucid: Ucid,
+    name: String,
+    oid: ObjectiveId,
+    action: Action,
+) -> Result<()> {
+    let args = match &action.kind {
+        ActionKind::NavalCruiseMissileStrike(cfg) => {
+            ActionArgs::NavalCruiseMissileStrike(WithObj {
+                cfg: cfg.clone(),
+                oid,
+            })
+        }
+        _ => bail!("invalid action type for enemy objective menu item"),
+    };
+    let cmd = ActionCmd { name, action, args };
+    run_action(ctx, perf, lua, side, slot, ucid, None, cmd)
+}
+
+fn run_enemy_objective_action(
+    lua: MizLua,
+    arg: ArgTriple<Ucid, String, ObjectiveId>,
+) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
+    match do_enemy_objective_action(
         ctx,
         perf,
         lua,
@@ -519,7 +580,8 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 }
                 DeployKind::Crate { .. }
                 | DeployKind::Objective { .. }
-                | DeployKind::ObjectiveDeprecated => None,
+                | DeployKind::ObjectiveDeprecated
+                | DeployKind::DownedPilot { .. } => None,
             };
             if let Some(key) = key {
                 let root = mc.add_submenu_for_group(
@@ -560,6 +622,30 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     obj.name.clone(),
                     Some(root.clone()),
                     run_objective_action,
+                    ArgTriple {
+                        fst: arg.fst,
+                        snd: name.clone(),
+                        trd: *oid,
+                    },
+                )?;
+                n += 1;
+            }
+        }
+        Ok(())
+    };
+    let add_enemy_objective = |mut root: GroupSubMenu, name: String| -> Result<()> {
+        let mut n = 0;
+        for (oid, obj) in ctx.db.objectives() {
+            if obj.owner != player.side && obj.owner != Side::Neutral {
+                if n >= 8 {
+                    root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
+                    n = 0;
+                }
+                mc.add_command_for_group(
+                    arg.snd,
+                    obj.name.clone(),
+                    Some(root.clone()),
+                    run_enemy_objective_action,
                     ArgTriple {
                         fst: arg.fst,
                         snd: name.clone(),
@@ -620,6 +706,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             ActionKind::LogisticsRepair(_) => {
                 let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
                 add_objective(root.clone(), name.clone())?
+            }
+            ActionKind::NavalCruiseMissileStrike(_) => {
+                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                add_enemy_objective(root.clone(), name.clone())?
             }
         }
         n += 1;

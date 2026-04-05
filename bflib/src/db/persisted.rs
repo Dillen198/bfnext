@@ -24,6 +24,7 @@ use bfprotocols::db::{
     group::{GroupId, UnitId},
     objective::ObjectiveId,
 };
+use chrono::prelude::*;
 use dcso3::{coalition::Side, net::Ucid, String};
 use serde_derive::{Deserialize, Serialize};
 
@@ -55,6 +56,11 @@ pub struct Persisted {
     #[serde(default)]
     pub factories: SetS<ObjectiveId>,
     #[serde(default)]
+    pub downed_pilots: SetS<GroupId>,
+    /// Spawn UTC timestamp for each downed pilot (used for capture timer)
+    #[serde(default)]
+    pub downed_pilot_spawn_times: MapS<GroupId, DateTime<Utc>>,
+    #[serde(default)]
     pub nukes_used: u32,
     #[serde(default)]
     pub logistics_ticks_since_delivery: u32,
@@ -66,10 +72,33 @@ pub struct Persisted {
     pub uid: i64,
     #[serde(default)]
     pub migrated_v0: bool,
+    /// Coalition treasury balances (Smart Commander).
+    #[serde(default)]
+    pub blue_treasury: i64,
+    #[serde(default)]
+    pub red_treasury: i64,
 }
 
 impl Persisted {
     pub fn players(&self) -> &Map<Ucid, Player> {
         &self.players
+    }
+
+    pub fn treasury(&self, side: Side) -> i64 {
+        match side {
+            Side::Blue => self.blue_treasury,
+            Side::Red => self.red_treasury,
+            _ => 0,
+        }
+    }
+
+    pub fn adjust_treasury(&mut self, side: Side, delta: i64) -> i64 {
+        let t = match side {
+            Side::Blue => &mut self.blue_treasury,
+            Side::Red => &mut self.red_treasury,
+            _ => return 0,
+        };
+        *t = (*t + delta).max(0);
+        *t
     }
 }

@@ -151,6 +151,9 @@ impl PubPerf {
             logistics_sync_to,
             logistics_items,
             logistics_convoy: _,
+            logistics_air_routes: _,
+            logistics_sea_routes: _,
+            frontline: _,
         } = perf;
         let ApiPerfStat {
             get_position,
@@ -261,6 +264,9 @@ impl PubPerf {
             logistics_sync_to,
             logistics_items,
             logistics_convoy: _,
+            logistics_air_routes: _,
+            logistics_sea_routes: _,
+            frontline: _,
         } = perf;
         let ApiPerfStat {
             get_position,

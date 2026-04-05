@@ -17,6 +17,7 @@ for more details.
 mod admin;
 mod bg;
 mod chatcmd;
+mod commander;
 mod db;
 mod ewr;
 mod frontline;
@@ -28,7 +29,7 @@ mod shots;
 mod spawnctx;
 
 extern crate nalgebra as na;
-use crate::db::player::SlotAuth;
+use crate::db::{events::{EventEffect, EventScheduler}, player::SlotAuth};
 use admin::{run_admin_commands, AdminCommand, AdminResult};
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use bfprotocols::{
@@ -49,6 +50,7 @@ use db::{
 };
 use dcso3::{
     coalition::Side,
+    coord::Coord,
     env::{
         self,
         miz::{Miz, UnitId},
@@ -64,7 +66,7 @@ use dcso3::{
     trigger::Trigger,
     unit::{ClassUnit, Unit},
     world::{HandlerId, MarkPanel, World},
-    HooksLua, LuaEnv, MizLua, String,
+    HooksLua, LuaEnv, LuaVec3, MizLua, String, Vector3,
 };
 use ewr::Ewr;
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
@@ -255,6 +257,7 @@ struct Context {
     last_frame: Option<DateTime<Utc>>,
     last_slow_timed_events: DateTime<Utc>,
     last_periodic_points: DateTime<Utc>,
+    last_commander_tick: DateTime<Utc>,
     last_unit_position: usize,
     last_player_position: usize,
     subscribed_jtac_menus: FxHashMap<SlotId, JtacSlotIfo>,
@@ -265,6 +268,7 @@ struct Context {
     jtac: Jtacs,
     frontline: Option<frontline::FrontLine>,
     last_frontline_update: DateTime<Utc>,
+    event_scheduler: EventScheduler,
 }
 
 impl Context {
@@ -303,7 +307,7 @@ impl Context {
         if let Some(to_bg) = &self.to_background {
             match to_bg.send(task) {
                 Ok(()) => (),
-                Err(_) => panic!("background thread is dead"),
+                Err(e) => log::error!("background thread is dead, task dropped: {e}"),
             }
         }
     }
@@ -536,6 +540,49 @@ fn on_player_try_change_slot(
     res
 }
 
+struct CsarPilotInfo {
+    ucid: Ucid,
+    name: dcso3::String,
+    side: Side,
+    life_type: LifeType,
+    pos: dcso3::Vector2,
+}
+
+fn try_capture_csar_info(
+    _lua: MizLua,
+    ctx: &Context,
+    unit: &Unit,
+) -> Option<CsarPilotInfo> {
+    let csar = ctx.db.ephemeral.cfg.csar.as_ref()?;
+    if !csar.enabled {
+        return None;
+    }
+    let slot = unit.slot().ok()?;
+    let ucid = ctx.db.ephemeral.player_in_slot(&slot).cloned()?;
+    let player = ctx.db.player(&ucid)?;
+    let life_type = player.airborne?;
+    let name = player.name.clone();
+    let side = player.side;
+    let pos3 = unit.get_position().ok()?;
+    let pos = dcso3::Vector2::new(pos3.p.x, pos3.p.z);
+    Some(CsarPilotInfo { ucid, name, side, life_type, pos })
+}
+
+fn spawn_csar_pilot(lua: MizLua, ctx: &mut Context, info: Option<CsarPilotInfo>) {
+    let Some(info) = info else { return };
+    if let Err(e) = ctx.db.spawn_downed_pilot(
+        lua,
+        &ctx.idx,
+        info.ucid,
+        info.name.into(),
+        info.side,
+        info.life_type,
+        info.pos,
+    ) {
+        error!("failed to spawn downed pilot: {:?}", e)
+    }
+}
+
 fn unit_killed(
     lua: MizLua,
     ctx: &mut Context,
@@ -645,7 +692,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             }
             ()
         }
-        Event::Dead(e) | Event::UnitLost(e) | Event::PilotDead(e) => {
+        Event::Dead(e) | Event::UnitLost(e) => {
             if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
                 let id = unit.object_id()?;
                 if let Err(e) = unit_killed(lua, ctx, id, start_ts) {
@@ -658,12 +705,29 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 }
             }
         }
+        Event::PilotDead(e) => {
+            if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
+                let csar_pilot = try_capture_csar_info(lua, ctx, &unit);
+                let id = unit.object_id()?;
+                if let Err(e) = unit_killed(lua, ctx, id, start_ts) {
+                    error!("1 unit killed failed {:?}", e)
+                }
+                spawn_csar_pilot(lua, ctx, csar_pilot);
+            } else if let Some(st) = e.initiator.as_ref().and_then(|s| s.as_static().ok())
+            {
+                if let Err(e) = ctx.db.static_dead(&st.object_id()?, start_ts) {
+                    error!("static killed failed {e:?}")
+                }
+            }
+        }
         Event::Ejection(e) => {
             if let Ok(unit) = e.initiator.as_unit() {
+                let csar_pilot = try_capture_csar_info(lua, ctx, &unit);
                 let id = unit.object_id()?;
                 if let Err(e) = unit_killed(lua, ctx, id, start_ts) {
                     error!("2 unit killed failed {}", e)
                 }
+                spawn_csar_pilot(lua, ctx, csar_pilot);
             }
         }
         Event::Takeoff(e) | Event::PostponedTakeoff(e) => {
@@ -1022,6 +1086,29 @@ fn award_periodic_points(ctx: &mut Context, ts: DateTime<Utc>) {
     }
 }
 
+fn tick_smart_commander(ctx: &mut Context, ts: DateTime<Utc>) {
+    let cfg = match ctx.db.ephemeral.cfg.smart_commander.as_ref() {
+        Some(c) => c.clone(),
+        None => return,
+    };
+    let elapsed = (ts - ctx.last_commander_tick).num_seconds();
+    if elapsed < cfg.tick_period_secs as i64 {
+        return;
+    }
+    ctx.last_commander_tick = ts;
+    let mut ucids_by_side: fxhash::FxHashMap<dcso3::coalition::Side, Vec<dcso3::net::Ucid>> =
+        fxhash::FxHashMap::default();
+    for ifo in ctx.connected.info_by_player_id.values() {
+        if let Some(player) = ctx.db.persisted.players.get(&ifo.ucid) {
+            ucids_by_side
+                .entry(player.side)
+                .or_default()
+                .push(ifo.ucid);
+        }
+    }
+    commander::tick(&mut ctx.db, &cfg, ts, &ucids_by_side);
+}
+
 fn update_frontline(ctx: &mut Context, ts: DateTime<Utc>, force_update: bool) {
     // Check if frontline feature is enabled
     let frontline_cfg = match &ctx.db.ephemeral.cfg.frontline {
@@ -1060,6 +1147,589 @@ fn update_frontline(ctx: &mut Context, ts: DateTime<Utc>, force_update: bool) {
     }
 }
 
+/// Find a ground/armor template name for the given side at an objective.
+fn find_ground_template(
+    db: &db::Db,
+    objective: bfprotocols::db::objective::ObjectiveId,
+    side: dcso3::coalition::Side,
+) -> Option<dcso3::String> {
+    use crate::db::objective::ObjGroupClass;
+    let is_ground = |class: &ObjGroupClass| matches!(
+        class,
+        ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Sr | ObjGroupClass::Lr
+    );
+
+    // First try the requested objective's own groups
+    if let Some(obj) = db.persisted.objectives.get(&objective) {
+        if let Some(gids) = obj.groups().get(&side) {
+            let found = gids.into_iter().find_map(|gid| {
+                db.persisted.groups.get(gid).and_then(|g| {
+                    if is_ground(&g.class) { Some(g.template_name.clone()) } else { None }
+                })
+            });
+            if found.is_some() {
+                return found;
+            }
+        }
+    }
+
+    // Fallback: find any ground template owned by this side (e.g. carrier objectives have no armor)
+    db.persisted.objectives.into_iter()
+        .filter(|(_, o)| o.owner() == side)
+        .find_map(|(_, o)| {
+            o.groups().get(&side)?.into_iter().find_map(|gid| {
+                db.persisted.groups.get(gid).and_then(|g| {
+                    if is_ground(&g.class) { Some(g.template_name.clone()) } else { None }
+                })
+            })
+        })
+}
+
+fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>) {
+    use crate::db::group::DeployKind;
+    use crate::db::events::EventEffect;
+    use crate::db::objective::ObjGroupClass;
+    use crate::spawnctx::{SpawnCtx, SpawnLoc};
+    use dcso3::Color;
+    use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation};
+    use dcso3::group::Group;
+    use dcso3::land::Land;
+    use dcso3::LuaVec2;
+    use dcso3::trigger::{CircleSpec, LineType, SideFilter};
+    use enumflags2::BitFlags;
+
+    let spctx = match SpawnCtx::new(lua) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("event effects: could not create SpawnCtx: {e}");
+            return;
+        }
+    };
+
+    for effect in effects {
+        match effect {
+            EventEffect::MarkInbound { event_id, side, obj_pos, obj_name } => {
+                let color = side_color(side);
+                let mid = dcso3::trigger::MarkId::new();
+                ctx.db.ephemeral.msgs().circle_to_all(
+                    SideFilter::All,
+                    mid,
+                    CircleSpec {
+                        center: dcso3::LuaVec3(dcso3::Vector3::new(obj_pos.x, 0., obj_pos.y)),
+                        radius: 1500.,
+                        color,
+                        fill_color: Color::new(0., 0., 0., 0.),
+                        line_type: LineType::Dashed,
+                        read_only: true,
+                    },
+                    Some(format_compact!("Reinforcements Inbound [{:?}] → {}", side, obj_name).into()),
+                );
+                ctx.event_scheduler.register_mark(event_id, mid);
+            }
+
+            EventEffect::SpawnReinforcements { event_id, side, objective, obj_pos } => {
+                let template = find_ground_template(&ctx.db, objective, side);
+                let template = match template {
+                    Some(t) => t,
+                    None => {
+                        info!("SpawnReinforcements: no suitable template at {:?}", objective);
+                        continue;
+                    }
+                };
+                match ctx.db.add_and_queue_group(
+                    &spctx,
+                    &ctx.idx,
+                    side,
+                    SpawnLoc::AtPos {
+                        pos: obj_pos + dcso3::Vector2::new(200., 200.),
+                        offset_direction: dcso3::Vector2::new(1., 0.),
+                        group_heading: 0.,
+                    },
+                    &template,
+                    DeployKind::Objective { origin: objective },
+                    BitFlags::empty(),
+                    None,
+                ) {
+                    Ok(gid) => {
+                        info!("SpawnReinforcements: spawned {:?} for {:?}", gid, side);
+                        // Queue the group to advance toward the nearest enemy objective
+                        // after it appears in DCS (spawn queue lag).
+                        let enemy_side = match side {
+                            dcso3::coalition::Side::Red => dcso3::coalition::Side::Blue,
+                            dcso3::coalition::Side::Blue => dcso3::coalition::Side::Red,
+                            dcso3::coalition::Side::Neutral => dcso3::coalition::Side::Neutral,
+                        };
+                        let advance_target = crate::db::events::find_nearest_friendly_objective(
+                            &ctx.db, enemy_side, obj_pos, None,
+                        );
+                        if let Some(target) = advance_target {
+                            ctx.event_scheduler.pending_moves.insert(gid, target);
+                        }
+                    }
+                    Err(e) => error!("SpawnReinforcements: {e:?}"),
+                }
+                // Brief "arrived" mark
+                let mid = dcso3::trigger::MarkId::new();
+                ctx.db.ephemeral.msgs().circle_to_all(
+                    SideFilter::All,
+                    mid,
+                    CircleSpec {
+                        center: dcso3::LuaVec3(dcso3::Vector3::new(obj_pos.x, 0., obj_pos.y)),
+                        radius: 1000.,
+                        color: side_color(side),
+                        fill_color: Color::new(0., 0., 0., 0.),
+                        line_type: LineType::Solid,
+                        read_only: true,
+                    },
+                    Some(format_compact!("Reinforcements Arrived [{:?}]", side).into()),
+                );
+                // Store it so it can be cleaned up — event is expiring so we delete it now
+                ctx.db.ephemeral.msgs().delete_mark(mid);
+                let _ = event_id;
+            }
+
+            EventEffect::SpawnHvt { event_id, side, objective, obj_pos, reward_points, escape_pos } => {
+                let template = find_ground_template(&ctx.db, objective, side);
+                let template = match template {
+                    Some(t) => t,
+                    None => {
+                        info!("SpawnHvt: no suitable template at {:?}", objective);
+                        continue;
+                    }
+                };
+                let gid = match ctx.db.add_and_queue_group(
+                    &spctx,
+                    &ctx.idx,
+                    side,
+                    SpawnLoc::AtPos {
+                        pos: obj_pos,
+                        offset_direction: dcso3::Vector2::new(0., 1.),
+                        group_heading: 0.,
+                    },
+                    &template,
+                    DeployKind::Objective { origin: objective },
+                    BitFlags::empty(),
+                    None,
+                ) {
+                    Ok(gid) => {
+                        info!("SpawnHvt: spawned {:?} for {:?}", gid, side);
+                        ctx.event_scheduler.hvt_groups.insert(gid, (event_id, reward_points));
+                        gid
+                    }
+                    Err(e) => { error!("SpawnHvt: {e:?}"); continue; }
+                };
+                // B: Queue escape move — group not in DCS yet (spawn queue lag).
+                // pending_moves is retried each slow tick until the group appears.
+                if let Some(epos) = escape_pos {
+                    ctx.event_scheduler.pending_moves.insert(gid, epos);
+                }
+                // F10 mark for the HVT
+                let mid = dcso3::trigger::MarkId::new();
+                ctx.db.ephemeral.msgs().circle_to_all(
+                    SideFilter::All,
+                    mid,
+                    CircleSpec {
+                        center: dcso3::LuaVec3(dcso3::Vector3::new(obj_pos.x, 0., obj_pos.y)),
+                        radius: 1000.,
+                        color: side_color(side),
+                        fill_color: Color::new(0., 0., 0., 0.),
+                        line_type: LineType::Solid,
+                        read_only: true,
+                    },
+                    Some(format_compact!("HVT [{:?}] +{} pts — EVACUATING", side, reward_points).into()),
+                );
+                ctx.event_scheduler.register_mark(event_id, mid);
+            }
+
+            EventEffect::OrderAttack { event_id, attacking_side, target_positions } => {
+                let land = match Land::singleton(lua) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        error!("OrderAttack: could not get Land singleton: {e}");
+                        continue;
+                    }
+                };
+
+                use crate::db::objective::ObjGroupClass;
+                let group_ids: Vec<bfprotocols::db::group::GroupId> = ctx
+                    .db
+                    .persisted
+                    .groups_by_side
+                    .get(&attacking_side)
+                    .map(|s| s.into_iter().copied().collect())
+                    .unwrap_or_default();
+
+                let mut to_order: Vec<(dcso3::String, dcso3::Vector2)> = Vec::new();
+                for gid in &group_ids {
+                    if let Some(g) = ctx.db.persisted.groups.get(gid) {
+                        match g.class {
+                            ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Sr | ObjGroupClass::Lr => {}
+                            _ => continue,
+                        }
+                        let alive = g.units.into_iter().any(|uid| {
+                            ctx.db.persisted.units.get(uid).map(|u| !u.dead).unwrap_or(false)
+                        });
+                        if !alive {
+                            continue;
+                        }
+                        let pos = ctx.db.group_center(gid).unwrap_or_default();
+                        to_order.push((g.name.clone(), pos));
+                    }
+                }
+
+                for (group_name, group_pos) in to_order {
+                    let closest = target_positions
+                        .iter()
+                        .min_by(|a, b| {
+                            let da = na::distance_squared(&(**a).into(), &group_pos.into());
+                            let db_d = na::distance_squared(&(**b).into(), &group_pos.into());
+                            da.partial_cmp(&db_d).unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .copied();
+                    let target_pos = match closest {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    let dcs_group = match Group::get_by_name(lua, group_name.as_str()) {
+                        Ok(g) => g,
+                        Err(_) => continue,
+                    };
+                    let controller = match dcs_group.get_controller() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("OrderAttack: get_controller for {group_name}: {e}");
+                            continue;
+                        }
+                    };
+                    let alt = land.get_height(LuaVec2(target_pos)).unwrap_or(0.);
+                    let task = Task::Mission {
+                        airborne: Some(false),
+                        route: vec![MissionPoint {
+                            typ: PointType::TurningPoint,
+                            airdrome_id: None,
+                            time_re_fu_ar: None,
+                            helipad: None,
+                            link_unit: None,
+                            action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+                            pos: LuaVec2(target_pos),
+                            alt,
+                            alt_typ: Some(AltType::BARO),
+                            speed: 8.,
+                            speed_locked: Some(false),
+                            eta: None,
+                            eta_locked: None,
+                            name: None,
+                            task: Box::new(Task::Hold),
+                        }],
+                    };
+                    if let Err(e) = controller.set_task(task) {
+                        error!("OrderAttack: set_task for {group_name}: {e}");
+                    } else {
+                        info!("OrderAttack: ordered {:?} group {group_name}", attacking_side);
+                    }
+                }
+
+                // F10 dashed circles at each target
+                let atk_color = side_color(attacking_side);
+                for tpos in &target_positions {
+                    let mid = dcso3::trigger::MarkId::new();
+                    ctx.db.ephemeral.msgs().circle_to_all(
+                        SideFilter::All,
+                        mid,
+                        CircleSpec {
+                            center: dcso3::LuaVec3(dcso3::Vector3::new(tpos.x, 0., tpos.y)),
+                            radius: 2000.,
+                            color: atk_color,
+                            fill_color: Color::new(0., 0., 0., 0.),
+                            line_type: LineType::Dashed,
+                            read_only: true,
+                        },
+                        Some(format_compact!("Counter-Offensive [{:?}]", attacking_side).into()),
+                    );
+                    ctx.event_scheduler.register_mark(event_id, mid);
+                }
+            }
+
+            // C: Artillery/armor barrage — order alive Armor/Mr/Lr groups to fire at target
+            EventEffect::FireBarrage { event_id, side, source_objective, target_pos } => {
+                let land = match Land::singleton(lua) {
+                    Ok(l) => l,
+                    Err(e) => { error!("FireBarrage: Land singleton: {e}"); continue; }
+                };
+
+                let obj = ctx.db.persisted.objectives.get(&source_objective);
+                let gids: Vec<_> = obj
+                    .and_then(|o| o.groups().get(&side))
+                    .map(|gs| gs.into_iter().copied().collect())
+                    .unwrap_or_default();
+
+                let mut fired = 0u32;
+                for gid in &gids {
+                    let group = match ctx.db.persisted.groups.get(gid) {
+                        Some(g) => g,
+                        None => continue,
+                    };
+                    match group.class {
+                        ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Lr => {}
+                        _ => continue,
+                    }
+                    let alive = group.units.into_iter().any(|uid| {
+                        ctx.db.persisted.units.get(uid).map(|u| !u.dead).unwrap_or(false)
+                    });
+                    if !alive { continue; }
+                    let group_name = group.name.clone();
+                    if let Ok(dcs_group) = Group::get_by_name(lua, group_name.as_str()) {
+                        if let Ok(controller) = dcs_group.get_controller() {
+                            let alt = land.get_height(LuaVec2(target_pos)).unwrap_or(0.);
+                            let fire_task = Task::FireAtPoint {
+                                point: LuaVec2(target_pos),
+                                radius: Some(500.),
+                                expend_qty: None,
+                                weapon_type: None,
+                                altitude: Some(alt),
+                                altitude_type: Some(AltType::BARO),
+                            };
+                            if let Err(e) = controller.set_task(fire_task) {
+                                error!("FireBarrage: set_task {group_name}: {e}");
+                            } else {
+                                fired += 1;
+                                info!("FireBarrage: ordered {:?} group {group_name} to fire at {:?}", side, target_pos);
+                            }
+                        }
+                    }
+                }
+
+                // F10 mark at target
+                if fired > 0 {
+                    let mid = dcso3::trigger::MarkId::new();
+                    ctx.db.ephemeral.msgs().circle_to_all(
+                        SideFilter::All,
+                        mid,
+                        CircleSpec {
+                            center: dcso3::LuaVec3(dcso3::Vector3::new(target_pos.x, 0., target_pos.y)),
+                            radius: 2000.,
+                            color: side_color(side),
+                            fill_color: Color::new(0., 0., 0., 0.),
+                            line_type: LineType::Dashed,
+                            read_only: true,
+                        },
+                        Some(format_compact!("Fire Support [{:?}] — {} units firing", side, fired).into()),
+                    );
+                    ctx.event_scheduler.register_mark(event_id, mid);
+                }
+            }
+
+            // D: Spawn ambush force near convoy position
+            EventEffect::SpawnAmbush { event_id, ambush_side, spawn_pos, source_objective } => {
+                let template = find_ground_template(&ctx.db, source_objective, ambush_side);
+                let template = match template {
+                    Some(t) => t,
+                    None => {
+                        info!("SpawnAmbush: no suitable template for {:?} at {:?}", ambush_side, source_objective);
+                        continue;
+                    }
+                };
+                match ctx.db.add_and_queue_group(
+                    &spctx,
+                    &ctx.idx,
+                    ambush_side,
+                    SpawnLoc::AtPos {
+                        pos: spawn_pos,
+                        offset_direction: dcso3::Vector2::new(1., 0.),
+                        group_heading: 0.,
+                    },
+                    &template,
+                    DeployKind::Objective { origin: source_objective },
+                    BitFlags::empty(),
+                    None,
+                ) {
+                    Ok(gid) => info!("SpawnAmbush: spawned {:?} for {:?}", gid, ambush_side),
+                    Err(e) => error!("SpawnAmbush: {e:?}"),
+                }
+                // F10 warning mark
+                let mid = dcso3::trigger::MarkId::new();
+                ctx.db.ephemeral.msgs().circle_to_all(
+                    SideFilter::All,
+                    mid,
+                    CircleSpec {
+                        center: dcso3::LuaVec3(dcso3::Vector3::new(spawn_pos.x, 0., spawn_pos.y)),
+                        radius: 1500.,
+                        color: side_color(ambush_side),
+                        fill_color: Color::new(0., 0., 0., 0.),
+                        line_type: LineType::Dashed,
+                        read_only: true,
+                    },
+                    Some(format_compact!("AMBUSH [{:?}]", ambush_side).into()),
+                );
+                ctx.event_scheduler.register_mark(event_id, mid);
+            }
+
+            EventEffect::DeleteMarks { ids } => {
+                for id in ids {
+                    ctx.db.ephemeral.msgs().delete_mark(id);
+                }
+            }
+
+            // E: Spawn a CAP aircraft patrol over/near an objective
+            EventEffect::SpawnCap { event_id, cap_side, objective, obj_pos } => {
+                let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
+                // Find a Fighter/Attackers template for this side from existing groups
+                // Template is determined from config (see fallback below).
+                let template: Option<dcso3::String> = None;
+                // Fall back to configured CAP template name
+                let template = template.unwrap_or_else(|| {
+                    let cap_tmpl = match cap_side {
+                        dcso3::coalition::Side::Red => cfg.campaign_events.as_ref()
+                            .map(|c| c.cap_template_red.as_str()).unwrap_or("RCAP"),
+                        dcso3::coalition::Side::Blue => cfg.campaign_events.as_ref()
+                            .map(|c| c.cap_template_blue.as_str()).unwrap_or("BCAP"),
+                        dcso3::coalition::Side::Neutral => "RCAP",
+                    };
+                    dcso3::String::from(cap_tmpl)
+                });
+                // Offset spawn slightly from objective center to avoid ground collisions
+                let spawn_pos = obj_pos + dcso3::Vector2::new(0., 2000.);
+                match ctx.db.add_and_queue_group(
+                    &spctx,
+                    &ctx.idx,
+                    cap_side,
+                    SpawnLoc::AtPos {
+                        pos: spawn_pos,
+                        offset_direction: dcso3::Vector2::new(0., 1.),
+                        group_heading: 0.,
+                    },
+                    &template,
+                    DeployKind::Objective { origin: objective },
+                    BitFlags::empty(),
+                    None,
+                ) {
+                    Ok(gid) => {
+                        info!("SpawnCap: spawned CAP {:?} for {:?} over {:?}", gid, cap_side, objective);
+                        ctx.event_scheduler.cap_groups
+                            .entry(event_id)
+                            .or_default()
+                            .push(gid);
+                        // F10 mark so players can see the CAP threat
+                        let enemy = match cap_side {
+                            dcso3::coalition::Side::Red => dcso3::coalition::Side::Blue,
+                            dcso3::coalition::Side::Blue => dcso3::coalition::Side::Red,
+                            s => s,
+                        };
+                        let mid = dcso3::trigger::MarkId::new();
+                        ctx.db.ephemeral.msgs().circle_to_all(
+                            match enemy {
+                                dcso3::coalition::Side::Red => SideFilter::Red,
+                                dcso3::coalition::Side::Blue => SideFilter::Blue,
+                                _ => SideFilter::All,
+                            },
+                            mid,
+                            CircleSpec {
+                                center: dcso3::LuaVec3(dcso3::Vector3::new(obj_pos.x, 5000., obj_pos.y)),
+                                radius: 25_000.,
+                                color: side_color(cap_side),
+                                fill_color: Color::new(0., 0., 0., 0.),
+                                line_type: LineType::Solid,
+                                read_only: true,
+                            },
+                            Some(format_compact!("Enemy CAP [{:?}] — ACTIVE", cap_side).into()),
+                        );
+                        ctx.event_scheduler.register_mark(event_id, mid);
+                    }
+                    Err(e) => error!("SpawnCap: failed to spawn CAP template {template}: {e:?}"),
+                }
+            }
+
+            // E: Remove all CAP groups when the event expires
+            EventEffect::DespawnCap { event_id } => {
+                if let Some(gids) = ctx.event_scheduler.cap_groups.remove(&event_id) {
+                    for gid in gids {
+                        if let Err(e) = ctx.db.delete_group(&gid) {
+                            error!("DespawnCap: could not delete group {:?}: {e:?}", gid);
+                        }
+                    }
+                }
+                info!("DespawnCap: CAP event {:?} expired, aircraft removed", event_id);
+            }
+        }
+    }
+}
+
+/// Retry deferred move orders each slow tick until the group appears in DCS.
+fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
+    use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation};
+    use dcso3::group::Group;
+    use dcso3::land::Land;
+    use dcso3::LuaVec2;
+
+    let land = match Land::singleton(lua) {
+        Ok(l) => l,
+        Err(e) => { error!("flush_pending_moves: Land singleton: {e}"); return; }
+    };
+
+    let pending: Vec<_> = ctx.event_scheduler.pending_moves.iter()
+        .map(|(gid, pos)| (*gid, *pos))
+        .collect();
+
+    for (gid, target_pos) in pending {
+        let group_name = match ctx.db.persisted.groups.get(&gid) {
+            Some(g) => g.name.clone(),
+            None => {
+                // Group was deleted; remove from pending
+                ctx.event_scheduler.pending_moves.remove(&gid);
+                continue;
+            }
+        };
+        let dcs_group = match Group::get_by_name(lua, group_name.as_str()) {
+            Ok(g) => g,
+            Err(_) => continue, // Not in DCS yet — try next tick
+        };
+        let controller = match dcs_group.get_controller() {
+            Ok(c) => c,
+            Err(e) => {
+                error!("flush_pending_moves: get_controller for {group_name}: {e}");
+                ctx.event_scheduler.pending_moves.remove(&gid);
+                continue;
+            }
+        };
+        let alt = land.get_height(LuaVec2(target_pos)).unwrap_or(0.);
+        let task = Task::Mission {
+            airborne: Some(false),
+            route: vec![MissionPoint {
+                typ: PointType::TurningPoint,
+                airdrome_id: None,
+                time_re_fu_ar: None,
+                helipad: None,
+                link_unit: None,
+                action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+                pos: LuaVec2(target_pos),
+                alt,
+                alt_typ: Some(AltType::BARO),
+                speed: 10.,
+                speed_locked: Some(false),
+                eta: None,
+                eta_locked: None,
+                name: None,
+                task: Box::new(Task::Hold),
+            }],
+        };
+        if let Err(e) = controller.set_task(task) {
+            error!("flush_pending_moves: set_task for {group_name}: {e}");
+        } else {
+            info!("flush_pending_moves: ordered {group_name} to move to {:?}", target_pos);
+        }
+        // Order issued (success or terminal failure) — remove from pending
+        ctx.event_scheduler.pending_moves.remove(&gid);
+    }
+}
+
+fn side_color(side: dcso3::coalition::Side) -> dcso3::Color {
+    match side {
+        dcso3::coalition::Side::Blue => dcso3::Color::blue(1.),
+        dcso3::coalition::Side::Red => dcso3::Color::red(1.),
+        dcso3::coalition::Side::Neutral => dcso3::Color::white(1.),
+    }
+}
+
 fn run_slow_timed_events(
     lua: MizLua,
     ctx: &mut Context,
@@ -1093,6 +1763,85 @@ fn run_slow_timed_events(
                 info!("kill {:?}", dead);
                 if let Some(points) = cfg.points.as_ref() {
                     ctx.db.award_kill_points(points, &dead)
+                }
+                // Detect convoy interdiction
+                if let bfprotocols::shots::Who::AI { gid, side, .. } = &dead.victim {
+                    if let Some(convoy_info) = ctx.db.convoy_info_for_group(gid) {
+                        let killer_ucid = dead.shots.iter().find_map(|s| match &s.shooter {
+                            bfprotocols::shots::Who::Player { ucid, .. } => Some(*ucid),
+                            _ => None,
+                        });
+                        info!("Convoy unit destroyed! Side: {:?}, GroupId: {:?}", side, gid);
+                        ctx.do_bg_task(Task::Stat(Stat::ConvoyDestroyed {
+                            from: convoy_info.0,
+                            to: convoy_info.1,
+                            side: *side,
+                            killer: killer_ucid,
+                        }));
+                        // Award interdiction points to the killing player
+                        if let (Some(ucid), Some(points)) = (killer_ucid, cfg.points.as_ref()) {
+                            let award = points.convoy_interdiction_points as i32;
+                            if award > 0 {
+                                ctx.db.adjust_points(
+                                    &ucid,
+                                    award,
+                                    "convoy interdiction",
+                                );
+                            }
+                        }
+                    }
+                }
+                // Detect HVT kill and award bonus points
+                if let bfprotocols::shots::Who::AI { gid, .. } = &dead.victim {
+                    if let Some((event_id, reward)) = ctx.event_scheduler.hvt_groups.remove(gid) {
+                        let killer_ucid = dead.shots.iter().find_map(|s| match &s.shooter {
+                            bfprotocols::shots::Who::Player { ucid, .. } => Some(*ucid),
+                            _ => None,
+                        });
+                        if let Some(ucid) = killer_ucid {
+                            if let Some(player) = ctx.db.persisted.players.get_mut_cow(&ucid) {
+                                player.points += reward;
+                                let side = player.side;
+                                let total = player.points;
+                                ctx.db.ephemeral.dirty();
+                                ctx.db.ephemeral.msgs().panel_to_side(
+                                    15, false, side,
+                                    format_compact!("HVT eliminated! +{reward} bonus points (total: {total})"),
+                                );
+                            }
+                        }
+                        // E: Revenge — enemy side launches a counter-offensive after a delay
+                        let events_cfg = ctx.db.ephemeral.cfg.campaign_events.clone();
+                        if let Some(ref ecfg) = events_cfg {
+                            if ecfg.escalation_enabled {
+                                // The HVT belonged to some side; the enemy of that side killed it.
+                                // Trigger revenge for the HVT's side.
+                                if let Some(event) = ctx.event_scheduler.active_events.iter()
+                                    .find(|e| e.id() == event_id)
+                                {
+                                    let hvt_side = match event {
+                                        crate::db::events::CampaignEvent::HighValueTarget { side, .. } => Some(*side),
+                                        _ => None,
+                                    };
+                                    if let Some(side) = hvt_side {
+                                        let trigger_at = dead.time + chrono::Duration::seconds(ecfg.revenge_delay_secs as i64);
+                                        ctx.event_scheduler.schedule_revenge(side, trigger_at);
+                                        ctx.db.ephemeral.msgs().panel_to_all(
+                                            15, false,
+                                            format_compact!("INTEL: {:?} forces will retaliate for the loss of their HVT!", side),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        // Remove HVT marks and expire the event
+                        if let Some(marks) = ctx.event_scheduler.event_marks.remove(&event_id) {
+                            for mid in marks {
+                                ctx.db.ephemeral.msgs().delete_mark(mid);
+                            }
+                        }
+                        ctx.event_scheduler.active_events.retain(|e| e.id() != event_id);
+                    }
                 }
                 ctx.do_bg_task(Task::Stat(Stat::Kill(dead)));
             }
@@ -1194,9 +1943,19 @@ fn run_slow_timed_events(
             }
             Err(e) => error!("could not check carrier captures {e}")
         }
+        // Auto-repair damaged carriers near naval bases
+        match ctx.db.check_carrier_auto_repair(ts) {
+            Ok(messages) => {
+                for (side, msg) in messages {
+                    ctx.db.ephemeral.msgs().panel_to_side(15, false, side, msg);
+                }
+            }
+            Err(e) => error!("could not check carrier auto repair {e}")
+        }
         record_perf(&mut perf.slow_timed, ts);
         let ts = Utc::now();
         update_frontline(ctx, ts, false);
+        record_perf(&mut perf.frontline, ts);
         let ts = Utc::now();
         update_jtac_contacts(ctx, lua);
         record_perf(&mut perf.update_jtac_contacts, ts);
@@ -1206,7 +1965,26 @@ fn run_slow_timed_events(
         }
         record_perf(&mut perf.snapshot, now);
         award_periodic_points(ctx, start_ts);
+        tick_smart_commander(ctx, start_ts);
         record_perf(&mut perf.slow_timed, start_ts);
+
+        // Tick campaign events system
+        if let Some(events_cfg) = ctx.db.ephemeral.cfg.campaign_events.as_ref() {
+            if events_cfg.enabled {
+                let events_cfg = events_cfg.clone();
+                match ctx.event_scheduler.tick(&ctx.db, &events_cfg, start_ts) {
+                    Ok((messages, effects)) => {
+                        for msg in messages {
+                            ctx.db.ephemeral.msgs().panel_to_all(15, false, msg);
+                        }
+                        apply_event_effects(lua, ctx, effects);
+                    }
+                    Err(e) => error!("error ticking campaign events: {e:?}"),
+                }
+                // Retry deferred move orders for newly-spawned groups
+                flush_pending_moves(lua, ctx);
+            }
+        }
     }
     Ok(AdminResult::Continue)
 }
@@ -1269,6 +2047,9 @@ fn run_timed_events(
         error!("error processing spawn queue {:?}", e)
     }
     record_perf(&mut perf.spawn_queue, now);
+    if let Err(e) = ctx.db.tick_csar(lua) {
+        error!("csar tick failed: {:?}", e)
+    }
     let now = Utc::now();
     let has_captures = match advise_captured(ctx, lua, ts) {
         Ok(captures) => captures,
@@ -1396,9 +2177,9 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
     debug!("path to saved state is {:?}", path);
     info!("initializing db");
     let to_bg = ctx.to_background.as_ref().unwrap().clone();
+    ctx.do_bg_task(Task::Stat(Stat::NewRound { sortie: ctx.sortie.clone() }));
     if !path.exists() {
         debug!("saved state doesn't exist, starting from default");
-        ctx.do_bg_task(Task::Stat(Stat::NewRound { sortie: ctx.sortie.clone() }));
         ctx.db = Db::init(lua, cfg, &ctx.idx, &miz, to_bg)
             .context("initalizing the mission")?;
     } else {
@@ -1418,6 +2199,27 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
     }));
     info!("spawning units");
     ctx.respawn_groups(lua, &miz).context("setting up the mission after load")?;
+
+    // Publish all objectives as stats (for bfdb JSONL ingestion after saved state load)
+    {
+        let coord = Coord::singleton(lua)?;
+        for (oid, obj) in ctx.db.persisted.objectives.into_iter() {
+            let pos = obj.pos();
+            match coord.lo_to_ll(LuaVec3(Vector3::new(pos.x, 0., pos.y))) {
+                Ok(llpos) => {
+                    ctx.db.ephemeral.stat(Stat::Objective {
+                        name: obj.name.clone(),
+                        id: *oid,
+                        kind: obj.kind().clone(),
+                        owner: obj.owner,
+                        pos: llpos,
+                    });
+                }
+                Err(e) => error!("failed to convert objective position for {}: {e:?}", obj.name),
+            }
+        }
+        info!("published {} objectives as stats", ctx.db.persisted.objectives.len());
+    }
 
     // Initialize dynamic frontline system if frontline is enabled
     if let Some(frontline_cfg) = &ctx.db.ephemeral.cfg.frontline {

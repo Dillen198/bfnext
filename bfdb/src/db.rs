@@ -21,14 +21,25 @@ use dcso3::{
     String,
 };
 use enumflags2::BitFlags;
-use fxhash::FxHashMap;
 use log::{error, info};
 use netidx::{path::Path as NetidxPath, subscriber::Subscriber};
+use netidx_archive::{
+    config::file::Config as ArchiveFileCfg,
+    logfile_collection::{ArchiveCollectionReader, ArchiveIndex},
+};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sled::{transaction::TransactionError, Db};
 use smallvec::SmallVec;
-use std::{ops::Deref, path::Path, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::Bound,
+    io::{Read as IoRead, Write as IoWrite},
+    ops::Deref,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::task;
 use uuid::Uuid;
 use yats::Tree;
@@ -327,9 +338,14 @@ impl StatCtx {
 
 #[derive(Clone)]
 pub(crate) struct StatsDbInner {
-    subscriber: Subscriber,
-    base: NetidxPath,
+    #[allow(dead_code)]
+    subscriber: Option<Subscriber>,
+    #[allow(dead_code)]
+    base: Option<NetidxPath>,
+    stats_dir: Option<PathBuf>,
+    #[allow(dead_code)]
     include: Option<Regex>,
+    #[allow(dead_code)]
     exclude: Option<Regex>,
     db: Db,
     pilots: Pilots,
@@ -344,6 +360,7 @@ pub(crate) struct StatsDbInner {
     objectives: Tree<(RoundId, ObjectiveId), Objective>,
     equipment: Tree<(RoundId, ObjectiveId, String), u32>,
     liquids: Tree<(RoundId, ObjectiveId, LiquidType), u32>,
+    stats_jsonl: Option<PathBuf>,
 }
 
 pub(crate) struct StatsDb(Arc<StatsDbInner>);
@@ -351,6 +368,107 @@ pub(crate) struct StatsDb(Arc<StatsDbInner>);
 impl Clone for StatsDb {
     fn clone(&self) -> Self {
         Self(Arc::clone(&self.0))
+    }
+}
+
+/// Copy a file that may be locked by another process (e.g., DCS holding an exclusive lock).
+/// On Windows, uses CreateFileW with FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE.
+fn copy_locked_file(src: &Path, dst: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::FromRawHandle;
+        use std::os::windows::ffi::OsStrExt;
+        extern "system" {
+            fn CreateFileW(
+                lpFileName: *const u16,
+                dwDesiredAccess: u32,
+                dwShareMode: u32,
+                lpSecurityAttributes: *mut u8,
+                dwCreationDisposition: u32,
+                dwFlagsAndAttributes: u32,
+                hTemplateFile: *mut u8,
+            ) -> isize;
+        }
+        const GENERIC_READ: u32 = 0x80000000;
+        const FILE_SHARE_READ: u32 = 1;
+        const FILE_SHARE_WRITE: u32 = 2;
+        const FILE_SHARE_DELETE: u32 = 4;
+        const OPEN_EXISTING: u32 = 3;
+        const INVALID_HANDLE_VALUE: isize = -1;
+
+        let wide_path: Vec<u16> = src.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let handle = unsafe {
+            CreateFileW(
+                wide_path.as_ptr(),
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut src_file = unsafe { std::fs::File::from_raw_handle(handle as *mut std::ffi::c_void) };
+        let mut buf = Vec::new();
+        src_file.read_to_end(&mut buf)?;
+        let mut dst_file = std::fs::File::create(dst)?;
+        dst_file.write_all(&buf)?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::copy(src, dst)?;
+        Ok(())
+    }
+}
+
+fn stat_variant_name(s: &Stat) -> &'static str {
+    match s {
+        Stat::NewRound { .. } => "NewRound",
+        Stat::RoundEnd { .. } => "RoundEnd",
+        Stat::SessionStart { .. } => "SessionStart",
+        Stat::SessionEnd { .. } => "SessionEnd",
+        Stat::Objective { .. } => "Objective",
+        Stat::ObjectiveDestroyed { .. } => "ObjectiveDestroyed",
+        Stat::ObjectiveHealth { .. } => "ObjectiveHealth",
+        Stat::ObjectiveSupply { .. } => "ObjectiveSupply",
+        Stat::Capture { .. } => "Capture",
+        Stat::Repair { .. } => "Repair",
+        Stat::SupplyTransfer { .. } => "SupplyTransfer",
+        Stat::Kill(_) => "Kill",
+        Stat::Unit { .. } => "Unit",
+        Stat::Position { .. } => "Position",
+        Stat::Detected { .. } => "Detected",
+        Stat::EquipmentInventory { .. } => "EquipmentInventory",
+        Stat::LiquidInventory { .. } => "LiquidInventory",
+        Stat::Action { .. } => "Action",
+        Stat::DeployTroop { .. } => "DeployTroop",
+        Stat::DeployGroup { .. } => "DeployGroup",
+        Stat::DeployFarp { .. } => "DeployFarp",
+        Stat::Register { .. } => "Register",
+        Stat::Sideswitch { .. } => "Sideswitch",
+        Stat::Connect { .. } => "Connect",
+        Stat::Disconnect { .. } => "Disconnect",
+        Stat::Slot { .. } => "Slot",
+        Stat::Deslot { .. } => "Deslot",
+        Stat::GroupDeleted { .. } => "GroupDeleted",
+        Stat::Takeoff { .. } => "Takeoff",
+        Stat::Land { .. } => "Land",
+        Stat::Life { .. } => "Life",
+        Stat::Points { .. } => "Points",
+        Stat::PointsTransfer { .. } => "PointsTransfer",
+        Stat::PointsTransferToObjective { .. } => "PointsTransferToObjective",
+        Stat::Bind { .. } => "Bind",
+        Stat::ConvoyDestroyed { .. } => "ConvoyDestroyed",
+        Stat::CampaignEvent { .. } => "CampaignEvent",
+        Stat::PilotXp { .. } => "PilotXp",
+        Stat::AirRouteDelivered { .. } => "AirRouteDelivered",
+        Stat::AirRouteDestroyed { .. } => "AirRouteDestroyed",
+        Stat::SeaRouteDelivered { .. } => "SeaRouteDelivered",
+        Stat::SeaRouteDestroyed { .. } => "SeaRouteDestroyed",
     }
 }
 
@@ -376,13 +494,15 @@ impl StatsDb {
         subscriber: Subscriber,
         db: P,
         base: NetidxPath,
+        stats_dir: Option<PathBuf>,
         include: Option<Regex>,
         exclude: Option<Regex>,
     ) -> Result<Self> {
         let db = sled::open(db.as_ref())?;
         let t = Self(Arc::new(StatsDbInner {
-            subscriber,
-            base,
+            subscriber: Some(subscriber),
+            base: Some(base),
+            stats_dir,
             include,
             exclude,
             db: db.clone(),
@@ -398,6 +518,7 @@ impl StatsDb {
             objectives: Tree::open(&db, "objectives")?,
             equipment: Tree::open(&db, "equipment")?,
             liquids: Tree::open(&db, "liquids")?,
+            stats_jsonl: None,
         }));
         let _t = t.clone();
         task::spawn(async move {
@@ -408,61 +529,253 @@ impl StatsDb {
         Ok(t)
     }
 
+    /// Create a database in offline mode (no Netidx subscription)
+    pub(crate) fn new_offline<P: AsRef<Path>>(db: P, stats_dir: Option<PathBuf>, stats_jsonl: Option<PathBuf>) -> Result<Self> {
+        let db = sled::open(db.as_ref())?;
+        let t = Self(Arc::new(StatsDbInner {
+            subscriber: None,
+            base: None,
+            stats_dir,
+            include: None,
+            exclude: None,
+            db: db.clone(),
+            pilots: Pilots::new(&db)?,
+            seq: Tree::open(&db, "seq")?,
+            round: Tree::open(&db, "round")?,
+            session: Tree::open(&db, "session")?,
+            kills: Tree::open(&db, "kills")?,
+            shared_kills: Tree::open(&db, "shared_kills")?,
+            units: Tree::open(&db, "units")?,
+            groups: Tree::open(&db, "groups")?,
+            detected: Tree::open(&db, "detected")?,
+            objectives: Tree::open(&db, "objectives")?,
+            equipment: Tree::open(&db, "equipment")?,
+            liquids: Tree::open(&db, "liquids")?,
+            stats_jsonl,
+        }));
+        let _t = t.clone();
+        task::spawn(async move {
+            if let Err(e) = _t.background_loop().await {
+                error!("background task failed {e:?}")
+            }
+        });
+        info!("running in offline mode (no Netidx subscription)");
+        Ok(t)
+    }
+
     async fn background_loop(self) -> Result<()> {
-        use futures::{channel::mpsc, prelude::*, select_biased};
-        use netidx::{
-            resolver_client::ChangeTracker,
-            subscriber::{Dval, Event, SubId, UpdatesFlags, Value},
-        };
+        // If stats_jsonl is configured, use the JSONL reader instead of archive
+        if let Some(jsonl_path) = self.stats_jsonl.clone() {
+            return self.jsonl_loop(jsonl_path).await;
+        }
+
+        use arcstr::ArcStr;
+        use netidx::subscriber::Event;
+        use netidx_archive::logfile::BatchItem;
         use tokio::time;
-        let resolver = self.subscriber.resolver();
-        let mut timer = time::interval(Duration::from_secs(1));
-        let mut ctx: FxHashMap<SubId, (Dval, StatCtx)> = FxHashMap::default();
-        let mut by_path: FxHashMap<NetidxPath, SubId> = FxHashMap::default();
-        let mut ct = ChangeTracker::new(self.base.clone());
-        let (tx_res, mut rx_res) = mpsc::channel(10);
-        loop {
-            select_biased! {
-                _ = timer.tick().fuse() => match resolver.check_changed(&mut ct).await {
-                    Err(e) => error!("failed to check changed {e:?}"),
-                    Ok(false) => (),
-                    Ok(true) => for path in resolver.list(self.base.clone()).await?.drain(..) {
-                        if let Some(sortie) = NetidxPath::basename(&path) {
-                            if self.include.as_ref().map(|r| r.is_match(sortie)).unwrap_or(true)
-                                && !self.exclude.as_ref().map(|r| r.is_match(sortie)).unwrap_or(false)
-                            {
-                                let path = path.append("stats");
-                                if !by_path.contains_key(&path) {
-                                    let dv = self.subscriber.subscribe(path.clone());
-                                    dv.updates(UpdatesFlags::empty(), tx_res.clone());
-                                    let id = dv.id();
-                                    ctx.insert(id, (dv, StatCtx::default()));
-                                    by_path.insert(path, id);
-                                }
-                            }
-                        }
+
+        let stats_dir = match &self.stats_dir {
+            Some(d) => d.clone(),
+            None => return Ok(()), // no archive configured
+        };
+
+        let shard: ArcStr = "0".into();
+        let mut archive_cfg = ArchiveFileCfg::default();
+        archive_cfg.archive_directory = stats_dir;
+        archive_cfg.archive_cmds = None;
+        let archive_cfg = Arc::new(netidx_archive::config::Config::try_from(archive_cfg)?);
+
+        let index = task::block_in_place(|| ArchiveIndex::new(&archive_cfg, &shard))?;
+        let head_path = archive_cfg.archive_directory().join(shard.as_str()).join("current");
+        let head_copy_path = archive_cfg.archive_directory().join(shard.as_str()).join("current_copy");
+        // Try to copy the current file so we can open it without lock conflicts
+        let head = task::block_in_place(|| {
+            match copy_locked_file(&head_path, &head_copy_path) {
+                Ok(()) => match netidx_archive::logfile::ArchiveReader::open(&head_copy_path) {
+                    Ok(r) => {
+                        info!("opened head file copy at {head_copy_path:?}");
+                        Some(r)
+                    }
+                    Err(e) => {
+                        error!("could not open head file copy: {e:?}");
+                        None
                     }
                 },
-                mut ev = rx_res.select_next_some() => {
-                    for (id, ev) in ev.drain(..) {
-                        if let Some((_dv, ctx)) = ctx.get_mut(&id) {
-                            if let Event::Update(Value::String(v)) = ev {
-                                let st: Stat = match serde_json::from_str(&v) {
-                                    Ok(s) => s,
-                                    Err(e) => {
-                                        error!("failed to parse stat {v} {e:?}");
-                                        continue
+                Err(e) => {
+                    error!("could not copy head file {head_path:?}: {e:?}");
+                    // Fall back to direct open (works when DCS is not running)
+                    match netidx_archive::logfile::ArchiveReader::open(&head_path) {
+                        Ok(r) => {
+                            info!("opened head file directly at {head_path:?}");
+                            Some(r)
+                        }
+                        Err(e2) => {
+                            error!("could not open head file directly: {e2:?}");
+                            None
+                        }
+                    }
+                }
+            }
+        });
+        if head.is_none() {
+            info!("reading historical files only");
+        }
+        let mut reader = ArchiveCollectionReader::new(
+            index,
+            archive_cfg.clone(),
+            shard.clone(),
+            head,
+            Bound::Unbounded,
+            Bound::Unbounded,
+        );
+
+        let mut ctx = StatCtx::default();
+        let mut timer = time::interval(Duration::from_secs(5));
+        let mut total_batches = 0u64;
+        let mut total_items = 0u64;
+
+        loop {
+            timer.tick().await;
+            // Refresh index to pick up newly rotated files
+            if let Ok(new_index) = task::block_in_place(|| ArchiveIndex::new(&archive_cfg, &shard)) {
+                reader.log_rotated(Utc::now(), new_index);
+            }
+            // Try to re-read the head file for new data
+            let new_head = task::block_in_place(|| {
+                match copy_locked_file(&head_path, &head_copy_path) {
+                    Ok(()) => netidx_archive::logfile::ArchiveReader::open(&head_copy_path).ok(),
+                    Err(_) => netidx_archive::logfile::ArchiveReader::open(&head_path).ok(),
+                }
+            });
+            if let Some(h) = new_head {
+                reader.set_head(h);
+            }
+            loop {
+                let batch = task::block_in_place(|| reader.read_next(None));
+                match batch {
+                    Err(e) => {
+                        error!("archive read error: {e:?}");
+                        break;
+                    }
+                    Ok(None) => break, // caught up to end of available historical files
+                    Ok(Some((ts, items))) => {
+                        total_batches += 1;
+                        total_items += items.len() as u64;
+                        if total_batches <= 5 || total_batches % 100 == 0 {
+                            info!("batch #{total_batches} ts={ts} items={} (total_items={total_items})", items.len());
+                        }
+                        for BatchItem(path_id, ev) in items.iter() {
+                            if let Event::Update(v) = ev {
+                                let s = match v {
+                                    netidx::publisher::Value::String(s) => s.clone(),
+                                    other => {
+                                        if total_batches <= 5 {
+                                            info!("  non-string value type for path_id={path_id:?}: {other:?}");
+                                        }
+                                        continue;
                                     }
                                 };
-                                info!("adding stat {st:?}");
-                                if let Err(e) = task::block_in_place(|| self.add_stat(ctx, Utc::now(), st)) {
+                                if total_batches <= 3 {
+                                    let preview: std::string::String = s.chars().take(100).collect();
+                                    info!("  raw[path_id={path_id:?}]: {preview}");
+                                }
+                                let st: Stat = match serde_json::from_str::<Stat>(&s) {
+                                    Ok(s) => s,
+                                    Err(e) => {
+                                        let preview: std::string::String = s.chars().take(200).collect();
+                                        error!("failed to deserialize stat: {e}, raw: {preview}");
+                                        continue;
+                                    }
+                                };
+                                if total_batches <= 10 || total_batches % 100 == 0 {
+                                    info!("adding stat variant={}", stat_variant_name(&st));
+                                }
+                                if let Err(e) = task::block_in_place(|| self.add_stat(&mut ctx, ts, st)) {
                                     error!("failed to add stat {e:?}")
                                 }
                             }
                         }
                     }
-                },
-                complete => break Ok(()),
+                }
+            }
+        }
+    }
+
+    /// Read stats from a JSONL file (one JSON object per line)
+    async fn jsonl_loop(self, jsonl_path: PathBuf) -> Result<()> {
+        use std::io::BufRead;
+        use tokio::time;
+
+        let mut ctx = StatCtx::default();
+        let mut timer = time::interval(Duration::from_secs(5));
+        let mut last_pos: u64 = 0;
+
+        info!("starting JSONL reader from {jsonl_path:?}");
+
+        loop {
+            timer.tick().await;
+            let read_result = task::block_in_place(|| -> Result<(u64, Vec<(DateTime<Utc>, Stat)>)> {
+                let file = match std::fs::File::open(&jsonl_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        if e.kind() != std::io::ErrorKind::NotFound {
+                            error!("failed to open JSONL file: {e:?}");
+                        }
+                        return Ok((last_pos, vec![]));
+                    }
+                };
+                let metadata = file.metadata()?;
+                let file_len = metadata.len();
+                if file_len <= last_pos {
+                    return Ok((last_pos, vec![]));
+                }
+                use std::io::Seek;
+                let mut reader = std::io::BufReader::new(file);
+                reader.seek(std::io::SeekFrom::Start(last_pos))?;
+                let mut line = std::string::String::new();
+                let mut new_pos = last_pos;
+                let mut stats = Vec::new();
+                while reader.read_line(&mut line)? > 0 {
+                    new_pos = reader.stream_position()?;
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        line.clear();
+                        continue;
+                    }
+                    match serde_json::from_str::<serde_json::Value>(trimmed) {
+                        Ok(val) => {
+                            let ts_str = val.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+                            let ts = ts_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now());
+                            if let Some(stat_val) = val.get("stat") {
+                                match serde_json::from_value::<Stat>(stat_val.clone()) {
+                                    Ok(st) => stats.push((ts, st)),
+                                    Err(e) => {
+                                        let preview: std::string::String = trimmed.chars().take(200).collect();
+                                        error!("failed to deserialize stat from JSONL: {e}, raw: {preview}");
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => error!("failed to parse JSONL line: {e}"),
+                    }
+                    line.clear();
+                }
+                Ok((new_pos, stats))
+            });
+            match read_result {
+                Ok((pos, stats)) => {
+                    if !stats.is_empty() {
+                        let count = stats.len();
+                        for (ts, st) in stats {
+                            if let Err(e) = task::block_in_place(|| self.add_stat(&mut ctx, ts, st)) {
+                                error!("failed to add stat from JSONL: {e:?}");
+                            }
+                        }
+                        info!("processed {count} stats from JSONL (pos {last_pos} -> {pos})");
+                    }
+                    last_pos = pos;
+                }
+                Err(e) => error!("JSONL read error: {e:?}"),
             }
         }
     }
@@ -481,8 +794,10 @@ impl StatsDb {
             end: None,
             winner: None,
         };
+        info!("new_round: inserting round id={id:?} sortie={sortie:?}");
         self.seq.insert(&key, &seqnum)?;
         self.round.insert(&key, &r)?;
+        info!("new_round: round inserted successfully");
         ctx.0 = Some(StatCtxInner {
             sortie,
             round: id,
@@ -626,6 +941,7 @@ impl StatsDb {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pilots(&self) -> impl Iterator<Item = Result<(Ucid, String)>> {
         self.pilots.pilots.iter().map(|r| {
             let (ucid, pilot) = r?;
@@ -638,6 +954,98 @@ impl StatsDb {
         })
     }
 
+    /// Get all pilots with their aggregate stats, sorted by total kills descending
+    pub(crate) fn pilot_leaderboard(&self) -> Result<Vec<(Ucid, String, Aggregates)>> {
+        let mut entries = Vec::new();
+        for r in self.pilots.pilots.iter() {
+            let (ucid, pilot) = r?;
+            let name = pilot
+                .name
+                .last()
+                .map(|s| s.clone())
+                .unwrap_or(String::default());
+            entries.push((ucid, name, pilot.total));
+        }
+        entries.sort_by(|a, b| {
+            let a_kills = a.2.air_kills + a.2.ground_kills;
+            let b_kills = b.2.air_kills + b.2.ground_kills;
+            b_kills.cmp(&a_kills)
+        });
+        Ok(entries)
+    }
+
+    /// Get the latest round for each scenario
+    pub(crate) fn latest_rounds(&self) -> Result<Vec<(Scenario, RoundId, Round)>> {
+        let mut rounds = Vec::new();
+        let mut seen_scenarios = std::collections::HashSet::new();
+        // Scan all rounds, keep the latest per scenario
+        for r in self.round.iter() {
+            let ((scenario, rid), round) = r?;
+            if !seen_scenarios.contains(&scenario) || round.end.is_none() {
+                seen_scenarios.insert(scenario.clone());
+                // Remove previous entry for this scenario if exists
+                rounds.retain(|(s, _, _): &(Scenario, RoundId, Round)| s != &scenario);
+                rounds.push((scenario, rid, round));
+            }
+        }
+        Ok(rounds)
+    }
+
+    /// Get objectives for a given round
+    pub(crate) fn objectives_for_round(&self, round: RoundId) -> Result<Vec<(ObjectiveId, Objective)>> {
+        let mut objs = Vec::new();
+        for r in self.objectives.scan_prefix(&round)? {
+            let ((_, oid), obj) = r?;
+            objs.push((oid, obj));
+        }
+        Ok(objs)
+    }
+
+    /// Get all detected, alive units for a given round
+    pub(crate) fn detected_units_for_round(
+        &self,
+        round: RoundId,
+    ) -> Result<Vec<(EnId, Unit, BitFlags<DetectionSource, u8>)>> {
+        let mut results = Vec::new();
+        for r in self.detected.scan_prefix(&round)? {
+            let ((_, eid), flags) = r?;
+            if flags.is_empty() {
+                continue;
+            }
+            if let Some(unit) = self.units.get(&(round, eid))? {
+                if !unit.dead {
+                    results.push((eid, unit, flags));
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    /// Get recent kills for a round (last N)
+    pub(crate) fn pilot_detail(&self, ucid: &Ucid) -> Result<Option<(String, Aggregates)>> {
+        match self.pilots.pilots.get(ucid)? {
+            None => Ok(None),
+            Some(pilot) => {
+                let name = pilot.name.last().cloned().unwrap_or_default();
+                Ok(Some((name, pilot.total)))
+            }
+        }
+    }
+
+    pub(crate) fn recent_kills(&self, round: RoundId, limit: usize) -> Result<Vec<Dead>> {
+        let mut kills = Vec::new();
+        for r in self.kills.iter().rev() {
+            let ((_, rid, _), dead) = r?;
+            if rid == round {
+                kills.push(dead);
+                if kills.len() >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(kills)
+    }
+
     fn add_stat(&self, ctx: &mut StatCtx, time: DateTime<Utc>, stat: Stat) -> Result<()> {
         if let Some(ctx) = &ctx.0 {
             if time <= ctx.seq {
@@ -645,13 +1053,16 @@ impl StatsDb {
             }
         }
         if let Stat::NewRound { sortie } = &stat {
-            if ctx.0.is_some() {
-                bail!("NewRound should only appear at the beginning of the stats or after RoundEnd")
-            }
+            ctx.0 = None; // reset on session restart so we re-attach or create a new round
+            info!("processing NewRound sortie={sortie:?}");
             match self.seq.scan_prefix(sortie)?.next_back().transpose()? {
-                None => return self.new_round(ctx, time, sortie.clone(), time),
+                None => {
+                    info!("NewRound: no existing seq, creating new round");
+                    return self.new_round(ctx, time, sortie.clone(), time);
+                }
                 Some(((_, round), seq)) => match self.round.get(&(sortie.clone(), round))? {
                     Some(r) if r.end.is_none() => {
+                        info!("NewRound: re-attaching to existing open round {round:?} seq={seq:?}");
                         ctx.0 = Some(StatCtxInner {
                             round,
                             seq,
@@ -659,16 +1070,40 @@ impl StatsDb {
                         });
                         return Ok(());
                     }
-                    Some(_) | None => {
-                        return self.new_round(ctx, time, sortie.clone(), time)
+                    Some(_) => {
+                        info!("NewRound: existing round is ended, creating new round");
+                        return self.new_round(ctx, time, sortie.clone(), time);
+                    }
+                    None => {
+                        info!("NewRound: seq entry exists but round missing, creating new round");
+                        return self.new_round(ctx, time, sortie.clone(), time);
                     }
                 },
+            }
+        }
+        // If we see a SessionStart but have no round context, auto-create a round.
+        // This happens when reading archives where the NewRound is in a locked/missing file.
+        if let Stat::SessionStart { cfg, .. } = &stat {
+            if ctx.0.is_none() {
+                let sortie = cfg.netidx_base
+                    .as_ref()
+                    .map(|p| {
+                        let s = format!("{p}");
+                        s.rsplit('/').next().unwrap_or("unknown").to_string()
+                    })
+                    .unwrap_or_else(|| "campaign".to_string());
+                let sortie = String::from(sortie);
+                info!("auto-creating round from SessionStart, sortie={sortie:?}");
+                self.new_round(ctx, time, sortie, time)?;
             }
         }
         if let Stat::RoundEnd { winner } = &stat {
             return self.round_end(ctx, time, *winner);
         }
-        let ctx = ctx.get_mut()?;
+        let ctx = match ctx.get_mut() {
+            Ok(c) => c,
+            Err(_) => return Ok(()), // no NewRound seen yet, skip
+        };
         match stat {
             Stat::NewRound { .. } | Stat::RoundEnd { .. } => unreachable!(),
             Stat::SessionStart { stop, cfg } => {
@@ -1016,6 +1451,15 @@ impl StatsDb {
             }
             Stat::PointsTransferToObjective { from: _, to: _, points: _ } => {
                 // Not currently tracked in database
+            }
+            Stat::ConvoyDestroyed { .. }
+            | Stat::CampaignEvent { .. }
+            | Stat::PilotXp { .. }
+            | Stat::AirRouteDelivered { .. }
+            | Stat::AirRouteDestroyed { .. }
+            | Stat::SeaRouteDelivered { .. }
+            | Stat::SeaRouteDestroyed { .. } => {
+                // Future: track in dedicated tables
             }
         };
         self.seq

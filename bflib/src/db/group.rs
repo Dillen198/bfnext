@@ -22,7 +22,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use bfprotocols::{
-    cfg::{Action, ActionKind, Crate, Deployable, Troop, UnitTag, UnitTags, Vehicle},
+    cfg::{Action, ActionKind, Crate, Deployable, LifeType, Troop, UnitTag, UnitTags, Vehicle},
     db::objective::ObjectiveId,
     stats::{self, EnId},
 };
@@ -92,6 +92,11 @@ pub enum DeployKind {
         spec: Troop,
         #[serde(default = "default_cost_fraction")]
         cost_fraction: f32,
+    },
+    DownedPilot {
+        ucid: Ucid,
+        name: String,
+        life_type: LifeType,
     },
     Crate {
         origin: ObjectiveId,
@@ -349,6 +354,15 @@ impl Db {
                     msg,
                 ))
             }
+            DeployKind::DownedPilot { name, .. } => {
+                let msg = format_compact!("downed pilot: {name}");
+                Some(self.ephemeral.msgs.mark_to_side(
+                    group.side,
+                    group_center,
+                    true,
+                    msg,
+                ))
+            }
         };
         if let Some(id) = id {
             self.ephemeral.group_marks.insert(*gid, id);
@@ -392,6 +406,15 @@ impl Db {
                 if spec.jtac.is_some() {
                     self.persisted.jtacs.remove_cow(gid);
                 }
+            }
+            DeployKind::DownedPilot { .. } => {
+                self.persisted.downed_pilots.remove_cow(gid);
+                self.persisted.downed_pilot_spawn_times.remove_cow(gid);
+                self.ephemeral.csar_flared.remove(gid);
+                self.ephemeral.csar_moving.remove(gid);
+                self.ephemeral.csar_notified.remove(gid);
+                self.ephemeral.csar_last_renotify.remove(gid);
+                self.ephemeral.csar_smoke_cooldown.remove(gid);
             }
         }
         if let Some(id) = self.ephemeral.group_marks.remove(gid) {
@@ -799,6 +822,9 @@ impl Db {
                     self.persisted.jtacs.insert_cow(gid);
                 }
             }
+            DeployKind::DownedPilot { .. } => {
+                self.persisted.downed_pilots.insert_cow(gid);
+            }
         }
         self.persisted.groups.insert_cow(gid, spawned);
         self.persisted.groups_by_name.insert_cow(group_name, gid);
@@ -1116,10 +1142,14 @@ impl Db {
                             | DeployKind::Action { .. }
                             | DeployKind::Crate { .. }
                             | DeployKind::Objective { .. }
-                            | DeployKind::ObjectiveDeprecated => (),
+                            | DeployKind::ObjectiveDeprecated
+                            | DeployKind::DownedPilot { .. } => (),
                         }
                         self.delete_group(&gid)?
                     }
+                }
+                if self.persisted.downed_pilots.contains(&gid) && health == 0 {
+                    self.delete_group(&gid)?
                 }
                 if self.persisted.actions.contains(&gid) {
                     if let DeployKind::Action { player, spec, .. } =

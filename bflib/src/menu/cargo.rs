@@ -21,6 +21,7 @@ use crate::{
 };
 use anyhow::{Context as ErrContext, Result, anyhow};
 use bfprotocols::cfg::{Cfg, LimitEnforceTyp};
+use chrono;
 use compact_str::{CompactString, ToCompactString, format_compact};
 use dcso3::{
     MizLua, String,
@@ -144,6 +145,13 @@ pub(crate) fn list_cargo_for_slot(ctx: &mut Context, slot: &SlotId) -> Result<()
         cargo.num_crates(),
         capacity.crate_slots
     ));
+    if capacity.pilot_slots > 0 {
+        msg.push_str(&format_compact!(
+            "pilots: {} of {}\n",
+            cargo.num_pilots(),
+            capacity.pilot_slots
+        ));
+    }
     msg.push_str(&format_compact!(
         "total : {} of {}\n",
         cargo.num_total(),
@@ -166,6 +174,9 @@ pub(crate) fn list_cargo_for_slot(ctx: &mut Context, slot: &SlotId) -> Result<()
             it.troop.weight
         ));
         total += it.troop.weight
+    }
+    for p in &cargo.pilots {
+        msg.push_str(&format_compact!("downed pilot: {}\n", p.name));
     }
     if total > 0 {
         msg.push_str("----------------------------\n");
@@ -327,6 +338,221 @@ fn spawn_all_c130_crates_for_deployable(lua: MizLua, arg: ArgTuple<GroupId, Stri
     Ok(())
 }
 
+fn list_downed_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let st = SlotStats::get(&ctx.db, lua, &slot).context("getting slot stats")?;
+    let pilots: Vec<_> = ctx
+        .db
+        .persisted
+        .downed_pilots
+        .into_iter()
+        .filter_map(|pgid| {
+            let group = ctx.db.persisted.groups.get(pgid)?;
+            if group.side != side {
+                return None;
+            }
+            let pos = group
+                .units
+                .into_iter()
+                .filter_map(|uid| ctx.db.persisted.units.get(uid))
+                .filter(|u| !u.dead)
+                .map(|u| u.pos)
+                .next()?;
+            let name = match &group.origin {
+                crate::db::group::DeployKind::DownedPilot { name, .. } => name.clone(),
+                _ => return None,
+            };
+            let dx = pos.x - st.point.x;
+            let dy = pos.y - st.point.y;
+            let dist = (dx * dx + dy * dy).sqrt() as u32;
+            let bearing = {
+                use dcso3::azumith2d_to;
+                (azumith2d_to(st.point, pos).to_degrees() as u32 + 360) % 360
+            };
+            Some((name, dist, bearing))
+        })
+        .collect();
+    if pilots.is_empty() {
+        ctx.db
+            .ephemeral
+            .msgs()
+            .panel_to_group(10, false, gid, "No downed pilots on your side");
+    } else {
+        let mut msg = CompactString::new("Downed Pilots\n----------------------------\n");
+        for (name, dist, bearing) in &pilots {
+            msg.push_str(&format_compact!(
+                "{name}: {bearing}° / {dist}m\n"
+            ));
+        }
+        ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, msg);
+    }
+    Ok(())
+}
+
+fn request_smoke(lua: MizLua, gid: GroupId) -> Result<()> {
+    use dcso3::trigger::{SmokeColor, Trigger};
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let st = SlotStats::get(&ctx.db, lua, &slot).context("getting slot stats")?;
+    // Find the nearest downed pilot of the player's side
+    let nearest = ctx
+        .db
+        .persisted
+        .downed_pilots
+        .into_iter()
+        .filter_map(|pgid| {
+            let group = ctx.db.persisted.groups.get(pgid)?;
+            if group.side != side {
+                return None;
+            }
+            let pos = group
+                .units
+                .into_iter()
+                .filter_map(|uid| ctx.db.persisted.units.get(uid))
+                .filter(|u| !u.dead)
+                .map(|u| u.pos)
+                .next()?;
+            let name = match &group.origin {
+                crate::db::group::DeployKind::DownedPilot { name, .. } => name.clone(),
+                _ => return None,
+            };
+            let dx = pos.x - st.point.x;
+            let dy = pos.y - st.point.y;
+            Some((*pgid, name, pos, dx * dx + dy * dy))
+        })
+        .min_by(|a, b| a.3.partial_cmp(&b.3).unwrap());
+    match nearest {
+        None => {
+            ctx.db
+                .ephemeral
+                .msgs()
+                .panel_to_group(10, false, gid, "No downed pilots nearby");
+        }
+        Some((pgid, name, pos, dist2)) => {
+            let dist = dist2.sqrt() as u32;
+            // Check smoke cooldown
+            let cooldown_secs = ctx
+                .db
+                .ephemeral
+                .cfg
+                .csar
+                .as_ref()
+                .map(|c| c.smoke_cooldown as i64)
+                .unwrap_or(300);
+            let now: chrono::DateTime<chrono::Utc> = chrono::Utc::now();
+            let last_smoke = ctx
+                .db
+                .ephemeral
+                .csar_smoke_cooldown
+                .get(&pgid)
+                .copied();
+            if let Some(last) = last_smoke {
+                let elapsed = now - last;
+                if elapsed < chrono::Duration::seconds(cooldown_secs) {
+                    let remaining = cooldown_secs - elapsed.num_seconds();
+                    let msg = format_compact!(
+                        "{name} smoke on cooldown — {remaining}s remaining"
+                    );
+                    ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg);
+                    return Ok(());
+                }
+            }
+            let act = Trigger::singleton(lua)?.action()?;
+            use dcso3::land::Land;
+            let alt = Land::singleton(lua)?
+                .get_height(dcso3::LuaVec2(pos))
+                .unwrap_or(0.);
+            let smoke_pos = dcso3::LuaVec3(dcso3::Vector3::new(pos.x, alt + 1., pos.y));
+            if let Err(e) = act.smoke(smoke_pos, SmokeColor::Green) {
+                let msg = format_compact!("smoke failed: {e}");
+                ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg);
+            } else {
+                ctx.db.ephemeral.csar_smoke_cooldown.insert(pgid, now);
+                let msg =
+                    format_compact!("{name} popped green smoke — {dist}m away");
+                ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, msg);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn pickup_pilot(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    match ctx.db.pickup_pilot(lua, &slot) {
+        Ok(pilot_name) => {
+            let player = player_name(&ctx.db, &slot);
+            let msg = format_compact!("{player} picked up downed pilot {pilot_name}");
+            ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
+        }
+        Err(e) => {
+            ctx.db
+                .ephemeral
+                .msgs()
+                .panel_to_group(10, false, gid, format_compact!("{e}"))
+        }
+    }
+    Ok(())
+}
+
+fn deliver_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let player = player_name(&ctx.db, &slot);
+    match ctx.db.deliver_pilots(lua, &slot) {
+        Err(e) => {
+            ctx.db
+                .ephemeral
+                .msgs()
+                .panel_to_group(10, false, gid, format_compact!("{e}"))
+        }
+        Ok(pilots) => {
+            let rescue_reward = ctx
+                .db
+                .ephemeral
+                .cfg
+                .csar
+                .as_ref()
+                .map(|c| c.rescue_reward)
+                .unwrap_or(0);
+            let rescuer_ucid = ctx.db.ephemeral.player_in_slot(&slot).cloned();
+            for pilot in &pilots {
+                if let Some(new_count) = ctx.db.restore_life(&pilot.ucid, pilot.life_type) {
+                    let msg = format_compact!(
+                        "your pilot {} was rescued by {player} and delivered safely — you now have {new_count} {} lives",
+                        pilot.name,
+                        pilot.life_type,
+                    );
+                    ctx.db.ephemeral.panel_to_player(
+                        &ctx.db.persisted,
+                        15,
+                        &pilot.ucid,
+                        msg,
+                    );
+                }
+                if rescue_reward > 0 {
+                    if let Some(ucid) = &rescuer_ucid {
+                        ctx.db.adjust_points(
+                            ucid,
+                            rescue_reward as i32,
+                            &format_compact!("for CSAR rescue of {}", pilot.name),
+                        );
+                    }
+                }
+            }
+            let n = pilots.len();
+            let msg = format_compact!(
+                "{player} delivered {n} rescued pilot{} to safety",
+                if n == 1 { "" } else { "s" }
+            );
+            ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn add_cargo_menu_for_group(
     cfg: &Cfg,
     mc: &MissionCommands,
@@ -376,6 +602,36 @@ pub(super) fn add_cargo_menu_for_group(
         destroy_nearby_crate,
         group,
     )?;
+    if cfg.csar.as_ref().map(|c| c.enabled).unwrap_or(false) {
+        mc.add_command_for_group(
+            group,
+            "List Downed Pilots".into(),
+            Some(root.clone()),
+            list_downed_pilots,
+            group,
+        )?;
+        mc.add_command_for_group(
+            group,
+            "Request Nearest Pilot Smoke".into(),
+            Some(root.clone()),
+            request_smoke,
+            group,
+        )?;
+        mc.add_command_for_group(
+            group,
+            "Pick Up Downed Pilot (manual)".into(),
+            Some(root.clone()),
+            pickup_pilot,
+            group,
+        )?;
+        mc.add_command_for_group(
+            group,
+            "Deliver Rescued Pilots (manual)".into(),
+            Some(root.clone()),
+            deliver_pilots,
+            group,
+        )?;
+    }
     let root = mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
     let rep = &cfg.repair_crate[side];
     let logi = mc.add_submenu_for_group(group, "Logistics".into(), Some(root.clone()))?;

@@ -17,7 +17,7 @@ for more details.
 extern crate nalgebra as na;
 use self::{group::DeployKind, persisted::Persisted};
 use crate::{bg::Task, db::ephemeral::Ephemeral, jtac::JtId};
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use bfprotocols::{
     cfg::{
         Action, ActionKind, AwacsCfg, Cfg, Deployable, DeployableEwr, DeployableJtac, DroneCfg,
@@ -39,6 +39,7 @@ use tokio::sync::mpsc::UnboundedSender;
 pub mod actions;
 pub mod cargo;
 pub mod ephemeral;
+pub mod events;
 pub mod group;
 pub mod logistics;
 pub mod markup;
@@ -216,6 +217,127 @@ impl Db {
         }
     }
 
+    /// Get convoy origin/destination if a group ID belongs to an active supply convoy
+    pub fn convoy_info_for_group(&self, gid: &GroupId) -> Option<(ObjectiveId, ObjectiveId)> {
+        self.ephemeral.active_convoys.values()
+            .find(|c| c.group_id == *gid)
+            .map(|c| (c.origin, c.destination))
+    }
+
+    /// Count active supply convoys for a given side
+    pub fn convoy_count_for_side(&self, side: dcso3::coalition::Side) -> usize {
+        self.ephemeral.active_convoys.values().filter(|c| c.side == side).count()
+    }
+
+    /// Create a new planned mission
+    pub fn create_mission(
+        &mut self,
+        name: compact_str::CompactString,
+        mission_type: bfprotocols::db::mission::MissionType,
+        creator: dcso3::net::Ucid,
+        side: dcso3::coalition::Side,
+        briefing: compact_str::CompactString,
+    ) -> bfprotocols::db::mission::MissionId {
+        use bfprotocols::db::mission::*;
+        let id = MissionId::new();
+        let mission = PlannedMission {
+            id,
+            name,
+            mission_type,
+            creator,
+            side,
+            created_at: chrono::Utc::now(),
+            scheduled_time: None,
+            status: MissionStatus::Planning,
+            flights: Vec::new(),
+            target_pos: None,
+            briefing,
+            rewarded: false,
+        };
+        self.ephemeral.planned_missions.push(mission);
+        id
+    }
+
+    /// Get active missions for a side
+    #[allow(dead_code)]
+    pub fn missions_for_side(&self, side: dcso3::coalition::Side) -> Vec<&bfprotocols::db::mission::PlannedMission> {
+        use bfprotocols::db::mission::MissionStatus;
+        self.ephemeral.planned_missions.iter()
+            .filter(|m| m.side == side && !matches!(m.status, MissionStatus::Completed | MissionStatus::Cancelled))
+            .collect()
+    }
+
+    /// Join a player to a mission
+    pub fn join_mission(
+        &mut self,
+        mission_id: bfprotocols::db::mission::MissionId,
+        ucid: dcso3::net::Ucid,
+    ) -> Result<()> {
+        let mission = self.ephemeral.planned_missions.iter_mut()
+            .find(|m| m.id == mission_id)
+            .ok_or_else(|| anyhow!("mission not found"))?;
+        if mission.flights.is_empty() {
+            mission.flights.push(bfprotocols::db::mission::FlightPlan {
+                callsign: compact_str::format_compact!("Flight 1"),
+                aircraft_type: compact_str::format_compact!("Any"),
+                num_aircraft: 1,
+                role: mission.mission_type,
+                waypoints: Vec::new(),
+                assigned_players: vec![ucid],
+                loadout_suggestion: None,
+            });
+        } else if let Some(flight) = mission.flights.first_mut() {
+            if !flight.assigned_players.contains(&ucid) {
+                flight.assigned_players.push(ucid);
+            }
+        }
+        Ok(())
+    }
+
+    /// Cancel a mission (only creator can cancel)
+    pub fn cancel_mission(
+        &mut self,
+        mission_id: bfprotocols::db::mission::MissionId,
+        ucid: &dcso3::net::Ucid,
+    ) -> Result<()> {
+        let mission = self.ephemeral.planned_missions.iter_mut()
+            .find(|m| m.id == mission_id)
+            .ok_or_else(|| anyhow!("mission not found"))?;
+        if mission.creator != *ucid {
+            bail!("only the mission creator can cancel");
+        }
+        mission.status = bfprotocols::db::mission::MissionStatus::Cancelled;
+        Ok(())
+    }
+
+    /// Mark a mission complete (creator only). Sets status to Completed,
+    /// sets rewarded=true, and returns (side, mission_type, name, participants).
+    pub fn complete_mission(
+        &mut self,
+        mission_id: bfprotocols::db::mission::MissionId,
+        ucid: &dcso3::net::Ucid,
+    ) -> Result<(Side, bfprotocols::db::mission::MissionType, compact_str::CompactString, Vec<dcso3::net::Ucid>)> {
+        use bfprotocols::db::mission::MissionStatus;
+        let mission = self.ephemeral.planned_missions.iter_mut()
+            .find(|m| m.id == mission_id)
+            .ok_or_else(|| anyhow!("mission not found"))?;
+        if mission.creator != *ucid {
+            bail!("only the mission creator can complete it");
+        }
+        if mission.rewarded {
+            bail!("mission has already been rewarded");
+        }
+        mission.status = MissionStatus::Completed;
+        mission.rewarded = true;
+        let side = mission.side;
+        let mt = mission.mission_type;
+        let name = mission.name.clone();
+        let players: Vec<dcso3::net::Ucid> = mission.flights.iter()
+            .flat_map(|f| f.assigned_players.iter().copied())
+            .collect();
+        Ok((side, mt, name, players))
+    }
+
     pub fn ewrs(&self) -> impl Iterator<Item = (Vector3, Side, &DeployableEwr)> {
         self.persisted.ewrs.into_iter().filter_map(|gid| {
             let group = self.persisted.groups.get(gid)?;
@@ -223,7 +345,8 @@ impl Db {
                 DeployKind::Crate { .. }
                 | DeployKind::Objective { .. }
                 | DeployKind::ObjectiveDeprecated
-                | DeployKind::Troop { .. } => None,
+                | DeployKind::Troop { .. }
+                | DeployKind::DownedPilot { .. } => None,
                 DeployKind::Action {
                     spec:
                         Action {
@@ -301,7 +424,8 @@ impl Db {
                     | DeployKind::Objective { .. }
                     | DeployKind::ObjectiveDeprecated
                     | DeployKind::Troop { .. }
-                    | DeployKind::Deployed { .. } => None,
+                    | DeployKind::Deployed { .. }
+                    | DeployKind::DownedPilot { .. } => None,
                 }
             })
             .chain(self.instanced_players().filter_map(|(_, p, inst)| {

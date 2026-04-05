@@ -428,7 +428,8 @@ fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String
         let mk = mk?;
         if mk.text.starts_with(key.as_str()) {
             to_remove.push(mk.id);
-            let spec = mk.text.as_str().strip_prefix(key.as_str()).unwrap();
+            let spec = mk.text.as_str().strip_prefix(key.as_str())
+                .ok_or_else(|| anyhow!("mark text missing expected prefix"))?;
             let mut iter = spec.splitn(4, " ");
             let kind = iter
                 .next()
@@ -587,7 +588,8 @@ pub(super) fn get_player_ucid<'a>(ctx: &'a Context, key: &str) -> Result<Ucid> {
             .collect()
     };
     if candidates.len() == 1 {
-        return Ok(candidates.pop().unwrap().0.clone());
+        return Ok(candidates.pop()
+            .ok_or_else(|| anyhow!("no candidates"))?.0.clone());
     } else if candidates.len() > 1 {
         bail!("multiple matching candidates {:?}", candidates)
     }
@@ -849,7 +851,8 @@ fn delete(ctx: &mut Context, id: &GroupId) -> Result<()> {
         DeployKind::Crate { .. }
         | DeployKind::Deployed { .. }
         | DeployKind::Troop { .. }
-        | DeployKind::Action { .. } => ctx.db.delete_group(id),
+        | DeployKind::Action { .. }
+        | DeployKind::DownedPilot { .. } => ctx.db.delete_group(id),
     }
 }
 
@@ -1049,6 +1052,9 @@ fn query_groups(ctx: &Context, side_filter: Option<Side>) -> Vec<GroupInfo> {
                 DeployKind::Troop { player, .. } => ("Troop".to_string(), Some(player.clone())),
                 DeployKind::Crate { player, .. } => ("Crate".to_string(), Some(player.clone())),
                 DeployKind::Action { player, .. } => ("Action".to_string(), player.clone()),
+                DeployKind::DownedPilot { ucid, .. } => {
+                    ("DownedPilot".to_string(), Some(ucid.clone()))
+                }
             };
 
             GroupInfo {
@@ -1091,6 +1097,9 @@ fn query_group_details(ctx: &Context, id: &GroupId) -> Result<GroupInfo> {
         DeployKind::Troop { player, .. } => ("Troop".to_string(), Some(player.clone())),
         DeployKind::Crate { player, .. } => ("Crate".to_string(), Some(player.clone())),
         DeployKind::Action { player, .. } => ("Action".to_string(), player.clone()),
+        DeployKind::DownedPilot { ucid, .. } => {
+            ("DownedPilot".to_string(), Some(ucid.clone()))
+        }
     };
 
     Ok(GroupInfo {
@@ -1682,7 +1691,9 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
             Caller::Player(_) => (),
             Caller::External(ch) => {
                 if replies.len() == 1 {
-                    let _ = ch.send(replies.pop().unwrap());
+                    if let Some(reply) = replies.pop() {
+                        let _ = ch.send(reply);
+                    }
                 } else {
                     let _ = ch.send(NetIdxValue::from(replies));
                 }
