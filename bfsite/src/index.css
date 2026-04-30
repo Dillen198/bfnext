@@ -1,0 +1,156 @@
+@import "tailwindcss";
+
+/* ── Design Tokens ── */
+:root {
+  --bg:           #0a0a0a;
+  --bg-card:      #111111;
+  --bg-elevated:  #181818;
+  --accent:       #4d7c0f;
+  --accent-warm:  #f97316;
+  --accent-hover: #65a30d;
+  --blue:         #3b82f6;
+  --red:          #ef4444;
+  --text:         #f1f5f9;
+  --text-muted:   #64748b;
+  --text-dim:     #374151;
+  --border:       #222222;
+}
+
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+html, body, #root { margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #4d7c0f60; }
+
+/* ── Typography helpers ── */
+.font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.05em; }
+.font-mono-vs { font-family: 'JetBrains Mono', monospace; }
+
+/* ── Section title ── */
+.vs-section-label {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* ── Feature card ── */
+.feature-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--accent);
+  border-radius: 2px;
+  padding: 1.5rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.feature-card:hover {
+  border-color: #2a2a2a;
+  box-shadow: 0 4px 24px rgba(77,124,15,0.08);
+}
+
+/* ── Stat box ── */
+.stat-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 2px;
+  padding: 1.25rem;
+}
+
+/* ── Button ── */
+.vs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.5rem;
+  background: var(--accent);
+  color: #fff;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 1rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 2px solid var(--accent);
+  border-radius: 2px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, transform 0.1s;
+}
+.vs-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+
+.vs-btn-outline {
+  background: transparent;
+  color: var(--text);
+  border-color: rgba(255,255,255,0.2);
+}
+.vs-btn-outline:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.4);
+  transform: translateY(-1px);
+}
+
+/* ── Territory bar ── */
+.territory-bar {
+  height: 6px;
+  display: flex;
+  overflow: hidden;
+  border-radius: 1px;
+  background: rgba(75,85,99,0.15);
+}
+.territory-bar-blue { background: linear-gradient(90deg, #1d4ed8, #3b82f6); transition: width 0.7s ease; }
+.territory-bar-neutral { background: #374151; transition: width 0.7s ease; }
+.territory-bar-red { background: linear-gradient(90deg, #dc2626, #991b1b); transition: width 0.7s ease; }
+
+/* ── Animations ── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 0.6s ease-out forwards; }
+.fade-up-d1 { animation-delay: 0.1s; opacity: 0; }
+.fade-up-d2 { animation-delay: 0.2s; opacity: 0; }
+.fade-up-d3 { animation-delay: 0.3s; opacity: 0; }
+.fade-up-d4 { animation-delay: 0.4s; opacity: 0; }
+
+@keyframes vs-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+.vs-pulse { animation: vs-pulse 2s ease-in-out infinite; }
+
+@keyframes scroll-indicator {
+  0%, 100% { transform: translateY(0); opacity: 0.6; }
+  50%       { transform: translateY(6px); opacity: 1; }
+}
+
+/* ── Red divider line ── */
+.vs-divider {
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--accent), transparent);
+  margin: 0;
+}
+
+/* ── Corner brackets ── */
+.vs-brackets { position: relative; }
+.vs-brackets::before, .vs-brackets::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+.vs-brackets::before { top: -2px; left: -2px; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); }
+.vs-brackets::after  { bottom: -2px; right: -2px; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }

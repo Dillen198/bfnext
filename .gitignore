@@ -1,4 +1,10 @@
 **/target/
+**/node_modules/
+Logs/
+bfdb_log.txt
+netidx_out.txt
+test_stats.jsonl
+netidx-resolver.json
 **/*.rs.bk
 Cargo.lock
 **/Cargo.lock

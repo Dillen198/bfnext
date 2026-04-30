@@ -323,7 +323,6 @@ impl Objective {
         self.name.as_str()
     }
 
-    #[allow(dead_code)]
     pub fn health(&self) -> u8 {
         self.health
     }
@@ -343,14 +342,14 @@ impl Objective {
     pub fn is_farp(&self) -> bool {
         match &self.kind {
             ObjectiveKind::Farp { .. } => true,
-            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Factory { .. } => false,
+            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Factory { .. } | ObjectiveKind::SpecialSamSite { .. } => false,
         }
     }
 
     pub fn is_airbase(&self) -> bool {
         match &self.kind {
             ObjectiveKind::Airbase => true,
-            ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Factory { .. } => false,
+            ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Factory { .. } | ObjectiveKind::SpecialSamSite { .. } => false,
         }
     }
 
@@ -392,6 +391,16 @@ impl Objective {
 
     pub fn warehouse(&self) -> &Warehouse {
         &self.warehouse
+    }
+
+    /// Objective that supplies this one in the logistics network, if any.
+    pub fn warehouse_supplier(&self) -> Option<ObjectiveId> {
+        self.warehouse.supplier
+    }
+
+    /// True if this objective's warehouse is damaged (reduced capacity/output).
+    pub fn warehouse_damaged(&self) -> bool {
+        self.warehouse.damaged
     }
 
     pub fn points(&self) -> i32 {
@@ -527,6 +536,7 @@ impl Db {
             self.ephemeral.return_pad_template(&pad_template);
         }
         self.persisted.farps.remove_cow(oid);
+        self.persisted.special_sam_sites.remove_cow(oid);
         self.ephemeral.airbase_by_oid.remove(oid);
         self.ephemeral.remove_objective_markup(oid);
         self.ephemeral.stat(Stat::ObjectiveDestroyed { id: *oid });
@@ -991,6 +1001,10 @@ impl Db {
                     self.ephemeral.dirty = true;
                 }
             }
+            // Special SAM sites are always spawned — they are static strategic installations
+            if obj.kind.is_special_sam_site() {
+                spawn = true;
+            }
             if !obj.spawned && spawn {
                 obj.spawned = true;
                 let is_mobile = obj.kind.is_carrier_group();
@@ -1017,9 +1031,8 @@ impl Db {
                 && !obj.threatened
                 && now - obj.last_activate >= Duration::seconds(cfg.cull_after as i64)
             {
-                // Don't cull carrier groups - they use Group.activate() and destroying
-                // them is permanent (they can't be re-activated after destroy)
-                if obj.kind.is_carrier_group() {
+                // Don't cull carrier groups or special SAM sites — they are always present
+                if obj.kind.is_carrier_group() || obj.kind.is_special_sam_site() {
                     continue;
                 }
                 obj.spawned = false;
@@ -1190,7 +1203,7 @@ impl Db {
     pub fn capturable_objectives(&self) -> SmallVec<[ObjectiveId; 1]> {
         let mut cap = smallvec![];
         for (oid, obj) in &self.persisted.objectives {
-            if obj.captureable() {
+            if obj.captureable() || obj.kind.is_special_sam_site() {
                 cap.push(*oid)
             }
         }
@@ -1198,24 +1211,29 @@ impl Db {
     }
 
     pub fn check_victory(&mut self, now: DateTime<Utc>) -> Option<Side> {
-        self.ephemeral.cfg.auto_reset.and_then(|vc| {
-            if let Some((vts, side)) = self.ephemeral.victory {
-                let delay = Duration::seconds(vc.delay as i64);
-                let elapsed = now - vts;
-                if elapsed >= delay {
-                    return Some(side);
-                } else {
-                    self.ephemeral.msgs().panel_to_all(
-                        10,
-                        true,
-                        format_compact!(
-                            "{side} has won. The server will reset in {}s",
-                            (delay - elapsed).as_seconds_f64()
-                        ),
-                    );
-                    return None;
-                }
+        // If victory was already declared (e.g. by last stand expiry), honour it.
+        // Use auto_reset delay if configured, otherwise trigger immediately.
+        if let Some((vts, side)) = self.ephemeral.victory {
+            let delay = self.ephemeral.cfg.auto_reset
+                .map(|vc| Duration::seconds(vc.delay as i64))
+                .unwrap_or(Duration::zero());
+            let elapsed = now - vts;
+            if elapsed >= delay {
+                return Some(side);
+            } else {
+                self.ephemeral.msgs().panel_to_all(
+                    10,
+                    true,
+                    format_compact!(
+                        "{side} has won. The server will reset in {}s",
+                        (delay - elapsed).num_seconds()
+                    ),
+                );
+                return None;
             }
+        }
+        // Check MapOwned condition if auto_reset is configured.
+        if let Some(vc) = self.ephemeral.cfg.auto_reset {
             let VictoryCondition::MapOwned { fraction } = vc.condition;
             let (blue, red, neutral, total) = self.persisted.objectives.into_iter().fold(
                 (0., 0., 0., 0.),
@@ -1230,8 +1248,104 @@ impl Db {
             } else if ((red + neutral) / total) >= fraction {
                 self.ephemeral.victory = Some((now, Side::Red));
             }
-            None
-        })
+        }
+        None
+    }
+
+    /// Returns true if `kind` qualifies as a primary objective for mercy timer purposes.
+    fn is_primary_objective(kind: &ObjectiveKind) -> bool {
+        matches!(kind, ObjectiveKind::Airbase | ObjectiveKind::NavalBase | ObjectiveKind::Farp { .. })
+    }
+
+    /// Check last stand timer: if a side is at or below `trigger_count` primary objectives,
+    /// arm the timer. If armed and countdown elapsed, trigger a victory for the other side.
+    /// Returns the losing side if the campaign should end now.
+    pub fn check_last_stand(&mut self, now: DateTime<Utc>) -> Option<Side> {
+        let cfg = self.ephemeral.cfg.last_stand.clone()?;
+        // If already armed, check for expiry or send countdown message.
+        if let Some((arm_time, losing_side)) = self.ephemeral.last_stand_state {
+            let elapsed = now - arm_time;
+            let countdown = Duration::seconds(cfg.countdown_secs as i64);
+            let remaining = countdown - elapsed;
+            if remaining <= Duration::zero() {
+                self.ephemeral.last_stand_state = None;
+                return Some(losing_side);
+            }
+            let remaining_secs = remaining.num_seconds();
+            let winning_side = losing_side.opposite();
+            self.ephemeral.msgs().panel_to_all(
+                10,
+                true,
+                format_compact!(
+                    "{losing_side:?} is making their last stand! \
+                     {winning_side:?} wins in {remaining_secs}s unless {losing_side:?} recaptures."
+                ),
+            );
+            // Re-check: if losing side has recovered objectives, disarm timer.
+            let losing_primary = self.persisted.objectives.into_iter()
+                .filter(|(_, o)| o.owner == losing_side && Self::is_primary_objective(&o.kind))
+                .count();
+            if losing_primary > cfg.trigger_count {
+                self.ephemeral.last_stand_state = None;
+                self.ephemeral.msgs().panel_to_all(
+                    10,
+                    false,
+                    format_compact!("{losing_side:?} has recaptured objectives. Last stand cancelled."),
+                );
+            }
+            return None;
+        }
+        // Not armed — check if any side should trigger it.
+        for side in [Side::Blue, Side::Red] {
+            let primary_count = self.persisted.objectives.into_iter()
+                .filter(|(_, o)| o.owner == side && Self::is_primary_objective(&o.kind))
+                .count();
+            if primary_count <= cfg.trigger_count {
+                self.ephemeral.last_stand_state = Some((now, side));
+                let winning = side.opposite();
+                self.ephemeral.msgs().panel_to_all(
+                    15,
+                    false,
+                    format_compact!(
+                        "{side:?} is down to {primary_count} primary objective(s) — Last Stand! \
+                         {winning:?} wins in {}s if not recaptured.",
+                        cfg.countdown_secs
+                    ),
+                );
+                break;
+            }
+        }
+        None
+    }
+
+    /// Trigger a victory for `winning_side`, used by the last stand timer expiry.
+    pub fn trigger_last_stand_victory(&mut self, now: DateTime<Utc>, winning_side: Side) {
+        self.ephemeral.victory = Some((now, winning_side));
+        let losing_side = winning_side.opposite();
+        self.ephemeral.msgs().panel_to_all(
+            20,
+            true,
+            format_compact!(
+                "Last Stand over: {losing_side:?} could not hold their objectives. {winning_side:?} wins!"
+            ),
+        );
+    }
+
+    fn defender_destruction_ratio(&self, obj: &Objective) -> f64 {
+        let Some(gids) = obj.groups.get(&obj.owner) else {
+            return 1.0;
+        };
+        let (total, dead) = gids
+            .into_iter()
+            .filter_map(|gid| self.persisted.groups.get(gid))
+            .flat_map(|g| g.units.into_iter())
+            .filter_map(|uid| self.persisted.units.get(uid))
+            .fold((0usize, 0usize), |(t, d), u| (t + 1, d + u.dead as usize));
+        if total == 0 {
+            1.0
+        } else {
+            dead as f64 / total as f64
+        }
     }
 
     pub fn check_capture(
@@ -1239,10 +1353,20 @@ impl Db {
         lua: MizLua,
         now: DateTime<Utc>,
     ) -> Result<SmallVec<[(Side, ObjectiveId); 1]>> {
-        let mut captured: FxHashMap<ObjectiveId, Vec<(Side, Ucid, Option<ObjectiveId>, GroupId)>> =
+        let min_unit_pct = self
+            .ephemeral
+            .cfg
+            .campaign_events
+            .as_ref()
+            .map(|c| c.capture_min_unit_pct_destroyed)
+            .unwrap_or(0.0);
+        let mut captured: FxHashMap<ObjectiveId, Vec<(Side, Option<Ucid>, Option<ObjectiveId>, GroupId)>> =
             FxHashMap::default();
         for (oid, obj) in &self.persisted.objectives {
-            if obj.captureable() {
+            let unit_threshold_met = min_unit_pct <= 0.0
+                || obj.kind.is_special_sam_site()
+                || self.defender_destruction_ratio(obj) >= min_unit_pct;
+            if (obj.captureable() || obj.kind.is_special_sam_site()) && unit_threshold_met {
                 for gid in &self.persisted.troops {
                     let group = group!(self, gid)?;
                     match &group.origin {
@@ -1262,7 +1386,7 @@ impl Db {
                                 captured
                                     .entry(*oid)
                                     .or_default()
-                                    .push((group.side, *player, *origin, *gid));
+                                    .push((group.side, Some(*player), *origin, *gid));
                             }
                         }
                         DeployKind::Crate { .. }
@@ -1271,7 +1395,26 @@ impl Db {
                         | DeployKind::ObjectiveDeprecated
                         | DeployKind::Action { .. }
                         | DeployKind::Troop { .. }
-                        | DeployKind::DownedPilot { .. } => (),
+                        | DeployKind::DownedPilot { .. }
+                        | DeployKind::Dismount { .. } => (),
+                    }
+                }
+                for gid in &self.persisted.dismounts {
+                    let group = group!(self, gid)?;
+                    if let DeployKind::Dismount { can_capture, .. } = &group.origin {
+                        if *can_capture {
+                            let in_range = group
+                                .units
+                                .into_iter()
+                                .filter_map(|uid| self.persisted.units.get(uid))
+                                .any(|u| obj.zone.contains(u.pos));
+                            if in_range {
+                                captured
+                                    .entry(*oid)
+                                    .or_default()
+                                    .push((group.side, None, None, *gid));
+                            }
+                        }
                     }
                 }
             }
@@ -1284,13 +1427,22 @@ impl Db {
             let (side, _, _, _) = gids.first().ok_or_else(|| anyhow!("no guid"))?;
             if gids.iter().all(|(s, _, _, _)| side == s) {
                 in_zone_objectives.insert(oid);
-                let capture_secs = self
-                    .ephemeral
-                    .cfg
-                    .campaign_events
-                    .as_ref()
-                    .map(|c| c.capture_time_secs)
-                    .unwrap_or(0) as i64;
+                let is_sam = self
+                    .persisted
+                    .objectives
+                    .get(&oid)
+                    .map(|o| o.kind.is_special_sam_site())
+                    .unwrap_or(false);
+                let capture_secs = if is_sam {
+                    0i64
+                } else {
+                    self.ephemeral
+                        .cfg
+                        .campaign_events
+                        .as_ref()
+                        .map(|c| c.capture_time_secs)
+                        .unwrap_or(0) as i64
+                };
 
                 if capture_secs > 0 {
                     // Momentum timer: record OR reset entry time.
@@ -1352,16 +1504,19 @@ impl Db {
                         }
                     }
                 }
-                let abid = self
-                    .ephemeral
-                    .airbase_by_oid
-                    .get(&oid)
-                    .ok_or_else(|| anyhow!("no airbase for objective {}", obj.name))?;
-                let airbase =
-                    Airbase::get_instance(lua, abid).context("getting captured airbase")?;
-                airbase
-                    .set_coalition(*side)
-                    .context("setting airbase coalition")?;
+                let is_sam = objective!(self, oid)?.kind.is_special_sam_site();
+                if !is_sam {
+                    let abid = self
+                        .ephemeral
+                        .airbase_by_oid
+                        .get(&oid)
+                        .ok_or_else(|| anyhow!("no airbase for objective {:?}", oid))?;
+                    let airbase =
+                        Airbase::get_instance(lua, abid).context("getting captured airbase")?;
+                    airbase
+                        .set_coalition(*side)
+                        .context("setting airbase coalition")?;
+                }
                 self.repair_one_logi_step(*side, now, oid)
                     .context("repairing captured airbase logi")?;
                 self.repair_services(*side, now, oid)
@@ -1375,9 +1530,11 @@ impl Db {
                 for (_, ucid, troop_origin, gid) in gids {
                     self.delete_group(&gid)
                         .context("deleting capturing troops")?;
-                    if previous_owner != new_owner || troop_origin != Some(oid) {
-                        if !ucids.contains(&ucid) {
-                            ucids.push(ucid);
+                    if let Some(ucid) = ucid {
+                        if previous_owner != new_owner || troop_origin != Some(oid) {
+                            if !ucids.contains(&ucid) {
+                                ucids.push(ucid);
+                            }
                         }
                     }
                 }
@@ -1387,9 +1544,11 @@ impl Db {
                     by: ucids.clone(),
                 });
                 if let Some(points) = self.ephemeral.cfg.points.as_ref() {
-                    let ppp = (points.capture as f32 / ucids.len() as f32).ceil() as i32;
-                    for ucid in &ucids {
-                        self.adjust_points(ucid, ppp, &format!("for capturing {name}"));
+                    if !ucids.is_empty() {
+                        let ppp = (points.capture as f32 / ucids.len() as f32).ceil() as i32;
+                        for ucid in &ucids {
+                            self.adjust_points(ucid, ppp, &format!("for capturing {name}"));
+                        }
                     }
                 }
                 let obj = objective!(self, oid)?;

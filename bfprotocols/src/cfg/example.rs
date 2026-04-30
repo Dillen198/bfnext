@@ -35,6 +35,7 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 0,
             weight: 800,
+            special_forces: false,
         },
         Troop {
             name: "Anti Tank".into(),
@@ -50,6 +51,7 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 1,
             weight: 1000,
+            special_forces: false,
         },
         Troop {
             name: "Mortar".into(),
@@ -65,6 +67,7 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 1200,
+            special_forces: false,
         },
         Troop {
             name: "Igla".into(),
@@ -76,6 +79,7 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 500,
+            special_forces: false,
         },
     ]
 }
@@ -96,6 +100,7 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 0,
             weight: 800,
+            special_forces: false,
         },
         Troop {
             name: "Anti Tank".into(),
@@ -111,6 +116,7 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 1,
             weight: 1000,
+            special_forces: false,
         },
         Troop {
             name: "Mortar".into(),
@@ -126,6 +132,7 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 1200,
+            special_forces: false,
         },
         Troop {
             name: "Stinger".into(),
@@ -141,6 +148,7 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 500,
+            special_forces: false,
         },
     ]
 }
@@ -1972,7 +1980,9 @@ impl Default for Cfg {
                 (Side::Blue, "BCRATE".into()),
             ]),
             c130_cargo_template: FxHashMap::default(),
+            helo_cargo_template: FxHashMap::default(),
             c130_cargo: None,
+            helo_cargo: None,
             deployables: FxHashMap::from_iter([
                 (Side::Red, default_red_deployables()),
                 (Side::Blue, default_blue_deployables()),
@@ -2001,6 +2011,14 @@ impl Default for Cfg {
                 ),
             ]),
             jtac_priority: default_jtac_priority(),
+            airborne_ewrs: FxHashMap::from_iter([(
+                "E-3A".into(),
+                AirborneEwr {
+                    range: 370000,
+                    aspect_half_angle: None,
+                },
+            )]),
+            ground_radar_ewrs: FxHashMap::default(),
             extra_fixed_wing_objectives: FxHashSet::default(),
             ewr_mode: EwrMode::Original,
             ewr_delay: 60,
@@ -2017,12 +2035,20 @@ impl Default for Cfg {
                 repair_time: 600,                  // 10 minutes
                 groups: vec![],                    // Carrier groups defined here, or auto-detected by BCARRIER/RCARRIER prefix
             }),
+            special_sam_sites: vec![],
             weather_effects: None,
             time_of_day_effects: None,
             campaign_events: None,
             pilot_experience: None,
             csar: None,
             supply_alert_threshold: 20,
+            supply_auto_convoy_delay_secs: 300,
+            objective_start_points: FxHashMap::default(),
+            dismount: FxHashMap::default(),
+            last_stand: None,
+            under_attack: None,
+            counter_battery: None,
+            era: None,
             smart_commander: Some(SmartCommanderCfg {
                 tick_period_secs: 60,
                 treasury_start: 2000,
@@ -2031,7 +2057,14 @@ impl Default for Cfg {
                 objective_fund_max_per_tick: 200,
                 objective_fund_period_secs: 120,
                 holding_bonus_per_objective: 5,
-                mission_rewards: MissionRewardCfg::default(),
+                objective_start_points: 500,
+                reinforcement_cost: 300,
+                counter_offensive_cost: 500,
+                barrage_cost: 150,
+                ambush_cost: 100,
+                cap_cost: 250,
+                cap_min_friendly_pilots: 1,
+                cap_cooldown_secs: 300,
             }),
         }
     }

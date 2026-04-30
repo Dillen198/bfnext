@@ -19,7 +19,7 @@ use dcso3::{
     coalition::Side,
     env::miz::{GroupId, UnitId},
     net::{Net, PlayerId},
-    trigger::{Action, ArrowSpec, CircleSpec, MarkId, QuadSpec, RectSpec, SideFilter, TextSpec},
+    trigger::{Action, ArrowSpec, CircleSpec, LineSpec, MarkId, PolylineSpec, QuadSpec, RectSpec, SideFilter, TextSpec},
 };
 use log::error;
 use std::collections::VecDeque;
@@ -33,7 +33,6 @@ pub enum PanelDest {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum MarkDest {
     All,
     Side(Side),
@@ -57,7 +56,6 @@ pub enum MsgTyp {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum Msg {
     Message {
         typ: MsgTyp,
@@ -90,6 +88,18 @@ pub enum Msg {
         id: MarkId,
         to: SideFilter,
         spec: ArrowSpec,
+        message: Option<String>,
+    },
+    Line {
+        id: MarkId,
+        to: SideFilter,
+        spec: LineSpec,
+        message: Option<String>,
+    },
+    Polyline {
+        id: MarkId,
+        to: SideFilter,
+        spec: PolylineSpec,
         message: Option<String>,
     },
     SetMarkupColor {
@@ -156,7 +166,9 @@ impl MsgQ {
                     | Msg::Rect { id, .. }
                     | Msg::Quad { id, .. }
                     | Msg::Text { id, .. }
-                    | Msg::Arrow { id, .. } => {
+                    | Msg::Arrow { id, .. }
+                    | Msg::Line { id, .. }
+                    | Msg::Polyline { id, .. } => {
                         if *id == did {
                             push = false;
                             false
@@ -180,7 +192,6 @@ impl MsgQ {
         }
     }
 
-    #[allow(dead_code)]
     pub fn mark_to_all<S: Into<String>>(
         &mut self,
         position: Vector2,
@@ -222,7 +233,6 @@ impl MsgQ {
         id
     }
 
-    #[allow(dead_code)]
     pub fn mark_to_group<S: Into<String>>(
         &mut self,
         group: GroupId,
@@ -244,7 +254,6 @@ impl MsgQ {
         id
     }
 
-    #[allow(dead_code)]
     pub fn panel_to_all<S: Into<String>>(&mut self, display_time: i64, clear_view: bool, text: S) {
         self.send_with_priority(
             0,
@@ -326,7 +335,6 @@ impl MsgQ {
         }))
     }
 
-    #[allow(dead_code)]
     pub fn rect_to_all(
         &mut self,
         to: SideFilter,
@@ -361,6 +369,26 @@ impl MsgQ {
         self.0[1].push_back(Cmd::Send(Msg::Text { id, to, spec }))
     }
 
+    pub fn line_to_all(
+        &mut self,
+        to: SideFilter,
+        id: MarkId,
+        spec: LineSpec,
+        message: Option<String>,
+    ) {
+        self.0[2].push_back(Cmd::Send(Msg::Line { id, to, spec, message }))
+    }
+
+    pub fn out_line_to_all(
+        &mut self,
+        to: SideFilter,
+        id: MarkId,
+        spec: PolylineSpec,
+        message: Option<String>,
+    ) {
+        self.0[2].push_back(Cmd::Send(Msg::Polyline { id, to, spec, message }))
+    }
+
     pub fn arrow_to(
         &mut self,
         to: SideFilter,
@@ -380,7 +408,6 @@ impl MsgQ {
         self.0[2].push_back(Cmd::Send(Msg::SetMarkupColor { id, color }))
     }
 
-    #[allow(dead_code)]
     pub fn set_markup_fill_color(&mut self, id: MarkId, color: Color) {
         self.0[2].push_back(Cmd::Send(Msg::SetMarkupFillColor { id, color }))
     }
@@ -476,6 +503,18 @@ impl MsgQ {
                     spec,
                     message,
                 }) => act.arrow_to_all(to, id, spec, message),
+                Cmd::Send(Msg::Line {
+                    id,
+                    to,
+                    spec,
+                    message,
+                }) => act.line_to_all(to, id, spec, message),
+                Cmd::Send(Msg::Polyline {
+                    id,
+                    to,
+                    spec,
+                    message,
+                }) => act.out_line_to_all(to, id, spec, message),
                 Cmd::Send(Msg::SetMarkupColor { id, color }) => act.set_markup_color(id, color),
                 Cmd::Send(Msg::SetMarkupFillColor { id, color }) => {
                     act.set_markup_fill_color(id, color)

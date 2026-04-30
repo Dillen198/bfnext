@@ -16,8 +16,10 @@ for more details.
 
 use super::{
     cargo::{Cargo, C130Cargo},
+    events::EventId,
     group::{DeployKind, SpawnedGroup, SpawnedUnit},
     logistics::LogiStage,
+    map_layer::MapLayer,
     markup::ObjectiveMarkup,
     objective::Objective,
     persisted::Persisted,
@@ -51,7 +53,9 @@ use dcso3::{
     centroid2d,
     coalition::Side,
     controller::{MissionPoint, PointType},
+    country::Country,
     env::miz::{self, GroupKind, Miz, MizIndex},
+    group::GroupCategory,
     net::{SlotId, Ucid},
     object::{ClassObject, DcsObject, DcsOid},
     perf::record_perf,
@@ -81,6 +85,44 @@ pub struct SlotInfo {
     pub ground_start: bool,
     pub miz_gid: miz::GroupId,
     pub side: Side,
+}
+
+/// Tracks the phase of an active SF HVT capture mission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SfPhase {
+    /// SF team is moving toward the HVT position.
+    MovingToHvt,
+    /// SF team has captured the HVT and is retreating toward extraction.
+    Captured,
+}
+
+/// State for a deployed Special Forces team on an HVT capture mission.
+#[derive(Debug, Clone)]
+pub struct SfMission {
+    /// The HVT campaign event this mission targets.
+    pub event_id: EventId,
+    /// Side that owns the SF team (the capturing side).
+    pub side: Side,
+    /// World position of the HVT unit.
+    pub hvt_pos: Vector2,
+    /// Position where the SF team was dropped (extraction return point).
+    pub drop_pos: Vector2,
+    /// Current phase of the SF mission.
+    pub phase: SfPhase,
+    /// Timestamp when capture was achieved (used for extraction timeout).
+    pub captured_at: Option<DateTime<Utc>>,
+    /// UCID of the pilot who deployed the SF team.
+    pub ucid: Ucid,
+    /// Reward points to award on successful extraction.
+    pub reward_points: i32,
+}
+
+/// Metadata for a group that was created from inline config rather than a .miz template.
+/// Stored in Ephemeral so that spawn_group can build a synthetic Lua group table for DCS.
+#[derive(Debug, Clone)]
+pub(super) struct SyntheticGroupSpec {
+    pub country: Country,
+    pub category: GroupCategory,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -114,7 +156,7 @@ pub struct Ephemeral {
     /// C-130 physical cargo tracking: crate_name -> C130Cargo (tracked by name because DCS changes object ID when loading/dropping)
     pub(super) c130_crates: FxHashMap<String, C130Cargo>,
     /// Queue for staggered crate spawning: (spawn_time, crate_data with index for positioning)
-    pub(super) c130_spawn_queue: BTreeMap<DateTime<Utc>, Vec<(Side, String, ObjectiveId, Ucid, Crate, usize)>>,
+    pub(super) c130_spawn_queue: BTreeMap<DateTime<Utc>, Vec<(Side, String, ObjectiveId, Ucid, Crate, usize, bool)>>,
     /// Supply convoy tracking: convoy_id -> SupplyConvoy
     pub(super) active_convoys: FxHashMap<super::logistics::ConvoyId, super::logistics::SupplyConvoy>,
     /// Track last convoy spawn time per side to throttle spawning
@@ -165,21 +207,27 @@ pub struct Ephemeral {
     sync_warehouse: Vec<(ObjectiveId, Vehicle)>,
     pub(super) msgs: MsgQ,
     pub(super) victory: Option<(DateTime<Utc>, Side)>,
-    /// Active mission plans created by players
-    pub(super) planned_missions: Vec<bfprotocols::db::mission::PlannedMission>,
     /// Downed pilots that have already fired their approach flare (reset on restart)
     pub(super) csar_flared: FxHashSet<GroupId>,
     /// Downed pilots currently moving toward a helicopter: gid -> last move order time
     pub(super) csar_moving: FxHashMap<GroupId, DateTime<Utc>>,
+    /// Objectives for which the "enemies spotted" threat alert has already been sent this session.
+    /// Prevents the alert from repeating each time a threat appears/clears cycle repeats.
+    pub(crate) threat_notified: FxHashSet<ObjectiveId>,
     /// Downed pilots for which the all-helicopter-pilots notification has already been sent
     pub(super) csar_notified: FxHashSet<GroupId>,
     /// Per-pilot last renotify broadcast time (bearing/distance reminder to helo pilots)
     pub(super) csar_last_renotify: FxHashMap<GroupId, DateTime<Utc>>,
     /// Per-pilot last smoke request time (for cooldown enforcement)
     pub(crate) csar_smoke_cooldown: FxHashMap<GroupId, DateTime<Utc>>,
-    /// Set of objective IDs for which a "supply critical" alert has been broadcast.
-    /// Cleared when the objective's supply recovers above the threshold.
-    pub(super) supply_warned: FxHashSet<ObjectiveId>,
+    /// Set of objective IDs for which a "supply critical" alert has been broadcast,
+    /// mapped to the time the alert first fired. Cleared when supply recovers.
+    pub(super) supply_warned: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// Active SF HVT capture missions. Maps the deployed SF group ID → mission state.
+    pub(crate) sf_missions: FxHashMap<GroupId, SfMission>,
+    /// SF missions currently in the helicopter awaiting delivery back to base.
+    /// Maps pilot SlotId → mission (moved here from sf_missions when SF is extracted).
+    pub(crate) sf_cargo: FxHashMap<SlotId, SfMission>,
     /// Tracks when enemy troops first entered an objective zone (for capture momentum timer).
     /// Maps ObjectiveId -> (capturing Side, entry DateTime). Cleared if troops leave.
     pub(super) capture_progress: FxHashMap<ObjectiveId, (dcso3::coalition::Side, DateTime<Utc>)>,
@@ -187,6 +235,18 @@ pub struct Ephemeral {
     pub(crate) last_treasury_income: DateTime<Utc>,
     /// Last time objectives were funded (Smart Commander).
     pub(crate) last_objective_fund: DateTime<Utc>,
+    /// Centralised F10 map drawing layer.
+    pub(super) map_layer: MapLayer,
+    /// Registry of groups whose unit definitions came from inline config rather than a .miz template.
+    /// Keyed by the group's template_name (which encodes the group's name prefix).
+    /// Used by spawn_group to build synthetic Lua tables for DCS when there is no .miz template.
+    pub(super) synthetic_templates: FxHashMap<String, SyntheticGroupSpec>,
+    /// Mercy timer state: (arm_time, losing_side). Set when a side drops to trigger_count primary objectives.
+    pub(crate) last_stand_state: Option<(DateTime<Utc>, Side)>,
+    /// Last time an under-attack notification was sent per objective (for cooldown).
+    pub(crate) last_under_attack_notif: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// Last time a counter-battery report was sent per grid cell (x_cell, y_cell).
+    pub(crate) counter_battery_reports: FxHashMap<(i64, i64), DateTime<Utc>>,
 }
 
 impl Default for Ephemeral {
@@ -238,16 +298,23 @@ impl Default for Ephemeral {
             msgs: MsgQ::default(),
             logistics_stage: LogiStage::default(),
             victory: None,
-            planned_missions: Vec::default(),
             csar_flared: FxHashSet::default(),
             csar_moving: FxHashMap::default(),
+            threat_notified: FxHashSet::default(),
             csar_notified: FxHashSet::default(),
             csar_last_renotify: FxHashMap::default(),
             csar_smoke_cooldown: FxHashMap::default(),
-            supply_warned: FxHashSet::default(),
+            supply_warned: FxHashMap::default(),
+            sf_missions: FxHashMap::default(),
+            sf_cargo: FxHashMap::default(),
             capture_progress: FxHashMap::default(),
             last_treasury_income: DateTime::<Utc>::default(),
             last_objective_fund: DateTime::<Utc>::default(),
+            map_layer: MapLayer::default(),
+            synthetic_templates: FxHashMap::default(),
+            last_stand_state: None,
+            last_under_attack_notif: FxHashMap::default(),
+            counter_battery_reports: FxHashMap::default(),
         }
     }
 }
@@ -270,6 +337,10 @@ impl Ephemeral {
         self.slot_info.get(slot)
     }
 
+    pub fn get_airbase_by_oid(&self, oid: &ObjectiveId) -> Option<&DcsOid<ClassAirbase>> {
+        self.airbase_by_oid.get(oid)
+    }
+
     pub fn get_slot_info_by_miz_gid(&self, gid: &miz::GroupId) -> Option<(SlotId, &SlotInfo)> {
         self.slot_by_miz_gid
             .get(gid)
@@ -277,6 +348,12 @@ impl Ephemeral {
     }
 
     pub fn create_objective_markup(&mut self, persisted: &Persisted, obj: &Objective) {
+        if obj.kind.is_special_sam_site() {
+            if let Some(mk) = self.objective_markup.remove(&obj.id) {
+                mk.remove(&mut self.msgs);
+            }
+            return;
+        }
         if let Some(mk) = self.objective_markup.remove(&obj.id) {
             mk.remove(&mut self.msgs);
         }
@@ -309,6 +386,43 @@ impl Ephemeral {
         if let Some(mk) = self.objective_markup.remove(oid) {
             mk.remove(&mut self.msgs)
         }
+    }
+
+    /// Perform a full diff-based update of the F10 map layer.  Call this from
+    /// the slow tick in lib.rs (every ~5 seconds).
+    pub fn update_map_layer(&mut self, persisted: &Persisted, now: DateTime<Utc>) {
+        let convoys = &self.active_convoys;
+        let air = &self.active_air_routes;
+        let sea = &self.active_sea_routes;
+        let csar_capture_mins = self.cfg.csar.as_ref().map(|c| c.capture_timer).unwrap_or(0);
+        self.map_layer.update_all(persisted, convoys, air, sea, csar_capture_mins, now, &mut self.msgs);
+    }
+
+    /// Draw a fire-mission overlay on the F10 map.  Replaces the inline
+    /// `circle_to_all` call in `db/actions.rs`.
+    pub fn on_fire_mission(
+        &mut self,
+        gun_pos: dcso3::Vector2,
+        target_pos: dcso3::Vector2,
+        radius_m: f64,
+        gun_count: u32,
+        side: dcso3::coalition::Side,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_fire_mission(
+            gun_pos,
+            target_pos,
+            radius_m,
+            gun_count,
+            side,
+            now,
+            &mut self.msgs,
+        );
+    }
+
+    /// Remove all F10 map layer marks (e.g. on mission reset).
+    pub fn remove_map_layer(&mut self) {
+        self.map_layer.remove_all(&mut self.msgs);
     }
 
     pub fn push_sync_warehouse(&mut self, oid: ObjectiveId, vehicle: Vehicle) {
@@ -430,13 +544,8 @@ impl Ephemeral {
         &mut self.msgs
     }
 
-    pub fn planned_missions(&self) -> &[bfprotocols::db::mission::PlannedMission] {
-        &self.planned_missions
-    }
-
-    #[allow(dead_code)]
-    pub fn planned_missions_mut(&mut self) -> &mut Vec<bfprotocols::db::mission::PlannedMission> {
-        &mut self.planned_missions
+    pub fn map_layer_and_msgs(&mut self) -> (&mut MapLayer, &mut MsgQ) {
+        (&mut self.map_layer, &mut self.msgs)
     }
 
     pub fn get_uid_by_object_id(&self, id: &DcsOid<ClassUnit>) -> Option<&UnitId> {
@@ -630,14 +739,6 @@ impl Ephemeral {
         self.object_id_by_slot
             .get(slot)
             .ok_or_else(|| anyhow!("unit {:?} not currently in the mission", slot))
-            .and_then(|id| Unit::get_instance(lua, id))
-    }
-
-    #[allow(dead_code)]
-    pub fn instance_unit<'lua>(&self, lua: MizLua<'lua>, uid: &UnitId) -> Result<Unit<'lua>> {
-        self.object_id_by_uid
-            .get(uid)
-            .ok_or_else(|| anyhow!("unit {:?} not currently in the mission", uid))
             .and_then(|id| Unit::get_instance(lua, id))
     }
 
@@ -915,7 +1016,10 @@ impl Ephemeral {
                     | ActionKind::CarrierWaypoint
                     | ActionKind::CarrierRepair
                     | ActionKind::CarrierRespawn
-                    | ActionKind::NavalCruiseMissileStrike(_) => (),
+                    // Artillery uses existing Armor/Mr/Lr groups; no template validation needed.
+                    | ActionKind::Artillery(_)
+                    | ActionKind::NavalCruiseMissileStrike(_)
+                    | ActionKind::Recon(_) => (),
                 }
             }
         }
@@ -1218,66 +1322,139 @@ impl Ephemeral {
             return Ok(Some(Spawned::Group(dcs_group)));
         }
 
-        let template = spctx
-            .get_template(
-                idx,
-                GroupKind::Any,
-                group.side,
-                group.template_name.as_str(),
-            )
-            .with_context(|| format_compact!("getting template {}", group.template_name))?;
-        template.group.set("lateActivation", false)?;
-        template.group.set("hidden", false)?;
-        template.group.set("visible", true)?;
-        template.group.set_name(group.name.clone())?;
-        if mission.len() > 0 {
-            template
-                .group
-                .route()
-                .context("getting route")?
-                .set_points(mission)
-                .context("setting points")?;
-        }
+        // Collect alive units and their positions.
         let mut points: SmallVec<[Vector2; 16]> = smallvec![];
-        let by_tname: FxHashMap<&str, &SpawnedUnit> = group
+        let alive_units: Vec<&SpawnedUnit> = group
             .units
             .into_iter()
             .filter_map(|uid| {
                 persisted.units.get(uid).and_then(|u| {
                     points.push(u.pos);
-                    if u.dead {
-                        None
-                    } else {
-                        Some((u.template_name.as_str(), u))
-                    }
+                    if u.dead { None } else { Some(u) }
                 })
             })
             .collect();
-        let alive = {
-            let units = template.group.units().context("getting units")?;
-            let mut i = 1;
-            while i as usize <= units.len() {
-                let unit = units.get(i)?;
-                match by_tname.get(unit.name()?.as_str()) {
-                    None => units.remove(i)?,
-                    Some(su) => {
-                        if su.tags.contains(UnitTag::AWACS) {
-                            let stn = String::from(format_compact!("{:005o}", self.awacs_stn));
-                            if let Ok(props) = unit.raw_get::<_, LuaTable>("AddPropAircraft") {
-                                self.awacs_stn -= 1;
-                                props.raw_set("STN_L16", stn)?;
+
+        // Check whether this is a synthetic (inline-config) group.  If so, build a Lua
+        // group table from scratch instead of cloning a .miz template.
+        let (template, alive) = if let Some(spec) = self.synthetic_templates.get(group.template_name.as_str()).cloned() {
+            if alive_units.is_empty() {
+                record_perf(&mut perf.spawn, ts);
+                return Ok(None);
+            }
+            use dcso3::LuaEnv as _;
+            let lua_inner = spctx.lua().inner();
+            let units_tbl = lua_inner.create_table()?;
+            for (i, su) in alive_units.iter().enumerate() {
+                let unit_tbl = lua_inner.create_table()?;
+                unit_tbl.raw_set("type", su.typ.0.as_str())?;
+                unit_tbl.raw_set("name", su.name.as_str())?;
+                unit_tbl.raw_set("x", su.pos.x)?;
+                unit_tbl.raw_set("y", su.pos.y)?;
+                unit_tbl.raw_set("heading", su.heading)?;
+                unit_tbl.raw_set("psi", -su.heading)?;
+                unit_tbl.raw_set("skill", "High")?;
+                unit_tbl.raw_set("playerCanDrive", false)?;
+                unit_tbl.raw_set("coldAtStart", false)?;
+                units_tbl.raw_set(i + 1, unit_tbl)?;
+            }
+            let point = centroid2d(points.iter().map(|p| *p));
+            let wp_tbl = lua_inner.create_table()?;
+            wp_tbl.raw_set("x", point.x)?;
+            wp_tbl.raw_set("y", point.y)?;
+            wp_tbl.raw_set("alt", 0.0f64)?;
+            wp_tbl.raw_set("type", "Turning Point")?;
+            wp_tbl.raw_set("action", "Off Road")?;
+            wp_tbl.raw_set("speed", 0.0f64)?;
+            wp_tbl.raw_set("speed_locked", true)?;
+            let combo_params = lua_inner.create_table()?;
+            combo_params.raw_set("tasks", lua_inner.create_table()?)?;
+            let combo_tbl = lua_inner.create_table()?;
+            combo_tbl.raw_set("id", "ComboTask")?;
+            combo_tbl.raw_set("params", combo_params)?;
+            wp_tbl.raw_set("task", combo_tbl)?;
+            let wps_tbl = lua_inner.create_table()?;
+            wps_tbl.raw_set(1, wp_tbl)?;
+            let route_tbl = lua_inner.create_table()?;
+            route_tbl.raw_set("points", wps_tbl)?;
+            let group_tbl = lua_inner.create_table()?;
+            group_tbl.raw_set("name", group.name.as_str())?;
+            group_tbl.raw_set("groupId", 0i64)?;
+            group_tbl.raw_set("x", point.x)?;
+            group_tbl.raw_set("y", point.y)?;
+            group_tbl.raw_set("lateActivation", false)?;
+            group_tbl.raw_set("hidden", false)?;
+            group_tbl.raw_set("visible", true)?;
+            group_tbl.raw_set("uncontrolled", false)?;
+            group_tbl.raw_set("task", "Ground Nothing")?;
+            group_tbl.raw_set("route", route_tbl)?;
+            group_tbl.raw_set("units", units_tbl)?;
+            let miz_group = miz::Group::from_lua(LuaValue::Table(group_tbl), lua_inner)
+                .map_err(|e| anyhow!("building synthetic group table: {e}"))?;
+            use dcso3::env::miz::GroupInfo;
+            let template = GroupInfo {
+                side: group.side,
+                country: spec.country,
+                category: match spec.category {
+                    GroupCategory::Ground | GroupCategory::Train => dcso3::env::miz::GroupKind::Vehicle,
+                    GroupCategory::Ship => dcso3::env::miz::GroupKind::Ship,
+                    GroupCategory::Airplane | GroupCategory::Helicopter => dcso3::env::miz::GroupKind::Plane,
+                },
+                group: miz_group,
+            };
+            (template, true)
+        } else {
+            let template = spctx
+                .get_template(
+                    idx,
+                    GroupKind::Any,
+                    group.side,
+                    group.template_name.as_str(),
+                )
+                .with_context(|| format_compact!("getting template {}", group.template_name))?;
+            template.group.set("lateActivation", false)?;
+            template.group.set("hidden", false)?;
+            template.group.set("visible", true)?;
+            template.group.set_name(group.name.clone())?;
+            if mission.len() > 0 {
+                template
+                    .group
+                    .route()
+                    .context("getting route")?
+                    .set_points(mission)
+                    .context("setting points")?;
+            }
+            let by_tname: FxHashMap<&str, &SpawnedUnit> = alive_units
+                .iter()
+                .map(|u| (u.template_name.as_str(), *u))
+                .collect();
+            let alive = {
+                let units = template.group.units().context("getting units")?;
+                let mut i = 1;
+                while i as usize <= units.len() {
+                    let unit = units.get(i)?;
+                    match by_tname.get(unit.name()?.as_str()) {
+                        None => units.remove(i)?,
+                        Some(su) => {
+                            if su.tags.contains(UnitTag::AWACS) {
+                                let stn = String::from(format_compact!("{:005o}", self.awacs_stn));
+                                if let Ok(props) = unit.raw_get::<_, LuaTable>("AddPropAircraft") {
+                                    self.awacs_stn -= 1;
+                                    props.raw_set("STN_L16", stn)?;
+                                }
                             }
+                            unit.raw_remove("unitId")?;
+                            unit.set_pos(su.pos)?;
+                            unit.set_alt(su.position.p.y)?;
+                            unit.set_heading(su.heading)?;
+                            unit.set_name(su.name.clone())?;
+                            i += 1;
                         }
-                        unit.raw_remove("unitId")?;
-                        unit.set_pos(su.pos)?;
-                        unit.set_alt(su.position.p.y)?;
-                        unit.set_heading(su.heading)?;
-                        unit.set_name(su.name.clone())?;
-                        i += 1;
                     }
                 }
-            }
-            units.len() > 0
+                units.len() > 0
+            };
+            (template, alive)
         };
         if !alive {
             record_perf(&mut perf.spawn, ts);

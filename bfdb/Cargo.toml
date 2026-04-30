@@ -49,3 +49,5 @@ warp = { workspace = true }
 yats = { version = "0.1", path = "../yats" }
 rust-embed = { version = "8", features = ["warp-ex"] }
 mime_guess = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+urlencoding = "2"

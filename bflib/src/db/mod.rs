@@ -17,11 +17,10 @@ for more details.
 extern crate nalgebra as na;
 use self::{group::DeployKind, persisted::Persisted};
 use crate::{bg::Task, db::ephemeral::Ephemeral, jtac::JtId};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use bfprotocols::{
     cfg::{
-        Action, ActionKind, AwacsCfg, Cfg, Deployable, DeployableEwr, DeployableJtac, DroneCfg,
-        Troop,
+        Action, ActionKind, AwacsCfg, Cfg, Deployable, DeployableJtac, DroneCfg, Troop,
     },
     db::{
         group::{GroupId, UnitId},
@@ -29,7 +28,7 @@ use bfprotocols::{
     },
 };
 use dcso3::{
-    Vector3, centroid3d,
+    Position3, Vector3, centroid3d,
     coalition::Side,
     env::miz::{Miz, MizIndex},
 };
@@ -42,6 +41,7 @@ pub mod ephemeral;
 pub mod events;
 pub mod group;
 pub mod logistics;
+pub mod map_layer;
 pub mod markup;
 pub mod mizinit;
 pub mod objective;
@@ -182,7 +182,61 @@ pub struct Db {
     pub ephemeral: Ephemeral,
 }
 
+/// A donor to the EWR radar network.
+/// `aspect_half_angle` is the half-angle of the forward detection cone in degrees;
+/// `None` means omnidirectional (ground EWRs, AWACS, ships).
+#[derive(Debug, Clone, Copy)]
+pub struct RadarDonor {
+    pub pos: Position3,
+    pub side: Side,
+    pub range: u32,
+    pub aspect_half_angle: Option<u16>,
+    /// True if this is an airborne donor (player aircraft).
+    /// Ground/naval donors are false.
+    pub airborne: bool,
+}
+
 impl Db {
+    /// Distribute `budget` points across owned objectives on `side`, weighted by
+    /// objective kind. Only seeds objectives whose current points == 0 (when
+    /// `only_zero` is true) so existing earned points are preserved on load.
+    fn seed_objective_points(&mut self, side: Side, budget: i32, only_zero: bool) {
+        use bfprotocols::db::objective::ObjectiveKind;
+        fn weight(kind: &ObjectiveKind) -> i32 {
+            match kind {
+                ObjectiveKind::Airbase => 5,
+                ObjectiveKind::NavalBase => 4,
+                ObjectiveKind::Factory { .. } => 4,
+                ObjectiveKind::Logistics => 3,
+                ObjectiveKind::Fob => 2,
+                ObjectiveKind::CarrierGroup { .. } => 2,
+                ObjectiveKind::Farp { .. } => 1,
+                ObjectiveKind::SpecialSamSite { .. } => 1,
+            }
+        }
+        let candidates: Vec<_> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(_, obj)| {
+                obj.owner() == side && (!only_zero || obj.points == 0)
+            })
+            .map(|(id, obj)| (*id, weight(obj.kind())))
+            .collect();
+        let total_weight: i32 = candidates.iter().map(|(_, w)| w).sum();
+        if total_weight == 0 {
+            return;
+        }
+        for (oid, w) in candidates {
+            let share = (budget as i64 * w as i64 / total_weight as i64) as i32;
+            if share > 0 {
+                if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+                    obj.points = share;
+                }
+            }
+        }
+    }
+
     pub fn load(
         miz: &Miz,
         idx: &MizIndex,
@@ -203,6 +257,11 @@ impl Db {
         GroupId::setseq(max(db.persisted.gid, GroupId::seq()));
         UnitId::setseq(max(db.persisted.uid, UnitId::seq()));
         db.ephemeral.set_cfg(miz, idx, cfg, to_bg)?;
+        for (side, budget) in db.ephemeral.cfg.objective_start_points.clone() {
+            if budget > 0 {
+                db.seed_objective_points(side, budget, true);
+            }
+        }
         Ok(db)
     }
 
@@ -229,124 +288,45 @@ impl Db {
         self.ephemeral.active_convoys.values().filter(|c| c.side == side).count()
     }
 
-    /// Create a new planned mission
-    pub fn create_mission(
-        &mut self,
-        name: compact_str::CompactString,
-        mission_type: bfprotocols::db::mission::MissionType,
-        creator: dcso3::net::Ucid,
-        side: dcso3::coalition::Side,
-        briefing: compact_str::CompactString,
-    ) -> bfprotocols::db::mission::MissionId {
-        use bfprotocols::db::mission::*;
-        let id = MissionId::new();
-        let mission = PlannedMission {
-            id,
-            name,
-            mission_type,
-            creator,
-            side,
-            created_at: chrono::Utc::now(),
-            scheduled_time: None,
-            status: MissionStatus::Planning,
-            flights: Vec::new(),
-            target_pos: None,
-            briefing,
-            rewarded: false,
-        };
-        self.ephemeral.planned_missions.push(mission);
-        id
+    /// True if there is an active supply convoy currently headed to the given objective.
+    #[allow(dead_code)]
+    pub fn convoy_inbound_to(&self, oid: ObjectiveId) -> bool {
+        self.ephemeral
+            .active_convoys
+            .values()
+            .any(|c| c.destination == oid)
     }
 
-    /// Get active missions for a side
-    #[allow(dead_code)]
-    pub fn missions_for_side(&self, side: dcso3::coalition::Side) -> Vec<&bfprotocols::db::mission::PlannedMission> {
-        use bfprotocols::db::mission::MissionStatus;
-        self.ephemeral.planned_missions.iter()
-            .filter(|m| m.side == side && !matches!(m.status, MissionStatus::Completed | MissionStatus::Cancelled))
+    /// Objectives of `side` that enemy troops are actively attempting to capture.
+    pub fn objectives_being_captured_by(&self, side: dcso3::coalition::Side) -> Vec<ObjectiveId> {
+        self.ephemeral
+            .capture_progress
+            .iter()
+            .filter_map(|(oid, (capturing_side, _))| {
+                if *capturing_side != side {
+                    // capturing_side is the ENEMY — oid is a friendly objective being taken
+                    let obj = self.persisted.objectives.get(oid)?;
+                    if obj.owner() == side {
+                        Some(*oid)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
-    /// Join a player to a mission
-    pub fn join_mission(
-        &mut self,
-        mission_id: bfprotocols::db::mission::MissionId,
-        ucid: dcso3::net::Ucid,
-    ) -> Result<()> {
-        let mission = self.ephemeral.planned_missions.iter_mut()
-            .find(|m| m.id == mission_id)
-            .ok_or_else(|| anyhow!("mission not found"))?;
-        if mission.flights.is_empty() {
-            mission.flights.push(bfprotocols::db::mission::FlightPlan {
-                callsign: compact_str::format_compact!("Flight 1"),
-                aircraft_type: compact_str::format_compact!("Any"),
-                num_aircraft: 1,
-                role: mission.mission_type,
-                waypoints: Vec::new(),
-                assigned_players: vec![ucid],
-                loadout_suggestion: None,
-            });
-        } else if let Some(flight) = mission.flights.first_mut() {
-            if !flight.assigned_players.contains(&ucid) {
-                flight.assigned_players.push(ucid);
-            }
-        }
-        Ok(())
-    }
-
-    /// Cancel a mission (only creator can cancel)
-    pub fn cancel_mission(
-        &mut self,
-        mission_id: bfprotocols::db::mission::MissionId,
-        ucid: &dcso3::net::Ucid,
-    ) -> Result<()> {
-        let mission = self.ephemeral.planned_missions.iter_mut()
-            .find(|m| m.id == mission_id)
-            .ok_or_else(|| anyhow!("mission not found"))?;
-        if mission.creator != *ucid {
-            bail!("only the mission creator can cancel");
-        }
-        mission.status = bfprotocols::db::mission::MissionStatus::Cancelled;
-        Ok(())
-    }
-
-    /// Mark a mission complete (creator only). Sets status to Completed,
-    /// sets rewarded=true, and returns (side, mission_type, name, participants).
-    pub fn complete_mission(
-        &mut self,
-        mission_id: bfprotocols::db::mission::MissionId,
-        ucid: &dcso3::net::Ucid,
-    ) -> Result<(Side, bfprotocols::db::mission::MissionType, compact_str::CompactString, Vec<dcso3::net::Ucid>)> {
-        use bfprotocols::db::mission::MissionStatus;
-        let mission = self.ephemeral.planned_missions.iter_mut()
-            .find(|m| m.id == mission_id)
-            .ok_or_else(|| anyhow!("mission not found"))?;
-        if mission.creator != *ucid {
-            bail!("only the mission creator can complete it");
-        }
-        if mission.rewarded {
-            bail!("mission has already been rewarded");
-        }
-        mission.status = MissionStatus::Completed;
-        mission.rewarded = true;
-        let side = mission.side;
-        let mt = mission.mission_type;
-        let name = mission.name.clone();
-        let players: Vec<dcso3::net::Ucid> = mission.flights.iter()
-            .flat_map(|f| f.assigned_players.iter().copied())
-            .collect();
-        Ok((side, mt, name, players))
-    }
-
-    pub fn ewrs(&self) -> impl Iterator<Item = (Vector3, Side, &DeployableEwr)> {
-        self.persisted.ewrs.into_iter().filter_map(|gid| {
+    /// Iterate over every active radar donor:
+    /// - deployed ground EWRs (omnidirectional, from the persisted EWR set)
+    /// - AI units whose vehicle type is in `cfg.ground_radar_ewrs` (ships, SAM search radars)
+    /// - player aircraft whose vehicle type is in `cfg.airborne_ewrs`
+    pub fn radar_donors(&self) -> impl Iterator<Item = RadarDonor> + '_ {
+        // Deployed EWR groups (AWACS actions, deployed EWR deployables)
+        let deployed = self.persisted.ewrs.into_iter().filter_map(|gid| {
             let group = self.persisted.groups.get(gid)?;
-            match &group.origin {
-                DeployKind::Crate { .. }
-                | DeployKind::Objective { .. }
-                | DeployKind::ObjectiveDeprecated
-                | DeployKind::Troop { .. }
-                | DeployKind::DownedPilot { .. } => None,
+            let (ewr, side) = match &group.origin {
                 DeployKind::Action {
                     spec:
                         Action {
@@ -358,18 +338,60 @@ impl Db {
                 | DeployKind::Deployed {
                     spec: Deployable { ewr: Some(ewr), .. },
                     ..
-                } => {
-                    let pos = centroid3d(
-                        group
-                            .units
-                            .into_iter()
-                            .map(|u| self.persisted.units[u].position.p.0),
-                    );
-                    Some((pos, group.side, ewr))
-                }
-                DeployKind::Action { .. } | DeployKind::Deployed { .. } => None,
-            }
-        })
+                } => (ewr, group.side),
+                _ => return None,
+            };
+            let p = centroid3d(
+                group
+                    .units
+                    .into_iter()
+                    .map(|u| self.persisted.units[u].position.p.0),
+            );
+            Some(RadarDonor {
+                pos: Position3 { p: dcso3::LuaVec3(p), ..Default::default() },
+                side,
+                range: ewr.range,
+                aspect_half_angle: None,
+                airborne: false,
+            })
+        });
+        // AI ground / naval units listed in ground_radar_ewrs
+        let ai_ground = self
+            .persisted
+            .units
+            .into_iter()
+            .filter(|(_, u)| !u.dead)
+            .filter_map(|(_, u)| {
+                self.ephemeral
+                    .cfg
+                    .ground_radar_ewrs
+                    .get(&u.typ)
+                    .map(|ewr_cfg| RadarDonor {
+                        pos: u.position,
+                        side: u.side,
+                        range: ewr_cfg.range,
+                        aspect_half_angle: ewr_cfg.aspect_half_angle,
+                        airborne: false,
+                    })
+            });
+        // Player aircraft listed in airborne_ewrs
+        let airborne = self
+            .instanced_players()
+            .filter(|(_, _, inst)| inst.in_air)
+            .filter_map(|(_, player, inst)| {
+                self.ephemeral
+                    .cfg
+                    .airborne_ewrs
+                    .get(&inst.typ)
+                    .map(|ewr_cfg| RadarDonor {
+                        pos: inst.position,
+                        side: player.side,
+                        range: ewr_cfg.range,
+                        aspect_half_angle: ewr_cfg.aspect_half_angle,
+                        airborne: true,
+                    })
+            });
+        deployed.chain(ai_ground).chain(airborne)
     }
 
     pub fn jtacs<'a>(&'a self) -> impl Iterator<Item = JtDesc> + 'a {
@@ -425,7 +447,8 @@ impl Db {
                     | DeployKind::ObjectiveDeprecated
                     | DeployKind::Troop { .. }
                     | DeployKind::Deployed { .. }
-                    | DeployKind::DownedPilot { .. } => None,
+                    | DeployKind::DownedPilot { .. }
+                    | DeployKind::Dismount { .. } => None,
                 }
             })
             .chain(self.instanced_players().filter_map(|(_, p, inst)| {

@@ -68,6 +68,7 @@ fn who(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
                 DeployKind::Crate { .. }
                 | DeployKind::Objective { .. }
                 | DeployKind::ObjectiveDeprecated
+                | DeployKind::Dismount { .. }
                 | DeployKind::DownedPilot { .. } => None,
             }),
         }),

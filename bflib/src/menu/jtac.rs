@@ -53,16 +53,27 @@ pub fn jtac_status(_: MizLua, arg: ArgTuple<Option<Ucid>, JtId>) -> Result<()> {
     let msg = jtac
         .status(&ctx.db, ctx.jtac.location_by_code())
         .context("generate jtac status")?;
-    match &arg.fst {
-        None => ctx
-            .db
-            .ephemeral
-            .msgs()
-            .panel_to_side(10, false, jtac.side(), msg),
-        Some(ucid) => ctx
-            .db
-            .ephemeral
-            .panel_to_player(&ctx.db.persisted, 10, ucid, msg),
+    // If a specific player requested status and there's a target, drop a group-visible mark
+    if let Some(ucid) = &arg.fst {
+        // Extract mark info before any mutable borrow
+        let mark_info = jtac.target().as_ref().and_then(|target| {
+            let player = ctx.db.persisted.players.get(ucid)?;
+            let miz_gid = player
+                .current_slot
+                .as_ref()
+                .and_then(|(s, _)| ctx.db.ephemeral.get_slot_info(s))
+                .map(|ifo| ifo.miz_gid)?;
+            use dcso3::Vector2;
+            let tgt_pos = Vector2::new(target.pos.x, target.pos.z);
+            let mark_text = format_compact!("JTAC {} — {}", arg.snd, target.typ);
+            Some((miz_gid, tgt_pos, mark_text))
+        });
+        if let Some((miz_gid, tgt_pos, mark_text)) = mark_info {
+            ctx.db.ephemeral.msgs().mark_to_group(miz_gid, tgt_pos, true, mark_text);
+        }
+        ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, 10, ucid, msg);
+    } else {
+        ctx.db.ephemeral.msgs().panel_to_side(10, false, jtac.side(), msg);
     }
     Ok(())
 }
@@ -108,7 +119,7 @@ fn jtac_msg_auto_shift(db: &mut Db, jtid: JtId, jtac: &Jtac, ucid: &Ucid) {
 pub fn jtac_toggle_auto_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
-    jtac.toggle_auto_shift(&ctx.db, lua)
+    jtac.toggle_auto_shift(&mut ctx.db, lua)
         .with_context(|| format_compact!("toggle auto shift {}", arg.snd))?;
     jtac_msg_auto_shift(&mut ctx.db, arg.snd, jtac, &arg.fst);
     Ok(())
@@ -117,7 +128,7 @@ pub fn jtac_toggle_auto_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<
 pub fn jtac_toggle_ir_pointer(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
-    jtac.toggle_ir_pointer(&ctx.db, lua)
+    jtac.toggle_ir_pointer(&mut ctx.db, lua)
         .context("toggling ir pointer")?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.fst);
     let msg = format_compact!(
@@ -176,7 +187,7 @@ fn jtac_msg_shift(db: &mut Db, jtid: JtId, jtac: &Jtac, ucid: &Ucid) {
 pub fn jtac_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
-    jtac.shift(&ctx.db, lua).context("shifting jtac target")?;
+    jtac.shift(&mut ctx.db, lua).context("shifting jtac target")?;
     jtac_msg_shift(&mut ctx.db, arg.snd, jtac, &arg.fst);
     Ok(())
 }
@@ -235,6 +246,43 @@ pub fn jtac_artillery_fire_all(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -
         }
         Err(e) => {
             let msg = format!("jtac {} could not start artillery fire all mission {:?}", arg.fst, e);
+            ctx.db
+                .ephemeral
+                .panel_to_player(&ctx.db.persisted, 10, &arg.trd, msg);
+        }
+    }
+    Ok(())
+}
+
+/// Fire every nearby artillery group simultaneously at the current JTAC target.
+/// arg: (jtac_id, rounds_per_gun, ucid)
+pub fn jtac_fire_all_artillery_together(
+    lua: MizLua,
+    arg: ArgTriple<JtId, u8, Ucid>,
+) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    match ctx
+        .jtac
+        .fire_all_artillery_together(&ctx.db, lua, &arg.fst, arg.snd)
+    {
+        Ok(count) => {
+            let jtac = get_jtac(&ctx.jtac, &arg.fst).context("getting jtac")?;
+            let (near, name) = change_info(jtac, &ctx.db, &arg.trd);
+            let msg = format_compact!(
+                "GROUP FIRE MISSION: {} guns firing {} rounds each\njtac {} near {}\nrequested by {}",
+                count,
+                arg.snd,
+                arg.fst,
+                near,
+                name
+            );
+            ctx.db
+                .ephemeral
+                .msgs()
+                .panel_to_side(10, false, jtac.side(), msg)
+        }
+        Err(e) => {
+            let msg = format!("group fire failed: {e:?}");
             ctx.db
                 .ephemeral
                 .panel_to_player(&ctx.db.persisted, 10, &arg.trd, msg);
@@ -358,7 +406,7 @@ fn jtac_relay_target(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<(
 fn jtac_clear_filter(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
-    jtac.clear_filter(&ctx.db, lua)
+    jtac.clear_filter(&mut ctx.db, lua)
         .context("clearing jtac target filter")?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.fst);
     let msg = format_compact!(
@@ -379,7 +427,7 @@ fn jtac_filter(lua: MizLua, arg: ArgTriple<JtId, u64, Ucid>) -> Result<()> {
     let filter =
         BitFlags::<UnitTag>::from_bits(arg.snd).map_err(|_| anyhow!("invalid filter bits"))?;
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.fst)?;
-    jtac.add_filter(&ctx.db, lua, filter)
+    jtac.add_filter(&mut ctx.db, lua, filter)
         .context("setting jtac target filter")?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.trd);
     let msg = format_compact!(
@@ -550,6 +598,26 @@ fn add_artillery_menu_for_jtac(
             }
         }
     }
+
+    // "Fire All Groups Together" — only shown when 2+ guns are registered.
+    if arty.len() >= 2 {
+        let group_fire =
+            mc.add_submenu_for_group(mizgid, "Fire All Groups Together".into(), Some(root.clone()))?;
+        for (label, n) in &[("1 round each", 1u8), ("3 rounds each", 3), ("5 rounds each", 5), ("10 rounds each", 10)] {
+            mc.add_command_for_group(
+                mizgid,
+                (*label).into(),
+                Some(group_fire.clone()),
+                jtac_fire_all_artillery_together,
+                ArgTriple {
+                    fst: jtac,
+                    snd: *n,
+                    trd: ucid,
+                },
+            )?;
+        }
+    }
+
     Ok(())
 }
 
@@ -719,7 +787,8 @@ pub(super) fn add_menu_for_jtac(
                 DeployKind::Objective { .. }
                 | DeployKind::ObjectiveDeprecated
                 | DeployKind::Crate { .. }
-                | DeployKind::DownedPilot { .. } => format_compact!("{gid}"),
+                | DeployKind::DownedPilot { .. }
+                | DeployKind::Dismount { .. } => format_compact!("{gid}"),
             },
         },
         JtId::Slot(sl) => {

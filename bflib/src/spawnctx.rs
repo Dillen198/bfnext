@@ -100,6 +100,9 @@ pub struct SpawnCtx<'lua> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Despawn {
     Group(DcsOid<ClassObject>),
+    /// Destroy a group by name when the DCS object ID is not yet tracked (e.g. the
+    /// group spawned so recently that no DCS event has fired to populate object_id_by_gid).
+    GroupByName(std::string::String),
     Static(String),
     /// Destroy a static object by its DCS object ID. Used when the DCS name may
     /// differ from the bflib name (e.g. after C-130 cargo load/drop renames).
@@ -270,6 +273,18 @@ impl<'lua> SpawnCtx<'lua> {
                 record_perf(&mut perf.despawn, ts);
                 Ok(())
             }
+            Despawn::GroupByName(name) => {
+                match Group::get_by_name(self.lua, &*name) {
+                    Ok(group) => {
+                        if let Err(e) = group.destroy() {
+                            info!("attempt to despawn group by name '{}' failed: {e:?}", name);
+                        }
+                    }
+                    Err(e) => info!("attempt to despawn unknown group by name '{}' {e:?}", name),
+                }
+                record_perf(&mut perf.despawn, ts);
+                Ok(())
+            }
             Despawn::Static(name) => {
                 match dcso3::static_object::StaticObject::get_by_name(self.lua, &*name) {
                     Ok(Static::Airbase(obj)) => obj.destroy()?,
@@ -300,7 +315,6 @@ impl<'lua> SpawnCtx<'lua> {
     }
     */
 
-    #[allow(dead_code)]
     pub fn remove_scenery(&self, point: Vector2, radius: f64) -> Result<()> {
         let alt = Land::singleton(self.lua)?.get_height(LuaVec2(point))?;
         let point = LuaVec3(Vector3::new(point.x, alt, point.y));

@@ -56,7 +56,11 @@ pub struct Persisted {
     #[serde(default)]
     pub factories: SetS<ObjectiveId>,
     #[serde(default)]
+    pub special_sam_sites: SetS<ObjectiveId>,
+    #[serde(default)]
     pub downed_pilots: SetS<GroupId>,
+    #[serde(default)]
+    pub dismounts: SetS<GroupId>,
     /// Spawn UTC timestamp for each downed pilot (used for capture timer)
     #[serde(default)]
     pub downed_pilot_spawn_times: MapS<GroupId, DateTime<Utc>>,

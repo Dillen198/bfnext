@@ -17,7 +17,7 @@ for more details.
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::prelude::*;
 use compact_str::format_compact;
-use dcso3::{coalition::Side, controller::AltType, net::Ucid, String};
+use dcso3::{coalition::Side, controller::AltType, country::Country, net::Ucid, String};
 use enumflags2::{bitflags, BitFlags};
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use indexmap::IndexMap;
@@ -92,7 +92,6 @@ impl Rule {
         }
     }
 
-    #[allow(dead_code)]
     pub fn blacklist(&mut self, ucid: Ucid, name: String) {
         match self {
             Self::Blacklist { denied } => {
@@ -109,7 +108,6 @@ impl Rule {
         }
     }
 
-    #[allow(dead_code)]
     pub fn whitelist(&mut self, ucid: Ucid, name: String) {
         match self {
             Self::Blacklist { denied } => {
@@ -255,13 +253,12 @@ impl LifeType {
         }
     }
 
-    #[allow(dead_code)]
     pub fn down(&self) -> Option<LifeType> {
         match self {
             LifeType::Recon => None,
             LifeType::Logistics => Some(LifeType::Recon),
             LifeType::Intercept => Some(LifeType::Logistics),
-            LifeType::Attack => Some(LifeType::Attack),
+            LifeType::Attack => Some(LifeType::Intercept),
             LifeType::Standard => Some(LifeType::Attack),
         }
     }
@@ -331,6 +328,17 @@ pub struct DeployableEwr {
     /// range for likely detection (Meters)
     pub range: u32,
     // CR estokes: Actual radar simulation ...
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AirborneEwr {
+    /// Radar detection range in meters
+    pub range: u32,
+    /// Half-angle of the radar cone in degrees (None = omnidirectional, e.g. AWACS/ships)
+    /// A fighter with a nose radar would be ~60, an AWACS would be None
+    #[serde(default)]
+    pub aspect_half_angle: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -454,6 +462,23 @@ pub struct Troop {
     pub cost: u32,
     /// Can laser designate and scout
     pub jtac: Option<DeployableJtac>,
+    /// If true, these troops are Special Forces and can capture HVTs.
+    #[serde(default)]
+    pub special_forces: bool,
+}
+
+/// Configuration for infantry that dismount from a destroyed vehicle
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DismountSpec {
+    /// DCS group template name per side. If a side has no entry no dismounts spawn for it.
+    pub template: FxHashMap<Side, String>,
+    /// Max simultaneous dismount groups spawned from this vehicle type. 0 = unlimited.
+    #[serde(default)]
+    pub max_concurrent: u32,
+    /// Can these dismounts capture objectives?
+    #[serde(default)]
+    pub can_capture: bool,
 }
 
 /// Configuration for vehicles that can be loaded into C-130 cargo
@@ -589,6 +614,26 @@ fn default_c130_spawn_delay() -> u32 {
 
 fn default_c130_max_spawn() -> u32 {
     50
+}
+
+/// Configuration for helicopters using dynamic (physical) cargo system.
+/// Helicopters with dynamic cargo spawn physical crate objects via the DCS cargo menu.
+/// Crate slot limits from CargoConfig are ignored for vehicles in this list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeloCargoConfig {
+    /// Vehicle types that use dynamic physical cargo instead of the old slot-based system
+    pub enabled_vehicles: FxHashSet<Vehicle>,
+    /// Spawn delay between crates when using "Spawn All" (seconds)
+    #[serde(default = "default_c130_spawn_delay")]
+    pub spawn_delay: u32,
+    /// Maximum number of crates that can be spawned at once with "Spawn All"
+    #[serde(default = "default_c130_max_spawn")]
+    pub max_spawn_all: u32,
+    /// If true, crates auto-unpack when they land after being dropped (like C-130 airdrop).
+    /// If false (default), the player must use "Unpack Nearby Crate(s)" manually.
+    #[serde(default)]
+    pub auto_unpack: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -953,6 +998,35 @@ pub struct NavalCruiseMissileCfg {
     pub supply_cost: u32,
 }
 
+/// Configuration for a player-callable artillery / indirect fire support action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtilleryCfg {
+    /// Maximum range in metres from the firing group to the target.
+    /// Groups beyond this distance will not participate. Default: 30000.
+    #[serde(default = "default_arty_range")]
+    pub max_range_m: f64,
+    /// FireAtPoint scatter radius in metres. Default: 200.
+    #[serde(default = "default_arty_radius")]
+    pub radius_m: f64,
+    /// Maximum number of groups that will fire simultaneously. Default: 3.
+    #[serde(default = "default_arty_group_count")]
+    pub max_groups: usize,
+}
+
+fn default_arty_range() -> f64 { 30_000.0 }
+fn default_arty_radius() -> f64 { 200.0 }
+fn default_arty_group_count() -> usize { 3 }
+
+impl Default for ArtilleryCfg {
+    fn default() -> Self {
+        Self {
+            max_range_m: default_arty_range(),
+            radius_m: default_arty_radius(),
+            max_groups: default_arty_group_count(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActionKind {
     Tanker(AiPlaneCfg),
@@ -981,6 +1055,9 @@ pub enum ActionKind {
     CarrierRepair,
     CarrierRespawn,
     NavalCruiseMissileStrike(NavalCruiseMissileCfg),
+    /// Player-callable ground artillery / indirect fire support.
+    Artillery(ArtilleryCfg),
+    Recon(ReconCfg),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1076,6 +1153,114 @@ pub struct AutoResetOnVictory {
     /// How long, in seconds, must the condition hold before reset is
     /// tiggered
     pub delay: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LastStandCfg {
+    /// Seconds of countdown once a side is at or below `trigger_count` primary objectives.
+    /// Primary objectives are Airbase, NavalBase, and Farp. Default: 3600.
+    #[serde(default = "default_last_stand_countdown")]
+    pub countdown_secs: u32,
+    /// Number of primary objectives at or below which the last stand timer arms. Default: 1.
+    #[serde(default = "default_last_stand_trigger")]
+    pub trigger_count: usize,
+}
+
+fn default_last_stand_countdown() -> u32 {
+    3600
+}
+
+fn default_last_stand_trigger() -> usize {
+    1
+}
+
+impl Default for LastStandCfg {
+    fn default() -> Self {
+        Self {
+            countdown_secs: default_last_stand_countdown(),
+            trigger_count: default_last_stand_trigger(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnderAttackCfg {
+    /// Cooldown in seconds between repeat under-attack notifications per objective. Default: 120.
+    #[serde(default = "default_under_attack_cooldown")]
+    pub cooldown_secs: u32,
+}
+
+fn default_under_attack_cooldown() -> u32 {
+    120
+}
+
+impl Default for UnderAttackCfg {
+    fn default() -> Self {
+        Self {
+            cooldown_secs: default_under_attack_cooldown(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CounterBatteryCfg {
+    /// Cooldown in seconds between counter-battery reports for the same grid cell. Default: 60.
+    #[serde(default = "default_cb_cooldown")]
+    pub cooldown_secs: u32,
+    /// Grid resolution in meters for report deduplication. Default: 2000.
+    #[serde(default = "default_cb_grid")]
+    pub grid_resolution_m: f64,
+}
+
+fn default_cb_cooldown() -> u32 {
+    60
+}
+
+fn default_cb_grid() -> f64 {
+    2000.0
+}
+
+impl Default for CounterBatteryCfg {
+    fn default() -> Self {
+        Self {
+            cooldown_secs: default_cb_cooldown(),
+            grid_resolution_m: default_cb_grid(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EraCfg {
+    /// Name of the currently active era. Must match a key in `eras`.
+    pub current: String,
+    /// Map of era name → list of allowed Vehicle types.
+    /// Vehicles not listed in the active era's list are denied.
+    pub eras: FxHashMap<String, Vec<Vehicle>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReconCfg {
+    /// AI plane template to spawn for the recon mission.
+    pub plane: AiPlaneCfg,
+    /// Radius in meters around the target position to scan for enemy units. Default: 10000.
+    #[serde(default = "default_recon_radius")]
+    pub scan_radius_m: f64,
+    /// How long in seconds the recon plane loiters before RTB. Default: 300.
+    #[serde(default = "default_recon_duration")]
+    pub duration_secs: u32,
+}
+
+fn default_recon_radius() -> f64 {
+    10_000.0
+}
+
+fn default_recon_duration() -> u32 {
+    300
 }
 
 fn default_msgs_per_second() -> usize {
@@ -1182,6 +1367,73 @@ fn default_carrier_spawn_repositioning_speed() -> f64 {
 
 fn default_carrier_repair_time() -> u32 {
     600
+}
+
+fn default_sam_capture_radius() -> f64 {
+    300.0
+}
+
+fn default_red_country() -> Country {
+    Country::CJTF_RED
+}
+
+fn default_blue_country() -> Country {
+    Country::CJTF_BLUE
+}
+
+/// A plain 2-D position in DCS LO coordinates that serializes as `{"x":…,"y":…}`.
+/// Used instead of `nalgebra::Vector2` in config structs because nalgebra serializes
+/// as a matrix array, not a named-field map.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Pos2d {
+    /// North-south (DCS x)
+    pub x: f64,
+    /// East-west (DCS y)
+    pub y: f64,
+}
+
+/// A single unit definition for an inline SAM site group.
+/// Positions are absolute DCS LO coordinates (x = north-south, y = east-west).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpecialSamUnitCfg {
+    /// DCS unit type string (e.g. "SNR_75V", "ZSU-23-4 Shilka")
+    #[serde(rename = "type")]
+    pub typ: String,
+    /// Absolute position in DCS LO space
+    pub pos: Pos2d,
+    /// Heading in radians
+    pub heading: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpecialSamSiteCfg {
+    pub name: String,
+    /// Centroid of the site in DCS LO space.
+    pub pos: Pos2d,
+    /// Starting coalition
+    pub coalition: Side,
+    /// Inline unit definitions for Red coalition. If non-empty, takes precedence over red_template.
+    #[serde(default)]
+    pub red_units: Vec<SpecialSamUnitCfg>,
+    /// Inline unit definitions for Blue coalition. If non-empty, takes precedence over blue_template.
+    #[serde(default)]
+    pub blue_units: Vec<SpecialSamUnitCfg>,
+    /// DCS country for Red inline units (ignored when using red_template).
+    #[serde(default = "default_red_country")]
+    pub red_country: Country,
+    /// DCS country for Blue inline units (ignored when using blue_template).
+    #[serde(default = "default_blue_country")]
+    pub blue_country: Country,
+    /// Template group name in the .miz for the Red coalition (legacy; use red_units instead).
+    pub red_template: Option<String>,
+    /// Template group name in the .miz for the Blue coalition (legacy; use blue_units instead).
+    pub blue_template: Option<String>,
+    /// Capture zone radius in metres
+    #[serde(default = "default_sam_capture_radius")]
+    pub capture_radius_m: f64,
+    /// Crate type that repairs the site; if None the site is not repairable
+    #[serde(default)]
+    pub repair_crate: Option<Crate>,
 }
 
 /// Weather effects on logistics and operations
@@ -1296,6 +1548,12 @@ pub struct CampaignEventsCfg {
     /// Duration in seconds of a barrage event
     #[serde(default = "default_barrage_duration")]
     pub barrage_duration_secs: u32,
+    /// FireAtPoint scatter radius (metres) used by the auto-barrage event. Default: 500.
+    #[serde(default = "default_barrage_radius_m")]
+    pub barrage_radius_m: f64,
+    /// Maximum number of groups the auto-barrage simultaneously orders. Default: 5.
+    #[serde(default = "default_barrage_max_groups")]
+    pub barrage_max_groups: usize,
     /// Enable convoy ambush events
     #[serde(default = "default_true")]
     pub ambush_enabled: bool,
@@ -1333,6 +1591,109 @@ pub struct CampaignEventsCfg {
     /// Set to 0 to disable momentum (instant capture). Default: 60.
     #[serde(default = "default_capture_time")]
     pub capture_time_secs: u32,
+    /// Fraction (0.0–1.0) of an objective's defending units that must be destroyed
+    /// before it becomes capturable, in addition to logi == 0. Default: 0.0 (disabled).
+    /// Example: 0.30 requires 30% of defenders to be killed first.
+    #[serde(default)]
+    pub capture_min_unit_pct_destroyed: f64,
+    /// Minimum random offset (metres) from the objective where an HVT spawns. Default: 5000.
+    #[serde(default = "default_hvt_offset_min")]
+    pub hvt_spawn_offset_min_m: f64,
+    /// Maximum random offset (metres) from the objective where an HVT spawns. Default: 20000.
+    #[serde(default = "default_hvt_offset_max")]
+    pub hvt_spawn_offset_max_m: f64,
+    /// How close (metres) an SF team must be to the HVT spawn position to trigger capture. Default: 300.
+    #[serde(default = "default_hvt_capture_radius")]
+    pub hvt_capture_radius_m: f64,
+    /// Radius (metres) within which a helicopter must drop SF troops to start an HVT mission. Default: 10000.
+    #[serde(default = "default_hvt_sf_detection_radius")]
+    pub hvt_sf_detection_radius_m: f64,
+    /// Seconds after HVT is secured before the SF team starts retreating (no extraction). Default: 600.
+    #[serde(default = "default_hvt_extraction_timeout")]
+    pub hvt_extraction_timeout_secs: u32,
+    /// Template name for Special Forces ground unit (Red side). Default: "RSFTEAM".
+    #[serde(default = "default_sf_template_red")]
+    pub sf_template_red: String,
+    /// Template name for Special Forces ground unit (Blue side). Default: "BSFTEAM".
+    #[serde(default = "default_sf_template_blue")]
+    pub sf_template_blue: String,
+    /// Template name for the HVT vehicle unit (Red side). Default: "RHVT".
+    #[serde(default = "default_hvt_template_red")]
+    pub hvt_template_red: String,
+    /// Template name for the HVT vehicle unit (Blue side). Default: "BHVT".
+    #[serde(default = "default_hvt_template_blue")]
+    pub hvt_template_blue: String,
+    /// Radius (metres) of the F10 map circle drawn at the HVT position. Default: 3000.
+    #[serde(default = "default_hvt_circle_radius")]
+    pub hvt_circle_radius_m: f64,
+    /// Seconds after session start before HVT events can activate. Default: 300 (5 min).
+    /// Prevents HVTs from firing the instant a server restarts with no players connected.
+    #[serde(default = "default_hvt_startup_delay")]
+    pub hvt_startup_delay_secs: u32,
+    /// Minimum number of connected players before HVT events activate. Default: 0 (no minimum).
+    #[serde(default)]
+    pub hvt_min_players: u32,
+    /// Player count increment at which the HVT check interval shrinks by one step.
+    /// Default: 0 (disabled — interval is always check_interval_secs).
+    /// Example: set to 5 → at 5 players interval halves, at 10 players interval is 1/3, etc.
+    /// The interval is clamped to a minimum of 60 seconds regardless.
+    #[serde(default)]
+    pub hvt_players_per_interval_step: u32,
+    /// Distance (metres) from an enemy-owned objective within which an in-air player aircraft
+    /// is considered a threat and triggers a reactive CAP spawn. Default: 60000 (60 km).
+    #[serde(default = "default_cap_trigger_radius")]
+    pub cap_trigger_radius_m: f64,
+    /// Maximum number of CAP events active simultaneously across both sides. Default: 3.
+    #[serde(default = "default_cap_max_concurrent")]
+    pub cap_max_concurrent: usize,
+    /// How often (seconds) to call world.removeJunk to clean up debris. Default: 300 (5 min).
+    /// Set to 0 to disable.
+    #[serde(default = "default_junk_removal_interval")]
+    pub junk_removal_interval_secs: u32,
+    /// Sphere radius (metres) passed to world.removeJunk. Default: 500_000 (covers most maps).
+    #[serde(default = "default_junk_removal_radius")]
+    pub junk_removal_radius_m: f64,
+
+    // ── Air-Assault (counter-offensive heli + C-130 airdrop) ──────────────────
+    /// Enable helicopter + C-130 air assault as part of counter-offensives.
+    #[serde(default)]
+    pub air_assault_enabled: bool,
+    /// Transport helicopter template — Red side (e.g. "RHeli_Assault").
+    #[serde(default = "default_heli_assault_red")]
+    pub heli_assault_template_red: String,
+    /// Transport helicopter template — Blue side (e.g. "BHeli_Assault").
+    #[serde(default = "default_heli_assault_blue")]
+    pub heli_assault_template_blue: String,
+    /// C-130 / heavy transport template — Red side (e.g. "RC130_Assault").
+    #[serde(default = "default_c130_assault_red")]
+    pub c130_assault_template_red: String,
+    /// C-130 / heavy transport template — Blue side (e.g. "BC130_Assault").
+    #[serde(default = "default_c130_assault_blue")]
+    pub c130_assault_template_blue: String,
+    /// Infantry squad template dropped from helicopter — Red side.
+    #[serde(default = "default_assault_troops_red")]
+    pub assault_troops_template_red: String,
+    /// Infantry squad template dropped from helicopter — Blue side.
+    #[serde(default = "default_assault_troops_blue")]
+    pub assault_troops_template_blue: String,
+    /// Light vehicle template airdropped from C-130 — Red side.
+    #[serde(default = "default_assault_vehicle_red")]
+    pub assault_vehicle_template_red: String,
+    /// Light vehicle template airdropped from C-130 — Blue side.
+    #[serde(default = "default_assault_vehicle_blue")]
+    pub assault_vehicle_template_blue: String,
+    /// How far (metres) from the objective the LZ is placed. Default: 3000.
+    #[serde(default = "default_assault_lz_offset")]
+    pub assault_lz_offset_m: f64,
+    /// Seconds after aircraft reach LZ before ground troops are spawned. Default: 90.
+    #[serde(default = "default_assault_deploy_delay")]
+    pub assault_deploy_delay_secs: u32,
+    /// How long (seconds) the air-assault event lasts. Default: 1800.
+    #[serde(default = "default_assault_duration")]
+    pub assault_duration_secs: u32,
+    /// Sound file to play as air-raid siren for the defending coalition. Default: "alarm_short.ogg".
+    #[serde(default = "default_assault_alarm_sound")]
+    pub assault_alarm_sound: String,
 }
 
 fn default_event_check_interval() -> u32 { 300 }
@@ -1352,6 +1713,35 @@ fn default_cap_duration() -> u32 { 600 }
 fn default_cap_orbit_radius() -> f64 { 15_000.0 }
 fn default_cap_probability() -> f64 { 0.35 }
 fn default_capture_time() -> u32 { 60 }
+fn default_barrage_radius_m() -> f64 { 500.0 }
+fn default_barrage_max_groups() -> usize { 5 }
+fn default_hvt_offset_min() -> f64 { 5_000.0 }
+fn default_hvt_offset_max() -> f64 { 20_000.0 }
+fn default_hvt_capture_radius() -> f64 { 300.0 }
+fn default_hvt_sf_detection_radius() -> f64 { 10_000.0 }
+fn default_hvt_extraction_timeout() -> u32 { 600 }
+fn default_sf_template_red() -> String { "RSFTEAM".into() }
+fn default_sf_template_blue() -> String { "BSFTEAM".into() }
+fn default_hvt_template_red() -> String { String::from("RHVT") }
+fn default_hvt_template_blue() -> String { String::from("BHVT") }
+fn default_hvt_circle_radius() -> f64 { 3_000.0 }
+fn default_hvt_startup_delay() -> u32 { 300 }
+fn default_cap_trigger_radius() -> f64 { 60_000.0 }
+fn default_cap_max_concurrent() -> usize { 3 }
+fn default_junk_removal_interval() -> u32 { 300 }
+fn default_junk_removal_radius() -> f64 { 500_000.0 }
+fn default_heli_assault_red()   -> String { "RHeli_Assault".into() }
+fn default_heli_assault_blue()  -> String { "BHeli_Assault".into() }
+fn default_c130_assault_red()   -> String { "RC130_Assault".into() }
+fn default_c130_assault_blue()  -> String { "BC130_Assault".into() }
+fn default_assault_troops_red() -> String { "RTroops_Assault".into() }
+fn default_assault_troops_blue() -> String { "BTroops_Assault".into() }
+fn default_assault_vehicle_red() -> String { "RVehicle_Assault".into() }
+fn default_assault_vehicle_blue() -> String { "BVehicle_Assault".into() }
+fn default_assault_lz_offset()  -> f64 { 3_000.0 }
+fn default_assault_deploy_delay() -> u32 { 90 }
+fn default_assault_duration()   -> u32 { 1800 }
+fn default_assault_alarm_sound() -> String { "alarm_short.ogg".into() }
 
 impl Default for CampaignEventsCfg {
     fn default() -> Self {
@@ -1380,6 +1770,39 @@ impl Default for CampaignEventsCfg {
             cap_orbit_radius_m: default_cap_orbit_radius(),
             cap_probability: default_cap_probability(),
             capture_time_secs: default_capture_time(),
+            capture_min_unit_pct_destroyed: 0.0,
+            barrage_radius_m: default_barrage_radius_m(),
+            barrage_max_groups: default_barrage_max_groups(),
+            hvt_spawn_offset_min_m: default_hvt_offset_min(),
+            hvt_spawn_offset_max_m: default_hvt_offset_max(),
+            hvt_capture_radius_m: default_hvt_capture_radius(),
+            hvt_sf_detection_radius_m: default_hvt_sf_detection_radius(),
+            hvt_extraction_timeout_secs: default_hvt_extraction_timeout(),
+            sf_template_red: default_sf_template_red(),
+            sf_template_blue: default_sf_template_blue(),
+            hvt_template_red: default_hvt_template_red(),
+            hvt_template_blue: default_hvt_template_blue(),
+            hvt_circle_radius_m: default_hvt_circle_radius(),
+            hvt_startup_delay_secs: default_hvt_startup_delay(),
+            hvt_min_players: 0,
+            hvt_players_per_interval_step: 0,
+            cap_trigger_radius_m: default_cap_trigger_radius(),
+            cap_max_concurrent: default_cap_max_concurrent(),
+            junk_removal_interval_secs: default_junk_removal_interval(),
+            junk_removal_radius_m: default_junk_removal_radius(),
+            air_assault_enabled: false,
+            heli_assault_template_red: default_heli_assault_red(),
+            heli_assault_template_blue: default_heli_assault_blue(),
+            c130_assault_template_red: default_c130_assault_red(),
+            c130_assault_template_blue: default_c130_assault_blue(),
+            assault_troops_template_red: default_assault_troops_red(),
+            assault_troops_template_blue: default_assault_troops_blue(),
+            assault_vehicle_template_red: default_assault_vehicle_red(),
+            assault_vehicle_template_blue: default_assault_vehicle_blue(),
+            assault_lz_offset_m: default_assault_lz_offset(),
+            assault_deploy_delay_secs: default_assault_deploy_delay(),
+            assault_duration_secs: default_assault_duration(),
+            assault_alarm_sound: default_assault_alarm_sound(),
         }
     }
 }
@@ -1543,9 +1966,16 @@ pub struct Cfg {
     /// The name of the C-130 physical cargo crate template for each side
     #[serde(default)]
     pub c130_cargo_template: FxHashMap<Side, String>,
+    /// The name of the helicopter physical cargo crate template for each side.
+    /// Falls back to c130_cargo_template if not set.
+    #[serde(default)]
+    pub helo_cargo_template: FxHashMap<Side, String>,
     /// C-130 physical cargo configuration
     #[serde(default)]
     pub c130_cargo: Option<C130CargoConfig>,
+    /// Helicopter dynamic cargo configuration
+    #[serde(default)]
+    pub helo_cargo: Option<HeloCargoConfig>,
     /// deployables configuration for each side
     #[serde(default)]
     pub deployables: FxHashMap<Side, Vec<Deployable>>,
@@ -1556,6 +1986,16 @@ pub struct Cfg {
     /// airborne jtacs
     #[serde(default)]
     pub airborne_jtacs: FxHashMap<Vehicle, DeployableJtac>,
+    /// Airborne radar EWR contributors keyed by vehicle type.
+    /// Any instanced player of these types will donate radar coverage to
+    /// the EWR network based on range and aspect.
+    #[serde(default)]
+    pub airborne_ewrs: FxHashMap<Vehicle, AirborneEwr>,
+    /// Ground / naval radar EWR contributors keyed by vehicle type.
+    /// Spawned AI units (ships, SAM search radars) of these types will donate
+    /// radar coverage to the EWR network based on range and aspect.
+    #[serde(default)]
+    pub ground_radar_ewrs: FxHashMap<Vehicle, AirborneEwr>,
     /// The jtac target priority list
     pub jtac_priority: Vec<UnitTags>,
     /// Objectives that can host fixed wing even though they aren't
@@ -1579,6 +2019,9 @@ pub struct Cfg {
     /// Carrier group configuration
     #[serde(default)]
     pub carrier: Option<CarrierCfg>,
+    /// Map-fixed SAM sites that can change hands via troop capture
+    #[serde(default)]
+    pub special_sam_sites: Vec<SpecialSamSiteCfg>,
     /// Weather effects on gameplay
     #[serde(default)]
     pub weather_effects: Option<WeatherEffectsCfg>,
@@ -1598,14 +2041,45 @@ pub struct Cfg {
     /// to its owning side. Set to 0 to disable. Default: 20.
     #[serde(default = "default_supply_alert_threshold")]
     pub supply_alert_threshold: u8,
+    /// Seconds after the "supply critical" alert fires before a convoy is automatically
+    /// dispatched if no player has sent one. Set to 0 to disable auto-dispatch. Default: 300 (5 min).
+    #[serde(default = "default_supply_auto_convoy_delay")]
+    pub supply_auto_convoy_delay_secs: u32,
     /// Smart Commander: automated treasury, objective funding, mission rewards,
     /// and holding bonuses. Disabled if absent.
     #[serde(default)]
     pub smart_commander: Option<SmartCommanderCfg>,
+    /// Per-side starting points seeded into each owned objective on a fresh map
+    /// init. Overrides smart_commander.objective_start_points per side.
+    /// e.g. { "Blue": 1000, "Red": 500 }
+    #[serde(default)]
+    pub objective_start_points: FxHashMap<Side, i32>,
+    /// Per vehicle type: if present, destroying that vehicle spawns infantry dismounts at the wreck.
+    #[serde(default)]
+    pub dismount: FxHashMap<Vehicle, DismountSpec>,
+    /// Mercy timer: when a side reaches `trigger_count` or fewer primary objectives,
+    /// starts a countdown. On expiry the losing side's victory is triggered.
+    #[serde(default)]
+    pub last_stand: Option<LastStandCfg>,
+    /// Under-attack notifications: send a panel message to a coalition when an
+    /// objective they own becomes threatened by enemy units.
+    #[serde(default)]
+    pub under_attack: Option<UnderAttackCfg>,
+    /// Counter-battery: when an enemy artillery/launcher unit fires, report its
+    /// approximate position to the opposing coalition.
+    #[serde(default)]
+    pub counter_battery: Option<CounterBatteryCfg>,
+    /// Era restrictions: limit which airframes are available based on the active era.
+    #[serde(default)]
+    pub era: Option<EraCfg>,
 }
 
 fn default_supply_alert_threshold() -> u8 {
     20
+}
+
+fn default_supply_auto_convoy_delay() -> u32 {
+    300
 }
 
 fn default_treasury_income_period() -> u32 {
@@ -1626,52 +2100,31 @@ fn default_commander_period() -> u32 {
 fn default_holding_bonus() -> i32 {
     5
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MissionRewardCfg {
-    pub strike: i32,
-    pub fighter_sweep: i32,
-    pub escort: i32,
-    pub sead: i32,
-    pub cap: i32,
-    pub reconnaissance: i32,
-    pub transport: i32,
-    pub refueling: i32,
-    pub cas: i32,
+fn default_objective_start_points() -> i32 {
+    500
+}
+fn default_reinforcement_cost() -> i64 {
+    300
+}
+fn default_counter_offensive_cost() -> i64 {
+    500
+}
+fn default_barrage_cost() -> i64 {
+    150
+}
+fn default_ambush_cost() -> i64 {
+    100
+}
+fn default_cap_cost() -> i64 {
+    250
+}
+fn default_cap_min_friendly_pilots() -> u32 {
+    1
+}
+fn default_cap_cooldown_secs() -> u32 {
+    300
 }
 
-impl Default for MissionRewardCfg {
-    fn default() -> Self {
-        Self {
-            strike: 200,
-            fighter_sweep: 150,
-            escort: 100,
-            sead: 175,
-            cap: 100,
-            reconnaissance: 125,
-            transport: 75,
-            refueling: 75,
-            cas: 150,
-        }
-    }
-}
-
-impl MissionRewardCfg {
-    pub fn reward_for(&self, mt: crate::db::mission::MissionType) -> i32 {
-        use crate::db::mission::MissionType::*;
-        match mt {
-            Strike => self.strike,
-            FighterSweep => self.fighter_sweep,
-            Escort => self.escort,
-            Sead => self.sead,
-            Cap => self.cap,
-            Reconnaissance => self.reconnaissance,
-            Transport => self.transport,
-            Refueling => self.refueling,
-            Cas => self.cas,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmartCommanderCfg {
@@ -1696,9 +2149,34 @@ pub struct SmartCommanderCfg {
     /// Points per owned objective awarded to each connected player per tick. Default: 5.
     #[serde(default = "default_holding_bonus")]
     pub holding_bonus_per_objective: i32,
-    /// Per-mission-type completion rewards.
-    #[serde(default)]
-    pub mission_rewards: MissionRewardCfg,
+    /// Points seeded into each owned objective on a fresh map init. Default: 500.
+    #[serde(default = "default_objective_start_points")]
+    pub objective_start_points: i32,
+    /// Treasury cost per side to spawn a reinforcement wave. Default: 300.
+    #[serde(default = "default_reinforcement_cost")]
+    pub reinforcement_cost: i64,
+    /// Treasury cost per side to launch a counter-offensive. Default: 500.
+    #[serde(default = "default_counter_offensive_cost")]
+    pub counter_offensive_cost: i64,
+    /// Treasury cost per side to order an artillery barrage. Default: 150.
+    #[serde(default = "default_barrage_cost")]
+    pub barrage_cost: i64,
+    /// Treasury cost per side to set a convoy ambush. Default: 100.
+    #[serde(default = "default_ambush_cost")]
+    pub ambush_cost: i64,
+    /// Treasury cost per side to scramble an enemy CAP. Default: 250.
+    #[serde(default = "default_cap_cost")]
+    pub cap_cost: i64,
+    /// Minimum air-superiority gap (enemy_in_air − friendly_in_air) required
+    /// before the commander dispatches a CAP flight to balance the skies.
+    /// 1 = dispatch as soon as enemy has even one more aircraft airborne;
+    /// 2+ = only dispatch when significantly outnumbered. Default: 1.
+    #[serde(default = "default_cap_min_friendly_pilots")]
+    pub cap_min_friendly_pilots: u32,
+    /// Seconds the commander waits after a dispatched CAP flight ends before
+    /// spawning another one. Default: 300 (5 min).
+    #[serde(default = "default_cap_cooldown_secs")]
+    pub cap_cooldown_secs: u32,
 }
 
 impl Cfg {

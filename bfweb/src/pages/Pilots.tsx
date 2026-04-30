@@ -1,16 +1,17 @@
-import React, { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import React, { useState, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip,
   BarChart, Bar, XAxis, YAxis, Cell,
 } from 'recharts'
 import PageHeader from '../components/PageHeader'
-import { Users, Crosshair, Clock, Award, TrendingUp, Shield } from 'lucide-react'
+import { Users, Crosshair, Clock, Award, TrendingUp, Shield, Link } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
 
 const TT = {
-  contentStyle: { background: '#0a1628', border: '1px solid #1a3555', borderRadius: 6, color: '#c9d1d9', fontSize: 12 },
-  cursor: { fill: 'rgba(59,130,246,0.05)' },
+  contentStyle: { background: '#111111', border: '1px solid #2a2a2a', borderRadius: 2, color: '#f1f5f9', fontSize: 12 },
+  cursor: { fill: 'rgba(77,124,15,0.04)' },
 }
 
 function kd(air: number, ground: number, deaths: number) {
@@ -31,6 +32,8 @@ const STAT_COLORS: Record<string, string> = {
 }
 
 export default function Pilots() {
+  const { user } = useAuth()
+  const queryClient = useQueryClient()
   const { data: pilots = [], isLoading } = useQuery({
     queryKey: ['leaderboard'],
     queryFn: api.leaderboard,
@@ -38,6 +41,28 @@ export default function Pilots() {
   })
   const [selected, setSelected] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [linking, setLinking] = useState(false)
+  const [linkInput, setLinkInput] = useState('')
+  const [linkError, setLinkError] = useState<string | null>(null)
+
+  // Auto-select logged-in user's pilot on first load
+  useEffect(() => {
+    if (user?.ucid && pilots.length > 0 && selected === null) {
+      setSelected(user.ucid)
+    }
+  }, [user?.ucid, pilots.length])
+
+  async function handleLink() {
+    setLinkError(null)
+    try {
+      await api.auth.link(linkInput.trim())
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+      setLinking(false)
+      setSelected(linkInput.trim())
+    } catch {
+      setLinkError('Pilot not found — check the UCID and try again')
+    }
+  }
 
   const filtered = pilots.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()))
   const pilot = pilots.find(p => p.ucid === selected)
@@ -80,33 +105,43 @@ export default function Pilots() {
 
       <div className="flex-1 overflow-hidden flex min-h-0">
         {/* ── Pilot list sidebar ── */}
-        <div className="w-56 flex-shrink-0 border-r border-[#1e3a5f]/50 flex flex-col" style={{ background: '#030a14' }}>
-          <div className="p-3 border-b border-[#1e3a5f]/40">
+        <div className="w-60 flex-shrink-0 flex flex-col" style={{ background: '#0d0d0d', borderRight: '1px solid var(--border)' }}>
+          <div className="p-3 border-b border-[#2a2a2a]">
             <input
               type="text"
               placeholder="Search pilots…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full bg-[#050d1a] border border-[#1e3a5f]/60 rounded px-3 py-1.5 text-[11px] text-slate-300 placeholder:text-slate-700 focus:outline-none focus:border-blue-500/50"
+              className="vs-input w-full"
             />
           </div>
           <div className="flex-1 overflow-y-auto">
-            {isLoading && <div className="text-center py-8 text-slate-700 text-xs">Loading…</div>}
+            {isLoading && <div className="text-center py-8 text-slate-700 text-sm">Loading…</div>}
             {filtered.map((p, i) => {
               const totalKills = p.air_kills + p.ground_kills
               const isSelected = selected === p.ucid
+              const isMe = user?.ucid === p.ucid
               return (
                 <button
                   key={p.ucid}
                   onClick={() => setSelected(p.ucid)}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left border-b border-[#0a1520] transition-colors ${
-                    isSelected ? 'bg-blue-500/10 border-l-2 border-l-blue-400 !pl-[10px]' : 'hover:bg-blue-500/[0.04]'
-                  }`}
+                  className="w-full flex items-center gap-2.5 px-3 py-3 text-left transition-colors"
+                  style={{
+                    borderBottom: '1px solid var(--border)',
+                    borderLeft: isSelected ? '3px solid var(--accent)' : '3px solid transparent',
+                    paddingLeft: isSelected ? '10px' : '12px',
+                    background: isSelected ? 'rgba(77,124,15,0.06)' : 'transparent',
+                  }}
                 >
-                  <span className="text-[10px] text-slate-700 w-5 shrink-0 font-mono">{i + 1}</span>
+                  <span className="text-[11px] text-slate-700 w-5 shrink-0 font-mono">{i + 1}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[11px] font-semibold text-slate-100 truncate">{p.name}</div>
-                    <div className="text-[9px] text-slate-600 mt-0.5 font-mono">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[12px] font-semibold text-slate-100 truncate">{p.name}</span>
+                      {isMe && (
+                        <span style={{ fontSize: '0.5rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0 3px', borderRadius: 2, letterSpacing: '0.08em', flexShrink: 0 }}>YOU</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-600 mt-0.5 font-mono">
                       {totalKills}k · {p.hours.toFixed(1)}h · {p.deaths}d
                     </div>
                   </div>
@@ -114,25 +149,60 @@ export default function Pilots() {
               )
             })}
             {!isLoading && filtered.length === 0 && (
-              <div className="text-center py-8 text-slate-700 text-xs">No pilots found</div>
+              <div className="text-center py-8 text-slate-700 text-sm">No pilots found</div>
             )}
           </div>
         </div>
 
         {/* ── Detail panel ── */}
-        <div className="flex-1 overflow-auto p-4 grid-bg">
+        <div className="flex-1 overflow-auto p-4 grid-bg" style={{ background: 'var(--bg)' }}>
+          {/* Link DCS account banner */}
+          {user && !user.ucid && !linking && (
+            <div className="vs-card px-4 py-3 mb-4 flex items-center gap-3" style={{ borderColor: '#5865F2', background: 'rgba(88,101,242,0.05)' }}>
+              <Link size={14} style={{ color: '#5865F2', flexShrink: 0 }} />
+              <div style={{ flex: 1, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                Link your DCS account to see your profile highlighted
+              </div>
+              <button
+                onClick={() => setLinking(true)}
+                style={{ fontSize: '0.65rem', color: '#5865F2', background: 'none', border: '1px solid #5865F2', padding: '2px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em', fontFamily: "'Bebas Neue', sans-serif" }}
+              >
+                LINK ACCOUNT
+              </button>
+            </div>
+          )}
+          {linking && (
+            <div className="vs-card px-4 py-3 mb-4" style={{ borderColor: '#5865F2' }}>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginBottom: '0.5rem', letterSpacing: '0.1em' }}>ENTER YOUR DCS UCID</div>
+              <div className="flex gap-2">
+                <input
+                  className="vs-input flex-1"
+                  placeholder="e.g. 76561198xxxxxxxxx"
+                  value={linkInput}
+                  onChange={e => setLinkInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleLink()}
+                />
+                <button onClick={handleLink} style={{ fontSize: '0.65rem', background: '#5865F2', color: '#fff', border: 'none', padding: '2px 12px', borderRadius: 2, cursor: 'pointer', fontFamily: "'Bebas Neue', sans-serif" }}>LINK</button>
+                <button onClick={() => { setLinking(false); setLinkError(null) }} style={{ fontSize: '0.65rem', background: 'none', color: 'var(--text-dim)', border: '1px solid var(--border)', padding: '2px 10px', borderRadius: 2, cursor: 'pointer' }}>Cancel</button>
+              </div>
+              {linkError && <div style={{ fontSize: '0.62rem', color: 'var(--accent)', marginTop: '0.4rem' }}>{linkError}</div>}
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginTop: '0.4rem' }}>
+                Find your UCID via the <code style={{ color: 'var(--text-muted)' }}>/bind</code> chat command in-game
+              </div>
+            </div>
+          )}
           {!pilot ? (
             <div className="flex flex-col items-center justify-center h-full text-slate-700 gap-3">
               <Users size={36} className="opacity-20" />
-              <div className="text-[11px] tracking-widest uppercase">Select a pilot to view details</div>
+              <div className="text-[12px] tracking-widest uppercase">Select a pilot to view details</div>
             </div>
           ) : (
             <div className="space-y-4 max-w-5xl">
               {/* ── Pilot header card ── */}
-              <div className="tac-card px-5 py-4">
+              <div className="vs-card px-5 py-4">
                 <div className="flex items-center gap-5">
                   {/* Avatar */}
-                  <div className="w-14 h-14 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-300 font-bold text-xl flex-shrink-0">
+                  <div className="w-14 h-14 flex items-center justify-center font-bold text-xl flex-shrink-0" style={{ background: 'rgba(77,124,15,0.1)', border: '1px solid rgba(77,124,15,0.25)', borderRadius: '2px', color: '#65a30d', fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.5rem' }}>
                     {pilot.name[0]?.toUpperCase()}
                   </div>
                   {/* Name + rank */}
@@ -143,9 +213,9 @@ export default function Pilots() {
                         <span className="text-lg">{['🥇', '🥈', '🥉'][pilotRank - 1]}</span>
                       )}
                       {pilotRank && (
-                        <span className="text-[10px] text-slate-600 font-mono">Rank #{pilotRank}</span>
+                        <span className="text-[11px] text-slate-600 font-mono">Rank #{pilotRank}</span>
                       )}
-                      <span className="text-[10px] text-slate-700 font-mono">· {pilot.ucid.slice(0, 12)}…</span>
+                      <span className="text-[11px] text-slate-700 font-mono">· {pilot.ucid.slice(0, 12)}…</span>
                     </div>
                   </div>
                   {/* Key stats */}
@@ -159,7 +229,7 @@ export default function Pilots() {
                       <div key={s.label} className="text-center">
                         <s.icon size={12} className={`${s.color} mx-auto mb-1`} />
                         <div className={`text-[20px] leading-none font-bold font-mono ${s.color}`}>{s.value}</div>
-                        <div className="text-[9px] text-slate-700 uppercase tracking-wider mt-0.5">{s.label}</div>
+                        <div className="text-[10px] text-slate-700 uppercase tracking-wider mt-0.5">{s.label}</div>
                       </div>
                     ))}
                   </div>
@@ -168,30 +238,30 @@ export default function Pilots() {
 
               {/* ── Charts ── */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="tac-card p-4">
-                  <div className="text-[10px] text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                    <Shield size={10} className="text-blue-400" />
+                <div className="vs-card p-5">
+                  <div className="text-[11px] text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                    <Shield size={11} className="text-blue-400" />
                     Performance Profile
                   </div>
                   <ResponsiveContainer width="100%" height={240}>
                     <RadarChart data={radarData}>
-                      <PolarGrid stroke="#1a3355" />
-                      <PolarAngleAxis dataKey="stat" tick={{ fill: '#475569', fontSize: 10 }} />
+                      <PolarGrid stroke="#2a2a2a" />
+                      <PolarAngleAxis dataKey="stat" tick={{ fill: '#475569', fontSize: 11 }} />
                       <Radar dataKey="value" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} strokeWidth={2} />
                       <Tooltip {...TT} />
                     </RadarChart>
                   </ResponsiveContainer>
                 </div>
 
-                <div className="tac-card p-4">
-                  <div className="text-[10px] text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                    <TrendingUp size={10} className="text-green-400" />
+                <div className="vs-card p-5">
+                  <div className="text-[11px] text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                    <TrendingUp size={11} className="text-green-400" />
                     Stat Breakdown
                   </div>
                   <ResponsiveContainer width="100%" height={240}>
                     <BarChart data={barData} margin={{ left: -10, right: 8, top: 4, bottom: 20 }}>
-                      <XAxis dataKey="name" tick={{ fill: '#374151', fontSize: 9 }} axisLine={false} tickLine={false} angle={-30} textAnchor="end" />
-                      <YAxis tick={{ fill: '#374151', fontSize: 10 }} axisLine={false} tickLine={false} width={25} />
+                      <XAxis dataKey="name" tick={{ fill: '#374151', fontSize: 10 }} axisLine={false} tickLine={false} angle={-30} textAnchor="end" />
+                      <YAxis tick={{ fill: '#374151', fontSize: 11 }} axisLine={false} tickLine={false} width={25} />
                       <Tooltip {...TT} />
                       <Bar dataKey="value" radius={[3, 3, 0, 0]}>
                         {barData.map((d, i) => (
@@ -204,29 +274,30 @@ export default function Pilots() {
               </div>
 
               {/* ── Stat grid ── */}
-              <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
                 {[
-                  { label: 'Air Kills',   value: pilot.air_kills,          color: 'text-blue-400',   border: '#3b82f622' },
-                  { label: 'Ground Kills',value: pilot.ground_kills,       color: 'text-orange-400', border: '#f9731622' },
-                  { label: 'Deaths',      value: pilot.deaths,             color: 'text-red-400',    border: '#ef444422' },
-                  { label: 'K/D Ratio',   value: kd(pilot.air_kills, pilot.ground_kills, pilot.deaths), color: 'text-green-400', border: '#22c55e22' },
-                  { label: 'Captures',    value: pilot.captures,           color: 'text-yellow-400', border: '#fbbf2422' },
-                  { label: 'Score',       value: computeScore(pilot.air_kills, pilot.ground_kills, pilot.captures, pilot.repairs, pilot.supply_transfers, pilot.troops, pilot.farps, pilot.deploys, pilot.actions, pilot.deaths), color: 'text-purple-400', border: '#a78bfa22' },
-                  { label: 'Repairs',     value: pilot.repairs,            color: 'text-green-400',  border: '#22c55e22' },
-                  { label: 'Supply',      value: pilot.supply_transfers,   color: 'text-cyan-400',   border: '#06b6d422' },
-                  { label: 'Troops',      value: pilot.troops,             color: 'text-violet-400', border: '#8b5cf622' },
-                  { label: 'FARPs',       value: pilot.farps,              color: 'text-pink-400',   border: '#ec489922' },
-                  { label: 'Deploys',     value: pilot.deploys,            color: 'text-slate-300',  border: '#94a3b822' },
-                  { label: 'Flight Hrs',  value: `${pilot.hours.toFixed(1)}h`, color: 'text-blue-300', border: '#60a5fa22' },
+                  { label: 'Air Kills',    value: pilot.air_kills,          color: 'text-blue-400',   border: '#3b82f622' },
+                  { label: 'Ground Kills', value: pilot.ground_kills,       color: 'text-orange-400', border: '#f9731622' },
+                  { label: 'Deaths',       value: pilot.deaths,             color: 'text-red-400',    border: '#ef444422' },
+                  { label: 'K/D Ratio',    value: kd(pilot.air_kills, pilot.ground_kills, pilot.deaths), color: 'text-green-400', border: '#22c55e22' },
+                  { label: 'Captures',     value: pilot.captures,           color: 'text-yellow-400', border: '#fbbf2422' },
+                  { label: 'Score',        value: computeScore(pilot.air_kills, pilot.ground_kills, pilot.captures, pilot.repairs, pilot.supply_transfers, pilot.troops, pilot.farps, pilot.deploys, pilot.actions, pilot.deaths), color: 'text-purple-400', border: '#a78bfa22' },
+                  { label: 'Repairs',      value: pilot.repairs,            color: 'text-green-400',  border: '#22c55e22' },
+                  { label: 'Supply',       value: pilot.supply_transfers,   color: 'text-cyan-400',   border: '#06b6d422' },
+                  { label: 'Troops',       value: pilot.troops,             color: 'text-violet-400', border: '#8b5cf622' },
+                  { label: 'FARPs',        value: pilot.farps,              color: 'text-pink-400',   border: '#ec489922' },
+                  { label: 'Deploys',      value: pilot.deploys,            color: 'text-slate-300',  border: '#94a3b822' },
+                  { label: 'Donated Pts',  value: pilot.donated_points,     color: 'text-cyan-400',   border: '#06b6d422' },
+                  { label: 'Flight Hrs',   value: `${pilot.hours.toFixed(1)}h`, color: 'text-blue-300', border: '#60a5fa22' },
                 ].map(s => (
                   <div
                     key={s.label}
-                    className="tac-card px-3 py-2.5"
+                    className="vs-card px-3 py-3"
                     style={{ borderColor: s.border } as React.CSSProperties}
                   >
                     <div className="absolute inset-x-0 top-0 h-px" style={{ background: `linear-gradient(to right,transparent,${s.border.replace('22', '66')},transparent)` }} />
-                    <div className="text-[8px] text-slate-700 uppercase tracking-widest mb-1">{s.label}</div>
-                    <div className={`text-[16px] leading-none font-bold font-mono ${s.color}`}>{s.value}</div>
+                    <div className="text-[10px] text-slate-700 uppercase tracking-widest mb-1">{s.label}</div>
+                    <div className={`text-[18px] leading-none font-bold font-mono ${s.color}`}>{s.value}</div>
                   </div>
                 ))}
               </div>

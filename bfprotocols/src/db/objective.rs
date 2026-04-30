@@ -33,27 +33,28 @@ pub enum ObjectiveKind {
         #[serde(default)]
         last_production_ts: Option<DateTime<Utc>>,
     },
+    SpecialSamSite,
 }
 
 impl ObjectiveKind {
     pub fn is_airbase(&self) -> bool {
         match self {
             Self::Airbase => true,
-            Self::Farp { .. } | Self::Fob | Self::Logistics | Self::NavalBase | Self::CarrierGroup { .. } | Self::Factory { .. } => false,
+            Self::Farp { .. } | Self::Fob | Self::Logistics | Self::NavalBase | Self::CarrierGroup { .. } | Self::Factory { .. } | Self::SpecialSamSite => false,
         }
     }
 
     pub fn is_farp(&self) -> bool {
         match self {
             Self::Farp { .. } => true,
-            Self::Airbase | Self::Fob | Self::Logistics | Self::NavalBase | Self::CarrierGroup { .. } | Self::Factory { .. } => false,
+            Self::Airbase | Self::Fob | Self::Logistics | Self::NavalBase | Self::CarrierGroup { .. } | Self::Factory { .. } | Self::SpecialSamSite => false,
         }
     }
 
     pub fn is_hub(&self) -> bool {
         match self {
             Self::Logistics => true,
-            Self::Airbase | Self::Farp { .. } | Self::Fob | Self::NavalBase | Self::CarrierGroup { .. } | Self::Factory { .. } => false,
+            Self::Airbase | Self::Farp { .. } | Self::Fob | Self::NavalBase | Self::CarrierGroup { .. } | Self::Factory { .. } | Self::SpecialSamSite => false,
         }
     }
 
@@ -67,6 +68,10 @@ impl ObjectiveKind {
 
     pub fn is_factory(&self) -> bool {
         matches!(self, Self::Factory { .. })
+    }
+
+    pub fn is_special_sam_site(&self) -> bool {
+        matches!(self, Self::SpecialSamSite)
     }
 
     pub fn is_mobile(&self) -> bool {
@@ -86,6 +91,7 @@ impl ObjectiveKind {
             Self::NavalBase => "Naval Base",
             Self::CarrierGroup { .. } => "Carrier Group",
             Self::Factory { .. } => "Factory",
+            Self::SpecialSamSite => "Special SAM Site",
         }
     }
 }

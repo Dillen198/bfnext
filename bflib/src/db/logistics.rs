@@ -66,18 +66,9 @@ pub enum LogiStage {
     ExecuteTransfers {
         transfers: Vec<Transfer>,
     },
-    ManageConvoys {
-        #[allow(dead_code)]
-        convoys: Vec<SupplyConvoy>,
-    },
-    ManageAirRoutes {
-        #[allow(dead_code)]
-        routes: Vec<AirLogisticsRoute>,
-    },
-    ManageSeaRoutes {
-        #[allow(dead_code)]
-        routes: Vec<SeaLogisticsRoute>,
-    },
+    ManageConvoys,
+    ManageAirRoutes,
+    ManageSeaRoutes,
     Init,
 }
 
@@ -253,6 +244,8 @@ pub type ConvoyId = CompactString;
 pub enum ConvoyCargoType {
     Fuel,
     Weapons,
+    /// Auto-dispatched convoy carrying a mix of whatever the hub has available.
+    Mixed,
 }
 
 impl ConvoyCargoType {
@@ -260,6 +253,7 @@ impl ConvoyCargoType {
         match self {
             ConvoyCargoType::Fuel => "fuel",
             ConvoyCargoType::Weapons => "weapons",
+            ConvoyCargoType::Mixed => "mixed supplies",
         }
     }
 }
@@ -752,7 +746,6 @@ impl Db {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn reinit_objective_warehouse(&mut self, oid: ObjectiveId) -> Result<()> {
         let whcfg = match self.ephemeral.cfg.warehouse.as_ref() {
             Some(cfg) => cfg,
@@ -935,7 +928,7 @@ impl Db {
                         missing.push(obj.name.clone());
                     }
                 }
-                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. } => {
+                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. } | ObjectiveKind::SpecialSamSite { .. } => {
                     // These objective types don't require airbase warehouses
                 }
             }
@@ -956,9 +949,9 @@ impl Db {
             | LogiStage::SyncFromWarehouses { .. }
             | LogiStage::SyncToWarehouses { .. }
             | LogiStage::ExecuteTransfers { .. }
-            | LogiStage::ManageConvoys { .. }
-            | LogiStage::ManageAirRoutes { .. }
-            | LogiStage::ManageSeaRoutes { .. } => (),
+            | LogiStage::ManageConvoys
+            | LogiStage::ManageAirRoutes
+            | LogiStage::ManageSeaRoutes => (),
             LogiStage::Complete { last_tick } => {
                 *last_tick = DateTime::<Utc>::MIN_UTC;
             }
@@ -1020,18 +1013,23 @@ impl Db {
                                 });
                                 let side = obj.owner;
                                 let name = obj.name.clone();
-                                if is_low && self.ephemeral.supply_warned.insert(oid) {
-                                    self.ephemeral.msgs().panel_to_side(
-                                        30,
-                                        false,
-                                        side,
-                                        format_compact!(
-                                            "⚠ SUPPLY CRITICAL: {} is below {}% — send a convoy!",
-                                            name,
-                                            threshold
-                                        ),
-                                    );
-                                } else if !is_low {
+                                if is_low {
+                                    // Record the first time the warning fires; re-fires only after recovery
+                                    let newly_warned = !self.ephemeral.supply_warned.contains_key(&oid);
+                                    self.ephemeral.supply_warned.entry(oid).or_insert(ts);
+                                    if newly_warned {
+                                        self.ephemeral.msgs().panel_to_side(
+                                            30,
+                                            false,
+                                            side,
+                                            format_compact!(
+                                                "⚠ SUPPLY CRITICAL: {} is below {}% — a convoy will auto-dispatch in 5 minutes if none is sent!",
+                                                name,
+                                                threshold
+                                            ),
+                                        );
+                                    }
+                                } else {
                                     // Clear the warning so it can fire again if supply drops again
                                     self.ephemeral.supply_warned.remove(&oid);
                                 }
@@ -1070,18 +1068,97 @@ impl Db {
                 },
                 LogiStage::ExecuteTransfers { transfers } if transfers.is_empty() => {
                     let st = Utc::now();
+
+                    // ── Auto convoy dispatch after supply-critical delay ───────────
+                    let auto_delay_secs = self.ephemeral.cfg.supply_auto_convoy_delay_secs;
+                    let convoy_enabled = self.ephemeral.cfg.warehouse
+                        .as_ref()
+                        .and_then(|w| w.convoy.as_ref())
+                        .map(|c| c.enabled)
+                        .unwrap_or(false);
+                    if auto_delay_secs > 0 && convoy_enabled {
+                        let auto_delay = chrono::Duration::seconds(auto_delay_secs as i64);
+                        let threshold = self.ephemeral.cfg.supply_alert_threshold as u32;
+                        // Collect objectives that have been warned long enough and still need supply
+                        let auto_dispatch: Vec<ObjectiveId> = self.ephemeral.supply_warned.iter()
+                            .filter(|(_, warned_at)| ts - **warned_at >= auto_delay)
+                            .filter_map(|(oid, _)| {
+                                self.persisted.objectives.get(oid).and_then(|obj| {
+                                    let still_low = obj.warehouse.equipment.into_iter().any(|(_, inv)| {
+                                        inv.capacity > 0
+                                            && inv.percent().map(|p| (p as u32) < threshold).unwrap_or(false)
+                                    });
+                                    // Only dispatch if no convoy already heading to this objective
+                                    let already_en_route = self.ephemeral.active_convoys.values()
+                                        .any(|c| c.destination == *oid);
+                                    if still_low && !already_en_route { Some(*oid) } else { None }
+                                })
+                            })
+                            .collect();
+
+                        for dest_oid in auto_dispatch {
+                            // Find the nearest logistics hub that serves this objective
+                            let hub_oid = self.persisted.logistics_hubs.into_iter()
+                                .filter(|lid| {
+                                    let logi = self.persisted.objectives.get(*lid);
+                                    let dest  = self.persisted.objectives.get(&dest_oid);
+                                    match (logi, dest) {
+                                        (Some(l), Some(d)) => {
+                                            l.owner == d.owner
+                                                && l.warehouse.destination.contains(&dest_oid)
+                                        }
+                                        _ => false,
+                                    }
+                                })
+                                .copied()
+                                .next();
+
+                            if let Some(hub) = hub_oid {
+                                let dest_name = self.persisted.objectives.get(&dest_oid)
+                                    .map(|o| o.name.clone())
+                                    .unwrap_or_default();
+                                let side = self.persisted.objectives.get(&dest_oid)
+                                    .map(|o| o.owner)
+                                    .unwrap_or(dcso3::coalition::Side::Neutral);
+                                match self.spawn_supply_convoy(
+                                    lua,
+                                    hub,
+                                    dest_oid,
+                                    ConvoyCargoType::Mixed,
+                                    vec![],
+                                    ts,
+                                ) {
+                                    Ok(()) => {
+                                        info!("AUTO-DISPATCH: supply convoy → {}", dest_name);
+                                        self.ephemeral.msgs().panel_to_side(
+                                            30,
+                                            false,
+                                            side,
+                                            format_compact!(
+                                                "🚛 AUTO-DISPATCH: Supply convoy en route to {}!",
+                                                dest_name
+                                            ),
+                                        );
+                                        // Reset the warning timer so we don't dispatch again immediately
+                                        self.ephemeral.supply_warned.insert(dest_oid, ts);
+                                    }
+                                    Err(e) => {
+                                        error!("auto convoy dispatch to {} failed: {e:?}", dest_name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     self.balance_logistics_hubs()?;
 
                     // Chain through management stages: convoys → air routes → sea routes → sync
                     if !self.ephemeral.active_convoys.is_empty() {
-                        let convoys = self.ephemeral.active_convoys.values().cloned().collect();
-                        self.ephemeral.logistics_stage = LogiStage::ManageConvoys { convoys };
+                        self.ephemeral.logistics_stage = LogiStage::ManageConvoys;
                     } else if !self.ephemeral.active_air_routes.is_empty() {
-                        let routes = self.ephemeral.active_air_routes.values().cloned().collect();
-                        self.ephemeral.logistics_stage = LogiStage::ManageAirRoutes { routes };
+                        self.ephemeral.logistics_stage = LogiStage::ManageAirRoutes;
                     } else if !self.ephemeral.active_sea_routes.is_empty() {
-                        let routes = self.ephemeral.active_sea_routes.values().cloned().collect();
-                        self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes { routes };
+                        self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes;
                     } else {
                         let objectives = self
                             .persisted
@@ -1105,7 +1182,7 @@ impl Db {
                     }
                     record_perf(&mut perf.logistics_transfer, st);
                 }
-                LogiStage::ManageConvoys { convoys: _ } => {
+                LogiStage::ManageConvoys => {
                     // Check convoy status and handle deliveries/destruction
                     let st = Utc::now();
                     let convoy_cfg = self.ephemeral.cfg.warehouse
@@ -1195,11 +1272,9 @@ impl Db {
                     // Transition to next stage: convoys → air routes → sea routes → sync
                     if self.ephemeral.active_convoys.is_empty() {
                         if !self.ephemeral.active_air_routes.is_empty() {
-                            let routes = self.ephemeral.active_air_routes.values().cloned().collect();
-                            self.ephemeral.logistics_stage = LogiStage::ManageAirRoutes { routes };
+                            self.ephemeral.logistics_stage = LogiStage::ManageAirRoutes;
                         } else if !self.ephemeral.active_sea_routes.is_empty() {
-                            let routes = self.ephemeral.active_sea_routes.values().cloned().collect();
-                            self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes { routes };
+                            self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes;
                         } else {
                             let objectives = self
                                 .persisted
@@ -1213,7 +1288,7 @@ impl Db {
 
                     record_perf(&mut perf.logistics_convoy, st);
                 }
-                LogiStage::ManageAirRoutes { routes: _ } => {
+                LogiStage::ManageAirRoutes => {
                     let st = Utc::now();
                     let (delivery_distance, check_interval_secs) = match self
                         .ephemeral
@@ -1311,8 +1386,7 @@ impl Db {
 
                     if self.ephemeral.active_air_routes.is_empty() {
                         if !self.ephemeral.active_sea_routes.is_empty() {
-                            let routes = self.ephemeral.active_sea_routes.values().cloned().collect();
-                            self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes { routes };
+                            self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes;
                         } else {
                             let objectives = self
                                 .persisted
@@ -1326,7 +1400,7 @@ impl Db {
 
                     record_perf(&mut perf.logistics_air_routes, st);
                 }
-                LogiStage::ManageSeaRoutes { routes: _ } => {
+                LogiStage::ManageSeaRoutes => {
                     let st = Utc::now();
                     let (delivery_distance, check_interval_secs) = match self
                         .ephemeral
@@ -1531,7 +1605,7 @@ impl Db {
                     let hub = self.compute_supplier(obj)?;
                     suppliers.push((*oid, hub));
                 }
-                ObjectiveKind::CarrierGroup { .. } => (),
+                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. } => (),
             }
         }
         let mut current: FxHashMap<ObjectiveId, SetS<ObjectiveId>> = FxHashMap::default();
@@ -2191,7 +2265,6 @@ impl Db {
         let hub_ids: SmallVec<[ObjectiveId; 16]> = self.persisted.logistics_hubs.into_iter().copied().collect();
 
         // Collect spawn info to execute after we're done with objective references
-        #[allow(dead_code)]
         struct RouteSpawnInfo {
             origin: ObjectiveId,
             destination: ObjectiveId,

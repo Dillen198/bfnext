@@ -244,6 +244,7 @@ pub struct Jtac {
     autoshift: Option<usize>,
     ir_pointer: bool,
     code: u16,
+    lase_range_m: f64,
     last_smoke: DateTime<Utc>,
     nearby_artillery: SmallVec<[GroupId; 8]>,
     nearby_alcm: SmallVec<[(GroupId, i32); 8]>,
@@ -260,6 +261,7 @@ impl Jtac {
         pos: Vector3,
         air: bool,
         default_laser_code: u16,
+        lase_range_m: f64,
     ) -> Self {
         Self {
             gid,
@@ -272,6 +274,7 @@ impl Jtac {
             autoshift: None,
             ir_pointer: false,
             code: default_laser_code,
+            lase_range_m,
             last_smoke: DateTime::<Utc>::default(),
             nearby_artillery: smallvec![],
             nearby_alcm: smallvec![],
@@ -419,11 +422,15 @@ impl Jtac {
         ct.pos = inst.position.p.0;
     }
 
-    fn remove_target(&mut self, _db: &Db, lua: MizLua) -> Result<()> {
+    fn remove_target(&mut self, db: &mut Db, lua: MizLua) -> Result<()> {
         if let Some(target) = self.target.take() {
             target
                 .destroy(lua)
-                .with_context(|| format_compact!("destroying target for jtac {}", self.gid))?
+                .with_context(|| format_compact!("destroying target for jtac {}", self.gid))?;
+        }
+        if let JtId::Group(gid) = self.gid {
+            let (map_layer, msgs) = db.ephemeral.map_layer_and_msgs();
+            map_layer.on_jtac_cleared(&gid, msgs);
         }
         Ok(())
     }
@@ -449,7 +456,7 @@ impl Jtac {
         Ok(())
     }
 
-    fn set_target(&mut self, db: &Db, lua: MizLua, i: usize) -> Result<bool> {
+    fn set_target(&mut self, db: &mut Db, lua: MizLua, i: usize) -> Result<bool> {
         let (id, ct) = self
             .contacts
             .get_index(i)
@@ -533,6 +540,23 @@ impl Jtac {
                 self.menu_dirty |= prev_arty != self.nearby_artillery;
                 self.menu_dirty |= prev_alcm != self.nearby_alcm;
                 self.mark_target(lua).context("marking target")?;
+                if let JtId::Group(gid) = self.gid {
+                    let target_pos2 = Vector2::new(pos.x, pos.z);
+                    let text = {
+                        let t = self.target.as_ref().unwrap();
+                        format_compact!("JTAC {}\nlasing {}\nCode: {}", self.gid, t.typ, self.code)
+                    };
+                    let (map_layer, msgs) = db.ephemeral.map_layer_and_msgs();
+                    map_layer.on_jtac_target(
+                        gid,
+                        self.location.pos,
+                        target_pos2,
+                        self.lase_range_m,
+                        self.side,
+                        text,
+                        msgs,
+                    );
+                }
                 Ok(true)
             }
         }
@@ -564,7 +588,7 @@ impl Jtac {
         Ok(())
     }
 
-    pub fn shift(&mut self, db: &Db, lua: MizLua) -> Result<bool> {
+    pub fn shift(&mut self, db: &mut Db, lua: MizLua) -> Result<bool> {
         if self.contacts.is_empty() {
             return Ok(false);
         }
@@ -592,7 +616,7 @@ impl Jtac {
         self.set_target(db, lua, i).context("setting target")
     }
 
-    fn remove_contact(&mut self, lua: MizLua, db: &Db, id: &EnId) -> Result<bool> {
+    fn remove_contact(&mut self, lua: MizLua, db: &mut Db, id: &EnId) -> Result<bool> {
         if let Some(_) = self.contacts.swap_remove(id) {
             if let Some(target) = &self.target {
                 if &target.id == id {
@@ -604,7 +628,7 @@ impl Jtac {
         Ok(false)
     }
 
-    fn sort_contacts(&mut self, db: &Db, lua: MizLua) -> Result<bool> {
+    fn sort_contacts(&mut self, db: &mut Db, lua: MizLua) -> Result<bool> {
         let plist = &self.priority;
         let priority = |tags: UnitTags| {
             plist
@@ -650,7 +674,7 @@ impl Jtac {
         Ok(())
     }
 
-    fn reset_target(&mut self, db: &Db, lua: MizLua) -> Result<()> {
+    fn reset_target(&mut self, db: &mut Db, lua: MizLua) -> Result<()> {
         if let Some(target) = &self.target {
             if let Some(i) = self.contacts.get_index_of(&target.id) {
                 self.remove_target(db, lua)?;
@@ -1041,7 +1065,7 @@ impl Jtac {
         Ok(())
     }
 
-    fn update_target_position(&mut self, lua: MizLua, db: &Db) -> Result<()> {
+    fn update_target_position(&mut self, lua: MizLua, db: &mut Db) -> Result<()> {
         if let Some(target) = &self.target {
             let (pos, velocity) = match &target.id {
                 EnId::Unit(uid) => {
@@ -1069,17 +1093,32 @@ impl Jtac {
             let contact = self.contacts.get_mut(&target.id).unwrap();
             if (contact.pos - pos).magnitude_squared() > 2. {
                 contact.pos = pos;
+                let typ_clone = contact.typ.clone();
                 let spot =
                     Spot::get_instance(lua, &target.spot).context("getting the spot instance")?;
                 spot.set_point(LuaVec3(contact.pos + velocity))
                     .context("setting the spot position")?;
-                self.mark_target(lua).context("marking moved target")?
+                let _ = contact;
+                self.mark_target(lua).context("marking moved target")?;
+                if let JtId::Group(gid) = self.gid {
+                    let new_target_pos2 = Vector2::new(pos.x, pos.z);
+                    let text = format_compact!(
+                        "JTAC {}\nlasing {}\nCode: {}",
+                        self.gid,
+                        typ_clone,
+                        self.code
+                    );
+                    let (map_layer, msgs) = db.ephemeral.map_layer_and_msgs();
+                    if let Some(marks) = map_layer.jtac_marks.get_mut(&gid) {
+                        marks.on_target_move(new_target_pos2, text, msgs);
+                    }
+                }
             }
         }
         Ok(())
     }
 
-    pub fn toggle_auto_shift(&mut self, db: &Db, lua: MizLua) -> Result<()> {
+    pub fn toggle_auto_shift(&mut self, db: &mut Db, lua: MizLua) -> Result<()> {
         match self.autoshift {
             None => match self.target.as_ref() {
                 None => self.autoshift = Some(0),
@@ -1096,18 +1135,18 @@ impl Jtac {
         Ok(())
     }
 
-    pub fn toggle_ir_pointer(&mut self, db: &Db, lua: MizLua) -> Result<()> {
+    pub fn toggle_ir_pointer(&mut self, db: &mut Db, lua: MizLua) -> Result<()> {
         self.ir_pointer = !self.ir_pointer;
         self.reset_target(db, lua).context("resetting target")?;
         Ok(())
     }
 
-    pub fn clear_filter(&mut self, db: &Db, lua: MizLua) -> Result<bool> {
+    pub fn clear_filter(&mut self, db: &mut Db, lua: MizLua) -> Result<bool> {
         self.filter = BitFlags::empty();
         self.sort_contacts(db, lua)
     }
 
-    pub fn add_filter(&mut self, db: &Db, lua: MizLua, tag: BitFlags<UnitTag>) -> Result<bool> {
+    pub fn add_filter(&mut self, db: &mut Db, lua: MizLua, tag: BitFlags<UnitTag>) -> Result<bool> {
         self.filter |= tag;
         self.sort_contacts(db, lua)
     }
@@ -1187,11 +1226,6 @@ impl Jtacs {
         self.jtacs.values().flat_map(|jtx| jtx.values())
     }
 
-    #[allow(dead_code)]
-    pub fn jtacs_mut(&mut self) -> impl Iterator<Item = &mut Jtac> {
-        self.jtacs.values_mut().flat_map(|jtx| jtx.values_mut())
-    }
-
     pub fn artillery_mission(
         &mut self,
         db: &Db,
@@ -1259,6 +1293,96 @@ impl Jtacs {
         };
 
         jtac.artillery_mission(db, lua, adjustment, &shooter, total_ammo)
+    }
+
+    /// Fire every gun in `nearby_artillery` at the current JTAC target simultaneously.
+    /// Each gun fires `n` rounds using its individual adjustment. Returns the count
+    /// of guns that accepted the order.
+    pub fn fire_all_artillery_together(
+        &mut self,
+        db: &Db,
+        lua: MizLua,
+        jtid: &JtId,
+        n: u8,
+    ) -> Result<usize> {
+        let jtac = self
+            .jtacs
+            .iter_mut()
+            .find_map(|(_, jtx)| jtx.get_mut(jtid))
+            .ok_or_else(|| anyhow!("no such jtac {jtid}"))?;
+        let target_pos = match &jtac.target {
+            None => bail!("no JTAC target — designate a target first"),
+            Some(t) => Vector2::new(t.pos.x, t.pos.z),
+        };
+        let arty_gids: SmallVec<[GroupId; 8]> = jtac.nearby_artillery.clone();
+        if arty_gids.is_empty() {
+            bail!("no nearby artillery groups registered with this JTAC");
+        }
+
+        let mut fired = 0usize;
+        for gid in &arty_gids {
+            // Per-gun adjustment (zero if none set yet).
+            let adjustment = self
+                .artillery_adjustment
+                .entry(*gid)
+                .or_insert_with(|| ArtilleryAdjustment {
+                    adjust: Vector2::zeros(),
+                    target: Vector2::zeros(),
+                    group: vec![],
+                    tracked: None,
+                });
+            let adjusted_pos = target_pos + adjustment.adjust;
+            adjustment.target = target_pos;
+
+            let group_name = match db.group(gid) {
+                Ok(g) => g.name.clone(),
+                Err(_) => continue,
+            };
+            let apos = match db.group_center(gid) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let fire_task = Task::FireAtPoint {
+                point: LuaVec2(adjusted_pos),
+                radius: None,
+                expend_qty: Some(n as i64),
+                weapon_type: None,
+                altitude: Some(0.),
+                altitude_type: Some(AltType::RADIO),
+            };
+            let mission = Task::Mission {
+                airborne: Some(false),
+                route: vec![MissionPoint {
+                    action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
+                    typ: PointType::TurningPoint,
+                    airdrome_id: None,
+                    helipad: None,
+                    time_re_fu_ar: None,
+                    link_unit: None,
+                    pos: LuaVec2(apos),
+                    alt: 0.,
+                    alt_typ: Some(AltType::RADIO),
+                    speed: 0.,
+                    speed_locked: None,
+                    eta: None,
+                    eta_locked: None,
+                    name: None,
+                    task: Box::new(fire_task),
+                }],
+            };
+            if let Ok(group) = Group::get_by_name(lua, &group_name) {
+                if let Ok(con) = group.get_controller() {
+                    if con.set_task(mission).is_ok() {
+                        fired += 1;
+                    }
+                }
+            }
+        }
+
+        if fired == 0 {
+            bail!("no artillery groups could be reached — are they spawned?");
+        }
+        Ok(fired)
     }
 
     pub fn get_artillery_ammo(
@@ -1539,7 +1663,7 @@ impl Jtacs {
         lua: MizLua,
         land: &Land,
         landcache: &mut LandCache,
-        db: &Db,
+        db: &mut Db,
         saw_jtacs: &mut SmallVec<[JtId; 32]>,
         saw_units: &mut FxHashSet<EnId>,
         lost_targets: &mut SmallVec<[(Side, JtId, Option<EnId>); 64]>,
@@ -1571,6 +1695,7 @@ impl Jtacs {
                     pos,
                     air,
                     spec.default_laser_code,
+                    spec.range as f64,
                 );
                 self.menu_dirty
                     .entry(side)
@@ -1588,6 +1713,15 @@ impl Jtacs {
         let prev_loc = jtac.location;
         jtac.location = JtacLocation::new(db, pos);
         let jtac_moved = (prev_loc.pos - jtac.location.pos).magnitude_squared() > 1.0;
+        if jtac_moved {
+            if let JtId::Group(gid) = jtac.gid {
+                let new_pos2 = jtac.location.pos;
+                let (map_layer, msgs) = db.ephemeral.map_layer_and_msgs();
+                if let Some(marks) = map_layer.jtac_marks.get_mut(&gid) {
+                    marks.on_jtac_move(new_pos2, msgs);
+                }
+            }
+        }
         if prev_loc.oid != jtac.location.oid {
             Self::remove_code_by_location(
                 &mut self.code_by_location,
@@ -1613,31 +1747,32 @@ impl Jtacs {
             pos.y += 10.
         };
 
-        for (unit, _) in db.instanced_units() {
+        // Collect unit/player snapshots before mutably borrowing db for remove_contact.
+        let units_snap: SmallVec<[SpawnedUnit; 32]> = db
+            .instanced_units()
+            .map(|(u, _)| u.clone())
+            .collect();
+        let players_snap: SmallVec<[(Ucid, Side, InstancedPlayer); 16]> = db
+            .instanced_players()
+            .map(|(ucid, pl, inst)| (*ucid, pl.side, inst.clone()))
+            .collect();
+
+        let mut to_remove: SmallVec<[EnId; 32]> = smallvec![];
+
+        for unit in &units_snap {
             let id = EnId::Unit(unit.id);
-            macro_rules! lost {
-                () => {{
-                    match jtac.remove_contact(lua, db, &id) {
-                        Err(e) => warn!(
-                            "could not remove airborne jtac contact {} {:?}",
-                            unit.name, e
-                        ),
-                        Ok(false) => (),
-                        Ok(true) => lost_targets.push((jtac.side, jtac.gid, None)),
-                    }
-                    continue;
-                }};
-            }
             if unit.side == jtac.side {
                 continue;
             }
             saw_units.insert(id);
             let detected = detected.entry(id).or_default();
             if !unit.tags.contains(jtac.filter) {
-                lost!();
+                to_remove.push(id);
+                continue;
             }
             if unit.airborne_velocity.is_some() && !unit.tags.contains(UnitTag::Helicopter) {
-                lost!();
+                to_remove.push(id);
+                continue;
             }
             if let Some(ct) = jtac.contacts.get(&id) {
                 if !jtac_moved && unit.moved == ct.last_move {
@@ -1653,11 +1788,12 @@ impl Jtacs {
                 detected.detected = true;
                 jtac.add_unit_contact(unit)
             } else {
-                lost!()
+                to_remove.push(id);
             }
         }
-        for (ucid, player, inst) in db.instanced_players() {
-            if player.side == jtac.side {
+
+        for (ucid, player_side, inst) in &players_snap {
+            if *player_side == jtac.side {
                 continue;
             }
             let id = EnId::Player(*ucid);
@@ -1665,9 +1801,7 @@ impl Jtacs {
             let detected = detected.entry(id).or_default();
             let tags = db.ephemeral.cfg.unit_classification[&inst.typ];
             if !tags.contains(jtac.filter) {
-                if let Err(e) = jtac.remove_contact(lua, db, &id) {
-                    warn!("could not filter player contact {ucid} {e:?}")
-                }
+                to_remove.push(id);
                 continue;
             }
             if inst.in_air && !tags.contains(UnitTag::Helicopter) {
@@ -1681,11 +1815,15 @@ impl Jtacs {
                 detected.detected = true;
                 jtac.add_player_contact(*ucid, inst)
             } else {
-                match jtac.remove_contact(lua, db, &id) {
-                    Err(e) => warn!("could not remove jtac contact {ucid} {e:?}"),
-                    Ok(false) => (),
-                    Ok(true) => lost_targets.push((jtac.side, jtac.gid, None)),
-                }
+                to_remove.push(id);
+            }
+        }
+
+        for id in to_remove {
+            match jtac.remove_contact(lua, db, &id) {
+                Err(e) => warn!("could not remove jtac contact {:?}", e),
+                Ok(false) => (),
+                Ok(true) => lost_targets.push((jtac.side, jtac.gid, None)),
             }
         }
         Ok(())
@@ -1702,7 +1840,8 @@ impl Jtacs {
         let mut saw_jtacs: SmallVec<[JtId; 32]> = smallvec![];
         let mut saw_units: FxHashSet<EnId> = FxHashSet::default();
         let mut lost_targets: SmallVec<[(Side, JtId, Option<EnId>); 64]> = smallvec![];
-        for jt in db.jtacs() {
+        let jtac_descs: Vec<JtDesc> = db.jtacs().collect();
+        for jt in jtac_descs {
             self.update_jtac(
                 lua,
                 &land,

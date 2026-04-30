@@ -16,13 +16,13 @@ for more details.
 
 use super::{ephemeral::SlotInfo, objective::ObjGroupClass, player::SlotAuth, Db, SetS};
 use crate::{
-    group, group_by_name, group_health, group_mut, objective,
+    group, group_health, group_mut, objective,
     spawnctx::{Despawn, SpawnCtx, SpawnLoc},
-    unit, unit_by_name, unit_mut, Connected,
+    unit, unit_mut, Connected,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use bfprotocols::{
-    cfg::{Action, ActionKind, Crate, Deployable, LifeType, Troop, UnitTag, UnitTags, Vehicle},
+    cfg::{Action, ActionKind, Crate, Deployable, LifeType, SpecialSamUnitCfg, Troop, UnitTag, UnitTags, Vehicle},
     db::objective::ObjectiveId,
     stats::{self, EnId},
 };
@@ -33,9 +33,10 @@ use bfprotocols::{
 use chrono::prelude::*;
 use compact_str::{format_compact, CompactString};
 use dcso3::{
-    azumith3d, centroid2d, centroid3d, change_heading,
+    azumith3d, centroid2d, change_heading,
     coalition::Side,
     coord::Coord,
+    country::Country,
     env::miz,
     env::miz::{Group, GroupKind, MizIndex},
     group::GroupCategory,
@@ -118,6 +119,11 @@ pub enum DeployKind {
         #[serde(skip)]
         ammo: i32,
     },
+    /// Infantry that bailed out of a destroyed vehicle
+    Dismount {
+        from_group: GroupId,
+        can_capture: bool,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -156,11 +162,6 @@ pub struct SpawnedGroup {
 }
 
 impl Db {
-    #[allow(dead_code)]
-    pub fn groups(&self) -> impl Iterator<Item = (&GroupId, &SpawnedGroup)> {
-        self.persisted.groups.into_iter()
-    }
-
     pub fn group(&self, id: &GroupId) -> Result<&SpawnedGroup> {
         group!(self, id)
     }
@@ -176,38 +177,8 @@ impl Db {
         ))
     }
 
-    #[allow(dead_code)]
-    pub fn group_center3(&self, id: &GroupId) -> Result<Vector3> {
-        let group = group!(self, id)?;
-        Ok(centroid3d(
-            group
-                .units
-                .into_iter()
-                .filter_map(|uid| self.persisted.units.get(uid))
-                .filter_map(
-                    |unit| {
-                        if unit.dead {
-                            None
-                        } else {
-                            Some(unit.position.p.0)
-                        }
-                    },
-                ),
-        ))
-    }
-
-    #[allow(dead_code)]
-    pub fn group_by_name(&self, name: &str) -> Result<&SpawnedGroup> {
-        group_by_name!(self, name)
-    }
-
     pub fn unit(&self, id: &UnitId) -> Result<&SpawnedUnit> {
         unit!(self, id)
-    }
-
-    #[allow(dead_code)]
-    pub fn unit_by_name(&self, name: &str) -> Result<&SpawnedUnit> {
-        unit_by_name!(self, name)
     }
 
     pub fn first_living_unit(&self, gid: &GroupId) -> Result<&DcsOid<ClassUnit>> {
@@ -363,6 +334,7 @@ impl Db {
                     msg,
                 ))
             }
+            DeployKind::Dismount { .. } => None,
         };
         if let Some(id) = id {
             self.ephemeral.group_marks.insert(*gid, id);
@@ -416,6 +388,9 @@ impl Db {
                 self.ephemeral.csar_last_renotify.remove(gid);
                 self.ephemeral.csar_smoke_cooldown.remove(gid);
             }
+            DeployKind::Dismount { .. } => {
+                self.persisted.dismounts.remove_cow(gid);
+            }
         }
         if let Some(id) = self.ephemeral.group_marks.remove(gid) {
             self.ephemeral.msgs.delete_mark(id);
@@ -452,6 +427,11 @@ impl Db {
                 // it's a normal group
                 if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
                     self.ephemeral.push_despawn(*gid, Despawn::Group(oid.clone()));
+                } else {
+                    // Object ID not yet tracked (e.g. group spawned moments ago and no DCS
+                    // event has fired yet). Fall back to destroying by name so the DCS unit
+                    // is actually removed from the world rather than silently left alive.
+                    self.ephemeral.push_despawn(*gid, Despawn::GroupByName(group.name.to_string()));
                 }
             }
         }
@@ -825,7 +805,96 @@ impl Db {
             DeployKind::DownedPilot { .. } => {
                 self.persisted.downed_pilots.insert_cow(gid);
             }
+            DeployKind::Dismount { .. } => {
+                self.persisted.dismounts.insert_cow(gid);
+            }
         }
+        self.persisted.groups.insert_cow(gid, spawned);
+        self.persisted.groups_by_name.insert_cow(group_name, gid);
+        self.persisted.groups_by_side.get_or_default_cow(side).insert_cow(gid);
+        self.ephemeral.dirty();
+        self.mark_group(&gid)?;
+        Ok(gid)
+    }
+
+    /// Create a `SpawnedGroup` from inline unit definitions (no .miz template required).
+    /// Registers a `SyntheticGroupSpec` in `ephemeral.synthetic_templates` so that
+    /// `spawn_group` can build the DCS Lua table at respawn time.
+    pub(super) fn add_group_from_units(
+        &mut self,
+        spctx: &SpawnCtx,
+        side: Side,
+        country: Country,
+        units: &[SpecialSamUnitCfg],
+        origin: DeployKind,
+    ) -> Result<GroupId> {
+        use super::ephemeral::SyntheticGroupSpec;
+
+        let gid = GroupId::new();
+        // Use a stable template name derived from the group ID so synthetic_templates can look it up.
+        let template_name = String::from(format_compact!("@synthetic:{}", gid));
+        let group_name = template_name.clone();
+
+        let mut spawned = SpawnedGroup {
+            id: gid,
+            name: group_name.clone(),
+            template_name: template_name.clone(),
+            side,
+            kind: Some(GroupCategory::Ground),
+            origin,
+            class: ObjGroupClass::Lr,
+            units: SetS::new(),
+            tags: UnitTags(BitFlags::empty()),
+        };
+
+        let land = Land::singleton(spctx.lua())?;
+        for unit_cfg in units {
+            let uid = UnitId::new();
+            let tags = *self
+                .ephemeral
+                .cfg
+                .unit_classification
+                .get(unit_cfg.typ.as_str())
+                .ok_or_else(|| anyhow!("unit type not classified {}", unit_cfg.typ))?;
+            let tags = UnitTags(tags.0);
+            spawned.tags.0.insert(tags.0);
+
+            let unit_name = String::from(format_compact!("{}-{}", group_name, uid));
+            let unit_pos = Vector2::new(unit_cfg.pos.x, unit_cfg.pos.y);
+            let height = land.get_height(LuaVec2(unit_pos))?;
+            let mut position = Position3::default();
+            position.p.x = unit_cfg.pos.x;
+            position.p.y = height;
+            position.p.z = unit_cfg.pos.y;
+
+            let su = SpawnedUnit {
+                id: uid,
+                group: gid,
+                side,
+                typ: Vehicle(String::from(unit_cfg.typ.as_str())),
+                tags,
+                name: unit_name.clone(),
+                template_name: unit_name.clone(),
+                spawn_position: position,
+                spawn_pos: unit_pos,
+                spawn_heading: unit_cfg.heading,
+                position,
+                pos: unit_pos,
+                heading: unit_cfg.heading,
+                dead: false,
+                moved: None,
+                airborne_velocity: None,
+            };
+            spawned.units.insert_cow(uid);
+            self.persisted.units.insert_cow(uid, su);
+            self.persisted.units_by_name.insert_cow(unit_name, uid);
+        }
+
+        self.ephemeral.synthetic_templates.insert(
+            template_name.clone(),
+            SyntheticGroupSpec { country, category: GroupCategory::Ground },
+        );
+
         self.persisted.groups.insert_cow(gid, spawned);
         self.persisted.groups_by_name.insert_cow(group_name, gid);
         self.persisted.groups_by_side.get_or_default_cow(side).insert_cow(gid);
@@ -1113,9 +1182,10 @@ impl Db {
                         }
                     }
                 }
-                if self.persisted.deployed.contains(&gid)
+                if self.is_player_deployed(&gid)
                     || self.persisted.troops.contains(&gid)
                     || self.persisted.crates.contains(&gid)
+                    || self.persisted.dismounts.contains(&gid)
                 {
                     if health == 0 {
                         match &group!(self, gid)?.origin {
@@ -1143,7 +1213,8 @@ impl Db {
                             | DeployKind::Crate { .. }
                             | DeployKind::Objective { .. }
                             | DeployKind::ObjectiveDeprecated
-                            | DeployKind::DownedPilot { .. } => (),
+                            | DeployKind::DownedPilot { .. }
+                            | DeployKind::Dismount { .. } => (),
                         }
                         self.delete_group(&gid)?
                     }
@@ -1194,7 +1265,7 @@ impl Db {
                     {
                         self.update_objective_status(&oid, now)?;
                     }
-                    if self.persisted.deployed.contains(&gid)
+                    if self.is_player_deployed(&gid)
                         || self.persisted.troops.contains(&gid)
                         || self.persisted.crates.contains(&gid)
                     {

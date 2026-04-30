@@ -11,9 +11,9 @@ use crate::{
 use anyhow::{Context, Ok, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{
-        Action, ActionGeoLimit, ActionKind, AiPlaneCfg, AiPlaneKind, AwacsCfg, BomberCfg,
+        Action, ActionGeoLimit, ActionKind, AiPlaneCfg, AiPlaneKind, ArtilleryCfg, AwacsCfg, BomberCfg,
         DeployableCfg, DeployableKind, DroneCfg, LimitEnforceTyp, MoveCfg, NavalCruiseMissileCfg,
-        NukeCfg, UnitTag,
+        NukeCfg, ReconCfg, UnitTag,
     },
     db::{
         group::GroupId,
@@ -45,7 +45,7 @@ use dcso3::{
 };
 use enumflags2::BitFlags;
 use fxhash::FxHashSet;
-use log::{error, info};
+use log::{error, info, warn};
 use rand::{Rng, thread_rng};
 use smallvec::{SmallVec, smallvec};
 use std::{cmp::max, f64, vec};
@@ -110,6 +110,10 @@ pub enum ActionArgs {
     CarrierRepair(WithObj<()>),
     CarrierRespawn(WithObj<()>),
     NavalCruiseMissileStrike(WithObj<NavalCruiseMissileCfg>),
+    /// Player-triggered indirect fire support (artillery / armor barrage at a map-mark position).
+    Artillery(WithPos<ArtilleryCfg>),
+    /// Player-triggered reconnaissance flight over a map-mark position.
+    Recon(WithPos<ReconCfg>),
 }
 
 impl ActionArgs {
@@ -281,6 +285,8 @@ impl ActionArgs {
             ActionKind::CarrierRepair => Ok(Self::CarrierRepair(obj(db, (), s)?)),
             ActionKind::CarrierRespawn => Ok(Self::CarrierRespawn(obj(db, (), s)?)),
             ActionKind::NavalCruiseMissileStrike(c) => Ok(Self::NavalCruiseMissileStrike(obj(db, c, s)?)),
+            ActionKind::Artillery(c) => Ok(Self::Artillery(pos(db, lua, side, c, s)?)),
+            ActionKind::Recon(c) => Ok(Self::Recon(pos(db, lua, side, c, s)?)),
         }
     }
 
@@ -312,6 +318,8 @@ impl ActionArgs {
             Self::CarrierRepair(_) => None,
             Self::CarrierRespawn(_) => None,
             Self::NavalCruiseMissileStrike(_) => None,
+            Self::Artillery(c) => Some(c.pos),
+            Self::Recon(c) => Some(c.pos),
         }
     }
 }
@@ -579,6 +587,12 @@ impl Db {
                     .move_group(spctx, side, ucid, cmd.action.penalty.unwrap_or(0), args)
                     .context("moving unit")?,
             },
+            ActionArgs::Artillery(args) => self
+                .artillery_strike(lua, side, ucid.clone(), args)
+                .context("calling artillery fire support")?,
+            ActionArgs::Recon(args) => self
+                .recon_flight(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .context("calling recon flight")?,
         };
         if let Some(ucid) = ucid.as_ref() {
             self.ephemeral.stat(Stat::Action {
@@ -840,6 +854,75 @@ impl Db {
                 )
             },
         )?))
+    }
+
+    fn recon_flight(
+        &mut self,
+        perf: &mut PerfInner,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        side: Side,
+        ucid: Option<Ucid>,
+        name: String,
+        action: Action,
+        args: WithPos<ReconCfg>,
+    ) -> Result<Option<GroupId>> {
+        let target_pos = args.pos;
+        let scan_radius = args.cfg.scan_radius_m;
+        let ucid_for_report = ucid.clone();
+        let gid = self.add_and_spawn_ai_air(
+            perf,
+            spctx,
+            idx,
+            side,
+            &ucid,
+            name,
+            action,
+            0.,
+            &WithPos {
+                pos: args.pos,
+                cfg: args.cfg.plane,
+            },
+            None,
+            BitFlags::empty(),
+            move |db, gid, spawn_pos| {
+                // Immediately count enemy units within scan radius and report to the player
+                let enemy_side = match side {
+                    Side::Blue => Side::Red,
+                    Side::Red => Side::Blue,
+                    Side::Neutral => Side::Neutral,
+                };
+                let unit_count: usize = db
+                    .objectives()
+                    .filter(|(_, obj)| obj.owner() == enemy_side)
+                    .flat_map(|(_, obj)| obj.groups.get(&enemy_side).into_iter().flat_map(|gs| gs.into_iter()))
+                    .filter_map(|gid| db.persisted.groups.get(gid))
+                    .flat_map(|g| g.units.into_iter())
+                    .filter_map(|uid| db.persisted.units.get(uid))
+                    .filter(|u| {
+                        !u.dead
+                            && na::distance_squared(&target_pos.into(), &u.pos.into())
+                                <= scan_radius.powi(2)
+                    })
+                    .count();
+                let msg = format_compact!(
+                    "Recon flight tasked. Initial report: ~{unit_count} enemy units within {:.0}km of target.",
+                    scan_radius / 1000.0
+                );
+                db.ephemeral.msgs().panel_to_side(20, false, side, msg);
+                db.drone_mission(
+                    side,
+                    ucid_for_report,
+                    spawn_pos,
+                    WithPosAndGroup {
+                        group: gid,
+                        pos: target_pos,
+                        cfg: (),
+                    },
+                )
+            },
+        )?;
+        Ok(Some(gid))
     }
 
     fn ai_fighters_mission<'lua>(
@@ -1173,7 +1256,8 @@ impl Db {
                 | DeployKind::ObjectiveDeprecated
                 | DeployKind::Troop { .. }
                 | DeployKind::Deployed { .. }
-                | DeployKind::DownedPilot { .. } => (),
+                | DeployKind::DownedPilot { .. }
+                | DeployKind::Dismount { .. } => (),
             }
         }
         let land = Land::singleton(spctx.lua())?;
@@ -2015,6 +2099,11 @@ impl Db {
                     drone_cfg.plane.altitude_typ.clone(),
                     drone_cfg.plane.speed,
                 ),
+                ActionKind::Recon(recon_cfg) => (
+                    recon_cfg.plane.altitude,
+                    recon_cfg.plane.altitude_typ.clone(),
+                    recon_cfg.plane.speed,
+                ),
                 ActionKind::Sead(ai_plane_cfg) => (
                     ai_plane_cfg.altitude,
                     ai_plane_cfg.altitude_typ.clone(),
@@ -2335,6 +2424,7 @@ impl Db {
                     ActionKind::Awacs(AwacsCfg { plane: a, .. })
                     | ActionKind::Tanker(a)
                     | ActionKind::Drone(DroneCfg { plane: a, .. })
+                    | ActionKind::Recon(ReconCfg { plane: a, .. })
                     | ActionKind::CruiseMissileSpawn(a)
                     | ActionKind::Fighters(a)
                     | ActionKind::Attackers(a)
@@ -2392,6 +2482,7 @@ impl Db {
                     | ActionKind::CarrierWaypoint
                     | ActionKind::CarrierRepair
                     | ActionKind::CarrierRespawn
+                    | ActionKind::Artillery(_)
                     | ActionKind::NavalCruiseMissileStrike(_) => bail!("not a race tracker"),
                 }
             }
@@ -2400,7 +2491,8 @@ impl Db {
             | DeployKind::Objective { .. }
             | DeployKind::ObjectiveDeprecated
             | DeployKind::Troop { .. }
-            | DeployKind::DownedPilot { .. } => bail!("not a race tracker"),
+            | DeployKind::DownedPilot { .. }
+            | DeployKind::Dismount { .. } => bail!("not a race tracker"),
         };
         let responsible = player
             .as_ref()
@@ -2662,6 +2754,9 @@ impl Db {
             }
         }
         let spctx = SpawnCtx::new(lua)?;
+        if let Err(e) = spctx.remove_scenery(pos, 50.) {
+            warn!("could not clear scenery at deploy point: {e:?}");
+        }
         let spawnloc = SpawnLoc::AtPos {
             pos,
             offset_direction: Vector2::new(1., 0.),
@@ -2826,6 +2921,7 @@ impl Db {
                     | ActionKind::Attackers(ai)
                     | ActionKind::CruiseMissileSpawn(ai)
                     | ActionKind::Drone(DroneCfg { plane: ai, .. })
+                    | ActionKind::Recon(ReconCfg { plane: ai, .. })
                     | ActionKind::Tanker(ai) => {
                         if let Some(d) = ai.duration {
                             if now - *time > Duration::hours(d as i64) {
@@ -2997,6 +3093,7 @@ impl Db {
                     | ActionKind::CarrierWaypoint
                     | ActionKind::CarrierRepair
                     | ActionKind::CarrierRespawn
+                    | ActionKind::Artillery(_)
                     | ActionKind::NavalCruiseMissileStrike(_) => {
                         bail!("should not be a group")
                     }
@@ -3057,5 +3154,142 @@ impl Db {
             }
         }
         Ok(())
+    }
+
+    /// Player-requested indirect fire support. Finds nearby friendly Armor/Mr/Lr
+    /// groups within `cfg.max_range_m` and issues `Task::FireAtPoint` toward
+    /// `args.pos`. Up to `cfg.max_groups` groups fire simultaneously.
+    fn artillery_strike(
+        &mut self,
+        lua: MizLua,
+        side: Side,
+        ucid: Option<Ucid>,
+        args: WithPos<ArtilleryCfg>,
+    ) -> Result<Option<GroupId>> {
+        use crate::db::objective::ObjGroupClass;
+
+        let cfg = args.cfg.clone();
+        let target_pos = args.pos;
+
+        let land = Land::singleton(lua)?;
+        let alt = land.get_height(LuaVec2(target_pos)).unwrap_or(0.);
+
+        // Collect alive Armor/Mr/Lr groups belonging to `side` within range.
+        let mut candidates: Vec<(GroupId, f64)> = Vec::new();
+        {
+            let group_ids: Vec<GroupId> = self
+                .persisted
+                .groups_by_side
+                .get(&side)
+                .map(|s| s.into_iter().copied().collect())
+                .unwrap_or_default();
+
+            for gid in group_ids {
+                let group = match self.persisted.groups.get(&gid) {
+                    Some(g) => g,
+                    None => continue,
+                };
+                match group.class {
+                    ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Lr => {}
+                    _ => continue,
+                }
+                let alive = group
+                    .units
+                    .into_iter()
+                    .any(|uid| self.persisted.units.get(uid).map(|u| !u.dead).unwrap_or(false));
+                if !alive {
+                    continue;
+                }
+                let center = self.group_center(&gid).unwrap_or_default();
+                let dist = na::distance(&center.into(), &target_pos.into());
+                if dist <= cfg.max_range_m {
+                    candidates.push((gid, dist));
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            bail!(
+                "no friendly artillery within {}m of that position",
+                cfg.max_range_m as u32
+            );
+        }
+
+        // Sort by distance (closest first) and cap at max_groups.
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.truncate(cfg.max_groups);
+
+        let fire_task = Task::FireAtPoint {
+            point: LuaVec2(target_pos),
+            radius: Some(cfg.radius_m),
+            expend_qty: None,
+            weapon_type: None,
+            altitude: Some(alt),
+            altitude_type: Some(AltType::BARO),
+        };
+
+        let mut fired = 0u32;
+        for (gid, _) in &candidates {
+            let group_name = match self.persisted.groups.get(gid) {
+                Some(g) => g.name.clone(),
+                None => continue,
+            };
+            let dcs_group = match Group::get_by_name(lua, group_name.as_str()) {
+                std::result::Result::Ok(g) => g,
+                std::result::Result::Err(_) => continue,
+            };
+            let controller = match dcs_group.get_controller() {
+                std::result::Result::Ok(c) => c,
+                std::result::Result::Err(e) => {
+                    error!("artillery_strike: get_controller {group_name}: {e}");
+                    continue;
+                }
+            };
+            match controller.set_task(fire_task.clone()) {
+                std::result::Result::Err(e) => {
+                    error!("artillery_strike: set_task {group_name}: {e}");
+                }
+                std::result::Result::Ok(()) => {
+                    info!(
+                        "artillery_strike: ordered {:?} group {} to fire at {:?}",
+                        side, group_name, target_pos
+                    );
+                    fired += 1;
+                }
+            }
+        }
+
+        if fired == 0 {
+            bail!("all artillery groups are unavailable or out of range right now");
+        }
+
+        // Notify the requesting player (if player-called) and the whole side.
+        let msg = format_compact!(
+            "FIRES: {} group(s) firing fire-support mission at requested target",
+            fired
+        );
+        self.ephemeral.msgs().panel_to_side(15, false, side, msg.clone());
+        if let Some(ref ucid) = ucid {
+            self.ephemeral.panel_to_player(&self.persisted, 15, ucid, msg);
+        }
+
+        // Place a temporary F10 overlay: trajectory line + impact circle + label.
+        // Gun centroid is the average position of the firing candidates.
+        let gun_pos = {
+            let sum = candidates.iter().fold(Vector2::zeros(), |acc, (gid, _)| {
+                acc + self.group_center(gid).unwrap_or_default()
+            });
+            sum / candidates.len() as f64
+        };
+        self.ephemeral.on_fire_mission(
+            gun_pos,
+            target_pos,
+            cfg.radius_m.max(500.),
+            fired,
+            side,
+            Utc::now(),
+        );
+
+        Ok(None)
     }
 }

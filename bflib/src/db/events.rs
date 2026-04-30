@@ -50,12 +50,23 @@ pub enum CampaignEvent {
         /// true until the HVT unit has been spawned (first tick after creation)
         #[serde(default)]
         announced: bool,
+        /// Actual world-space spawn position (offset from objective into a nearby town/area).
+        /// None on older saved states — falls back to objective position.
+        #[serde(default)]
+        spawn_pos: Option<Vector2>,
+        /// GroupId of the spawned HVT unit — persisted so we can despawn it after a restart.
+        #[serde(default)]
+        spawned_gid: Option<GroupId>,
     },
     ReinforcementWave {
         id: EventId,
         side: Side,
         objective: ObjectiveId,
         arrival_time: DateTime<Utc>,
+        /// Source friendly objective position where units will be spawned to march from.
+        /// None on older saved states — falls back to spawning at the destination.
+        #[serde(default)]
+        source_pos: Option<Vector2>,
     },
     CounterOffensive {
         id: EventId,
@@ -80,6 +91,20 @@ pub enum CampaignEvent {
         #[serde(default)]
         fire_ordered: bool,
     },
+    /// ALCM / ballistic-missile strike ordered by the Smart Commander.
+    MissileStrike {
+        id: EventId,
+        /// Side launching the missiles.
+        side: Side,
+        /// Deployed group IDs that will fire (ALCM-tagged, pre-selected by commander).
+        shooter_gids: SmallVec<[bfprotocols::db::group::GroupId; 4]>,
+        /// World-space position to strike.
+        target_pos: Vector2,
+        expires_at: DateTime<Utc>,
+        /// False on the first tick — fire order issued exactly once.
+        #[serde(default)]
+        fire_ordered: bool,
+    },
     /// Enemy ambush force spawned along an active supply-convoy route.
     ConvoyAmbush {
         id: EventId,
@@ -93,11 +118,55 @@ pub enum CampaignEvent {
         /// False on the first tick — spawn happens exactly once.
         #[serde(default)]
         spawned: bool,
+        /// DCS group ID of the convoy being ambushed (for AttackGroup task).
+        convoy_group_id: bfprotocols::db::group::GroupId,
+        /// Last known convoy position (fallback if AttackGroup unavailable).
+        convoy_pos: Vector2,
+    },
+    /// Multi-phase air assault: heli troop insertion + C-130 vehicle airdrop → ground attack.
+    AirAssault {
+        id: EventId,
+        /// Side conducting the assault.
+        attacking_side: Side,
+        /// Enemy objective being assaulted.
+        target_objective: ObjectiveId,
+        /// World-space position of the LZ (offset from objective).
+        lz_pos: Vector2,
+        /// When the event expires.
+        expires_at: DateTime<Utc>,
+        /// Phase tracking.
+        #[serde(default)]
+        aircraft_spawned: bool,
+        /// Absolute time when ground troops should be spawned (after aircraft arrive).
+        #[serde(default)]
+        deploy_at: Option<DateTime<Utc>>,
+        /// Whether ground troops + vehicles have been spawned.
+        #[serde(default)]
+        troops_spawned: bool,
+        /// Whether the ground attack order has been issued.
+        #[serde(default)]
+        attack_ordered: bool,
     },
     /// Enemy CAP orbit spawned over/near an objective when players penetrate enemy airspace.
     EnemyCap {
         id: EventId,
         /// Side that owns the CAP (the defending side).
+        cap_side: Side,
+        /// Objective the CAP orbits over.
+        objective: ObjectiveId,
+        /// When the CAP event expires and the aircraft despawn.
+        expires_at: DateTime<Utc>,
+        /// False until the aircraft is actually spawned (first tick).
+        #[serde(default)]
+        spawned: bool,
+    },
+    /// Commander-dispatched CAP: a friendly AI CAP flight launched by the Smart
+    /// Commander when friendly pilot coverage is thin.  Uses the same DCS spawn
+    /// machinery as EnemyCap but is tracked separately so the commander can
+    /// enforce a post-expiry cooldown before spawning another.
+    CommanderCap {
+        id: EventId,
+        /// Side that owns (and benefits from) this CAP flight.
         cap_side: Side,
         /// Objective the CAP orbits over.
         objective: ObjectiveId,
@@ -116,8 +185,11 @@ impl CampaignEvent {
             Self::ReinforcementWave { id, .. } => *id,
             Self::CounterOffensive { id, .. } => *id,
             Self::Barrage { id, .. } => *id,
+            Self::MissileStrike { id, .. } => *id,
             Self::ConvoyAmbush { id, .. } => *id,
             Self::EnemyCap { id, .. } => *id,
+            Self::AirAssault { id, .. } => *id,
+            Self::CommanderCap { id, .. } => *id,
         }
     }
 
@@ -129,8 +201,11 @@ impl CampaignEvent {
                 format_compact!("{:?} Counter-Offensive", attacking_side)
             }
             Self::Barrage { side, .. } => format_compact!("{:?} Barrage", side),
+            Self::MissileStrike { side, .. } => format_compact!("{:?} Missile Strike", side),
             Self::ConvoyAmbush { ambush_side, .. } => format_compact!("{:?} Convoy Ambush", ambush_side),
             Self::EnemyCap { cap_side, .. } => format_compact!("{:?} Enemy CAP", cap_side),
+            Self::AirAssault { attacking_side, .. } => format_compact!("{:?} Air Assault", attacking_side),
+            Self::CommanderCap { cap_side, .. } => format_compact!("{:?} Commander CAP", cap_side),
         }
     }
 }
@@ -165,6 +240,10 @@ pub enum EventEffect {
         objective: ObjectiveId,
         obj_pos: Vector2,
         reward_points: i32,
+        /// Dedicated HVT template name from config.
+        template: dcso3::String,
+        /// F10 circle radius in metres.
+        circle_radius_m: f64,
         /// Nearest friendly objective position for the HVT to flee toward.
         escape_pos: Option<Vector2>,
     },
@@ -175,12 +254,23 @@ pub enum EventEffect {
         source_objective: ObjectiveId,
         target_pos: Vector2,
     },
+    /// Issue FireAtPoint to pre-selected ALCM/missile groups.
+    FireMissileStrike {
+        event_id: EventId,
+        side: Side,
+        shooter_gids: SmallVec<[bfprotocols::db::group::GroupId; 4]>,
+        target_pos: Vector2,
+    },
     /// Spawn an ambush force for `ambush_side` near `spawn_pos`.
     SpawnAmbush {
         event_id: EventId,
         ambush_side: Side,
         spawn_pos: Vector2,
         source_objective: ObjectiveId,
+        /// DCS GroupId of the convoy being ambushed — used to issue AttackGroup order.
+        convoy_group_id: bfprotocols::db::group::GroupId,
+        /// Last known position of the convoy (fallback if AttackGroup fails).
+        convoy_pos: Vector2,
     },
     /// Remove F10 marks associated with a finished event.
     DeleteMarks {
@@ -197,6 +287,69 @@ pub enum EventEffect {
     DespawnCap {
         event_id: EventId,
     },
+    /// Despawn the HVT group when the event expires (it "escaped" but must be cleaned up).
+    DespawnHvt {
+        event_id: EventId,
+        /// GroupId of the HVT unit to despawn. Taken from the persisted event so it
+        /// survives server restarts (hvt_group_by_event is serde(skip)).
+        gid: Option<GroupId>,
+    },
+    /// Despawn all groups registered to a convoy-ambush event.
+    DespawnAmbush {
+        event_id: EventId,
+    },
+    /// Spawn transport helicopters and C-130 for the air assault; play air-raid alarm.
+    SpawnAirAssaultAircraft {
+        event_id: EventId,
+        attacking_side: Side,
+        /// Friendly objective the aircraft depart from.
+        src_pos: Vector2,
+        /// LZ position near the target objective.
+        lz_pos: Vector2,
+        target_objective: ObjectiveId,
+        heli_template: dcso3::String,
+        c130_template: dcso3::String,
+        alarm_sound: dcso3::String,
+    },
+    /// Spawn infantry + vehicles at the LZ (called after aircraft arrive).
+    SpawnAirAssaultTroops {
+        event_id: EventId,
+        attacking_side: Side,
+        lz_pos: Vector2,
+        target_objective: ObjectiveId,
+        troops_template: dcso3::String,
+        vehicle_template: dcso3::String,
+    },
+    /// Order spawned assault troops/vehicles to advance on the target objective.
+    OrderAirAssaultAttack {
+        event_id: EventId,
+        attacking_side: Side,
+        target_pos: Vector2,
+    },
+    /// Despawn all groups registered to an air-assault event.
+    DespawnAirAssault {
+        event_id: EventId,
+    },
+}
+
+/// Convert a 2D bearing (from → to) into an 8-point compass label.
+pub(crate) fn bearing_to_compass(from: Vector2, to: Vector2) -> &'static str {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y; // DCS: +Y is north
+    // atan2(dy, dx) gives angle from east; convert to bearing from north, clockwise
+    let angle_rad = dy.atan2(dx);
+    let deg = (90.0 - angle_rad.to_degrees()).rem_euclid(360.0);
+    match deg as u32 {
+        0..=22   => "North",
+        23..=67  => "Northeast",
+        68..=112 => "East",
+        113..=157 => "Southeast",
+        158..=202 => "South",
+        203..=247 => "Southwest",
+        248..=292 => "West",
+        293..=337 => "Northwest",
+        _         => "North",
+    }
 }
 
 /// Manages dynamic campaign events
@@ -205,6 +358,11 @@ pub struct EventScheduler {
     pub active_events: Vec<CampaignEvent>,
     pub last_event_check: Option<DateTime<Utc>>,
     pub total_events_spawned: u64,
+    /// Per-side last commander decision timestamp (smart commander).
+    #[serde(default)]
+    pub last_commander_check_blue: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_commander_check_red: Option<DateTime<Utc>>,
     /// Pending escalation entries: (attacking_side, trigger_at).
     /// When trigger_at is reached a counter-offensive is spawned for that side.
     #[serde(default)]
@@ -215,16 +373,79 @@ pub struct EventScheduler {
     /// Maps HVT group ID → (event_id, reward_points) for kill detection.
     #[serde(skip)]
     pub hvt_groups: FxHashMap<GroupId, (EventId, i32)>,
-    /// Deferred move orders: GroupId → target position.
+    /// Deferred move orders: GroupId → ordered waypoints (route).
     /// Retried each tick until the DCS group appears (spawn queue lag).
     #[serde(skip)]
-    pub pending_moves: FxHashMap<GroupId, Vector2>,
+    pub pending_moves: FxHashMap<GroupId, Vec<Vector2>>,
     /// CAP event → list of spawned group IDs (for cleanup on expiry).
     #[serde(skip)]
     pub cap_groups: FxHashMap<EventId, SmallVec<[GroupId; 2]>>,
+    /// CAP event → which side owns it (needed for retargeting, to know who the enemy is).
+    #[serde(skip)]
+    pub cap_side_by_event: FxHashMap<EventId, Side>,
+    /// Deferred CAP initial-task setup: GroupId → spawn position (used only
+    /// once, until DCS reports the group as alive; after that, dynamic
+    /// retargeting takes over).
+    #[serde(skip)]
+    pub pending_cap_tasks: FxHashMap<GroupId, Vector2>,
+    /// Air assault event → all spawned group IDs (aircraft + ground) for cleanup.
+    #[serde(skip)]
+    pub air_assault_groups: FxHashMap<EventId, SmallVec<[GroupId; 8]>>,
+    /// Deferred ground-move orders for assault troops/vehicles: GroupId → target position.
+    #[serde(skip)]
+    pub pending_assault_moves: FxHashMap<GroupId, Vector2>,
+    /// Deferred flight-route orders for assault aircraft: GroupId → lz_pos.
+    /// Retried each tick until the DCS group appears.
+    #[serde(skip)]
+    pub pending_assault_aircraft: FxHashMap<GroupId, Vector2>,
+    /// Deferred flight-route orders for assault C-130s: GroupId → lz_pos.
+    /// C-130s fly over the LZ rather than landing; troops spawn via the timer.
+    #[serde(skip)]
+    pub pending_assault_c130: FxHashMap<GroupId, Vector2>,
+    /// Ambush event → spawned group ID (for cleanup on expiry).
+    #[serde(skip)]
+    pub ambush_groups: FxHashMap<EventId, GroupId>,
+    /// HVT event → spawned group ID (for cleanup on expiry).
+    #[serde(skip)]
+    pub hvt_group_by_event: FxHashMap<EventId, GroupId>,
+    /// Deferred event effects — drained at most `EFFECTS_PER_TICK` per slow tick
+    /// to avoid blocking DCS Lua for too long in a single frame.
+    #[serde(skip)]
+    pub pending_effects: std::collections::VecDeque<EventEffect>,
+    /// Timestamp when the last commander-dispatched CAP for Blue ended (expired or
+    /// all aircraft destroyed).  Used to enforce the post-expiry cooldown.
+    #[serde(default)]
+    pub last_commander_cap_ended_blue: Option<DateTime<Utc>>,
+    /// Same as above for Red.
+    #[serde(default)]
+    pub last_commander_cap_ended_red: Option<DateTime<Utc>>,
+    /// Timestamp of the first tick in this server session. Not persisted — resets on
+    /// every restart so hvt_startup_delay_secs counts from each fresh session start.
+    #[serde(skip)]
+    pub session_start: Option<DateTime<Utc>>,
 }
 
 impl EventScheduler {
+    /// Maximum event effects applied per slow tick to avoid stalling DCS Lua.
+    pub const EFFECTS_PER_TICK: usize = 2;
+
+    /// Build the candidate objective list used by spawn functions.
+    pub(crate) fn build_candidates(
+        db: &Db,
+    ) -> Vec<(ObjectiveId, Side, Vector2, dcso3::String, u8)> {
+        db.persisted
+            .objectives
+            .into_iter()
+            .filter(|(_, o)| {
+                o.owner() != Side::Neutral
+                    && !o.kind().is_naval_base()
+                    && !o.kind().is_carrier_group()
+                    && !o.kind().is_special_sam_site()
+            })
+            .map(|(id, o)| (*id, o.owner(), o.pos(), dcso3::String::from(o.name.as_str()), o.supply()))
+            .collect()
+    }
+
     pub fn register_mark(&mut self, event_id: EventId, mark_id: MarkId) {
         self.event_marks.entry(event_id).or_default().push(mark_id);
     }
@@ -246,6 +467,8 @@ impl EventScheduler {
         cfg: &CampaignEventsCfg,
         now: DateTime<Utc>,
     ) -> Result<(Vec<CompactString>, Vec<EventEffect>)> {
+        // Record the first tick time so tick_events can enforce hvt_startup_delay_secs.
+        self.session_start = self.session_start.or(Some(now));
         let mut messages: Vec<CompactString> = Vec::new();
         let mut effects: Vec<EventEffect> = Vec::new();
 
@@ -254,20 +477,21 @@ impl EventScheduler {
             .persisted
             .objectives
             .into_iter()
-            .filter(|(_, o)| o.owner() != Side::Neutral)
-            .map(|(id, o)| (*id, o.owner(), o.pos(), o.name.as_str().into(), o.supply()))
+            .filter(|(_, o)| {
+                o.owner() != Side::Neutral
+                    && !o.kind().is_naval_base()
+                    && !o.kind().is_carrier_group()
+                    && !o.kind().is_special_sam_site()
+            })
+            .map(|(id, o)| (*id, o.owner(), o.pos(), dcso3::String::from(o.name.as_str()), o.supply()))
             .collect();
-
-        let red_count = all_owned.iter().filter(|(_, s, ..)| *s == Side::Red).count();
-        let blue_count = all_owned.iter().filter(|(_, s, ..)| *s == Side::Blue).count();
-        let total_count = (red_count + blue_count).max(1);
 
         // ---- Process active events ----
         let mut expired_indices: Vec<usize> = Vec::new();
         for (i, event) in self.active_events.iter_mut().enumerate() {
             match event {
                 // -- Reinforcement wave --
-                CampaignEvent::ReinforcementWave { id, side, objective, arrival_time } => {
+                CampaignEvent::ReinforcementWave { id, side, objective, arrival_time, source_pos: _ } => {
                     if now >= *arrival_time {
                         info!("ReinforcementWave arriving for {:?} at {:?}", side, objective);
                         let obj = db.persisted.objectives.get(objective);
@@ -328,11 +552,11 @@ impl EventScheduler {
 
                 // -- High-value target --
                 CampaignEvent::HighValueTarget {
-                    id, side, objective, expires_at, reward_points, announced,
+                    id, side, objective, expires_at, reward_points, announced, spawn_pos, spawned_gid,
                 } => {
                     if now >= *expires_at {
                         messages.push(format_compact!(
-                            "INTEL: High-value target near {} has escaped!",
+                            "INTEL: High-value target in the area of {} has escaped!",
                             db.persisted.objectives.get(objective)
                                 .map(|o| o.name.as_str()).unwrap_or("unknown")
                         ));
@@ -340,18 +564,31 @@ impl EventScheduler {
                             effects.push(EventEffect::DeleteMarks { ids: marks });
                         }
                         self.hvt_groups.retain(|_, (eid, _)| *eid != *id);
+                        // Prefer the persisted gid (survives restarts) then fall back to the
+                        // in-session map which is populated the same tick the group spawned.
+                        let gid = spawned_gid.or_else(|| self.hvt_group_by_event.get(id).copied());
+                        effects.push(EventEffect::DespawnHvt { event_id: *id, gid });
                         expired_indices.push(i);
                     } else if *announced {
                         let obj_pos = db.persisted.objectives.get(objective)
                             .map(|o| o.pos()).unwrap_or_default();
+                        // Use the pre-computed random spawn position, or fall back to objective
+                        let actual_spawn_pos = spawn_pos.unwrap_or(obj_pos);
                         // Find a nearby friendly objective for the HVT to escape toward
-                        let escape_pos = find_nearest_friendly_objective(db, *side, obj_pos, Some(*objective));
+                        let escape_pos = find_nearest_friendly_objective(db, *side, actual_spawn_pos, Some(*objective));
+                        let template = match *side {
+                            Side::Red => cfg.hvt_template_red.clone(),
+                            Side::Blue => cfg.hvt_template_blue.clone(),
+                            Side::Neutral => cfg.hvt_template_red.clone(),
+                        };
                         effects.push(EventEffect::SpawnHvt {
                             event_id: *id,
                             side: *side,
                             objective: *objective,
-                            obj_pos,
+                            obj_pos: actual_spawn_pos,
                             reward_points: *reward_points,
+                            template,
+                            circle_radius_m: cfg.hvt_circle_radius_m,
                             escape_pos,
                         });
                         *announced = false;
@@ -381,18 +618,22 @@ impl EventScheduler {
                     }
                 }
 
-                // -- Convoy ambush --
-                CampaignEvent::ConvoyAmbush { id, ambush_side, spawn_pos, source_objective, expires_at, spawned } => {
-                    if !*spawned {
-                        *spawned = true;
-                        effects.push(EventEffect::SpawnAmbush {
+                // -- Missile strike --
+                CampaignEvent::MissileStrike { id, side, shooter_gids, target_pos, expires_at, fire_ordered } => {
+                    if !*fire_ordered {
+                        *fire_ordered = true;
+                        effects.push(EventEffect::FireMissileStrike {
                             event_id: *id,
-                            ambush_side: *ambush_side,
-                            spawn_pos: *spawn_pos,
-                            source_objective: *source_objective,
+                            side: *side,
+                            shooter_gids: shooter_gids.clone(),
+                            target_pos: *target_pos,
                         });
                     }
                     if now >= *expires_at {
+                        messages.push(format_compact!(
+                            "INTEL: {:?} missile strike mission has ended",
+                            side
+                        ));
                         if let Some(marks) = self.event_marks.remove(id) {
                             effects.push(EventEffect::DeleteMarks { ids: marks });
                         }
@@ -400,7 +641,123 @@ impl EventScheduler {
                     }
                 }
 
+                // -- Convoy ambush --
+                CampaignEvent::ConvoyAmbush { id, ambush_side, spawn_pos, source_objective, expires_at, spawned, convoy_group_id, convoy_pos } => {
+                    if !*spawned {
+                        *spawned = true;
+                        effects.push(EventEffect::SpawnAmbush {
+                            event_id: *id,
+                            ambush_side: *ambush_side,
+                            spawn_pos: *spawn_pos,
+                            source_objective: *source_objective,
+                            convoy_group_id: *convoy_group_id,
+                            convoy_pos: *convoy_pos,
+                        });
+                    }
+                    if now >= *expires_at {
+                        if let Some(marks) = self.event_marks.remove(id) {
+                            effects.push(EventEffect::DeleteMarks { ids: marks });
+                        }
+                        effects.push(EventEffect::DespawnAmbush { event_id: *id });
+                        expired_indices.push(i);
+                    }
+                }
+
                 // -- Enemy CAP --
+                CampaignEvent::AirAssault {
+                    id, attacking_side, target_objective, lz_pos,
+                    expires_at, aircraft_spawned, deploy_at, troops_spawned, attack_ordered,
+                } => {
+                    // Phase 1 — spawn aircraft on first tick
+                    if !*aircraft_spawned {
+                        *aircraft_spawned = true;
+                        *deploy_at = Some(now + chrono::Duration::seconds(cfg.assault_deploy_delay_secs as i64));
+                        let src_pos = db.persisted.objectives.into_iter()
+                            .filter(|(_, o)| o.owner() == *attacking_side)
+                            .map(|(_, o)| o.pos())
+                            .min_by(|a, b| {
+                                let da = na::distance(&(*a).into(), &(*lz_pos).into());
+                                let db_ = na::distance(&(*b).into(), &(*lz_pos).into());
+                                da.partial_cmp(&db_).unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .unwrap_or(*lz_pos);
+                        let (heli_tmpl, c130_tmpl) = match *attacking_side {
+                            Side::Red => (
+                                dcso3::String::from(cfg.heli_assault_template_red.as_str()),
+                                dcso3::String::from(cfg.c130_assault_template_red.as_str()),
+                            ),
+                            Side::Blue => (
+                                dcso3::String::from(cfg.heli_assault_template_blue.as_str()),
+                                dcso3::String::from(cfg.c130_assault_template_blue.as_str()),
+                            ),
+                            Side::Neutral => continue,
+                        };
+                        effects.push(EventEffect::SpawnAirAssaultAircraft {
+                            event_id: *id,
+                            attacking_side: *attacking_side,
+                            src_pos,
+                            lz_pos: *lz_pos,
+                            target_objective: *target_objective,
+                            heli_template: heli_tmpl,
+                            c130_template: c130_tmpl,
+                            alarm_sound: cfg.assault_alarm_sound.clone(),
+                        });
+                    }
+                    // Phase 2 — spawn ground troops at LZ after deploy delay
+                    if !*troops_spawned {
+                        if let Some(at) = deploy_at {
+                            if now >= *at {
+                                *troops_spawned = true;
+                                let (troops_tmpl, vehicle_tmpl) = match *attacking_side {
+                                    Side::Red => (
+                                        dcso3::String::from(cfg.assault_troops_template_red.as_str()),
+                                        dcso3::String::from(cfg.assault_vehicle_template_red.as_str()),
+                                    ),
+                                    Side::Blue => (
+                                        dcso3::String::from(cfg.assault_troops_template_blue.as_str()),
+                                        dcso3::String::from(cfg.assault_vehicle_template_blue.as_str()),
+                                    ),
+                                    Side::Neutral => continue,
+                                };
+                                effects.push(EventEffect::SpawnAirAssaultTroops {
+                                    event_id: *id,
+                                    attacking_side: *attacking_side,
+                                    lz_pos: *lz_pos,
+                                    target_objective: *target_objective,
+                                    troops_template: troops_tmpl,
+                                    vehicle_template: vehicle_tmpl,
+                                });
+                            }
+                        }
+                    }
+                    // Phase 3 — order ground attack 30 s after troops spawn
+                    if *troops_spawned && !*attack_ordered {
+                        if let Some(at) = deploy_at {
+                            if now >= *at + chrono::Duration::seconds(30) {
+                                *attack_ordered = true;
+                                let target_pos = db.persisted.objectives.get(target_objective)
+                                    .map(|o| o.pos()).unwrap_or(*lz_pos);
+                                effects.push(EventEffect::OrderAirAssaultAttack {
+                                    event_id: *id,
+                                    attacking_side: *attacking_side,
+                                    target_pos,
+                                });
+                            }
+                        }
+                    }
+                    if now >= *expires_at {
+                        messages.push(format_compact!(
+                            "INTEL: {:?} air assault has concluded.",
+                            attacking_side
+                        ));
+                        if let Some(marks) = self.event_marks.remove(id) {
+                            effects.push(EventEffect::DeleteMarks { ids: marks });
+                        }
+                        effects.push(EventEffect::DespawnAirAssault { event_id: *id });
+                        expired_indices.push(i);
+                    }
+                }
+
                 CampaignEvent::EnemyCap { id, cap_side, objective, expires_at, spawned } => {
                     if !*spawned {
                         *spawned = true;
@@ -417,6 +774,34 @@ impl EventScheduler {
                         effects.push(EventEffect::DespawnCap { event_id: *id });
                         if let Some(marks) = self.event_marks.remove(id) {
                             effects.push(EventEffect::DeleteMarks { ids: marks });
+                        }
+                        expired_indices.push(i);
+                    }
+                }
+
+                CampaignEvent::CommanderCap { id, cap_side, objective, expires_at, spawned } => {
+                    if !*spawned {
+                        *spawned = true;
+                        let obj_pos = db.persisted.objectives.get(objective)
+                            .map(|o| o.pos()).unwrap_or_default();
+                        effects.push(EventEffect::SpawnCap {
+                            event_id: *id,
+                            cap_side: *cap_side,
+                            objective: *objective,
+                            obj_pos,
+                        });
+                    }
+                    if now >= *expires_at {
+                        effects.push(EventEffect::DespawnCap { event_id: *id });
+                        if let Some(marks) = self.event_marks.remove(id) {
+                            effects.push(EventEffect::DeleteMarks { ids: marks });
+                        }
+                        // Record when this commander CAP ended so the cooldown
+                        // enforcer in commander.rs can gate the next dispatch.
+                        match *cap_side {
+                            Side::Blue => self.last_commander_cap_ended_blue = Some(now),
+                            Side::Red => self.last_commander_cap_ended_red = Some(now),
+                            Side::Neutral => {}
                         }
                         expired_indices.push(i);
                     }
@@ -440,61 +825,7 @@ impl EventScheduler {
         });
         for attacking_side in to_escalate {
             if self.active_events.len() < cfg.max_concurrent_events as usize {
-                let enemy_side = match attacking_side {
-                    Side::Red => Side::Blue,
-                    Side::Blue => Side::Red,
-                    Side::Neutral => continue,
-                };
-                let targets: SmallVec<[ObjectiveId; 4]> = all_owned
-                    .iter()
-                    .filter(|(_, s, ..)| *s == enemy_side)
-                    .take(2)
-                    .map(|(id, ..)| *id)
-                    .collect();
-                if !targets.is_empty() {
-                    let duration = 900u32;
-                    let event = CampaignEvent::CounterOffensive {
-                        id: EventId::new(),
-                        attacking_side,
-                        target_objectives: targets,
-                        started_at: now,
-                        duration_secs: duration,
-                        orders_issued: false,
-                    };
-                    messages.push(format_compact!(
-                        "WARNING: {:?} forces are mounting a counter-attack! Duration: {} minutes",
-                        attacking_side, duration / 60
-                    ));
-                    self.total_events_spawned += 1;
-                    info!("Escalation: spawned counter-offensive by {:?}", attacking_side);
-                    self.active_events.push(event);
-                }
-            }
-        }
-
-        // ---- Periodic event check ----
-        let should_check = match self.last_event_check {
-            None => true,
-            Some(last) => (now - last).num_seconds() >= cfg.check_interval_secs as i64,
-        };
-
-        if should_check {
-            self.last_event_check = Some(now);
-            info!(
-                "Campaign events check: {} active, {} escalations queued",
-                self.active_events.len(),
-                self.escalation_queue.len()
-            );
-            if self.active_events.len() < cfg.max_concurrent_events as usize {
-                let mut rng = rand::thread_rng();
-                if rng.r#gen::<f64>() < cfg.event_probability {
-                    self.try_spawn_event(
-                        db, cfg, now,
-                        red_count, blue_count, total_count,
-                        &all_owned,
-                        &mut messages, &mut effects,
-                    )?;
-                }
+                self.spawn_counter_offensive(db, cfg, now, attacking_side, &all_owned, &mut messages);
             }
         }
 
@@ -503,121 +834,55 @@ impl EventScheduler {
 
     // -------------------------------------------------------------------------
     // Event spawning
-    // -------------------------------------------------------------------------
-
-    fn try_spawn_event(
-        &mut self,
-        db: &Db,
-        cfg: &CampaignEventsCfg,
-        now: DateTime<Utc>,
-        red_count: usize,
-        blue_count: usize,
-        total_count: usize,
-        all_owned: &[(ObjectiveId, Side, Vector2, dcso3::String, u8)],
-        messages: &mut Vec<CompactString>,
-        effects: &mut Vec<EventEffect>,
-    ) -> Result<()> {
-        let mut rng = rand::thread_rng();
-
-        // ---- A: State-aware weights ----
-        // Losing side (fewer objectives) favours reinforcements.
-        // Winning side favours counter-offensive / barrage.
-        // Both always eligible for HVT.
-        let red_share = red_count as f64 / total_count as f64;
-        let blue_share = blue_count as f64 / total_count as f64;
-
-        // Build weighted event-type table:
-        // (weight, type_id): 0=HVT, 1=Reinforcement, 2=CounterOffensive, 3=Barrage, 4=Ambush
-        let mut weighted: Vec<(u32, u8)> = vec![(10, 0)]; // HVT always available
-
-        if cfg.reinforcement_waves_enabled {
-            // Losing side gets disproportionately more reinforcements
-            let red_rein = ((1.0 - red_share) * 20.0) as u32 + 5;
-            let blue_rein = ((1.0 - blue_share) * 20.0) as u32 + 5;
-            // We pick the reinforcement event for the side with higher weight (50/50 otherwise)
-            // Encode: side choice is handled inside the spawn function based on supply pressure.
-            weighted.push((red_rein.max(blue_rein), 1));
-        }
-
-        if cfg.counter_offensives_enabled {
-            // Winning side launches counter-offensive
-            let weight = ((red_share - blue_share).abs() * 15.0) as u32 + 3;
-            weighted.push((weight, 2));
-        }
-
-        if cfg.barrage_enabled {
-            // Barrage probability rises with contested territory
-            let contested_count = all_owned.iter().filter(|(_, _, _, _, _)| true)
-                .filter(|(oid, side, _, _, _)| {
-                    let enemy = match side {
-                        Side::Red => Side::Blue,
-                        Side::Blue => Side::Red,
-                        Side::Neutral => return false,
-                    };
-                    all_owned.iter().any(|(oid2, s2, _pos2, _, _)| {
-                        if *s2 != enemy { return false; }
-                        let obj1 = db.persisted.objectives.get(oid);
-                        let obj2 = db.persisted.objectives.get(oid2);
-                        if let (Some(o1), Some(o2)) = (obj1, obj2) {
-                            na::distance(&o1.pos().into(), &o2.pos().into()) < 50_000.0
-                        } else {
-                            false
-                        }
-                    })
-                })
-                .count();
-            let weight = (contested_count as u32).min(10) + 2;
-            weighted.push((weight, 3));
-        }
-
-        if cfg.ambush_enabled && !db.ephemeral.active_convoys.is_empty() {
-            weighted.push((8, 4));
-        }
-
-        if cfg.enemy_cap_enabled {
-            // CAP fires at a flat probability rather than weighted
-            let weight = (cfg.cap_probability * 10.0) as u32 + 1;
-            weighted.push((weight, 5));
-        }
-
-        // Weighted random selection
-        let total_weight: u32 = weighted.iter().map(|(w, _)| w).sum();
-        let mut roll = rng.r#gen_range(0..total_weight);
-        let mut choice = 0u8;
-        for (w, t) in &weighted {
-            if roll < *w {
-                choice = *t;
-                break;
-            }
-            roll -= w;
-        }
-
-        match choice {
-            0 => self.spawn_hvt_event(db, cfg, now, all_owned, messages, effects),
-            1 => self.spawn_reinforcement_wave(db, cfg, now, red_count, blue_count, all_owned, messages, effects),
-            2 => self.spawn_counter_offensive(cfg, now, all_owned, messages),
-            3 => self.spawn_barrage_event(db, cfg, now, all_owned, messages, effects),
-            4 => self.spawn_convoy_ambush(db, cfg, now, all_owned, messages, effects),
-            5 => self.spawn_cap_event(cfg, now, all_owned, messages),
-            _ => {}
-        }
-        Ok(())
-    }
-
     // -- HVT --
 
-    fn spawn_hvt_event(
+    pub(crate) fn spawn_hvt_event(
         &mut self,
-        _db: &Db,
+        db: &Db,
         cfg: &CampaignEventsCfg,
         now: DateTime<Utc>,
         candidates: &[(ObjectiveId, Side, Vector2, dcso3::String, u8)],
         messages: &mut Vec<CompactString>,
         _effects: &mut Vec<EventEffect>,
     ) {
+        use std::f64::consts::PI;
         let mut rng = rand::thread_rng();
-        let idx = rng.r#gen_range(0..candidates.len());
-        let (oid, side, _pos, ref name, _supply) = candidates[idx];
+
+        // Score each candidate by proximity to nearest enemy objective.
+        // Frontline objectives (closest to the enemy) make the most compelling HVT targets.
+        let scored: Vec<(usize, f64)> = candidates.iter().enumerate().map(|(i, (_, side, pos, _, supply))| {
+            let nearest_enemy_dist = db.persisted.objectives.into_iter()
+                .filter(|(_, o)| o.owner() != Side::Neutral && o.owner() != *side)
+                .map(|(_, o)| na::distance(&(*pos).into(), &o.pos().into()))
+                .fold(f64::MAX, f64::min);
+            // Low-supply objectives on the frontline score highest
+            let supply_factor = 1.0 - (*supply as f64 / 100.0).min(1.0);
+            let proximity_score = if nearest_enemy_dist < 1.0 { 1e9 } else { 1.0 / nearest_enemy_dist };
+            let score = proximity_score * (1.0 + supply_factor);
+            (i, score)
+        }).collect();
+
+        // Pick the highest-scoring candidate (with small random tie-breaking noise).
+        let idx = scored.iter()
+            .max_by(|a, b| {
+                let a_s = a.1 + rng.r#gen::<f64>() * 0.05;
+                let b_s = b.1 + rng.r#gen::<f64>() * 0.05;
+                a_s.partial_cmp(&b_s).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(i, _)| *i)
+            .unwrap_or(0);
+
+        let (oid, side, obj_pos, ref name, _supply) = candidates[idx];
+
+        // Spawn HVT at a random offset from the objective (simulating a nearby town/area)
+        let min_m = cfg.hvt_spawn_offset_min_m;
+        let max_m = cfg.hvt_spawn_offset_max_m;
+        let distance = min_m + rng.r#gen::<f64>() * (max_m - min_m);
+        let angle = rng.r#gen::<f64>() * 2.0 * PI;
+        let spawn_pos = Vector2::new(
+            obj_pos.x + distance * angle.cos(),
+            obj_pos.y + distance * angle.sin(),
+        );
 
         let event = CampaignEvent::HighValueTarget {
             id: EventId::new(),
@@ -626,10 +891,12 @@ impl EventScheduler {
             expires_at: now + chrono::Duration::seconds(cfg.hvt_duration_secs as i64),
             reward_points: cfg.hvt_reward_points,
             announced: true,
+            spawn_pos: Some(spawn_pos),
+            spawned_gid: None,
         };
 
         messages.push(format_compact!(
-            "INTEL: High-value target detected near {}! Destroy within {} minutes for {} bonus points. It is attempting to evacuate!",
+            "INTEL: High-value target detected in the area of {}! Destroy or capture within {} minutes for {} bonus points. It is attempting to evacuate!",
             name, cfg.hvt_duration_secs / 60, cfg.hvt_reward_points
         ));
 
@@ -640,9 +907,9 @@ impl EventScheduler {
 
     // -- Reinforcement wave (F: supply-pressure weighted) --
 
-    fn spawn_reinforcement_wave(
+    pub(crate) fn spawn_reinforcement_wave(
         &mut self,
-        _db: &Db,
+        db: &Db,
         _cfg: &CampaignEventsCfg,
         now: DateTime<Utc>,
         red_count: usize,
@@ -653,8 +920,16 @@ impl EventScheduler {
     ) {
         let mut rng = rand::thread_rng();
 
-        // F: Bias toward the losing side and toward low-supply objectives.
-        // Build a weighted list of candidates.
+        // Pre-compute the set of objectives currently being captured (enemy troops in zone).
+        let being_captured: std::collections::HashSet<ObjectiveId> = db
+            .ephemeral
+            .capture_progress
+            .iter()
+            .map(|(oid, _)| *oid)
+            .collect();
+
+        // Bias toward the losing side, low-supply objectives, and — most importantly —
+        // any objective that is currently under attack or being captured.
         let total_count = (red_count + blue_count).max(1);
         let red_share = red_count as f64 / total_count as f64;
         let blue_share = blue_count as f64 / total_count as f64;
@@ -662,7 +937,7 @@ impl EventScheduler {
         let weighted: Vec<(u32, usize)> = candidates
             .iter()
             .enumerate()
-            .map(|(i, (_, side, _, _, supply))| {
+            .map(|(i, (oid, side, _, _, supply))| {
                 // Losing-side bonus
                 let side_bonus = match side {
                     Side::Red => ((1.0 - red_share) * 10.0) as u32 + 1,
@@ -676,7 +951,18 @@ impl EventScheduler {
                     50..=74 => 2,
                     _ => 1,
                 };
-                (side_bonus * supply_bonus, i)
+                // Threat multiplier: massively prioritise objectives under active attack.
+                // "being_captured" means enemy troops are in the zone right now (highest
+                // urgency); "threatened" means enemy units are nearby.
+                let threat_mul = {
+                    let obj = db.persisted.objectives.get(oid);
+                    let is_captured = being_captured.contains(oid);
+                    let is_threatened = obj.map(|o| o.threatened()).unwrap_or(false);
+                    if is_captured { 50u32 }
+                    else if is_threatened { 10u32 }
+                    else { 1u32 }
+                };
+                (side_bonus * supply_bonus * threat_mul, i)
             })
             .filter(|(w, _)| *w > 0)
             .collect();
@@ -706,6 +992,9 @@ impl EventScheduler {
             return;
         }
 
+        // Source objective is resolved at spawn time (inside EventEffect::SpawnReinforcements)
+        // so we have the freshest objective ownership data.  The field is kept in the event
+        // struct for backwards-compat with saved campaigns that stored it.
         let arrival_delay = rng.r#gen_range(30..120i64); // 30s–2min so it's visible in testing
         let id = EventId::new();
         let event = CampaignEvent::ReinforcementWave {
@@ -713,6 +1002,7 @@ impl EventScheduler {
             side,
             objective: oid,
             arrival_time: now + chrono::Duration::seconds(arrival_delay),
+            source_pos: None,
         };
 
         let supply_note = if supply < 50 {
@@ -738,48 +1028,130 @@ impl EventScheduler {
         self.active_events.push(event);
     }
 
-    // -- Counter-offensive (A: state-aware side selection) --
+    // -- Counter-offensive --
 
-    fn spawn_counter_offensive(
+    /// Spawn a counter-offensive for `attacking_side` (pre-chosen by the Smart Commander).
+    /// Targets are selected by opportunity score: weakest health + lowest supply + strategic
+    /// value, closest to the attacker's front. Up to 3 targets are picked simultaneously.
+    /// Spawn an air-assault event: helicopters + C-130 depart from a friendly objective,
+    /// fly low toward the target LZ, drop troops and vehicles, which then advance on foot.
+    pub(crate) fn spawn_air_assault_event(
         &mut self,
-        _cfg: &CampaignEventsCfg,
+        cfg: &CampaignEventsCfg,
         now: DateTime<Utc>,
+        attacking_side: Side,
+        target_objective: ObjectiveId,
+        lz_pos: Vector2,
+        target_name: &str,
+        messages: &mut Vec<CompactString>,
+    ) {
+        let defending_side = match attacking_side {
+            Side::Red => Side::Blue,
+            Side::Blue => Side::Red,
+            Side::Neutral => return,
+        };
+        let event = CampaignEvent::AirAssault {
+            id: EventId::new(),
+            attacking_side,
+            target_objective,
+            lz_pos,
+            expires_at: now + chrono::Duration::seconds(cfg.assault_duration_secs as i64),
+            aircraft_spawned: false,
+            deploy_at: None,
+            troops_spawned: false,
+            attack_ordered: false,
+        };
+        messages.push(format_compact!(
+            "⚠ AIR RAID: {:?} air assault inbound on {}! Helicopters and heavy transports detected!",
+            attacking_side, target_name
+        ));
+        // Compass direction for situational awareness
+        info!(
+            "Air assault by {:?} targeting {} — LZ {:?} — defending {:?}",
+            attacking_side, target_name, lz_pos, defending_side
+        );
+        self.total_events_spawned += 1;
+        self.active_events.push(event);
+    }
+
+    pub(crate) fn spawn_counter_offensive(
+        &mut self,
+        db: &Db,
+        cfg: &CampaignEventsCfg,
+        now: DateTime<Utc>,
+        attacking_side: Side,
         all_owned: &[(ObjectiveId, Side, Vector2, dcso3::String, u8)],
         messages: &mut Vec<CompactString>,
     ) {
+        use super::objective::ObjGroupClass;
         let mut rng = rand::thread_rng();
 
-        // A: The winning side launches the counter-offensive
-        let red_count = all_owned.iter().filter(|(_, s, ..)| *s == Side::Red).count();
-        let blue_count = all_owned.iter().filter(|(_, s, ..)| *s == Side::Blue).count();
-        let attacking_side = if red_count > blue_count {
-            Side::Red
-        } else if blue_count > red_count {
-            Side::Blue
-        } else {
-            if rng.r#gen_bool(0.5) { Side::Red } else { Side::Blue }
-        };
         let enemy_side = match attacking_side {
             Side::Red => Side::Blue,
             Side::Blue => Side::Red,
             Side::Neutral => return,
         };
 
-        let count = rng.r#gen_range(1..=3);
-        let mut targets: SmallVec<[ObjectiveId; 4]> = SmallVec::new();
-        let mut used = std::collections::HashSet::new();
+        // Compute centroid of attacking side's objectives for proximity scoring.
+        let attacker_positions: Vec<Vector2> = all_owned
+            .iter()
+            .filter(|(_, s, ..)| *s == attacking_side)
+            .map(|(_, _, pos, ..)| *pos)
+            .collect();
+        let attacker_centroid = if attacker_positions.is_empty() {
+            return;
+        } else {
+            let n = attacker_positions.len() as f64;
+            attacker_positions.iter().fold(Vector2::zeros(), |a, p| a + p) / n
+        };
 
-        for (oid, side, _, _, _) in all_owned {
-            if targets.len() >= count { break; }
-            if *side == enemy_side && !used.contains(oid) {
-                targets.push(*oid);
-                used.insert(*oid);
-            }
-        }
+        // Score every enemy objective: weak health + low supply + strategic + proximity.
+        let mut scored: Vec<(f64, ObjectiveId, Vector2)> = all_owned
+            .iter()
+            .filter(|(_, s, ..)| *s == enemy_side)
+            .filter_map(|(oid, _, pos, _, supply)| {
+                let obj = db.persisted.objectives.get(oid)?;
+                let health = obj.health() as f64;
+                let capturable = obj.captureable();
+                let is_logi = matches!(obj.kind(), bfprotocols::db::objective::ObjectiveKind::Logistics);
+                let is_factory = matches!(obj.kind(), bfprotocols::db::objective::ObjectiveKind::Factory { .. });
 
-        if targets.is_empty() { return; }
+                // Fewer defenders = better target.
+                let has_defenders = obj.groups().get(&enemy_side).map(|gids| {
+                    gids.into_iter().any(|gid| {
+                        db.persisted.groups.get(gid).map(|g| {
+                            matches!(g.class, ObjGroupClass::Armor | ObjGroupClass::Sr | ObjGroupClass::Mr | ObjGroupClass::Lr)
+                                && g.units.into_iter().any(|uid| {
+                                    db.persisted.units.get(uid).map(|u| !u.dead).unwrap_or(false)
+                                })
+                        }).unwrap_or(false)
+                    })
+                }).unwrap_or(false);
 
-        let duration = rng.r#gen_range(600..1800i64);
+                let weakness = (100.0 - health) * 0.8 + (100u8.saturating_sub(*supply)) as f64 * 0.5;
+                let strategic = if is_logi { 1.8 } else if is_factory { 1.4 } else { 1.0 };
+                let capturable_bonus = if capturable { 50.0 } else { 0.0 };
+                let defender_penalty = if has_defenders { 0.0 } else { 20.0 };
+                let dist = na::distance(&attacker_centroid.into(), &(*pos).into());
+                // Prefer closer targets (proximity bonus up to 30 pts within 20 km).
+                let proximity = (20_000.0_f64 - dist.min(20_000.0)) / 20_000.0 * 30.0;
+
+                let score = (weakness + capturable_bonus + defender_penalty + proximity) * strategic;
+                Some((score, *oid, *pos))
+            })
+            .collect();
+
+        if scored.is_empty() { return; }
+
+        // Sort descending by score; pick up to 3 targets.
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let count = rng.r#gen_range(1..=3usize).min(scored.len());
+        let targets: SmallVec<[ObjectiveId; 4]> = scored.iter().take(count).map(|(_, oid, _)| *oid).collect();
+        let target_names: Vec<&str> = scored.iter().take(count).filter_map(|(_, oid, _)| {
+            db.persisted.objectives.get(oid).map(|o| o.name())
+        }).collect();
+
+        let duration = rng.r#gen_range(600i64..=1800);
         let event = CampaignEvent::CounterOffensive {
             id: EventId::new(),
             attacking_side,
@@ -789,87 +1161,84 @@ impl EventScheduler {
             orders_issued: false,
         };
 
+        let target_list = target_names.join(", ");
         messages.push(format_compact!(
-            "WARNING: {:?} forces launching counter-offensive! Duration: {} minutes",
-            attacking_side, duration / 60
+            "WARNING: {:?} forces launching counter-offensive against {}! Duration: {} minutes",
+            attacking_side, target_list, duration / 60
         ));
 
         self.total_events_spawned += 1;
-        info!("Spawned counter-offensive by {:?} (winning side)", attacking_side);
+        info!("Spawned counter-offensive by {:?} targeting [{}]", attacking_side, target_list);
         self.active_events.push(event);
+
+        // If air assault is enabled, also spawn helicopter + C-130 assault on the primary target.
+        if cfg.air_assault_enabled {
+            if let Some((_, primary_oid, primary_pos)) = scored.first() {
+                let lz_offset = cfg.assault_lz_offset_m;
+                // Place LZ on the attacker's side of the objective.
+                let dir_to_attacker = (attacker_centroid - *primary_pos).normalize();
+                let lz_pos = *primary_pos + dir_to_attacker * lz_offset;
+                let target_name = db.persisted.objectives.get(primary_oid)
+                    .map(|o| o.name()).unwrap_or("Unknown");
+                self.spawn_air_assault_event(cfg, now, attacking_side, *primary_oid, lz_pos, target_name, messages);
+            }
+        }
     }
 
     // -- C: Artillery/armor barrage --
 
-    fn spawn_barrage_event(
+    /// Spawn a missile-strike event using the pre-selected shooters and target chosen by
+    /// the Smart Commander. All target selection and range checking has already been done.
+    pub(crate) fn spawn_missile_strike_event(
         &mut self,
-        db: &Db,
         cfg: &CampaignEventsCfg,
         now: DateTime<Utc>,
-        all_owned: &[(ObjectiveId, Side, Vector2, dcso3::String, u8)],
+        side: Side,
+        shooter_gids: SmallVec<[bfprotocols::db::group::GroupId; 4]>,
+        target_pos: Vector2,
+        target_name: CompactString,
         messages: &mut Vec<CompactString>,
-        _effects: &mut Vec<EventEffect>,
     ) {
-        use super::objective::ObjGroupClass;
-        let mut rng = rand::thread_rng();
-
-        // Find a source objective that has alive Armor/Mr/Lr groups
-        let mut sources: Vec<(ObjectiveId, Side, Vector2)> = Vec::new();
-        for (oid, side, pos, _, _) in all_owned {
-            if *side == Side::Neutral { continue; }
-            let obj = match db.persisted.objectives.get(oid) {
-                Some(o) => o,
-                None => continue,
-            };
-            let has_fire_groups = obj.groups().get(side).map(|gids| {
-                gids.into_iter().any(|gid| {
-                    db.persisted.groups.get(gid).map(|g| {
-                        matches!(g.class, ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Lr)
-                            && g.units.into_iter().any(|uid| {
-                                db.persisted.units.get(uid).map(|u| !u.dead).unwrap_or(false)
-                            })
-                    }).unwrap_or(false)
-                })
-            }).unwrap_or(false);
-            if has_fire_groups {
-                sources.push((*oid, *side, *pos));
-            }
-        }
-
-        if sources.is_empty() { return; }
-
-        let src_idx = rng.r#gen_range(0..sources.len());
-        let (src_oid, src_side, src_pos) = sources[src_idx];
-        let enemy_side = match src_side {
-            Side::Red => Side::Blue,
-            Side::Blue => Side::Red,
-            Side::Neutral => return,
+        let id = EventId::new();
+        let event = CampaignEvent::MissileStrike {
+            id,
+            side,
+            shooter_gids,
+            target_pos,
+            expires_at: now + chrono::Duration::seconds(cfg.barrage_duration_secs as i64),
+            fire_ordered: false,
         };
 
-        // Find an enemy objective within 40 km to fire at
-        let target = all_owned.iter()
-            .filter(|(_, s, pos, _, _)| {
-                *s == enemy_side
-                    && na::distance(&(*pos).into(), &src_pos.into()) < 40_000.0
-                    && na::distance(&(*pos).into(), &src_pos.into()) > 5_000.0
-            })
-            .min_by(|(_, _, pa, ..), (_, _, pb, ..)| {
-                let da = na::distance(&(*pa).into(), &src_pos.into());
-                let db_d = na::distance(&(*pb).into(), &src_pos.into());
-                da.partial_cmp(&db_d).unwrap_or(std::cmp::Ordering::Equal)
-            });
+        messages.push(format_compact!(
+            "INTEL: {:?} missile strike inbound — {} is the target!",
+            side, target_name
+        ));
 
-        let (target_oid, _, target_pos, target_name, _) = match target {
-            Some(t) => t,
-            None => return,
-        };
+        self.total_events_spawned += 1;
+        info!("Spawned missile strike by {:?} at {}", side, target_name);
+        self.active_events.push(event);
+    }
 
+    /// Spawn a barrage event using the pre-selected (src, target) pair chosen by
+    /// the Smart Commander. All target selection and range checking has already been
+    /// done by `commander::score_actions`; this function only records the event.
+    pub(crate) fn spawn_barrage_event(
+        &mut self,
+        cfg: &CampaignEventsCfg,
+        now: DateTime<Utc>,
+        src_oid: ObjectiveId,
+        src_side: Side,
+        target_oid: ObjectiveId,
+        target_pos: Vector2,
+        target_name: CompactString,
+        messages: &mut Vec<CompactString>,
+    ) {
         let id = EventId::new();
         let event = CampaignEvent::Barrage {
             id,
             side: src_side,
             source_objective: src_oid,
-            target_pos: *target_pos,
+            target_pos,
             expires_at: now + chrono::Duration::seconds(cfg.barrage_duration_secs as i64),
             fire_ordered: false,
         };
@@ -886,7 +1255,7 @@ impl EventScheduler {
 
     // -- D: Convoy ambush --
 
-    fn spawn_convoy_ambush(
+    pub(crate) fn spawn_convoy_ambush(
         &mut self,
         db: &Db,
         cfg: &CampaignEventsCfg,
@@ -929,6 +1298,8 @@ impl EventScheduler {
         );
         let spawn_pos = convoy.last_pos + offset;
 
+        let convoy_group_id = convoy.group_id;
+        let convoy_pos = convoy.last_pos;
         let id = EventId::new();
         let event = CampaignEvent::ConvoyAmbush {
             id,
@@ -937,6 +1308,8 @@ impl EventScheduler {
             source_objective,
             expires_at: now + chrono::Duration::seconds(cfg.ambush_duration_secs as i64),
             spawned: false,
+            convoy_group_id,
+            convoy_pos,
         };
 
         messages.push(format_compact!(
@@ -949,59 +1322,78 @@ impl EventScheduler {
         self.active_events.push(event);
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
-    // -- E: Dynamic enemy CAP --
-
-    fn spawn_cap_event(
+    /// Spawn a commander-dispatched CAP flight for `cap_side` orbiting its best
+    /// defended objective.  Picks the most threatened owned objective that isn't
+    /// already covered by an active CAP.
+    pub(crate) fn spawn_commander_cap(
         &mut self,
+        db: &Db,
         cfg: &CampaignEventsCfg,
         now: DateTime<Utc>,
-        all_owned: &[(ObjectiveId, Side, Vector2, dcso3::String, u8)],
+        cap_side: Side,
         messages: &mut Vec<CompactString>,
     ) {
-        let mut rng = rand::thread_rng();
-
-        // Avoid stacking multiple CAP events
-        let already_active = self.active_events.iter().any(|e| matches!(e, CampaignEvent::EnemyCap { .. }));
-        if already_active {
-            return;
-        }
-
-        // Pick a random owned objective to defend with CAP
-        let candidates: Vec<_> = all_owned.iter()
-            .filter(|(_, s, ..)| *s != Side::Neutral)
+        // Find the most threatened owned objective without existing CAP coverage.
+        let active_cap_objs: Vec<ObjectiveId> = self
+            .active_events
+            .iter()
+            .filter_map(|e| match e {
+                CampaignEvent::EnemyCap { objective, .. }
+                | CampaignEvent::CommanderCap { objective, .. } => Some(*objective),
+                _ => None,
+            })
             .collect();
-        if candidates.is_empty() { return; }
 
-        let idx = rng.r#gen_range(0..candidates.len());
-        let (oid, side, _, ref name, _) = *candidates[idx];
+        let obj_score = |obj: &crate::db::objective::Objective| -> u8 {
+            let mut s = 0u8;
+            if obj.threatened() { s += 2; }
+            if obj.captureable() { s += 4; }
+            s
+        };
+        let best = db
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(oid, obj)| {
+                obj.owner() == cap_side
+                    && !obj.kind().is_naval_base()
+                    && !obj.kind().is_carrier_group()
+                    && !active_cap_objs.contains(oid)
+            })
+            .max_by(|(_, a), (_, b)| obj_score(a).cmp(&obj_score(b)));
 
+        let (objective, obj) = match best {
+            Some(pair) => pair,
+            None => return,
+        };
+
+        let obj_pos = obj.pos();
+        let obj_name = dcso3::String::from(obj.name.as_str());
         let id = EventId::new();
-        let event = CampaignEvent::EnemyCap {
+        let event = CampaignEvent::CommanderCap {
             id,
-            cap_side: side,
-            objective: oid,
+            cap_side,
+            objective: *objective,
             expires_at: now + chrono::Duration::seconds(cfg.cap_duration_secs as i64),
             spawned: false,
         };
 
-        let enemy_side = match side {
-            Side::Red => Side::Blue,
-            Side::Blue => Side::Red,
-            _ => return,
-        };
         messages.push(format_compact!(
-            "INTEL: [{:?}] Enemy CAP detected over {}! Watch your six.",
-            enemy_side, name
+            "COMMAND: [{:?}] Dispatching CAP flight to cover {} — insufficient friendly air cover.",
+            cap_side,
+            obj_name
         ));
 
         self.total_events_spawned += 1;
-        info!("Spawned enemy CAP for {:?} over {:?}", side, oid);
+        info!("[Commander] Dispatched {:?} CAP over {}", cap_side, obj_name);
         self.active_events.push(event);
+        let _ = obj_pos; // position used by SpawnCap effect via EnemyCap path
     }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
 }
 
 /// Find the nearest friendly objective to `pos` owned by `side`, excluding `exclude`.
@@ -1024,4 +1416,65 @@ pub fn find_nearest_friendly_objective(
         })
         .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(_, opos)| opos)
+}
+
+/// Build a road-following waypoint list from `source_pos` to `dest_pos`, threading
+/// intermediate friendly objectives that lie within a 30%-wide corridor along the
+/// route.  Returns `[intermediates..., dest_pos]` — the spawned group is already at
+/// `source_pos` so it is not included.  DCS pathfinds between waypoints on roads via
+/// `VehicleFormation::OnRoad`.
+pub fn build_reinforcement_route(
+    db: &Db,
+    side: Side,
+    source_pos: Vector2,
+    dest_pos: Vector2,
+) -> Vec<Vector2> {
+    let total_dist = na::distance(&source_pos.into(), &dest_pos.into());
+    if total_dist < 1.0 {
+        return vec![dest_pos];
+    }
+    let route_dir = (dest_pos - source_pos) / total_dist;
+    let corridor = total_dist * 0.30;
+
+    let mut intermediates: Vec<(f64, Vector2)> = db
+        .persisted
+        .objectives
+        .into_iter()
+        .filter_map(|(_, o)| {
+            if o.owner() != side {
+                return None;
+            }
+            let p = o.pos();
+            // Exclude the source and destination endpoints (50 m threshold)
+            if na::distance(&p.into(), &source_pos.into()) < 50.0 {
+                return None;
+            }
+            if na::distance(&p.into(), &dest_pos.into()) < 50.0 {
+                return None;
+            }
+            // Project p onto the route axis
+            let offset = p - source_pos;
+            let t = offset.x * route_dir.x + offset.y * route_dir.y;
+            if t <= 0.0 || t >= total_dist {
+                return None;
+            }
+            // Perpendicular distance from the straight line
+            let perp_x = offset.x - route_dir.x * t;
+            let perp_y = offset.y - route_dir.y * t;
+            let perp = (perp_x * perp_x + perp_y * perp_y).sqrt();
+            if perp > corridor {
+                return None;
+            }
+            Some((t, p))
+        })
+        .collect();
+
+    // Sort by progress along the route; keep at most 3 intermediates
+    intermediates
+        .sort_by(|(t1, _), (t2, _)| t1.partial_cmp(t2).unwrap_or(std::cmp::Ordering::Equal));
+    intermediates.truncate(3);
+
+    let mut route: Vec<Vector2> = intermediates.into_iter().map(|(_, p)| p).collect();
+    route.push(dest_pos);
+    route
 }

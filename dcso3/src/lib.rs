@@ -346,6 +346,10 @@ impl Color {
     pub fn yellow(a: f32) -> Color {
         Color { r: 0.75, g: 1., b: 0., a }
     }
+
+    pub fn with_alpha(self, a: f32) -> Color {
+        Color { a, ..self }
+    }
 }
 
 impl<'lua> FromLua<'lua> for Color {

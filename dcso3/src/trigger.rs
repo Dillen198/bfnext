@@ -183,6 +183,18 @@ pub struct ArrowSpec {
     pub read_only: bool,
 }
 
+/// A connected polyline / filled polygon drawn via `trigger.action.outLineToAll`.
+/// Points are drawn in order as a single shape — the last point connects back to
+/// the first only if you repeat it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolylineSpec {
+    pub points: Vec<LuaVec3>,
+    pub color: Color,
+    pub fill_color: Color,
+    pub line_type: LineType,
+    pub read_only: bool,
+}
+
 wrapped_table!(Action, None);
 
 impl<'lua> Action<'lua> {
@@ -472,6 +484,28 @@ impl<'lua> Action<'lua> {
                 spec.font_size,
                 spec.read_only,
                 spec.text,
+            ),
+        )?)
+    }
+
+    pub fn out_line_to_all(
+        &self,
+        side: SideFilter,
+        id: MarkId,
+        spec: PolylineSpec,
+        message: Option<String>,
+    ) -> Result<()> {
+        Ok(self.call_function(
+            "outLineToAll",
+            (
+                side,
+                id,
+                spec.points,
+                spec.color,
+                spec.fill_color,
+                spec.line_type,
+                spec.read_only,
+                message,
             ),
         )?)
     }

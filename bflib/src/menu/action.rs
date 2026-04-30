@@ -109,6 +109,14 @@ fn do_pos_action(
             cfg: cfg.clone(),
             pos,
         }),
+        ActionKind::Artillery(cfg) => ActionArgs::Artillery(WithPos {
+            cfg: cfg.clone(),
+            pos,
+        }),
+        ActionKind::Recon(cfg) => ActionArgs::Recon(WithPos {
+            cfg: cfg.clone(),
+            pos,
+        }),
         ActionKind::Bomber(_)
         | ActionKind::LogisticsTransfer(_)
         | ActionKind::LogisticsRepair(_)
@@ -266,6 +274,8 @@ fn do_pos_group_action(
         | ActionKind::LogisticsRepair(_)
         | ActionKind::CarrierRepair
         | ActionKind::CarrierRespawn
+        | ActionKind::Artillery(_)
+        | ActionKind::Recon(_)
         | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
@@ -348,6 +358,8 @@ fn do_objective_action(
         | ActionKind::CarrierWaypoint
         | ActionKind::CarrierRepair
         | ActionKind::CarrierRespawn
+        | ActionKind::Artillery(_)
+        | ActionKind::Recon(_)
         | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
@@ -581,7 +593,8 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 DeployKind::Crate { .. }
                 | DeployKind::Objective { .. }
                 | DeployKind::ObjectiveDeprecated
-                | DeployKind::DownedPilot { .. } => None,
+                | DeployKind::DownedPilot { .. }
+                | DeployKind::Dismount { .. } => None,
             };
             if let Some(key) = key {
                 let root = mc.add_submenu_for_group(
@@ -695,7 +708,9 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             | ActionKind::Fighters(_)
             | ActionKind::Tanker(_)
             | ActionKind::Paratrooper(_)
-            | ActionKind::Nuke(_) => {
+            | ActionKind::Nuke(_)
+            | ActionKind::Artillery(_)
+            | ActionKind::Recon(_) => {
                 let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
                 add_pos(root.clone(), name.clone())?
             }

@@ -17,8 +17,9 @@ for more details.
 pub mod action;
 pub mod cargo;
 mod ewr;
+mod info;
 pub mod jtac;
-pub mod mission;
+mod objectives;
 mod troop;
 
 use crate::{db::Db, Context};
@@ -273,22 +274,32 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["EWR".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Cargo".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["C-130 Cargo".into()]))?;
+            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["CSAR".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Troops".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Actions".into()]))?;
-            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Missions".into()]))?;
             ewr::add_ewr_menu_for_group(&mc, miz_gid)?;
             let cap = CarryCap::from_typ(&cfg, si_typ.as_str());
 
-            // Check if this is a C-130 for physical cargo system
             let is_c130 = ctx.db.ephemeral.cfg.c130_cargo
+                .as_ref()
+                .map(|c| c.enabled_vehicles.contains(&si_typ))
+                .unwrap_or(false);
+            let is_helo_dynamic = ctx.db.ephemeral.cfg.helo_cargo
                 .as_ref()
                 .map(|c| c.enabled_vehicles.contains(&si_typ))
                 .unwrap_or(false);
 
             if is_c130 && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
                 cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
+            } else if is_helo_dynamic && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
+                cargo::add_helo_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
             } else if cap.crates && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
                 cargo::add_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
+            }
+            if ctx.db.ephemeral.cfg.csar.as_ref().map(|c| c.enabled).unwrap_or(false)
+                && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid)
+            {
+                cargo::add_csar_menu_for_group(&mc, miz_gid)?
             }
             if cap.troops && ctx.db.ephemeral.cfg.rules.troops.check(&ucid) {
                 troop::add_troops_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
@@ -299,8 +310,8 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             if ctx.db.ephemeral.cfg.rules.actions.check(&ucid) {
                 action::init_action_menu_for_slot(ctx, lua, slot, &ucid)?
             }
-            // Mission planning menu (available to all players)
-            mission::add_mission_menu_for_group(&mc, miz_gid, ucid)?;
+            objectives::init_objectives_menu_for_slot(ctx, lua, slot)?;
+            info::init_info_menu_for_slot(ctx, lua, slot)?;
             Ok(())
         }
     }

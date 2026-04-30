@@ -342,6 +342,9 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                     DeployKind::DownedPilot { .. } => {
                         reply!("can't delete a downed pilot this way")
                     }
+                    DeployKind::Dismount { .. } => {
+                        reply!("can't delete a dismount group this way")
+                    }
                     DeployKind::Troop {
                         player,
                         spec,
@@ -477,6 +480,14 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
             ActionKind::CarrierRepair => None,
             ActionKind::CarrierRespawn => None,
             ActionKind::NavalCruiseMissileStrike(_) => None,
+            ActionKind::Artillery(_) => Some(format_compact!(
+                "{name}: <key> | Request artillery fire support at key, a mark point. cost {}",
+                action.cost
+            )),
+            ActionKind::Recon(_) => Some(format_compact!(
+                "{name}: <key> | Dispatch a recon flight over key, a mark point. cost {}",
+                action.cost
+            )),
         };
         if let Some(msg) = msg {
             ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg)

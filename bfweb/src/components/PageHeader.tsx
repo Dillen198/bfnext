@@ -9,12 +9,17 @@ interface Props {
 export default function PageHeader({ title, sub, right }: Props) {
   return (
     <div
-      className="flex items-center justify-between px-5 py-3.5 border-b border-[#1e3a5f]/50 flex-shrink-0"
-      style={{ background: 'linear-gradient(180deg, #060d1c 0%, #040b16 100%)' }}
+      className="flex items-center justify-between px-5 py-3.5 flex-shrink-0"
+      style={{ background: '#0d0d0d', borderBottom: '1px solid var(--border)' }}
     >
       <div>
-        <h1 className="text-[13px] font-bold tracking-[0.2em] text-slate-100 uppercase">{title}</h1>
-        {sub && <p className="text-[10px] text-slate-600 mt-0.5 tracking-wide">{sub}</p>}
+        <h1
+          className="uppercase"
+          style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.15rem', letterSpacing: '0.2em', color: 'var(--text)', lineHeight: 1 }}
+        >
+          {title}
+        </h1>
+        {sub && <p className="mt-0.5" style={{ fontSize: '0.65rem', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>{sub}</p>}
       </div>
       {right && <div className="flex items-center gap-3">{right}</div>}
     </div>

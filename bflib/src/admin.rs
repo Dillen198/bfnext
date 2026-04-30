@@ -28,7 +28,7 @@ use bfprotocols::{
         CampaignState, GroupInfo, LogisticsInfo, ObjectiveDetails, ObjectiveInfo,
         PlayerInfo, UnitInfo, WarehouseInfo,
     },
-    cfg::{Cfg, DeployableKind},
+    cfg::{Cfg, DeployableKind, Rule},
     db::{group::GroupId, objective::ObjectiveId},
     perf::Perf,
     stats::Stat,
@@ -210,6 +210,17 @@ pub enum AdminCommand {
         amount: i32,
         reason: String,
     },
+    Blacklist {
+        rule: String,
+        player: String,
+    },
+    Whitelist {
+        rule: String,
+        player: String,
+    },
+    ReinitWarehouse {
+        airbase: String,
+    },
 }
 
 impl AdminCommand {
@@ -241,6 +252,9 @@ impl AdminCommand {
             "remark <obj>: force refresh the markup on objective",
             "reset [winner]: shutdown the server and reset the campaign state",
             "shutdown: shutdown the server",
+            "blacklist <rule> <player>: deny <player> access to <rule> (actions|cargo|troops|jtac|ca)",
+            "whitelist <rule> <player>: allow <player> access to <rule> (actions|cargo|troops|jtac|ca)",
+            "reinit-warehouse <airbase>: reinitialize the warehouse for the given airbase",
         ]
     }
 }
@@ -386,6 +400,24 @@ impl FromStr for AdminCommand {
                 Some(Side::from_str(s)?)
             };
             Ok(Self::Reset { winner })
+        } else if let Some(s) = s.strip_prefix("blacklist ") {
+            match s.split_once(" ") {
+                None => bail!("blacklist <rule> <player>"),
+                Some((rule, player)) => Ok(Self::Blacklist {
+                    rule: rule.into(),
+                    player: player.into(),
+                }),
+            }
+        } else if let Some(s) = s.strip_prefix("whitelist ") {
+            match s.split_once(" ") {
+                None => bail!("whitelist <rule> <player>"),
+                Some((rule, player)) => Ok(Self::Whitelist {
+                    rule: rule.into(),
+                    player: player.into(),
+                }),
+            }
+        } else if let Some(s) = s.strip_prefix("reinit-warehouse ") {
+            Ok(Self::ReinitWarehouse { airbase: s.into() })
         } else {
             bail!("unknown command {s}")
         }
@@ -767,6 +799,7 @@ pub(super) fn admin_shutdown(
             api_perf: (*api_perf.0).clone(),
         }
     };
+    ctx.db.ephemeral.remove_map_layer();
     if let Some(winner) = reset {
         ctx.do_bg_task(Task::ResetState(ctx.miz_state_path.clone()));
         ctx.do_bg_task(Task::Stat(se));
@@ -852,7 +885,8 @@ fn delete(ctx: &mut Context, id: &GroupId) -> Result<()> {
         | DeployKind::Deployed { .. }
         | DeployKind::Troop { .. }
         | DeployKind::Action { .. }
-        | DeployKind::DownedPilot { .. } => ctx.db.delete_group(id),
+        | DeployKind::DownedPilot { .. }
+        | DeployKind::Dismount { .. } => ctx.db.delete_group(id),
     }
 }
 
@@ -1055,6 +1089,7 @@ fn query_groups(ctx: &Context, side_filter: Option<Side>) -> Vec<GroupInfo> {
                 DeployKind::DownedPilot { ucid, .. } => {
                     ("DownedPilot".to_string(), Some(ucid.clone()))
                 }
+                DeployKind::Dismount { .. } => ("Dismount".to_string(), None),
             };
 
             GroupInfo {
@@ -1100,6 +1135,7 @@ fn query_group_details(ctx: &Context, id: &GroupId) -> Result<GroupInfo> {
         DeployKind::DownedPilot { ucid, .. } => {
             ("DownedPilot".to_string(), Some(ucid.clone()))
         }
+        DeployKind::Dismount { .. } => ("Dismount".to_string(), None),
     };
 
     Ok(GroupInfo {
@@ -1684,6 +1720,59 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                         reply_ok!("{{\"success\":true,\"new_balance\":{}}}", new_balance)
                     },
                     Err(e) => reply_err!("failed to add points: {e:?}"),
+                }
+            }
+            AdminCommand::Blacklist { rule, player } => {
+                match get_player_ucid(ctx, &player) {
+                    Err(e) => reply_err!("player not found: {e:?}"),
+                    Ok(ucid) => {
+                        let name = ctx.db.player(&ucid).map(|p| p.name.clone()).unwrap_or_default();
+                        let cfg = Arc::make_mut(&mut ctx.db.ephemeral.cfg);
+                        let rules = &mut cfg.rules;
+                        let target: Option<&mut Rule> = match rule.as_str() {
+                            "actions" => Some(&mut rules.actions),
+                            "cargo" => Some(&mut rules.cargo),
+                            "troops" => Some(&mut rules.troops),
+                            "jtac" => Some(&mut rules.jtac),
+                            "ca" => Some(&mut rules.ca),
+                            _ => None,
+                        };
+                        match target {
+                            None => reply_err!("unknown rule {rule}, expected: actions|cargo|troops|jtac|ca"),
+                            Some(r) => { r.blacklist(ucid, name.into()); reply_ok!("{player} blacklisted from {rule}") }
+                        }
+                    }
+                }
+            }
+            AdminCommand::Whitelist { rule, player } => {
+                match get_player_ucid(ctx, &player) {
+                    Err(e) => reply_err!("player not found: {e:?}"),
+                    Ok(ucid) => {
+                        let name = ctx.db.player(&ucid).map(|p| p.name.clone()).unwrap_or_default();
+                        let cfg = Arc::make_mut(&mut ctx.db.ephemeral.cfg);
+                        let rules = &mut cfg.rules;
+                        let target: Option<&mut Rule> = match rule.as_str() {
+                            "actions" => Some(&mut rules.actions),
+                            "cargo" => Some(&mut rules.cargo),
+                            "troops" => Some(&mut rules.troops),
+                            "jtac" => Some(&mut rules.jtac),
+                            "ca" => Some(&mut rules.ca),
+                            _ => None,
+                        };
+                        match target {
+                            None => reply_err!("unknown rule {rule}, expected: actions|cargo|troops|jtac|ca"),
+                            Some(r) => { r.whitelist(ucid, name.into()); reply_ok!("{player} whitelisted for {rule}") }
+                        }
+                    }
+                }
+            }
+            AdminCommand::ReinitWarehouse { airbase } => {
+                match get_airbase(&ctx.db, &airbase) {
+                    Err(e) => reply_err!("airbase not found: {e:?}"),
+                    Ok(oid) => match ctx.db.reinit_objective_warehouse(oid) {
+                        Ok(()) => reply_ok!("warehouse reinitialized for {airbase}"),
+                        Err(e) => reply_err!("failed to reinit warehouse: {e:?}"),
+                    }
                 }
             }
         }

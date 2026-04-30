@@ -1,553 +1,403 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  MapContainer, TileLayer, CircleMarker, Marker, Popup, Tooltip,
+  MapContainer, TileLayer, CircleMarker, Marker, Popup,
   useMap, ScaleControl, Polyline, Circle, useMapEvents,
 } from 'react-leaflet'
 import type { LatLngBoundsExpression, LatLngExpression } from 'leaflet'
 import L from 'leaflet'
 import 'leaflet.heat'
-import { api, type Objective, type MapUnit } from '../api'
-import PageHeader from '../components/PageHeader'
-import { createMapIcon, type IconStyle } from '../lib/mapIcons'
+// @ts-ignore – milsymbol v3 ships its own types but declaration may be missing
+import ms from 'milsymbol'
 import {
-  Navigation, Ruler, Shield, Trash2,
-  ChevronRight, ChevronLeft, X, MapPin, Radio, Flame,
-} from 'lucide-react'
+  api, connectLiveUnits,
+  type Objective, type MapUnit, type LiveUnit, type WsUnitsMsg, type Bullseye,
+} from '../api'
+import { type IconStyle } from '../lib/mapIcons'
+import { useRound } from '../context/RoundContext'
 
-// ── localStorage persistence helpers ──────────────────────────────────
-const STORAGE_PREFIX = 'bfmap_'
+// ── Constants ──────────────────────────────────────────────────────────
+const TRAIL_MAX  = 12
+const TRAIL_SEC  = 30
+const VEL_SECS   = 60      // project position this many seconds ahead
+const OBJ_INT    = 30_000
+const REST_INT   = 5_000
 
-function loadState<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(STORAGE_PREFIX + key)
-    if (raw === null) return fallback
-    return JSON.parse(raw) as T
-  } catch { return fallback }
+// ── Colors ─────────────────────────────────────────────────────────────
+// Sneaker palette: enemies=cyan, allies=red/pink, watches=yellow
+const COL_ENEMY   = '#17c2f6'   // red coalition  (Sneaker: cyan)
+const COL_ALLY    = '#ff8080'   // blue coalition  (Sneaker: red/pink)
+const COL_NEUTRAL = '#888888'
+const COL_WATCH   = '#ffd600'   // watched tracks
+const GREEN  = '#39ff14'
+const HUD_BG     = 'rgba(4,10,4,0.82)'
+const HUD_BORDER = 'rgba(57,255,20,0.22)'
+const HUD_TEXT   = '#39ff14'
+const HUD_DIM    = 'rgba(57,255,20,0.45)'
+const PANEL_BG   = 'rgba(6,12,6,0.90)'
+const FONT_MONO  = "'Share Tech Mono','Courier New',monospace"
+const FONT_HEAD  = "'Bebas Neue',sans-serif"
+
+function unitColor(coa: number, watched: boolean) {
+  if (watched) return COL_WATCH
+  return coa === 1 ? COL_ENEMY : coa === 2 ? COL_ALLY : COL_NEUTRAL
 }
-
-function saveState<T>(key: string, value: T): void {
-  try { localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value)) } catch { /* quota */ }
-}
-
-function usePersistedState<T>(key: string, fallback: T): [T, React.Dispatch<React.SetStateAction<T>>] {
-  const [state, setState] = useState<T>(() => loadState(key, fallback))
-  const ref = useRef(state)
-  ref.current = state
-  useEffect(() => { saveState(key, ref.current) }, [key, state])
-  return [state, setState]
-}
-
-// ── Heatmap component ─────────────────────────────────────────────────
-function HeatmapLayer({ points }: { points: [number, number, number][] }) {
-  const map = useMap()
-  const layerRef = useRef<L.HeatLayer | null>(null)
-
-  useEffect(() => {
-    if (points.length === 0) {
-      if (layerRef.current) {
-        map.removeLayer(layerRef.current)
-        layerRef.current = null
-      }
-      return
-    }
-    if (!layerRef.current) {
-      layerRef.current = (L as any).heatLayer(points, {
-        radius: 25,
-        blur: 20,
-        maxZoom: 12,
-        max: 1.0,
-        gradient: { 0.2: '#0000ff', 0.4: '#00ffff', 0.6: '#00ff00', 0.8: '#ffff00', 1.0: '#ff0000' },
-      }).addTo(map)
-    } else {
-      layerRef.current.setLatLngs(points as any)
-    }
-    return () => {
-      if (layerRef.current) {
-        map.removeLayer(layerRef.current)
-        layerRef.current = null
-      }
-    }
-  }, [map, points])
-
-  return null
+function restUnitColor(owner: string, watched: boolean) {
+  if (watched) return COL_WATCH
+  return owner === 'Red' ? COL_ENEMY : owner === 'Blue' ? COL_ALLY : COL_NEUTRAL
 }
 
 // ── Tile layers ────────────────────────────────────────────────────────
 const TILE_LAYERS = {
-  satellite: {
-    label: 'SAT',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attr: 'Tiles &copy; Esri',
-  },
-  hybrid: {
-    label: 'HYBRID',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    labelUrl: 'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
-    attr: 'Tiles &copy; Esri',
-  },
-  tactical: {
-    label: 'TACMAP',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attr: '&copy; CARTO',
-  },
-  topo: {
-    label: 'TOPO',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
-    attr: 'Tiles &copy; Esri',
-  },
+  tactical:  { label: 'TACMAP',  url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',                                                                attr: '© CARTO' },
+  satellite: { label: 'SAT',     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',                                 attr: 'Esri' },
+  topo:      { label: 'TOPO',    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',                                 attr: 'Esri' },
 } as const
 type TileKey = keyof typeof TILE_LAYERS
 
 // ── DCS region presets ─────────────────────────────────────────────────
-const DCS_REGIONS = [
-  { label: 'Caucasus',     center: [42.35, 43.50] as [number, number], zoom: 8 },
-  { label: 'Persian Gulf', center: [26.50, 55.50] as [number, number], zoom: 7 },
-  { label: 'Syria',        center: [35.00, 38.50] as [number, number], zoom: 8 },
-  { label: 'NTTR',         center: [37.00, -116.00] as [number, number], zoom: 8 },
-  { label: 'Marianas',     center: [14.50, 145.50] as [number, number], zoom: 8 },
-  { label: 'Normandy',     center: [49.00, -0.50] as [number, number], zoom: 8 },
-  { label: 'Kola',         center: [69.00, 28.00] as [number, number], zoom: 7 },
-  { label: 'Sinai',        center: [29.00, 34.50] as [number, number], zoom: 8 },
+const DCS_REGIONS: { label: string; center: [number, number]; zoom: number }[] = [
+  { label: 'CAUCASUS',  center: [42.35, 43.50],   zoom: 8 },
+  { label: 'PERSIA',    center: [26.50, 55.50],   zoom: 7 },
+  { label: 'SYRIA',     center: [35.00, 38.50],   zoom: 8 },
+  { label: 'NTTR',      center: [37.00,-116.00],  zoom: 8 },
+  { label: 'MARIANAS',  center: [14.50, 145.50],  zoom: 8 },
+  { label: 'NORMANDY',  center: [49.00,  -0.50],  zoom: 8 },
+  { label: 'KOLA',      center: [69.00,  28.00],  zoom: 7 },
+  { label: 'SINAI',     center: [29.00,  34.50],  zoom: 8 },
 ]
 
 // ── Planning types ─────────────────────────────────────────────────────
-type PlanMode = 'none' | 'waypoint' | 'marker' | 'measure'
+type PlanMode   = 'none' | 'waypoint' | 'marker' | 'measure'
 type MarkerType = 'IP' | 'TGT' | 'CP' | 'BULL' | 'EGR'
-interface Waypoint { id: string; lat: number; lon: number }
+interface Waypoint   { id: string; lat: number; lon: number }
 interface PlanMarker { id: string; lat: number; lon: number; type: MarkerType }
 
+// ── BRAA lines ─────────────────────────────────────────────────────────
+interface BraaLine { id: string; from: { lat: number; lon: number }; to: { lat: number; lon: number } }
+
+// ── Hack timer ─────────────────────────────────────────────────────────
+interface HackTimer { id: string; label: string; startedAt: number }  // startedAt = Date.now() ms
+
+// ── Trail storage ──────────────────────────────────────────────────────
+interface TrailPt { lat: number; lon: number; ts: number }
+type Trails = Map<string, TrailPt[]>
+
 // ── Geo helpers ────────────────────────────────────────────────────────
-function haversineNm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 3440.065
-  const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180
-  const Δφ = (lat2 - lat1) * Math.PI / 180
-  const Δλ = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+function haversineNm(a: {lat:number;lon:number}, b: {lat:number;lon:number}) {
+  const R=3440.065, φ1=a.lat*Math.PI/180, φ2=b.lat*Math.PI/180
+  const Δφ=(b.lat-a.lat)*Math.PI/180, Δλ=(b.lon-a.lon)*Math.PI/180
+  const x=Math.sin(Δφ/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x))
 }
-
-function trueBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180
-  const Δλ = (lon2 - lon1) * Math.PI / 180
-  const y = Math.sin(Δλ)*Math.cos(φ2)
-  const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ)
-  return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360
+function bearingDeg(a: {lat:number;lon:number}, b: {lat:number;lon:number}) {
+  const φ1=a.lat*Math.PI/180, φ2=b.lat*Math.PI/180, Δλ=(b.lon-a.lon)*Math.PI/180
+  const y=Math.sin(Δλ)*Math.cos(φ2)
+  const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ)
+  return ((Math.atan2(y,x)*180/Math.PI)+360)%360
 }
-
-function nmToMeters(nm: number): number { return nm * 1852 }
-
-function fmtCoord(lat: number, lon: number): string {
+function projectPos(lat: number, lon: number, hdgDeg: number, distNm: number): [number, number] {
+  const R=3440.065, d=distNm/R, brg=hdgDeg*Math.PI/180
+  const φ1=lat*Math.PI/180, λ1=lon*Math.PI/180
+  const φ2=Math.asin(Math.sin(φ1)*Math.cos(d)+Math.cos(φ1)*Math.sin(d)*Math.cos(brg))
+  const λ2=λ1+Math.atan2(Math.sin(brg)*Math.sin(d)*Math.cos(φ1),Math.cos(d)-Math.sin(φ1)*Math.sin(φ2))
+  return [φ2*180/Math.PI, λ2*180/Math.PI]
+}
+function nmToM(nm: number) { return nm*1852 }
+function fmtCoord(lat: number, lon: number) {
   return `${Math.abs(lat).toFixed(4)}°${lat>=0?'N':'S'} ${Math.abs(lon).toFixed(4)}°${lon>=0?'E':'W'}`
 }
-
-function fmtTime(minutes: number): string {
-  const h = Math.floor(minutes / 60)
-  const m = Math.round(minutes % 60)
-  return h > 0 ? `${h}h ${m}m` : `${m}m`
+function fmtBrg(deg: number) { return Math.round(deg).toString().padStart(3,'0') + '°' }
+function fmtAlt(m: number)  { const ft=Math.round(m*3.28084/100)*100; return ft>=1000?`${(ft/1000).toFixed(1)}K`:`${ft}` }
+function fmtSpd(kts: number){ return Math.round(kts).toString() }
+function fmtTime(min: number){ const h=Math.floor(min/60),m=Math.round(min%60); return h?`${h}h${m}m`:`${m}m` }
+function fmtDcsTime(secs: number) {
+  const h=Math.floor(secs/3600),m=Math.floor((secs%3600)/60),s=Math.floor(secs%60)
+  return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`
+}
+function fmtElapsed(ms: number) {
+  const s=Math.floor(ms/1000), m=Math.floor(s/60), sec=s%60
+  return `${m.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}`
 }
 
-// ── Leaflet DivIcon factories ──────────────────────────────────────────
-function waypointIcon(num: number, isFinal: boolean): L.DivIcon {
-  const color = isFinal ? '#ef4444' : '#00b4f5'
-  return L.divIcon({
-    html: `<div style="width:22px;height:22px;border-radius:50%;background:${color}30;border:2px solid ${color};color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;font-family:monospace;box-shadow:0 0 10px ${color}88;">${num}</div>`,
-    className: '',
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
-  })
+// ── localStorage helpers ───────────────────────────────────────────────
+const PFX = 'bfmap_'
+function loadS<T>(k: string, fb: T): T { try { const r=localStorage.getItem(PFX+k); return r?JSON.parse(r) as T:fb } catch { return fb } }
+function saveS<T>(k: string, v: T) { try { localStorage.setItem(PFX+k,JSON.stringify(v)) } catch { /* quota */ } }
+function usePersisted<T>(k: string, fb: T): [T, React.Dispatch<React.SetStateAction<T>>] {
+  const [s,set] = useState<T>(()=>loadS(k,fb))
+  const r = useRef(s); r.current=s
+  useEffect(()=>saveS(k,r.current),[k,s])
+  return [s,set]
 }
 
-const MARKER_STYLES: Record<MarkerType, { bg: string; border: string }> = {
-  IP:   { bg: '#22c55e30', border: '#22c55e' },
-  TGT:  { bg: '#ef444430', border: '#ef4444' },
-  CP:   { bg: '#3b82f630', border: '#3b82f6' },
-  BULL: { bg: '#ffffff15', border: '#e2e8f0' },
-  EGR:  { bg: '#eab30830', border: '#eab308' },
+// ── milsymbol SIDC factory ─────────────────────────────────────────────
+// Standard identity: F=Friendly, H=Hostile
+// cat 1=Plane, 2=Helo, 3=Ground, 4=Ship
+function getSIDC(coa: number, cat: number): string {
+  const si = coa === 2 ? 'F' : 'H'
+  if (cat === 1) return `S${si}AP----------`
+  if (cat === 2) return `S${si}AH----------`
+  if (cat === 4) return `S${si}SP----------`
+  return         `S${si}GP----------`
 }
 
-const MARKER_ICONS: Record<MarkerType, string> = {
-  IP:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"><polygon points="12,2 22,22 2,22"/></svg>`,
-  TGT:  `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8" stroke-width="2"/><line x1="12" y1="2" x2="12" y2="22" stroke-width="1.5"/><line x1="2" y1="12" x2="22" y2="12" stroke-width="1.5"/></svg>`,
-  CP:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"><polygon points="12,2 22,12 12,22 2,12"/></svg>`,
-  BULL: `<svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>`,
-  EGR:  `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="12" x2="20" y2="12"/><polyline points="14,6 20,12 14,18"/></svg>`,
+// ── Sneaker-style unit icon with persistent labels ─────────────────────
+// Layout (matches Sneaker):
+//   [NATO symbol]  CALLSIGN          ← coalition color
+//                  ↑ALT              ← pink  #FFC0CB
+//                  SPDkts            ← orange
+interface UnitIconOpts {
+  coa:     number    // 1=Red/hostile 2=Blue/friendly
+  cat:     number    // 1=plane 2=helo 3=ground 4=ship
+  name:    string    // callsign / unit name
+  alt:     number    // metres
+  spd:     number    // knots
+  vspd?:   number    // m/s vertical speed (optional)
+  watched: boolean
+  symSize?: number
 }
 
-function planMarkerIcon(type: MarkerType): L.DivIcon {
-  const s = MARKER_STYLES[type]
-  const icon = MARKER_ICONS[type]
-  return L.divIcon({
-    html: `<div style="padding:4px 6px;border-radius:3px;background:${s.bg};color:#fff;font-family:monospace;white-space:nowrap;box-shadow:0 0 8px ${s.border}77;display:flex;flex-direction:column;align-items:center;gap:1px;line-height:1.1;">${icon}<span style="font-size:8px;font-weight:700;letter-spacing:0.08em;opacity:0.9;">${type}</span></div>`,
-    className: '',
-    popupAnchor: [5, 0] as unknown as L.PointExpression,
-  })
-}
+function sneakerUnitIcon(opts: UnitIconOpts): L.DivIcon {
+  const { coa, cat, name, alt, spd, vspd, watched, symSize = 26 } = opts
+  const sidc = getSIDC(coa, cat)
+  const namCol  = watched ? COL_WATCH : (coa === 1 ? COL_ENEMY : COL_ALLY)
+  const fillCol = namCol
+  const altCol  = '#FFC0CB'                        // pink – Sneaker
+  const spdCol  = '#f97316'                        // orange – Sneaker
+  const vCol    = '#6EE7B7'                        // mint – Sneaker
+  const shadow  = `text-shadow:0 0 4px #000,0 0 8px #000`
 
-// ── Radar unit icon helpers ────────────────────────────────────────────
-function isAirUnit(tags: string[]): boolean {
-  return tags.some(t => t === 'Aircraft' || t === 'Helicopter' || t === 'AWACS')
-}
+  // vertical speed arrow + value
+  const vspdStr = vspd !== undefined && Math.abs(vspd) > 0.5
+    ? `<div style="color:${vCol};font-size:9px;line-height:1.3;${shadow}">${vspd>0?'↑':'↓'}${Math.round(Math.abs(vspd)*196.85)}fpm</div>`
+    : ''
 
-function unitCategory(tags: string[]): string {
-  if (tags.includes('Aircraft') || tags.includes('AWACS')) return 'AIR'
-  if (tags.includes('Helicopter')) return 'HELO'
-  if (tags.includes('SAM')) return 'SAM'
-  if (tags.includes('EWR')) return 'EWR'
-  if (tags.includes('Armor')) return 'ARMOR'
-  if (tags.includes('AAA')) return 'AAA'
-  if (tags.includes('Boat')) return 'NAVAL'
-  if (tags.includes('Artillery')) return 'ARTY'
-  return 'GND'
-}
+  // altitude – show as FL if high enough
+  const altFt   = alt * 3.28084
+  const altStr  = altFt >= 18000
+    ? `FL${Math.round(altFt/100).toString().padStart(3,'0')}`
+    : `${Math.round(altFt/100)*100}ft`
 
-function radarUnitIcon(unit: MapUnit): L.DivIcon {
-  const color = unit.owner === 'Red' ? '#ef4444' : unit.owner === 'Blue' ? '#3b82f6' : '#6b7280'
-  const isAir = isAirUnit(unit.tags)
-  const cat = unitCategory(unit.tags)
-  const hdg = unit.heading
-
-  if (isAir) {
-    // Directional chevron for aircraft
-    return L.divIcon({
-      html: `<div style="position:relative;width:20px;height:20px;">
-        <svg width="20" height="20" viewBox="0 0 20 20" style="transform:rotate(${hdg}deg);filter:drop-shadow(0 0 4px ${color}88);">
-          <polygon points="10,2 16,16 10,12 4,16" fill="${color}" fill-opacity="0.85" stroke="${color}" stroke-width="1"/>
-        </svg>
-        <div style="position:absolute;top:20px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:7px;font-family:monospace;font-weight:700;color:${color};text-shadow:0 0 3px #000,0 0 6px #000;letter-spacing:0.05em;">${cat}</div>
-      </div>`,
-      className: '',
-      iconSize: [20, 30],
-      iconAnchor: [10, 10],
+  let symSvg = ''
+  let symW = symSize, symH = symSize
+  try {
+    const sym = new ms.Symbol(sidc, {
+      size:        symSize,
+      fillColor:   fillCol,
+      strokeWidth: 0.4,
+      iconColor:   '#ffffff',
     })
+    symSvg = sym.asSVG() as string
+    const sz = sym.getSize() as { width:number; height:number }
+    symW = sz.width; symH = sz.height
+  } catch {
+    symSvg = `<svg width="${symSize}" height="${symSize}" viewBox="0 0 20 20">
+      <polygon points="10,2 17,17 10,12 3,17" fill="${fillCol}" stroke="#000" stroke-width="0.5"/>
+    </svg>`
+    symW = symSize; symH = symSize
   }
 
-  // Diamond for ground units
+  const labelHtml = cat <= 2
+    ? `<div style="position:absolute;left:${symW+4}px;top:0;white-space:nowrap;font-family:'Share Tech Mono','Courier New',monospace;line-height:1.35;pointer-events:none;">
+        <div style="color:${namCol};font-size:10px;font-weight:700;${shadow}">${name||'UNKNOWN'}</div>
+        <div style="color:${altCol};font-size:9px;${shadow}">${altStr}</div>
+        <div style="color:${spdCol};font-size:9px;${shadow}">${Math.round(spd)}kts</div>
+        ${vspdStr}
+      </div>`
+    : `<div style="position:absolute;left:${symW+4}px;top:2px;white-space:nowrap;font-family:'Share Tech Mono','Courier New',monospace;line-height:1.35;pointer-events:none;">
+        <div style="color:${namCol};font-size:9px;${shadow}">${name||'UNKNOWN'}</div>
+      </div>`
+
   return L.divIcon({
-    html: `<div style="position:relative;width:14px;height:14px;">
-      <svg width="14" height="14" viewBox="0 0 14 14" style="filter:drop-shadow(0 0 3px ${color}66);">
-        <polygon points="7,1 13,7 7,13 1,7" fill="${color}" fill-opacity="0.7" stroke="${color}" stroke-width="1"/>
-      </svg>
-      <div style="position:absolute;top:14px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:7px;font-family:monospace;font-weight:700;color:${color};text-shadow:0 0 3px #000,0 0 6px #000;letter-spacing:0.05em;">${cat}</div>
-    </div>`,
-    className: '',
-    iconSize: [14, 24],
-    iconAnchor: [7, 7],
+    html: `<div style="position:relative;display:inline-block;filter:drop-shadow(0 0 3px ${fillCol}66)">
+             ${symSvg}
+             ${labelHtml}
+           </div>`,
+    className:  '',
+    iconSize:   [0, 0],
+    iconAnchor: [Math.round(symW / 2), Math.round(symH / 2)],
   })
 }
 
-// ── Threat ring radii (nautical miles) ────────────────────────────────
-const THREAT_NM: Record<string, number> = {
-  Airbase: 25, 'Naval Base': 40, 'Carrier Group': 50,
-  Factory: 15, 'Logistics Hub': 10, FARP: 5, FOB: 5,
+function restMilSymIcon(owner: string, tags: string[], typ: string, alt: number, spd: number, _heading: number, watched = false): L.DivIcon {
+  const coa = owner === 'Red' ? 1 : 2
+  const cat = tags.includes('Aircraft')||tags.includes('AWACS') ? 1
+            : tags.includes('Helicopter') ? 2
+            : tags.includes('Boat')       ? 4
+            : 3
+  return sneakerUnitIcon({ coa, cat, name: typ, alt, spd, watched, symSize: 24 })
+}
+
+// ── Threat / objective icons ───────────────────────────────────────────
+const OBJ_SYMBOL: Record<string,string> = {
+  Airbase:'✈', FARP:'⬡', FOB:'⬡', 'Logistics Hub':'⬡',
+  'Naval Base':'⚓', 'Carrier Group':'⚓', Factory:'⚙',
+}
+const OBJ_RADIUS: Record<string,number> = {
+  Airbase:12, 'Naval Base':11, 'Carrier Group':11, Factory:9, default:7,
+}
+const THREAT_NM: Record<string,number> = {
+  Airbase:25, 'Naval Base':40, 'Carrier Group':50, Factory:15, 'Logistics Hub':10, FARP:5, FOB:5,
+}
+const MK_STYLE: Record<MarkerType,{bg:string;bd:string}> = {
+  IP:{bg:'#22c55e30',bd:'#22c55e'}, TGT:{bg:'#ef444430',bd:'#ef4444'},
+  CP:{bg:'#3b82f630',bd:'#3b82f6'}, BULL:{bg:'#ffffff10',bd:'#e2e8f0'},
+  EGR:{bg:'#eab30830',bd:'#eab308'},
+}
+
+function waypointIcon(n: number, last: boolean): L.DivIcon {
+  const c = last ? '#ef4444' : '#00b4f5'
+  return L.divIcon({
+    html:`<div style="width:22px;height:22px;border-radius:50%;background:${c}22;border:2px solid ${c};
+               color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;
+               justify-content:center;font-family:${FONT_MONO};box-shadow:0 0 6px ${c}88;">${n}</div>`,
+    className:'', iconSize:[22,22], iconAnchor:[11,11],
+  })
+}
+function planMarkerIcon(type: MarkerType): L.DivIcon {
+  const s = MK_STYLE[type]
+  const ICONS: Record<MarkerType, string> = {
+    IP:   `<svg width="10" height="10" viewBox="0 0 10 10"><polygon points="5,0 10,10 0,10" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
+    TGT:  `<svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="5" y1="1" x2="5" y2="9" stroke="currentColor" stroke-width="1"/><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1"/></svg>`,
+    CP:   `<svg width="10" height="10" viewBox="0 0 10 10"><polygon points="5,0 10,5 5,10 0,5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
+    BULL: `<svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1"/><circle cx="5" cy="5" r="2" fill="none" stroke="currentColor" stroke-width="1"/><circle cx="5" cy="5" r="0.8" fill="currentColor"/></svg>`,
+    EGR:  `<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.5"/><polyline points="6,2 9,5 6,8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
+  }
+  return L.divIcon({
+    html: `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:none;">
+      <div style="padding:3px 7px;border-radius:2px;background:${s.bg};color:${s.bd};
+                  font-family:${FONT_MONO};font-size:9px;font-weight:700;letter-spacing:0.1em;
+                  border:1px solid ${s.bd};box-shadow:0 0 6px ${s.bd}66;
+                  display:flex;align-items:center;gap:4px;white-space:nowrap;">
+        <span style="color:${s.bd}">${ICONS[type]}</span>${type}
+      </div>
+    </div>`,
+    className: '',
+    iconSize:   [0, 0],
+    iconAnchor: [0, 0],
+  })
+}
+
+// ── Heatmap layer ──────────────────────────────────────────────────────
+function HeatmapLayer({ points }: { points: [number,number,number][] }) {
+  const map = useMap()
+  const ref = useRef<L.HeatLayer|null>(null)
+  useEffect(() => {
+    if (!points.length) { if(ref.current){map.removeLayer(ref.current);ref.current=null}; return }
+    if (!ref.current) ref.current=(L as any).heatLayer(points,{radius:25,blur:20,maxZoom:12,max:1,
+      gradient:{0.2:'#002200',0.5:'#006600',0.8:'#00cc00',1.0:'#39ff14'}}).addTo(map)
+    else ref.current.setLatLngs(points as any)
+    return ()=>{ if(ref.current){map.removeLayer(ref.current);ref.current=null} }
+  },[map,points])
+  return null
 }
 
 // ── Map sub-components ─────────────────────────────────────────────────
-
-function FlyTo({ center, zoom }: { center: [number, number]; zoom: number }) {
-  const map = useMap()
-  useEffect(() => { map.flyTo(center, zoom, { duration: 1.2 }) }, [center, zoom, map])
+function FlyTo({ center, zoom }: { center:[number,number]; zoom:number }) {
+  const map=useMap()
+  useEffect(()=>{ map.flyTo(center,zoom,{duration:1.2}) },[center,zoom,map])
   return null
 }
-
 function FitBounds({ objectives }: { objectives: Objective[] }) {
-  const map = useMap()
-  const done = useRef(false)
-  useEffect(() => {
-    if (done.current || objectives.length === 0) return
-    done.current = true
-    const lats = objectives.map(o => o.lat)
-    const lons = objectives.map(o => o.lon)
-    const bounds: LatLngBoundsExpression = [
-      [Math.min(...lats) - 0.3, Math.min(...lons) - 0.3],
-      [Math.max(...lats) + 0.3, Math.max(...lons) + 0.3],
-    ]
-    map.fitBounds(bounds, { padding: [30, 30], maxZoom: 10 })
-  }, [objectives, map])
+  const map=useMap(), done=useRef(false)
+  useEffect(()=>{
+    if(done.current||!objectives.length) return; done.current=true
+    const lats=objectives.map(o=>o.lat), lons=objectives.map(o=>o.lon)
+    map.fitBounds([[Math.min(...lats)-.3,Math.min(...lons)-.3],[Math.max(...lats)+.3,Math.max(...lons)+.3]] as LatLngBoundsExpression,{padding:[40,40],maxZoom:10})
+  },[objectives,map])
   return null
 }
 
-function MapInteractionLayer({
-  mode, onMapClick,
-}: { mode: PlanMode; onMapClick: (lat: number, lon: number) => void }) {
-  const map = useMap()
-  useEffect(() => {
-    const c = map.getContainer()
-    c.style.cursor = mode !== 'none' ? 'crosshair' : ''
-    return () => { c.style.cursor = '' }
-  }, [mode, map])
-  useMapEvents({ click: e => { if (mode !== 'none') onMapClick(e.latlng.lat, e.latlng.lng) } })
-  return null
-}
-
-// ── Side colours ──────────────────────────────────────────────────────
-const SIDE_COLOR: Record<string, string> = {
-  Red: '#ef4444', Blue: '#3b82f6', Neutral: '#6b7280',
-}
-const KIND_RADIUS: Record<string, number> = {
-  Airbase: 13, 'Naval Base': 12, 'Carrier Group': 11, Factory: 9, default: 7,
-}
-const KIND_SYMBOL: Record<string, string> = {
-  Airbase: '✈', FARP: '⬡', FOB: '⬡', 'Logistics Hub': '⬡',
-  'Naval Base': '⚓', 'Carrier Group': '⚓', Factory: '⚙',
-}
-
-// ── Planning panel ─────────────────────────────────────────────────────
-function PlanningPanel({
-  waypoints, planMarkers, measurePts,
-  speed, onSpeedChange,
-  onRemoveWaypoint, onClearWaypoints,
-  onRemoveMarker, onClearMarkers,
-  showThreats, onToggleThreats,
+// Combined map event handler: planning clicks, cursor coords, BRAA
+function MapEvents({
+  planMode, onPlanClick,
+  braaStart, onBraaContextMenu, onBraaFinish, onMouseMove,
 }: {
-  waypoints: Waypoint[]
-  planMarkers: PlanMarker[]
-  measurePts: { lat: number; lon: number }[]
-  speed: number
-  onSpeedChange: (v: number) => void
-  onRemoveWaypoint: (id: string) => void
-  onClearWaypoints: () => void
-  onRemoveMarker: (id: string) => void
-  onClearMarkers: () => void
-  showThreats: boolean
-  onToggleThreats: () => void
+  planMode: PlanMode
+  onPlanClick: (lat:number,lon:number) => void
+  braaStart: {lat:number;lon:number}|null
+  onBraaContextMenu: (lat:number,lon:number) => void
+  onBraaFinish: (lat:number,lon:number) => void
+  onMouseMove: (lat:number,lon:number) => void
 }) {
-  const [tab, setTab] = useState<'route' | 'markers' | 'measure'>('route')
-
-  // Build legs
-  let totalNm = 0
-  const legs = waypoints.slice(0, -1).map((wp, i) => {
-    const next = waypoints[i + 1]!
-    const dist = haversineNm(wp.lat, wp.lon, next.lat, next.lon)
-    const brg  = trueBearing(wp.lat, wp.lon, next.lat, next.lon)
-    const ete  = speed > 0 ? dist / speed * 60 : 0
-    totalNm += dist
-    return { from: i + 1, to: i + 2, dist, brg, ete }
+  const map = useMap()
+  useEffect(()=>{
+    const c=map.getContainer()
+    c.style.cursor = planMode!=='none' ? 'crosshair' : braaStart ? 'crosshair' : ''
+    return ()=>{ c.style.cursor='' }
+  },[planMode,braaStart,map])
+  useMapEvents({
+    click: e => {
+      if (planMode!=='none') onPlanClick(e.latlng.lat, e.latlng.lng)
+      else if (braaStart)   onBraaFinish(e.latlng.lat, e.latlng.lng)
+    },
+    contextmenu: e => {
+      e.originalEvent.preventDefault()
+      onBraaContextMenu(e.latlng.lat, e.latlng.lng)
+    },
+    mousemove: e => onMouseMove(e.latlng.lat, e.latlng.lng),
   })
-  const totalEte = speed > 0 ? totalNm / speed * 60 : 0
+  return null
+}
 
-  // Measure info
-  const measDist = measurePts.length === 2
-    ? haversineNm(measurePts[0]!.lat, measurePts[0]!.lon, measurePts[1]!.lat, measurePts[1]!.lon)
-    : null
-  const measBrg = measurePts.length === 2
-    ? trueBearing(measurePts[0]!.lat, measurePts[0]!.lon, measurePts[1]!.lat, measurePts[1]!.lon)
-    : null
-
+// ── HUD button ─────────────────────────────────────────────────────────
+function HudBtn({ active, onClick, children, title, color=GREEN }: {
+  active?: boolean; onClick: ()=>void; children: React.ReactNode; title?: string; color?: string
+}) {
   return (
-    <div className="w-72 flex-shrink-0 flex flex-col border-l border-[#1e3a5f]/50 overflow-hidden" style={{ background: '#040b16' }}>
-      {/* Panel header */}
-      <div className="px-3 py-2.5 border-b border-[#1e3a5f]/40 flex items-center justify-between">
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mission Planning</span>
-        <button
-          onClick={onToggleThreats}
-          className={`flex items-center gap-1 text-[9px] font-bold px-2 py-1 rounded transition-colors ${
-            showThreats ? 'text-red-400 bg-red-500/15 border border-red-500/30' : 'text-slate-600 border border-[#1e3a5f]/40 hover:text-slate-400'
-          }`}
-        >
-          <Shield size={9} />
-          THREATS
+    <button title={title} onClick={onClick} style={{
+      fontFamily:FONT_HEAD, fontSize:'0.72rem', letterSpacing:'0.14em',
+      padding:'0.3rem 0.7rem', borderRadius:'2px',
+      border: active ? `1px solid ${color}66` : `1px solid ${HUD_BORDER}`,
+      background: active ? `${color}15` : 'transparent',
+      color: active ? color : HUD_DIM,
+      cursor:'pointer', transition:'all 0.12s', whiteSpace:'nowrap',
+    }}
+    onMouseEnter={e=>{ if(!active) e.currentTarget.style.color=color }}
+    onMouseLeave={e=>{ if(!active) e.currentTarget.style.color=HUD_DIM }}
+    >{children}</button>
+  )
+}
+
+// ── Mission timer display ──────────────────────────────────────────────
+function MissionTimer({ liveTime, hacks, onAddHack, onRemoveHack }: {
+  liveTime: number
+  hacks: HackTimer[]
+  onAddHack: () => void
+  onRemoveHack: (id: string) => void
+}) {
+  const [, setTick] = useState(0)
+  useEffect(()=>{ const id=setInterval(()=>setTick(t=>t+1),1000); return ()=>clearInterval(id) },[])
+  const now = Date.now()
+  const base: React.CSSProperties = {
+    background:'rgba(64,64,64,0.2)', border:'1px solid rgba(255,128,128,0.25)',
+    backdropFilter:'blur(6px)', borderRadius:'2px', padding:'6px 10px',
+    fontFamily:FONT_MONO, color:'#ff8080', fontSize:'0.65rem',
+  }
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+      {/* Hack timers above mission timer */}
+      {hacks.map(h => (
+        <div key={h.id} style={{ ...base, display:'flex', justifyContent:'space-between', gap:'10px', cursor:'pointer' }}
+          onClick={() => onRemoveHack(h.id)}>
+          <span style={{ color:'#ffd600', letterSpacing:'0.08em' }}>{h.label}</span>
+          <span style={{ color:'#ffd600' }}>{fmtElapsed(now - h.startedAt)}</span>
+        </div>
+      ))}
+      {/* Mission timer */}
+      <div style={{ ...base, display:'flex', gap:'12px', alignItems:'center' }}>
+        <span style={{ color:'rgba(255,128,128,0.5)', fontSize:'0.58rem', letterSpacing:'0.12em' }}>T+</span>
+        <span style={{ fontSize:'0.82rem', color:'#ff3333', letterSpacing:'0.08em' }}>
+          {liveTime > 0 ? fmtDcsTime(liveTime) : '--:--:--'}
+        </span>
+        <button onClick={onAddHack} title="Start hack timer"
+          style={{ marginLeft:'4px', background:'none', border:'1px solid rgba(255,214,0,0.35)',
+                   borderRadius:'2px', color:'#ffd600', cursor:'pointer',
+                   fontSize:'0.6rem', padding:'1px 6px', fontFamily:FONT_MONO }}>
+          HACK
         </button>
       </div>
-
-      {/* Tabs */}
-      <div className="flex border-b border-[#1e3a5f]/40">
-        {([['route', 'ROUTE'], ['markers', 'MARKERS'], ['measure', 'MEASURE']] as const).map(([t, label]) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 py-2 text-[9px] font-bold tracking-widest transition-colors ${
-              tab === t ? 'text-blue-300 border-b-2 border-blue-400 -mb-px' : 'text-slate-700 hover:text-slate-500'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
-
-        {/* ── Route tab ── */}
-        {tab === 'route' && (
-          <div className="p-3 space-y-3">
-            {/* Speed input */}
-            <div className="flex items-center gap-2">
-              <span className="text-[9px] text-slate-600 uppercase tracking-widest w-10">KTAS</span>
-              <input
-                type="number"
-                min={0}
-                max={2000}
-                value={speed}
-                onChange={e => onSpeedChange(Number(e.target.value))}
-                className="flex-1 bg-[#080f1a] border border-[#1e3a5f]/60 rounded px-2 py-1 text-[11px] font-mono text-slate-200 focus:outline-none focus:border-blue-500/50"
-              />
-              <span className="text-[9px] text-slate-700">kts</span>
-            </div>
-
-            {/* Totals */}
-            {waypoints.length >= 2 && (
-              <div className="tac-card p-3 grid grid-cols-2 gap-2 text-center">
-                <div>
-                  <div className="text-[18px] font-bold font-mono text-cyan-400">{totalNm.toFixed(1)}</div>
-                  <div className="text-[8px] text-slate-700 uppercase tracking-widest">NM Total</div>
-                </div>
-                <div>
-                  <div className="text-[18px] font-bold font-mono text-purple-400">{speed > 0 ? fmtTime(totalEte) : '—'}</div>
-                  <div className="text-[8px] text-slate-700 uppercase tracking-widest">ETE</div>
-                </div>
-              </div>
-            )}
-
-            {/* Waypoints list */}
-            {waypoints.length === 0 ? (
-              <div className="text-center py-6 text-slate-700 text-[10px]">
-                <Navigation size={20} className="mx-auto mb-2 opacity-30" />
-                Click the map in ROUTE mode<br/>to add waypoints
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-[9px] text-slate-600 uppercase tracking-widest">{waypoints.length} waypoints</span>
-                  <button onClick={onClearWaypoints} className="text-[9px] text-red-500/60 hover:text-red-400 flex items-center gap-1">
-                    <Trash2 size={9} /> Clear
-                  </button>
-                </div>
-                {waypoints.map((wp, i) => {
-                  const leg = legs[i - 1]
-                  return (
-                    <div key={wp.id} className="tac-card text-[10px]">
-                      {/* Leg info (above waypoint, for all except first) */}
-                      {leg && (
-                        <div className="px-2 py-1 border-b border-[#1e3a5f]/30 flex justify-between bg-[#03080f]">
-                          <span className="text-slate-600 font-mono">{leg.dist.toFixed(1)} NM</span>
-                          <span className="text-slate-500 font-mono">{Math.round(leg.brg).toString().padStart(3,'0')}°T</span>
-                          {speed > 0 && <span className="text-purple-500 font-mono">{fmtTime(leg.ete)}</span>}
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2 px-2 py-2">
-                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0 ${
-                          i === waypoints.length - 1 ? 'bg-red-500/20 text-red-400 border border-red-500/40' : 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
-                        }`}>
-                          {i + 1}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="font-mono text-[9px] text-slate-400 truncate">{fmtCoord(wp.lat, wp.lon)}</div>
-                        </div>
-                        <button onClick={() => onRemoveWaypoint(wp.id)} className="text-slate-700 hover:text-red-400 ml-1 flex-shrink-0">
-                          <X size={10} />
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Markers tab ── */}
-        {tab === 'markers' && (
-          <div className="p-3 space-y-3">
-            {planMarkers.length === 0 ? (
-              <div className="text-center py-6 text-slate-700 text-[10px]">
-                <MapPin size={20} className="mx-auto mb-2 opacity-30" />
-                Click the map in MARK mode<br/>to add point labels
-              </div>
-            ) : (
-              <>
-                <div className="flex justify-between items-center">
-                  <span className="text-[9px] text-slate-600 uppercase tracking-widest">{planMarkers.length} markers</span>
-                  <button onClick={onClearMarkers} className="text-[9px] text-red-500/60 hover:text-red-400 flex items-center gap-1">
-                    <Trash2 size={9} /> Clear all
-                  </button>
-                </div>
-                <div className="space-y-1">
-                  {planMarkers.map(m => {
-                    const s = MARKER_STYLES[m.type]
-                    return (
-                      <div key={m.id} className="tac-card flex items-center gap-2 px-3 py-2">
-                        <span
-                          className="text-[9px] font-bold px-1.5 py-0.5 rounded font-mono"
-                          style={{ color: s.border, background: s.bg, border: `1px solid ${s.border}55` }}
-                        >
-                          {m.type}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[9px] font-mono text-slate-500 truncate">{fmtCoord(m.lat, m.lon)}</div>
-                        </div>
-                        <button onClick={() => onRemoveMarker(m.id)} className="text-slate-700 hover:text-red-400">
-                          <X size={10} />
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── Measure tab ── */}
-        {tab === 'measure' && (
-          <div className="p-3 space-y-3">
-            {measurePts.length === 0 ? (
-              <div className="text-center py-6 text-slate-700 text-[10px]">
-                <Ruler size={20} className="mx-auto mb-2 opacity-30" />
-                Click the map in MEASURE mode<br/>to place two points
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {measurePts.map((p, i) => (
-                  <div key={i} className="tac-card px-3 py-2">
-                    <div className="text-[9px] text-slate-600 uppercase tracking-widest mb-1">Point {i + 1}</div>
-                    <div className="text-[10px] font-mono text-slate-300">{fmtCoord(p.lat, p.lon)}</div>
-                  </div>
-                ))}
-
-                {measDist !== null && measBrg !== null && (
-                  <div className="tac-card p-3 space-y-2">
-                    <div className="text-[9px] text-slate-600 uppercase tracking-widest border-b border-[#1e3a5f]/40 pb-2 mb-2">Result</div>
-                    <div className="grid grid-cols-2 gap-2 text-center">
-                      <div>
-                        <div className="text-[22px] font-bold font-mono text-cyan-400">{measDist.toFixed(1)}</div>
-                        <div className="text-[8px] text-slate-700 uppercase tracking-widest">Nautical Miles</div>
-                      </div>
-                      <div>
-                        <div className="text-[22px] font-bold font-mono text-orange-400">{Math.round(measBrg).toString().padStart(3,'0')}°</div>
-                        <div className="text-[8px] text-slate-700 uppercase tracking-widest">True Bearing</div>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-center text-[10px]">
-                      <div>
-                        <div className="font-mono text-slate-400">{(measDist * 1.852).toFixed(1)} km</div>
-                        <div className="text-slate-700 text-[8px]">Kilometres</div>
-                      </div>
-                      <div>
-                        <div className="font-mono text-slate-400">{((measBrg + 180) % 360).toString().padStart(3,'0')}°</div>
-                        <div className="text-slate-700 text-[8px]">Reciprocal</div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-      </div>
-
-      {/* Threat ring legend */}
-      {showThreats && (
-        <div className="px-3 py-2 border-t border-[#1e3a5f]/40 space-y-1">
-          <div className="text-[9px] text-slate-700 uppercase tracking-widest mb-1.5">Threat Rings</div>
-          {Object.entries(THREAT_NM).map(([kind, nm]) => (
-            <div key={kind} className="flex justify-between text-[9px]">
-              <span className="text-slate-600">{kind}</span>
-              <span className="font-mono text-slate-500">{nm} NM</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
@@ -556,689 +406,919 @@ function PlanningPanel({
 // Main MapPage
 // ═══════════════════════════════════════════════════════════════════════
 export default function MapPage() {
-  // ── Persisted UI settings ───────────────────────────────────────────
-  const [tileKey,     setTileKey]     = usePersistedState<TileKey>('tileKey', 'satellite')
-  const [sideFilter,  setSideFilter]  = usePersistedState<'All' | 'Red' | 'Blue' | 'Neutral'>('sideFilter', 'All')
-  const [iconStyle,   setIconStyle]   = usePersistedState<IconStyle>('iconStyle', 'dot')
-  const [showThreats, setShowThreats] = usePersistedState('showThreats', false)
-  const [showRadar,   setShowRadar]   = usePersistedState('showRadar', true)
-  const [showHeatmap, setShowHeatmap] = usePersistedState('showHeatmap', false)
-  const [showPanel,   setShowPanel]   = usePersistedState('showPanel', true)
-  const [speed,       setSpeed]       = usePersistedState('speed', 400)
+  // ── Persisted settings ──────────────────────────────────────────────
+  const [tileKey,     setTileKey]     = usePersisted<TileKey>('tileKey','tactical')
+  const [_iconStyle,  _setIconStyle]  = usePersisted<IconStyle>('iconStyle','dot')
+  const [sideFilter,  setSideFilter]  = usePersisted<'All'|'Red'|'Blue'|'Neutral'>('sideFilter','All')
+  const [showThreats, setShowThreats] = usePersisted('showThreats',false)
+  const [showRadar,   setShowRadar]   = usePersisted('showRadar',true)
+  const [showLive,    setShowLive]    = usePersisted('showLive',true)
+  const [showHeat,    setShowHeat]    = usePersisted('showHeat',false)
+  const [showVectors, setShowVectors] = usePersisted('showVectors',true)
+  const [showTrails,  setShowTrails]  = usePersisted('showTrails',true)
+  const [showPlan,    setShowPlan]    = usePersisted('showPlan',false)
+  const [speed,       setSpeed]       = usePersisted('speed',400)
+  const [scratchText, setScratchText] = usePersisted('scratch','')
 
   // ── Persisted planning data ─────────────────────────────────────────
-  const [waypoints,   setWaypoints]   = usePersistedState<Waypoint[]>('waypoints', [])
-  const [planMarkers, setPlanMarkers] = usePersistedState<PlanMarker[]>('planMarkers', [])
-  const [measurePts,  setMeasurePts]  = usePersistedState<{lat:number;lon:number}[]>('measurePts', [])
+  const [waypoints,   setWaypoints]   = usePersisted<Waypoint[]>('waypoints',[])
+  const [planMarkers, setPlanMarkers] = usePersisted<PlanMarker[]>('planMarkers',[])
+  const [measurePts,  setMeasurePts]  = usePersisted<{lat:number;lon:number}[]>('measurePts',[])
 
   // ── Ephemeral state ─────────────────────────────────────────────────
-  const [flyTarget,   setFlyTarget]   = useState<{ center: [number, number]; zoom: number } | null>(null)
-  const [selectedId,  setSelectedId]  = useState<string | null>(null)
-  const [planMode,    setPlanMode]    = useState<PlanMode>('none')
-  const [markerType,  setMarkerType]  = useState<MarkerType>('IP')
+  const [flyTarget,    setFlyTarget]    = useState<{center:[number,number];zoom:number}|null>(null)
+  const [planMode,     setPlanMode]     = useState<PlanMode>('none')
+  const [markerType,   setMarkerType]   = useState<MarkerType>('IP')
+  const [wsStatus,     setWsStatus]     = useState<'open'|'closed'|'error'>('closed')
 
-  const tileLayer = TILE_LAYERS[tileKey]
+  // BRAA
+  const [braaStart,   setBraaStart]   = useState<{lat:number;lon:number}|null>(null)
+  const [braaCursor,  setBraaCursor]  = useState<{lat:number;lon:number}|null>(null)
+  const [drawnBraas,  setDrawnBraas]  = useState<BraaLine[]>([])
 
-  const { data: objectives = [], isLoading } = useQuery({
-    queryKey: ['objectives'],
-    queryFn: () => api.objectives(),
-    refetchInterval: 30_000,
+  // Watches (set of unit IDs)
+  const [watches,     setWatches]     = useState<Set<string>>(new Set())
+
+  // Console panel
+  const [showConsole,  setShowConsole]  = useState(true)
+  const [consoleTab,   setConsoleTab]   = useState<'search'|'watches'|'draw'>('search')
+  const [searchQuery,  setSearchQuery]  = useState('')
+
+  // Scratchpad
+  const [showScratch, setShowScratch] = useState(false)
+
+  // Hack timers
+  const [hacks, setHacks] = useState<HackTimer[]>([])
+  let hackCounter = useRef(1)
+
+  // Live units + bullseye
+  const [liveUnits,  setLiveUnits]  = useState<LiveUnit[]>([])
+  const [liveTime,   setLiveTime]   = useState<number>(0)
+  const [bullseyes,  setBullseyes]  = useState<Bullseye[]>([])
+  const trailsRef = useRef<Trails>(new Map())
+
+  // Cursor coords (ref + 5Hz display to avoid re-render on every mouse move)
+  const cursorLatLon = useRef<{lat:number;lon:number}|null>(null)
+  const [cursorCoord, setCursorCoord] = useState('')
+  useEffect(()=>{ const id=setInterval(()=>{
+    if (cursorLatLon.current) setCursorCoord(fmtCoord(cursorLatLon.current.lat, cursorLatLon.current.lon))
+  },200); return ()=>clearInterval(id) },[])
+
+  const { selectedRound } = useRound()
+
+  // ── REST queries ────────────────────────────────────────────────────
+  const { data: objectives=[], isLoading } = useQuery({
+    queryKey:['objectives',selectedRound],
+    queryFn:()=>api.objectives(selectedRound),
+    refetchInterval: OBJ_INT,
   })
-  const { data: radarUnits = [] } = useQuery({
-    queryKey: ['units'],
-    queryFn: () => api.units(),
-    refetchInterval: 5_000,
+  const { data: restUnits=[] } = useQuery({
+    queryKey:['units'], queryFn:api.units, refetchInterval: REST_INT,
+    enabled: wsStatus!=='open',
   })
-  const { data: rounds = [] } = useQuery({
-    queryKey: ['rounds'],
-    queryFn: api.rounds,
-    refetchInterval: 60_000,
+  const { data: rounds=[] } = useQuery({
+    queryKey:['rounds'], queryFn:api.rounds, refetchInterval:60_000,
   })
 
-  const activeRound  = rounds.find(r => r.active)
-  const validObjs    = objectives.filter(o => o.lat !== 0 || o.lon !== 0)
-  const shown        = sideFilter === 'All' ? validObjs : validObjs.filter(o => o.owner === sideFilter)
+  // ── Load historical trail points on mount ───────────────────────────
+  useEffect(()=>{
+    api.trails().then(points => {
+      const trails = trailsRef.current
+      for (const p of points) {
+        const pts = trails.get(p.id) ?? []
+        pts.push({ lat: p.lat, lon: p.lon, ts: p.ts })
+        trails.set(p.id, pts)
+      }
+    }).catch(() => {/* trails are optional */})
+  }, [])
 
+  // ── WebSocket ────────────────────────────────────────────────────────
+  useEffect(()=>{
+    return connectLiveUnits((msg: WsUnitsMsg)=>{
+      setLiveTime(msg.t)
+      setLiveUnits(msg.units)
+      if (msg.bull && msg.bull.length > 0) setBullseyes(msg.bull)
+      const now = Date.now()/1000
+      const trails = trailsRef.current
+      for (const u of msg.units) {
+        const pts = trails.get(u.id) ?? []
+        pts.push({ lat:u.lat, lon:u.lon, ts:now })
+        const trimmed = pts.filter(p=>p.ts>=now-TRAIL_SEC)
+        if (trimmed.length>TRAIL_MAX) trimmed.splice(0,trimmed.length-TRAIL_MAX)
+        trails.set(u.id, trimmed)
+      }
+      const liveIds = new Set(msg.units.map(u=>u.id))
+      for (const id of Array.from(trails.keys())) if (!liveIds.has(id)) trails.delete(id)
+    }, setWsStatus)
+  },[])
+
+  // ── Derived data ────────────────────────────────────────────────────
+  rounds.find(r=>r.active)
+  const validObjs   = objectives.filter(o=>o.lat!==0||o.lon!==0)
+  const shownObjs   = sideFilter==='All' ? validObjs : validObjs.filter(o=>o.owner===sideFilter)
   const counts = {
     All:     validObjs.length,
-    Red:     validObjs.filter(o => o.owner === 'Red').length,
-    Blue:    validObjs.filter(o => o.owner === 'Blue').length,
-    Neutral: validObjs.filter(o => o.owner === 'Neutral').length,
+    Red:     validObjs.filter(o=>o.owner==='Red').length,
+    Blue:    validObjs.filter(o=>o.owner==='Blue').length,
+    Neutral: validObjs.filter(o=>o.owner==='Neutral').length,
   }
-  const redPct  = counts.All > 0 ? Math.round(counts.Red  / counts.All * 100) : 0
-  const bluePct = counts.All > 0 ? Math.round(counts.Blue / counts.All * 100) : 0
+  const redPct  = counts.All>0 ? Math.round(counts.Red /counts.All*100) : 0
+  const bluePct = counts.All>0 ? Math.round(counts.Blue/counts.All*100) : 0
 
-  // ── Heatmap data: combine unit contacts + contested objectives ──────
-  const heatmapPoints: [number, number, number][] = (() => {
-    if (!showHeatmap) return []
-    const pts: [number, number, number][] = []
-    // Radar contacts are activity hotspots
-    for (const u of radarUnits) {
-      pts.push([u.lat, u.lon, 0.6])
-    }
-    // Contested objectives (low health = active combat area)
-    for (const o of validObjs) {
-      if (o.health < 90) {
-        const intensity = Math.max(0.3, 1.0 - o.health / 100)
-        pts.push([o.lat, o.lon, intensity])
-      }
-    }
+  // Active unit list
+  const useLive = wsStatus==='open' && showLive
+  const activeUnits: LiveUnit[] = useMemo(()=>{
+    if (!useLive) return []
+    if (!searchQuery) return liveUnits
+    const q = searchQuery.toLowerCase()
+    return liveUnits.filter(u=>u.nm.toLowerCase().includes(q)||u.typ.toLowerCase().includes(q))
+  },[useLive,liveUnits,searchQuery])
+
+  const activeRestUnits: MapUnit[] = useMemo(()=>{
+    if (useLive || !showRadar) return []
+    if (!searchQuery) return restUnits
+    const q = searchQuery.toLowerCase()
+    return restUnits.filter(u=>u.typ.toLowerCase().includes(q))
+  },[useLive,showRadar,restUnits,searchQuery])
+
+  const airCount = useLive
+    ? activeUnits.filter(u=>u.cat<=2).length
+    : activeRestUnits.filter(u=>u.tags.some(t=>t==='Aircraft'||t==='Helicopter')).length
+
+  // Heatmap
+  const heatPoints: [number,number,number][] = useMemo(()=>{
+    if (!showHeat) return []
+    const pts: [number,number,number][] = []
+    for (const u of activeUnits) pts.push([u.lat,u.lon,0.6])
+    for (const u of activeRestUnits) pts.push([u.lat,u.lon,0.6])
+    for (const o of validObjs) if (o.health<90) pts.push([o.lat,o.lon,Math.max(0.3,1-o.health/100)])
     return pts
-  })()
+  },[showHeat,activeUnits,activeRestUnits,validObjs])
 
-  // ── Map click handler ───────────────────────────────────────────────
-  const handleMapClick = useCallback((lat: number, lon: number) => {
-    if (planMode === 'waypoint') {
-      setWaypoints(prev => [...prev, { id: crypto.randomUUID(), lat, lon }])
-    } else if (planMode === 'marker') {
-      setPlanMarkers(prev => [...prev, { id: crypto.randomUUID(), lat, lon, type: markerType }])
-    } else if (planMode === 'measure') {
-      setMeasurePts(prev => prev.length >= 2 ? [{ lat, lon }] : [...prev, { lat, lon }])
+  // Route / measure
+  const routePos   = waypoints.map(w=>[w.lat,w.lon] as LatLngExpression)
+  const measurePos = measurePts.map(p=>[p.lat,p.lon] as LatLngExpression)
+  const measDist   = measurePts.length===2 ? haversineNm(measurePts[0]!,measurePts[1]!) : null
+  const measBrg    = measurePts.length===2 ? bearingDeg(measurePts[0]!,measurePts[1]!) : null
+
+  let totalNm = 0
+  const legs = waypoints.slice(0,-1).map((wp,i)=>{
+    const next=waypoints[i+1]!
+    const dist=haversineNm(wp,next), brg=bearingDeg(wp,next)
+    totalNm+=dist
+    return { dist, brg, ete: speed>0?dist/speed*60:0 }
+  })
+
+  // BRAA live line
+  const braaActiveLine: [number,number][] = braaStart && braaCursor
+    ? [[braaStart.lat,braaStart.lon],[braaCursor.lat,braaCursor.lon]]
+    : []
+  const braaActiveDist  = braaStart && braaCursor ? haversineNm(braaStart,braaCursor) : null
+  const braaActiveBrg   = braaStart && braaCursor ? bearingDeg(braaStart,braaCursor) : null
+
+  // ── Handlers ────────────────────────────────────────────────────────
+  const handlePlanClick = useCallback((lat:number,lon:number)=>{
+    if (planMode==='waypoint') setWaypoints(p=>[...p,{id:crypto.randomUUID(),lat,lon}])
+    else if (planMode==='marker') setPlanMarkers(p=>[...p,{id:crypto.randomUUID(),lat,lon,type:markerType}])
+    else if (planMode==='measure') setMeasurePts(p=>p.length>=2?[{lat,lon}]:[...p,{lat,lon}])
+  },[planMode,markerType])
+
+  const handleContextMenu = useCallback((lat:number,lon:number)=>{
+    if (braaStart) {
+      setDrawnBraas(p=>[...p,{id:crypto.randomUUID(),from:braaStart,to:{lat,lon}}])
+      setBraaStart(null); setBraaCursor(null)
+    } else {
+      setBraaStart({lat,lon}); setBraaCursor({lat,lon})
     }
-  }, [planMode, markerType])
+  },[braaStart])
 
-  // ── Mode toggle (click active mode to deactivate) ───────────────────
-  function toggleMode(m: PlanMode) {
-    setPlanMode(prev => prev === m ? 'none' : m)
+  const handleBraaFinish = useCallback((lat:number,lon:number)=>{
+    if (braaStart) {
+      setDrawnBraas(p=>[...p,{id:crypto.randomUUID(),from:braaStart,to:{lat,lon}}])
+      setBraaStart(null); setBraaCursor(null)
+    }
+  },[braaStart])
+
+  const handleMouseMove = useCallback((lat:number,lon:number)=>{
+    cursorLatLon.current = {lat,lon}
+    if (braaStart) setBraaCursor({lat,lon})
+  },[braaStart])
+
+  function toggleMode(m: PlanMode) { setPlanMode(p=>p===m?'none':m) }
+  function toggleWatch(id: string) {
+    setWatches(prev=>{ const s=new Set(prev); s.has(id)?s.delete(id):s.add(id); return s })
+  }
+  function addHack() {
+    setHacks(p=>[...p,{id:crypto.randomUUID(),label:`HACK ${hackCounter.current++}`,startedAt:Date.now()}])
+  }
+  function clearAll() { setWaypoints([]); setPlanMarkers([]); setMeasurePts([]); setPlanMode('none') }
+
+  // ── Shared panel style ───────────────────────────────────────────────
+  const hudPanel: React.CSSProperties = {
+    background:HUD_BG, border:`1px solid ${HUD_BORDER}`,
+    borderRadius:'3px', backdropFilter:'blur(8px)',
+    padding:'7px 11px', color:HUD_TEXT, fontFamily:FONT_MONO,
   }
 
-  // Build route polyline positions
-  const routePositions = waypoints.map(w => [w.lat, w.lon] as LatLngExpression)
-
-  // Build measure line positions
-  const measurePositions = measurePts.map(p => [p.lat, p.lon] as LatLngExpression)
-
+  // ── Render ───────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader
-        title="TACTICAL MAP"
-        sub={activeRound ? activeRound.scenario : 'No active campaign'}
-        right={
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 text-[11px] font-semibold tabular-nums">
-              <span className="text-red-400">{redPct}%</span>
-              <div className="w-20 h-1.5 bg-[#0d1117] rounded-full overflow-hidden flex">
-                <div className="h-full bg-red-500/70"  style={{ width: `${redPct}%` }} />
-                <div className="h-full bg-blue-500/70" style={{ width: `${bluePct}%` }} />
-              </div>
-              <span className="text-blue-400">{bluePct}%</span>
-            </div>
-            <span className={`flex items-center gap-1.5 text-[10px] font-semibold tracking-wider px-2 py-1 rounded border ${
-              activeRound
-                ? 'text-green-400 bg-green-500/10 border-green-500/25'
-                : 'text-slate-600 bg-slate-800/30 border-slate-700/30'
-            }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${activeRound ? 'bg-green-400 glow-pulse' : 'bg-slate-600'}`} />
-              {activeRound ? 'LIVE' : 'OFFLINE'}
-            </span>
-          </div>
-        }
-      />
+    <div style={{ position:'relative', flex:1, overflow:'hidden', display:'flex' }}>
 
-      {/* ── Toolbar row 1: map controls ──────────────────────────────── */}
-      <div
-        className="flex items-center gap-2 px-4 py-2 border-b border-[#1e3a5f]/40 flex-shrink-0 flex-wrap gap-y-1.5"
-        style={{ background: '#040c18' }}
-      >
-        {/* Tile switcher */}
-        <div className="flex rounded border border-[#1e3a5f]/50 overflow-hidden">
-          {(Object.keys(TILE_LAYERS) as TileKey[]).map(k => (
-            <button key={k} onClick={() => setTileKey(k)}
-              className={`px-2.5 py-1.5 text-[9px] font-bold tracking-wider transition-colors ${
-                tileKey === k ? 'bg-blue-500/15 text-blue-300' : 'text-slate-600 hover:text-slate-400 hover:bg-white/[0.02]'
-              }`}
-            >
-              {TILE_LAYERS[k].label}
-            </button>
-          ))}
-        </div>
-
-        <div className="w-px h-4 bg-[#1e3a5f]/50" />
-
-        {/* Side filter */}
-        <div className="flex rounded border border-[#1e3a5f]/50 overflow-hidden">
-          {(['All', 'Red', 'Blue', 'Neutral'] as const).map(f => (
-            <button key={f} onClick={() => setSideFilter(f)}
-              className={`px-2.5 py-1.5 text-[9px] font-bold tracking-wider transition-colors ${
-                sideFilter === f
-                  ? f === 'Red'     ? 'bg-red-500/15 text-red-400'
-                  : f === 'Blue'    ? 'bg-blue-500/15 text-blue-400'
-                  : f === 'Neutral' ? 'bg-slate-500/15 text-slate-400'
-                  : 'bg-blue-500/10 text-blue-300'
-                  : 'text-slate-600 hover:text-slate-400 hover:bg-white/[0.02]'
-              }`}
-            >
-              {f === 'All' ? `ALL (${counts.All})` : `${f.toUpperCase()} (${counts[f]})`}
-            </button>
-          ))}
-        </div>
-
-        <div className="w-px h-4 bg-[#1e3a5f]/50" />
-
-        {/* Icon style */}
-        <div className="flex rounded border border-[#1e3a5f]/50 overflow-hidden">
-          {([
-            { key: 'dot',     label: '● DOT' },
-            { key: 'nato',    label: '⬛ NATO' },
-            { key: 'russian', label: '◆ RU' },
-          ] as { key: IconStyle; label: string }[]).map(opt => (
-            <button key={opt.key} onClick={() => setIconStyle(opt.key)}
-              className={`px-2.5 py-1.5 text-[9px] font-bold tracking-wider transition-colors ${
-                iconStyle === opt.key ? 'bg-blue-500/15 text-blue-300' : 'text-slate-600 hover:text-slate-400 hover:bg-white/[0.02]'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="w-px h-4 bg-[#1e3a5f]/50" />
-
-        {/* Region jump */}
-        <div className="flex items-center gap-1 flex-wrap">
-          {DCS_REGIONS.map(r => (
-            <button key={r.label} onClick={() => setFlyTarget({ center: r.center, zoom: r.zoom })}
-              className="px-2 py-1.5 text-[9px] font-bold tracking-wider text-slate-600 hover:text-blue-400 hover:bg-blue-500/[0.05] rounded transition-colors border border-transparent hover:border-blue-500/20"
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-
-        <span className="ml-auto text-[9px] text-slate-700 tabular-nums">{shown.length} obj</span>
-      </div>
-
-      {/* ── Toolbar row 2: planning tools ─────────────────────────────── */}
-      <div
-        className="flex items-center gap-2 px-4 py-1.5 border-b border-[#1e3a5f]/40 flex-shrink-0"
-        style={{ background: '#03090f' }}
-      >
-        <span className="text-[9px] text-slate-700 uppercase tracking-widest mr-1">Plan</span>
-
-        {/* ROUTE mode */}
-        <button
-          onClick={() => toggleMode('waypoint')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[9px] font-bold tracking-wider border transition-colors ${
-            planMode === 'waypoint'
-              ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
-              : 'text-slate-600 border-[#1e3a5f]/50 hover:text-cyan-400 hover:border-cyan-500/30'
-          }`}
-        >
-          <Navigation size={11} />
-          ROUTE {waypoints.length > 0 ? `(${waypoints.length})` : ''}
-        </button>
-
-        {/* MARK mode */}
-        <button
-          onClick={() => toggleMode('marker')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[9px] font-bold tracking-wider border transition-colors ${
-            planMode === 'marker'
-              ? 'bg-yellow-500/15 text-yellow-300 border-yellow-500/40'
-              : 'text-slate-600 border-[#1e3a5f]/50 hover:text-yellow-400 hover:border-yellow-500/30'
-          }`}
-        >
-          <MapPin size={11} />
-          MARK
-        </button>
-
-        {/* Marker type selector (shown when in mark mode) */}
-        {planMode === 'marker' && (
-          <div className="flex rounded border border-[#1e3a5f]/50 overflow-hidden">
-            {(['IP', 'TGT', 'CP', 'BULL', 'EGR'] as MarkerType[]).map(t => (
-              <button key={t} onClick={() => setMarkerType(t)}
-                className={`px-2.5 py-1.5 text-[9px] font-bold transition-colors ${
-                  markerType === t
-                    ? 'text-white'
-                    : 'text-slate-700 hover:text-slate-400'
-                }`}
-                style={markerType === t ? {
-                  background: MARKER_STYLES[t].bg,
-                  color: MARKER_STYLES[t].border,
-                  borderRight: `1px solid ${MARKER_STYLES[t].border}33`,
-                } : {}}
-              >
-                {t}
+      {/* ── LEFT CONSOLE PANEL (Sneaker-style) ────────────────────────── */}
+      {showConsole && (
+        <div style={{
+          width:'240px', flexShrink:0, display:'flex', flexDirection:'column',
+          background:PANEL_BG, borderRight:`1px solid ${HUD_BORDER}`,
+          fontFamily:FONT_MONO, color:HUD_TEXT, zIndex:10,
+        }}>
+          {/* Tabs */}
+          <div style={{ display:'flex', borderBottom:`1px solid ${HUD_BORDER}` }}>
+            {(['search','watches','draw'] as const).map(t=>(
+              <button key={t} onClick={()=>setConsoleTab(t)} style={{
+                flex:1, padding:'8px 0', fontFamily:FONT_HEAD, fontSize:'0.68rem',
+                letterSpacing:'0.14em', cursor:'pointer', border:'none',
+                borderBottom: consoleTab===t ? `2px solid ${GREEN}` : '2px solid transparent',
+                marginBottom:'-1px', background:'transparent',
+                color: consoleTab===t ? GREEN : HUD_DIM, transition:'all 0.12s',
+              }}>
+                {t.toUpperCase()}
               </button>
             ))}
           </div>
-        )}
 
-        {/* MEASURE mode */}
-        <button
-          onClick={() => toggleMode('measure')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[9px] font-bold tracking-wider border transition-colors ${
-            planMode === 'measure'
-              ? 'bg-purple-500/15 text-purple-300 border-purple-500/40'
-              : 'text-slate-600 border-[#1e3a5f]/50 hover:text-purple-400 hover:border-purple-500/30'
-          }`}
-        >
-          <Ruler size={11} />
-          MEASURE
-        </button>
+          <div style={{ flex:1, overflowY:'auto', padding:'10px' }}>
 
-        {/* RADAR toggle */}
-        <button
-          onClick={() => setShowRadar(t => !t)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[9px] font-bold tracking-wider border transition-colors ${
-            showRadar
-              ? 'bg-green-500/15 text-green-300 border-green-500/40'
-              : 'text-slate-600 border-[#1e3a5f]/50 hover:text-green-400 hover:border-green-500/30'
-          }`}
-        >
-          <Radio size={11} />
-          RADAR {radarUnits.length > 0 ? `(${radarUnits.length})` : ''}
-        </button>
-
-        {/* THREATS toggle */}
-        <button
-          onClick={() => setShowThreats(t => !t)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[9px] font-bold tracking-wider border transition-colors ${
-            showThreats
-              ? 'bg-red-500/15 text-red-300 border-red-500/40'
-              : 'text-slate-600 border-[#1e3a5f]/50 hover:text-red-400 hover:border-red-500/30'
-          }`}
-        >
-          <Shield size={11} />
-          THREATS
-        </button>
-
-        {/* HEATMAP toggle */}
-        <button
-          onClick={() => setShowHeatmap(t => !t)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[9px] font-bold tracking-wider border transition-colors ${
-            showHeatmap
-              ? 'bg-orange-500/15 text-orange-300 border-orange-500/40'
-              : 'text-slate-600 border-[#1e3a5f]/50 hover:text-orange-400 hover:border-orange-500/30'
-          }`}
-        >
-          <Flame size={11} />
-          HEAT
-        </button>
-
-        {/* Clear all */}
-        {(waypoints.length > 0 || planMarkers.length > 0 || measurePts.length > 0) && (
-          <button
-            onClick={() => {
-              setWaypoints([])
-              setPlanMarkers([])
-              setMeasurePts([])
-              setPlanMode('none')
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[9px] font-bold tracking-wider border border-[#1e3a5f]/50 text-slate-600 hover:text-red-400 hover:border-red-500/30 transition-colors"
-          >
-            <Trash2 size={11} />
-            CLEAR
-          </button>
-        )}
-
-        {/* Active mode indicator */}
-        {planMode !== 'none' && (
-          <span className="text-[9px] text-slate-600 italic ml-1">
-            click map to {planMode === 'waypoint' ? 'add waypoint' : planMode === 'marker' ? `place ${markerType}` : 'measure'}
-          </span>
-        )}
-
-        {/* Panel toggle */}
-        <button
-          onClick={() => setShowPanel(v => !v)}
-          className="ml-auto flex items-center gap-1 text-[9px] text-slate-600 hover:text-slate-400 transition-colors"
-        >
-          {showPanel ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
-          {showPanel ? 'Hide' : 'Plan'}
-        </button>
-      </div>
-
-      {/* ── Map + Panel ─────────────────────────────────────────────── */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Map */}
-        <div className="flex-1 relative overflow-hidden">
-          {isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-[#020810] z-20 pointer-events-none">
-              <span className="text-[11px] text-slate-600 tracking-widest animate-pulse">LOADING MAP…</span>
-            </div>
-          )}
-
-          <MapContainer
-            center={[42.35, 43.50]}
-            zoom={7}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-            zoomControl={false}
-            attributionControl={true}
-          >
-            <TileLayer key={tileKey} url={tileLayer.url} attribution={tileLayer.attr} maxZoom={19} />
-
-            {tileKey === 'hybrid' && (
-              <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png"
-                attribution=""
-                maxZoom={19}
-                pane="overlayPane"
-              />
-            )}
-
-            <ScaleControl position="bottomleft" />
-
-            {validObjs.length > 0 && <FitBounds objectives={validObjs} />}
-            {flyTarget && <FlyTo center={flyTarget.center} zoom={flyTarget.zoom} />}
-
-            {/* Map interaction handler */}
-            <MapInteractionLayer mode={planMode} onMapClick={handleMapClick} />
-
-            {/* ── Heatmap layer ────────────────────────────────────── */}
-            {showHeatmap && <HeatmapLayer points={heatmapPoints} />}
-
-            {/* ── Threat rings ─────────────────────────────────────── */}
-            {showThreats && shown.map(obj => {
-              const nm = THREAT_NM[obj.kind]
-              if (!nm) return null
-              const color = SIDE_COLOR[obj.owner] ?? '#6b7280'
-              return (
-                <Circle
-                  key={`threat-${obj.id}`}
-                  center={[obj.lat, obj.lon]}
-                  radius={nmToMeters(nm)}
-                  pathOptions={{
-                    color,
-                    fillColor: color,
-                    fillOpacity: 0.04,
-                    weight: 1,
-                    dashArray: '4 4',
+            {/* ── SEARCH TAB ── */}
+            {consoleTab==='search' && (
+              <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+                <input
+                  type="text" placeholder="filter by name or type…"
+                  value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}
+                  style={{
+                    background:'rgba(0,20,0,0.5)', border:`1px solid ${HUD_BORDER}`,
+                    borderRadius:'2px', color:GREEN, fontFamily:FONT_MONO,
+                    fontSize:'0.68rem', padding:'5px 8px', outline:'none', width:'100%',
+                    boxSizing:'border-box',
                   }}
                 />
-              )
-            })}
-
-            {/* ── Objectives ───────────────────────────────────────── */}
-            {shown.map(obj => {
-              const color     = SIDE_COLOR[obj.owner] ?? '#6b7280'
-              const r         = KIND_RADIUS[obj.kind] ?? KIND_RADIUS.default
-              const isSelected = selectedId === obj.id
-              const icon      = iconStyle !== 'dot'
-                ? createMapIcon(obj.kind, obj.owner as 'Red' | 'Blue' | 'Neutral', iconStyle, isSelected)
-                : null
-
-              const popup = (
-                <Popup minWidth={210} maxWidth={250}>
-                  <div style={{ fontFamily: 'Segoe UI, system-ui, sans-serif' }}>
-                    <div style={{ borderBottom: '1px solid #1e3a5f', paddingBottom: 8, marginBottom: 10 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>
-                        {KIND_SYMBOL[obj.kind] ?? '●'} {obj.name}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 6px', borderRadius: 3, border: '1px solid', color, borderColor: `${color}55`, background: `${color}18` }}>
-                          {obj.owner.toUpperCase()}
+                <div style={{ fontSize:'0.6rem', color:HUD_DIM, letterSpacing:'0.1em' }}>
+                  {useLive
+                    ? `${activeUnits.length} LIVE CONTACTS`
+                    : `${activeRestUnits.length} EWR CONTACTS`}
+                </div>
+                {/* unit list */}
+                <div style={{ display:'flex', flexDirection:'column', gap:'3px' }}>
+                  {(useLive ? activeUnits : activeRestUnits).slice(0,40).map(u=>{
+                    const isLive = 'cat' in u
+                    const id  = u.id
+                    const coa = isLive ? (u as LiveUnit).coa : ((u as MapUnit).owner==='Red'?1:2)
+                    const col = unitColor(coa, watches.has(id))
+                    const name = isLive ? ((u as LiveUnit).nm||(u as LiveUnit).typ) : (u as MapUnit).typ
+                    return (
+                      <div key={id} onClick={()=>toggleWatch(id)}
+                        style={{
+                          padding:'4px 7px', borderRadius:'2px', cursor:'pointer',
+                          background: watches.has(id) ? 'rgba(255,214,0,0.08)' : 'rgba(255,255,255,0.03)',
+                          border:`1px solid ${watches.has(id)?'rgba(255,214,0,0.3)':'transparent'}`,
+                          display:'flex', justifyContent:'space-between', alignItems:'center',
+                        }}>
+                        <span style={{ fontSize:'0.65rem', color:col, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                          {name}
                         </span>
-                        <span style={{ fontSize: 10, color: '#64748b' }}>{obj.kind}</span>
-                      </div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 12px', marginBottom: 10 }}>
-                      {[
-                        { label: 'Health', value: obj.health },
-                        { label: 'Logistics', value: obj.logi },
-                        { label: 'Supply', value: obj.supply },
-                        { label: 'Fuel', value: obj.fuel },
-                      ].map(s => {
-                        const c = s.value >= 75 ? '#22c55e' : s.value >= 40 ? '#eab308' : '#ef4444'
-                        return (
-                          <div key={s.label}>
-                            <div style={{ fontSize: 9, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>{s.label}</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <div style={{ flex: 1, height: 4, background: '#0d1117', borderRadius: 2, overflow: 'hidden' }}>
-                                <div style={{ width: `${s.value}%`, height: '100%', background: c, borderRadius: 2 }} />
-                              </div>
-                              <span style={{ fontSize: 11, color: c, fontFamily: 'monospace', minWidth: 30, textAlign: 'right' }}>{s.value}%</span>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                    <div style={{ fontSize: 9, color: '#374151', borderTop: '1px solid #1e3a5f', paddingTop: 6, display: 'flex', justifyContent: 'space-between' }}>
-                      <span>{obj.lat.toFixed(4)}°N {obj.lon.toFixed(4)}°E</span>
-                      <span>{new Date(obj.last_change).toLocaleTimeString()}</span>
-                    </div>
-                  </div>
-                </Popup>
-              )
-
-              const nameLabel = (
-                <Tooltip permanent direction="bottom" offset={[0, icon ? 14 : r + 4]} className="obj-label">
-                  <span style={{
-                    fontFamily: 'monospace', fontSize: 8, fontWeight: 700,
-                    color, textShadow: '0 0 4px #000, 0 0 8px #000',
-                    letterSpacing: '0.06em', textTransform: 'uppercase',
-                  }}>
-                    {obj.name}
-                  </span>
-                </Tooltip>
-              )
-
-              if (icon) {
-                return (
-                  <Marker key={obj.id} position={[obj.lat, obj.lon]} icon={icon}
-                    eventHandlers={{ click: () => setSelectedId(isSelected ? null : obj.id) }}
-                  >
-                    {popup}
-                    {nameLabel}
-                  </Marker>
-                )
-              }
-
-              return (
-                <CircleMarker
-                  key={obj.id}
-                  center={[obj.lat, obj.lon]}
-                  radius={isSelected ? r + 3 : r}
-                  pathOptions={{ color, fillColor: color, fillOpacity: isSelected ? 0.9 : 0.65, weight: isSelected ? 3 : 2 }}
-                  eventHandlers={{ click: () => setSelectedId(isSelected ? null : obj.id) }}
-                >
-                  {popup}
-                  {nameLabel}
-                </CircleMarker>
-              )
-            })}
-
-            {/* ── Radar units (detected) ────────────────────────────── */}
-            {showRadar && radarUnits.map(unit => {
-              const color = unit.owner === 'Red' ? '#ef4444' : unit.owner === 'Blue' ? '#3b82f6' : '#6b7280'
-              const isAir = isAirUnit(unit.tags)
-              const cat = unitCategory(unit.tags)
-              return (
-                <Marker
-                  key={`unit-${unit.id}`}
-                  position={[unit.lat, unit.lon]}
-                  icon={radarUnitIcon(unit)}
-                >
-                  <Popup minWidth={180} maxWidth={220}>
-                    <div style={{ fontFamily: 'Segoe UI, system-ui, sans-serif' }}>
-                      <div style={{ borderBottom: '1px solid #1e3a5f', paddingBottom: 6, marginBottom: 8 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>{unit.typ}</div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 6px', borderRadius: 3, border: '1px solid', color, borderColor: `${color}55`, background: `${color}18` }}>
-                            {unit.owner.toUpperCase()}
+                        {isLive && (
+                          <span style={{ fontSize:'0.58rem', color:HUD_DIM, marginLeft:'6px', flexShrink:0 }}>
+                            {fmtAlt((u as LiveUnit).alt)}
                           </span>
-                          <span style={{ fontSize: 9, color: '#64748b', fontFamily: 'monospace' }}>{cat}</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── WATCHES TAB ── */}
+            {consoleTab==='watches' && (
+              <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
+                {watches.size===0 ? (
+                  <div style={{ fontSize:'0.62rem', color:HUD_DIM, textAlign:'center', paddingTop:'20px' }}>
+                    Click any contact to watch it
+                  </div>
+                ) : (
+                  Array.from(watches).map(id=>{
+                    const u = useLive
+                      ? liveUnits.find(u=>u.id===id)
+                      : restUnits.find(u=>u.id===id)
+                    if (!u) return (
+                      <div key={id} style={{ fontSize:'0.62rem', color:HUD_DIM }}>
+                        {id.slice(0,8)}… (lost)
+                        <button onClick={()=>toggleWatch(id)} style={{ marginLeft:'6px', background:'none', border:'none', color:HUD_DIM, cursor:'pointer' }}>✕</button>
+                      </div>
+                    )
+                    const isLive = 'cat' in u
+                    const coa = isLive ? (u as LiveUnit).coa : ((u as MapUnit).owner==='Red'?1:2)
+                    const col = unitColor(coa, true)
+                    const name = isLive ? ((u as LiveUnit).nm||(u as LiveUnit).typ) : (u as MapUnit).typ
+                    return (
+                      <div key={id} style={{
+                        padding:'6px 8px', borderRadius:'2px',
+                        background:'rgba(255,214,0,0.06)', border:'1px solid rgba(255,214,0,0.25)',
+                      }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'3px' }}>
+                          <span style={{ fontSize:'0.65rem', color:col, fontWeight:700 }}>{name}</span>
+                          <button onClick={()=>toggleWatch(id)}
+                            style={{ background:'none', border:'none', color:HUD_DIM, cursor:'pointer', fontSize:'0.65rem' }}>✕</button>
                         </div>
+                        {isLive && (
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'2px 6px', fontSize:'0.6rem', color:HUD_DIM }}>
+                            <span>ALT {fmtAlt((u as LiveUnit).alt)}</span>
+                            <span>SPD {fmtSpd((u as LiveUnit).spd)}kts</span>
+                            <span>HDG {fmtBrg((u as LiveUnit).hdg)}</span>
+                            <span>{(u as LiveUnit).coa===1?'RED':'BLUE'}</span>
+                          </div>
+                        )}
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 10 }}>
-                        {isAir && <>
-                          <div style={{ color: '#475569' }}>ALT</div>
-                          <div style={{ color: '#e2e8f0', fontFamily: 'monospace', textAlign: 'right' }}>{Math.round(unit.alt * 3.28084).toLocaleString()} ft</div>
-                        </>}
-                        <div style={{ color: '#475569' }}>HDG</div>
-                        <div style={{ color: '#e2e8f0', fontFamily: 'monospace', textAlign: 'right' }}>{Math.round(unit.heading).toString().padStart(3, '0')}°</div>
-                        <div style={{ color: '#475569' }}>SPD</div>
-                        <div style={{ color: '#e2e8f0', fontFamily: 'monospace', textAlign: 'right' }}>{Math.round(unit.speed)} kts</div>
-                        <div style={{ color: '#475569' }}>DET</div>
-                        <div style={{ color: '#22c55e', fontFamily: 'monospace', textAlign: 'right', fontSize: 9 }}>{unit.detected_by.join(', ')}</div>
+                    )
+                  })
+                )}
+                {watches.size>0 && (
+                  <button onClick={()=>setWatches(new Set())}
+                    style={{ marginTop:'4px', background:'none', border:`1px solid ${HUD_BORDER}`,
+                             borderRadius:'2px', color:HUD_DIM, cursor:'pointer', padding:'4px',
+                             fontFamily:FONT_HEAD, fontSize:'0.65rem', letterSpacing:'0.12em' }}>
+                    CLEAR WATCHES
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* ── DRAW TAB ── */}
+            {consoleTab==='draw' && (
+              <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
+                <div style={{ fontSize:'0.6rem', color:HUD_DIM, letterSpacing:'0.1em', marginBottom:'2px' }}>
+                  RIGHT-CLICK MAP TO DRAW BRAA
+                </div>
+                {braaStart && (
+                  <div style={{ padding:'5px 7px', borderRadius:'2px', background:'rgba(255,200,0,0.08)',
+                                border:'1px solid rgba(255,200,0,0.3)', fontSize:'0.62rem', color:'#ffd600' }}>
+                    DRAWING… click or right-click to finish
+                  </div>
+                )}
+                {drawnBraas.length===0 ? (
+                  <div style={{ fontSize:'0.62rem', color:HUD_DIM, textAlign:'center', paddingTop:'10px' }}>
+                    No BRAA lines drawn
+                  </div>
+                ) : drawnBraas.map((b,i)=>{
+                  const dist = haversineNm(b.from,b.to)
+                  const brg  = bearingDeg(b.from,b.to)
+                  return (
+                    <div key={b.id} style={{
+                      padding:'5px 8px', borderRadius:'2px',
+                      background:'rgba(57,255,20,0.04)', border:`1px solid ${HUD_BORDER}`,
+                      fontSize:'0.62rem',
+                    }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'2px' }}>
+                        <span style={{ color:GREEN }}>BRAA {i+1}</span>
+                        <button onClick={()=>setDrawnBraas(p=>p.filter(x=>x.id!==b.id))}
+                          style={{ background:'none', border:'none', color:HUD_DIM, cursor:'pointer' }}>✕</button>
                       </div>
-                      <div style={{ fontSize: 8, color: '#374151', borderTop: '1px solid #1e3a5f', paddingTop: 4, marginTop: 6, fontFamily: 'monospace' }}>
-                        {unit.lat.toFixed(4)}°N {unit.lon.toFixed(4)}°E
+                      <div style={{ color:HUD_DIM }}>
+                        {fmtBrg(brg)} · {dist.toFixed(1)} NM
                       </div>
                     </div>
-                  </Popup>
-                  <Tooltip direction="top" offset={[0, -12]} opacity={0.9}>
-                    <span style={{ fontFamily: 'monospace', fontSize: 9, color }}>
-                      {unit.typ}{isAir ? ` · ${Math.round(unit.alt * 3.28084).toLocaleString()}ft` : ''}
-                    </span>
-                  </Tooltip>
-                </Marker>
-              )
-            })}
-
-            {/* ── Route polyline ───────────────────────────────────── */}
-            {routePositions.length >= 2 && (
-              <>
-                {/* Shadow line */}
-                <Polyline
-                  positions={routePositions}
-                  pathOptions={{ color: '#000000', weight: 5, opacity: 0.4, dashArray: undefined }}
-                />
-                {/* Main route line */}
-                <Polyline
-                  positions={routePositions}
-                  pathOptions={{ color: '#00b4f5', weight: 2, opacity: 0.9, dashArray: '8 4' }}
-                />
-                {/* Per-leg labels */}
-                {waypoints.slice(0, -1).map((wp, i) => {
-                  const next = waypoints[i + 1]!
-                  const midLat = (wp.lat + next.lat) / 2
-                  const midLon = (wp.lon + next.lon) / 2
-                  const dist = haversineNm(wp.lat, wp.lon, next.lat, next.lon)
-                  const brg  = trueBearing(wp.lat, wp.lon, next.lat, next.lon)
-                  return (
-                    <CircleMarker key={`leg-${i}`} center={[midLat, midLon]} radius={0} pathOptions={{ opacity: 0, fillOpacity: 0 }}>
-                      <Tooltip permanent direction="top" offset={[0, -2]}>
-                        <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#00b4f5', background: 'transparent', border: 'none', textShadow: '0 0 4px #000' }}>
-                          {dist.toFixed(1)}NM · {Math.round(brg).toString().padStart(3,'0')}°
-                        </div>
-                      </Tooltip>
-                    </CircleMarker>
                   )
                 })}
-              </>
-            )}
-
-            {/* ── Waypoint markers ─────────────────────────────────── */}
-            {waypoints.map((wp, i) => (
-              <Marker
-                key={wp.id}
-                position={[wp.lat, wp.lon]}
-                icon={waypointIcon(i + 1, i === waypoints.length - 1)}
-              >
-                <Tooltip direction="top" offset={[0, -14]} opacity={0.95}>
-                  <span style={{ fontFamily: 'monospace', fontSize: 10 }}>
-                    WP{i + 1} · {fmtCoord(wp.lat, wp.lon)}
-                  </span>
-                </Tooltip>
-              </Marker>
-            ))}
-
-            {/* ── Planning markers ─────────────────────────────────── */}
-            {planMarkers.map(m => (
-              <Marker
-                key={m.id}
-                position={[m.lat, m.lon]}
-                icon={planMarkerIcon(m.type)}
-              >
-                <Tooltip direction="top" offset={[0, -6]} opacity={0.95}>
-                  <span style={{ fontFamily: 'monospace', fontSize: 10 }}>
-                    {m.type} · {fmtCoord(m.lat, m.lon)}
-                  </span>
-                </Tooltip>
-              </Marker>
-            ))}
-
-            {/* ── Measurement layer ────────────────────────────────── */}
-            {measurePositions.length >= 2 && (
-              <>
-                <Polyline
-                  positions={measurePositions}
-                  pathOptions={{ color: '#a78bfa', weight: 2, opacity: 0.9, dashArray: '5 5' }}
-                />
-              </>
-            )}
-            {measurePts.map((p, i) => (
-              <CircleMarker
-                key={`meas-${i}`}
-                center={[p.lat, p.lon]}
-                radius={5}
-                pathOptions={{ color: '#a78bfa', fillColor: '#a78bfa', fillOpacity: 0.7, weight: 2 }}
-              />
-            ))}
-
-          </MapContainer>
-
-          {/* ── Map HUD: legend ────────────────────────────────────── */}
-          <div className="absolute bottom-8 right-3 z-[1000] text-[10px] space-y-1.5 backdrop-blur-sm"
-            style={{ background: 'rgba(2,8,16,0.85)', border: '1px solid rgba(30,58,95,0.6)', borderRadius: 8, padding: '10px 12px' }}>
-            <div className="text-slate-700 uppercase tracking-widest mb-2 text-[8px]">
-              Legend · {iconStyle === 'nato' ? 'NATO APP-6' : iconStyle === 'russian' ? 'Russian' : 'Dot'}
-            </div>
-            {[
-              { color: '#ef4444', label: 'Red Force' },
-              { color: '#3b82f6', label: 'Blue Force' },
-              { color: '#6b7280', label: 'Neutral' },
-            ].map(l => (
-              <div key={l.label} className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full border-2 flex-shrink-0" style={{ borderColor: l.color, background: `${l.color}40` }} />
-                <span className="text-slate-500">{l.label}</span>
-              </div>
-            ))}
-            {waypoints.length > 0 && (
-              <div className="flex items-center gap-2 border-t border-[#1e3a5f]/40 pt-1.5 mt-1">
-                <span className="w-3 h-1.5 rounded bg-[#00b4f5]" />
-                <span className="text-slate-500">Route ({waypoints.length} WP)</span>
-              </div>
-            )}
-            {showRadar && (
-              <div className="flex items-center gap-2 border-t border-[#1e3a5f]/40 pt-1.5 mt-1">
-                <svg width="12" height="12" viewBox="0 0 14 14"><polygon points="7,1 13,7 7,13 1,7" fill="#22c55e" fillOpacity="0.7" stroke="#22c55e" strokeWidth="1"/></svg>
-                <span className="text-slate-500">Radar contact ({radarUnits.length})</span>
-              </div>
-            )}
-            {showThreats && (
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full border border-dashed border-red-500/60 flex-shrink-0" />
-                <span className="text-slate-500">Threat ring</span>
-              </div>
-            )}
-            {showHeatmap && (
-              <div className="flex items-center gap-2 border-t border-[#1e3a5f]/40 pt-1.5 mt-1">
-                <span className="w-3 h-3 rounded" style={{ background: 'linear-gradient(135deg, #00f, #0ff, #0f0, #ff0, #f00)' }} />
-                <span className="text-slate-500">Activity heatmap</span>
+                {drawnBraas.length>0 && (
+                  <button onClick={()=>setDrawnBraas([])}
+                    style={{ background:'none', border:`1px solid ${HUD_BORDER}`,
+                             borderRadius:'2px', color:HUD_DIM, cursor:'pointer', padding:'4px',
+                             fontFamily:FONT_HEAD, fontSize:'0.65rem', letterSpacing:'0.12em' }}>
+                    CLEAR ALL
+                  </button>
+                )}
               </div>
             )}
           </div>
 
-          {/* ── No data overlay ──────────────────────────────────── */}
-          {!isLoading && validObjs.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center z-[500] pointer-events-none">
-              <div className="text-center backdrop-blur-sm" style={{ background: 'rgba(2,8,16,0.8)', border: '1px solid rgba(30,58,95,0.6)', borderRadius: 12, padding: 32 }}>
-                <div className="text-3xl mb-3 opacity-20">⬡</div>
-                <div className="text-[11px] text-slate-500 tracking-wider uppercase">No objective coordinates</div>
-                <div className="text-[10px] text-slate-700 mt-1">Connect to a live server to populate the map</div>
+          {/* Console footer: scratchpad toggle */}
+          <div style={{ padding:'7px 10px', borderTop:`1px solid ${HUD_BORDER}`, display:'flex', gap:'6px' }}>
+            <button onClick={()=>setShowScratch(v=>!v)} style={{
+              flex:1, background: showScratch?`${GREEN}12`:'transparent',
+              border:`1px solid ${showScratch?`${GREEN}44`:HUD_BORDER}`,
+              borderRadius:'2px', color: showScratch?GREEN:HUD_DIM,
+              cursor:'pointer', fontFamily:FONT_HEAD, fontSize:'0.65rem',
+              letterSpacing:'0.12em', padding:'4px',
+            }}>SCRATCHPAD</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── MAP AREA ─────────────────────────────────────────────────── */}
+      <div style={{ position:'relative', flex:1, overflow:'hidden' }}>
+        <MapContainer
+          center={[42.35,43.50]} zoom={7}
+          style={{ position:'absolute', inset:0, width:'100%', height:'100%', background:'#060a06' }}
+          zoomControl={false} attributionControl={false}
+        >
+          <TileLayer key={tileKey} url={TILE_LAYERS[tileKey].url}
+            attribution={TILE_LAYERS[tileKey].attr} maxZoom={19}
+            opacity={tileKey==='tactical'?0.85:0.70} />
+
+          <ScaleControl position="bottomleft" />
+          <MapEvents
+            planMode={planMode}
+            onPlanClick={handlePlanClick}
+            braaStart={braaStart}
+            onBraaContextMenu={handleContextMenu}
+            onBraaFinish={handleBraaFinish}
+            onMouseMove={handleMouseMove}
+          />
+          {validObjs.length>0 && <FitBounds objectives={validObjs} />}
+          {flyTarget && <FlyTo center={flyTarget.center} zoom={flyTarget.zoom} />}
+
+          {/* Heatmap */}
+          {showHeat && <HeatmapLayer points={heatPoints} />}
+
+          {/* ── Threat rings ──────────────────────────────────────── */}
+          {showThreats && shownObjs.map(obj=>{
+            const nm=THREAT_NM[obj.kind]; if(!nm) return null
+            const c=obj.owner==='Red'?COL_ENEMY:obj.owner==='Blue'?COL_ALLY:COL_NEUTRAL
+            return <Circle key={`thr-${obj.id}`} center={[obj.lat,obj.lon]} radius={nmToM(nm)}
+              pathOptions={{color:c,fillColor:c,fillOpacity:0.03,weight:0.8,dashArray:'4 6'}}
+              interactive={false} />
+          })}
+
+          {/* ── Bullseye markers (from mission) ──────────────────── */}
+          {bullseyes.map(b=>{
+            const col = b.side===1 ? COL_ENEMY : COL_ALLY
+            const label = b.side===1 ? 'RED BULL' : 'BLU BULL'
+            const icon = L.divIcon({
+              html: `<div style="position:relative;display:flex;flex-direction:column;align-items:center;pointer-events:none;">
+                <svg width="32" height="32" viewBox="0 0 32 32" style="filter:drop-shadow(0 0 4px ${col});">
+                  <circle cx="16" cy="16" r="13" fill="none" stroke="${col}" stroke-width="1.2"/>
+                  <circle cx="16" cy="16" r="7"  fill="none" stroke="${col}" stroke-width="1"/>
+                  <circle cx="16" cy="16" r="2"  fill="${col}"/>
+                  <line x1="16" y1="2"  x2="16" y2="8"  stroke="${col}" stroke-width="1"/>
+                  <line x1="16" y1="24" x2="16" y2="30" stroke="${col}" stroke-width="1"/>
+                  <line x1="2"  y1="16" x2="8"  y2="16" stroke="${col}" stroke-width="1"/>
+                  <line x1="24" y1="16" x2="30" y2="16" stroke="${col}" stroke-width="1"/>
+                </svg>
+                <div style="color:${col};font-family:'Share Tech Mono','Courier New',monospace;
+                            font-size:8px;font-weight:700;letter-spacing:0.1em;margin-top:1px;
+                            text-shadow:0 0 4px #000,0 0 8px #000;">${label}</div>
+              </div>`,
+              className: '', iconSize: [0,0], iconAnchor: [16,16],
+            })
+            return (
+              <Marker key={`bull-${b.side}`} position={[b.lat,b.lon]} icon={icon}>
+                <Popup minWidth={140}>
+                  <div style={{background:'#060a06',color:HUD_TEXT,fontFamily:FONT_MONO,fontSize:'0.7rem',padding:'2px 0'}}>
+                    <div style={{color:col,fontFamily:FONT_HEAD,letterSpacing:'0.12em',marginBottom:'4px'}}>{label}</div>
+                    <div style={{fontSize:'0.62rem',color:HUD_DIM}}>{fmtCoord(b.lat,b.lon)}</div>
+                  </div>
+                </Popup>
+              </Marker>
+            )
+          })}
+
+          {/* ── Objectives ────────────────────────────────────────── */}
+          {shownObjs.map(obj=>{
+            const c=obj.owner==='Red'?COL_ENEMY:obj.owner==='Blue'?COL_ALLY:COL_NEUTRAL
+            const r=OBJ_RADIUS[obj.kind]??OBJ_RADIUS.default
+            return (
+              <CircleMarker key={obj.id} center={[obj.lat,obj.lon]} radius={r}
+                pathOptions={{color:c,fillColor:c,fillOpacity:0.15,weight:1.5}}>
+                <Popup minWidth={200} maxWidth={240}>
+                  <div style={{background:'#060a06',color:HUD_TEXT,fontFamily:FONT_MONO,fontSize:'0.72rem',padding:'2px 0'}}>
+                    <div style={{fontFamily:FONT_HEAD,letterSpacing:'0.12em',marginBottom:'6px',fontSize:'0.85rem'}}>
+                      {OBJ_SYMBOL[obj.kind]??'●'} {obj.name}
+                    </div>
+                    <div style={{display:'flex',gap:'6px',marginBottom:'8px',fontSize:'0.65rem'}}>
+                      <span style={{color:c,border:`1px solid ${c}55`,padding:'1px 6px',borderRadius:'2px'}}>{obj.owner.toUpperCase()}</span>
+                      <span style={{color:HUD_DIM}}>{obj.kind}</span>
+                    </div>
+                    {obj.owner !== 'Neutral' && (['health','logi','supply','fuel'] as const).map(k=>{
+                      const v=obj[k as keyof Objective] as number
+                      const bc=v>=75?GREEN:v>=40?'#ffaa00':COL_ENEMY
+                      return (
+                        <div key={k} style={{marginBottom:'4px'}}>
+                          <div style={{display:'flex',justifyContent:'space-between',marginBottom:'2px',fontSize:'0.6rem',color:HUD_DIM}}>
+                            <span>{k.toUpperCase()}</span><span style={{color:bc}}>{v}%</span>
+                          </div>
+                          <div style={{height:'3px',background:'#0a150a',borderRadius:'1px',overflow:'hidden'}}>
+                            <div style={{width:`${v}%`,height:'100%',background:bc}} />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </Popup>
+              </CircleMarker>
+            )
+          })}
+
+          {/* ── Unit trails – fading dots (Sneaker style) ─────────── */}
+          {showTrails && activeUnits.filter(u=>u.cat<=2).flatMap(u=>{
+            const pts=trailsRef.current.get(u.id)
+            if (!pts||pts.length<2) return []
+            const col=unitColor(u.coa,watches.has(u.id))
+            const now=Date.now()/1000
+            // Render each historical point as a small circle, older = more transparent
+            return pts.slice(0,-1).map((p,i)=>{
+              const age=(now-p.ts)/TRAIL_SEC          // 0=fresh 1=oldest
+              const opacity=Math.max(0.08, 0.55*(1-age))
+              return (
+                <CircleMarker key={`trail-${u.id}-${i}`}
+                  center={[p.lat,p.lon]} radius={2}
+                  pathOptions={{color:col,fillColor:col,fillOpacity:opacity,weight:0,stroke:false}} />
+              )
+            })
+          })}
+
+          {/* ── Velocity vectors ──────────────────────────────────── */}
+          {showVectors && activeUnits.filter(u=>u.cat<=2&&u.spd>20).map(u=>{
+            const distNm = u.spd/3600*VEL_SECS  // knots → NM in VEL_SECS seconds
+            const [lat2,lon2] = projectPos(u.lat,u.lon,u.hdg,distNm)
+            return (
+              <Polyline key={`vel-${u.id}`}
+                positions={[[u.lat,u.lon],[lat2,lon2]]}
+                pathOptions={{color:unitColor(u.coa,watches.has(u.id)),weight:1,opacity:0.55}} />
+            )
+          })}
+          {showVectors && activeRestUnits.filter(u=>u.speed>20&&u.tags.some(t=>t==='Aircraft'||t==='Helicopter')).map(u=>{
+            const distNm = u.speed/3600*VEL_SECS
+            const [lat2,lon2] = projectPos(u.lat,u.lon,u.heading,distNm)
+            return (
+              <Polyline key={`velr-${u.id}`}
+                positions={[[u.lat,u.lon],[lat2,lon2]]}
+                pathOptions={{color:restUnitColor(u.owner,watches.has(u.id)),weight:1,opacity:0.55}} />
+            )
+          })}
+
+          {/* ── Live unit markers (milsymbol + Sneaker labels) ─────── */}
+          {activeUnits.map(u=>(
+            <Marker key={`live-${u.id}`} position={[u.lat,u.lon]}
+              icon={sneakerUnitIcon({coa:u.coa,cat:u.cat,name:u.nm||u.typ,alt:u.alt,spd:u.spd,watched:watches.has(u.id)})}
+              eventHandlers={{click:()=>toggleWatch(u.id)}}>
+              <Popup minWidth={170}>
+                <div style={{background:'#060a06',color:HUD_TEXT,fontFamily:FONT_MONO,fontSize:'0.7rem',padding:'2px 0'}}>
+                  <div style={{fontFamily:FONT_HEAD,letterSpacing:'0.12em',marginBottom:'4px',fontSize:'0.82rem'}}>
+                    {u.nm||u.typ||'UNKNOWN'}
+                  </div>
+                  <div style={{color:unitColor(u.coa,false),fontSize:'0.65rem',marginBottom:'6px'}}>
+                    {u.coa===1?'RED':'BLUE'} · {u.cat===1?'AIRPLANE':u.cat===2?'HELICOPTER':u.cat===4?'NAVAL':'GROUND'}
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'auto 1fr',gap:'2px 8px',fontSize:'0.65rem'}}>
+                    <span style={{color:HUD_DIM}}>ALT</span><span>{fmtAlt(u.alt)} ft</span>
+                    <span style={{color:HUD_DIM}}>SPD</span><span>{fmtSpd(u.spd)} kts</span>
+                    <span style={{color:HUD_DIM}}>HDG</span><span>{fmtBrg(u.hdg)}</span>
+                    <span style={{color:HUD_DIM}}>TYP</span><span style={{fontSize:'0.58rem'}}>{u.typ}</span>
+                  </div>
+                  <div style={{marginTop:'5px',fontSize:'0.6rem',color:HUD_DIM}}>{fmtCoord(u.lat,u.lon)}</div>
+                  <div style={{marginTop:'4px',fontSize:'0.6rem',color:COL_WATCH,cursor:'pointer'}}
+                    onClick={()=>toggleWatch(u.id)}>
+                    {watches.has(u.id)?'★ WATCHING':'☆ WATCH'}
+                  </div>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+
+          {/* ── REST unit markers (milsymbol + Sneaker labels) ─────── */}
+          {activeRestUnits.map(u=>(
+            <Marker key={`rest-${u.id}`} position={[u.lat,u.lon]}
+              icon={restMilSymIcon(u.owner,u.tags,u.typ,u.alt,u.speed,u.heading,watches.has(u.id))}
+              eventHandlers={{click:()=>toggleWatch(u.id)}}>
+              <Popup minWidth={160}>
+                <div style={{background:'#060a06',color:HUD_TEXT,fontFamily:FONT_MONO,fontSize:'0.7rem',padding:'2px 0'}}>
+                  <div style={{fontFamily:FONT_HEAD,letterSpacing:'0.12em',marginBottom:'4px'}}>{u.typ||'UNKNOWN'}</div>
+                  <div style={{color:restUnitColor(u.owner,false),fontSize:'0.65rem',marginBottom:'6px'}}>
+                    {u.owner.toUpperCase()} · EWR
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'auto 1fr',gap:'2px 8px',fontSize:'0.65rem'}}>
+                    <span style={{color:HUD_DIM}}>ALT</span><span>{fmtAlt(u.alt)} ft</span>
+                    <span style={{color:HUD_DIM}}>SPD</span><span>{fmtSpd(u.speed)} kts</span>
+                    <span style={{color:HUD_DIM}}>HDG</span><span>{fmtBrg(u.heading)}</span>
+                  </div>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+
+          {/* ── BRAA lines (drawn) ────────────────────────────────── */}
+          {drawnBraas.map((b,i)=>{
+            const dist=haversineNm(b.from,b.to), brg=bearingDeg(b.from,b.to)
+            const mid: [number,number] = [(b.from.lat+b.to.lat)/2,(b.from.lon+b.to.lon)/2]
+            return (
+              <div key={b.id}>
+                <Polyline positions={[[b.from.lat,b.from.lon],[b.to.lat,b.to.lon]]}
+                  pathOptions={{color:GREEN,weight:1.5,opacity:0.7,dashArray:'6 4'}} />
+                <Marker position={mid} icon={L.divIcon({
+                  html:`<div style="background:rgba(4,10,4,0.85);border:1px solid ${HUD_BORDER};padding:2px 6px;
+                              border-radius:2px;font-family:${FONT_MONO};font-size:8px;color:${GREEN};
+                              white-space:nowrap;display:inline-block;">
+                          BRAA${i+1} ${fmtBrg(brg)} ${dist.toFixed(1)}NM
+                        </div>`,
+                  className:'', iconSize:[0,0], iconAnchor:[0,8],
+                })} />
               </div>
+            )
+          })}
+
+          {/* ── BRAA active drawing line ──────────────────────────── */}
+          {braaActiveLine.length===2 && (
+            <Polyline positions={braaActiveLine as LatLngExpression[]}
+              pathOptions={{color:COL_WATCH,weight:1.5,opacity:0.9,dashArray:'5 3'}} />
+          )}
+
+          {/* ── Planning overlays ─────────────────────────────────── */}
+          {routePos.length>=2 && (
+            <Polyline positions={routePos}
+              pathOptions={{color:'#00b4f5',weight:1.5,opacity:0.8,dashArray:'6 4'}} />
+          )}
+          {waypoints.map((wp,i)=>(
+            <Marker key={wp.id} position={[wp.lat,wp.lon]} icon={waypointIcon(i+1,i===waypoints.length-1)} />
+          ))}
+          {measurePos.length===2 && (
+            <Polyline positions={measurePos}
+              pathOptions={{color:'#a78bfa',weight:1.5,opacity:0.8,dashArray:'4 3'}} />
+          )}
+          {measurePts.map((p,i)=>(
+            <CircleMarker key={i} center={[p.lat,p.lon]} radius={4}
+              pathOptions={{color:'#a78bfa',fillColor:'#a78bfa',fillOpacity:0.8,weight:1}} />
+          ))}
+          {planMarkers.map(m=>(
+            <Marker key={m.id} position={[m.lat,m.lon]} icon={planMarkerIcon(m.type)} />
+          ))}
+        </MapContainer>
+
+        {/* ═══════════════ HUD OVERLAYS ═══════════════ */}
+
+        {/* ── TOP-RIGHT: controls ─────────────────────────────────── */}
+        <div style={{
+          position:'absolute', top:10, right:10, zIndex:1000,
+          display:'flex', flexDirection:'column', gap:'5px', alignItems:'flex-end',
+        }}>
+          {/* Tile + view toggles */}
+          <div style={{...hudPanel, display:'flex', gap:'3px', flexWrap:'wrap', justifyContent:'flex-end', padding:'5px 9px'}}>
+            {(Object.keys(TILE_LAYERS) as TileKey[]).map(k=>(
+              <HudBtn key={k} active={tileKey===k} onClick={()=>setTileKey(k)}>{TILE_LAYERS[k].label}</HudBtn>
+            ))}
+            <div style={{width:'1px',background:HUD_BORDER,margin:'0 2px'}} />
+            <HudBtn active={useLive} onClick={()=>setShowLive(v=>!v)}
+              color={wsStatus==='open'?GREEN:COL_NEUTRAL}
+              title={wsStatus==='open'?'Live export connected':'No live export – using EWR poll'}>
+              {wsStatus==='open'?'⬤ LIVE':'◯ LIVE'}
+            </HudBtn>
+            <HudBtn active={showRadar}   onClick={()=>setShowRadar(v=>!v)}>RADAR</HudBtn>
+            <HudBtn active={showVectors} onClick={()=>setShowVectors(v=>!v)}>VECTORS</HudBtn>
+            <HudBtn active={showTrails}  onClick={()=>setShowTrails(v=>!v)}>TRAILS</HudBtn>
+            <HudBtn active={showThreats} onClick={()=>setShowThreats(v=>!v)}>THREATS</HudBtn>
+            <HudBtn active={showHeat}    onClick={()=>setShowHeat(v=>!v)}>HEAT</HudBtn>
+          </div>
+
+          {/* Side filter */}
+          <div style={{...hudPanel, display:'flex', gap:'3px', padding:'5px 9px'}}>
+            {(['All','Red','Blue','Neutral'] as const).map(f=>(
+              <HudBtn key={f} active={sideFilter===f}
+                color={f==='Red'?COL_ENEMY:f==='Blue'?COL_ALLY:GREEN}
+                onClick={()=>setSideFilter(f)}>
+                {f==='All'?`ALL ${counts.All}`:`${f.slice(0,3).toUpperCase()} ${counts[f]}`}
+              </HudBtn>
+            ))}
+          </div>
+
+          {/* Planning */}
+          <div style={{...hudPanel, display:'flex', gap:'3px', flexWrap:'wrap', justifyContent:'flex-end', padding:'5px 9px'}}>
+            <span style={{fontFamily:FONT_HEAD,fontSize:'0.64rem',letterSpacing:'0.18em',color:HUD_DIM,alignSelf:'center',marginRight:'2px'}}>PLAN</span>
+            <HudBtn active={planMode==='waypoint'} onClick={()=>toggleMode('waypoint')} color='#00b4f5'>
+              ROUTE{waypoints.length>0?` (${waypoints.length})`:''}
+            </HudBtn>
+            <HudBtn active={planMode==='marker'} onClick={()=>toggleMode('marker')} color='#eab308'>MARK</HudBtn>
+            {planMode==='marker' && (['IP','TGT','CP','BULL','EGR'] as MarkerType[]).map(t=>(
+              <HudBtn key={t} active={markerType===t} onClick={()=>setMarkerType(t)} color={MK_STYLE[t].bd}>{t}</HudBtn>
+            ))}
+            <HudBtn active={planMode==='measure'} onClick={()=>toggleMode('measure')} color='#a78bfa'>MEAS</HudBtn>
+            {(waypoints.length>0||planMarkers.length>0||measurePts.length>0) && (
+              <HudBtn active={false} onClick={clearAll} color={COL_ENEMY}>CLR</HudBtn>
+            )}
+            <HudBtn active={showPlan} onClick={()=>setShowPlan(v=>!v)}>
+              {showPlan?'▸ HIDE':'◂ PANEL'}
+            </HudBtn>
+          </div>
+
+          {/* Region jump */}
+          <div style={{...hudPanel, display:'flex', gap:'2px', flexWrap:'wrap', justifyContent:'flex-end', padding:'4px 9px'}}>
+            {DCS_REGIONS.map(r=>(
+              <button key={r.label} onClick={()=>setFlyTarget({center:r.center,zoom:r.zoom})}
+                style={{fontFamily:FONT_HEAD,fontSize:'0.62rem',letterSpacing:'0.1em',
+                        padding:'2px 7px',background:'transparent',color:HUD_DIM,
+                        border:'1px solid transparent',borderRadius:'2px',cursor:'pointer'}}
+                onMouseEnter={e=>{e.currentTarget.style.color=GREEN;e.currentTarget.style.borderColor=HUD_BORDER}}
+                onMouseLeave={e=>{e.currentTarget.style.color=HUD_DIM;e.currentTarget.style.borderColor='transparent'}}>
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── BOTTOM-LEFT: mission timer + cursor ─────────────────── */}
+        <div style={{
+          position:'absolute', bottom:28, left:10, zIndex:1000,
+          display:'flex', flexDirection:'column', gap:'5px',
+          alignItems:'flex-start',
+        }}>
+          <MissionTimer
+            liveTime={liveTime} hacks={hacks}
+            onAddHack={addHack}
+            onRemoveHack={id=>setHacks(p=>p.filter(h=>h.id!==id))} />
+          <div style={{...hudPanel, fontSize:'0.63rem', letterSpacing:'0.07em'}}>
+            <div style={{color:HUD_DIM,marginBottom:'2px',fontSize:'0.57rem',letterSpacing:'0.14em'}}>CURSOR</div>
+            <div>{cursorCoord||'—'}</div>
+          </div>
+        </div>
+
+        {/* ── BOTTOM-RIGHT: territory + contacts ──────────────────── */}
+        <div style={{position:'absolute',bottom:28,right:10,zIndex:1000}}>
+          <div style={{...hudPanel, minWidth:'150px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'6px',marginBottom:'7px'}}>
+              <span style={{fontFamily:FONT_MONO,fontSize:'0.65rem',color:COL_ENEMY,fontWeight:700}}>{redPct}%</span>
+              <div style={{flex:1,height:'3px',background:'#0a150a',borderRadius:'1px',overflow:'hidden',display:'flex'}}>
+                <div style={{width:`${redPct}%`,background:`${COL_ENEMY}99`}} />
+                <div style={{width:`${bluePct}%`,background:`${COL_ALLY}99`}} />
+              </div>
+              <span style={{fontFamily:FONT_MONO,fontSize:'0.65rem',color:COL_ALLY,fontWeight:700}}>{bluePct}%</span>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'auto 1fr',gap:'2px 8px',fontSize:'0.62rem'}}>
+              <span style={{color:HUD_DIM}}>AIR</span><span>{airCount}</span>
+              <span style={{color:HUD_DIM}}>GND</span><span>{(useLive?activeUnits:activeRestUnits).length - airCount}</span>
+              <span style={{color:HUD_DIM}}>OBJ</span><span>{shownObjs.length}</span>
+              <span style={{color:HUD_DIM}}>WATCH</span><span style={{color:COL_WATCH}}>{watches.size}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ── BRAA active info overlay ──────────────────────────────── */}
+        {braaStart && braaActiveDist!==null && braaActiveBrg!==null && (
+          <div style={{position:'absolute',top:10,left:'50%',transform:'translateX(-50%)',zIndex:1000,pointerEvents:'none'}}>
+            <div style={{...hudPanel,display:'flex',gap:'18px',fontSize:'0.7rem',borderColor:`rgba(255,214,0,0.4)`,background:'rgba(4,10,4,0.9)'}}>
+              <div style={{textAlign:'center'}}>
+                <div style={{color:HUD_DIM,fontSize:'0.55rem',letterSpacing:'0.14em',marginBottom:'2px'}}>BRG</div>
+                <div style={{color:COL_WATCH,fontWeight:700}}>{fmtBrg(braaActiveBrg)}</div>
+              </div>
+              <div style={{textAlign:'center'}}>
+                <div style={{color:HUD_DIM,fontSize:'0.55rem',letterSpacing:'0.14em',marginBottom:'2px'}}>RANGE</div>
+                <div style={{color:COL_WATCH,fontWeight:700}}>{braaActiveDist.toFixed(1)} NM</div>
+              </div>
+              <div style={{textAlign:'center',alignSelf:'center'}}>
+                <div style={{color:'rgba(255,214,0,0.5)',fontSize:'0.58rem'}}>click or R-click to set</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Measure overlay ───────────────────────────────────────── */}
+        {measDist!==null && measBrg!==null && !braaStart && (
+          <div style={{position:'absolute',top:10,left:'50%',transform:'translateX(-50%)',zIndex:1000,pointerEvents:'none'}}>
+            <div style={{...hudPanel,display:'flex',gap:'18px',fontSize:'0.7rem'}}>
+              <div style={{textAlign:'center'}}>
+                <div style={{color:HUD_DIM,fontSize:'0.55rem',letterSpacing:'0.14em',marginBottom:'2px'}}>DIST</div>
+                <div style={{color:'#00b4f5',fontWeight:700}}>{measDist.toFixed(1)} NM</div>
+              </div>
+              <div style={{textAlign:'center'}}>
+                <div style={{color:HUD_DIM,fontSize:'0.55rem',letterSpacing:'0.14em',marginBottom:'2px'}}>BRG</div>
+                <div style={{color:'#f97316',fontWeight:700}}>{fmtBrg(measBrg)}</div>
+              </div>
+              {speed>0 && (
+                <div style={{textAlign:'center'}}>
+                  <div style={{color:HUD_DIM,fontSize:'0.55rem',letterSpacing:'0.14em',marginBottom:'2px'}}>ETE</div>
+                  <div style={{color:'#a78bfa',fontWeight:700}}>{fmtTime(measDist/speed*60)}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Console toggle button (top-left) ─────────────────────── */}
+        <button onClick={()=>setShowConsole(v=>!v)} style={{
+          position:'absolute', top:10, left:10, zIndex:1000,
+          fontFamily:FONT_HEAD, fontSize:'0.7rem', letterSpacing:'0.15em',
+          padding:'0.35rem 0.8rem', borderRadius:'2px',
+          border:`1px solid ${HUD_BORDER}`,
+          background: showConsole?`${GREEN}15`:HUD_BG,
+          color: showConsole?GREEN:HUD_DIM,
+          cursor:'pointer', backdropFilter:'blur(6px)',
+        }}>
+          {showConsole ? '◂ GCI' : '▸ GCI'}
+        </button>
+
+        {/* ── Scratchpad floating panel ─────────────────────────────── */}
+        {showScratch && (
+          <div style={{
+            position:'absolute', bottom:100, left: showConsole?250:10, zIndex:1000,
+            width:'260px', background:PANEL_BG,
+            border:`1px solid ${HUD_BORDER}`, borderRadius:'3px',
+            backdropFilter:'blur(10px)', display:'flex', flexDirection:'column',
+          }}>
+            <div style={{
+              padding:'6px 10px', borderBottom:`1px solid ${HUD_BORDER}`,
+              display:'flex', justifyContent:'space-between', alignItems:'center',
+            }}>
+              <span style={{fontFamily:FONT_HEAD,fontSize:'0.72rem',letterSpacing:'0.18em',color:GREEN}}>SCRATCHPAD</span>
+              <button onClick={()=>setShowScratch(false)}
+                style={{background:'none',border:'none',color:HUD_DIM,cursor:'pointer',fontSize:'0.75rem'}}>✕</button>
+            </div>
+            <textarea
+              value={scratchText}
+              onChange={e=>setScratchText(e.target.value)}
+              placeholder="notes…"
+              style={{
+                background:'transparent', border:'none', outline:'none',
+                color:GREEN, fontFamily:FONT_MONO, fontSize:'0.68rem',
+                padding:'8px 10px', resize:'none', minHeight:'140px',
+                lineHeight:1.5,
+              }}
+            />
+          </div>
+        )}
+
+        {/* Loading overlay */}
+        {isLoading && (
+          <div style={{position:'absolute',inset:0,zIndex:2000,display:'flex',alignItems:'center',
+                       justifyContent:'center',background:'rgba(6,10,6,0.8)',pointerEvents:'none'}}>
+            <span style={{fontFamily:FONT_HEAD,fontSize:'1.1rem',letterSpacing:'0.3em',color:GREEN,
+                          animation:'pulse 1.2s ease-in-out infinite'}}>
+              LOADING MAP…
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* ── Plan panel – flex sibling so it pushes the map ─────────── */}
+      {showPlan && (
+        <div style={{
+          width:'250px', flexShrink:0, display:'flex', flexDirection:'column',
+          background:PANEL_BG, borderLeft:`1px solid ${HUD_BORDER}`,
+          fontFamily:FONT_MONO, color:HUD_TEXT, overflowY:'auto', zIndex:10,
+        }}>
+          <div style={{padding:'11px 13px 8px',borderBottom:`1px solid ${HUD_BORDER}`}}>
+            <div style={{fontFamily:FONT_HEAD,fontSize:'0.85rem',letterSpacing:'0.2em',color:GREEN}}>MISSION PLAN</div>
+          </div>
+          <div style={{padding:'9px 13px',borderBottom:`1px solid ${HUD_BORDER}`}}>
+            <div style={{fontSize:'0.59rem',color:HUD_DIM,letterSpacing:'0.12em',marginBottom:'4px'}}>SPEED (KTAS)</div>
+            <input type="number" min={0} max={2000} value={speed} onChange={e=>setSpeed(Number(e.target.value))}
+              style={{width:'100%',background:'rgba(0,20,0,0.5)',border:`1px solid ${HUD_BORDER}`,
+                      borderRadius:'2px',color:GREEN,fontFamily:FONT_MONO,fontSize:'0.75rem',
+                      padding:'4px 8px',outline:'none',boxSizing:'border-box'}} />
+          </div>
+          {waypoints.length>0 && (
+            <div style={{padding:'9px 13px',borderBottom:`1px solid ${HUD_BORDER}`}}>
+              <div style={{fontSize:'0.59rem',color:HUD_DIM,letterSpacing:'0.12em',marginBottom:'5px'}}>
+                ROUTE — {totalNm.toFixed(1)} NM{speed>0?` / ${fmtTime(totalNm/speed*60)}`:''}
+              </div>
+              {waypoints.map((wp,i)=>{
+                const leg=legs[i-1]
+                return (
+                  <div key={wp.id} style={{marginBottom:'4px',fontSize:'0.62rem'}}>
+                    {leg && <div style={{color:HUD_DIM,fontSize:'0.58rem',marginBottom:'1px'}}>
+                      {leg.dist.toFixed(1)} NM  {fmtBrg(leg.brg)}{speed>0?`  ${fmtTime(leg.ete)}`:''}
+                    </div>}
+                    <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
+                      <span style={{color:'#00b4f5',minWidth:'16px',fontWeight:700}}>{i+1}</span>
+                      <span style={{flex:1}}>{fmtCoord(wp.lat,wp.lon)}</span>
+                      <button onClick={()=>setWaypoints(p=>p.filter(w=>w.id!==wp.id))}
+                        style={{background:'none',border:'none',color:HUD_DIM,cursor:'pointer',padding:'0 2px'}}>✕</button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {planMarkers.length>0 && (
+            <div style={{padding:'9px 13px',borderBottom:`1px solid ${HUD_BORDER}`}}>
+              <div style={{fontSize:'0.59rem',color:HUD_DIM,letterSpacing:'0.12em',marginBottom:'5px'}}>MARKERS</div>
+              {planMarkers.map(m=>(
+                <div key={m.id} style={{display:'flex',gap:'6px',alignItems:'center',marginBottom:'3px',fontSize:'0.62rem'}}>
+                  <span style={{color:MK_STYLE[m.type].bd,minWidth:'28px',fontWeight:700}}>{m.type}</span>
+                  <span style={{flex:1}}>{fmtCoord(m.lat,m.lon)}</span>
+                  <button onClick={()=>setPlanMarkers(p=>p.filter(mk=>mk.id!==m.id))}
+                    style={{background:'none',border:'none',color:HUD_DIM,cursor:'pointer',padding:'0 2px'}}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {showThreats && (
+            <div style={{padding:'9px 13px',marginTop:'auto',borderTop:`1px solid ${HUD_BORDER}`}}>
+              <div style={{fontSize:'0.59rem',color:HUD_DIM,letterSpacing:'0.12em',marginBottom:'5px'}}>THREAT RINGS</div>
+              {Object.entries(THREAT_NM).map(([kind,nm])=>(
+                <div key={kind} style={{display:'flex',justifyContent:'space-between',fontSize:'0.62rem',marginBottom:'2px'}}>
+                  <span>{kind}</span><span style={{color:HUD_DIM}}>{nm} NM</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
-
-        {/* ── Planning Panel ────────────────────────────────────────── */}
-        {showPanel && (
-          <PlanningPanel
-            waypoints={waypoints}
-            planMarkers={planMarkers}
-            measurePts={measurePts}
-            speed={speed}
-            onSpeedChange={setSpeed}
-            onRemoveWaypoint={id => setWaypoints(ws => ws.filter(w => w.id !== id))}
-            onClearWaypoints={() => setWaypoints([])}
-            onRemoveMarker={id => setPlanMarkers(ms => ms.filter(m => m.id !== id))}
-            onClearMarkers={() => setPlanMarkers([])}
-            showThreats={showThreats}
-            onToggleThreats={() => setShowThreats(t => !t)}
-          />
-        )}
-      </div>
+      )}
     </div>
   )
 }

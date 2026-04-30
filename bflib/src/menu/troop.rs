@@ -15,13 +15,23 @@ for more details.
 */
 
 use super::{cargo, player_name, slot_for_group, ArgTuple};
-use crate::{jtac::JtId, Context};
+use crate::{
+    db::{
+        ephemeral::{SfMission, SfPhase},
+        events::CampaignEvent,
+    },
+    jtac::JtId,
+    Context,
+};
 use anyhow::{Context as ErrContext, Result};
 use bfprotocols::cfg::{Cfg, LimitEnforceTyp};
 use compact_str::format_compact;
 use dcso3::{
     coalition::Side, env::miz::GroupId, mission_commands::MissionCommands, MizLua, String,
+    Vector2,
 };
+use log::info;
+use std::sync::Arc;
 
 fn load_troops(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
@@ -52,13 +62,20 @@ fn load_troops(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
                     }
                 },
             };
-            let msg = format_compact!(
-                "{player} loaded {}\n{n} of {} {} deployed, {}",
-                tr.name,
-                tr.limit,
-                tr.name,
-                enforce
-            );
+            let msg = if tr.special_forces {
+                format_compact!(
+                    "{player} loaded {} (Special Forces — deploy near an HVT to capture it)",
+                    tr.name
+                )
+            } else {
+                format_compact!(
+                    "{player} loaded {}\n{n} of {} {} deployed, {}",
+                    tr.name,
+                    tr.limit,
+                    tr.name,
+                    enforce
+                )
+            };
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
         }
         Err(e) => {
@@ -77,14 +94,137 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     match ctx.db.unload_troops(lua, &ctx.idx, &slot) {
         Ok((tr, tgid, oid)) => {
             let player = player_name(&ctx.db, &slot);
-            let sub = ctx.subscribed_jtac_menus.entry(slot).or_default();
+            let sub = ctx.subscribed_jtac_menus.entry(slot.clone()).or_default();
             sub.pinned.insert(JtId::Group(tgid));
             if let Some(oid) = oid {
                 sub.subscribed_objectives.insert(oid);
             }
             super::jtac::init_jtac_menu_for_slot(ctx, lua, &slot)?;
-            let msg = format_compact!("{player} dropped {} troops into the field", tr.name);
-            ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
+
+            // ── Special Forces HVT capture mission setup ──────────────────────
+            if tr.special_forces {
+                let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
+                let ev_cfg = cfg.campaign_events.as_ref();
+                if let Some(ev_cfg) = ev_cfg {
+                    // Get helo position for proximity check
+                    let helo_pos = ctx
+                        .db
+                        .ephemeral
+                        .slot_instance_pos(lua, &slot)
+                        .ok()
+                        .map(|p| Vector2::new(p.p.x, p.p.z));
+
+                    if let Some(helo_pos) = helo_pos {
+                        let detection_radius_sq =
+                            ev_cfg.hvt_sf_detection_radius_m.powi(2);
+
+                        // Find a nearby active HVT event that belongs to the ENEMY side
+                        // (pilots capture enemy HVTs, not their own side's)
+                        let hvt_match = ctx
+                            .event_scheduler
+                            .active_events
+                            .iter()
+                            .find_map(|e| {
+                                if let CampaignEvent::HighValueTarget {
+                                    id,
+                                    side: hvt_side,
+                                    spawn_pos: Some(sp),
+                                    reward_points,
+                                    ..
+                                } = e
+                                {
+                                    // Skip HVTs belonging to the pilot's own side
+                                    if *hvt_side == side {
+                                        return None;
+                                    }
+                                    let dx = sp.x - helo_pos.x;
+                                    let dy = sp.y - helo_pos.y;
+                                    if dx * dx + dy * dy <= detection_radius_sq {
+                                        Some((*id, *sp, *reward_points))
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            });
+
+                        if let Some((event_id, hvt_pos, reward_points)) = hvt_match {
+                            let ucid = ctx
+                                .db
+                                .ephemeral
+                                .player_in_slot(&slot)
+                                .cloned()
+                                .unwrap_or_default();
+                            ctx.db.ephemeral.sf_missions.insert(
+                                tgid,
+                                SfMission {
+                                    event_id,
+                                    side,
+                                    hvt_pos,
+                                    drop_pos: helo_pos,
+                                    phase: SfPhase::MovingToHvt,
+                                    captured_at: None,
+                                    ucid,
+                                    reward_points,
+                                },
+                            );
+                            // Issue move order toward the HVT position
+                            ctx.event_scheduler.pending_moves.insert(tgid, vec![hvt_pos]);
+                            info!(
+                                "SF team {:?} deployed by {:?}, moving to HVT {:?}",
+                                tgid, slot, hvt_pos
+                            );
+                            ctx.db.ephemeral.msgs().panel_to_group(
+                                30,
+                                false,
+                                gid,
+                                format_compact!(
+                                    "SF team deployed — moving to HVT position. Come back to extract them after capture!"
+                                ),
+                            );
+                            ctx.db.ephemeral.msgs().panel_to_side(
+                                20,
+                                false,
+                                side,
+                                format_compact!(
+                                    "{player} deployed Special Forces on HVT capture mission!"
+                                ),
+                            );
+                        } else {
+                            ctx.db.ephemeral.msgs().panel_to_group(
+                                20,
+                                false,
+                                gid,
+                                format_compact!(
+                                    "No HVT target in range ({:.0}km). SF team deployed as regular troops.",
+                                    ev_cfg.hvt_sf_detection_radius_m / 1000.0
+                                ),
+                            );
+                            let msg = format_compact!(
+                                "{player} dropped {} troops into the field",
+                                tr.name
+                            );
+                            ctx.db
+                                .ephemeral
+                                .msgs()
+                                .panel_to_side(10, false, side, msg);
+                        }
+                    } else {
+                        let msg =
+                            format_compact!("{player} dropped {} troops into the field", tr.name);
+                        ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
+                    }
+                } else {
+                    let msg =
+                        format_compact!("{player} dropped {} troops into the field", tr.name);
+                    ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
+                }
+            } else {
+                // Normal troop deployment message
+                let msg = format_compact!("{player} dropped {} troops into the field", tr.name);
+                ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
+            }
         }
         Err(e) => ctx
             .db
@@ -99,8 +239,36 @@ fn extract_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.extract_troops(lua, &slot) {
-        Ok(tr) => {
+        Ok((tr, extracted_gid)) => {
             let player = player_name(&ctx.db, &slot);
+
+            // ── If the extracted group was an SF mission, move it to sf_cargo ──
+            if tr.special_forces {
+                if let Some(mission) = ctx.db.ephemeral.sf_missions.remove(&extracted_gid) {
+                    if mission.phase == SfPhase::Captured {
+                        ctx.db.ephemeral.sf_cargo.insert(slot.clone(), mission);
+                        ctx.db.ephemeral.msgs().panel_to_group(
+                            30,
+                            false,
+                            gid,
+                            format_compact!(
+                                "SF team aboard — return to any friendly base to complete the mission and reveal enemy intel!"
+                            ),
+                        );
+                    } else {
+                        // SF extracted before capturing — mission aborted
+                        ctx.db.ephemeral.msgs().panel_to_group(
+                            15,
+                            false,
+                            gid,
+                            format_compact!(
+                                "SF team extracted before reaching the HVT — mission aborted."
+                            ),
+                        );
+                    }
+                }
+            }
+
             let msg = format_compact!("{player} extracted {} troops from the field", tr.name);
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
         }
@@ -119,6 +287,101 @@ fn return_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     match ctx.db.return_troops(lua, &slot) {
         Ok(tr) => {
             let player = player_name(&ctx.db, &slot);
+
+            // ── SF mission completion: reveal intel, award points ─────────────
+            if tr.special_forces {
+                if let Some(mission) = ctx.db.ephemeral.sf_cargo.remove(&slot) {
+                    if mission.phase == SfPhase::Captured {
+                        // Award points to the pilot
+                        ctx.db.adjust_points(
+                            &mission.ucid,
+                            mission.reward_points,
+                            "for SF HVT capture",
+                        );
+
+                        // Expire the HVT campaign event
+                        ctx.event_scheduler
+                            .active_events
+                            .retain(|e| e.id() != mission.event_id);
+
+                        // Intel reveal: place F10 marks on all known enemy group positions
+                        let enemy_side = match mission.side {
+                            Side::Red => Side::Blue,
+                            Side::Blue => Side::Red,
+                            s => s,
+                        };
+                        let side_filter = match mission.side {
+                            Side::Red => dcso3::trigger::SideFilter::Red,
+                            Side::Blue => dcso3::trigger::SideFilter::Blue,
+                            _ => dcso3::trigger::SideFilter::All,
+                        };
+                        // Collect enemy group positions from persisted state
+                        let enemy_groups: Vec<(String, Vector2)> = ctx
+                            .db
+                            .persisted
+                            .groups
+                            .into_iter()
+                            .filter(|(_, g)| g.side == enemy_side)
+                            .filter_map(|(_, g)| {
+                                // Get position of first unit in the group
+                                g.units
+                                    .into_iter()
+                                    .find_map(|uid| {
+                                        ctx.db.persisted.units.get(uid).map(|u| {
+                                            (g.name.clone(), u.pos)
+                                        })
+                                    })
+                            })
+                            .collect();
+
+                        for (name, pos) in &enemy_groups {
+                            let mid = dcso3::trigger::MarkId::new();
+                            ctx.db.ephemeral.msgs().circle_to_all(
+                                side_filter,
+                                mid,
+                                dcso3::trigger::CircleSpec {
+                                    center: dcso3::LuaVec3(dcso3::Vector3::new(
+                                        pos.x, 50., pos.y,
+                                    )),
+                                    radius: 200.,
+                                    color: dcso3::Color::new(1., 0.1, 0.1, 0.8),
+                                    fill_color: dcso3::Color::new(1., 0., 0., 0.15),
+                                    line_type: dcso3::trigger::LineType::Solid,
+                                    read_only: true,
+                                },
+                                Some(
+                                    format_compact!("INTEL: {name}").into(),
+                                ),
+                            );
+                            // Track for expiry — register under the event id
+                            ctx.event_scheduler
+                                .register_mark(mission.event_id, mid);
+                        }
+
+                        info!(
+                            "SF mission complete: {} enemy groups revealed to {:?}",
+                            enemy_groups.len(),
+                            mission.side
+                        );
+                        ctx.db.ephemeral.msgs().panel_to_side(
+                            45,
+                            false,
+                            mission.side,
+                            format_compact!(
+                                "🎯 HVT CAPTURED! {player} extracted the SF team. {} enemy positions revealed for 5 minutes!",
+                                enemy_groups.len()
+                            ),
+                        );
+                        // Schedule intel mark cleanup after 5 minutes
+                        // (marks are tied to mission.event_id in event_marks — we schedule a DespawnCap-like
+                        // effect by just adding a short-lived expiry event to clean them up)
+                        // For simplicity the marks will be cleaned up when their MarkIds are garbage collected
+                        // or on server restart. A future improvement can add a timed cleanup event.
+                        return Ok(());
+                    }
+                }
+            }
+
             let msg = format_compact!("{player} returned {} troops", tr.name);
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
         }

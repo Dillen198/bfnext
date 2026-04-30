@@ -24,7 +24,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{C130Vehicle, CargoConfig, Crate, Deployable, DeployableKind, LifeType, LimitEnforceTyp, Troop, Vehicle},
+    cfg::{C130Vehicle, CargoConfig, Crate, Deployable, DeployableKind, DismountSpec, LifeType, LimitEnforceTyp, Troop, Vehicle},
     db::{
         group::GroupId,
         objective::{ObjectiveId, ObjectiveKind},
@@ -200,6 +200,8 @@ pub struct C130Cargo {
     pub crate_def: Crate,
     /// The vehicle definition from config (for vehicles)
     pub vehicle_def: Option<C130Vehicle>,
+    /// If false the crate must be manually unpacked (helicopter dynamic cargo)
+    pub auto_unpack: bool,
 }
 
 impl C130Cargo {
@@ -212,6 +214,7 @@ impl C130Cargo {
         side: Side,
         pos: Vector2,
         crate_def: Crate,
+        auto_unpack: bool,
     ) -> Self {
         Self {
             name,
@@ -226,6 +229,7 @@ impl C130Cargo {
             airborne_time: None,
             crate_def,
             vehicle_def: None,
+            auto_unpack,
         }
     }
 
@@ -253,6 +257,7 @@ impl C130Cargo {
             airborne_time: None,
             crate_def,
             vehicle_def: Some(vehicle_def),
+            auto_unpack: true,
         }
     }
 }
@@ -447,7 +452,8 @@ impl Db {
                 | DeployKind::Objective { .. }
                 | DeployKind::ObjectiveDeprecated
                 | DeployKind::Action { .. }
-                | DeployKind::DownedPilot { .. } => {
+                | DeployKind::DownedPilot { .. }
+                | DeployKind::Dismount { .. } => {
                     bail!("group {:?} is listed in crates but isn't a crate", gid)
                 }
             };
@@ -497,7 +503,6 @@ impl Db {
         self.ephemeral.cargo.get(slot)
     }
 
-    #[allow(dead_code)]
     pub fn is_player_deployed(&self, gid: &GroupId) -> bool {
         self.persisted.deployed.contains(gid)
     }
@@ -746,7 +751,8 @@ impl Db {
                             | DeployKind::ObjectiveDeprecated
                             | DeployKind::Troop { .. }
                             | DeployKind::Action { .. }
-                            | DeployKind::DownedPilot { .. } => (),
+                            | DeployKind::DownedPilot { .. }
+                            | DeployKind::Dismount { .. } => (),
                         }
                     }
                     if let Some(gid) = group_to_repair {
@@ -1458,7 +1464,7 @@ impl Db {
         Ok(it.troop)
     }
 
-    pub fn extract_troops(&mut self, lua: MizLua, slot: &SlotId) -> Result<Troop> {
+    pub fn extract_troops(&mut self, lua: MizLua, slot: &SlotId) -> Result<(Troop, GroupId)> {
         let (cargo_capacity, side, unit_name) = self.unit_cargo_cfg(slot)?;
         let pos = self.ephemeral.slot_instance_pos(lua, slot)?;
         let point = Vector2::new(pos.p.x, pos.p.z);
@@ -1514,7 +1520,7 @@ impl Db {
             .action()?
             .set_unit_internal_cargo(unit_name, cargo.weight() as i64)?;
         self.delete_group(&gid)?;
-        Ok(troop_cfg)
+        Ok((troop_cfg, gid))
     }
 
     // ===== CSAR System =====
@@ -2288,6 +2294,41 @@ impl Db {
         Ok(None)
     }
 
+    /// Manually unpack nearby dynamic crates for helicopters (no auto-unpack on landing).
+    /// Finds all tracked c130-style crates within `crate_load_distance` of the player
+    /// that have `auto_unpack: false`, then calls `unpack_c130_crate` on each one.
+    pub fn unpack_nearby_helo_crates(&mut self, lua: MizLua, idx: &MizIndex, slot: &SlotId) -> Result<String> {
+        let st = SlotStats::get(self, lua, slot)?;
+        let radius = self.ephemeral.cfg.crate_load_distance as f64;
+
+        let nearby: Vec<(String, C130Cargo)> = self.ephemeral.c130_crates
+            .iter()
+            .filter(|(_, c)| {
+                !c.auto_unpack
+                    && c.side == st.side
+                    && na::distance(&c.last_pos.into(), &st.point.into()) <= radius
+            })
+            .map(|(name, c)| (name.clone(), c.clone()))
+            .collect();
+
+        if nearby.is_empty() {
+            return Ok(String::from(format_compact!(
+                "No friendly dynamic crates within {} meters to unpack",
+                self.ephemeral.cfg.crate_load_distance
+            )));
+        }
+
+        let mut msgs: Vec<compact_str::CompactString> = Vec::new();
+        for (name, crate_data) in nearby {
+            match self.unpack_c130_crate(lua, idx, &crate_data, &name) {
+                Ok(msg) => msgs.push(compact_str::CompactString::from(msg.as_str())),
+                Err(e) => msgs.push(format_compact!("Failed to unpack {}: {}", name, e)),
+            }
+        }
+
+        Ok(String::from(msgs.join("\n").as_str()))
+    }
+
     /// Spawn a single physical crate near the player's aircraft
     pub fn spawn_c130_crate(
         &mut self,
@@ -2297,6 +2338,7 @@ impl Db {
         crate_name: String,
         side: Side,
         origin: ObjectiveId,
+        auto_unpack: bool,
     ) -> Result<String> {
         debug!("[C130_CARGO] spawn_c130_crate called: crate={}, side={:?}, origin={:?}, slot={:?}",
             crate_name, side, origin, slot);
@@ -2412,14 +2454,19 @@ impl Db {
         debug!("[C130_CARGO] Player position: x={:.2}, z={:.2}, dir=({:.2}, {:.2})",
                point.x, point.y, dir.x, dir.y);
 
-        // Spawn physical crate using spawn system (use C-130 specific template)
-        let template = self
-            .ephemeral
-            .cfg
-            .c130_cargo_template
-            .get(&side)
-            .ok_or_else(|| anyhow!("missing c130_cargo_template for {:?}", side))?
-            .clone();
+        // Pick template: helo dynamic cargo uses helo_cargo_template (fallback to c130_cargo_template)
+        let template = if !auto_unpack {
+            self.ephemeral.cfg.helo_cargo_template
+                .get(&side)
+                .or_else(|| self.ephemeral.cfg.c130_cargo_template.get(&side))
+                .ok_or_else(|| anyhow!("missing helo_cargo_template or c130_cargo_template for {:?}", side))?
+                .clone()
+        } else {
+            self.ephemeral.cfg.c130_cargo_template
+                .get(&side)
+                .ok_or_else(|| anyhow!("missing c130_cargo_template for {:?}", side))?
+                .clone()
+        };
 
         // Use same spawn location approach as regular cargo system
         let spawnpos = SpawnLoc::AtPos {
@@ -2481,6 +2528,7 @@ impl Db {
             side,
             point,
             crate_def,
+            auto_unpack,
         );
 
         self.ephemeral.c130_crates.insert(group_name.clone(), c130_cargo);
@@ -2654,18 +2702,19 @@ impl Db {
         crate_list: Vec<(String, Crate)>,
         side: Side,
         origin: ObjectiveId,
+        auto_unpack: bool,
     ) -> Result<String> {
         let ucid = maybe!(self.ephemeral.players_by_slot, *slot, "no such player")?.clone();
 
-        let spawn_delay = self.ephemeral.cfg.c130_cargo
-            .as_ref()
-            .map(|c| c.spawn_delay)
-            .unwrap_or(1);
-
-        let max_spawn = self.ephemeral.cfg.c130_cargo
-            .as_ref()
-            .map(|c| c.max_spawn_all as usize)
-            .unwrap_or(50);
+        let (spawn_delay, max_spawn) = if auto_unpack {
+            let delay = self.ephemeral.cfg.c130_cargo.as_ref().map(|c| c.spawn_delay).unwrap_or(1);
+            let max = self.ephemeral.cfg.c130_cargo.as_ref().map(|c| c.max_spawn_all as usize).unwrap_or(50);
+            (delay, max)
+        } else {
+            let delay = self.ephemeral.cfg.helo_cargo.as_ref().map(|c| c.spawn_delay).unwrap_or(1);
+            let max = self.ephemeral.cfg.helo_cargo.as_ref().map(|c| c.max_spawn_all as usize).unwrap_or(50);
+            (delay, max)
+        };
 
         let num_to_spawn = crate_list.len().min(max_spawn);
         let mut spawn_time = Utc::now();
@@ -2677,7 +2726,7 @@ impl Db {
                 .c130_spawn_queue
                 .entry(spawn_time)
                 .or_insert_with(Vec::new)
-                .push((side, crate_name, origin, ucid.clone(), crate_def, idx));
+                .push((side, crate_name, origin, ucid.clone(), crate_def, idx, auto_unpack));
         }
 
         Ok(String::from(format!(
@@ -2697,7 +2746,7 @@ impl Db {
 
         for spawn_time in to_spawn {
             if let Some(crates) = self.ephemeral.c130_spawn_queue.remove(&spawn_time) {
-                for (side, crate_name, origin, ucid, crate_def, _crate_idx) in crates {
+                for (side, crate_name, origin, ucid, crate_def, _crate_idx, auto_unpack) in crates {
                     // Get player's current position and direction (might have moved)
                     let unit_result = self.ephemeral.slot_instance_unit(lua, slot);
                     let (point, dir) = match unit_result {
@@ -2710,8 +2759,15 @@ impl Db {
                         Err(_) => continue, // Player might have disconnected
                     };
 
-                    // Spawn the crate (use C-130 specific template)
-                    let template = match self.ephemeral.cfg.c130_cargo_template.get(&side).cloned() {
+                    let template = if !auto_unpack {
+                        self.ephemeral.cfg.helo_cargo_template
+                            .get(&side)
+                            .or_else(|| self.ephemeral.cfg.c130_cargo_template.get(&side))
+                            .cloned()
+                    } else {
+                        self.ephemeral.cfg.c130_cargo_template.get(&side).cloned()
+                    };
+                    let template = match template {
                         Some(name) => name,
                         None => continue,
                     };
@@ -2769,6 +2825,7 @@ impl Db {
                                 side,
                                 point,
                                 crate_def,
+                                auto_unpack,
                             );
 
                             debug!("[C130_CARGO] Spawned crate: name='{}', group_id={:?}", group_name, group_id);
@@ -2858,9 +2915,13 @@ impl Db {
                         if let Some(airborne_time) = crate_data.airborne_time {
                             let airborne_duration = Utc::now().signed_duration_since(airborne_time);
                             if airborne_duration.num_seconds() >= 3 {
-                                info!("[C130_CARGO] Crate '{}' transitioned to Landed (speed={:.2}m/s) - queuing for auto-unpack", crate_name, speed);
                                 crate_data.state = C130CargoState::Landed;
-                                to_unpack.push(crate_name.clone());
+                                if crate_data.auto_unpack {
+                                    info!("[C130_CARGO] Crate '{}' transitioned to Landed (speed={:.2}m/s) - queuing for auto-unpack", crate_name, speed);
+                                    to_unpack.push(crate_name.clone());
+                                } else {
+                                    info!("[C130_CARGO] Crate '{}' transitioned to Landed (speed={:.2}m/s) - manual unpack required", crate_name, speed);
+                                }
                             }
                         }
                     }
@@ -3374,5 +3435,56 @@ impl Db {
                 }
             }
         }
+    }
+
+    // ===== Dismount System =====
+
+    /// Spawn an infantry dismount group at a destroyed vehicle's position.
+    /// Returns Ok(()) silently if the vehicle type has no dismount config,
+    /// or if the side has no template configured.
+    pub fn spawn_dismount_group(
+        &mut self,
+        lua: MizLua,
+        idx: &MizIndex,
+        vehicle_typ: &Vehicle,
+        side: Side,
+        pos: Vector2,
+        heading: f64,
+        from_group: GroupId,
+    ) -> Result<()> {
+        let spec: DismountSpec = match self.ephemeral.cfg.dismount.get(vehicle_typ) {
+            None => return Ok(()),
+            Some(s) => s.clone(),
+        };
+        if spec.max_concurrent > 0
+            && self.persisted.dismounts.len() as u32 >= spec.max_concurrent
+        {
+            return Ok(());
+        }
+        let template = match spec.template.get(&side) {
+            None => return Ok(()),
+            Some(t) => t.clone(),
+        };
+        let spawnpos = SpawnLoc::AtPos {
+            pos,
+            offset_direction: Vector2::new(heading.sin(), heading.cos()),
+            group_heading: heading,
+        };
+        let dk = DeployKind::Dismount {
+            from_group,
+            can_capture: spec.can_capture,
+        };
+        let spctx = SpawnCtx::new(lua)?;
+        self.add_and_queue_group(
+            &spctx,
+            idx,
+            side,
+            spawnpos,
+            &*template,
+            dk,
+            BitFlags::empty(),
+            None,
+        )?;
+        Ok(())
     }
 }

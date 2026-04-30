@@ -32,7 +32,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{Cfg, Vehicle},
+    cfg::{Cfg, SpecialSamSiteCfg, SpecialSamUnitCfg, Vehicle},
     db::{
         group::GroupId,
         objective::{ObjectiveId, ObjectiveKind},
@@ -43,7 +43,10 @@ use bfprotocols::{
 use chrono::prelude::*;
 use compact_str::CompactString;
 use dcso3::{
-    centroid2d, coalition::Side, controller::PointType, coord::Coord, env::miz::{Group, Miz, MizIndex, Skill, TriggerZone, TriggerZoneTyp}, land::Land, net::Net, trigger::Trigger, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3
+    centroid2d, coalition::Side, controller::PointType, coord::Coord,
+    country::Country,
+    env::miz::{Group, Miz, MizIndex, Skill, TriggerZone, TriggerZoneTyp},
+    land::Land, net::Net, trigger::Trigger, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3
 };
 use enumflags2::BitFlags;
 use fxhash::FxHashSet;
@@ -557,6 +560,146 @@ impl Db {
         Ok(())
     }
 
+    fn init_special_sam_sites(
+        &mut self,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        lua: MizLua,
+    ) -> Result<()> {
+        use super::ephemeral::SyntheticGroupSpec;
+        use dcso3::group::GroupCategory;
+        let sites: Vec<SpecialSamSiteCfg> = self.ephemeral.cfg.special_sam_sites.clone();
+        for cfg_site in &sites {
+            // On load, re-register synthetic templates for any inline groups so that
+            // spawn_group can find them in ephemeral.synthetic_templates (which is cleared on restart).
+            if self.persisted.objectives_by_name.get(&cfg_site.name).is_some() {
+                let sides_info: [(Side, &Vec<SpecialSamUnitCfg>, Country); 2] = [
+                    (Side::Red, &cfg_site.red_units, cfg_site.red_country),
+                    (Side::Blue, &cfg_site.blue_units, cfg_site.blue_country),
+                ];
+                for (side, inline_units, country) in &sides_info {
+                    if inline_units.is_empty() {
+                        continue;
+                    }
+                    if let Some(oid) = self.persisted.objectives_by_name.get(&cfg_site.name) {
+                        if let Some(obj) = self.persisted.objectives.get(oid) {
+                            if let Some(groups) = obj.groups.get(side) {
+                                for gid in groups {
+                                    if let Some(g) = self.persisted.groups.get(gid) {
+                                        if g.template_name.starts_with("@synthetic:") {
+                                            self.ephemeral.synthetic_templates.insert(
+                                                g.template_name.clone(),
+                                                SyntheticGroupSpec {
+                                                    country: *country,
+                                                    category: GroupCategory::Ground,
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            let id = ObjectiveId::new();
+            let site_pos = Vector2::new(cfg_site.pos.x, cfg_site.pos.y);
+            let zone = Zone::Circle {
+                pos: site_pos,
+                radius: cfg_site.capture_radius_m,
+            };
+            let obj = Objective {
+                id,
+                spawned: false,
+                enabled: false,
+                threatened: false,
+                zone,
+                name: cfg_site.name.clone(),
+                kind: ObjectiveKind::SpecialSamSite {},
+                owner: cfg_site.coalition,
+                groups: MapS::new(),
+                health: 0,
+                logi: 0,
+                supply: 0,
+                fuel: 0,
+                last_change_ts: Utc::now(),
+                last_threatened_ts: Utc::now(),
+                warehouse: Warehouse::default(),
+                points: 0,
+                logistics_detached: false,
+                last_activate: DateTime::<Utc>::default(),
+                threat_pos3: Vector3::default(),
+            };
+            self.persisted.special_sam_sites.insert_cow(id);
+            let llpos = Coord::singleton(lua)?
+                .lo_to_ll(LuaVec3(Vector3::new(cfg_site.pos.x, 0., cfg_site.pos.y)))?;
+            self.ephemeral.stat(Stat::Objective {
+                name: cfg_site.name.clone(),
+                id,
+                kind: obj.kind.clone(),
+                owner: obj.owner,
+                pos: llpos,
+            });
+            self.persisted.objectives.insert_cow(id, obj);
+            self.persisted.objectives_by_name.insert_cow(cfg_site.name.clone(), id);
+
+            // Register a group for BOTH coalitions, just like standard objectives.
+            // The non-owner side's units are marked dead so they don't count toward health.
+            // When the site is captured, cull_or_respawn_objectives finds the new owner's
+            // group in obj.groups and spawns it — this is the standard capture flow.
+            let sides: [(Side, Option<String>, &Vec<SpecialSamUnitCfg>, Country); 2] = [
+                (Side::Red, cfg_site.red_template.clone(), &cfg_site.red_units, cfg_site.red_country),
+                (Side::Blue, cfg_site.blue_template.clone(), &cfg_site.blue_units, cfg_site.blue_country),
+            ];
+            for (side, template, inline_units, country) in &sides {
+                let side = *side;
+                let country = *country;
+                let gid = if !inline_units.is_empty() {
+                    self.add_group_from_units(
+                        spctx,
+                        side,
+                        country,
+                        inline_units,
+                        DeployKind::Objective { origin: id },
+                    )?
+                } else if let Some(tmpl) = template {
+                    // AtPosWithCenter with pos==center is a pure translation that preserves each
+                    // unit's exact template position and heading (no rotation applied).
+                    self.add_group(
+                        spctx,
+                        idx,
+                        side,
+                        SpawnLoc::AtPosWithCenter {
+                            pos: site_pos,
+                            center: site_pos,
+                        },
+                        tmpl,
+                        DeployKind::Objective { origin: id },
+                        BitFlags::empty(),
+                    )?
+                } else {
+                    bail!(
+                        "special SAM site '{}': {} side needs either inline units or a template",
+                        cfg_site.name,
+                        side
+                    )
+                };
+                let o = objective_mut!(self, id)?;
+                o.groups.get_or_default_cow(side).insert_cow(gid);
+                self.persisted.objectives_by_group.insert_cow(gid, id);
+                // Mark non-owner side's units dead (same as init_objective_group)
+                if side != cfg_site.coalition {
+                    for uid in group!(self, gid)?.units.clone().into_iter() {
+                        unit_mut!(self, uid)?.dead = true;
+                    }
+                }
+            }
+            self.update_objective_status(&id, Utc::now())?;
+        }
+        Ok(())
+    }
+
     pub fn init_objective_slots(&mut self, side: Side, slot: Group) -> Result<()> {
         let mut ground_start = false;
         let mut has_link_unit = false;
@@ -657,6 +800,19 @@ impl Db {
         let spctx = SpawnCtx::new(lua)?;
         let mut t = Self::default();
         t.ephemeral.set_cfg(miz, idx, cfg, to_bg)?;
+        if let Some(sc) = t.ephemeral.cfg.smart_commander.as_ref() {
+            if sc.treasury_start > 0 {
+                t.persisted.blue_treasury = sc.treasury_start;
+                t.persisted.red_treasury = sc.treasury_start;
+            }
+        }
+        let sc_obj_start = t
+            .ephemeral
+            .cfg
+            .smart_commander
+            .as_ref()
+            .map(|sc| sc.objective_start_points)
+            .unwrap_or(0);
         let mut objective_names = FxHashSet::default();
         for zone in miz.triggers()? {
             let zone = zone?;
@@ -702,6 +858,8 @@ impl Db {
         t.init_carrier_groups()
             .context("init_carrier_groups failed")?;
         info!("[CARRIER_SETUP] Carrier initialization complete");
+        t.init_special_sam_sites(&spctx, idx, lua)
+            .context("init_special_sam_sites failed")?;
 
         // Now initialize slots - carrier objectives are available for slot association
         for side in Side::ALL {
@@ -728,10 +886,23 @@ impl Db {
         for id in ids {
             // Skip carrier groups during initial status update - they'll be updated after spawning
             let obj = objective!(&t, id)?;
-            if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
+            if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. }) {
                 continue;
             }
             t.update_objective_status(&id, now)?
+        }
+        // Seed objective points from cfg (per-side budget distributed by kind weight).
+        // cfg.objective_start_points takes priority; falls back to sc_obj_start
+        // (which was the old flat equal-per-objective value from smart_commander).
+        for (side, budget) in t.ephemeral.cfg.objective_start_points.clone() {
+            if budget > 0 {
+                t.seed_objective_points(side, budget, false);
+            }
+        }
+        if t.ephemeral.cfg.objective_start_points.is_empty() && sc_obj_start > 0 {
+            for side in dcso3::coalition::Side::ALL {
+                t.seed_objective_points(side, sc_obj_start, false);
+            }
         }
         t.init_warehouses(lua).context("initializing warehouses")?;
         t.ephemeral.dirty();
@@ -799,6 +970,8 @@ impl Db {
             .context("re-initializing carrier template groups")?;
         self.init_carrier_groups()
             .context("re-initializing carrier groups")?;
+        self.init_special_sam_sites(spctx, idx, lua)
+            .context("re-init special sam sites")?;
         info!("[CARRIER_LOAD] Spawning carrier groups before other entities");
         while self.ephemeral.spawnq_len() > 0 {
             self.ephemeral.process_spawn_queue(perf, &self.persisted, Utc::now(), idx, spctx)?

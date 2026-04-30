@@ -21,7 +21,7 @@ use dcso3::{
     String,
 };
 use enumflags2::BitFlags;
-use log::{error, info};
+use log::{error, info, warn};
 use netidx::{path::Path as NetidxPath, subscriber::Subscriber};
 use netidx_archive::{
     config::file::Config as ArchiveFileCfg,
@@ -47,6 +47,27 @@ use yats::Tree;
 db_id!(KillId);
 db_id!(RoundId);
 db_id!(SortieId);
+
+// ── Auth / session types ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SessionData {
+    pub(crate) discord_id: std::string::String,
+    pub(crate) username:   std::string::String,
+    pub(crate) avatar:     Option<std::string::String>,
+    pub(crate) is_admin:   bool,
+    pub(crate) expires:    DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TrailPoint {
+    pub(crate) unit_id: std::string::String,
+    pub(crate) lat:     f64,
+    pub(crate) lon:     f64,
+    pub(crate) alt:     f64,
+    pub(crate) hdg:     f64,
+    pub(crate) ts:      i64,
+}
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub(crate) struct Aggregates {
@@ -361,6 +382,13 @@ pub(crate) struct StatsDbInner {
     equipment: Tree<(RoundId, ObjectiveId, String), u32>,
     liquids: Tree<(RoundId, ObjectiveId, LiquidType), u32>,
     stats_jsonl: Option<PathBuf>,
+    // Auth
+    auth_sessions:    Tree<Uuid, SessionData>,
+    auth_states:      Tree<Uuid, DateTime<Utc>>,
+    discord_to_ucid:  Tree<std::string::String, Ucid>,
+    ucid_to_discord:  Tree<Ucid, std::string::String>,
+    // Trail history
+    trail_points: Tree<(RoundId, std::string::String, i64), (f64, f64, f64, f64)>,
 }
 
 pub(crate) struct StatsDb(Arc<StatsDbInner>);
@@ -519,6 +547,11 @@ impl StatsDb {
             equipment: Tree::open(&db, "equipment")?,
             liquids: Tree::open(&db, "liquids")?,
             stats_jsonl: None,
+            auth_sessions: Tree::open(&db, "auth_sessions")?,
+            auth_states: Tree::open(&db, "auth_states")?,
+            discord_to_ucid: Tree::open(&db, "discord_to_ucid")?,
+            ucid_to_discord: Tree::open(&db, "ucid_to_discord")?,
+            trail_points: Tree::open(&db, "trail_points")?,
         }));
         let _t = t.clone();
         task::spawn(async move {
@@ -552,6 +585,11 @@ impl StatsDb {
             equipment: Tree::open(&db, "equipment")?,
             liquids: Tree::open(&db, "liquids")?,
             stats_jsonl,
+            auth_sessions: Tree::open(&db, "auth_sessions")?,
+            auth_states: Tree::open(&db, "auth_states")?,
+            discord_to_ucid: Tree::open(&db, "discord_to_ucid")?,
+            ucid_to_discord: Tree::open(&db, "ucid_to_discord")?,
+            trail_points: Tree::open(&db, "trail_points")?,
         }));
         let _t = t.clone();
         task::spawn(async move {
@@ -768,7 +806,7 @@ impl StatsDb {
                         let count = stats.len();
                         for (ts, st) in stats {
                             if let Err(e) = task::block_in_place(|| self.add_stat(&mut ctx, ts, st)) {
-                                error!("failed to add stat from JSONL: {e:?}");
+                                warn!("failed to add stat from JSONL: {e:?}");
                             }
                         }
                         info!("processed {count} stats from JSONL (pos {last_pos} -> {pos})");
@@ -1466,5 +1504,118 @@ impl StatsDb {
             .insert(&(ctx.sortie.clone(), ctx.round), &time)?;
         ctx.seq = time;
         Ok(())
+    }
+
+    // ── Auth session methods ─────────────────────────────────────────
+
+    pub(crate) fn create_session(&self, id: Uuid, data: SessionData) -> Result<()> {
+        self.auth_sessions.insert(&id, &data)?;
+        Ok(())
+    }
+
+    pub(crate) fn get_session(&self, id: Uuid) -> Result<Option<SessionData>> {
+        match self.auth_sessions.get(&id)? {
+            None => Ok(None),
+            Some(s) if s.expires < Utc::now() => {
+                let _ = self.auth_sessions.remove(&id);
+                Ok(None)
+            }
+            Some(s) => Ok(Some(s)),
+        }
+    }
+
+    pub(crate) fn delete_session(&self, id: Uuid) -> Result<()> {
+        self.auth_sessions.remove(&id)?;
+        Ok(())
+    }
+
+    pub(crate) fn store_oauth_state(&self, state: Uuid) -> Result<()> {
+        let expires = Utc::now() + chrono::Duration::minutes(10);
+        self.auth_states.insert(&state, &expires)?;
+        Ok(())
+    }
+
+    pub(crate) fn validate_oauth_state(&self, state: Uuid) -> Result<bool> {
+        match self.auth_states.remove(&state)? {
+            None => Ok(false),
+            Some(expires) => Ok(expires > Utc::now()),
+        }
+    }
+
+    pub(crate) fn link_discord_ucid(&self, discord_id: &std::string::String, ucid: &Ucid) -> Result<()> {
+        self.discord_to_ucid.insert(discord_id, ucid)?;
+        self.ucid_to_discord.insert(ucid, discord_id)?;
+        Ok(())
+    }
+
+    pub(crate) fn get_ucid_for_discord(&self, discord_id: &std::string::String) -> Result<Option<Ucid>> {
+        Ok(self.discord_to_ucid.get(discord_id)?)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn get_discord_for_ucid(&self, ucid: &Ucid) -> Result<Option<std::string::String>> {
+        Ok(self.ucid_to_discord.get(ucid)?)
+    }
+
+    pub(crate) fn list_links(&self) -> Result<Vec<(std::string::String, Ucid)>> {
+        let mut out = Vec::new();
+        for item in self.discord_to_ucid.iter() {
+            let (discord_id, ucid) = item?;
+            out.push((discord_id, ucid));
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn list_sessions(&self) -> Result<Vec<(Uuid, SessionData)>> {
+        let now = Utc::now();
+        let mut out = Vec::new();
+        for item in self.auth_sessions.iter() {
+            let (id, data) = item?;
+            if data.expires > now {
+                out.push((id, data));
+            }
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn unlink_discord(&self, discord_id: &std::string::String) -> Result<()> {
+        if let Some(ucid) = self.discord_to_ucid.remove(discord_id)? {
+            let _ = self.ucid_to_discord.remove(&ucid);
+        }
+        Ok(())
+    }
+
+    // ── Trail point methods ──────────────────────────────────────────
+
+    pub(crate) fn append_trail_point(
+        &self,
+        round_id: RoundId,
+        unit_id: &std::string::String,
+        ts: i64,
+        lat: f64,
+        lon: f64,
+        alt: f64,
+        hdg: f64,
+    ) -> Result<()> {
+        self.trail_points.insert(&(round_id, unit_id.clone(), ts), &(lat, lon, alt, hdg))?;
+        Ok(())
+    }
+
+    pub(crate) fn get_trail_points(&self, round_id: RoundId) -> Result<Vec<TrailPoint>> {
+        // Keep last 30 minutes of trail history
+        let cutoff = Utc::now().timestamp() - 1800;
+        let mut points = Vec::new();
+        for item in self.trail_points.range(
+            (round_id, std::string::String::new(), cutoff)..,
+        )? {
+            let ((rid, unit_id, ts), (lat, lon, alt, hdg)) = item?;
+            if rid != round_id {
+                break;
+            }
+            if ts >= cutoff {
+                points.push(TrailPoint { unit_id, lat, lon, alt, hdg, ts });
+            }
+        }
+        Ok(points)
     }
 }

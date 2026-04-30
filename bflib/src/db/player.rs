@@ -61,6 +61,7 @@ pub enum SlotAuth {
     NotRegistered(Side),
     VehicleNotAvailable(Vehicle),
     Denied,
+    EraRestricted { vehicle: Vehicle, era: compact_str::CompactString },
 }
 
 pub enum RegErr {
@@ -265,7 +266,8 @@ impl Db {
                             DeployKind::Crate { .. }
                             | DeployKind::Objective { .. }
                             | DeployKind::ObjectiveDeprecated
-                            | DeployKind::DownedPilot { .. } => None,
+                            | DeployKind::DownedPilot { .. }
+                            | DeployKind::Dismount { .. } => None,
                         })
                 }
             }
@@ -368,6 +370,9 @@ impl Db {
             self.ephemeral.dirty();
             Ok(TakeoffRes::TookLife(life_type))
         } else {
+            player.airborne = Some(life_type);
+            player.kill_streak = 0;
+            self.ephemeral.dirty();
             Ok(TakeoffRes::NoLifeTaken)
         };
         if cost > 0
@@ -504,16 +509,32 @@ impl Db {
     }
 
     /// Restore one life of the given type to a player (e.g. after CSAR delivery).
-    /// Capped at the configured default max. Returns the new life count, or None if
-    /// limited_lives is off or the player is already at max lives.
+    /// If the player is already at max for that tier, cascade down via `LifeType::down()`.
+    /// Returns the new life count, or None if nothing to restore.
     pub fn restore_life(&mut self, ucid: &Ucid, life_type: LifeType) -> Option<u8> {
         if !self.ephemeral.cfg.limited_lives {
             return None;
         }
-        let max_lives = self.ephemeral.cfg.default_lives.get(&life_type).map(|(n, _)| *n)?;
+        // Find the first tier (starting from life_type, cascading down) that has a deficit
+        let mut current = life_type;
+        let (current, max_lives) = loop {
+            let max = self.ephemeral.cfg.default_lives.get(&current).map(|(n, _)| *n);
+            let has_deficit = self
+                .persisted
+                .players
+                .get(ucid)
+                .map(|p| p.lives.get(&current).is_some())
+                .unwrap_or(false);
+            match (max, has_deficit) {
+                (Some(max), true) => break (current, max),
+                _ => match current.down() {
+                    Some(lower) => current = lower,
+                    None => return None,
+                },
+            }
+        };
         let player = self.persisted.players.get_mut_cow(ucid)?;
-        // No entry in lives means player is already at max; nothing to restore
-        let new_count = match player.lives.get_mut_cow(&life_type) {
+        let new_count = match player.lives.get_mut_cow(&current) {
             None => return None,
             Some((_, count)) => {
                 *count = (*count + 1).min(max_lives);
@@ -521,7 +542,7 @@ impl Db {
             }
         };
         if new_count >= max_lives {
-            player.lives.remove_cow(&life_type);
+            player.lives.remove_cow(&current);
         }
         self.ephemeral.dirty();
         Some(new_count)
@@ -681,6 +702,15 @@ impl Db {
                     cost: cost as u32,
                     vehicle: sifo.typ.clone(),
                     balance,
+                };
+            }
+        }
+        if let Some(era_cfg) = &self.ephemeral.cfg.era {
+            let allowed = era_cfg.eras.get(era_cfg.current.as_str()).map(|v| v.as_slice()).unwrap_or(&[]);
+            if !allowed.is_empty() && !allowed.contains(&sifo.typ) {
+                return SlotAuth::EraRestricted {
+                    vehicle: sifo.typ.clone(),
+                    era: compact_str::format_compact!("{}", era_cfg.current),
                 };
             }
         }
