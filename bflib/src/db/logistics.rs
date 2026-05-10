@@ -1014,24 +1014,17 @@ impl Db {
                                 let side = obj.owner;
                                 let name = obj.name.clone();
                                 if is_low {
-                                    // Record the first time the warning fires; re-fires only after recovery
                                     let newly_warned = !self.ephemeral.supply_warned.contains_key(&oid);
                                     self.ephemeral.supply_warned.entry(oid).or_insert(ts);
                                     if newly_warned {
-                                        self.ephemeral.msgs().panel_to_side(
-                                            30,
-                                            false,
-                                            side,
-                                            format_compact!(
-                                                "⚠ SUPPLY CRITICAL: {} is below {}% — a convoy will auto-dispatch in 5 minutes if none is sent!",
-                                                name,
-                                                threshold
-                                            ),
-                                        );
+                                        let pos = obj.zone.pos();
+                                        let (ml, msgs) = self.ephemeral.map_layer_and_msgs();
+                                        ml.on_supply_critical(oid, pos, side, &name, threshold, msgs);
                                     }
                                 } else {
-                                    // Clear the warning so it can fire again if supply drops again
                                     self.ephemeral.supply_warned.remove(&oid);
+                                    let (ml, msgs) = self.ephemeral.map_layer_and_msgs();
+                                    ml.on_supply_recovered(&oid, msgs);
                                 }
                             }
                         }
@@ -1117,7 +1110,7 @@ impl Db {
                                 let dest_name = self.persisted.objectives.get(&dest_oid)
                                     .map(|o| o.name.clone())
                                     .unwrap_or_default();
-                                let side = self.persisted.objectives.get(&dest_oid)
+                                let _side = self.persisted.objectives.get(&dest_oid)
                                     .map(|o| o.owner)
                                     .unwrap_or(dcso3::coalition::Side::Neutral);
                                 match self.spawn_supply_convoy(
@@ -1130,16 +1123,6 @@ impl Db {
                                 ) {
                                     Ok(()) => {
                                         info!("AUTO-DISPATCH: supply convoy → {}", dest_name);
-                                        self.ephemeral.msgs().panel_to_side(
-                                            30,
-                                            false,
-                                            side,
-                                            format_compact!(
-                                                "🚛 AUTO-DISPATCH: Supply convoy en route to {}!",
-                                                dest_name
-                                            ),
-                                        );
-                                        // Reset the warning timer so we don't dispatch again immediately
                                         self.ephemeral.supply_warned.insert(dest_oid, ts);
                                     }
                                     Err(e) => {
@@ -1539,6 +1522,7 @@ impl Db {
         };
         let map = warehouse::Warehouse::get_resource_map(lua).context("getting resource map")?;
         let hub = obj.kind.is_hub();
+        let is_carrier = matches!(obj.kind, ObjectiveKind::CarrierGroup { .. });
         map.for_each(|name, _| {
             match production.equipment.get(&name) {
                 Some(equip) => {
@@ -1546,10 +1530,17 @@ impl Db {
                     inv.capacity = whcfg.capacity(hub, equip.production);
                 }
                 None => {
-                    if let Some(_) = other_production.equipment.get(&name) {
+                    if let Some(equip) = other_production.equipment.get(&name) {
                         let inv = obj.warehouse.equipment.get_or_default_cow(name);
-                        inv.stored = 0;
-                        inv.capacity = 0;
+                        if is_carrier {
+                            // captured carrier: keep the previous owner's aircraft available
+                            // with hub capacity so the new owner can operate them
+                            inv.capacity = whcfg.capacity(true, equip.production);
+                            // stored stays as-is (whatever was on the carrier at capture)
+                        } else {
+                            inv.stored = 0;
+                            inv.capacity = 0;
+                        }
                     }
                 }
             }
@@ -1564,8 +1555,12 @@ impl Db {
                 None => {
                     if let Some(_) = other_production.liquids.get(&name) {
                         let inv = obj.warehouse.liquids.get_or_default_cow(name);
-                        inv.stored = 0;
-                        inv.capacity = 0;
+                        // liquids are side-neutral (fuel/ammo) so always preserve
+                        // capacity on carriers; zero out on regular objectives
+                        if !is_carrier {
+                            inv.stored = 0;
+                            inv.capacity = 0;
+                        }
                     }
                 }
             }

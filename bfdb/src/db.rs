@@ -37,7 +37,7 @@ use std::{
     ops::Deref,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::Duration,
 };
 use tokio::task;
@@ -47,6 +47,17 @@ use yats::Tree;
 db_id!(KillId);
 db_id!(RoundId);
 db_id!(SortieId);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct WeatherSnapshot {
+    pub(crate) temp_c: f64,
+    pub(crate) wind_speed_kts: f64,
+    pub(crate) wind_from_deg: f64,
+    pub(crate) cloud_base_m: f64,
+    pub(crate) qnh_hpa: f64,
+    pub(crate) cloud_density: Option<u8>,
+    pub(crate) visibility_m: Option<f64>,
+}
 
 // ── Auth / session types ─────────────────────────────────────────────
 
@@ -389,6 +400,11 @@ pub(crate) struct StatsDbInner {
     ucid_to_discord:  Tree<Ucid, std::string::String>,
     // Trail history
     trail_points: Tree<(RoundId, std::string::String, i64), (f64, f64, f64, f64)>,
+    latest_weather: Arc<RwLock<Option<WeatherSnapshot>>>,
+    // Capture counts per objective per round
+    objective_captures: Tree<(RoundId, ObjectiveId), u32>,
+    // Aircraft sortie counts per round: (RoundId, vehicle_type) -> (sortie_count, total_hours_f32)
+    aircraft_sorties: Tree<(RoundId, std::string::String), (u32, f32)>,
 }
 
 pub(crate) struct StatsDb(Arc<StatsDbInner>);
@@ -497,6 +513,7 @@ fn stat_variant_name(s: &Stat) -> &'static str {
         Stat::AirRouteDestroyed { .. } => "AirRouteDestroyed",
         Stat::SeaRouteDelivered { .. } => "SeaRouteDelivered",
         Stat::SeaRouteDestroyed { .. } => "SeaRouteDestroyed",
+        Stat::Weather { .. } => "Weather",
     }
 }
 
@@ -552,6 +569,9 @@ impl StatsDb {
             discord_to_ucid: Tree::open(&db, "discord_to_ucid")?,
             ucid_to_discord: Tree::open(&db, "ucid_to_discord")?,
             trail_points: Tree::open(&db, "trail_points")?,
+            latest_weather: Arc::new(RwLock::new(None)),
+            objective_captures: Tree::open(&db, "objective_captures")?,
+            aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
         }));
         let _t = t.clone();
         task::spawn(async move {
@@ -590,6 +610,9 @@ impl StatsDb {
             discord_to_ucid: Tree::open(&db, "discord_to_ucid")?,
             ucid_to_discord: Tree::open(&db, "ucid_to_discord")?,
             trail_points: Tree::open(&db, "trail_points")?,
+            latest_weather: Arc::new(RwLock::new(None)),
+            objective_captures: Tree::open(&db, "objective_captures")?,
+            aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
         }));
         let _t = t.clone();
         task::spawn(async move {
@@ -992,27 +1015,175 @@ impl StatsDb {
         })
     }
 
-    /// Get all pilots with their aggregate stats, sorted by total kills descending
-    pub(crate) fn pilot_leaderboard(&self) -> Result<Vec<(Ucid, String, Aggregates)>> {
+    /// Get all pilots with their aggregate stats, sorted by total kills descending.
+    /// If `round` is Some, only stats from that round are included; otherwise all-time.
+    pub(crate) fn pilot_leaderboard(&self, round: Option<RoundId>) -> Result<Vec<(Ucid, String, Aggregates)>> {
+        match round {
+            None => {
+                // All-time: use pre-aggregated totals
+                let mut entries = Vec::new();
+                for r in self.pilots.pilots.iter() {
+                    let (ucid, pilot) = r?;
+                    let name = pilot.name.last().map(|s| s.clone()).unwrap_or_default();
+                    entries.push((ucid, name, pilot.total));
+                }
+                entries.sort_by(|a, b| {
+                    (b.2.air_kills + b.2.ground_kills).cmp(&(a.2.air_kills + a.2.ground_kills))
+                });
+                Ok(entries)
+            }
+            Some(rid) => {
+                // Per-round: sum aggregates tree entries for this round across all vehicles
+                let mut map: std::collections::HashMap<Ucid, Aggregates> = std::collections::HashMap::new();
+                for r in self.pilots.aggregates.iter() {
+                    let ((ucid, _vehicle, round_id), agg) = r?;
+                    if round_id != rid { continue; }
+                    let e = map.entry(ucid).or_insert_with(Aggregates::default);
+                    e.air_kills       += agg.air_kills;
+                    e.ground_kills    += agg.ground_kills;
+                    e.captures        += agg.captures;
+                    e.repairs         += agg.repairs;
+                    e.supply_transfers += agg.supply_transfers;
+                    e.troops          += agg.troops;
+                    e.farps           += agg.farps;
+                    e.deploys         += agg.deploys;
+                    e.actions         += agg.actions;
+                    e.deaths          += agg.deaths;
+                    e.hours           += agg.hours;
+                    e.donated_points  += agg.donated_points;
+                }
+                let mut entries: Vec<(Ucid, String, Aggregates)> = map
+                    .into_iter()
+                    .map(|(ucid, agg)| {
+                        let name = self.pilots.pilots.get(&ucid)
+                            .ok().flatten()
+                            .and_then(|p| p.name.last().cloned())
+                            .unwrap_or_default();
+                        (ucid, name, agg)
+                    })
+                    .collect();
+                entries.sort_by(|a, b| {
+                    (b.2.air_kills + b.2.ground_kills).cmp(&(a.2.air_kills + a.2.ground_kills))
+                });
+                Ok(entries)
+            }
+        }
+    }
+
+    /// Get all pilot UCIDs and their most recent names (all-time, for name resolution)
+    pub(crate) fn all_pilot_names(&self) -> Result<Vec<(Ucid, String)>> {
         let mut entries = Vec::new();
         for r in self.pilots.pilots.iter() {
             let (ucid, pilot) = r?;
-            let name = pilot
-                .name
-                .last()
-                .map(|s| s.clone())
-                .unwrap_or(String::default());
-            entries.push((ucid, name, pilot.total));
+            let name = pilot.name.last().map(|s| s.clone()).unwrap_or_default();
+            entries.push((ucid, name));
         }
-        entries.sort_by(|a, b| {
-            let a_kills = a.2.air_kills + a.2.ground_kills;
-            let b_kills = b.2.air_kills + b.2.ground_kills;
-            b_kills.cmp(&a_kills)
-        });
         Ok(entries)
     }
 
     /// Get the latest round for each scenario
+    /// Pilot points for active round, sorted descending
+    pub(crate) fn pilot_points(&self, round: RoundId) -> Result<Vec<(std::string::String, i32, std::string::String)>> {
+        // Returns Vec<(name, points, side)>
+        let mut result = Vec::new();
+        for r in self.pilots.round_info.iter() {
+            let ((ucid, rid), ri) = r?;
+            if rid != round { continue; }
+            if ri.points == 0 { continue; }
+            let name = self.pilots.pilots.get(&ucid)?
+                .and_then(|p| p.name.last().map(|s| s.to_string()))
+                .unwrap_or_default();
+            let side = format!("{:?}", ri.side.1);
+            result.push((name, ri.points, side));
+        }
+        result.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok(result)
+    }
+
+    /// Most captured objectives for a round, sorted by capture count desc
+    pub(crate) fn most_captured(&self, round: RoundId) -> Result<Vec<(std::string::String, u32)>> {
+        // Returns Vec<(objective_name, capture_count)>
+        let mut result = Vec::new();
+        for r in self.objective_captures.scan_prefix(&round)? {
+            let ((_, oid), count) = r?;
+            // Look up objective name
+            let name = self.objectives.get(&(round, oid))?
+                .map(|o| o.name.to_string())
+                .unwrap_or_else(|| format!("{:?}", oid));
+            result.push((name, count));
+        }
+        result.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok(result)
+    }
+
+    /// Aircraft usage stats for a round, sorted by sortie count desc
+    pub(crate) fn aircraft_usage(&self, round: RoundId) -> Result<Vec<(std::string::String, u32, f32)>> {
+        // Returns Vec<(vehicle_type, sortie_count, total_hours)>
+        let mut result = Vec::new();
+        for r in self.aircraft_sorties.scan_prefix(&round)? {
+            let ((_, vehicle), (count, hours)) = r?;
+            result.push((vehicle, count, hours));
+        }
+        result.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok(result)
+    }
+
+    /// Get connected pilots for a round with name, side, and current aircraft type
+    pub(crate) fn connected_pilots(&self, round: RoundId) -> Result<Vec<(std::string::String, std::string::String, Side, Option<std::string::String>)>> {
+        // Returns Vec<(ucid, name, side, aircraft_type)> for currently connected pilots
+        let mut result = Vec::new();
+        for r in self.pilots.round_info.iter() {
+            let ((ucid, rid), ri) = r?;
+            if rid != round { continue; }
+            if ri.connected.is_none() { continue; }
+            let name = self.pilots.pilots.get(&ucid)?
+                .and_then(|p| p.name.last().map(|s| s.to_string()))
+                .unwrap_or_default();
+            let aircraft = ri.slot.and_then(|s| s.vehicle).map(|v| format!("{}", v));
+            result.push((ucid.to_string(), name, ri.side.1, aircraft));
+        }
+        result.sort_by(|a, b| a.2.cmp(&b.2).then(a.1.cmp(&b.1)));
+        Ok(result)
+    }
+
+    /// Count registered pilots per side and online pilots for a round
+    pub(crate) fn pilot_side_counts(&self, round: RoundId) -> Result<(u32, u32, u32, u32)> {
+        // Returns (blue_registered, red_registered, blue_online, red_online)
+        let mut blue_reg = 0u32;
+        let mut red_reg  = 0u32;
+        let mut blue_online = 0u32;
+        let mut red_online  = 0u32;
+        for r in self.pilots.round_info.iter() {
+            let ((_, rid), ri) = r?;
+            if rid != round { continue; }
+            match ri.side.1 {
+                Side::Blue => {
+                    blue_reg += 1;
+                    if ri.connected.is_some() { blue_online += 1; }
+                }
+                Side::Red => {
+                    red_reg += 1;
+                    if ri.connected.is_some() { red_online += 1; }
+                }
+                _ => {}
+            }
+        }
+        Ok((blue_reg, red_reg, blue_online, red_online))
+    }
+
+    pub(crate) fn latest_weather(&self) -> Option<WeatherSnapshot> {
+        self.latest_weather.read().ok()?.clone()
+    }
+
+    pub(crate) fn active_session_stop(&self, round: RoundId) -> Option<DateTime<Utc>> {
+        self.session
+            .scan_prefix(&round)
+            .ok()?
+            .next_back()
+            .and_then(|r| r.ok())
+            .and_then(|(_, s)| s.stop_time)
+    }
+
     pub(crate) fn latest_rounds(&self) -> Result<Vec<(Scenario, RoundId, Round)>> {
         let mut rounds = Vec::new();
         let mut seen_scenarios = std::collections::HashSet::new();
@@ -1070,6 +1241,70 @@ impl StatsDb {
         }
     }
 
+    /// All sorties for a pilot across all rounds, sorted chronologically
+    pub(crate) fn pilot_sorties(&self, ucid: &Ucid) -> Result<Vec<(RoundId, SortieId, Sortie)>> {
+        let mut result = Vec::new();
+        for r in self.pilots.sortie.scan_prefix(ucid)? {
+            let ((_, round_id, sortie_id), sortie) = r?;
+            result.push((round_id, sortie_id, sortie));
+        }
+        // Sort chronologically
+        result.sort_by(|a, b| a.2.takeoff.cmp(&b.2.takeoff));
+        Ok(result)
+    }
+
+    /// Per-round aggregates for a pilot, enriched with scenario name
+    pub(crate) fn pilot_round_breakdown(&self, ucid: &Ucid) -> Result<Vec<(Scenario, RoundId, Aggregates)>> {
+        // Build a round_id → scenario lookup
+        let mut rid_to_scenario: std::collections::HashMap<RoundId, Scenario> = std::collections::HashMap::new();
+        for r in self.round.iter() {
+            let ((scenario, rid), _) = r?;
+            rid_to_scenario.insert(rid, scenario);
+        }
+        // Sum aggregates per round for this pilot
+        let mut map: std::collections::HashMap<RoundId, Aggregates> = std::collections::HashMap::new();
+        for r in self.pilots.aggregates.iter() {
+            let ((u, _vehicle, round_id), agg) = r?;
+            if u != *ucid { continue; }
+            let e = map.entry(round_id).or_insert_with(Aggregates::default);
+            e.air_kills        += agg.air_kills;
+            e.ground_kills     += agg.ground_kills;
+            e.captures         += agg.captures;
+            e.repairs          += agg.repairs;
+            e.supply_transfers += agg.supply_transfers;
+            e.troops           += agg.troops;
+            e.farps            += agg.farps;
+            e.deploys          += agg.deploys;
+            e.actions          += agg.actions;
+            e.deaths           += agg.deaths;
+            e.hours            += agg.hours;
+            e.donated_points   += agg.donated_points;
+        }
+        let mut result: Vec<(Scenario, RoundId, Aggregates)> = map
+            .into_iter()
+            .map(|(rid, agg)| {
+                let scenario = rid_to_scenario.get(&rid).cloned().unwrap_or_default();
+                (scenario, rid, agg)
+            })
+            .collect();
+        // Sort by round id ascending (oldest first)
+        result.sort_by(|a, b| a.1.cmp(&b.1));
+        Ok(result)
+    }
+
+    /// All kills made by a specific pilot (killer = Player(ucid)), all rounds
+    pub(crate) fn pilot_kills_for(&self, ucid: &Ucid) -> Result<Vec<(RoundId, Dead)>> {
+        let prefix_key = EnId::Player(*ucid);
+        let mut result = Vec::new();
+        for r in self.kills.scan_prefix(&prefix_key)? {
+            let ((_, round_id, _), dead) = r?;
+            result.push((round_id, dead));
+        }
+        // Sort newest first
+        result.sort_by(|a, b| b.1.time.cmp(&a.1.time));
+        Ok(result)
+    }
+
     pub(crate) fn recent_kills(&self, round: RoundId, limit: usize) -> Result<Vec<Dead>> {
         let mut kills = Vec::new();
         for r in self.kills.iter().rev() {
@@ -1098,15 +1333,14 @@ impl StatsDb {
                     info!("NewRound: no existing seq, creating new round");
                     return self.new_round(ctx, time, sortie.clone(), time);
                 }
-                Some(((_, round), seq)) => match self.round.get(&(sortie.clone(), round))? {
+                Some(((_, round), _seq)) => match self.round.get(&(sortie.clone(), round))? {
                     Some(r) if r.end.is_none() => {
-                        info!("NewRound: re-attaching to existing open round {round:?} seq={seq:?}");
-                        ctx.0 = Some(StatCtxInner {
-                            round,
-                            seq,
-                            sortie: sortie.clone(),
-                        });
-                        return Ok(());
+                        info!("NewRound: ending stale open round {round:?}, creating new round");
+                        let key = (sortie.clone(), round);
+                        let mut stale = r;
+                        stale.end = Some(time);
+                        let _ = self.round.insert(&key, &stale)?;
+                        return self.new_round(ctx, time, sortie.clone(), time);
                     }
                     Some(_) => {
                         info!("NewRound: existing round is ended, creating new round");
@@ -1223,6 +1457,10 @@ impl StatsDb {
             }
             Stat::Capture { id, by, side } => {
                 self.with_objective((ctx.round, id), |o| o.owner = side)?;
+                // Track capture count per objective
+                let cap_key = (ctx.round, id);
+                let prev = self.objective_captures.get(&cap_key)?.unwrap_or(0);
+                self.objective_captures.insert(&cap_key, &(prev + 1))?;
                 for ucid in by {
                     self.pilots.with_pilot_and_aggregates(
                         ucid,
@@ -1425,6 +1663,10 @@ impl StatsDb {
                     }
                 })?;
                 let vehicle = vehicle.ok_or_else(|| anyhow!("{id} takeoff without slotting"))?;
+                // Track sortie count per aircraft type
+                let ac_key = (ctx.round, vehicle.to_string());
+                let (prev_cnt, prev_hrs) = self.aircraft_sorties.get(&ac_key)?.unwrap_or((0, 0.0));
+                self.aircraft_sorties.insert(&ac_key, &(prev_cnt + 1, prev_hrs))?;
                 self.pilots.sortie.insert(
                     &(id, ctx.round, sid),
                     &Sortie {
@@ -1442,8 +1684,20 @@ impl StatsDb {
                     }
                 })?;
                 let sid = sid.ok_or_else(|| anyhow!("{id} landed without taking off"))?;
-                self.pilots
-                    .with_sortie((id, ctx.round, sid), |s| s.land = Some(time))?;
+                // Add flight hours to aircraft sortie totals
+                let mut vehicle_str: Option<std::string::String> = None;
+                self.pilots.with_sortie((id, ctx.round, sid), |s| {
+                    s.land = Some(time);
+                    vehicle_str = Some(s.vehicle.to_string());
+                })?;
+                if let Some(v) = vehicle_str {
+                    let hours = (time - self.pilots.sortie.get(&(id, ctx.round, sid))?
+                        .map(|s| s.takeoff).unwrap_or(time))
+                        .num_seconds() as f32 / 3600.0;
+                    let ac_key = (ctx.round, v);
+                    let (cnt, prev_hrs) = self.aircraft_sorties.get(&ac_key)?.unwrap_or((0, 0.0));
+                    self.aircraft_sorties.insert(&ac_key, &(cnt, prev_hrs + hours))?;
+                }
             }
             Stat::Life { id, lives } => {
                 self.pilots.with_pilot_round_info(id, ctx.round, |ri| {
@@ -1489,6 +1743,19 @@ impl StatsDb {
             }
             Stat::PointsTransferToObjective { from: _, to: _, points: _ } => {
                 // Not currently tracked in database
+            }
+            Stat::Weather { temp_c, wind_speed_kts, wind_from_deg, cloud_base_m, qnh_hpa, cloud_density, visibility_m } => {
+                if let Ok(mut w) = self.latest_weather.write() {
+                    *w = Some(WeatherSnapshot {
+                        temp_c,
+                        wind_speed_kts,
+                        wind_from_deg,
+                        cloud_base_m,
+                        qnh_hpa,
+                        cloud_density,
+                        visibility_m,
+                    });
+                }
             }
             Stat::ConvoyDestroyed { .. }
             | Stat::CampaignEvent { .. }
@@ -1617,5 +1884,39 @@ impl StatsDb {
             }
         }
         Ok(points)
+    }
+
+    /// Wipe all campaign data — rounds, kills, objectives, pilot stats, trails,
+    /// captures, sorties, weather — while preserving auth sessions and Discord links
+    /// so admins remain logged in and pilot linking is not lost.
+    pub(crate) fn reset_campaign_data(&self) -> Result<()> {
+        // Pilot stat trees
+        self.pilots.pilots.clear()?;
+        self.pilots.aggregates.clear()?;
+        self.pilots.by_name.clear()?;
+        self.pilots.sortie.clear()?;
+        self.pilots.round_info.clear()?;
+        // Round / mission trees
+        self.seq.clear()?;
+        self.round.clear()?;
+        self.session.clear()?;
+        // Combat trees
+        self.kills.clear()?;
+        self.shared_kills.clear()?;
+        self.units.clear()?;
+        self.groups.clear()?;
+        self.detected.clear()?;
+        // Objectives
+        self.objectives.clear()?;
+        self.equipment.clear()?;
+        self.liquids.clear()?;
+        // Captures & sorties
+        self.objective_captures.clear()?;
+        self.aircraft_sorties.clear()?;
+        // Trails & weather
+        self.trail_points.clear()?;
+        if let Ok(mut w) = self.latest_weather.write() { *w = None; }
+        // auth_sessions, auth_states, discord_to_ucid, ucid_to_discord → preserved
+        Ok(())
     }
 }

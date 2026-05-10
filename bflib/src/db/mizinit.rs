@@ -45,7 +45,7 @@ use compact_str::CompactString;
 use dcso3::{
     centroid2d, coalition::Side, controller::PointType, coord::Coord,
     country::Country,
-    env::miz::{Group, Miz, MizIndex, Skill, TriggerZone, TriggerZoneTyp},
+    env::miz::{Group, GroupKind, Miz, MizIndex, Skill, TriggerZone, TriggerZoneTyp},
     land::Land, net::Net, trigger::Trigger, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3
 };
 use enumflags2::BitFlags;
@@ -701,6 +701,9 @@ impl Db {
     }
 
     pub fn init_objective_slots(&mut self, side: Side, slot: Group) -> Result<()> {
+        if slot.raw_get::<_, bool>("dynSpawnTemplate").unwrap_or(false) {
+            return Ok(());
+        }
         let mut ground_start = false;
         let mut has_link_unit = false;
 
@@ -839,6 +842,15 @@ impl Db {
                 if let Some(name) = name.strip_prefix("G") {
                     let (template_side, name) = name.parse::<ObjGroup>()?.template(side);
                     if template_side == side {
+                        // Skip if the template doesn't exist in the miz for this side
+                        // (e.g. unprefixed zones like "GLOGIA" generate "NLOGIA" for Neutral
+                        // but missions typically don't define Neutral-coalition variants)
+                        if spctx
+                            .get_template_ref(idx, GroupKind::Any, side, name.as_str())
+                            .is_err()
+                        {
+                            continue;
+                        }
                         t.init_objective_group(&spctx, idx, miz, zone, side, name.as_str())?
                     }
                 } else if name.starts_with("T") || name.starts_with("O") {

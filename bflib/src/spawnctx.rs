@@ -163,6 +163,32 @@ impl<'lua> SpawnCtx<'lua> {
             .ok_or_else(|| anyhow!("no such trigger zone {name}"))?)
     }
 
+    /// Returns the world positions of all trigger zones whose names start with "TOWN_".
+    pub fn town_zone_positions(&self) -> Vec<dcso3::Vector2> {
+        let zones = match self.miz.triggers() {
+            Ok(z) => z,
+            Err(e) => { warn!("town_zone_positions: could not read triggers: {e}"); return vec![]; }
+        };
+        let mut out = Vec::new();
+        for zone in zones {
+            let zone: TriggerZone = match zone {
+                Ok(z) => z,
+                Err(_) => continue,
+            };
+            let name: dcso3::String = match zone.name() {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            if !name.starts_with("TOWN_") {
+                continue;
+            }
+            if let Ok(pos) = zone.pos() {
+                out.push(pos);
+            }
+        }
+        out
+    }
+
     pub fn move_farp_pad(
         &self,
         idx: &MizIndex,
@@ -255,7 +281,6 @@ impl<'lua> SpawnCtx<'lua> {
         let ts = Utc::now();
         match name {
             Despawn::Group(oid) => {
-                // Get as Object, then convert to Unit, then get Group to despawn
                 match dcso3::object::Object::get_instance(self.lua, &oid) {
                     Ok(obj) => {
                         match obj.as_unit() {
@@ -265,7 +290,12 @@ impl<'lua> SpawnCtx<'lua> {
                                     Err(e) => info!("attempt to despawn unit without group {e:?}"),
                                 }
                             }
-                            Err(e) => info!("attempt to despawn object that is not a unit {e:?}"),
+                            Err(_) => {
+                                // oid is a Group, not a unit — destroy directly
+                                if let Err(e) = obj.destroy() {
+                                    info!("attempt to despawn group directly failed: {e:?}");
+                                }
+                            }
                         }
                     }
                     Err(e) => info!("attempt to despawn invalid object {e:?}"),

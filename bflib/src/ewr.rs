@@ -39,6 +39,9 @@ use compact_str::{CompactString, format_compact};
 use dcso3::{
     MizLua, Position3, Vector2, Vector3, azumith2d_to, azumith3d, azumith3d_to, coalition::Side,
     land::Land, net::Ucid, radians_to_degrees,
+    object::DcsObject,
+    unit::Unit,
+
 };
 use fxhash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
@@ -274,6 +277,7 @@ impl Ewr {
                         inst.velocity,
                     )
                 });
+            // Action groups (player-deployed AWACS, drones, etc.) — use stored airborne_velocity.
             let actions = db
                 .persisted
                 .actions
@@ -288,8 +292,39 @@ impl Ewr {
                                 .map(|v| (EnId::Unit(uid), sg.side, su.position, v))
                         })
                 });
-            players.chain(actions).collect()
+            // AI aircraft (spawned CAP, AI AWACS, any AI airborne group).
+            // These are NOT in `db.persisted.actions` and do NOT have `airborne_velocity` set
+            // because they never go through `update_unit_positions()`.  We query DCS directly
+            // here — the same way player positions are queried — using the object-id map
+            // populated at birth time.
+            let mut ai_aircraft: SmallVec<[(EnId, Side, Position3, Vector3); 32]> =
+                SmallVec::new();
+            for (uid, oid, side) in db.ai_aircraft_unit_ids() {
+                // Query DCS for live position and in_air state.
+                let unit_instance: Unit<'_> = match Unit::get_instance(lua, oid) {
+                    Ok(u) => u,
+                    Err(_) => continue, // unit may have died but not yet been cleaned up
+                };
+                let in_air = match unit_instance.in_air() {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                if !in_air {
+                    continue;
+                }
+                let pos = match unit_instance.get_position() {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+                let vel = match unit_instance.get_velocity() {
+                    Ok(v) => v.0,
+                    Err(_) => Vector3::zeros(),
+                };
+                ai_aircraft.push((EnId::Unit(uid), side, pos, vel));
+            }
+            players.chain(actions).chain(ai_aircraft.into_iter()).collect()
         };
+
         for tracks in self.tracks.values_mut() {
             for track in tracks.values_mut() {
                 track.detected = false;
@@ -530,5 +565,90 @@ impl Ewr {
             state.last_spike_warned = now;
         }
         warnings
+    }
+
+    /// Return the 2D (x,z) positions of all enemy aircraft currently detected by
+    /// `defending_side`'s EWR network (`Track.detected == true`, enemy side, fresh age).
+    /// Only contacts that a radar has actually seen are included — players on the ground
+    /// or outside radar range do NOT appear here.
+    /// This is the authoritative source for reactive CAP spawning.
+    pub fn detected_enemy_positions(
+        &self,
+        defending_side: Side,
+        now: DateTime<Utc>,
+    ) -> Vec<Vector2> {
+        let tracks = match self.tracks.get(&defending_side) {
+            Some(t) => t,
+            None => return vec![],
+        };
+        tracks
+            .values()
+            .filter(|t| {
+                t.detected
+                    && t.side != defending_side
+                    && (now - t.last).num_seconds() <= DROP_AGE_SECS
+            })
+            .map(|t| Vector2::new(t.pos.p.x, t.pos.p.z))
+            .collect()
+    }
+
+    /// Count the number of **enemy player** contacts currently detected by
+    /// `defending_side`'s EWR network that are flying **fixed-wing aircraft only**
+    /// (i.e. `UnitTag::Aircraft`, NOT `UnitTag::Helicopter`).
+    ///
+    /// Helicopters are excluded because SAMs are expected to handle them.
+    /// AI aircraft are excluded because they should not trigger reactive CAP
+    /// (a lone AI scout or logistics plane does not constitute an air threat).
+    ///
+    /// Returns the count of qualifying fresh tracks.
+    pub fn detected_enemy_fixedwing_player_count(
+        &self,
+        defending_side: Side,
+        now: DateTime<Utc>,
+        db: &crate::db::Db,
+    ) -> usize {
+        use bfprotocols::cfg::UnitTag;
+        use bfprotocols::stats::EnId;
+        let tracks = match self.tracks.get(&defending_side) {
+            Some(t) => t,
+            None => return 0,
+        };
+        tracks
+            .iter()
+            .filter(|(id, t)| {
+                if !t.detected
+                    || t.side == defending_side
+                    || (now - t.last).num_seconds() > DROP_AGE_SECS
+                {
+                    return false;
+                }
+                // Only player contacts — AI aircraft don't trigger CAP.
+                let ucid = match id {
+                    EnId::Player(ucid) => ucid,
+                    EnId::Unit(_) => return false,
+                };
+                // Look up what they're flying and exclude helicopters.
+                let tags = db
+                    .persisted
+                    .players
+                    .get(ucid)
+                    .and_then(|p| p.current_slot.as_ref())
+                    .and_then(|(_, inst)| inst.as_ref())
+                    .and_then(|inst| {
+                        db.ephemeral
+                            .cfg
+                            .unit_classification
+                            .get(&inst.typ)
+                    });
+                match tags {
+                    Some(tags) => {
+                        tags.contains(UnitTag::Aircraft)
+                            && !tags.contains(UnitTag::Helicopter)
+                    }
+                    // If we can't determine the type, be conservative and include it.
+                    None => true,
+                }
+            })
+            .count()
     }
 }

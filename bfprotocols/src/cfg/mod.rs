@@ -29,6 +29,7 @@ use std::{
     fmt,
     fs::{self, File},
     io,
+    sync::Arc,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
 };
@@ -994,7 +995,7 @@ pub struct NavalCruiseMissileCfg {
     pub missiles_per_strike: u8,
     /// maximum range in meters from carrier to target
     pub max_range: u32,
-    /// supply cost deducted from parent naval base
+    /// supply cost deducted from carrier group warehouse
     pub supply_cost: u32,
 }
 
@@ -1646,6 +1647,20 @@ pub struct CampaignEventsCfg {
     /// Maximum number of CAP events active simultaneously across both sides. Default: 3.
     #[serde(default = "default_cap_max_concurrent")]
     pub cap_max_concurrent: usize,
+    /// Maximum reactive EnemyCap events active for a single side at the same time.
+    /// Prevents one side from consuming all concurrent CAP slots. Default: 2.
+    #[serde(default = "default_cap_max_per_side")]
+    pub cap_max_per_side: usize,
+    /// Minimum number of enemy aircraft within `cap_trigger_radius_m` of an objective
+    /// before a reactive CAP spawn is triggered. A lone scout will not trigger CAP;
+    /// a real incursion of 2+ aircraft will. Default: 2.
+    #[serde(default = "default_cap_min_threat")]
+    pub cap_min_threat_count: u32,
+    /// Cooldown (seconds) before a new reactive CAP can spawn for an objective after
+    /// the previous reactive CAP was destroyed mid-mission. Prevents instant respawn
+    /// of CAP and gives the attacker a window. Default: 120 (2 minutes).
+    #[serde(default = "default_cap_respawn_cooldown")]
+    pub cap_respawn_cooldown_secs: u64,
     /// How often (seconds) to call world.removeJunk to clean up debris. Default: 300 (5 min).
     /// Set to 0 to disable.
     #[serde(default = "default_junk_removal_interval")]
@@ -1654,47 +1669,9 @@ pub struct CampaignEventsCfg {
     #[serde(default = "default_junk_removal_radius")]
     pub junk_removal_radius_m: f64,
 
-    // ── Air-Assault (counter-offensive heli + C-130 airdrop) ──────────────────
-    /// Enable helicopter + C-130 air assault as part of counter-offensives.
-    #[serde(default)]
-    pub air_assault_enabled: bool,
-    /// Transport helicopter template — Red side (e.g. "RHeli_Assault").
-    #[serde(default = "default_heli_assault_red")]
-    pub heli_assault_template_red: String,
-    /// Transport helicopter template — Blue side (e.g. "BHeli_Assault").
-    #[serde(default = "default_heli_assault_blue")]
-    pub heli_assault_template_blue: String,
-    /// C-130 / heavy transport template — Red side (e.g. "RC130_Assault").
-    #[serde(default = "default_c130_assault_red")]
-    pub c130_assault_template_red: String,
-    /// C-130 / heavy transport template — Blue side (e.g. "BC130_Assault").
-    #[serde(default = "default_c130_assault_blue")]
-    pub c130_assault_template_blue: String,
-    /// Infantry squad template dropped from helicopter — Red side.
-    #[serde(default = "default_assault_troops_red")]
-    pub assault_troops_template_red: String,
-    /// Infantry squad template dropped from helicopter — Blue side.
-    #[serde(default = "default_assault_troops_blue")]
-    pub assault_troops_template_blue: String,
-    /// Light vehicle template airdropped from C-130 — Red side.
-    #[serde(default = "default_assault_vehicle_red")]
-    pub assault_vehicle_template_red: String,
-    /// Light vehicle template airdropped from C-130 — Blue side.
-    #[serde(default = "default_assault_vehicle_blue")]
-    pub assault_vehicle_template_blue: String,
-    /// How far (metres) from the objective the LZ is placed. Default: 3000.
-    #[serde(default = "default_assault_lz_offset")]
-    pub assault_lz_offset_m: f64,
-    /// Seconds after aircraft reach LZ before ground troops are spawned. Default: 90.
-    #[serde(default = "default_assault_deploy_delay")]
-    pub assault_deploy_delay_secs: u32,
-    /// How long (seconds) the air-assault event lasts. Default: 1800.
-    #[serde(default = "default_assault_duration")]
-    pub assault_duration_secs: u32,
-    /// Sound file to play as air-raid siren for the defending coalition. Default: "alarm_short.ogg".
-    #[serde(default = "default_assault_alarm_sound")]
-    pub assault_alarm_sound: String,
 }
+
+fn default_cap_respawn_cooldown() -> u64 { 120 }
 
 fn default_event_check_interval() -> u32 { 300 }
 fn default_event_probability() -> f64 { 0.15 }
@@ -1728,20 +1705,10 @@ fn default_hvt_circle_radius() -> f64 { 3_000.0 }
 fn default_hvt_startup_delay() -> u32 { 300 }
 fn default_cap_trigger_radius() -> f64 { 60_000.0 }
 fn default_cap_max_concurrent() -> usize { 3 }
+fn default_cap_max_per_side() -> usize { 2 }
+fn default_cap_min_threat() -> u32 { 2 }
 fn default_junk_removal_interval() -> u32 { 300 }
 fn default_junk_removal_radius() -> f64 { 500_000.0 }
-fn default_heli_assault_red()   -> String { "RHeli_Assault".into() }
-fn default_heli_assault_blue()  -> String { "BHeli_Assault".into() }
-fn default_c130_assault_red()   -> String { "RC130_Assault".into() }
-fn default_c130_assault_blue()  -> String { "BC130_Assault".into() }
-fn default_assault_troops_red() -> String { "RTroops_Assault".into() }
-fn default_assault_troops_blue() -> String { "BTroops_Assault".into() }
-fn default_assault_vehicle_red() -> String { "RVehicle_Assault".into() }
-fn default_assault_vehicle_blue() -> String { "BVehicle_Assault".into() }
-fn default_assault_lz_offset()  -> f64 { 3_000.0 }
-fn default_assault_deploy_delay() -> u32 { 90 }
-fn default_assault_duration()   -> u32 { 1800 }
-fn default_assault_alarm_sound() -> String { "alarm_short.ogg".into() }
 
 impl Default for CampaignEventsCfg {
     fn default() -> Self {
@@ -1788,21 +1755,11 @@ impl Default for CampaignEventsCfg {
             hvt_players_per_interval_step: 0,
             cap_trigger_radius_m: default_cap_trigger_radius(),
             cap_max_concurrent: default_cap_max_concurrent(),
+            cap_max_per_side: default_cap_max_per_side(),
+            cap_min_threat_count: default_cap_min_threat(),
+            cap_respawn_cooldown_secs: default_cap_respawn_cooldown(),
             junk_removal_interval_secs: default_junk_removal_interval(),
             junk_removal_radius_m: default_junk_removal_radius(),
-            air_assault_enabled: false,
-            heli_assault_template_red: default_heli_assault_red(),
-            heli_assault_template_blue: default_heli_assault_blue(),
-            c130_assault_template_red: default_c130_assault_red(),
-            c130_assault_template_blue: default_c130_assault_blue(),
-            assault_troops_template_red: default_assault_troops_red(),
-            assault_troops_template_blue: default_assault_troops_blue(),
-            assault_vehicle_template_red: default_assault_vehicle_red(),
-            assault_vehicle_template_blue: default_assault_vehicle_blue(),
-            assault_lz_offset_m: default_assault_lz_offset(),
-            assault_deploy_delay_secs: default_assault_deploy_delay(),
-            assault_duration_secs: default_assault_duration(),
-            assault_alarm_sound: default_assault_alarm_sound(),
         }
     }
 }
@@ -2030,7 +1987,7 @@ pub struct Cfg {
     pub time_of_day_effects: Option<TimeOfDayEffectsCfg>,
     /// Dynamic campaign events configuration
     #[serde(default)]
-    pub campaign_events: Option<CampaignEventsCfg>,
+    pub campaign_events: Option<Arc<CampaignEventsCfg>>,
     /// Pilot experience and progression system
     #[serde(default)]
     pub pilot_experience: Option<PilotExperienceCfg>,
@@ -2119,7 +2076,7 @@ fn default_cap_cost() -> i64 {
     250
 }
 fn default_cap_min_friendly_pilots() -> u32 {
-    1
+    2
 }
 fn default_cap_cooldown_secs() -> u32 {
     300

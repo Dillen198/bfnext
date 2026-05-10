@@ -58,18 +58,18 @@ export default function KillFeed() {
     queryFn: () => api.kills(selectedRound, 150),
     refetchInterval: 15_000,
   })
-  const { data: pilots = [] } = useQuery({
-    queryKey: ['leaderboard'],
-    queryFn: api.leaderboard,
-    refetchInterval: 60_000,
+  const { data: allPilots = [] } = useQuery({
+    queryKey: ['all-pilots'],
+    queryFn: api.allPilots,
+    refetchInterval: 120_000,
   })
 
   // Pilot name resolution
   const nameMap = useMemo(() => {
     const m = new Map<string, string>()
-    pilots.forEach(p => m.set(p.ucid, p.name))
+    allPilots.forEach(p => m.set(p.ucid, p.name))
     return m
-  }, [pilots])
+  }, [allPilots])
 
   // Weapon kill counts
   const weaponCounts: Record<string, number> = {}

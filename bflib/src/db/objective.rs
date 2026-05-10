@@ -1793,71 +1793,247 @@ impl Db {
         Ok(messages)
     }
 
-    pub fn check_carrier_group_capture(&mut self, now: DateTime<Utc>) -> Result<Vec<(ObjectiveId, Side, Side)>> {
-        let mut captures: Vec<(ObjectiveId, Side, Side)> = Vec::new();
+    pub fn check_carrier_group_capture(
+        &mut self,
+        lua: MizLua,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<(ObjectiveId, Side, Side)>> {
+        // Capture time reuses campaign_events.capture_time_secs (0 = instant)
+        let capture_secs = self
+            .ephemeral
+            .cfg
+            .campaign_events
+            .as_ref()
+            .map(|c| c.capture_time_secs as i64)
+            .unwrap_or(0);
 
-        for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
-            if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
-                // Carrier groups can be captured when health reaches 0
-                if obj.health == 0 && obj.logi == 0 {
-                    // Find the closest enemy group to determine new owner
-                    let carrier_pos = obj.zone.pos();
-                    let mut closest_enemy: Option<(Side, f64)> = None;
+        // --- Pass 1: collect which carriers have qualifying troops in zone ---
+        // Map: carrier ObjectiveId → Vec<(capturing_side, Option<ucid>, group_id)>
+        let mut in_zone: FxHashMap<ObjectiveId, Vec<(Side, Option<dcso3::net::Ucid>, GroupId)>> =
+            FxHashMap::default();
 
-                    for (_uid, unit) in &self.persisted.units {
-                        if unit.side != obj.owner && !unit.dead {
-                            let dist_sq = na::distance_squared(&carrier_pos.into(), &unit.pos.into());
-                            if dist_sq <= (10000.0_f64).powi(2) {  // Within 10km
-                                if let Some((_, best_dist)) = closest_enemy {
-                                    if dist_sq < best_dist {
-                                        closest_enemy = Some((unit.side, dist_sq));
-                                    }
-                                } else {
-                                    closest_enemy = Some((unit.side, dist_sq));
-                                }
-                            }
-                        }
+        for (oid, obj) in &self.persisted.objectives {
+            let ObjectiveKind::CarrierGroup { .. } = &obj.kind else {
+                continue;
+            };
+            // Carrier is only capturable when logi == 0 (dead in the water)
+            if obj.logi > 0 {
+                continue;
+            }
+
+            // Scan troops
+            for gid in &self.persisted.troops {
+                let group = group!(self, gid)?;
+                if let DeployKind::Troop { spec, player, .. } = &group.origin {
+                    if !spec.can_capture {
+                        continue;
                     }
+                    let in_range = group
+                        .units
+                        .into_iter()
+                        .filter_map(|uid| self.persisted.units.get(uid))
+                        .any(|u| obj.zone.contains(u.pos));
+                    if in_range {
+                        in_zone
+                            .entry(*oid)
+                            .or_default()
+                            .push((group.side, Some(*player), *gid));
+                    }
+                }
+            }
 
-                    if let Some((new_owner, _)) = closest_enemy {
-                        if new_owner != obj.owner {
-                            let old_owner = obj.owner;
-                            obj.owner = new_owner;
-                            obj.health = 50;  // Captured carrier starts at 50% health
-                            obj.logi = 100;   // Full logistics
-                            obj.last_change_ts = now;
-
-                            // IMPORTANT: Keep warehouse inventory! When Red captures a US carrier,
-                            // they inherit Blue aircraft (F/A-18, F-14, etc.). This creates strategic
-                            // value in capturing enemy carriers.
-                            obj.warehouse.damaged = false;
-
-                            // Transfer all groups to new owner
-                            if let Some(old_groups) = obj.groups.remove_cow(&old_owner) {
-                                for gid in &old_groups {
-                                    if let Some(group) = self.persisted.groups.get_mut_cow(gid) {
-                                        group.side = new_owner;
-                                        // Mark all units as alive for new owner
-                                        for uid in &group.units {
-                                            if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
-                                                unit.dead = false;
-                                                unit.side = new_owner;
-                                            }
-                                        }
-                                    }
-                                }
-                                obj.groups.insert_cow(new_owner, old_groups);
-                            }
-
-                            captures.push((*oid, old_owner, new_owner));
-                            info!("[CARRIER_CAPTURE] {} captured by {:?} from {:?}, warehouse aircraft transferred intact", obj.name, new_owner, old_owner);
-                            self.ephemeral.dirty();
-                        }
+            // Scan dismounts
+            for gid in &self.persisted.dismounts {
+                let group = group!(self, gid)?;
+                if let DeployKind::Dismount { can_capture, .. } = &group.origin {
+                    if !can_capture {
+                        continue;
+                    }
+                    let in_range = group
+                        .units
+                        .into_iter()
+                        .filter_map(|uid| self.persisted.units.get(uid))
+                        .any(|u| obj.zone.contains(u.pos));
+                    if in_range {
+                        in_zone
+                            .entry(*oid)
+                            .or_default()
+                            .push((group.side, None, *gid));
                     }
                 }
             }
         }
 
-        Ok(captures)
+        // --- Pass 2: apply capture logic for each eligible carrier ---
+        let mut actually_captured: Vec<(ObjectiveId, Side, Side)> = Vec::new();
+        let mut in_zone_oids: FxHashSet<ObjectiveId> = FxHashSet::default();
+
+        for (oid, groups) in in_zone {
+            let (captor_side, _, _) = *groups.first().ok_or_else(|| anyhow!("empty group list"))?;
+
+            // All troops must belong to the same side
+            if !groups.iter().all(|(s, _, _)| *s == captor_side) {
+                in_zone_oids.insert(oid);
+                continue;
+            }
+
+            // Must be different from current owner
+            let current_owner = objective!(self, oid)?.owner;
+            if captor_side == current_owner {
+                // Friendly troops — don't capture own carrier
+                continue;
+            }
+
+            in_zone_oids.insert(oid);
+
+            // --- Momentum timer ---
+            if capture_secs > 0 {
+                let is_new = !self.ephemeral.capture_progress.contains_key(&oid);
+                if is_new {
+                    let obj_name = self
+                        .persisted
+                        .objectives
+                        .get(&oid)
+                        .map(|o| o.name.clone())
+                        .unwrap_or_else(|| "carrier".into());
+                    let enemy = captor_side.opposite();
+                    self.ephemeral.msgs().panel_to_side(
+                        15,
+                        false,
+                        captor_side,
+                        format_compact!("⚔ Boarding {}… hold position! ({} sec)", obj_name, capture_secs),
+                    );
+                    self.ephemeral.msgs().panel_to_side(
+                        15,
+                        false,
+                        enemy,
+                        format_compact!("⚠ {} is being boarded! Eliminate enemy troops!", obj_name),
+                    );
+                }
+                let entry = self
+                    .ephemeral
+                    .capture_progress
+                    .entry(oid)
+                    .or_insert((captor_side, now));
+                if entry.0 != captor_side {
+                    *entry = (captor_side, now);
+                }
+                let elapsed = (now - entry.1).num_seconds();
+                if elapsed < capture_secs {
+                    continue; // Not enough time yet
+                }
+                // Timer elapsed — fall through to capture
+            }
+
+            // --- Execute capture ---
+            self.ephemeral.capture_progress.remove(&oid);
+
+            let obj = objective_mut!(self, oid)?;
+            let old_owner = obj.owner;
+            let obj_name = obj.name.clone();
+
+            obj.owner = captor_side;
+            obj.health = 50; // Carrier starts at 50% after boarding
+            obj.logi = 100;
+            obj.last_change_ts = now;
+            obj.warehouse.damaged = false;
+
+            // --- Despawn old owner's ship groups ---
+            // The mission defines separate BCARRIER/RCARRIER group sets for each side.
+            // On capture: remove old side's groups from DCS world, then spawn new side's groups.
+            if let Some(old_groups) = obj.groups.get(&old_owner).cloned() {
+                for gid in &old_groups {
+                    // Push despawn to remove from DCS world
+                    if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
+                        self.ephemeral.push_despawn(*gid, Despawn::Group(oid.clone()));
+                    }
+                    // Mark all units dead in our DB
+                    if let Some(group) = self.persisted.groups.get(gid) {
+                        for uid in &group.units {
+                            if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
+                                unit.dead = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- Spawn new owner's ship groups (BCARRIER → Blue, RCARRIER → Red) ---
+            // These must already exist in obj.groups for captor_side (mission-defined).
+            if let Some(new_groups) = obj.groups.get(&captor_side).cloned() {
+                for gid in &new_groups {
+                    // Resurrect all units
+                    if let Some(group) = self.persisted.groups.get(gid) {
+                        for uid in &group.units {
+                            if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
+                                unit.dead = false;
+                            }
+                        }
+                    }
+                    self.ephemeral.push_spawn(*gid);
+                }
+            } else {
+                warn!(
+                    "[CARRIER_CAPTURE] No {:?} ship groups found for carrier {}; \
+                     mission must define both BCARRIER and RCARRIER group sets",
+                    captor_side, obj_name
+                );
+            }
+
+
+            // Re-map warehouse capacity to new owner's production (keeps captured aircraft)
+            self.capture_warehouse(lua, oid)
+                .context("capturing carrier warehouse")?;
+
+            // Recalculate supply lines
+            self.setup_supply_lines().context("setup supply lines after carrier capture")?;
+            self.deliver_supplies_from_logistics_hubs(lua, now)
+                .context("delivering supplies after carrier capture")?;
+
+            // Delete capturing troop groups and collect ucids for points
+            let mut ucids: SmallVec<[dcso3::net::Ucid; 1]> = smallvec![];
+            for (_, ucid, gid) in &groups {
+                self.delete_group(gid).context("deleting boarding troops")?;
+                if let Some(u) = ucid {
+                    if !ucids.contains(u) {
+                        ucids.push(*u);
+                    }
+                }
+            }
+
+            // Award capture points
+            if let Some(points) = self.ephemeral.cfg.points.as_ref() {
+                if !ucids.is_empty() {
+                    let ppp = (points.capture as f32 / ucids.len() as f32).ceil() as i32;
+                    for ucid in &ucids {
+                        self.adjust_points(ucid, ppp, &format!("for capturing {obj_name}"));
+                    }
+                }
+            }
+
+            self.ephemeral.stat(Stat::Capture {
+                id: oid,
+                side: captor_side,
+                by: ucids.clone(),
+            });
+
+            // Rebuild objective markup
+            let obj = objective!(self, oid)?;
+            self.ephemeral.create_objective_markup(&self.persisted, obj);
+            self.ephemeral.dirty();
+
+            actually_captured.push((oid, old_owner, captor_side));
+            info!(
+                "[CARRIER_CAPTURE] {} boarded and captured by {:?} from {:?}; warehouse aircraft transferred intact",
+                obj_name, captor_side, old_owner
+            );
+        }
+
+        // Clear capture_progress for carriers no longer being contested
+        self.ephemeral
+            .capture_progress
+            .retain(|oid, _| in_zone_oids.contains(oid));
+
+        Ok(actually_captured)
     }
 }

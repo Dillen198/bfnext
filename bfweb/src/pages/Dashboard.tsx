@@ -1,426 +1,416 @@
-import React, { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import {
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
-} from 'recharts'
-import {
-  Shield, Target, Users, Zap, Clock,
-  AlertTriangle, Award, Crosshair, Activity, MapPin, Flame,
-} from 'lucide-react'
-import { api } from '../api'
-import SideBadge from '../components/SideBadge'
-import HealthBar from '../components/HealthBar'
-import PageHeader from '../components/PageHeader'
+import { MapContainer, TileLayer, CircleMarker, useMap } from 'react-leaflet'
+import type { LatLngBoundsExpression } from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+import { useNavigate } from 'react-router-dom'
+import { ExternalLink, Crosshair } from 'lucide-react'
+import { api, type OnlinePilot, type Objective, type Pilot, type Kill } from '../api'
+import { campaign } from '../config/campaign'
+import { useRound } from '../context/RoundContext'
 
-const TT = {
-  contentStyle: { background: '#111111', border: '1px solid #2a2a2a', borderRadius: 2, color: '#f1f5f9', fontSize: 12 },
-  labelStyle: { color: '#64748b' },
-  cursor: { fill: 'rgba(77,124,15,0.04)' },
+// ── Kill classifier (shared with KillFeed) ────────────────────────────────────
+
+function classifyKill(targetType: string | null): { label: string; color: string } {
+  const t = (targetType ?? '').toLowerCase()
+  if (t.includes('air') || t.includes('plane') || t.includes('heli') || t.includes('fighter'))
+    return { label: 'AIR', color: '#3b82f6' }
+  if (t.includes('ship') || t.includes('naval') || t.includes('carrier'))
+    return { label: 'NAVAL', color: '#06b6d4' }
+  if (t.includes('armor') || t.includes('tank') || t.includes('apc') || t.includes('ifv'))
+    return { label: 'ARMOR', color: '#f97316' }
+  if (t.includes('sam') || t.includes('radar') || t.includes('aaa') || t.includes('air defence'))
+    return { label: 'AD', color: '#a78bfa' }
+  if (t.includes('truck') || t.includes('supply') || t.includes('vehicle') || t.includes('car'))
+    return { label: 'VEH', color: '#fbbf24' }
+  if (t.includes('infantry') || t.includes('troop') || t.includes('soldier'))
+    return { label: 'INF', color: '#22c55e' }
+  return { label: 'GND', color: '#94a3b8' }
 }
 
-// ── Shared card shell ──
-function Card({
-  children, className = '',
-}: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`vs-card ${className}`}>
-      {children}
-    </div>
-  )
+function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-function CardHeader({ title, icon: Icon, color = 'text-slate-400', right }: {
-  title: string; icon: React.ElementType; color?: string; right?: React.ReactNode
-}) {
+// ── Map ───────────────────────────────────────────────────────────────────────
+
+function FitBounds({ objectives }: { objectives: Objective[] }) {
+  const map = useMap()
+  useEffect(() => {
+    if (!objectives.length) return
+    const bounds: LatLngBoundsExpression = objectives.map(o => [o.lat, o.lon] as [number, number])
+    map.fitBounds(bounds, { padding: [32, 32], maxZoom: 9, animate: false })
+  }, [map, objectives])
+  return null
+}
+
+function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenTacmap: () => void }) {
+  const valid = objectives.filter(o => o.lat !== 0 || o.lon !== 0)
+  const dot = (owner: string) =>
+    owner === 'Blue' ? { color: campaign.blueColor, fillColor: campaign.blueColor } :
+    owner === 'Red'  ? { color: campaign.redColor,  fillColor: campaign.redColor  } :
+                       { color: '#6b7280',           fillColor: '#4b5563'          }
+
   return (
-    <div className="flex items-center justify-between px-5 pt-4 pb-3.5" style={{ borderBottom: '1px solid var(--border)' }}>
-      <div className="flex items-center gap-2">
-        <Icon size={13} className={color} />
-        <span className="vs-section-title" style={{ fontSize: '0.72rem' }}>{title}</span>
+    <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <MapContainer
+        center={campaign.mapCenter}
+        zoom={campaign.mapZoom}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+        zoomControl={false}
+        attributionControl={false}
+      >
+        <TileLayer
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          maxZoom={19}
+          opacity={0.75}
+        />
+        {valid.length > 0 && <FitBounds objectives={valid} />}
+        {valid.map(obj => (
+          <CircleMarker
+            key={obj.id}
+            center={[obj.lat, obj.lon]}
+            radius={obj.kind === 'Airbase' ? 7 : obj.kind === 'Carrier Group' ? 6 : 5}
+            pathOptions={{ ...dot(obj.owner), fillOpacity: obj.health > 0 ? 0.85 : 0.25, weight: 1.5 }}
+          />
+        ))}
+      </MapContainer>
+
+      {/* TACMAP button */}
+      <button
+        onClick={onOpenTacmap}
+        style={{
+          position: 'absolute', top: 8, right: 8, zIndex: 1000,
+          display: 'flex', alignItems: 'center', gap: 4,
+          background: 'rgba(0,0,0,0.75)', border: '1px solid var(--border)',
+          color: 'var(--accent)', borderRadius: 2, padding: '4px 8px',
+          fontSize: '0.6rem', letterSpacing: '0.1em', cursor: 'pointer',
+          fontFamily: "'Bebas Neue', sans-serif",
+        }}
+      >
+        <ExternalLink size={9} /> TACMAP
+      </button>
+
+      {/* Legend */}
+      <div style={{
+        position: 'absolute', bottom: 8, left: 8, zIndex: 1000,
+        display: 'flex', gap: 8, background: 'rgba(0,0,0,0.65)',
+        padding: '4px 8px', borderRadius: 2,
+        fontSize: '0.58rem', color: '#94a3b8',
+      }}>
+        {[
+          { label: campaign.blueLabel, color: campaign.blueColor },
+          { label: campaign.redLabel,  color: campaign.redColor  },
+          { label: 'Neutral',          color: '#6b7280'          },
+        ].map(({ label, color }) => (
+          <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, display: 'inline-block' }} />
+            {label}
+          </span>
+        ))}
       </div>
-      {right}
     </div>
   )
 }
 
-// ── KPI Card ──
-function KpiCard({ label, value, icon: Icon, color, sub }: {
-  label: string; value: React.ReactNode; icon: React.ElementType; color: string; sub?: string
-}) {
-  return (
-    <div
-      className="vs-card-top p-4"
-      style={{ borderTopColor: color } as React.CSSProperties}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>{label}</span>
-        <div className="p-1.5" style={{ background: `${color}15`, borderRadius: '2px' }}>
-          <Icon size={12} style={{ color }} />
-        </div>
-      </div>
-      <div className="vs-stat-value tabular-nums mb-1" style={{ fontSize: '1.8rem', color }}>{value}</div>
-      {sub && <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '0.2rem' }}>{sub}</div>}
-    </div>
-  )
-}
+// ── Objectives strip ──────────────────────────────────────────────────────────
 
-// ── Objective kind icon ──
-const kindBg: Record<string, string> = {
-  Airbase: '#1e3a5f', FARP: '#1a3020', FOB: '#2d2010',
-  Factory: '#2a1a30', 'Logistics Hub': '#1a2a2d', 'Naval Base': '#101d30',
-  'Carrier Group': '#101d30',
-}
-const kindLabel: Record<string, string> = {
-  Airbase: 'AB', FARP: 'FP', FOB: 'FB', Factory: 'FC',
-  'Logistics Hub': 'LH', 'Naval Base': 'NB', 'Carrier Group': 'CG',
-}
+const OBJ_CATEGORIES: { label: string; kinds: string[]; icon: string }[] = [
+  { label: 'Airfields',        kinds: ['Airbase'],                          icon: '✈' },
+  { label: 'FARPs & FOBs',     kinds: ['FARP', 'FOB'],                      icon: '⬡' },
+  { label: 'Infrastructure',   kinds: ['Factory', 'Logistics Hub'],         icon: '⚙' },
+  { label: 'Naval & SAM',      kinds: ['Naval Base', 'Carrier Group', 'SAM Site', 'Port'], icon: '⚓' },
+]
 
-export default function Dashboard() {
-  const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: api.stats, refetchInterval: 30_000 })
-  const { data: pilots = [] } = useQuery({ queryKey: ['leaderboard'], queryFn: api.leaderboard, refetchInterval: 30_000 })
-  const { data: objectives = [] } = useQuery({ queryKey: ['objectives'], queryFn: () => api.objectives(), refetchInterval: 30_000 })
-  const { data: rounds = [] } = useQuery({ queryKey: ['rounds'], queryFn: api.rounds, refetchInterval: 60_000 })
-  const { data: kills = [] } = useQuery({ queryKey: ['kills'], queryFn: () => api.kills(undefined, 50), refetchInterval: 15_000 })
+function ObjectivesStrip({ objectives }: { objectives: Objective[] }) {
+  const cols = OBJ_CATEGORIES.map(cat => ({
+    ...cat,
+    items: objectives.filter(o => cat.kinds.includes(o.kind)).sort((a, b) => a.name.localeCompare(b.name)),
+  })).filter(c => c.items.length > 0)
 
-  const activeRound = rounds.find(r => r.active)
-  const pastRounds = rounds.filter(r => !r.active).slice(-3).reverse()
-
-  // ── Territory ──
-  const redCount     = objectives.filter(o => o.owner === 'Red').length
-  const blueCount    = objectives.filter(o => o.owner === 'Blue').length
-  const neutralCount = objectives.filter(o => o.owner === 'Neutral').length
-  const total        = redCount + blueCount + neutralCount
-
-  const bluePct    = total > 0 ? Math.round(blueCount    / total * 100) : 0
-  const redPct     = total > 0 ? Math.round(redCount     / total * 100) : 0
-  const neutralPct = total > 0 ? Math.round(neutralCount / total * 100) : 0
-
-  // ── Pilot name map ──
-  const nameMap = useMemo(() => {
-    const m = new Map<string, string>()
-    pilots.forEach(p => m.set(p.ucid, p.name))
-    return m
-  }, [pilots])
-
-  // ── Kill activity by hour ──
-  const hourBuckets: Record<number, { blue: number; red: number }> = {}
-  kills.forEach(k => {
-    const h = new Date(k.time).getHours()
-    if (!hourBuckets[h]) hourBuckets[h] = { blue: 0, red: 0 }
-    if (k.killer?.side === 'Blue') hourBuckets[h].blue++
-    else if (k.killer?.side === 'Red') hourBuckets[h].red++
-  })
-  const activityData = Array.from({ length: 24 }, (_, i) => ({
-    hour: `${i}h`,
-    blue: hourBuckets[i]?.blue ?? 0,
-    red:  hourBuckets[i]?.red  ?? 0,
-  }))
-
-  // ── Top pilots bar chart ──
-  const top8 = pilots.slice(0, 8).map(p => ({
-    name: p.name.length > 14 ? p.name.slice(0, 13) + '…' : p.name,
-    air: p.air_kills,
-    ground: p.ground_kills,
-  }))
-
-  // ── Weapon distribution ──
-  const weaponCounts: Record<string, number> = {}
-  kills.forEach(k => { const w = k.killer?.weapon ?? 'Unknown'; weaponCounts[w] = (weaponCounts[w] ?? 0) + 1 })
-  const topWeapons = Object.entries(weaponCounts).sort((a, b) => b[1] - a[1]).slice(0, 6)
-    .map(([name, count]) => ({ name: name.length > 18 ? name.slice(0, 17) + '…' : name, count }))
-
-  // ── Objectives under threat ──
-  const threatened = [...objectives].filter(o => o.health < 60).sort((a, b) => a.health - b.health).slice(0, 8)
-
-  // ── Summary stats ──
-  const totalHours    = pilots.reduce((s, p) => s + p.hours, 0)
-  const totalAirKills = pilots.reduce((s, p) => s + p.air_kills, 0)
-  const totalGndKills = pilots.reduce((s, p) => s + p.ground_kills, 0)
-  const blueKills     = kills.filter(k => k.killer?.side === 'Blue').length
-  const redKills      = kills.filter(k => k.killer?.side === 'Red').length
+  if (!cols.length) return null
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader
-        title="SITREP"
-        sub={activeRound
-          ? `${activeRound.scenario} · active since ${new Date(activeRound.start).toLocaleDateString()}`
-          : 'No active campaign'}
-        right={
-          activeRound ? (
-            <span className="vs-badge vs-badge-live">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-400 vs-pulse" />
-              CAMPAIGN ACTIVE
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: `repeat(${Math.min(cols.length, 4)}, 1fr)`,
+      borderTop: '1px solid var(--border)',
+      maxHeight: campaign.dashboardObjectivesHeight,
+      overflow: 'hidden',
+      flexShrink: 0,
+    }}>
+      {cols.map((col, ci) => (
+        <div key={col.label} style={{
+          borderRight: ci < cols.length - 1 ? '1px solid var(--border)' : 'none',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '4px 10px',
+            background: '#0d0d0d',
+            borderBottom: '1px solid var(--border)',
+            flexShrink: 0,
+          }}>
+            <span style={{ fontSize: '0.58rem', letterSpacing: '0.14em', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
+              {col.icon} {col.label}
             </span>
-          ) : (
-            <span className="vs-badge vs-badge-offline">STANDBY</span>
-          )
-        }
-      />
-
-      <div className="flex-1 overflow-auto p-4 space-y-4 grid-bg" style={{ background: 'var(--bg)' }}>
-
-        {/* ── KPI strip ── */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-          <KpiCard label="Active Pilots"   value={stats?.total_pilots ?? '—'}   icon={Users}    color="#3b82f6" sub={`${totalHours.toFixed(0)}h total`} />
-          <KpiCard label="Total Kills"     value={stats?.total_kills ?? '—'}    icon={Zap}      color="#ef4444" sub={`${totalAirKills} air · ${totalGndKills} gnd`} />
-          <KpiCard label="Blue Territory"  value={`${bluePct}%`}                icon={Shield}   color="#60a5fa" sub={`${blueCount} / ${total} obj`} />
-          <KpiCard label="Red Territory"   value={`${redPct}%`}                 icon={Flame}    color="#f87171" sub={`${redCount} / ${total} obj`} />
-          <KpiCard label="Objectives"      value={stats?.objective_count ?? '—'} icon={Target}  color="#fbbf24" sub={`${neutralCount} neutral`} />
-          <KpiCard label="Rounds Played"   value={stats?.total_rounds ?? '—'}   icon={Clock}    color="#a78bfa" sub={activeRound ? 'Round in progress' : 'No active round'} />
-        </div>
-
-        {/* ── Territory control bar ── */}
-        {total > 0 && (
-          <div className="vs-card px-5 py-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="flex items-center gap-1.5" style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
-                <MapPin size={11} />
-                Territory Control
-              </span>
-              <div className="flex items-center gap-4 font-mono-vs" style={{ fontSize: '0.7rem' }}>
-                <span style={{ color: 'var(--blue)' }}>{blueCount} Blue</span>
-                <span style={{ color: 'var(--text-dim)' }}>·</span>
-                <span style={{ color: 'var(--accent)' }}>{redCount} Red</span>
-                <span style={{ color: 'var(--text-dim)' }}>·</span>
-                <span style={{ color: 'var(--text-muted)' }}>{neutralCount} Neutral</span>
-              </div>
-            </div>
-            <div className="h-2.5 overflow-hidden flex" style={{ background: 'rgba(75,85,99,0.12)', borderRadius: '1px' }}>
-              <div className="h-full health-fill" style={{ width: `${bluePct}%`, background: 'linear-gradient(90deg, #1d4ed8, #3b82f6)' }} />
-              <div className="h-full health-fill" style={{ width: `${neutralPct}%`, background: '#374151' }} />
-              <div className="h-full health-fill" style={{ width: `${redPct}%`, background: 'linear-gradient(90deg, #dc2626, #991b1b)' }} />
-            </div>
+            <span style={{ fontSize: '0.58rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>{col.items.length}</span>
           </div>
-        )}
-
-        {/* ── Main charts row ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Top pilots */}
-          <div className="lg:col-span-2">
-            <Card>
-              <CardHeader title="Top Pilots by Kills" icon={Award} color="text-yellow-400" />
-              <div className="p-5">
-                {top8.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={top8} layout="vertical" margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
-                      <XAxis type="number" tick={{ fill: '#374151', fontSize: 11 }} axisLine={false} tickLine={false} />
-                      <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 12 }} width={110} axisLine={false} tickLine={false} />
-                      <Tooltip {...TT} />
-                      <Bar dataKey="air"    name="Air Kills"    stackId="a" fill="#3b82f6" />
-                      <Bar dataKey="ground" name="Ground Kills" stackId="a" fill="#f97316" radius={[0, 4, 4, 0]} />
-                      <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} iconSize={8} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-[220px] flex items-center justify-center text-slate-700 text-sm">No pilot data</div>
-                )}
-              </div>
-            </Card>
-          </div>
-
-          {/* Kill distribution + recent round */}
-          <div className="space-y-4">
-            <Card>
-              <CardHeader title="Blue vs Red Kills" icon={Crosshair} color="text-red-400" />
-              <div className="p-5">
-                {(blueKills + redKills) > 0 ? (
-                  <>
-                    <ResponsiveContainer width="100%" height={100}>
-                      <PieChart>
-                        <Pie data={[
-                          { name: 'Blue', value: blueKills, color: '#3b82f6' },
-                          { name: 'Red',  value: redKills,  color: '#ef4444' },
-                        ]} cx="50%" cy="50%" innerRadius={28} outerRadius={44} paddingAngle={3} dataKey="value" stroke="none">
-                          <Cell fill="#3b82f6" />
-                          <Cell fill="#ef4444" />
-                        </Pie>
-                        <Tooltip {...TT} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div className="flex justify-center gap-6 text-[12px] mt-1">
-                      <div className="text-center">
-                        <div className="font-mono font-bold text-blue-400 text-base">{blueKills}</div>
-                        <div className="text-slate-600">Blue</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="font-mono font-bold text-red-400 text-base">{redKills}</div>
-                        <div className="text-slate-600">Red</div>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="h-[130px] flex items-center justify-center text-slate-700 text-sm">No kill data</div>
-                )}
-              </div>
-            </Card>
-
-            {/* Past rounds */}
-            {pastRounds.length > 0 && (
-              <Card>
-                <CardHeader title="Past Rounds" icon={Clock} color="text-purple-400" />
-                <div className="divide-y divide-[#2a2a2a]">
-                  {pastRounds.map(r => (
-                    <div key={r.id} className="px-5 py-2.5 flex items-center justify-between">
-                      <div>
-                        <div className="text-[12px] text-slate-300 font-semibold truncate max-w-[120px]">{r.scenario}</div>
-                        <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{new Date(r.start).toLocaleDateString()}</div>
-                      </div>
-                      {r.winner ? (
-                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${
-                          r.winner.includes('Blue') ? 'text-blue-300 bg-blue-500/10' :
-                          r.winner.includes('Red')  ? 'text-red-300 bg-red-500/10'  :
-                          'text-slate-400 bg-slate-500/10'
-                        }`}>{r.winner}</span>
-                      ) : (
-                        <span className="text-[11px] text-slate-700">—</span>
-                      )}
-                    </div>
-                  ))}
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            {col.items.map(obj => {
+              const ownerColor = obj.owner === 'Blue' ? campaign.blueColor : obj.owner === 'Red' ? campaign.redColor : '#4b5563'
+              return (
+                <div key={obj.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '3px 10px',
+                  borderBottom: '1px solid rgba(42,42,42,0.4)',
+                }}>
+                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: ownerColor, flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {obj.name}
+                  </span>
                 </div>
-              </Card>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Right panel — Online Pilots ───────────────────────────────────────────────
+
+function OnlinePilotsSection({ online, leaderboard }: { online: OnlinePilot[]; leaderboard: Pilot[] }) {
+  const navigate = useNavigate()
+
+  const killMap = useMemo(() => {
+    const m = new Map<string, number>()
+    leaderboard.forEach(p => m.set(p.ucid, p.air_kills + p.ground_kills))
+    return m
+  }, [leaderboard])
+
+  const blue = online.filter(p => p.side === 'Blue')
+  const red  = online.filter(p => p.side === 'Red')
+  const spec = online.filter(p => p.side === 'Neutral')
+
+  const group = (list: OnlinePilot[], color: string) =>
+    list.map(p => {
+      const kills = killMap.get(p.ucid) ?? 0
+      return (
+        <div
+          key={p.ucid}
+          onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '4px 10px', cursor: 'pointer',
+            borderBottom: '1px solid rgba(42,42,42,0.3)',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+        >
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {p.name}
+            </div>
+            {p.aircraft && (
+              <div style={{ fontSize: '0.54rem', color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {p.aircraft}
+              </div>
             )}
           </div>
+          {kills > 0 && (
+            <span style={{ fontSize: '0.62rem', fontFamily: 'monospace', fontWeight: 700, color, flexShrink: 0 }}>
+              {kills}
+            </span>
+          )}
+          {!p.aircraft && kills === 0 && (
+            <span style={{ fontSize: '0.52rem', color: 'var(--text-dim)', flexShrink: 0 }}>spec</span>
+          )}
         </div>
+      )
+    })
 
-        {/* ── Kill activity + weapons ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-          {/* Kill activity area chart */}
-          <Card className="lg:col-span-3">
-            <CardHeader title="Kill Activity (24h)" icon={Activity} color="text-cyan-400" />
-            <div className="p-5">
-              <ResponsiveContainer width="100%" height={140}>
-                <AreaChart data={activityData} margin={{ left: -10, right: 4, top: 4, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="redGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="hour" tick={{ fill: '#374151', fontSize: 10 }} axisLine={false} tickLine={false} interval={3} />
-                  <YAxis tick={{ fill: '#374151', fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip {...TT} />
-                  <Area type="monotone" dataKey="blue" name="Blue" stroke="#3b82f6" strokeWidth={1.5} fill="url(#blueGrad)" dot={false} />
-                  <Area type="monotone" dataKey="red"  name="Red"  stroke="#ef4444" strokeWidth={1.5} fill="url(#redGrad)"  dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-
-          {/* Top weapons */}
-          <Card className="lg:col-span-2">
-            <CardHeader title="Top Weapons" icon={Zap} color="text-orange-400" />
-            <div className="p-4">
-              {topWeapons.length > 0 ? (
-                <div className="space-y-2">
-                  {topWeapons.map((w, i) => {
-                    const pct = (topWeapons[0]?.count ?? 0) > 0 ? (w.count / topWeapons[0]!.count) * 100 : 0
-                    return (
-                      <div key={i}>
-                        <div className="flex justify-between text-[11px] mb-0.5">
-                          <span className="text-slate-400 truncate max-w-[150px]">{w.name}</span>
-                          <span className="font-mono text-slate-300 ml-2">{w.count}</span>
-                        </div>
-                        <div className="h-1.5 rounded-none overflow-hidden" style={{ background: 'var(--bg-elevated)' }}>
-                          <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{ width: `${pct}%`, background: 'linear-gradient(90deg, #f97316, #ef4444)' }}
-                          />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              ) : (
-                <div className="h-[120px] flex items-center justify-center text-slate-700 text-sm">No data</div>
-              )}
-            </div>
-          </Card>
-        </div>
-
-        {/* ── Bottom row: recent kills + threatened objectives ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-          {/* Recent kill feed */}
-          <Card>
-            <CardHeader title="Recent Kills" icon={Crosshair} color="text-red-400"
-              right={<span className="text-[10px] text-slate-700 font-mono">LIVE · 15s</span>}
-            />
-            <div className="divide-y divide-[#2a2a2a]">
-              {kills.length === 0 && (
-                <div className="px-5 py-6 text-center text-sm" style={{ color: 'var(--text-dim)' }}>No kills recorded</div>
-              )}
-              {kills.slice(0, 12).map((k, i) => {
-                const killerName = k.killer?.ucid ? (nameMap.get(k.killer.ucid) ?? 'Unknown Pilot') : null
-                const victimName = k.victim.ucid ? (nameMap.get(k.victim.ucid) ?? 'Unknown Pilot') : null
-                return (
-                  <div key={i} className="kill-row flex items-center gap-2 px-4 py-2.5">
-                    <span className="text-[10px] font-mono text-slate-700 w-14 shrink-0 tabular-nums">
-                      {new Date(k.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </span>
-                    <SideBadge side={k.killer?.side ?? 'Neutral'} size="xs" />
-                    <span className="text-[11px] flex-1 min-w-0 truncate">
-                      {killerName && <span className="text-slate-200 font-semibold">{killerName} </span>}
-                      {!killerName && <span className="text-slate-600">AI </span>}
-                      {k.killer?.weapon && (
-                        <span className="text-yellow-500/70 font-mono text-[10px]">[{k.killer.weapon}]</span>
-                      )}
-                      <span className="text-slate-700"> → </span>
-                      <span className="text-slate-400">
-                        {victimName ?? k.target_type ?? 'Unknown'}
-                      </span>
-                    </span>
-                    <SideBadge side={k.victim.side} size="xs" />
-                  </div>
-                )
-              })}
-            </div>
-          </Card>
-
-          {/* Threatened objectives */}
-          <Card>
-            <CardHeader title="Objectives Under Threat" icon={AlertTriangle} color="text-amber-400"
-              right={<span className="text-[10px] text-amber-600 font-mono">{threatened.length} CRITICAL</span>}
-            />
-            <div className="divide-y divide-[#2a2a2a] max-h-[340px] overflow-y-auto">
-              {threatened.length === 0 ? (
-                <div className="px-5 py-6 text-center text-sm" style={{ color: 'var(--text-dim)' }}>All objectives healthy</div>
-              ) : (
-                threatened.map(obj => (
-                  <div key={obj.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-amber-500/[0.02]">
-                    <div
-                      className="obj-icon text-[10px] font-bold text-slate-300"
-                      style={{ background: kindBg[obj.kind] ?? '#1a2030' }}
-                    >
-                      {kindLabel[obj.kind] ?? '??'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[12px] font-semibold text-slate-200 truncate">{obj.name}</span>
-                        <SideBadge side={obj.owner} size="xs" />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1">
-                          <HealthBar value={obj.health} />
-                        </div>
-                        <span className="text-[10px] font-mono text-slate-600">
-                          L:{obj.logi}% S:{obj.supply}%
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </Card>
-        </div>
-
+  return (
+    <div style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+      {/* header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '5px 10px 4px',
+        borderBottom: '1px solid var(--border)',
+        background: '#0d0d0d',
+      }}>
+        <span style={{ fontSize: '0.58rem', letterSpacing: '0.16em', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
+          Online Pilots
+        </span>
+        <span style={{ fontSize: '0.58rem', fontFamily: 'monospace', color: 'var(--text-dim)' }}>
+          <span style={{ color: campaign.redColor }}>{red.length}</span>
+          <span style={{ margin: '0 3px', color: 'var(--border)' }}>·</span>
+          <span style={{ color: campaign.blueColor }}>{blue.length}</span>
+        </span>
       </div>
+
+      {online.length === 0 ? (
+        <div style={{ padding: '8px 10px', fontSize: '0.62rem', color: 'var(--text-dim)' }}>No pilots online</div>
+      ) : (
+        <>
+          {red.length > 0 && (
+            <>
+              <div style={{ padding: '2px 10px', background: 'rgba(239,68,68,0.05)', borderBottom: '1px solid rgba(239,68,68,0.1)' }}>
+                <span style={{ fontSize: '0.52rem', color: campaign.redColor, letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 700 }}>
+                  {campaign.redLabel} · {red.length}
+                </span>
+              </div>
+              {group(red, campaign.redColor)}
+            </>
+          )}
+          {blue.length > 0 && (
+            <>
+              <div style={{ padding: '2px 10px', background: 'rgba(59,130,246,0.05)', borderBottom: '1px solid rgba(59,130,246,0.1)' }}>
+                <span style={{ fontSize: '0.52rem', color: campaign.blueColor, letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 700 }}>
+                  {campaign.blueLabel} · {blue.length}
+                </span>
+              </div>
+              {group(blue, campaign.blueColor)}
+            </>
+          )}
+          {spec.length > 0 && (
+            <>
+              <div style={{ padding: '2px 10px', background: 'rgba(107,114,128,0.05)', borderBottom: '1px solid rgba(107,114,128,0.1)' }}>
+                <span style={{ fontSize: '0.52rem', color: '#6b7280', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 700 }}>
+                  Spectators · {spec.length}
+                </span>
+              </div>
+              {group(spec, '#6b7280')}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Right panel — Recent Kills ────────────────────────────────────────────────
+
+function RecentKillsSection({ kills }: { kills: Kill[] }) {
+  const navigate = useNavigate()
+  const shown = kills.slice(0, campaign.dashboardKillFeedCount)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+      {/* header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '5px 10px 4px',
+        borderBottom: '1px solid var(--border)',
+        background: '#0d0d0d',
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: '0.58rem', letterSpacing: '0.16em', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
+          Recent Kills
+        </span>
+        <Crosshair size={9} style={{ color: 'var(--text-dim)' }} />
+      </div>
+
+      <div style={{ overflowY: 'auto', flex: 1 }}>
+        {shown.length === 0 ? (
+          <div style={{ padding: '8px 10px', fontSize: '0.62rem', color: 'var(--text-dim)' }}>No kills recorded</div>
+        ) : shown.map((k, i) => {
+          const { label, color } = classifyKill(k.target_type)
+          const killerColor = k.killer?.side === 'Blue' ? campaign.blueColor : k.killer?.side === 'Red' ? campaign.redColor : '#6b7280'
+          const victimColor = k.victim.side === 'Blue' ? campaign.blueColor : k.victim.side === 'Red' ? campaign.redColor : '#6b7280'
+          return (
+            <div
+              key={i}
+              style={{
+                padding: '4px 10px',
+                borderBottom: '1px solid rgba(42,42,42,0.4)',
+                display: 'flex', gap: 6, alignItems: 'flex-start',
+              }}
+            >
+              {/* kill type badge */}
+              <span style={{
+                fontSize: '0.48rem', fontWeight: 700, letterSpacing: '0.1em',
+                color, border: `1px solid ${color}`, borderRadius: 1,
+                padding: '1px 3px', flexShrink: 0, marginTop: 2, lineHeight: 1.4,
+              }}>
+                {label}
+              </span>
+
+              {/* content */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {k.killer?.ucid ? (
+                  <span
+                    style={{ fontSize: '0.62rem', color: killerColor, fontWeight: 600, cursor: 'pointer' }}
+                    onClick={() => k.killer?.ucid && navigate(`/pilots?ucid=${encodeURIComponent(k.killer.ucid)}`)}
+                  >
+                    {/* name shown via kills feed — ucid available but no name here, use side */}
+                    {k.killer.side}
+                  </span>
+                ) : (
+                  <span style={{ fontSize: '0.62rem', color: killerColor, fontWeight: 600 }}>
+                    {k.killer?.side ?? '?'}
+                  </span>
+                )}
+                {k.killer?.weapon && (
+                  <span style={{ fontSize: '0.55rem', color: 'var(--text-dim)' }}> · {k.killer.weapon}</span>
+                )}
+                <div style={{ fontSize: '0.55rem', color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ color: victimColor }}>{k.victim.side}</span>
+                  {k.target_type && <span> · {k.target_type}</span>}
+                </div>
+              </div>
+
+              {/* time */}
+              <span style={{ fontSize: '0.52rem', color: 'var(--text-dim)', fontFamily: 'monospace', flexShrink: 0, marginTop: 1 }}>
+                {fmtTime(k.time)}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+export default function Dashboard() {
+  const navigate = useNavigate()
+  const { selectedRound } = useRound()
+
+  const { data: online = []     } = useQuery({ queryKey: ['online'],      queryFn: api.online,                                   refetchInterval: 10_000 })
+  const { data: pilots = []     } = useQuery({ queryKey: ['leaderboard'], queryFn: api.leaderboard,                              refetchInterval: 60_000 })
+  const { data: objectives = [] } = useQuery({ queryKey: ['objectives', selectedRound],  queryFn: () => api.objectives(selectedRound),  refetchInterval: 30_000 })
+  const { data: kills = []      } = useQuery({ queryKey: ['kills-dash', selectedRound],  queryFn: () => api.kills(selectedRound, campaign.dashboardKillFeedCount + 10), refetchInterval: 15_000 })
+
+  return (
+    <div style={{ display: 'flex', flex: 1, overflow: 'hidden', background: 'var(--bg)' }}>
+
+      {/* ── LEFT — map + objectives strip ── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        <TacMap
+          objectives={objectives}
+          onOpenTacmap={() => navigate('/map')}
+        />
+        <ObjectivesStrip objectives={objectives} />
+      </div>
+
+      {/* ── RIGHT — live panel ── */}
+      <div style={{
+        width: campaign.dashboardRightPanelWidth,
+        flexShrink: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#0a0a0a',
+        borderLeft: '1px solid var(--border)',
+        overflow: 'hidden',
+      }}>
+        <OnlinePilotsSection online={online} leaderboard={pilots} />
+        <RecentKillsSection kills={kills} />
+      </div>
+
     </div>
   )
 }

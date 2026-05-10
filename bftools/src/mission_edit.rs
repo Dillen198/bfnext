@@ -984,6 +984,8 @@ struct WarehouseTemplate {
     blue_inventory: Table<'static>,
     red_inventory: Table<'static>,
     default: Table<'static>,
+    /// dynSpawnTemplate groups from the warehouse miz: (side, is_helicopter, original_group_id, group_table)
+    dyn_spawn_groups: Vec<(Side, bool, i64, Table<'static>)>,
 }
 
 impl WarehouseTemplate {
@@ -991,12 +993,18 @@ impl WarehouseTemplate {
         let mut blue_inventory_id = 0;
         let mut red_inventory_id = 0;
         let mut default_id = 0;
-        for coa in wht
+        let mut dyn_spawn_groups = vec![];
+        for pair in wht
             .mission
             .raw_get::<_, Table>("coalition")?
-            .pairs::<Value, Table>()
+            .pairs::<String, Table>()
         {
-            let coa = coa?.1;
+            let (coa_name, coa) = pair?;
+            let side = match coa_name.as_str() {
+                "blue" => Side::Blue,
+                "red" => Side::Red,
+                _ => continue,
+            };
             for country in coa.raw_get::<_, Table>("country")?.pairs::<Value, Table>() {
                 let country = country?.1;
                 for group in vehicle(&country, "static")? {
@@ -1017,6 +1025,19 @@ impl WarehouseTemplate {
                                     "invalid warehouse template, unexpected {name} invisible farp"
                                 )
                             }
+                        }
+                    }
+                }
+                for category in ["plane", "helicopter"] {
+                    let is_heli = category == "helicopter";
+                    for group in vehicle(&country, category)? {
+                        let group = group?;
+                        if group.raw_get::<_, bool>("dynSpawnTemplate").unwrap_or(false) {
+                            let orig_id = group.raw_get::<_, i64>("groupId")?;
+                            info!(
+                                "found dynSpawnTemplate group id={orig_id} in {coa_name}/{category}"
+                            );
+                            dyn_spawn_groups.push((side, is_heli, orig_id, group));
                         }
                     }
                 }
@@ -1048,10 +1069,101 @@ impl WarehouseTemplate {
             default: warehouses
                 .raw_get(default_id)
                 .context("getting default inventory")?,
+            dyn_spawn_groups,
         })
     }
 
-    fn apply(&self, lua: &Lua, cfg: &MizCmd, base: &mut LoadedMiz) -> Result<()> {
+    /// Copy dynSpawnTemplate groups from the warehouse miz into the base mission,
+    /// assigning fresh group/unit IDs to avoid conflicts. Returns a map of
+    /// original group ID -> new group ID so that linkDynTempl can be patched.
+    fn apply_dyn_spawn_templates(
+        &self,
+        lua: &Lua,
+        base: &mut LoadedMiz,
+    ) -> Result<HashMap<i64, i64>> {
+        if self.dyn_spawn_groups.is_empty() {
+            return Ok(HashMap::default());
+        }
+        let idx = base.mission.index()?;
+        let mut gid = idx.max_gid();
+        let mut uid = idx.max_uid();
+        gid.next();
+        uid.next();
+        // Maps original groupId -> new groupId. linkDynTempl references the
+        // dynSpawnTemplate group's groupId (confirmed from DCS mission editor output).
+        let mut id_map: HashMap<i64, i64> = HashMap::default();
+        for (side, is_heli, orig_gid, group) in &self.dyn_spawn_groups {
+            let group = group.deep_clone(lua)?;
+            let new_gid = gid.inner();
+            group.raw_set("groupId", gid)?;
+            id_map.insert(*orig_gid, new_gid);
+            for unit_pair in group
+                .raw_get::<_, Table>("units")?
+                .pairs::<Value, Table>()
+            {
+                let (_k, unit) = unit_pair?;
+                unit.raw_set("unitId", uid)?;
+                uid.next();
+            }
+            gid.next();
+            let coa = base.mission.coalition(*side)?;
+            let cname = match side {
+                Side::Blue => Country::CJTF_BLUE,
+                Side::Red => Country::CJTF_RED,
+                Side::Neutral => unreachable!(),
+            };
+            let country = match coa.country(cname)? {
+                Some(c) => c,
+                None => {
+                    let tbl = lua.create_table()?;
+                    tbl.raw_set("id", cname)?;
+                    tbl.raw_set(
+                        "name",
+                        match cname {
+                            Country::CJTF_BLUE => "CJTF Blue",
+                            Country::CJTF_RED => "CJTF Red",
+                            _ => unreachable!(),
+                        },
+                    )?;
+                    coa.raw_get::<_, Table>("country")?.push(tbl)?;
+                    coa.country(cname)?.unwrap()
+                }
+            };
+            let seq = if *is_heli {
+                let heli = country.helicopters()?;
+                if heli.len() > 0 {
+                    heli
+                } else {
+                    let heli = lua.create_table()?;
+                    heli.raw_set("group", lua.create_table()?)?;
+                    country.raw_set("helicopter", heli)?;
+                    country.helicopters()?
+                }
+            } else {
+                let plane = country.planes()?;
+                if plane.len() > 0 {
+                    plane
+                } else {
+                    let plane = lua.create_table()?;
+                    plane.raw_set("group", lua.create_table()?)?;
+                    country.raw_set("plane", plane)?;
+                    country.planes()?
+                }
+            };
+            let group_typed = Group::from_lua(Value::Table(group), lua)?;
+            seq.push(group_typed)?;
+            info!("added dynSpawnTemplate group orig_groupId={orig_gid}");
+        }
+        Ok(id_map)
+    }
+
+    fn apply(
+        &self,
+        lua: &Lua,
+        cfg: &MizCmd,
+        base: &mut LoadedMiz,
+        id_map: &HashMap<i64, i64>,
+    ) -> Result<()> {
         let mut blue_inventory = 0;
         let mut red_inventory = 0;
         let mut whids = vec![];
@@ -1103,14 +1215,37 @@ impl WarehouseTemplate {
             airport_ids.push(id);
         }
         for id in airport_ids {
+            let new_wh = self.default.deep_clone(lua)?;
+            // Preserve original aircrafts and coalition from the base mission.
+            // Propagation will add linkDynTempl into the aircraft entries.
+            // Coalition must be preserved so propagate_links picks the correct
+            // blue/red inventory for each airport.
+            if let Ok(orig) = airports.raw_get::<_, Table>(id) {
+                if let Ok(orig_ac) = orig.raw_get::<_, Table>("aircrafts") {
+                    new_wh.raw_set("aircrafts", orig_ac)?;
+                }
+                if let Ok(orig_coa) = orig.raw_get::<_, String>("coalition") {
+                    new_wh.raw_set("coalition", orig_coa)?;
+                }
+            }
             airports
-                .set(id, self.default.deep_clone(lua)?)
+                .set(id, new_wh)
                 .with_context(|| format_compact!("setting airport {id}"))?;
         }
-        for id in whids {
+        for id in &whids {
+            let new_wh = self.default.deep_clone(lua)?;
+            // Same: preserve original aircrafts and coalition.
+            if let Ok(orig) = warehouses.raw_get::<_, Table>(*id) {
+                if let Ok(orig_ac) = orig.raw_get::<_, Table>("aircrafts") {
+                    new_wh.raw_set("aircrafts", orig_ac)?;
+                }
+                if let Ok(orig_coa) = orig.raw_get::<_, String>("coalition") {
+                    new_wh.raw_set("coalition", orig_coa)?;
+                }
+            }
             warehouses
-                .set(id, self.default.deep_clone(lua)?)
-                .with_context(|| format_compact!("setting warehouse {id}"))?
+                .set(*id, new_wh)
+                .with_context(|| format_compact!("setting warehouse {id}"))?;
         }
         warehouses
             .set(red_inventory, self.red_inventory.deep_clone(lua)?)
@@ -1118,6 +1253,123 @@ impl WarehouseTemplate {
         warehouses
             .set(blue_inventory, self.blue_inventory.deep_clone(lua)?)
             .context("setting blue inventory")?;
+        // Patch linkDynTempl in all warehouse/airport entries.
+        // Structure: warehouse[id].planes["TypeName"].linkDynTempl = groupId
+        //            warehouse[id].helicopters["TypeName"].linkDynTempl = groupId
+        if !id_map.is_empty() {
+            let patch_wh = |wh: Table| -> Result<()> {
+                let aircrafts: Table = match wh.raw_get("aircrafts") {
+                    Ok(t) => t,
+                    Err(_) => return Ok(()),
+                };
+                for cat in ["planes", "helicopters"] {
+                    if let Ok(cat_tbl) = aircrafts.raw_get::<_, Table>(cat) {
+                        for ac_pair in cat_tbl.clone().pairs::<String, Table>() {
+                            let (ac_type, ac) = ac_pair?;
+                            if let Ok(old_id) = ac.raw_get::<_, i64>("linkDynTempl") {
+                                if let Some(&new_id) = id_map.get(&old_id) {
+                                    ac.raw_set("linkDynTempl", new_id)?;
+                                    info!(
+                                        "patched {ac_type} linkDynTempl {old_id} -> {new_id}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            };
+            for wh_pair in airports.clone().pairs::<i64, Table>() {
+                patch_wh(wh_pair?.1)?;
+            }
+            for wh_pair in warehouses.clone().pairs::<i64, Table>() {
+                patch_wh(wh_pair?.1)?;
+            }
+        }
+        // Propagate linkDynTempl from the (now-patched) inventory entries into every
+        // airport and non-inventory warehouse, so all airbases/FARPs/naval units get
+        // Apply dynSpawnTemplate links from both inventories to every warehouse —
+        // templates are common to all sides so coalition is not used to filter.
+        let both_invs: [Table; 2] = [
+            warehouses
+                .raw_get::<_, Table>(blue_inventory)
+                .context("getting blue inventory for propagation")?,
+            warehouses
+                .raw_get::<_, Table>(red_inventory)
+                .context("getting red inventory for propagation")?,
+        ];
+        let propagate_links = |wh: Table| -> Result<()> {
+            let wh_ac: Table = match wh.raw_get("aircrafts") {
+                Ok(t) => t,
+                Err(_) => return Ok(()),
+            };
+            let mut any_link = false;
+            for inv in &both_invs {
+                let inv_ac: Table = match inv.raw_get("aircrafts") {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                for cat in ["planes", "helicopters"] {
+                    if let Ok(inv_cat) = inv_ac.raw_get::<_, Table>(cat) {
+                        let wh_cat: Table = match wh_ac.raw_get::<_, Table>(cat) {
+                            Ok(t) => t,
+                            Err(_) => {
+                                let t = lua.create_table()?;
+                                wh_ac.raw_set(cat, t.clone())?;
+                                t
+                            }
+                        };
+                        for pair in inv_cat.clone().pairs::<String, Table>() {
+                            let (ac_type, inv_entry) = pair?;
+                            if let Ok(link) = inv_entry.raw_get::<_, i64>("linkDynTempl") {
+                                if link != 0 {
+                                    let wh_entry: Table =
+                                        match wh_cat.raw_get::<_, Table>(ac_type.as_str()) {
+                                            Ok(t) => t,
+                                            Err(_) => {
+                                                let t = inv_entry.deep_clone(lua)?;
+                                                wh_cat.raw_set(ac_type.as_str(), t.clone())?;
+                                                t
+                                            }
+                                        };
+                                    wh_entry.raw_set("linkDynTempl", link)?;
+                                    let cur_amt = wh_entry
+                                        .raw_get::<_, i64>("initialAmount")
+                                        .unwrap_or(0);
+                                    if cur_amt == 0 {
+                                        let inv_amt = inv_entry
+                                            .raw_get::<_, i64>("initialAmount")
+                                            .unwrap_or(0);
+                                        wh_entry.raw_set(
+                                            "initialAmount",
+                                            if inv_amt > 0 { inv_amt } else { 1 },
+                                        )?;
+                                    }
+                                    any_link = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if any_link {
+                wh.raw_set("dynamicSpawn", true)?;
+                wh.raw_set("unlimitedAircrafts", false)?;
+            }
+            Ok(())
+        };
+        for wh_pair in airports.clone().pairs::<i64, Table>() {
+            propagate_links(wh_pair?.1)?;
+        }
+        for wh_pair in warehouses.clone().pairs::<i64, Table>() {
+            let (id, wh) = wh_pair?;
+            if id != blue_inventory && id != red_inventory {
+                propagate_links(wh)?;
+            }
+        }
+        info!(
+            "propagated dynSpawn linkDynTempl to all airbase/FARP warehouses"
+        );
         base.warehouses.set("airports", airports)?;
         base.warehouses.set("warehouses", warehouses)?;
         Ok(())
@@ -1168,11 +1420,19 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
     vehicle_templates
         .apply(lua, &mut objectives, &mut base)
         .context("applying vehicle templates")?;
+    // Apply dynSpawnTemplate groups to the mission before serializing it,
+    // and record the old->new group ID mapping for linkDynTempl patching.
+    let dyn_templ_id_map = match warehouse_template.as_ref() {
+        Some(wht) => wht
+            .apply_dyn_spawn_templates(lua, &mut base)
+            .context("applying dyn spawn templates")?,
+        None => HashMap::default(),
+    };
     let s = serialize_to_lua("mission", Value::Table((&*base.mission).clone()))?;
     fs::write(&base.miz.files["mission"], &s).context("writing mission file")?;
     info!("wrote serialized mission to mission file.");
     if let Some(wht) = warehouse_template {
-        wht.apply(lua, &cfg, &mut base)
+        wht.apply(lua, &cfg, &mut base, &dyn_templ_id_map)
             .context("applying warehouse template")?;
         let s = serialize_to_lua("warehouses", Value::Table(base.warehouses.clone()))?;
         fs::write(&base.miz.files["warehouses"], &*s).context("writing warehouse file")?;

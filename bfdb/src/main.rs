@@ -21,6 +21,10 @@ use warp::{
 #[folder = "../bfweb/dist/"]
 struct Assets;
 
+#[derive(RustEmbed)]
+#[folder = "../bfsite/dist/"]
+struct SiteAssets;
+
 mod db;
 mod db_id;
 
@@ -70,6 +74,20 @@ struct Args {
     /// Discord role ID that grants admin access
     #[arg(long)]
     discord_admin_role_id: Option<String>,
+    /// Path to campaign config JSON (e.g. campaign.json).
+    /// Served at GET /api/config so the web UI can brand itself.
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Optional separate address to serve the public website (bfsite) on.
+    /// e.g. 0.0.0.0:8081 — if omitted, the site is still accessible at /site/ on the main port.
+    #[arg(long)]
+    site_address: Option<SocketAddr>,
+    /// Local admin username for password-based login (alternative to Discord OAuth)
+    #[arg(long)]
+    admin_username: Option<String>,
+    /// Local admin password for password-based login
+    #[arg(long)]
+    admin_password: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +97,12 @@ struct AuthConfig {
     redirect_uri:  String,
     guild_id:      String,
     admin_role_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct LocalAdminConfig {
+    username: String,
+    password: String,
 }
 
 #[derive(Debug)]
@@ -102,7 +126,21 @@ impl From<anyhow::Error> for Error {
 }
 
 fn json_response(data: String) -> impl warp::Reply {
-    reply::with_header(data, "content-type", "application/json")
+    reply::with_header(
+        reply::with_header(data, "content-type", "application/json"),
+        "cache-control",
+        "no-store",
+    )
+}
+
+// ── Campaign config handler ──────────────────────────────────────────
+
+async fn api_config(cfg_json: Arc<String>) -> impl warp::Reply {
+    reply::with_header(
+        reply::with_header((*cfg_json).clone(), "content-type", "application/json"),
+        "cache-control",
+        "no-store",
+    )
 }
 
 // ── API handlers ────────────────────────────────────────────────────
@@ -130,7 +168,11 @@ async fn api_rounds(db: StatsDb) -> std::result::Result<impl warp::Reply, Error>
 
 async fn api_leaderboard(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
-        let pilots = db.pilot_leaderboard()?;
+        // Use the active round so rankings reset on mission restart
+        let active_round = db.latest_rounds()?.into_iter()
+            .find(|(_, _, r)| r.end.is_none())
+            .map(|(_, rid, _)| rid);
+        let pilots = db.pilot_leaderboard(active_round)?;
         let entries: Vec<_> = pilots
             .iter()
             .map(|(ucid, name, agg)| {
@@ -152,6 +194,18 @@ async fn api_leaderboard(db: StatsDb) -> std::result::Result<impl warp::Reply, E
                 })
             })
             .collect();
+        Ok(serde_json::to_string(&entries)?)
+    })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/pilots — all pilot UCIDs + names (all-time, for name resolution)
+async fn api_all_pilots(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let pilots = db.all_pilot_names()?;
+        let entries: Vec<_> = pilots.iter().map(|(ucid, name)| {
+            serde_json::json!({ "ucid": ucid.to_string(), "name": name.to_string() })
+        }).collect();
         Ok(serde_json::to_string(&entries)?)
     })?;
     Ok(json_response(data))
@@ -280,17 +334,117 @@ async fn api_pilot(
     Ok(json_response(data))
 }
 
+/// GET /api/pilot/:ucid/sorties — all sorties for a pilot
+async fn api_pilot_sorties(
+    ucid: String,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let ucid: dcso3::net::Ucid = ucid.parse().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let sorties = db.pilot_sorties(&ucid)?;
+        let entries: Vec<_> = sorties.iter().rev().map(|(round_id, _sortie_id, s)| {
+            let duration_secs = s.land
+                .map(|l| (l - s.takeoff).num_seconds())
+                .unwrap_or(0);
+            serde_json::json!({
+                "round_id": round_id.0,
+                "aircraft": s.vehicle.to_string(),
+                "takeoff": s.takeoff.to_rfc3339(),
+                "land": s.land.map(|l| l.to_rfc3339()),
+                "duration_secs": duration_secs,
+                "landed": s.land.is_some(),
+            })
+        }).collect();
+        Ok(serde_json::to_string(&entries)?)
+    })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/pilot/:ucid/breakdown — per-round aggregates for a pilot
+async fn api_pilot_breakdown(
+    ucid: String,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let ucid: dcso3::net::Ucid = ucid.parse().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let rounds = db.pilot_round_breakdown(&ucid)?;
+        let entries: Vec<_> = rounds.iter().map(|(scenario, rid, agg)| serde_json::json!({
+            "round_id": rid.0,
+            "scenario": scenario,
+            "air_kills": agg.air_kills,
+            "ground_kills": agg.ground_kills,
+            "captures": agg.captures,
+            "repairs": agg.repairs,
+            "supply_transfers": agg.supply_transfers,
+            "troops": agg.troops,
+            "farps": agg.farps,
+            "deploys": agg.deploys,
+            "actions": agg.actions,
+            "deaths": agg.deaths,
+            "hours": agg.hours,
+        })).collect();
+        Ok(serde_json::to_string(&entries)?)
+    })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/pilot/:ucid/kills — all kills made by a pilot
+async fn api_pilot_kills(
+    ucid: String,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let ucid: dcso3::net::Ucid = ucid.parse().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let kills = db.pilot_kills_for(&ucid)?;
+        let entries: Vec<_> = kills.iter().map(|(round_id, dead)| {
+            let shot = dead.shots.iter().find(|s| s.hit || dead.shots.len() == 1);
+            let weapon = shot.and_then(|s| s.weapon_name.as_ref().map(|w| w.to_string()));
+            let target_type = shot.map(|s| s.target_typ.to_string());
+            let victim_ucid = dead.victim.ucid().map(|u| u.to_string());
+            let victim_side = format!("{:?}", dead.victim.side());
+            serde_json::json!({
+                "round_id": round_id.0,
+                "time": dead.time.to_rfc3339(),
+                "victim_ucid": victim_ucid,
+                "victim_side": victim_side,
+                "target_type": target_type,
+                "weapon": weapon,
+            })
+        }).collect();
+        Ok(serde_json::to_string(&entries)?)
+    })?;
+    Ok(json_response(data))
+}
+
 async fn api_stats(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
         let rounds = db.latest_rounds()?;
-        let pilots = db.pilot_leaderboard()?;
         let active_round = rounds.iter().find(|(_, _, r)| r.end.is_none());
+        let active_rid = active_round.map(|(_, rid, _)| *rid);
+        let pilots = db.pilot_leaderboard(active_rid)?;
         let obj_count = if let Some((_, rid, _)) = active_round {
             db.objectives_for_round(*rid)?.len()
         } else {
             0
         };
         let total_kills: u32 = pilots.iter().map(|(_, _, a)| a.air_kills + a.ground_kills).sum();
+        let restart_at = active_round
+            .and_then(|(_, rid, _)| db.active_session_stop(*rid))
+            .map(|t| t.to_rfc3339());
+        let weather = db.latest_weather().map(|w| serde_json::json!({
+            "temp_c": w.temp_c,
+            "wind_speed_kts": w.wind_speed_kts,
+            "wind_from_deg": w.wind_from_deg,
+            "cloud_base_m": w.cloud_base_m,
+            "qnh_hpa": w.qnh_hpa,
+            "cloud_density": w.cloud_density,
+            "visibility_m": w.visibility_m,
+        }));
+        let (blue_reg, red_reg, blue_online, red_online) = if let Some((_, rid, _)) = active_round {
+            db.pilot_side_counts(*rid).unwrap_or_default()
+        } else {
+            (0, 0, 0, 0)
+        };
         Ok(serde_json::to_string(&serde_json::json!({
             "total_pilots": pilots.len(),
             "total_rounds": rounds.len(),
@@ -301,7 +455,82 @@ async fn api_stats(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> 
             })),
             "objective_count": obj_count,
             "total_kills": total_kills,
+            "restart_at": restart_at,
+            "weather": weather,
+            "blue_registered": blue_reg,
+            "red_registered": red_reg,
+            "blue_online": blue_online,
+            "red_online": red_online,
         }))?)
+    })?;
+    Ok(json_response(data))
+}
+
+async fn api_points(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let rounds = db.latest_rounds()?;
+        let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
+            Some((_, rid, _)) => *rid,
+            None => return Ok("[]".to_string()),
+        };
+        let entries = db.pilot_points(rid)?;
+        let json: Vec<_> = entries.iter().map(|(name, pts, side)| serde_json::json!({
+            "name": name, "points": pts, "side": side,
+        })).collect();
+        Ok(serde_json::to_string(&json)?)
+    })?;
+    Ok(json_response(data))
+}
+
+async fn api_captures(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let rounds = db.latest_rounds()?;
+        let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
+            Some((_, rid, _)) => *rid,
+            None => return Ok("[]".to_string()),
+        };
+        let entries = db.most_captured(rid)?;
+        let json: Vec<_> = entries.iter().map(|(name, count)| serde_json::json!({
+            "name": name, "count": count,
+        })).collect();
+        Ok(serde_json::to_string(&json)?)
+    })?;
+    Ok(json_response(data))
+}
+
+async fn api_aircraft_usage(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let rounds = db.latest_rounds()?;
+        let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
+            Some((_, rid, _)) => *rid,
+            None => return Ok("[]".to_string()),
+        };
+        let entries = db.aircraft_usage(rid)?;
+        let json: Vec<_> = entries.iter().map(|(vehicle, count, hours)| serde_json::json!({
+            "vehicle": vehicle, "sorties": count, "hours": (hours * 10.0).round() / 10.0,
+        })).collect();
+        Ok(serde_json::to_string(&json)?)
+    })?;
+    Ok(json_response(data))
+}
+
+async fn api_online(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let rounds = db.latest_rounds()?;
+        let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
+            Some((_, rid, _)) => *rid,
+            None => return Ok("[]".to_string()),
+        };
+        let pilots = db.connected_pilots(rid)?;
+        let entries: Vec<_> = pilots.iter().map(|(ucid, name, side, aircraft)| {
+            serde_json::json!({
+                "ucid": ucid,
+                "name": name,
+                "side": format!("{:?}", side),
+                "aircraft": aircraft,
+            })
+        }).collect();
+        Ok(serde_json::to_string(&entries)?)
     })?;
     Ok(json_response(data))
 }
@@ -494,6 +723,41 @@ async fn api_auth_logout(
 }
 
 #[derive(Deserialize)]
+struct LocalLoginBody { username: String, password: String }
+
+/// POST /api/auth/local-login  — username/password admin login (no Discord required)
+async fn api_auth_local_login(
+    body: LocalLoginBody,
+    local_cfg: Option<LocalAdminConfig>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let cfg = local_cfg
+        .ok_or_else(|| anyhow::anyhow!("Local login is not enabled on this server"))?;
+    if body.username != cfg.username || body.password != cfg.password {
+        return Err(anyhow::anyhow!("Invalid username or password").into());
+    }
+    let session_id = Uuid::new_v4();
+    let session = SessionData {
+        discord_id: format!("local:{}", cfg.username),
+        username:   cfg.username.clone(),
+        avatar:     None,
+        is_admin:   true,
+        expires:    chrono::Utc::now() + chrono::Duration::days(7),
+    };
+    task::block_in_place(|| db.create_session(session_id, session))?;
+    let cookie = format!(
+        "session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
+        session_id
+    );
+    Ok(warp::http::Response::builder()
+        .status(200)
+        .header("set-cookie", cookie)
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .unwrap())
+}
+
+#[derive(Deserialize)]
 struct LinkBody { ucid: String }
 
 /// POST /api/auth/link  — link Discord account to DCS UCID
@@ -583,6 +847,17 @@ async fn api_admin_unlink(
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
+/// POST /api/admin/reset  — wipe all campaign data, keep auth & Discord links
+async fn api_admin_reset(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    task::block_in_place(|| db.reset_campaign_data())?;
+    eprintln!("ADMIN: campaign data reset by admin");
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
 /// GET /api/trails  — return recent trail points for the active round
 async fn api_trails(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
@@ -627,6 +902,10 @@ fn with_auth_cfg(cfg: Option<AuthConfig>) -> impl Filter<Extract = (AuthConfig,)
         .and_then(|cfg: Option<AuthConfig>| async move {
             cfg.ok_or_else(warp::reject::not_found)
         })
+}
+
+fn with_local_admin(cfg: Option<LocalAdminConfig>) -> impl Filter<Extract = (Option<LocalAdminConfig>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || cfg.clone())
 }
 
 // ── Live unit types (from Export.lua UDP feed) ───────────────────────
@@ -807,6 +1086,29 @@ async fn ws_units(ws: WebSocket, state: LiveState, mut rx: broadcast::Receiver<S
 
 // ── Static file serving ─────────────────────────────────────────────
 
+fn serve_site_asset(path: &str) -> Response {
+    let path = if path.is_empty() { "index.html" } else { path };
+    match SiteAssets::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            warp::http::Response::builder()
+                .header("content-type", mime.as_ref())
+                .body(content.data.into_owned())
+                .unwrap()
+                .into_response()
+        }
+        None => {
+            // SPA fallback
+            let content = SiteAssets::get("index.html").unwrap();
+            warp::http::Response::builder()
+                .header("content-type", "text/html")
+                .body(content.data.into_owned())
+                .unwrap()
+                .into_response()
+        }
+    }
+}
+
 fn serve_asset(path: &str) -> Response {
     let path = if path.is_empty() { "index.html" } else { path };
     match Assets::get(path) {
@@ -876,6 +1178,37 @@ async fn main() -> Result<()> {
         }
     };
 
+    let local_admin_cfg: Option<LocalAdminConfig> = match (args.admin_username, args.admin_password) {
+        (Some(u), Some(p)) => {
+            eprintln!("Local admin login enabled (username={u})");
+            Some(LocalAdminConfig { username: u, password: p })
+        }
+        _ => {
+            eprintln!("Local admin login disabled (pass --admin-username and --admin-password to enable)");
+            None
+        }
+    };
+
+    // ── Load campaign config JSON (served at /api/config) ────────────────
+    let campaign_json: Arc<String> = Arc::new(match &args.config {
+        Some(path) => {
+            let raw = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| { eprintln!("Warning: could not read --config {path:?}: {e}"); "{}".to_string() });
+            // Validate it's valid JSON; fall back to empty object on error
+            if serde_json::from_str::<serde_json::Value>(&raw).is_ok() {
+                eprintln!("Campaign config loaded from {:?}", path);
+                raw
+            } else {
+                eprintln!("Warning: --config file is not valid JSON, using empty config");
+                "{}".to_string()
+            }
+        }
+        None => {
+            eprintln!("No --config file specified; /api/config will return {{}}");
+            "{}".to_string()
+        }
+    });
+
     let cors = warp::cors()
         .allow_any_origin()
         .allow_methods(&[Method::GET, Method::POST, Method::OPTIONS])
@@ -889,6 +1222,10 @@ async fn main() -> Result<()> {
     let leaderboard = warp::path!("api" / "leaderboard")
         .and(with_db(db.clone()))
         .then(api_leaderboard);
+
+    let all_pilots = warp::path!("api" / "pilots")
+        .and(with_db(db.clone()))
+        .then(api_all_pilots);
 
     let objectives = warp::path!("api" / "objectives")
         .and(with_db(db.clone()))
@@ -911,6 +1248,18 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_pilot);
 
+    let pilot_sorties = warp::path!("api" / "pilot" / String / "sorties")
+        .and(with_db(db.clone()))
+        .then(api_pilot_sorties);
+
+    let pilot_breakdown = warp::path!("api" / "pilot" / String / "breakdown")
+        .and(with_db(db.clone()))
+        .then(api_pilot_breakdown);
+
+    let pilot_kills_route = warp::path!("api" / "pilot" / String / "kills")
+        .and(with_db(db.clone()))
+        .then(api_pilot_kills);
+
     let stats = warp::path!("api" / "stats")
         .and(with_db(db.clone()))
         .then(api_stats);
@@ -918,6 +1267,22 @@ async fn main() -> Result<()> {
     let units = warp::path!("api" / "units")
         .and(with_db(db.clone()))
         .then(api_units);
+
+    let online = warp::path!("api" / "online")
+        .and(with_db(db.clone()))
+        .then(api_online);
+
+    let points = warp::path!("api" / "points")
+        .and(with_db(db.clone()))
+        .then(api_points);
+
+    let captures = warp::path!("api" / "captures")
+        .and(with_db(db.clone()))
+        .then(api_captures);
+
+    let aircraft_usage = warp::path!("api" / "aircraft-usage")
+        .and(with_db(db.clone()))
+        .then(api_aircraft_usage);
 
     // ── Live unit WebSocket ────────────────────────────────────────────
     let live_state: LiveState = Arc::new(tokio::sync::RwLock::new((0.0, Vec::new(), Vec::new())));
@@ -963,6 +1328,19 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_auth_link);
 
+    let auth_local_login = warp::path!("api" / "auth" / "local-login")
+        .and(warp::post())
+        .and(warp::body::json::<LocalLoginBody>())
+        .and(with_local_admin(local_admin_cfg.clone()))
+        .and(with_db(db.clone()))
+        .then(api_auth_local_login);
+
+    // Tells the frontend whether local admin login is available
+    let local_admin_enabled = local_admin_cfg.is_some();
+    let auth_local_enabled = warp::path!("api" / "auth" / "local-enabled")
+        .map(move || json_response(format!(r#"{{"enabled":{}}}"#, local_admin_enabled)))
+        .boxed();
+
     let admin_links = warp::path!("api" / "admin" / "links")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
@@ -980,38 +1358,88 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_admin_unlink);
 
+    let admin_reset = warp::path!("api" / "admin" / "reset")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(api_admin_reset);
+
     let trails = warp::path!("api" / "trails")
         .and(with_db(db.clone()))
         .then(api_trails);
 
+    let config_route = warp::path!("api" / "config")
+        .and(warp::any().map(move || campaign_json.clone()))
+        .then(api_config);
+
+    // /site/* → embedded bfsite SPA
+    let site_files = warp::path("site")
+        .and(warp::path::tail())
+        .map(|tail: warp::path::Tail| serve_site_asset(tail.as_str()));
+
+    // Catch-all → embedded bfweb SPA
     let static_files = warp::get()
         .and(warp::path::tail())
         .map(|tail: warp::path::Tail| serve_asset(tail.as_str()));
 
+    // Box sub-chains to avoid warp filter type overflow
+    let api_routes = rounds
+        .or(leaderboard)
+        .or(objectives)
+        .or(kills)
+        .or(pilot_sorties)
+        .or(pilot_breakdown)
+        .or(pilot_kills_route)
+        .or(pilot)
+        .or(stats)
+        .or(units)
+        .or(online)
+        .or(points)
+        .or(captures)
+        .or(aircraft_usage)
+        .or(trails)
+        .or(all_pilots)
+        .or(config_route)
+        .boxed();
+
+    let auth_routes = auth_login
+        .or(auth_callback)
+        .or(auth_me)
+        .or(auth_logout)
+        .or(auth_local_enabled)
+        .or(admin_links)
+        .or(admin_sessions)
+        .boxed();
+
     let routes = warp::get()
         .and(
-            rounds
-                .or(leaderboard)
-                .or(objectives)
-                .or(kills)
-                .or(pilot)
-                .or(stats)
-                .or(units)
-                .or(trails)
-                .or(auth_login)
-                .or(auth_callback)
-                .or(auth_me)
-                .or(auth_logout)
-                .or(admin_links)
-                .or(admin_sessions)
+            api_routes
+                .or(auth_routes)
                 .or(ws_units_route)
+                .or(site_files)
                 .or(static_files),
         )
         .or(auth_link)
+        .or(auth_local_login)
         .or(admin_unlink)
+        .or(admin_reset)
         .with(cors);
 
     eprintln!("API server listening on http://{}", args.listen_address);
+
+    // Optional separate site server
+    if let Some(site_addr) = args.site_address {
+        let site_cors = warp::cors()
+            .allow_any_origin()
+            .allow_methods(&[Method::GET])
+            .build();
+        let site_only = warp::get()
+            .and(warp::path::tail())
+            .map(|tail: warp::path::Tail| serve_site_asset(tail.as_str()))
+            .with(site_cors);
+        eprintln!("Site server listening on http://{}", site_addr);
+        tokio::spawn(warp::serve(site_only).run(site_addr));
+    }
 
     match (&args.cert, &args.key) {
         (_, None) | (None, _) => warp::serve(routes).run(args.listen_address).await,

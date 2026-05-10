@@ -3,6 +3,7 @@ use anyhow::Result;
 use bfprotocols::{
     cfg::UnitTag,
     db::objective::ObjectiveKind,
+    stats::Stat,
 };
 use compact_str::format_compact;
 use dcso3::{
@@ -23,6 +24,8 @@ struct WeatherData {
     qnh_hpa: f64,
     temp_c: f64,
     cloud_base_m: f64,
+    cloud_density: u8,
+    visibility_m: f64,
 }
 
 fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
@@ -53,13 +56,30 @@ fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
     let season: LuaTable = wx.raw_get("season")?;
     let temp_c: f64 = season.get("temperature").unwrap_or(15.0);
 
-    let cloud_base_m: f64 = wx
-        .raw_get::<_, LuaTable>("clouds")
-        .ok()
-        .and_then(|c: LuaTable| c.get("base").ok())
+    let clouds: Option<LuaTable> = wx.raw_get("clouds").ok();
+    let cloud_base_m: f64 = clouds
+        .as_ref()
+        .and_then(|c| c.get("base").ok())
         .unwrap_or(3000.0);
+    let cloud_density: u8 = clouds
+        .as_ref()
+        .and_then(|c| c.get::<_, f64>("density").ok())
+        .map(|d| d.round() as u8)
+        .unwrap_or(0);
 
-    Ok(WeatherData { wind_from_deg, wind_speed_kts, qnh_inhg, qnh_hpa, temp_c, cloud_base_m })
+    // Fog / visibility
+    let fog_enabled: bool = wx.get("enable_fog").unwrap_or(false);
+    let visibility_m: f64 = if fog_enabled {
+        wx.raw_get::<_, LuaTable>("fog")
+            .ok()
+            .and_then(|f| f.get::<_, f64>("visibility").ok())
+            .unwrap_or(10000.0)
+            .min(10000.0)
+    } else {
+        10000.0
+    };
+
+    Ok(WeatherData { wind_from_deg, wind_speed_kts, qnh_inhg, qnh_hpa, temp_c, cloud_base_m, cloud_density, visibility_m })
 }
 
 fn active_runway(lua: MizLua, airbase_id: &DcsOid<ClassAirbase>, wind_from_deg: f64) -> Option<compact_str::CompactString> {
@@ -196,6 +216,21 @@ fn send_atis(lua: MizLua, slot: SlotId) -> Result<()> {
     };
 
     ctx.db.ephemeral.msgs().panel_to_group(30, false, miz_gid, msg);
+    Ok(())
+}
+
+pub fn publish_weather(lua: MizLua, ctx: &mut Context) -> Result<()> {
+    // Use map origin as reference point for dashboard weather
+    let wx = fetch_weather(lua, 0.0, 0.0)?;
+    ctx.db.ephemeral.stat(Stat::Weather {
+        temp_c: wx.temp_c,
+        wind_speed_kts: wx.wind_speed_kts,
+        wind_from_deg: wx.wind_from_deg,
+        cloud_base_m: wx.cloud_base_m,
+        qnh_hpa: wx.qnh_hpa,
+        cloud_density: Some(wx.cloud_density),
+        visibility_m: Some(wx.visibility_m),
+    });
     Ok(())
 }
 

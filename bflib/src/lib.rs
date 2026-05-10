@@ -271,6 +271,7 @@ struct Context {
     last_frontline_update: DateTime<Utc>,
     event_scheduler: EventScheduler,
     last_junk_removal: DateTime<Utc>,
+    last_weather_publish: DateTime<Utc>,
 }
 
 impl Context {
@@ -748,26 +749,23 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 error!("error processing shot event {:?}", e)
             }
             // Counter-battery detection
-            if let Some(cb_cfg) = ctx.db.ephemeral.cfg.counter_battery.clone() {
+            let cb_params = ctx.db.ephemeral.cfg.counter_battery.as_ref()
+                .map(|c| (c.grid_resolution_m, c.cooldown_secs));
+            if let Some((cb_res, cb_cooldown)) = cb_params {
                 if let Ok(obj_id) = e.initiator.object_id() {
                     let shooter_info = ctx.db.ephemeral.get_uid_by_object_id(&obj_id)
                         .and_then(|uid| ctx.db.unit(uid).ok())
                         .map(|u| (u.side, u.tags.0, u.pos));
                     if let Some((side, tags, pos2)) = shooter_info {
                         if tags.contains(UnitTag::Artillery) || tags.contains(UnitTag::Launcher) {
-                            let res = cb_cfg.grid_resolution_m.max(1.0);
+                            let res = cb_res.max(1.0);
                             let cell = ((pos2.x / res) as i64, (pos2.y / res) as i64);
-                            let cooldown = Duration::seconds(cb_cfg.cooldown_secs as i64);
+                            let cooldown = Duration::seconds(cb_cooldown as i64);
                             let last = ctx.db.ephemeral.counter_battery_reports.get(&cell).copied();
                             if last.map(|t| start_ts - t >= cooldown).unwrap_or(true) {
                                 ctx.db.ephemeral.counter_battery_reports.insert(cell, start_ts);
                                 let friendly = side.opposite();
-                                let grid_x = (pos2.x / 1000.0) as i32;
-                                let grid_y = (pos2.y / 1000.0) as i32;
-                                let msg = format_compact!(
-                                    "Counter-battery: enemy artillery firing near grid {grid_x}/{grid_y}"
-                                );
-                                ctx.db.ephemeral.msgs().panel_to_side(15, false, friendly, msg);
+                                ctx.db.ephemeral.on_counter_battery(pos2, friendly, start_ts);
                             }
                         }
                     }
@@ -978,15 +976,12 @@ fn advise_captured(ctx: &mut Context, lua: MizLua, ts: DateTime<Utc>) -> Result<
     let mut has_captures = false;
     for (side, oid) in ctx.db.check_capture(lua, ts)? {
         has_captures = true;
+        ctx.event_scheduler.owned_cache_dirty = true;
         let (name, pos) = {
             let obj = ctx.db.objective(&oid)?;
             (obj.name().to_owned(), obj.pos())
         };
-        let mcap = format_compact!("our forces have captured {}", name);
-        let mlost = format_compact!("we have lost {}", name);
         let mark_text = format_compact!("{} captured by {:?}", name, side);
-        ctx.db.ephemeral.msgs().panel_to_side(15, false, side, mcap);
-        ctx.db.ephemeral.msgs().panel_to_side(15, false, side.opposite(), mlost);
         ctx.db.ephemeral.msgs().mark_to_all(pos, true, mark_text);
         ctx.captureable.remove(&oid);
     }
@@ -1430,27 +1425,11 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     }
                     Err(e) => error!("SpawnReinforcements: {e:?}"),
                 }
-                // Brief "arrived" mark
-                let mid = dcso3::trigger::MarkId::new();
-                ctx.db.ephemeral.msgs().circle_to_all(
-                    SideFilter::All,
-                    mid,
-                    CircleSpec {
-                        center: dcso3::LuaVec3(dcso3::Vector3::new(obj_pos.x, 0., obj_pos.y)),
-                        radius: 1000.,
-                        color: side_color(side),
-                        fill_color: Color::new(0., 0., 0., 0.),
-                        line_type: LineType::Solid,
-                        read_only: true,
-                    },
-                    Some(format_compact!("Reinforcements Arrived [{:?}]", side).into()),
-                );
-                // Store it so it can be cleaned up — event is expiring so we delete it now
-                ctx.db.ephemeral.msgs().delete_mark(mid);
+                ctx.db.ephemeral.on_reinforcements_arrived(obj_pos, side, Utc::now());
                 let _ = event_id;
             }
 
-            EventEffect::SpawnHvt { event_id, side, objective, obj_pos, reward_points, template, circle_radius_m, escape_pos } => {
+            EventEffect::SpawnHvt { event_id, side, objective, obj_pos, reward_points, template, circle_radius_m, escape_route } => {
                 let gid = match ctx.db.add_and_queue_group(
                     &spctx,
                     &ctx.idx,
@@ -1473,10 +1452,12 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     }
                     Err(e) => { error!("SpawnHvt: {e:?}"); continue; }
                 };
-                // B: Queue escape move — group not in DCS yet (spawn queue lag).
-                // pending_moves is retried each slow tick until the group appears.
-                if let Some(epos) = escape_pos {
-                    ctx.event_scheduler.pending_moves.insert(gid, vec![epos]);
+                // Build escape route through TOWN_ trigger zones (nearest-first chain).
+                // Falls back to the objective-based escape_route if no TOWN_ zones exist.
+                let town_route = build_hvt_town_route(&spctx, obj_pos, 3);
+                let route = if !town_route.is_empty() { town_route } else { escape_route };
+                if !route.is_empty() {
+                    ctx.event_scheduler.pending_moves.insert(gid, route);
                 }
                 // Persist the gid so DespawnHvt can find it after a server restart.
                 if let Some(evt) = ctx.event_scheduler.active_events.iter_mut().find(|e| e.id() == event_id) {
@@ -1994,6 +1975,35 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
 
             // E: Remove all CAP groups when the event expires
             EventEffect::DespawnCap { event_id } => {
+                let now = Utc::now();
+                // Determine if this was a shootdown (all aircraft dead) or natural expiry.
+                // If shot down, record the time so check_air_threats can enforce a cooldown.
+                let was_shot_down = ctx.event_scheduler.cap_groups.get(&event_id)
+                    .map(|gids| {
+                        gids.iter().all(|gid| {
+                            // group_health returns (alive_count, total_count)
+                            ctx.db.group_health(gid)
+                                .map(|(alive, _)| alive == 0)
+                                .unwrap_or(true) // missing group = dead
+                        })
+                    })
+                    .unwrap_or(false); // no groups registered = natural expiry
+
+                if was_shot_down {
+                    // Look up the (side, objective) for this reactive CAP event.
+                    if let Some((side, oid)) = ctx.event_scheduler.reactive_cap_objective.remove(&event_id) {
+                        ctx.event_scheduler.last_reactive_cap_died_at.insert((side, oid), now);
+                        info!(
+                            "DespawnCap: {:?} reactive CAP at {:?} was shot down \
+                             — respawn cooldown started",
+                            side, oid
+                        );
+                    }
+                } else {
+                    // Clean up the objective registration (normal expiry, no cooldown).
+                    ctx.event_scheduler.reactive_cap_objective.remove(&event_id);
+                }
+
                 if let Some(gids) = ctx.event_scheduler.cap_groups.remove(&event_id) {
                     for gid in gids {
                         if let Err(e) = ctx.db.delete_group(&gid) {
@@ -2004,194 +2014,40 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 info!("DespawnCap: CAP event {:?} expired, aircraft removed", event_id);
             }
 
-            // ── Air Assault effects ──────────────────────────────────────────────
-            EventEffect::SpawnAirAssaultAircraft {
-                event_id,
-                attacking_side,
-                src_pos,
-                lz_pos,
-                target_objective,
-                heli_template,
-                c130_template,
-                alarm_sound,
-            } => {
-                use dcso3::trigger::Trigger;
 
-                let defending_side = match attacking_side {
-                    dcso3::coalition::Side::Red => dcso3::coalition::Side::Blue,
-                    dcso3::coalition::Side::Blue => dcso3::coalition::Side::Red,
-                    s => s,
-                };
-
-                // Play air-raid siren for the defending coalition
-                match Trigger::singleton(lua).and_then(|t| t.action()) {
-                    Ok(act) => {
-                        if let Err(e) = act.out_sound_for_coalition(defending_side, dcso3::String::from(alarm_sound.as_str())) {
-                            warn!("SpawnAirAssaultAircraft: out_sound_for_coalition: {e}");
-                        }
-                    }
-                    Err(e) => error!("SpawnAirAssaultAircraft: Trigger singleton: {e}"),
-                }
-
-                // Aircraft routes are issued later via flush_assault_aircraft once groups appear in DCS.
-                // Compute initial heading from source toward LZ so aircraft face the right direction.
-                let to_lz = lz_pos - src_pos;
-                let assault_heading = to_lz.y.atan2(to_lz.x);
-
-                // Spawn helicopter in-air so it flies immediately (AtPos would ground it on arbitrary terrain).
-                let heli_spawn = src_pos + dcso3::Vector2::new(500., 500.);
-                match ctx.db.add_and_queue_group(
-                    &spctx, &ctx.idx, attacking_side,
-                    SpawnLoc::InAir { pos: heli_spawn, heading: assault_heading, altitude: 300.0, speed: 65.0 },
-                    &heli_template,
-                    DeployKind::Objective { origin: target_objective },
-                    BitFlags::empty(), None,
-                ) {
-                    Ok(heli_gid) => {
-                        ctx.event_scheduler.air_assault_groups.entry(event_id).or_default().push(heli_gid);
-                        ctx.event_scheduler.pending_assault_aircraft.insert(heli_gid, lz_pos);
-                        info!("SpawnAirAssaultAircraft: heli {:?} for {:?} → LZ {:?}", heli_gid, attacking_side, lz_pos);
-                    }
-                    Err(e) => error!("SpawnAirAssaultAircraft: heli '{}': {e:?}", heli_template),
-                }
-
-                // Spawn C-130 in-air at slightly higher altitude.
-                let c130_spawn = src_pos + dcso3::Vector2::new(-500., 500.);
-                match ctx.db.add_and_queue_group(
-                    &spctx, &ctx.idx, attacking_side,
-                    SpawnLoc::InAir { pos: c130_spawn, heading: assault_heading, altitude: 500.0, speed: 90.0 },
-                    &c130_template,
-                    DeployKind::Objective { origin: target_objective },
-                    BitFlags::empty(), None,
-                ) {
-                    Ok(c130_gid) => {
-                        ctx.event_scheduler.air_assault_groups.entry(event_id).or_default().push(c130_gid);
-                        ctx.event_scheduler.pending_assault_c130.insert(c130_gid, lz_pos);
-                        info!("SpawnAirAssaultAircraft: C-130 {:?} for {:?} → LZ overflight {:?}", c130_gid, attacking_side, lz_pos);
-                    }
-                    Err(e) => error!("SpawnAirAssaultAircraft: C-130 '{}': {e:?}", c130_template),
-                }
-            }
-
-            EventEffect::SpawnAirAssaultTroops {
-                event_id,
-                attacking_side,
-                lz_pos,
-                target_objective,
-                troops_template,
-                vehicle_template,
-            } => {
-                // Look up the objective position now so pending_assault_moves stores
-                // the attack destination (not the LZ). flush_pending_moves uses this
-                // value to issue the advance order and will retry every slow tick.
-                let target_pos = ctx.db.persisted.objectives.get(&target_objective)
-                    .map(|o| o.pos())
-                    .unwrap_or(lz_pos);
-                let troops_offset = lz_pos + dcso3::Vector2::new(200., 0.);
-                match ctx.db.add_and_queue_group(
-                    &spctx, &ctx.idx, attacking_side,
-                    SpawnLoc::AtPos { pos: troops_offset, offset_direction: dcso3::Vector2::new(1., 0.), group_heading: 0. },
-                    &troops_template,
-                    DeployKind::Objective { origin: target_objective },
-                    BitFlags::empty(), None,
-                ) {
-                    Ok(gid) => {
-                        ctx.event_scheduler.air_assault_groups.entry(event_id).or_default().push(gid);
-                        ctx.event_scheduler.pending_assault_moves.insert(gid, target_pos);
-                        info!("SpawnAirAssaultTroops: infantry {:?} at LZ {:?} → obj {:?}", gid, lz_pos, target_pos);
-                    }
-                    Err(e) => error!("SpawnAirAssaultTroops: troops '{}': {e:?}", troops_template),
-                }
-
-                let vehicle_offset = lz_pos + dcso3::Vector2::new(-200., 0.);
-                match ctx.db.add_and_queue_group(
-                    &spctx, &ctx.idx, attacking_side,
-                    SpawnLoc::AtPos { pos: vehicle_offset, offset_direction: dcso3::Vector2::new(-1., 0.), group_heading: 0. },
-                    &vehicle_template,
-                    DeployKind::Objective { origin: target_objective },
-                    BitFlags::empty(), None,
-                ) {
-                    Ok(gid) => {
-                        ctx.event_scheduler.air_assault_groups.entry(event_id).or_default().push(gid);
-                        ctx.event_scheduler.pending_assault_moves.insert(gid, target_pos);
-                        info!("SpawnAirAssaultTroops: vehicles {:?} at LZ {:?} → obj {:?}", gid, lz_pos, target_pos);
-                    }
-                    Err(e) => error!("SpawnAirAssaultTroops: vehicles '{}': {e:?}", vehicle_template),
-                }
-            }
-
-            EventEffect::OrderAirAssaultAttack {
-                event_id,
-                attacking_side,
-                target_pos,
-            } => {
-                use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation};
-                use dcso3::group::Group;
-                use dcso3::land::Land;
-
-                let land = match Land::singleton(lua) {
-                    Ok(l) => l,
-                    Err(e) => { error!("OrderAirAssaultAttack[{event_id:?}]: Land singleton: {e}"); continue; }
-                };
-                let alt = land.get_height(LuaVec2(target_pos)).unwrap_or(0.);
-
-                let assault_gids: Vec<_> = ctx.event_scheduler.pending_assault_moves.keys().copied().collect();
-                for gid in assault_gids {
-                    let group = match ctx.db.persisted.groups.get(&gid) {
-                        Some(g) => g,
-                        None => { ctx.event_scheduler.pending_assault_moves.remove(&gid); continue; }
-                    };
-                    // Only order groups belonging to the attacking side
-                    if group.side != attacking_side {
-                        continue;
-                    }
-                    let group_name = group.name.clone();
-                    let dcs_group = match Group::get_by_name(lua, group_name.as_str()) {
-                        Ok(g) => g,
-                        Err(_) => continue,
-                    };
-                    let controller = match dcs_group.get_controller() {
-                        Ok(c) => c,
-                        Err(e) => { error!("OrderAirAssaultAttack[{event_id:?}]: get_controller {group_name}: {e}"); continue; }
-                    };
-                    let task = Task::Mission {
-                        airborne: Some(false),
-                        route: vec![MissionPoint {
-                            typ: PointType::TurningPoint,
-                            airdrome_id: None, time_re_fu_ar: None, helipad: None, link_unit: None,
-                            action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
-                            pos: LuaVec2(target_pos),
-                            alt,
-                            alt_typ: Some(AltType::BARO),
-                            speed: 8., speed_locked: Some(false),
-                            eta: None, eta_locked: None, name: None,
-                            task: Box::new(Task::Hold),
-                        }],
-                    };
-                    if let Err(e) = controller.set_task(task) {
-                        error!("OrderAirAssaultAttack[{event_id:?}]: set_task {group_name}: {e}");
-                    } else {
-                        info!("OrderAirAssaultAttack[{event_id:?}]: {group_name} advancing on {:?}", target_pos);
-                        ctx.event_scheduler.pending_assault_moves.remove(&gid);
-                    }
-                }
-            }
-
-            EventEffect::DespawnAirAssault { event_id } => {
-                if let Some(gids) = ctx.event_scheduler.air_assault_groups.remove(&event_id) {
-                    for gid in gids {
-                        ctx.event_scheduler.pending_assault_moves.remove(&gid);
-                        ctx.event_scheduler.pending_assault_aircraft.remove(&gid);
-                        ctx.event_scheduler.pending_assault_c130.remove(&gid);
-                        if let Err(e) = ctx.db.delete_group(&gid) {
-                            error!("DespawnAirAssault: could not delete group {:?}: {e:?}", gid);
-                        }
-                    }
-                }
-                info!("DespawnAirAssault: event {:?} cleaned up", event_id);
-            }
         }
     }
+}
+
+/// Build a multi-hop escape route for an HVT through TOWN_ trigger zones,
+/// chaining up to `max_hops` nearest unvisited zones starting from `start_pos`.
+fn build_hvt_town_route(spctx: &SpawnCtx, start_pos: dcso3::Vector2, max_hops: usize) -> Vec<dcso3::Vector2> {
+    let all_towns = spctx.town_zone_positions();
+    if all_towns.is_empty() {
+        return vec![];
+    }
+    let mut route = Vec::with_capacity(max_hops);
+    let mut remaining: Vec<dcso3::Vector2> = all_towns;
+    let mut current = start_pos;
+    for _ in 0..max_hops {
+        let nearest = remaining
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                let da = na::distance(&na::Point2::from(**a), &na::Point2::from(current));
+                let db = na::distance(&na::Point2::from(**b), &na::Point2::from(current));
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(i, &p)| (i, p));
+        if let Some((i, pos)) = nearest {
+            route.push(pos);
+            current = pos;
+            remaining.swap_remove(i);
+        } else {
+            break;
+        }
+    }
+    route
 }
 
 /// Retry deferred move orders each slow tick until the group appears in DCS.
@@ -2317,179 +2173,6 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
         ctx.event_scheduler.pending_cap_tasks.remove(&gid);
     }
 
-    // Flush pending assault-aircraft missions (one per tick).
-    let pending_aircraft: Vec<_> = ctx.event_scheduler.pending_assault_aircraft.iter()
-        .map(|(gid, pos)| (*gid, *pos))
-        .take(1)
-        .collect();
-
-    for (gid, lz_pos) in pending_aircraft {
-        use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, TurnMethod};
-        use dcso3::group::Group;
-        use dcso3::Time;
-
-        let group_name = match ctx.db.persisted.groups.get(&gid) {
-            Some(g) => g.name.clone(),
-            None => { ctx.event_scheduler.pending_assault_aircraft.remove(&gid); continue; }
-        };
-        let dcs_group = match Group::get_by_name(lua, group_name.as_str()) {
-            Ok(g) => g,
-            Err(_) => continue, // not in DCS yet
-        };
-        let controller = match dcs_group.get_controller() {
-            Ok(c) => c,
-            Err(e) => {
-                error!("flush_assault_aircraft: get_controller {group_name}: {e}");
-                ctx.event_scheduler.pending_assault_aircraft.remove(&gid);
-                continue;
-            }
-        };
-        // Build a simple low-level route straight to LZ
-        let low_alt = 150.0_f64;
-        let task = Task::Mission {
-            airborne: Some(true),
-            route: vec![
-                MissionPoint {
-                    typ: PointType::TurningPoint,
-                    airdrome_id: None, time_re_fu_ar: None, helipad: None, link_unit: None,
-                    action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
-                    pos: LuaVec2(lz_pos),
-                    alt: low_alt,
-                    alt_typ: Some(AltType::RADIO),
-                    speed: 65.0, speed_locked: Some(true),
-                    eta: None, eta_locked: None, name: None,
-                    task: Box::new(Task::Land { point: LuaVec2(lz_pos), duration: Some(Time(120.0)) }),
-                },
-            ],
-        };
-        if let Err(e) = controller.set_task(task) {
-            error!("flush_assault_aircraft: set_task {group_name}: {e}");
-        } else {
-            info!("flush_assault_aircraft: {group_name} flying low to LZ {:?}", lz_pos);
-        }
-        ctx.event_scheduler.pending_assault_aircraft.remove(&gid);
-    }
-
-    // Flush pending C-130 overflight missions (one per tick).
-    let pending_c130: Vec<_> = ctx.event_scheduler.pending_assault_c130.iter()
-        .map(|(gid, pos)| (*gid, *pos))
-        .take(1)
-        .collect();
-
-    for (gid, lz_pos) in pending_c130 {
-        use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, TurnMethod};
-        use dcso3::group::Group;
-
-        let group_name = match ctx.db.persisted.groups.get(&gid) {
-            Some(g) => g.name.clone(),
-            None => { ctx.event_scheduler.pending_assault_c130.remove(&gid); continue; }
-        };
-        let dcs_group = match Group::get_by_name(lua, group_name.as_str()) {
-            Ok(g) => g,
-            Err(_) => continue, // not in DCS yet
-        };
-        let controller = match dcs_group.get_controller() {
-            Ok(c) => c,
-            Err(e) => {
-                error!("flush_assault_aircraft(C-130): get_controller {group_name}: {e}");
-                ctx.event_scheduler.pending_assault_c130.remove(&gid);
-                continue;
-            }
-        };
-        // C-130 cannot drop in DCS — fly over the LZ at low altitude then continue past it.
-        // Troops will be spawned at the LZ by the timed deploy_at phase independently.
-        let overfly_alt = 150.0_f64;
-        let overshoot = lz_pos + dcso3::Vector2::new(0., 3000.);
-        let task = Task::Mission {
-            airborne: Some(true),
-            route: vec![
-                MissionPoint {
-                    typ: PointType::TurningPoint,
-                    airdrome_id: None, time_re_fu_ar: None, helipad: None, link_unit: None,
-                    action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
-                    pos: LuaVec2(lz_pos),
-                    alt: overfly_alt,
-                    alt_typ: Some(AltType::RADIO),
-                    speed: 90.0, speed_locked: Some(true),
-                    eta: None, eta_locked: None, name: None,
-                    task: Box::new(Task::Hold),
-                },
-                MissionPoint {
-                    typ: PointType::TurningPoint,
-                    airdrome_id: None, time_re_fu_ar: None, helipad: None, link_unit: None,
-                    action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
-                    pos: LuaVec2(overshoot),
-                    alt: overfly_alt,
-                    alt_typ: Some(AltType::RADIO),
-                    speed: 90.0, speed_locked: Some(true),
-                    eta: None, eta_locked: None, name: None,
-                    task: Box::new(Task::Hold),
-                },
-            ],
-        };
-        if let Err(e) = controller.set_task(task) {
-            error!("flush_assault_aircraft(C-130): set_task {group_name}: {e}");
-        } else {
-            info!("flush_assault_aircraft(C-130): {group_name} overflying LZ {:?}", lz_pos);
-        }
-        ctx.event_scheduler.pending_assault_c130.remove(&gid);
-    }
-
-    // Retry pending assault ground-attack moves (one per tick).
-    // OrderAirAssaultAttack fires once based on clock time; if troops haven't
-    // appeared in DCS yet (still in spawnq), that order is skipped. This loop
-    // retries every slow tick until each group is successfully given its advance
-    // order. pending_assault_moves stores the objective position (set during
-    // SpawnAirAssaultTroops) so we know the correct attack destination.
-    let pending_assault_attack: Vec<_> = ctx.event_scheduler.pending_assault_moves.iter()
-        .map(|(gid, pos)| (*gid, *pos))
-        .take(1)
-        .collect();
-    for (gid, target_pos) in pending_assault_attack {
-        use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation};
-        use dcso3::group::Group;
-        use dcso3::land::Land;
-
-        let group_name = match ctx.db.persisted.groups.get(&gid) {
-            Some(g) => g.name.clone(),
-            None => { ctx.event_scheduler.pending_assault_moves.remove(&gid); continue; }
-        };
-        let dcs_group = match Group::get_by_name(lua, group_name.as_str()) {
-            Ok(g) => g,
-            Err(_) => continue, // not in DCS yet — retry next tick
-        };
-        let controller = match dcs_group.get_controller() {
-            Ok(c) => c,
-            Err(e) => {
-                error!("flush_pending_assault_attack: get_controller {group_name}: {e}");
-                ctx.event_scheduler.pending_assault_moves.remove(&gid);
-                continue;
-            }
-        };
-        let alt = Land::singleton(lua)
-            .and_then(|l| l.get_height(LuaVec2(target_pos)))
-            .unwrap_or(0.);
-        let task = Task::Mission {
-            airborne: Some(false),
-            route: vec![MissionPoint {
-                typ: PointType::TurningPoint,
-                airdrome_id: None, time_re_fu_ar: None, helipad: None, link_unit: None,
-                action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
-                pos: LuaVec2(target_pos),
-                alt,
-                alt_typ: Some(AltType::BARO),
-                speed: 8., speed_locked: Some(false),
-                eta: None, eta_locked: None, name: None,
-                task: Box::new(Task::Hold),
-            }],
-        };
-        if let Err(e) = controller.set_task(task) {
-            error!("flush_pending_assault_attack: set_task {group_name}: {e}");
-        } else {
-            info!("flush_pending_assault_attack: {group_name} advancing on {:?}", target_pos);
-            ctx.event_scheduler.pending_assault_moves.remove(&gid);
-        }
-    }
 }
 
 /// Each slow tick, redirect all active CAP groups toward the centroid of the
@@ -2608,152 +2291,242 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
         _ => return,
     };
 
-    let trigger_radius_sq = events_cfg.cap_trigger_radius_m.powi(2);
+    let cluster_radius_sq = events_cfg.cap_trigger_radius_m.powi(2);
     let max_concurrent = events_cfg.cap_max_concurrent;
+    let max_per_side = events_cfg.cap_max_per_side;
+    let min_threat = events_cfg.cap_min_threat_count as usize;
+    let respawn_cooldown = chrono::Duration::seconds(events_cfg.cap_respawn_cooldown_secs as i64);
 
-    // Which objectives already have active CAP coverage?
-    let active_cap: Vec<bfprotocols::db::objective::ObjectiveId> = ctx
-        .event_scheduler
-        .active_events
-        .iter()
-        .filter_map(|e| {
-            if let CampaignEvent::EnemyCap { objective, .. } = e {
-                Some(*objective)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if active_cap.len() >= max_concurrent {
-        return;
-    }
-
-    // Collect 2D positions of all in-air players, keyed by side.
-    let mut aircraft: fxhash::FxHashMap<Side, Vec<Vector2>> = fxhash::FxHashMap::default();
-    for (_, player) in ctx.db.persisted.players() {
-        if let Some((_, Some(inst))) = &player.current_slot {
-            if inst.in_air {
-                let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
-                aircraft.entry(player.side).or_default().push(pos);
+    // Count active EnemyCap events per side — CommanderCap is excluded (it's friendly support).
+    let mut active_cap_red: fxhash::FxHashSet<bfprotocols::db::objective::ObjectiveId> =
+        fxhash::FxHashSet::default();
+    let mut active_cap_blue: fxhash::FxHashSet<bfprotocols::db::objective::ObjectiveId> =
+        fxhash::FxHashSet::default();
+    for e in &ctx.event_scheduler.active_events {
+        if let CampaignEvent::EnemyCap { objective, cap_side, .. } = e {
+            match cap_side {
+                Side::Red  => { active_cap_red.insert(*objective); }
+                Side::Blue => { active_cap_blue.insert(*objective); }
+                _ => {}
             }
         }
     }
 
-    if aircraft.is_empty() {
-        return;
+    let total_active = active_cap_red.len() + active_cap_blue.len();
+    if total_active >= max_concurrent {
+        return; // global cap reached
+    }
+    if active_cap_red.len() >= max_per_side && active_cap_blue.len() >= max_per_side {
+        return; // both sides at per-side limit
     }
 
-    // Compute battlefield centroid for compass bearings.
-    let all_positions: Vec<Vector2> = ctx
+    // Compute battlefield centroid for compass reporting.
+    let (centroid_sum, centroid_n) = ctx
         .db
         .persisted
         .objectives
         .into_iter()
         .filter(|(_, o)| o.owner() != Side::Neutral)
-        .map(|(_, o)| o.pos())
-        .collect();
-    let centroid = if all_positions.is_empty() {
+        .fold((Vector2::new(0., 0.), 0usize), |(acc, n), (_, o)| {
+            let p = o.pos();
+            (Vector2::new(acc.x + p.x, acc.y + p.y), n + 1)
+        });
+    let centroid = if centroid_n == 0 {
         Vector2::new(0., 0.)
     } else {
-        let n = all_positions.len() as f64;
-        let sum = all_positions.iter().fold(Vector2::new(0., 0.), |acc, p| {
-            Vector2::new(acc.x + p.x, acc.y + p.y)
-        });
-        Vector2::new(sum.x / n, sum.y / n)
+        Vector2::new(centroid_sum.x / centroid_n as f64, centroid_sum.y / centroid_n as f64)
     };
 
-    // Find all threatened objectives sorted by threat intensity.
-    let mut threats: Vec<(usize, bfprotocols::db::objective::ObjectiveId, Side, Vector2, dcso3::String)> =
-        Vec::new();
+    // For each side that still has room for more CAP, check EWR detections and cluster them.
+    // We iterate Red-defends-against-Blue and Blue-defends-against-Red.
+    for defending_side in [Side::Red, Side::Blue] {
+        let side_active_count = match defending_side {
+            Side::Red  => active_cap_red.len(),
+            Side::Blue => active_cap_blue.len(),
+            _ => continue,
+        };
+        if side_active_count >= max_per_side {
+            continue; // this side is already at its per-side limit
+        }
+        if active_cap_red.len() + active_cap_blue.len() >= max_concurrent {
+            break; // global cap hit mid-loop
+        }
 
-    for (oid, obj) in ctx.db.persisted.objectives.into_iter() {
-        let defending_side = obj.owner();
-        if defending_side == Side::Neutral {
+        // ── Step 1: gate on detected fixed-wing PLAYER count ─────────────────────
+        // Only enemy PLAYERS in fixed-wing aircraft trigger reactive CAP.
+        // AI aircraft, scouts, and helicopter players are excluded:
+        //   - helicopters are low-altitude threats handled by SAMs
+        //   - AI aircraft (e.g. transports) should not trigger CAP
+        // Require at least `min_threat` (default: 2) qualifying player contacts.
+        let player_fw_count =
+            ctx.ewr.detected_enemy_fixedwing_player_count(defending_side, now, &ctx.db);
+        if player_fw_count < min_threat {
+            debug!(
+                "Reactive CAP: {:?} side has only {} fixed-wing player contact(s) — below threshold {}, skipping",
+                defending_side, player_fw_count, min_threat
+            );
+            continue; // not enough real fixed-wing players to justify CAP
+        }
+
+        // ── Step 2: get EWR-detected enemy positions for cluster geometry ────────
+        // ALL detected aircraft (players + AI) are used for spatial clustering
+        // so the CAP is placed nearest the actual incursion area, but only
+        // PLAYER fixed-wing count was used to decide *whether* to scramble.
+        let detected = ctx.ewr.detected_enemy_positions(defending_side, now);
+        if detected.is_empty() {
+            continue; // no radar contacts → no CAP (shouldn't happen if player count > 0)
+        }
+
+        // ── Step 3 (was 2): greedy spatial clustering ─────────────────────────────
+        // Group the detected contacts: if two contacts are within cap_trigger_radius_m
+        // of each other they belong to the same incursion. One CAP handles one cluster.
+        // This prevents 5 aircraft spread over 3 objectives from spawning 3 CAP flights.
+        let mut assigned = vec![false; detected.len()];
+        let mut clusters: Vec<(Vector2, usize)> = Vec::new(); // (centroid, count)
+        for i in 0..detected.len() {
+            if assigned[i] { continue; }
+            assigned[i] = true;
+            let mut cx = detected[i].x;
+            let mut cz = detected[i].y;
+            let mut count = 1usize;
+            for j in (i + 1)..detected.len() {
+                if assigned[j] { continue; }
+                let dx = detected[j].x - detected[i].x;
+                let dz = detected[j].y - detected[i].y;
+                if dx * dx + dz * dz <= cluster_radius_sq {
+                    assigned[j] = true;
+                    cx += detected[j].x;
+                    cz += detected[j].y;
+                    count += 1;
+                }
+            }
+            clusters.push((Vector2::new(cx / count as f64, cz / count as f64), count));
+        }
+
+        // ── Step 4 (was 3): filter clusters below the minimum threat threshold ─────
+        // Even though we already checked player_fw_count, filter any cluster whose
+        // raw position count is below min_threat (edge case: positions from AI only).
+        clusters.retain(|(_, count)| *count >= min_threat);
+        if clusters.is_empty() {
             continue;
         }
-        if active_cap.contains(oid) {
-            continue; // already defended
+
+        // Sort clusters largest → smallest so the most dangerous incursion gets covered first.
+        clusters.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+
+        // ── Step 5 (was 4): for each cluster find the nearest friendly objective ───
+        let slots_remaining = (max_per_side - side_active_count)
+            .min(max_concurrent - (active_cap_red.len() + active_cap_blue.len()));
+
+        for (cluster_center, cluster_count) in clusters.into_iter().take(slots_remaining) {
+            // Find the closest friendly AIRBASE or FARP that doesn't already have active CAP.
+            // CAP cannot spawn from FOBs, logistics hubs, factories, etc. — only from
+            // objectives that have a runway or FARP pad. Neutral objectives are excluded
+            // (obj.owner() == defending_side already ensures non-neutral).
+            let best_obj = ctx.db.persisted.objectives.into_iter()
+                .filter(|(oid, obj)| {
+                    obj.owner() == defending_side
+                        && (obj.is_airbase() || obj.is_farp())
+                        && {
+                            let already = match defending_side {
+                                Side::Red  => active_cap_red.contains(oid),
+                                Side::Blue => active_cap_blue.contains(oid),
+                                _ => true,
+                            };
+                            !already
+                        }
+                })
+                .min_by(|(_, a), (_, b)| {
+                    let ap = a.pos();
+                    let bp = b.pos();
+                    let da = {
+                        let dx = ap.x - cluster_center.x;
+                        let dy = ap.y - cluster_center.y;
+                        dx * dx + dy * dy
+                    };
+                    let db = {
+                        let dx = bp.x - cluster_center.x;
+                        let dy = bp.y - cluster_center.y;
+                        dx * dx + dy * dy
+                    };
+                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+            let (oid, obj) = match best_obj {
+                Some(o) => o,
+                None => {
+                    debug!(
+                        "Reactive CAP: no friendly airbase/FARP available for {:?} — skipping cluster",
+                        defending_side
+                    );
+                    continue;
+                }
+            };
+
+            // ── Step 6: respawn cooldown check ───────────────────────────────────
+            // If the previous reactive CAP for this (side, objective) was destroyed
+            // (not just expired), enforce a cool-down before re-scrambling.
+            let cooldown_key = (defending_side, *oid);
+            if let Some(&died_at) = ctx.event_scheduler.last_reactive_cap_died_at.get(&cooldown_key) {
+                if now - died_at < respawn_cooldown {
+                    let secs_remaining = (respawn_cooldown - (now - died_at)).num_seconds();
+                    debug!(
+                        "Reactive CAP: {:?} cooldown active for {:?} — {}s remaining, skipping",
+                        defending_side, oid, secs_remaining
+                    );
+                    continue;
+                }
+            }
+
+            let _obj_pos = obj.pos();
+            let obj_name = dcso3::String::from(obj.name.as_str());
+            let direction = bearing_to_compass(centroid, cluster_center);
+            let attacking_side = match defending_side {
+                Side::Red  => Side::Blue,
+                Side::Blue => Side::Red,
+                _ => continue,
+            };
+
+            let event_id = EventId::new();
+            let event = CampaignEvent::EnemyCap {
+                id: event_id,
+                cap_side: defending_side,
+                objective: *oid,
+                expires_at: now + chrono::Duration::seconds(events_cfg.cap_duration_secs as i64),
+                spawned: false,
+            };
+            ctx.event_scheduler.active_events.push(event);
+            ctx.event_scheduler.total_events_spawned += 1;
+            // Register the (side, objective) so DespawnCap can update the cooldown
+            // if the CAP aircraft are shot down before the event naturally expires.
+            ctx.event_scheduler.reactive_cap_objective.insert(event_id, (defending_side, *oid));
+
+            // Track locally so this loop iteration's later clusters don't double-book.
+            match defending_side {
+                Side::Red  => { active_cap_red.insert(*oid); }
+                Side::Blue => { active_cap_blue.insert(*oid); }
+                _ => {}
+            }
+
+            info!(
+                "Reactive CAP: {:?} scrambled over {} — EWR cluster of {} contacts to the {}",
+                defending_side, obj_name, cluster_count, direction
+            );
+
+            ctx.db.ephemeral.msgs().panel_to_side(
+                20,
+                false,
+                attacking_side,
+                format_compact!(
+                    "⚠ THREAT: Enemy CAP scrambled to the {} — {} aircraft detected by EWR!",
+                    direction,
+                    cluster_count
+                ),
+            );
         }
-        let attacking_side = match defending_side {
-            Side::Red => Side::Blue,
-            Side::Blue => Side::Red,
-            _ => continue,
-        };
-        let obj_pos = obj.pos();
-        let threat_count = aircraft
-            .get(&attacking_side)
-            .map(|positions: &Vec<Vector2>| {
-                positions
-                    .iter()
-                    .filter(|apos| {
-                        let dx = apos.x - obj_pos.x;
-                        let dy = apos.y - obj_pos.y;
-                        dx * dx + dy * dy <= trigger_radius_sq
-                    })
-                    .count()
-            })
-            .unwrap_or(0);
-
-        if threat_count > 0 {
-            threats.push((
-                threat_count,
-                *oid,
-                defending_side,
-                obj_pos,
-                dcso3::String::from(obj.name.as_str()),
-            ));
-        }
-    }
-
-    if threats.is_empty() {
-        return;
-    }
-
-    // Highest-threat objectives first; spawn up to the remaining CAP budget.
-    threats.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-    let slots = max_concurrent - active_cap.len();
-
-    for (threat_count, oid, defending_side, obj_pos, name) in threats.into_iter().take(slots) {
-        let attacking_side = match defending_side {
-            Side::Red => Side::Blue,
-            Side::Blue => Side::Red,
-            _ => continue,
-        };
-        let direction = bearing_to_compass(centroid, obj_pos);
-
-        let event = CampaignEvent::EnemyCap {
-            id: EventId::new(),
-            cap_side: defending_side,
-            objective: oid,
-            expires_at: now
-                + chrono::Duration::seconds(events_cfg.cap_duration_secs as i64),
-            spawned: false,
-        };
-        ctx.event_scheduler.active_events.push(event);
-        ctx.event_scheduler.total_events_spawned += 1;
-
-        info!(
-            "Reactive CAP: {:?} defending {:?} ({} aircraft within {:.0}km)",
-            defending_side,
-            name,
-            threat_count,
-            events_cfg.cap_trigger_radius_m / 1000.0
-        );
-
-        ctx.db.ephemeral.msgs().panel_to_side(
-            20,
-            false,
-            attacking_side,
-            format_compact!(
-                "⚠ THREAT: Enemy CAP scrambled over {} to the {} — {} aircraft detected in area!",
-                name,
-                direction,
-                threat_count
-            ),
-        );
     }
 }
+
 
 /// Check all deployed SF teams for HVT capture and extraction timeout.
 fn check_sf_missions(ctx: &mut Context) {
@@ -3072,41 +2845,50 @@ fn run_slow_timed_events(
                 // Detect HVT kill and award/penalize bonus points
                 if let bfprotocols::shots::Who::AI { gid, .. } = &dead.victim {
                     if let Some((event_id, reward)) = ctx.event_scheduler.hvt_groups.remove(gid) {
-                        // Look up which side owns this HVT from the active event.
-                        let hvt_side = ctx.event_scheduler.active_events.iter()
+                        // Look up the HVT's owning side and departed objective.
+                        let hvt_info = ctx.event_scheduler.active_events.iter()
                             .find(|e| e.id() == event_id)
                             .and_then(|e| match e {
-                                crate::db::events::CampaignEvent::HighValueTarget { side, .. } => Some(*side),
+                                crate::db::events::CampaignEvent::HighValueTarget { side, objective, .. } => Some((*side, *objective)),
                                 _ => None,
                             });
                         let killer_ucid = dead.shots.iter().find_map(|s| match &s.shooter {
                             bfprotocols::shots::Who::Player { ucid, .. } => Some(*ucid),
                             _ => None,
                         });
+                        // Killing the HVT is always bad — the killer loses personal points
+                        // (should have captured it) and the HVT's departed objective loses points.
                         if let Some(ucid) = killer_ucid {
-                            if let Some(player) = ctx.db.persisted.players.get_mut_cow(&ucid) {
-                                // Friendly-fire penalty: killing your own side's HVT costs points.
-                                let (delta, msg) = if hvt_side == Some(player.side) {
-                                    (-reward, format_compact!("Friendly HVT killed! -{reward} points penalty (total: {})", player.points - reward))
-                                } else {
-                                    (reward, format_compact!("HVT eliminated! +{reward} bonus points (total: {})", player.points + reward))
-                                };
-                                player.points += delta;
-                                let side = player.side;
-                                ctx.db.ephemeral.dirty();
+                            let killer_side = ctx.db.persisted.players.get(&ucid).map(|p| p.side);
+                            let msg = if hvt_info.map(|(s, _)| s) == killer_side {
+                                // Friendly fire on own HVT
+                                format_compact!("Friendly HVT destroyed! -{reward} points penalty")
+                            } else {
+                                // Enemy killed HVT instead of capturing it
+                                format_compact!("HVT destroyed! -{reward} points penalty (capture for positive score)")
+                            };
+                            ctx.db.adjust_points(&ucid, -reward, "hvt killed (should have captured)");
+                            if let Some(side) = killer_side {
                                 ctx.db.ephemeral.msgs().panel_to_side(15, false, side, msg);
+                            }
+                        }
+                        // HVT's departed objective loses points regardless of who killed it
+                        if let Some((_, hvt_oid)) = hvt_info {
+                            if let Some(obj) = ctx.db.persisted.objectives.get_mut_cow(&hvt_oid) {
+                                obj.points = (obj.points - reward).max(0);
+                                ctx.db.ephemeral.dirty();
                             }
                         }
                         // E: Revenge — enemy side launches a counter-offensive after a delay
                         let events_cfg = ctx.db.ephemeral.cfg.campaign_events.clone();
                         if let Some(ref ecfg) = events_cfg {
                             if ecfg.escalation_enabled {
-                                if let Some(side) = hvt_side {
+                                if let Some((hvt_side, _)) = hvt_info {
                                     let trigger_at = dead.time + chrono::Duration::seconds(ecfg.revenge_delay_secs as i64);
-                                    ctx.event_scheduler.schedule_revenge(side, trigger_at);
+                                    ctx.event_scheduler.schedule_revenge(hvt_side, trigger_at);
                                     ctx.db.ephemeral.msgs().panel_to_all(
                                         15, false,
-                                        format_compact!("INTEL: {:?} forces will retaliate for the loss of their HVT!", side),
+                                        format_compact!("INTEL: {:?} forces will retaliate for the loss of their HVT!", hvt_side),
                                     );
                                 }
                             }
@@ -3170,20 +2952,20 @@ fn run_slow_timed_events(
                 for oid in threatened {
                     if ctx.db.ephemeral.threat_notified.insert(oid) {
                         let obj = ctx.db.objective(&oid)?;
-                        let owner = obj.owner();
-                        let msg = format_compact!("enemies spotted near {}", obj.name());
-                        ctx.db.ephemeral.msgs().panel_to_side(10, false, owner, msg)
+                        let (owner, pos, name) = (obj.owner(), obj.pos(), obj.name().to_string());
+                        ctx.db.ephemeral.on_objective_threatened(pos, owner, &name, ts);
                     }
                     // Under-attack notification with cooldown
-                    if let Some(ua_cfg) = ctx.db.ephemeral.cfg.under_attack.clone() {
-                        let cooldown = chrono::Duration::seconds(ua_cfg.cooldown_secs as i64);
+                    let ua_cooldown = ctx.db.ephemeral.cfg.under_attack.as_ref()
+                        .map(|c| c.cooldown_secs);
+                    if let Some(cooldown_secs) = ua_cooldown {
+                        let cooldown = chrono::Duration::seconds(cooldown_secs as i64);
                         let last = ctx.db.ephemeral.last_under_attack_notif.get(&oid).copied();
                         if last.map(|t| ts - t >= cooldown).unwrap_or(true) {
                             ctx.db.ephemeral.last_under_attack_notif.insert(oid, ts);
                             if let Ok(obj) = ctx.db.objective(&oid) {
-                                let owner = obj.owner();
-                                let msg = format_compact!("{} is under attack!", obj.name());
-                                ctx.db.ephemeral.msgs().panel_to_side(15, true, owner, msg);
+                                let (owner, pos, name) = (obj.owner(), obj.pos(), obj.name().to_string());
+                                ctx.db.ephemeral.on_objective_under_attack(pos, owner, &name, cooldown_secs as i64, ts);
                             }
                         }
                     }
@@ -3221,9 +3003,10 @@ fn run_slow_timed_events(
         }
         record_perf(&mut perf.slow_timed, ts);
         let ts = Utc::now();
-        match ctx.db.check_carrier_group_capture(ts) {
+        match ctx.db.check_carrier_group_capture(lua, ts) {
             Ok(captures) => {
                 for (oid, old_owner, new_owner) in captures {
+                    ctx.event_scheduler.owned_cache_dirty = true;
                     if let Ok(obj) = ctx.db.objective(&oid) {
                         let msg_old = format_compact!("{} has been captured by the enemy!", obj.name());
                         let msg_new = format_compact!("You have captured {} with its aircraft! Carrier at 50% health", obj.name());
@@ -3287,6 +3070,13 @@ fn run_slow_timed_events(
             }
         }
         remove_junk_periodic(lua, ctx, start_ts);
+        // Publish weather to dashboard every 5 minutes
+        if (start_ts - ctx.last_weather_publish).num_seconds() >= 300 {
+            ctx.last_weather_publish = start_ts;
+            if let Err(e) = atis::publish_weather(lua, ctx) {
+                error!("failed to publish weather: {e:?}");
+            }
+        }
     }
     Ok(AdminResult::Continue)
 }

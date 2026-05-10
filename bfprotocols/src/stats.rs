@@ -250,4 +250,17 @@ pub enum Stat {
         xp: u32,
         reason: String,
     },
+    Weather {
+        temp_c: f64,
+        wind_speed_kts: f64,
+        wind_from_deg: f64,
+        cloud_base_m: f64,
+        qnh_hpa: f64,
+        /// Cloud density 0–10 (0 = clear, 10 = overcast). None if not available.
+        #[serde(default)]
+        cloud_density: Option<u8>,
+        /// Horizontal visibility in metres (capped at 10 000 = unlimited). None if no fog.
+        #[serde(default)]
+        visibility_m: Option<f64>,
+    },
 }

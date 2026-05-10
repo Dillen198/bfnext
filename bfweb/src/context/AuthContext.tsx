@@ -7,9 +7,10 @@ interface AuthCtx {
   user:    AuthUser | null
   loading: boolean
   logout:  () => void
+  refresh: () => Promise<void>
 }
 
-const AuthContext = createContext<AuthCtx>({ user: null, loading: true, logout: () => {} })
+const AuthContext = createContext<AuthCtx>({ user: null, loading: true, logout: () => {}, refresh: async () => {} })
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient()
@@ -28,8 +29,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })
   }
 
+  async function refresh() {
+    await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+  }
+
   return (
-    <AuthContext.Provider value={{ user, loading: isLoading, logout }}>
+    <AuthContext.Provider value={{ user, loading: isLoading, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   )

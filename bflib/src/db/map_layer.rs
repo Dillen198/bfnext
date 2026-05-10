@@ -38,6 +38,7 @@ use super::{
     logistics::{AirLogisticsRoute, ConvoyId, LogiRouteId, SeaLogisticsRoute, SupplyConvoy},
     persisted::Persisted,
 };
+use bfprotocols::db::objective::ObjectiveId;
 use bfprotocols::db::group::GroupId;
 use chrono::{DateTime, Duration, Utc};
 use compact_str::format_compact;
@@ -45,7 +46,7 @@ use dcso3::{
     Color, LuaVec3, Vector2, Vector3,
     coalition::Side,
     trigger::{
-        ArrowSpec, CircleSpec, LineSpec, LineType, MarkId, QuadSpec, SideFilter, TextSpec,
+        ArrowSpec, CircleSpec, LineSpec, LineType, MarkId, QuadSpec, RectSpec, SideFilter, TextSpec,
     },
 };
 use fxhash::{FxHashMap, FxHashSet};
@@ -657,6 +658,32 @@ impl JtacLayerMarks {
 // MapLayer — top-level owner of all marks
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Generic timed mark bundle — up to 3 MarkIds that expire together.
+#[derive(Debug)]
+struct TimedMark {
+    ids: [Option<MarkId>; 3],
+    expires: DateTime<Utc>,
+}
+
+impl TimedMark {
+    #[allow(dead_code)]
+    fn one(id: MarkId, ttl_secs: i64, now: DateTime<Utc>) -> Self {
+        Self { ids: [Some(id), None, None], expires: now + Duration::seconds(ttl_secs) }
+    }
+    fn two(a: MarkId, b: MarkId, ttl_secs: i64, now: DateTime<Utc>) -> Self {
+        Self { ids: [Some(a), Some(b), None], expires: now + Duration::seconds(ttl_secs) }
+    }
+    #[allow(dead_code)]
+    fn three(a: MarkId, b: MarkId, c: MarkId, ttl_secs: i64, now: DateTime<Utc>) -> Self {
+        Self { ids: [Some(a), Some(b), Some(c)], expires: now + Duration::seconds(ttl_secs) }
+    }
+    fn remove(self, msgs: &mut MsgQ) {
+        for id in self.ids.into_iter().flatten() {
+            msgs.delete_mark(id);
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct MapLayer {
     convoy_marks: FxHashMap<ConvoyId, ConvoyMarks>,
@@ -665,6 +692,8 @@ pub struct MapLayer {
     fire_marks: Vec<FireOverlay>,
     csar_marks: FxHashMap<GroupId, CsarMarks>,
     pub jtac_marks: FxHashMap<GroupId, JtacLayerMarks>,
+    supply_critical_marks: FxHashMap<ObjectiveId, MarkId>,
+    timed_marks: Vec<TimedMark>,
 }
 
 impl MapLayer {
@@ -717,6 +746,324 @@ impl MapLayer {
         }
     }
 
+    // ── Supply critical warnings ────────────────────────────────────────────
+
+    /// Draw a persistent F10 map marker when an objective's supply is critical.
+    pub fn on_supply_critical(
+        &mut self,
+        oid: ObjectiveId,
+        pos: Vector2,
+        side: Side,
+        name: &str,
+        threshold: u8,
+        msgs: &mut MsgQ,
+    ) {
+        if self.supply_critical_marks.contains_key(&oid) {
+            return;
+        }
+        let sf = side_filter(side);
+        let col = side_color(side, 0.9);
+        let mark = MarkId::new();
+        msgs.text_to_all(
+            sf,
+            mark,
+            TextSpec {
+                pos: v3(pos.x, pos.y),
+                color: col,
+                fill_color: Color::black(0.55),
+                font_size: 12,
+                read_only: true,
+                text: format_compact!("⚠ LOW SUPPLY\n{}\n< {}%", name, threshold).into(),
+            },
+        );
+        self.supply_critical_marks.insert(oid, mark);
+    }
+
+    /// Remove the supply-critical marker when supply has recovered.
+    pub fn on_supply_recovered(&mut self, oid: &ObjectiveId, msgs: &mut MsgQ) {
+        if let Some(mark) = self.supply_critical_marks.remove(oid) {
+            msgs.delete_mark(mark);
+        }
+    }
+
+    // ── Transient tactical events ────────────────────────────────────────────
+
+    /// Dotted square bounding the recon scan area + text label.
+    pub fn on_recon_result(
+        &mut self,
+        target_pos: Vector2,
+        scan_radius_m: f64,
+        unit_count: usize,
+        side: Side,
+        now: DateTime<Utc>,
+        msgs: &mut MsgQ,
+    ) {
+        let sf = side_filter(side);
+        let col = side_color(side, 0.85);
+        let h = scan_radius_m;
+        let rect = MarkId::new();
+        msgs.rect_to_all(
+            sf,
+            rect,
+            RectSpec {
+                start: v3(target_pos.x - h, target_pos.y - h),
+                end:   v3(target_pos.x + h, target_pos.y + h),
+                color: col,
+                fill_color: Color::new(1., 1., 0., 0.04),
+                line_type: LineType::Dotted,
+                read_only: true,
+            },
+            None,
+        );
+        let label = MarkId::new();
+        msgs.text_to_all(
+            sf,
+            label,
+            TextSpec {
+                pos: v3(target_pos.x, target_pos.y),
+                color: col,
+                fill_color: Color::black(0.5),
+                font_size: 11,
+                read_only: true,
+                text: format_compact!("RECON\n~{} enemy units", unit_count).into(),
+            },
+        );
+        self.timed_marks.push(TimedMark::two(rect, label, 120, now));
+    }
+
+    /// NATO hostile unit symbol (diamond) at the detected enemy arty position.
+    ///
+    /// A diamond (◇) is the NATO APP-6 symbol for a hostile ground unit.
+    /// Shown only to the friendly side so they can call counter-fire.
+    pub fn on_counter_battery(
+        &mut self,
+        enemy_pos: Vector2,
+        friendly_side: Side,
+        now: DateTime<Utc>,
+        msgs: &mut MsgQ,
+    ) {
+        let sf = side_filter(friendly_side);
+        let enemy_col = match friendly_side {
+            Side::Blue => Color::red(0.95),
+            _ => Color::blue(0.95),
+        };
+        let r = 1_200_f64;
+        let diamond = MarkId::new();
+        msgs.quad_to_all(
+            sf,
+            diamond,
+            QuadSpec {
+                p0: v3(enemy_pos.x,     enemy_pos.y + r),
+                p1: v3(enemy_pos.x + r, enemy_pos.y),
+                p2: v3(enemy_pos.x,     enemy_pos.y - r),
+                p3: v3(enemy_pos.x - r, enemy_pos.y),
+                color: enemy_col,
+                fill_color: Color::new(1., 0., 0., 0.08),
+                line_type: LineType::Solid,
+                read_only: true,
+            },
+            None,
+        );
+        let label = MarkId::new();
+        msgs.text_to_all(
+            sf,
+            label,
+            TextSpec {
+                pos: v3(enemy_pos.x, enemy_pos.y),
+                color: enemy_col,
+                fill_color: Color::black(0.5),
+                font_size: 11,
+                read_only: true,
+                text: "ARTY\nCOUNTER-BATTERY".into(),
+            },
+        );
+        self.timed_marks.push(TimedMark::two(diamond, label, 60, now));
+    }
+
+    /// Enemy axis-of-advance arrow pointing at the objective — the standard
+    /// military symbol for a ground threat approaching a position.
+    pub fn on_objective_threatened(
+        &mut self,
+        obj_pos: Vector2,
+        side: Side,
+        obj_name: &str,
+        now: DateTime<Utc>,
+        msgs: &mut MsgQ,
+    ) {
+        let sf = side_filter(side);
+        let enemy_col = match side {
+            Side::Blue => Color::red(0.95),
+            _ => Color::blue(0.95),
+        };
+        // Arrow tip at the objective; tail 5 km out (direction of enemy approach
+        // is unknown so we use a universal "converging" bearing from the NE).
+        let tail = obj_pos + Vector2::new(3_500., 3_500.);
+        let arrow = MarkId::new();
+        msgs.arrow_to(
+            sf,
+            arrow,
+            ArrowSpec {
+                start: v3(tail.x, tail.y),
+                end:   v3(obj_pos.x, obj_pos.y),
+                color: enemy_col,
+                fill_color: enemy_col,
+                line_type: LineType::Solid,
+                read_only: true,
+            },
+            None,
+        );
+        let label = MarkId::new();
+        msgs.text_to_all(
+            sf,
+            label,
+            TextSpec {
+                pos: v3(obj_pos.x, obj_pos.y),
+                color: enemy_col,
+                fill_color: Color::black(0.55),
+                font_size: 12,
+                read_only: true,
+                text: format_compact!("ENEMY CONTACT\n{}", obj_name).into(),
+            },
+        );
+        self.timed_marks.push(TimedMark::two(arrow, label, 120, now));
+    }
+
+    /// Bold enemy axis-of-advance arrow at an objective that is actively under
+    /// attack — heavier weight and shorter range than the "threatened" arrow to
+    /// show immediate close combat.
+    pub fn on_objective_under_attack(
+        &mut self,
+        obj_pos: Vector2,
+        side: Side,
+        obj_name: &str,
+        ttl_secs: i64,
+        now: DateTime<Utc>,
+        msgs: &mut MsgQ,
+    ) {
+        let sf = side_filter(side);
+        let enemy_col = match side {
+            Side::Blue => Color::red(1.),
+            _ => Color::blue(1.),
+        };
+        // Two converging attack arrows from NW and NE — standard hasty-attack
+        // symbol showing multi-axis pressure on the position.
+        let offset = 2_500_f64;
+        let arrow_nw = MarkId::new();
+        msgs.arrow_to(
+            sf,
+            arrow_nw,
+            ArrowSpec {
+                start: v3(obj_pos.x - offset, obj_pos.y + offset),
+                end:   v3(obj_pos.x, obj_pos.y),
+                color: enemy_col,
+                fill_color: enemy_col,
+                line_type: LineType::Solid,
+                read_only: true,
+            },
+            None,
+        );
+        let arrow_ne = MarkId::new();
+        msgs.arrow_to(
+            sf,
+            arrow_ne,
+            ArrowSpec {
+                start: v3(obj_pos.x + offset, obj_pos.y + offset),
+                end:   v3(obj_pos.x, obj_pos.y),
+                color: enemy_col,
+                fill_color: enemy_col,
+                line_type: LineType::Solid,
+                read_only: true,
+            },
+            None,
+        );
+        let label = MarkId::new();
+        msgs.text_to_all(
+            sf,
+            label,
+            TextSpec {
+                pos: v3(obj_pos.x, obj_pos.y),
+                color: enemy_col,
+                fill_color: Color::black(0.6),
+                font_size: 13,
+                read_only: true,
+                text: format_compact!("UNDER ATTACK\n{}", obj_name).into(),
+            },
+        );
+        self.timed_marks.push(TimedMark::three(arrow_nw, arrow_ne, label, ttl_secs, now));
+    }
+
+    /// NATO friendly unit symbol (rectangle) at the objective + a movement
+    /// arrow showing the axis of advance — standard symbol for friendly forces
+    /// arriving at a position.
+    pub fn on_reinforcements_arrived(
+        &mut self,
+        obj_pos: Vector2,
+        side: Side,
+        now: DateTime<Utc>,
+        msgs: &mut MsgQ,
+    ) {
+        let sf = side_filter(side);
+        let col = side_color(side, 0.9);
+        // Movement arrow: axis of advance pointing into the objective from the north
+        let arrow = MarkId::new();
+        msgs.arrow_to(
+            sf,
+            arrow,
+            ArrowSpec {
+                start: v3(obj_pos.x, obj_pos.y + 3_500.),
+                end:   v3(obj_pos.x, obj_pos.y),
+                color: col,
+                fill_color: col,
+                line_type: LineType::Solid,
+                read_only: true,
+            },
+            None,
+        );
+        // Friendly unit rectangle at the destination (NATO APP-6 friendly ground symbol)
+        let h = 800_f64;
+        let w = 1_400_f64;
+        let unit_box = MarkId::new();
+        msgs.rect_to_all(
+            sf,
+            unit_box,
+            RectSpec {
+                start: v3(obj_pos.x - w, obj_pos.y - h),
+                end:   v3(obj_pos.x + w, obj_pos.y + h),
+                color: col,
+                fill_color: Color::new(0., 0.5, 1., 0.08),
+                line_type: LineType::Solid,
+                read_only: true,
+            },
+            None,
+        );
+        let label = MarkId::new();
+        msgs.text_to_all(
+            sf,
+            label,
+            TextSpec {
+                pos: v3(obj_pos.x, obj_pos.y),
+                color: col,
+                fill_color: Color::black(0.5),
+                font_size: 12,
+                read_only: true,
+                text: format_compact!("REINFORCEMENTS\nARRIVED [{:?}]", side).into(),
+            },
+        );
+        self.timed_marks.push(TimedMark::three(arrow, unit_box, label, 120, now));
+    }
+
+    fn expire_timed_marks(&mut self, now: DateTime<Utc>, msgs: &mut MsgQ) {
+        let mut i = 0;
+        while i < self.timed_marks.len() {
+            if now >= self.timed_marks[i].expires {
+                let m = self.timed_marks.swap_remove(i);
+                m.remove(msgs);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     // ── Full diff-based update (call from slow tick) ─────────────────────────
 
     /// Performs a full diff of the entire map layer against current DB state.
@@ -741,6 +1088,7 @@ impl MapLayer {
         self.update_sea_routes(persisted, active_sea_routes, msgs);
         self.update_csar(persisted, csar_capture_mins, now, msgs);
         self.expire_fire_marks(now, msgs);
+        self.expire_timed_marks(now, msgs);
     }
 
     // ── Ground convoys ───────────────────────────────────────────────────────
@@ -940,57 +1288,62 @@ impl MapLayer {
         let mut live_pilots: FxHashSet<GroupId> = FxHashSet::default();
         let capture_secs = csar_capture_mins as i64 * 60;
 
-        for (gid, group) in persisted.groups.into_iter() {
-            if let DeployKind::DownedPilot { name, .. } = &group.origin {
-                live_pilots.insert(*gid);
+        for gid in persisted.downed_pilots.into_iter() {
+            let group = match persisted.groups.get(gid) {
+                Some(g) => g,
+                None => continue,
+            };
+            let name = match &group.origin {
+                DeployKind::DownedPilot { name, .. } => name,
+                _ => continue,
+            };
+            live_pilots.insert(*gid);
 
-                let spawn_time = persisted
-                    .downed_pilot_spawn_times
-                    .get(gid)
-                    .copied()
-                    .unwrap_or(now);
-                let elapsed_secs = (now - spawn_time).num_seconds().max(0);
+            let spawn_time = persisted
+                .downed_pilot_spawn_times
+                .get(gid)
+                .copied()
+                .unwrap_or(now);
+            let elapsed_secs = (now - spawn_time).num_seconds().max(0);
 
-                let (label, urgency) = if capture_secs > 0 {
-                    let remaining_secs = (capture_secs - elapsed_secs).max(0);
-                    let remaining_mins = remaining_secs / 60;
-                    let remaining_s = remaining_secs % 60;
-                    let frac = elapsed_secs as f64 / capture_secs as f64;
-                    let urgency = if frac >= 0.66 {
-                        UrgencyLevel::High
-                    } else if frac >= 0.33 {
-                        UrgencyLevel::Medium
-                    } else {
-                        UrgencyLevel::Low
-                    };
-                    let lbl = format_compact!(
-                        "CSAR\n{}\nCapture in {}:{:02}",
-                        name,
-                        remaining_mins,
-                        remaining_s
-                    );
-                    (lbl, urgency)
+            let (label, urgency) = if capture_secs > 0 {
+                let remaining_secs = (capture_secs - elapsed_secs).max(0);
+                let remaining_mins = remaining_secs / 60;
+                let remaining_s = remaining_secs % 60;
+                let frac = elapsed_secs as f64 / capture_secs as f64;
+                let urgency = if frac >= 0.66 {
+                    UrgencyLevel::High
+                } else if frac >= 0.33 {
+                    UrgencyLevel::Medium
                 } else {
-                    (format_compact!("CSAR\n{}\nAwaiting rescue", name), UrgencyLevel::Low)
+                    UrgencyLevel::Low
                 };
+                let lbl = format_compact!(
+                    "CSAR\n{}\nCapture in {}:{:02}",
+                    name,
+                    remaining_mins,
+                    remaining_s
+                );
+                (lbl, urgency)
+            } else {
+                (format_compact!("CSAR\n{}\nAwaiting rescue", name), UrgencyLevel::Low)
+            };
 
-                if self.csar_marks.contains_key(gid) {
-                    let marks = self.csar_marks.get(gid).unwrap();
-                    marks.set_urgency(urgency, msgs);
-                    marks.update_label(label, msgs);
-                } else {
-                    let pos = persisted
-                        .units
-                        .into_iter()
-                        .find(|(_, u)| u.group == *gid)
-                        .map(|(_, u)| u.pos)
-                        .unwrap_or_default();
-                    let marks = CsarMarks::new(pos, group.side, label, msgs);
-                    self.csar_marks.insert(*gid, marks);
-                    // Set initial urgency on the new mark
-                    let marks = self.csar_marks.get(gid).unwrap();
-                    marks.set_urgency(urgency, msgs);
-                }
+            if self.csar_marks.contains_key(gid) {
+                let marks = self.csar_marks.get(gid).unwrap();
+                marks.set_urgency(urgency, msgs);
+                marks.update_label(label, msgs);
+            } else {
+                // Position: take the first unit from the group — O(1), no full scan needed
+                let pos = group.units.into_iter()
+                    .next()
+                    .and_then(|uid| persisted.units.get(uid))
+                    .map(|u| u.pos)
+                    .unwrap_or_default();
+                let marks = CsarMarks::new(pos, group.side, label, msgs);
+                self.csar_marks.insert(*gid, marks);
+                let marks = self.csar_marks.get(gid).unwrap();
+                marks.set_urgency(urgency, msgs);
             }
         }
 
@@ -1054,6 +1407,12 @@ impl MapLayer {
             msgs.delete_mark(j.target_ring);
             msgs.delete_mark(j.bearing_line);
             msgs.delete_mark(j.nine_line);
+        }
+        for (_, m) in self.supply_critical_marks.drain() {
+            msgs.delete_mark(m);
+        }
+        for m in self.timed_marks.drain(..) {
+            m.remove(msgs);
         }
     }
 }

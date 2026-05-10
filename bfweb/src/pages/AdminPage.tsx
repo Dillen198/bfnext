@@ -3,14 +3,29 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
-import { Shield, Link, Users, Trash2 } from 'lucide-react'
+import { Shield, Link, Users, Trash2, AlertTriangle, RotateCcw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 export default function AdminPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [unlinkTarget, setUnlinkTarget] = useState<string | null>(null)
+  const [unlinkTarget,  setUnlinkTarget]  = useState<string | null>(null)
+  const [resetConfirm,  setResetConfirm]  = useState(false)
+  const [resetLoading,  setResetLoading]  = useState(false)
+  const [resetDone,     setResetDone]     = useState(false)
+
+  async function handleReset() {
+    setResetLoading(true)
+    try {
+      await api.admin.reset()
+      queryClient.invalidateQueries()
+      setResetDone(true)
+      setResetConfirm(false)
+    } finally {
+      setResetLoading(false)
+    }
+  }
 
   // Redirect non-admins
   if (!user) { navigate('/login'); return null }
@@ -89,6 +104,58 @@ export default function AdminPage() {
               </tbody>
             </table>
           )}
+        </div>
+
+        {/* ── Campaign Reset ── */}
+        <div className="vs-card" style={{ border: '1px solid rgba(239,68,68,0.25)' }}>
+          <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
+            <AlertTriangle size={13} style={{ color: '#ef4444' }} />
+            <span style={{ ...dim, fontSize: '0.65rem', color: '#ef4444' }}>Danger Zone</span>
+          </div>
+          <div className="p-4 flex items-start justify-between gap-6">
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text)', fontWeight: 600, marginBottom: '0.3rem' }}>
+                Reset All Campaign Data
+              </div>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 420 }}>
+                Permanently deletes all rounds, kills, objectives, pilot stats, sorties, trails and weather data.
+                Discord links and admin sessions are preserved — you will stay logged in.
+              </div>
+            </div>
+            <div className="flex flex-col items-end gap-2 flex-shrink-0">
+              {resetDone && (
+                <div style={{ fontSize: '0.65rem', color: 'var(--accent)', letterSpacing: '0.1em' }}>✓ Reset complete</div>
+              )}
+              {!resetConfirm ? (
+                <button
+                  onClick={() => { setResetConfirm(true); setResetDone(false) }}
+                  className="flex items-center gap-1.5"
+                  style={{ fontSize: '0.68rem', color: '#ef4444', background: 'none', border: '1px solid rgba(239,68,68,0.4)', padding: '0.4rem 0.9rem', borderRadius: '3px', cursor: 'pointer', letterSpacing: '0.08em' }}
+                >
+                  <RotateCcw size={11} /> RESET DATABASE
+                </button>
+              ) : (
+                <div className="flex flex-col items-end gap-1.5">
+                  <div style={{ fontSize: '0.62rem', color: '#ef4444', letterSpacing: '0.06em' }}>This cannot be undone. Are you sure?</div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setResetConfirm(false)}
+                      style={{ fontSize: '0.65rem', color: 'var(--text-dim)', background: 'none', border: '1px solid var(--border)', padding: '0.3rem 0.8rem', borderRadius: '3px', cursor: 'pointer' }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleReset}
+                      disabled={resetLoading}
+                      style={{ fontSize: '0.65rem', color: '#fff', background: '#ef4444', border: 'none', padding: '0.3rem 0.8rem', borderRadius: '3px', cursor: resetLoading ? 'not-allowed' : 'pointer', opacity: resetLoading ? 0.7 : 1 }}
+                    >
+                      {resetLoading ? 'Resetting…' : 'YES, RESET'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* ── Linked accounts ── */}

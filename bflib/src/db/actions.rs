@@ -905,11 +905,7 @@ impl Db {
                                 <= scan_radius.powi(2)
                     })
                     .count();
-                let msg = format_compact!(
-                    "Recon flight tasked. Initial report: ~{unit_count} enemy units within {:.0}km of target.",
-                    scan_radius / 1000.0
-                );
-                db.ephemeral.msgs().panel_to_side(20, false, side, msg);
+                db.ephemeral.on_recon_result(target_pos, scan_radius, unit_count, side, Utc::now());
                 db.drone_mission(
                     side,
                     ucid_for_report,
@@ -1608,30 +1604,6 @@ impl Db {
             );
         }
 
-        // 4. Deduct supply cost from parent naval base
-        let parent_nb = {
-            let cg = objective!(self, &carrier_oid)?;
-            match &cg.kind {
-                ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. } => *nb_id,
-                _ => bail!("Carrier has no parent naval base"),
-            }
-        };
-        let available_supplies = {
-            let nb = objective!(self, &parent_nb)?;
-            nb.warehouse.equipment.get("SUPPLIES").map(|inv| inv.stored).unwrap_or(0)
-        };
-        if available_supplies < args.cfg.supply_cost {
-            bail!(
-                "Not enough supplies at Naval Base for strike (need {}, have {})",
-                args.cfg.supply_cost,
-                available_supplies
-            );
-        }
-        if let Some(nb_mut) = self.persisted.objectives.get_mut_cow(&parent_nb) {
-            if let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow("SUPPLIES") {
-                inv.stored -= args.cfg.supply_cost;
-            }
-        }
 
         // 5. Build Task::Bombing and command the carrier group
         let expend = match args.cfg.missiles_per_strike {
@@ -3163,7 +3135,7 @@ impl Db {
         &mut self,
         lua: MizLua,
         side: Side,
-        ucid: Option<Ucid>,
+        _ucid: Option<Ucid>,
         args: WithPos<ArtilleryCfg>,
     ) -> Result<Option<GroupId>> {
         use crate::db::objective::ObjGroupClass;
@@ -3261,16 +3233,6 @@ impl Db {
 
         if fired == 0 {
             bail!("all artillery groups are unavailable or out of range right now");
-        }
-
-        // Notify the requesting player (if player-called) and the whole side.
-        let msg = format_compact!(
-            "FIRES: {} group(s) firing fire-support mission at requested target",
-            fired
-        );
-        self.ephemeral.msgs().panel_to_side(15, false, side, msg.clone());
-        if let Some(ref ucid) = ucid {
-            self.ephemeral.panel_to_player(&self.persisted, 15, ucid, msg);
         }
 
         // Place a temporary F10 overlay: trajectory line + impact circle + label.

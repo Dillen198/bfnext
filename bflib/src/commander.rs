@@ -265,13 +265,6 @@ enum CommanderAction {
         target_name: CompactString,
     },
     Ambush,
-    /// Standalone air assault: helicopters + transport fly troops to an LZ near
-    /// a weak enemy objective, independent of a counter-offensive.
-    AirAssault {
-        target_oid: ObjectiveId,
-        target_pos: Vector2,
-        target_name: CompactString,
-    },
     /// Dispatch a friendly AI CAP flight when there aren't enough human pilots
     /// in the air for this side.
     DispatchCap,
@@ -491,60 +484,24 @@ fn score_actions(
         }
     }
 
-    // --- Standalone Air Assault ---
-    // A focused helicopter + transport strike on the best enemy target, scored
-    // like a counter-offensive opportunity but independent of ground forces.
-    // Only eligible when air_assault_enabled, treasury covers the cost, and no
-    // other AirAssault or CounterOffensive from this side is already running.
-    if events_cfg.air_assault_enabled
-        && treasury >= sc_cfg.counter_offensive_cost
-        && territory_ratio >= 0.40
-        && !enemy.is_empty()
-        && !scheduler.active_events.iter().any(|e| matches!(
-            e,
-            CampaignEvent::AirAssault { attacking_side: s, .. }
-            | CampaignEvent::CounterOffensive { attacking_side: s, .. }
-            if *s == side
-        ))
-    {
-        // Pick the highest-opportunity enemy objective.
-        let best = enemy
-            .iter()
-            .max_by(|a, b| {
-                a.opportunity_score()
-                    .partial_cmp(&b.opportunity_score())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        if let Some(tgt) = best {
-            let score = tgt.opportunity_score();
-            if score > 0.0 {
-                // Slightly less value than a full counter-offensive (no ground push)
-                // but more targeted and cheaper in terms of time.
-                let value = score * 0.85;
-                actions.push((
-                    CommanderAction::AirAssault {
-                        target_oid: tgt.oid,
-                        target_pos: tgt.pos,
-                        target_name: tgt.name.clone(),
-                    },
-                    sc_cfg.counter_offensive_cost,
-                    value,
-                ));
-            }
-        }
-    }
-
     // --- Dispatch CAP ---
     // Only when cap_cost > 0, treasury covers it, there is no active commander
-    // CAP for this side already, the post-expiry cooldown has passed, and friendly
-    // in-air pilot count is below the configured threshold.
+    // CAP for this side already, no reactive EnemyCap is already covering this side
+    // (prevents stacking friendly + reactive), the post-expiry cooldown has passed,
+    // and friendly in-air pilot count is below the configured threshold.
     if sc_cfg.cap_cost > 0
         && treasury >= sc_cfg.cap_cost
         && events_cfg.enemy_cap_enabled
         && !scheduler
             .active_events
             .iter()
-            .any(|e| matches!(e, CampaignEvent::CommanderCap { cap_side: s, .. } if *s == side))
+            .any(|e| match e {
+                // Block if a CommanderCap OR an EnemyCap for this defending side already exists.
+                // EnemyCap{cap_side} = the side that owns the CAP (defending side) = our side.
+                CampaignEvent::CommanderCap { cap_side: s, .. }
+                | CampaignEvent::EnemyCap { cap_side: s, .. } => *s == side,
+                _ => false,
+            })
     {
         let last_ended = match side {
             Side::Blue => scheduler.last_commander_cap_ended_blue,
@@ -560,9 +517,8 @@ fn score_actions(
             let enemy_air = pilots_in_air(db, opposite_side(side));
             // Dispatch when enemy has more aircraft airborne than we do.
             // `cap_min_friendly_pilots` acts as a minimum gap threshold:
-            // we only scramble if enemy_air - friendly_air >= that value,
-            // so a single extra enemy doesn't immediately trigger (set it to 1
-            // for sensitive, 2+ for more relaxed response).
+            // we only scramble if enemy_air - friendly_air >= that value.
+            // Default is 2, meaning the enemy needs at least 2 more aircraft airborne.
             let gap = enemy_air.saturating_sub(friendly_air);
             if gap >= sc_cfg.cap_min_friendly_pilots {
                 // Value scales with how lopsided the air balance is and how
@@ -574,6 +530,7 @@ fn score_actions(
             }
         }
     }
+
 
     actions
 }
@@ -664,7 +621,7 @@ pub fn tick_events(
 
     // HVT: free intel event — spawned on normal check interval, independent of
     // per-side treasury decisions.
-    let candidates = EventScheduler::build_candidates(db);
+    let candidates = scheduler.build_candidates(db);
 
     // Dynamic check interval: shrinks linearly as player count increases.
     // hvt_players_per_interval_step == 0 disables scaling (constant interval).
@@ -754,7 +711,6 @@ pub fn tick_events(
                 CommanderAction::Barrage { .. } => "barrage",
                 CommanderAction::MissileStrike { .. } => "missile strike",
                 CommanderAction::Ambush => "ambush",
-                CommanderAction::AirAssault { .. } => "air assault",
                 CommanderAction::DispatchCap => "dispatch CAP",
             };
             info!(
@@ -808,33 +764,6 @@ pub fn tick_events(
                     &mut messages,
                     &mut effects,
                 ),
-                CommanderAction::AirAssault { target_oid, target_pos, target_name } => {
-                    // Compute LZ on the attacker's side of the target.
-                    let attacker_centroid: Vector2 = {
-                        let positions: Vec<Vector2> = candidates
-                            .iter()
-                            .filter(|(_, s, ..)| *s == side)
-                            .map(|(_, _, pos, ..)| *pos)
-                            .collect();
-                        if positions.is_empty() {
-                            target_pos
-                        } else {
-                            let n = positions.len() as f64;
-                            positions.iter().fold(Vector2::zeros(), |a, p| a + p) / n
-                        }
-                    };
-                    let dir_to_attacker = (attacker_centroid - target_pos).normalize();
-                    let lz_pos = target_pos + dir_to_attacker * events_cfg.assault_lz_offset_m;
-                    scheduler.spawn_air_assault_event(
-                        events_cfg,
-                        ts,
-                        side,
-                        target_oid,
-                        lz_pos,
-                        &target_name,
-                        &mut messages,
-                    );
-                }
                 CommanderAction::DispatchCap => scheduler.spawn_commander_cap(
                     db,
                     events_cfg,

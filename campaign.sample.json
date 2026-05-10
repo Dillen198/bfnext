@@ -1,0 +1,41 @@
+{
+  "_comment": "Copy this file, rename it (e.g. campaign.json), fill in your values, then pass it to bfdb:",
+  "_usage":   "bfdb.exe --db \"E:\\Saved Games\\DCS\\bfdb\" --config \"E:\\campaign.json\" --listen-address 0.0.0.0:8080",
+
+  "name":      "Vector Strike",
+  "shortName": "VS",
+  "tagline":   "Where every sortie shapes the war.",
+  "version":   "v3.0",
+  "logoUrl":   "",
+
+  "discord":     "https://discord.gg/YOURCODE",
+  "server":      "Your Server Name · Campaign Name",
+  "serverIp":    "123.456.789.0:10309",
+  "websiteUrl":  "https://yourdomain.com",
+  "donationUrl": "https://ko-fi.com/yourname",
+
+  "blueLabel": "BLUFOR",
+  "redLabel":  "REDFOR",
+
+  "accentColor":      "#4d7c0f",
+  "accentHoverColor": "#65a30d",
+  "blueColor":        "#3b82f6",
+  "redColor":         "#ef4444",
+  "bgColor":          "#0a0a0a",
+  "bgCardColor":      "#111111",
+  "bgElevatedColor":  "#191919",
+  "borderColor":      "#2a2a2a",
+
+  "mapCenter": [33.0, 36.5],
+  "mapZoom":   7,
+
+  "engineCredits": [
+    { "name": "EvilKipper", "handle": "",               "role": "Creator"              },
+    { "name": "KillerDog",  "handle": "No15 | KillerDog", "role": "Lead Developer"       },
+    { "name": "EagleEye",   "handle": "[.ID] EagleEye",   "role": "Tester & Contributor" }
+  ],
+
+  "serverCredits": [
+    { "name": "YourName", "role": "Server Admin" }
+  ]
+}

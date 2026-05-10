@@ -115,6 +115,10 @@ pub struct SfMission {
     pub ucid: Ucid,
     /// Reward points to award on successful extraction.
     pub reward_points: i32,
+    /// The objective the HVT departed from (for scoring on capture/kill).
+    pub hvt_objective: ObjectiveId,
+    /// Side that owns the HVT (the side losing points on capture/kill).
+    pub hvt_side: dcso3::coalition::Side,
 }
 
 /// Metadata for a group that was created from inline config rather than a .miz template.
@@ -423,6 +427,56 @@ impl Ephemeral {
     /// Remove all F10 map layer marks (e.g. on mission reset).
     pub fn remove_map_layer(&mut self) {
         self.map_layer.remove_all(&mut self.msgs);
+    }
+
+    pub fn on_recon_result(
+        &mut self,
+        target_pos: dcso3::Vector2,
+        scan_radius_m: f64,
+        unit_count: usize,
+        side: dcso3::coalition::Side,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_recon_result(target_pos, scan_radius_m, unit_count, side, now, &mut self.msgs);
+    }
+
+    pub fn on_counter_battery(
+        &mut self,
+        enemy_pos: dcso3::Vector2,
+        friendly_side: dcso3::coalition::Side,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_counter_battery(enemy_pos, friendly_side, now, &mut self.msgs);
+    }
+
+    pub fn on_objective_threatened(
+        &mut self,
+        obj_pos: dcso3::Vector2,
+        side: dcso3::coalition::Side,
+        obj_name: &str,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_objective_threatened(obj_pos, side, obj_name, now, &mut self.msgs);
+    }
+
+    pub fn on_reinforcements_arrived(
+        &mut self,
+        obj_pos: dcso3::Vector2,
+        side: dcso3::coalition::Side,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_reinforcements_arrived(obj_pos, side, now, &mut self.msgs);
+    }
+
+    pub fn on_objective_under_attack(
+        &mut self,
+        obj_pos: dcso3::Vector2,
+        side: dcso3::coalition::Side,
+        obj_name: &str,
+        ttl_secs: i64,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_objective_under_attack(obj_pos, side, obj_name, ttl_secs, now, &mut self.msgs);
     }
 
     pub fn push_sync_warehouse(&mut self, oid: ObjectiveId, vehicle: Vehicle) {

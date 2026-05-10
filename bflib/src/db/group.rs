@@ -1438,4 +1438,28 @@ impl Db {
         }
         Ok(dead)
     }
+
+    /// Returns an iterator over all **non-player** aircraft/helicopter units that have been
+    /// confirmed alive by DCS (i.e. they appear in `object_id_by_uid`). This includes
+    /// AI CAP, AI AWACS, logistics aircraft, etc.
+    ///
+    /// The EWR system calls this to get the live DCS object IDs it needs to call
+    /// `Unit::get_instance()` and check `in_air()` for each AI aircraft, so that
+    /// AI units show up in radar reports just like player aircraft do.
+    pub fn ai_aircraft_unit_ids(
+        &self,
+    ) -> impl Iterator<Item = (UnitId, &DcsOid<ClassUnit>, Side)> {
+        self.ephemeral.object_id_by_uid.iter().filter_map(|(uid, oid)| {
+            let su = self.persisted.units.get(uid)?;
+            // Fixed-wing or rotary-wing only.
+            if !su.tags.contains(UnitTag::Aircraft) && !su.tags.contains(UnitTag::Helicopter) {
+                return None;
+            }
+            // Exclude units that belong to a player slot (already tracked via instanced_players).
+            if self.ephemeral.slot_by_object_id.contains_key(oid) {
+                return None;
+            }
+            Some((*uid, oid, su.side))
+        })
+    }
 }

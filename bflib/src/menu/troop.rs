@@ -128,6 +128,7 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
                                 if let CampaignEvent::HighValueTarget {
                                     id,
                                     side: hvt_side,
+                                    objective: hvt_obj,
                                     spawn_pos: Some(sp),
                                     reward_points,
                                     ..
@@ -140,7 +141,7 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
                                     let dx = sp.x - helo_pos.x;
                                     let dy = sp.y - helo_pos.y;
                                     if dx * dx + dy * dy <= detection_radius_sq {
-                                        Some((*id, *sp, *reward_points))
+                                        Some((*id, *sp, *reward_points, *hvt_obj, *hvt_side))
                                     } else {
                                         None
                                     }
@@ -149,7 +150,7 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
                                 }
                             });
 
-                        if let Some((event_id, hvt_pos, reward_points)) = hvt_match {
+                        if let Some((event_id, hvt_pos, reward_points, hvt_objective, hvt_side)) = hvt_match {
                             let ucid = ctx
                                 .db
                                 .ephemeral
@@ -167,6 +168,8 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
                                     captured_at: None,
                                     ucid,
                                     reward_points,
+                                    hvt_objective,
+                                    hvt_side,
                                 },
                             );
                             // Issue move order toward the HVT position
@@ -292,10 +295,28 @@ fn return_troops(lua: MizLua, gid: GroupId) -> Result<()> {
             if tr.special_forces {
                 if let Some(mission) = ctx.db.ephemeral.sf_cargo.remove(&slot) {
                     if mission.phase == SfPhase::Captured {
-                        // Award points to the pilot
+                        let reward = mission.reward_points;
+
+                        // HVT's departed objective loses points (HVT side penalized)
+                        if let Some(hvt_obj) = ctx.db.persisted.objectives.get_mut_cow(&mission.hvt_objective) {
+                            hvt_obj.points = (hvt_obj.points - reward).max(0);
+                            ctx.db.ephemeral.dirty();
+                        }
+                        // Find the nearest capturing-side objective to the capture position
+                        // and award it the points
+                        let capture_pos = mission.hvt_pos;
+                        if let Some((cap_oid, _)) = crate::db::events::find_nearest_friendly_objective_id(
+                            &ctx.db, mission.side, capture_pos, &[],
+                        ) {
+                            if let Some(cap_obj) = ctx.db.persisted.objectives.get_mut_cow(&cap_oid) {
+                                cap_obj.points += reward;
+                                ctx.db.ephemeral.dirty();
+                            }
+                        }
+                        // Pilot also gets personal points for the mission
                         ctx.db.adjust_points(
                             &mission.ucid,
-                            mission.reward_points,
+                            reward,
                             "for SF HVT capture",
                         );
 
@@ -368,8 +389,8 @@ fn return_troops(lua: MizLua, gid: GroupId) -> Result<()> {
                             false,
                             mission.side,
                             format_compact!(
-                                "🎯 HVT CAPTURED! {player} extracted the SF team. {} enemy positions revealed for 5 minutes!",
-                                enemy_groups.len()
+                                "HVT CAPTURED! {player} extracted the SF team. {:?} forces lose {} points. {} enemy positions revealed!",
+                                mission.hvt_side, reward, enemy_groups.len()
                             ),
                         );
                         // Schedule intel mark cleanup after 5 minutes

@@ -1,8 +1,8 @@
 import React from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Map, Target, BarChart3, Users, Crosshair, WifiOff, Zap, LogOut, Shield, Settings, Info } from 'lucide-react'
+import { LayoutDashboard, Map, Target, BarChart3, Users, Crosshair, WifiOff, Zap, LogOut, Shield, Settings, Info, Wind, Thermometer, Cloud, Gauge, Server } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../api'
+import { api, type Weather } from '../api'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
@@ -16,6 +16,224 @@ const nav = [
   { to: '/kills',       icon: Crosshair,       label: 'KILL FEED' },
   { to: '/about',       icon: Info,            label: 'ABOUT' },
 ]
+
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+function SessionTimer({ start }: { start: string }) {
+  const [elapsed, setElapsed] = React.useState(0)
+  React.useEffect(() => {
+    const startMs = new Date(start).getTime()
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startMs) / 1000)))
+    tick()
+    const t = setInterval(tick, 1000)
+    return () => clearInterval(t)
+  }, [start])
+  return (
+    <div>
+      <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: '0.2rem' }}>
+        Session Elapsed
+      </div>
+      <div className="font-mono-vs tabular-nums" style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '0.08em' }}>
+        {formatDuration(elapsed)}
+      </div>
+    </div>
+  )
+}
+
+function RestartCountdown({ restartAt }: { restartAt: string }) {
+  const [remaining, setRemaining] = React.useState(0)
+  React.useEffect(() => {
+    const endMs = new Date(restartAt).getTime()
+    const tick = () => setRemaining(Math.max(0, Math.floor((endMs - Date.now()) / 1000)))
+    tick()
+    const t = setInterval(tick, 1000)
+    return () => clearInterval(t)
+  }, [restartAt])
+  const color = remaining < 1800 ? 'var(--accent)' : 'var(--text-muted)'
+  return (
+    <div>
+      <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: '0.2rem' }}>
+        Restart In
+      </div>
+      <div className="font-mono-vs tabular-nums" style={{ fontSize: '0.85rem', fontWeight: 700, color, letterSpacing: '0.08em' }}>
+        {formatDuration(remaining)}
+      </div>
+    </div>
+  )
+}
+
+// ── Weather decode helpers ────────────────────────────────────────────────────
+
+const COMPASS_POINTS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW']
+function windDirName(deg: number): string {
+  const idx = Math.round(deg / 22.5) % 16
+  return COMPASS_POINTS[idx]
+}
+
+function beaufortLabel(kts: number): string {
+  if (kts < 1)   return 'Calm'
+  if (kts < 4)   return 'Light air'
+  if (kts < 8)   return 'Light breeze'
+  if (kts < 13)  return 'Gentle breeze'
+  if (kts < 18)  return 'Moderate breeze'
+  if (kts < 24)  return 'Fresh breeze'
+  if (kts < 31)  return 'Strong breeze'
+  if (kts < 38)  return 'Near gale'
+  if (kts < 47)  return 'Gale'
+  if (kts < 56)  return 'Severe gale'
+  return 'Storm'
+}
+
+function cloudCoverLabel(density: number | null): string {
+  if (density === null) return 'Unknown'
+  if (density === 0)    return 'Clear'
+  if (density <= 2)     return 'Few'
+  if (density <= 4)     return 'Scattered'
+  if (density <= 7)     return 'Broken'
+  return 'Overcast'
+}
+
+function cloudCoverCode(density: number | null): string {
+  if (density === null) return '?'
+  if (density === 0)    return 'SKC'
+  if (density <= 2)     return 'FEW'
+  if (density <= 4)     return 'SCT'
+  if (density <= 7)     return 'BKN'
+  return 'OVC'
+}
+
+function visLabel(m: number | null): string {
+  if (m === null || m >= 9999) return '10 km+'
+  if (m >= 1000) return `${(m / 1000).toFixed(1).replace(/\.0$/, '')} km`
+  return `${Math.round(m)} m`
+}
+
+type FlightRule = 'VFR' | 'MVFR' | 'IFR' | 'LIFR'
+function flightRule(ceilingFt: number | null, visM: number | null): FlightRule {
+  const visKm = visM !== null ? visM / 1000 : 99
+  const ceil  = ceilingFt ?? 9999
+  if (ceil < 500  || visKm < 1.6) return 'LIFR'
+  if (ceil < 1000 || visKm < 4.8) return 'IFR'
+  if (ceil < 3000 || visKm < 8)   return 'MVFR'
+  return 'VFR'
+}
+const RULE_COLOR: Record<FlightRule, string> = {
+  VFR:  '#22c55e',
+  MVFR: '#3b82f6',
+  IFR:  '#ef4444',
+  LIFR: '#a855f7',
+}
+
+function WeatherStrip({ weather }: { weather: Weather }) {
+  const calm = weather.wind_speed_kts < 1
+
+  // Decoded values
+  const tempF    = Math.round(weather.temp_c * 9 / 5 + 32)
+  const qnh_inhg = (weather.qnh_hpa / 33.8639).toFixed(2)
+  const cloudFt  = Math.round(weather.cloud_base_m * 3.281 / 100) * 100
+  const density  = weather.cloud_density ?? null
+  const cover    = cloudCoverLabel(density)
+  const coverCode = cloudCoverCode(density)
+  const hasCeiling = density !== null && density >= 5  // BKN or OVC = ceiling
+  const ceilingFt  = hasCeiling ? cloudFt : null
+  const rule       = flightRule(ceilingFt, weather.visibility_m ?? null)
+  const ruleColor  = RULE_COLOR[rule]
+
+  const WindArrow = () => (
+    <svg
+      width="11" height="11" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2.5"
+      strokeLinecap="round" strokeLinejoin="round"
+      style={{ transform: `rotate(${weather.wind_from_deg}deg)`, flexShrink: 0, color: 'var(--accent)' }}
+    >
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="5 12 12 5 19 12" />
+    </svg>
+  )
+
+  const iconStyle = { color: 'var(--accent)', flexShrink: 0 } as const
+  const label = { fontSize: '0.58rem', color: 'var(--text-dim)', letterSpacing: '0.13em', textTransform: 'uppercase' as const, marginBottom: '0.05rem' }
+  const value = { fontSize: '0.68rem', color: '#cbd5e1', letterSpacing: '0.02em' }
+  const row   = 'flex items-start gap-1.5'
+
+  return (
+    <div>
+      {/* Header row: WEATHER label + flight rules badge */}
+      <div className="flex items-center justify-between mb-2">
+        <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+          WEATHER
+        </div>
+        <span style={{
+          fontSize: '0.55rem', fontWeight: 700, letterSpacing: '0.12em',
+          color: ruleColor, border: `1px solid ${ruleColor}`,
+          padding: '0 4px', borderRadius: '2px', lineHeight: '1.6',
+        }}>
+          {rule}
+        </span>
+      </div>
+
+      <div className="space-y-2 font-mono-vs">
+        {/* Wind */}
+        <div className={row}>
+          {calm ? <Wind size={11} style={{ ...iconStyle, marginTop: 1 }} /> : <span style={{ marginTop: 1 }}><WindArrow /></span>}
+          <div>
+            <div style={label}>Wind</div>
+            {calm ? (
+              <div style={{ ...value, color: '#64748b' }}>Calm</div>
+            ) : (
+              <>
+                <div style={value}>
+                  From {windDirName(weather.wind_from_deg)} ({Math.round(weather.wind_from_deg)}°)
+                </div>
+                <div style={{ fontSize: '0.62rem', color: '#64748b' }}>
+                  {Math.round(weather.wind_speed_kts)} kts · {beaufortLabel(weather.wind_speed_kts)}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Visibility */}
+        <div className={row}>
+          <Cloud size={11} style={{ ...iconStyle, marginTop: 1 }} />
+          <div>
+            <div style={label}>Sky &amp; Visibility</div>
+            <div style={value}>
+              {coverCode} · {cover}
+              {density !== null && density > 0 && ` at ${cloudFt.toLocaleString()} ft`}
+            </div>
+            <div style={{ fontSize: '0.62rem', color: '#64748b' }}>
+              Vis {visLabel(weather.visibility_m)}
+            </div>
+          </div>
+        </div>
+
+        {/* Temperature */}
+        <div className={row}>
+          <Thermometer size={11} style={{ ...iconStyle, marginTop: 1 }} />
+          <div>
+            <div style={label}>Temperature</div>
+            <div style={value}>{Math.round(weather.temp_c)}°C / {tempF}°F</div>
+          </div>
+        </div>
+
+        {/* QNH */}
+        <div className={row}>
+          <Gauge size={11} style={{ ...iconStyle, marginTop: 1 }} />
+          <div>
+            <div style={label}>Altimeter (QNH)</div>
+            <div style={value}>{Math.round(weather.qnh_hpa)} hPa / {qnh_inhg} inHg</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function Clock() {
   const [time, setTime] = React.useState(new Date())
@@ -82,21 +300,29 @@ export default function Layout() {
         {/* Logo */}
         <div className="px-4 pt-5 pb-4" style={{ borderBottom: '1px solid var(--border)' }}>
           <div className="flex items-center gap-3">
-            {/* VS monogram */}
-            <div
-              className="flex items-center justify-center w-9 h-9 flex-shrink-0"
-              style={{
-                background: 'var(--accent)',
-                borderRadius: '2px',
-                fontFamily: "'Bebas Neue', sans-serif",
-                fontSize: '1.1rem',
-                letterSpacing: '0.05em',
-                color: '#fff',
-                lineHeight: 1,
-              }}
-            >
-              VS
-            </div>
+            {/* Logo image or monogram fallback */}
+            {campaign.logoUrl ? (
+              <img
+                src={campaign.logoUrl}
+                alt={campaign.shortName}
+                style={{ width: 36, height: 36, objectFit: 'contain', flexShrink: 0, borderRadius: '2px' }}
+              />
+            ) : (
+              <div
+                className="flex items-center justify-center w-9 h-9 flex-shrink-0"
+                style={{
+                  background: 'var(--accent)',
+                  borderRadius: '2px',
+                  fontFamily: "'Bebas Neue', sans-serif",
+                  fontSize: '1.1rem',
+                  letterSpacing: '0.05em',
+                  color: '#fff',
+                  lineHeight: 1,
+                }}
+              >
+                {campaign.shortName}
+              </div>
+            )}
             <div>
               <div
                 style={{
@@ -148,7 +374,24 @@ export default function Layout() {
           )}
 
           <Clock />
+          {stats?.active_round && (
+            <div className="mt-2">
+              <SessionTimer start={stats.active_round.start} />
+            </div>
+          )}
+          {stats?.restart_at && (
+            <div className="mt-2">
+              <RestartCountdown restartAt={stats.restart_at} />
+            </div>
+          )}
         </div>
+
+        {/* Weather */}
+        {stats?.weather && (
+          <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+            <WeatherStrip weather={stats.weather} />
+          </div>
+        )}
 
         {/* Round selector */}
         {rounds.length > 0 && (
@@ -187,11 +430,11 @@ export default function Layout() {
             </div>
             <div className="h-1.5 rounded-none overflow-hidden flex" style={{ background: 'rgba(75,85,99,0.15)' }}>
               <div className="h-full health-fill" style={{ width: `${bluePct}%`, background: 'var(--blue)' }} />
-              <div className="h-full health-fill" style={{ width: `${redPct}%`, background: 'var(--accent)' }} />
+              <div className="h-full health-fill" style={{ width: `${redPct}%`, background: 'var(--red)' }} />
             </div>
             <div className="flex justify-between mt-1">
               <span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--blue)' }}>{bluePct}% {campaign.blueLabel}</span>
-              <span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--accent)' }}>{campaign.redLabel} {redPct}%</span>
+              <span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--red)' }}>{campaign.redLabel} {redPct}%</span>
             </div>
           </div>
         )}
@@ -229,6 +472,24 @@ export default function Layout() {
           ))}
         </nav>
 
+        {/* Server connect info */}
+        {campaign.serverIp && (
+          <div className="px-4 py-3" style={{ borderTop: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+              Connect
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Server size={10} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+              <span className="font-mono-vs truncate" style={{ fontSize: '0.65rem', color: '#94a3b8', letterSpacing: '0.04em' }}>
+                {campaign.serverIp}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.58rem', color: 'var(--text-dim)', marginTop: '0.2rem', letterSpacing: '0.06em' }}>
+              {campaign.server}
+            </div>
+          </div>
+        )}
+
         {/* Quick stats */}
         {stats && (
           <div className="px-4 py-3" style={{ borderTop: '1px solid var(--border)' }}>
@@ -236,11 +497,31 @@ export default function Layout() {
               Quick Stats
             </div>
             <div className="space-y-1.5">
+              {/* Pilots — online / registered per coalition in one row each */}
+              <div className="flex justify-between items-center">
+                <span style={{ fontSize: '0.68rem', color: 'var(--blue)' }}>{campaign.blueLabel}</span>
+                <span className="font-mono-vs font-bold" style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>
+                  {stats.blue_online}
+                  <span style={{ fontSize: '0.6rem', fontWeight: 400, color: 'var(--text-dim)', marginLeft: '3px' }}>
+                    / {stats.blue_registered} reg
+                  </span>
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span style={{ fontSize: '0.68rem', color: 'var(--red)' }}>{campaign.redLabel}</span>
+                <span className="font-mono-vs font-bold" style={{ fontSize: '0.75rem', color: 'var(--red)' }}>
+                  {stats.red_online}
+                  <span style={{ fontSize: '0.6rem', fontWeight: 400, color: 'var(--text-dim)', marginLeft: '3px' }}>
+                    / {stats.red_registered} reg
+                  </span>
+                </span>
+              </div>
+              {/* Divider */}
+              <div style={{ height: 1, background: 'var(--border)', margin: '0.2rem 0' }} />
               {[
-                { label: 'Active Pilots', value: stats.total_pilots,    color: 'var(--blue)' },
-                { label: 'Objectives',    value: stats.objective_count, color: '#f59e0b' },
-                { label: 'Total Kills',   value: stats.total_kills,     color: 'var(--accent)' },
-                { label: 'Rounds',        value: stats.total_rounds,    color: 'var(--text-muted)' },
+                { label: 'Objectives',  value: stats.objective_count, color: '#f59e0b' },
+                { label: 'Total Kills', value: stats.total_kills,     color: '#ef4444' },
+                { label: 'Rounds',      value: stats.total_rounds,    color: 'var(--text-muted)' },
               ].map(s => (
                 <div key={s.label} className="flex justify-between items-center">
                   <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{s.label}</span>
@@ -306,6 +587,34 @@ export default function Layout() {
           )}
         </div>
 
+        {/* Donation button */}
+        {campaign.donationUrl && (
+          <div className="px-4 py-3" style={{ borderTop: '1px solid var(--border)' }}>
+            <a
+              href={campaign.donationUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                width: '100%', padding: '0.5rem',
+                background: 'rgba(249,115,22,0.08)',
+                border: '1px solid rgba(249,115,22,0.35)',
+                borderRadius: '3px',
+                color: '#f97316',
+                fontSize: '0.68rem', letterSpacing: '0.12em',
+                fontFamily: "'Bebas Neue', sans-serif",
+                textDecoration: 'none',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(249,115,22,0.15)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(249,115,22,0.08)')}
+            >
+              <HeartIcon />
+              SUPPORT THE SERVER
+            </a>
+          </div>
+        )}
+
         {/* Footer */}
         <div className="px-4 py-2" style={{ borderTop: '1px solid var(--border)' }}>
           <div className="flex items-center gap-1.5 mb-1">
@@ -314,8 +623,8 @@ export default function Layout() {
               {campaign.name} · {campaign.version}
             </span>
           </div>
-          <div style={{ fontSize: '0.54rem', color: 'var(--text-dim)', letterSpacing: '0.08em', opacity: 0.6 }}>
-            Developed &amp; Customized by No15 | KillerDog &amp; [.ID] EagleEye
+          <div style={{ fontSize: '0.52rem', color: 'var(--text-dim)', letterSpacing: '0.07em', opacity: 0.55, lineHeight: 1.5 }}>
+            Fowl Engine by EvilKipper &amp; KillerDog
           </div>
         </div>
       </aside>
@@ -325,5 +634,13 @@ export default function Layout() {
         <Outlet />
       </main>
     </div>
+  )
+}
+
+function HeartIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+    </svg>
   )
 }

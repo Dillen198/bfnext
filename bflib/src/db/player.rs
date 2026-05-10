@@ -328,7 +328,7 @@ impl Db {
         let owned_objective = self
             .persisted
             .objectives
-            .iter_mut_cow()
+            .into_iter()
             .find_map(|(oid, obj)| {
                 if obj.owner == player.side && obj.zone.contains(position) {
                     Some((oid, obj))
