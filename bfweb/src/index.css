@@ -15,7 +15,7 @@
   --text:          #f1f5f9;
   --text-muted:    #64748b;
   --text-dim:      #374151;
-  --border:        #2a2a2a;
+  --border:        #1e1e1e;
   --border-accent: #4d7c0f;
   --scrollbar:     #2a2a2a;
   --scrollbar-h:   #4d7c0f80;
@@ -33,7 +33,7 @@ body {
 }
 
 /* ── Scrollbar ── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-h); }
@@ -96,37 +96,29 @@ body {
 }
 .radar-sweep { animation: radar-sweep 4s linear infinite; transform-origin: center; }
 
-@keyframes shimmer {
-  0%   { background-position: -200% center; }
-  100% { background-position:  200% center; }
-}
-
 /* ── Grid background ── */
 .grid-bg {
   background-image:
-    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
   background-size: 32px 32px;
 }
 
-/* ── Radar scope overlay (sneaker-style scanlines + vignette) ── */
-.radar-scope {
-  position: relative;
-}
+/* ── Scanline / vignette overlay ── */
+.radar-scope { position: relative; }
 .radar-scope::before {
   content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 1000;
-  background:
-    repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(0,0,0,0.04) 2px,
-      rgba(0,0,0,0.04) 4px
-    );
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.04) 2px,
+    rgba(0,0,0,0.04) 4px
+  );
 }
 .radar-scope::after {
   content: '';
@@ -146,12 +138,11 @@ body {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .vs-card:hover {
-  border-color: #333;
+  border-color: #2a2a2a;
   border-left-color: var(--accent-hover);
-  box-shadow: 0 0 16px rgba(77,124,15,0.08);
+  box-shadow: 0 0 16px rgba(77,124,15,0.06);
 }
 
-/* Top-border variant (for KPI cards, section headers) */
 .vs-card-top {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -159,7 +150,6 @@ body {
   border-radius: 2px;
 }
 
-/* Blue faction card */
 .vs-card-blue {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -167,7 +157,6 @@ body {
   border-radius: 2px;
 }
 
-/* Neutral flat card (no accent border) */
 .vs-card-flat {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -244,33 +233,34 @@ body {
   font-weight: 700;
   letter-spacing: 0.14em;
   border-radius: 2px;
-  padding: 2px 7px;
+  padding: 2px 6px;
   text-transform: uppercase;
+  flex-shrink: 0;
 }
 .vs-badge-live {
   color: #4ade80;
-  background: rgba(74,222,128,0.08);
-  border: 1px solid rgba(74,222,128,0.22);
+  background: rgba(74,222,128,0.07);
+  border: 1px solid rgba(74,222,128,0.2);
 }
 .vs-badge-offline {
   color: var(--text-dim);
-  background: rgba(55,65,81,0.12);
-  border: 1px solid rgba(55,65,81,0.25);
+  background: rgba(55,65,81,0.1);
+  border: 1px solid rgba(55,65,81,0.2);
 }
 .vs-badge-red {
   color: var(--red);
-  background: rgba(239,68,68,0.08);
-  border: 1px solid rgba(239,68,68,0.2);
+  background: rgba(239,68,68,0.07);
+  border: 1px solid rgba(239,68,68,0.18);
 }
 .vs-badge-blue {
   color: var(--blue);
-  background: rgba(59,130,246,0.08);
-  border: 1px solid rgba(59,130,246,0.2);
+  background: rgba(59,130,246,0.07);
+  border: 1px solid rgba(59,130,246,0.18);
 }
 .vs-badge-neutral {
   color: var(--text-muted);
-  background: rgba(100,116,139,0.08);
-  border: 1px solid rgba(100,116,139,0.2);
+  background: rgba(100,116,139,0.07);
+  border: 1px solid rgba(100,116,139,0.18);
 }
 
 /* ── Health bar ── */
@@ -282,7 +272,7 @@ body {
 .rank-bronze { color: #d97706; text-shadow: 0 0 8px rgba(217,119,6,0.35); }
 
 /* ── Kill row hover ── */
-.kill-row:hover { background: rgba(77,124,15,0.04); }
+.kill-row:hover { background: rgba(77,124,15,0.03); }
 
 /* ── Input / Select ── */
 .vs-input {
@@ -330,17 +320,12 @@ body {
 }
 .vs-table td {
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid rgba(42,42,42,0.6);
+  border-bottom: 1px solid rgba(30,30,30,0.8);
   color: var(--text);
   font-family: 'Inter', sans-serif;
 }
 .vs-table tr:last-child td { border-bottom: none; }
-.vs-table tbody tr:hover { background: rgba(255,255,255,0.02); }
-
-/* ── Diagonal separator ── */
-.vs-diagonal {
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 40px), 0 100%);
-}
+.vs-table tbody tr:hover { background: rgba(255,255,255,0.015); }
 
 /* ── Scrollable page wrapper ── */
 .vs-page {
@@ -350,4 +335,140 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+}
+
+/* ────────────────────────────────────────────────────────────
+   TOPBAR
+   ──────────────────────────────────────────────────────────── */
+
+.topbar-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* ────────────────────────────────────────────────────────────
+   ICON NAV SIDEBAR
+   ──────────────────────────────────────────────────────────── */
+
+.nav-icon-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 52px;
+  cursor: pointer;
+  color: var(--text-dim);
+  transition: color 0.15s, background 0.15s;
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-decoration: none;
+}
+.nav-icon-btn:hover {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.025);
+}
+.nav-icon-btn.active {
+  color: var(--accent);
+  background: rgba(77, 124, 15, 0.07);
+}
+.nav-icon-btn.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 22%;
+  height: 56%;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 1px 1px 0;
+}
+
+/* Tooltip that appears to the right on hover */
+.nav-tooltip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-family: 'Bebas Neue', sans-serif;
+  letter-spacing: 0.14em;
+  padding: 5px 12px;
+  border-radius: 2px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+  z-index: 1000;
+}
+.nav-icon-btn:hover .nav-tooltip {
+  opacity: 1;
+}
+
+/* ── KPI strip ── */
+.kpi-strip {
+  display: grid;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: #060606;
+}
+.kpi-cell {
+  padding: 9px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  border-right: 1px solid var(--border);
+}
+.kpi-cell:last-child { border-right: none; }
+.kpi-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 700;
+}
+.kpi-value {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 1.65rem;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+.kpi-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+}
+
+/* ── Page header (used by interior pages) ── */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  flex-shrink: 0;
+  background: #0a0a0a;
+  border-bottom: 1px solid var(--border);
+}
+.page-header-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 1.25rem;
+  letter-spacing: 0.22em;
+  color: var(--text);
+  line-height: 1;
+  padding-left: 12px;
+  border-left: 3px solid var(--accent);
+}
+.page-header-sub {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  margin-top: 3px;
+  padding-left: 15px;
 }
