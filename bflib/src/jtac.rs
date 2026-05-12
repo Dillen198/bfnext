@@ -112,12 +112,16 @@ impl fmt::Display for JtId {
     }
 }
 
-fn ui_jtac_dead(db: &mut Db, side: Side, gid: JtId) {
+fn ui_jtac_dead(db: &mut Db, side: Side, gid: JtId, name: Option<&CompactString>) {
+    let display = match name {
+        Some(n) => format_compact!("{n} ({gid})"),
+        None => format_compact!("{gid}"),
+    };
     db.ephemeral.msgs().panel_to_side(
         10,
         false,
         side,
-        format_compact!("JTAC {gid} is no longer available"),
+        format_compact!("JTAC {display} is no longer available"),
     )
 }
 
@@ -235,6 +239,7 @@ impl<'a> Iterator for ContactsIter<'a> {
 #[derive(Debug, Clone)]
 pub struct Jtac {
     gid: JtId,
+    name: Option<CompactString>,
     side: Side,
     contacts: IndexMap<EnId, Contact>,
     filter: BitFlags<UnitTag>,
@@ -256,6 +261,7 @@ impl Jtac {
     fn new(
         db: &Db,
         gid: JtId,
+        name: Option<CompactString>,
         side: Side,
         priority: Vec<UnitTags>,
         pos: Vector3,
@@ -265,6 +271,7 @@ impl Jtac {
     ) -> Self {
         Self {
             gid,
+            name,
             side,
             contacts: IndexMap::default(),
             filter: BitFlags::default(),
@@ -297,7 +304,10 @@ impl Jtac {
             })
         }
         let mut msg = CompactString::new("");
-        write!(msg, "JTAC {} status\n", self.gid)?;
+        match &self.name {
+            Some(n) => write!(msg, "JTAC {} ({}) status\n", n, self.gid)?,
+            None => write!(msg, "JTAC {} status\n", self.gid)?,
+        }
         match &self.target {
             None => {
                 write!(msg, "no target\n")?;
@@ -406,6 +416,55 @@ impl Jtac {
             }
         }
         write!(msg, "]")?;
+        Ok(msg)
+    }
+
+    pub fn callsign(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    pub fn nine_line(&self, db: &Db) -> Result<CompactString> {
+        use std::fmt::Write;
+        let target = match &self.target {
+            None => bail!("no target — lase a target first"),
+            Some(t) => t,
+        };
+        let target_pos2 = Vector2::new(target.pos.x, target.pos.z);
+        let jtac_pos2 = self.location.pos;
+        let diff = target_pos2 - jtac_pos2;
+        let dist_m = diff.magnitude();
+        let bearing_rad = diff.y.atan2(diff.x).rem_euclid(std::f64::consts::TAU);
+        let brg_deg = radians_to_degrees(bearing_rad) as u32;
+        let recip_deg = (brg_deg + 180) % 360;
+        let elev_ft = (target.pos.y * 3.28084) as i32;
+        let (tgt_dist_km, tgt_brg, tgt_obj) =
+            Db::objective_near_point(&db.persisted.objectives, target_pos2, |_| true)
+                .context("no objectives found")?;
+        let tgt_obj_name = &tgt_obj.name;
+        let tgt_brg_deg = radians_to_degrees(tgt_brg) as u32;
+        let jtac_brg_deg = radians_to_degrees(self.location.bearing) as u32;
+        let ip_name = db.objective(&self.location.oid)?.name.clone();
+        let jtac_name = match &self.name {
+            Some(n) => format_compact!("{n}"),
+            None => format_compact!("{}", self.gid),
+        };
+        let mut msg = CompactString::new("");
+        write!(msg, "━━ 9-LINE CAS — {jtac_name} ━━\n")?;
+        write!(msg, "1. IP: {ip_name} (JTAC {jtac_brg_deg}° / {:.1}km from IP)\n",
+            self.location.distance / 1000.0)?;
+        write!(msg, "2. HDG: {brg_deg}° to target (egress {recip_deg}°)\n")?;
+        write!(msg, "3. DIST: {:.1}km — ELEV: {elev_ft}ft\n", dist_m / 1000.0)?;
+        write!(msg, "4. TGT: {}\n", target.typ)?;
+        write!(msg, "5. TGT POS: {tgt_brg_deg}° / {:.1}km from {tgt_obj_name}\n",
+            tgt_dist_km / 1000.0)?;
+        write!(msg, "6. MARK: LASER {}\n", self.code)?;
+        write!(msg, "7. FRIENDLIES: {:.0} side\n", self.side)?;
+        write!(msg, "8. EGRESS: {recip_deg}°\n")?;
+        let contact_count = self.contacts.len();
+        write!(msg, "9. REMARKS: {contact_count} contact(s) visible")?;
+        if self.ir_pointer {
+            write!(msg, ", IR pointer active")?;
+        }
         Ok(msg)
     }
 
@@ -1562,7 +1621,7 @@ impl Jtacs {
                                 if let Err(e) = jt.remove_target(db, lua) {
                                     warn!("0 could not remove jtac target {:?}", e)
                                 }
-                                ui_jtac_dead(db, *side, jtid);
+                                ui_jtac_dead(db, *side, jtid, jt.name.as_ref());
                                 Self::remove_code_by_location(
                                     &mut self.code_by_location,
                                     jt.side,
@@ -1690,6 +1749,7 @@ impl Jtacs {
                 let jt = Jtac::new(
                     db,
                     id,
+                    spec.name.as_deref().map(CompactString::new),
                     side,
                     db.ephemeral.cfg.jtac_priority.clone(),
                     pos,
@@ -1859,7 +1919,7 @@ impl Jtacs {
                     if let Err(e) = jt.remove_target(db, lua) {
                         warn!("2 could not remove jtac target {:?}", e)
                     }
-                    ui_jtac_dead(db, *side, *gid);
+                    ui_jtac_dead(db, *side, *gid, jt.name.as_ref());
                     Self::remove_code_by_location(
                         &mut self.code_by_location,
                         jt.side,

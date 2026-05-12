@@ -867,6 +867,8 @@ impl Db {
         action: Action,
         args: WithPos<ReconCfg>,
     ) -> Result<Option<GroupId>> {
+        use crate::db::intel::{IntelSource, IntelUnitClass};
+        use bfprotocols::cfg::UnitTag;
         let target_pos = args.pos;
         let scan_radius = args.cfg.scan_radius_m;
         let ucid_for_report = ucid.clone();
@@ -886,13 +888,14 @@ impl Db {
             None,
             BitFlags::empty(),
             move |db, gid, spawn_pos| {
-                // Immediately count enemy units within scan radius and report to the player
                 let enemy_side = match side {
                     Side::Blue => Side::Red,
                     Side::Red => Side::Blue,
                     Side::Neutral => Side::Neutral,
                 };
-                let unit_count: usize = db
+                let now = Utc::now();
+                // Collect enemy units within scan radius with their positions and tags.
+                let detected: Vec<(dcso3::Vector2, IntelUnitClass)> = db
                     .objectives()
                     .filter(|(_, obj)| obj.owner() == enemy_side)
                     .flat_map(|(_, obj)| obj.groups.get(&enemy_side).into_iter().flat_map(|gs| gs.into_iter()))
@@ -904,8 +907,64 @@ impl Db {
                             && na::distance_squared(&target_pos.into(), &u.pos.into())
                                 <= scan_radius.powi(2)
                     })
-                    .count();
-                db.ephemeral.on_recon_result(target_pos, scan_radius, unit_count, side, Utc::now());
+                    .map(|u| {
+                        let unit_class = db.ephemeral.cfg.unit_classification
+                            .get(&u.typ)
+                            .map(|tags| {
+                                if tags.0.contains(UnitTag::SAM) || tags.0.contains(UnitTag::AAA) {
+                                    IntelUnitClass::AirDefense
+                                } else if tags.0.contains(UnitTag::Armor) || tags.0.contains(UnitTag::APC) {
+                                    IntelUnitClass::Armor
+                                } else if tags.0.contains(UnitTag::Artillery) {
+                                    IntelUnitClass::Artillery
+                                } else if tags.0.contains(UnitTag::Infantry) {
+                                    IntelUnitClass::Infantry
+                                } else if tags.0.contains(UnitTag::Boat) {
+                                    IntelUnitClass::Naval
+                                } else {
+                                    IntelUnitClass::Unknown
+                                }
+                            })
+                            .unwrap_or(IntelUnitClass::Unknown);
+                        (dcso3::Vector2::new(u.pos.x, u.pos.y), unit_class)
+                    })
+                    .collect();
+
+                // Cluster detected units and insert into IntelDatabase.
+                if let Some(elint_cfg) = db.ephemeral.cfg.elint.as_ref() {
+                    let cluster_sq = elint_cfg.contact_cluster_radius_m.powi(2);
+                    // Group by class then cluster spatially.
+                    let mut clusters: Vec<(dcso3::Vector2, IntelUnitClass, u8)> = Vec::new();
+                    for (pos, class) in &detected {
+                        let existing = clusters.iter_mut().find(|(cpos, cclass, _)| {
+                            *cclass == *class
+                                && na::distance_squared(&(*cpos).into(), &(*pos).into()) <= cluster_sq
+                        });
+                        if let Some((cpos, _, count)) = existing {
+                            cpos.x = cpos.x * 0.7 + pos.x * 0.3;
+                            cpos.y = cpos.y * 0.7 + pos.y * 0.3;
+                            *count += 1;
+                        } else {
+                            clusters.push((*pos, *class, 1));
+                        }
+                    }
+                    let elint_cfg = elint_cfg.clone();
+                    for (pos, class, count) in clusters {
+                        db.ephemeral.intel_db.upsert(
+                            side,
+                            enemy_side,
+                            pos,
+                            class,
+                            count,
+                            IntelSource::ReconFlight,
+                            &elint_cfg,
+                            now,
+                        );
+                    }
+                }
+
+                // Legacy map layer report (count only, 120 s).
+                db.ephemeral.on_recon_result(target_pos, scan_radius, detected.len(), side, now);
                 db.drone_mission(
                     side,
                     ucid_for_report,
@@ -3138,16 +3197,17 @@ impl Db {
         _ucid: Option<Ucid>,
         args: WithPos<ArtilleryCfg>,
     ) -> Result<Option<GroupId>> {
-        use crate::db::objective::ObjGroupClass;
-
         let cfg = args.cfg.clone();
         let target_pos = args.pos;
 
         let land = Land::singleton(lua)?;
         let alt = land.get_height(LuaVec2(target_pos)).unwrap_or(0.);
 
-        // Collect alive Armor/Mr/Lr groups belonging to `side` within range.
+        // Collect groups with alive Artillery/Launcher units within their configured range.
+        // Works for ground artillery, missile launchers, and naval units — any unit type
+        // listed in cfg.units or tagged Artillery/Launcher uses its configured range.
         let mut candidates: Vec<(GroupId, f64)> = Vec::new();
+        let mut too_close = false;
         {
             let group_ids: Vec<GroupId> = self
                 .persisted
@@ -3161,30 +3221,43 @@ impl Db {
                     Some(g) => g,
                     None => continue,
                 };
-                match group.class {
-                    ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Lr => {}
-                    _ => continue,
-                }
-                let alive = group
+                // Find the best (longest) range from alive Artillery/Launcher units in this group.
+                let best_range = group
                     .units
                     .into_iter()
-                    .any(|uid| self.persisted.units.get(uid).map(|u| !u.dead).unwrap_or(false));
-                if !alive {
-                    continue;
-                }
+                    .filter_map(|uid| self.persisted.units.get(uid))
+                    .filter(|u| {
+                        !u.dead
+                            && (u.tags.0.contains(UnitTag::Artillery)
+                                || u.tags.0.contains(UnitTag::Launcher))
+                    })
+                    .map(|u| {
+                        cfg.units
+                            .get(u.typ.as_str())
+                            .map(|r| (r.max_range_m, r.min_range_m))
+                            .unwrap_or((cfg.default_max_range_m, cfg.default_min_range_m))
+                    })
+                    .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+                let (max_range, min_range) = match best_range {
+                    None => continue, // no alive artillery/launcher units in this group
+                    Some(r) => r,
+                };
                 let center = self.group_center(&gid).unwrap_or_default();
                 let dist = na::distance(&center.into(), &target_pos.into());
-                if dist <= cfg.max_range_m {
+                if min_range > 0.0 && dist < min_range {
+                    too_close = true;
+                } else if dist <= max_range {
                     candidates.push((gid, dist));
                 }
             }
         }
 
         if candidates.is_empty() {
-            bail!(
-                "no friendly artillery within {}m of that position",
-                cfg.max_range_m as u32
-            );
+            if too_close {
+                bail!("target is too close for available artillery");
+            }
+            bail!("no friendly artillery/missiles in range of that position");
         }
 
         // Sort by distance (closest first) and cap at max_groups.

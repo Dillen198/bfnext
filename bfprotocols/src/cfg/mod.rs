@@ -331,6 +331,21 @@ pub struct DeployableEwr {
     // CR estokes: Actual radar simulation ...
 }
 
+/// Radar frequency band — determines aspect/RCS variation and stealth effectiveness.
+/// Lower bands (VHF/UHF) have compressed aspect variation, making shaping less effective.
+/// Higher bands (X/Ku) have sharp aspect dependence and are best countered by shaping.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum RadarBand {
+    Vhf,   // 30–300 MHz   — EWR (55G6, P-14, 1L13). Least affected by stealth shaping.
+    Uhf,   // 300–3000 MHz — some older SAMs
+    Lband, // 1–2 GHz      — FPS-117, some ship/SAM search radars
+    Sband, // 2–4 GHz      — Patriot, most naval surface-search
+    Cband, // 4–8 GHz      — some acquisition radars
+    #[default]
+    Xband, // 8–12 GHz     — most fighters, SAMs, NASAMS, Tor. Sharpest aspect dependence.
+    Kuband,// 12–18 GHz    — some precision track/fire-control radars
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AirborneEwr {
@@ -340,7 +355,39 @@ pub struct AirborneEwr {
     /// A fighter with a nose radar would be ~60, an AWACS would be None
     #[serde(default)]
     pub aspect_half_angle: Option<u16>,
+    /// True if this radar uses a pulse-Doppler waveform.
+    /// Enables Doppler notch exploitation — beam-aspect targets at low closure
+    /// rates get a significant detection probability penalty.
+    #[serde(default)]
+    pub pulse_doppler: bool,
+    /// Whether this radar can effectively look down into ground clutter.
+    /// False for older radars (MiG-21, F-4, early Hawk) — they are nearly blind
+    /// against low-altitude targets regardless of altitude factor tuning.
+    #[serde(default = "default_look_down_capable")]
+    pub look_down_capable: bool,
+    /// Susceptibility to chaff (0.0 = immune, 1.0 = fully defeated).
+    /// Modern PD radars ≈ 0.1, older non-PD ≈ 0.8–0.9.
+    /// Used when a chaff mechanic is active (stored for future use).
+    #[serde(default = "default_chaff_susceptibility")]
+    pub chaff_susceptibility: f32,
+    /// Susceptibility to stand-off jamming/ECM (0.0 = immune, 1.0 = fully defeated).
+    /// Modern AESA/LPI ≈ 0.1, older analog radars ≈ 0.7–0.9.
+    /// Used when a jamming mechanic is active (stored for future use).
+    #[serde(default = "default_ecm_susceptibility")]
+    pub ecm_susceptibility: f32,
+    /// Scan interval in seconds — how often the radar refreshes a track.
+    /// Slow-rotating EWRs (~10s) update less frequently than AESA fighters (~1s).
+    #[serde(default = "default_scan_interval_secs")]
+    pub scan_interval_secs: u32,
+    /// Frequency band — affects aspect/RCS variation and stealth penetration.
+    #[serde(default)]
+    pub frequency_band: RadarBand,
 }
+
+fn default_look_down_capable() -> bool { true }
+fn default_chaff_susceptibility() -> f32 { 0.3 }
+fn default_ecm_susceptibility() -> f32 { 0.4 }
+fn default_scan_interval_secs() -> u32 { 2 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -357,7 +404,208 @@ impl Default for EwrMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// Sensor category used by the IADN fusion layer to apply appropriate detection physics.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SensorType {
+    /// Ground-based omnidirectional EWR / deployed radar.
+    GroundEwr,
+    /// Naval surface-search radar (omnidirectional, some look-down).
+    NavalRadar,
+    /// SAM search/acquisition radar (directional, limited look-down).
+    SamSearchRadar,
+    /// Player/AI fighter with nose radar (directional forward cone).
+    AirborneFighter,
+    /// AWACS — look-down/shoot-down capable, pulse-Doppler.
+    Awacs,
+}
+
+/// Advanced probabilistic radar physics configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RadarPhysicsCfg {
+    /// RCS factor for Hot aspect (nose-on). Default 1.0.
+    #[serde(default = "default_rcs_hot")]
+    pub rcs_hot: f32,
+    /// RCS factor for Flank aspect. Default 0.7.
+    #[serde(default = "default_rcs_flank")]
+    pub rcs_flank: f32,
+    /// RCS factor for Beam aspect (perpendicular). Default 0.35.
+    #[serde(default = "default_rcs_beam")]
+    pub rcs_beam: f32,
+    /// RCS factor for Cold aspect (tail-on). Default 0.15.
+    #[serde(default = "default_rcs_cold")]
+    pub rcs_cold: f32,
+    /// Detection probability attenuation in the Doppler notch window. Default 0.05.
+    #[serde(default = "default_notch_attenuation")]
+    pub notch_attenuation: f32,
+    /// Closure rate (m/s) below which beam-aspect targets are notching. Default 50.
+    #[serde(default = "default_notch_closure_threshold_ms")]
+    pub notch_closure_threshold_ms: f32,
+    /// AGL (m) below which ground EWR probability degrades due to ground clutter. Default 300.
+    #[serde(default = "default_ground_radar_low_alt_threshold_m")]
+    pub ground_radar_low_alt_threshold_m: f32,
+    /// Exponential smoothing alpha for track position/velocity. Default 0.3.
+    #[serde(default = "default_track_smoothing_alpha")]
+    pub track_smoothing_alpha: f32,
+    /// AWACS look-down bonus multiplier vs ground EWR at low altitude. Default 1.5.
+    #[serde(default = "default_awacs_look_down_bonus")]
+    pub awacs_look_down_bonus: f32,
+}
+
+impl Default for RadarPhysicsCfg {
+    fn default() -> Self {
+        Self {
+            rcs_hot: default_rcs_hot(),
+            rcs_flank: default_rcs_flank(),
+            rcs_beam: default_rcs_beam(),
+            rcs_cold: default_rcs_cold(),
+            notch_attenuation: default_notch_attenuation(),
+            notch_closure_threshold_ms: default_notch_closure_threshold_ms(),
+            ground_radar_low_alt_threshold_m: default_ground_radar_low_alt_threshold_m(),
+            track_smoothing_alpha: default_track_smoothing_alpha(),
+            awacs_look_down_bonus: default_awacs_look_down_bonus(),
+        }
+    }
+}
+
+fn default_rcs_hot() -> f32 { 1.0 }
+fn default_rcs_flank() -> f32 { 0.7 }
+fn default_rcs_beam() -> f32 { 0.35 }
+fn default_rcs_cold() -> f32 { 0.15 }
+fn default_notch_attenuation() -> f32 { 0.05 }
+fn default_notch_closure_threshold_ms() -> f32 { 50.0 }
+fn default_ground_radar_low_alt_threshold_m() -> f32 { 300.0 }
+fn default_track_smoothing_alpha() -> f32 { 0.3 }
+fn default_awacs_look_down_bonus() -> f32 { 1.5 }
+
+/// Integrated Air Defence Network configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IadnConfig {
+    /// Radius (m) within which two detections are fused into one track. Default 3000.
+    #[serde(default = "default_track_association_radius_m")]
+    pub track_association_radius_m: f64,
+    /// Minimum SNR (0–1) required to register a detection. Default 0.5.
+    #[serde(default = "default_detection_snr_threshold")]
+    pub detection_snr_threshold: f32,
+    /// Seconds with no detection before a track is marked stale. Default 60.
+    #[serde(default = "default_track_stale_secs")]
+    pub track_stale_secs: u32,
+    /// Seconds before a stale track is dropped entirely. Default 120.
+    #[serde(default = "default_track_drop_secs")]
+    pub track_drop_secs: u32,
+    /// Enable automatic SAM target cueing from the fused picture.
+    #[serde(default = "default_sam_cue_enabled")]
+    pub sam_cue_enabled: bool,
+    /// Minimum fused track confidence (0–1) required before a SAM engages. Default 0.4.
+    #[serde(default = "default_sam_cue_confidence_threshold")]
+    pub sam_cue_confidence_threshold: f32,
+}
+
+impl Default for IadnConfig {
+    fn default() -> Self {
+        Self {
+            track_association_radius_m: default_track_association_radius_m(),
+            detection_snr_threshold: default_detection_snr_threshold(),
+            track_stale_secs: default_track_stale_secs(),
+            track_drop_secs: default_track_drop_secs(),
+            sam_cue_enabled: default_sam_cue_enabled(),
+            sam_cue_confidence_threshold: default_sam_cue_confidence_threshold(),
+        }
+    }
+}
+
+fn default_track_association_radius_m() -> f64 { 3000.0 }
+fn default_detection_snr_threshold() -> f32 { 0.5 }
+fn default_track_stale_secs() -> u32 { 60 }
+fn default_track_drop_secs() -> u32 { 120 }
+fn default_sam_cue_enabled() -> bool { true }
+fn default_sam_cue_confidence_threshold() -> f32 { 0.4 }
+
+/// ELINT/SIGINT intelligence system configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ElintConfig {
+    /// Radius (m) within which units are clustered into one intel contact. Default 500.
+    #[serde(default = "default_contact_cluster_radius_m")]
+    pub contact_cluster_radius_m: f64,
+    /// Confidence half-life (s) for recon-flight intel. Default 600.
+    #[serde(default = "default_half_life_recon")]
+    pub half_life_recon_secs: u32,
+    /// Confidence half-life (s) for special-forces intel. Default 1800.
+    #[serde(default = "default_half_life_sf")]
+    pub half_life_sf_secs: u32,
+    /// Confidence half-life (s) for AWACS-derived intel. Default 300.
+    #[serde(default = "default_half_life_awacs")]
+    pub half_life_awacs_secs: u32,
+    /// Confidence half-life (s) for EWR-fused intel. Default 180.
+    #[serde(default = "default_half_life_ewr")]
+    pub half_life_ewr_secs: u32,
+    /// Confidence below which a contact is deleted. Default 0.05.
+    #[serde(default = "default_confidence_delete_threshold")]
+    pub confidence_delete_threshold: f32,
+    /// Max intel contacts stored per side. Default 200.
+    #[serde(default = "default_max_contacts_per_side")]
+    pub max_contacts_per_side: usize,
+    /// Show unit class label on F10 map markers. Default true.
+    #[serde(default = "default_show_unit_class")]
+    pub show_unit_class: bool,
+    /// Show confidence percentage on F10 map markers. Default true.
+    #[serde(default = "default_show_confidence_on_map")]
+    pub show_confidence_on_map: bool,
+}
+
+impl Default for ElintConfig {
+    fn default() -> Self {
+        Self {
+            contact_cluster_radius_m: default_contact_cluster_radius_m(),
+            half_life_recon_secs: default_half_life_recon(),
+            half_life_sf_secs: default_half_life_sf(),
+            half_life_awacs_secs: default_half_life_awacs(),
+            half_life_ewr_secs: default_half_life_ewr(),
+            confidence_delete_threshold: default_confidence_delete_threshold(),
+            max_contacts_per_side: default_max_contacts_per_side(),
+            show_unit_class: default_show_unit_class(),
+            show_confidence_on_map: default_show_confidence_on_map(),
+        }
+    }
+}
+
+fn default_contact_cluster_radius_m() -> f64 { 500.0 }
+fn default_half_life_recon() -> u32 { 600 }
+fn default_half_life_sf() -> u32 { 1800 }
+fn default_half_life_awacs() -> u32 { 300 }
+fn default_half_life_ewr() -> u32 { 180 }
+fn default_confidence_delete_threshold() -> f32 { 0.05 }
+fn default_max_contacts_per_side() -> usize { 200 }
+fn default_show_unit_class() -> bool { true }
+fn default_show_confidence_on_map() -> bool { true }
+
+/// Ground vehicle cargo configuration for a specific vehicle type (IFV/APC).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GroundVehicleCargo {
+    /// Maximum infantry squads this vehicle can carry.
+    pub troop_capacity: u8,
+    /// Distance (m) within which troops must be to board. Default 50.
+    #[serde(default = "default_board_radius_m")]
+    pub board_radius_m: f64,
+    /// Max vehicle speed (m/s) that still allows boarding. Default 1.0.
+    #[serde(default = "default_board_speed_threshold_ms")]
+    pub board_speed_threshold_ms: f64,
+    /// Radius (m) within which dismounted troops spawn around the vehicle. Default 30.
+    #[serde(default = "default_dismount_radius_m")]
+    pub dismount_radius_m: f64,
+    /// Allow boarding while the vehicle is moving. Default false.
+    #[serde(default)]
+    pub can_board_while_moving: bool,
+}
+
+fn default_board_radius_m() -> f64 { 50.0 }
+fn default_board_speed_threshold_ms() -> f64 { 1.0 }
+fn default_dismount_radius_m() -> f64 { 30.0 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeployableJtac {
     /// jtac detection and lasing range (Meters)
@@ -369,6 +617,9 @@ pub struct DeployableJtac {
     /// default laser code for this JTAC (1111-1788), defaults to 1688
     #[serde(default = "default_laser_code")]
     pub default_laser_code: u16,
+    /// optional callsign displayed instead of numeric group ID (e.g. "Axeman 11")
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 fn default_laser_code() -> u16 {
@@ -999,13 +1250,27 @@ pub struct NavalCruiseMissileCfg {
     pub supply_cost: u32,
 }
 
+/// Per-unit-type range override entry inside ArtilleryCfg.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UnitRangeCfg {
+    pub max_range_m: f64,
+    #[serde(default)]
+    pub min_range_m: f64,
+}
+
 /// Configuration for a player-callable artillery / indirect fire support action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtilleryCfg {
-    /// Maximum range in metres from the firing group to the target.
-    /// Groups beyond this distance will not participate. Default: 30000.
-    #[serde(default = "default_arty_range")]
-    pub max_range_m: f64,
+    /// Per-unit-type range config. Keys are DCS unit type names (e.g. "M142 HIMARS", "Scud_B").
+    /// Any unit type not listed falls back to default_max_range_m / default_min_range_m.
+    #[serde(default)]
+    pub units: FxHashMap<String, UnitRangeCfg>,
+    /// Fallback max range (metres) for unit types not in `units`. Default: 30000.
+    #[serde(default = "default_arty_max")]
+    pub default_max_range_m: f64,
+    /// Fallback min range (metres) for unit types not in `units`. Default: 4000.
+    #[serde(default = "default_arty_min")]
+    pub default_min_range_m: f64,
     /// FireAtPoint scatter radius in metres. Default: 200.
     #[serde(default = "default_arty_radius")]
     pub radius_m: f64,
@@ -1014,14 +1279,17 @@ pub struct ArtilleryCfg {
     pub max_groups: usize,
 }
 
-fn default_arty_range() -> f64 { 30_000.0 }
+fn default_arty_max() -> f64 { 30_000.0 }
+fn default_arty_min() -> f64 { 4_000.0 }
 fn default_arty_radius() -> f64 { 200.0 }
 fn default_arty_group_count() -> usize { 3 }
 
 impl Default for ArtilleryCfg {
     fn default() -> Self {
         Self {
-            max_range_m: default_arty_range(),
+            units: FxHashMap::default(),
+            default_max_range_m: default_arty_max(),
+            default_min_range_m: default_arty_min(),
             radius_m: default_arty_radius(),
             max_groups: default_arty_group_count(),
         }
@@ -1270,6 +1538,22 @@ fn default_msgs_per_second() -> usize {
 
 fn default_cull_after() -> u32 {
     1800
+}
+
+fn default_lr_cull_distance() -> u32 {
+    80_000
+}
+
+fn default_ewr_cull_distance() -> u32 {
+    300_000
+}
+
+fn default_weapon_spawn_radius() -> u32 {
+    60_000
+}
+
+fn default_weapon_spawn_expiry_secs() -> u32 {
+    120
 }
 
 fn default_lock_sides() -> bool {
@@ -1856,6 +2140,12 @@ pub struct Cfg {
     pub repair_time: u32,
     /// The base repair crate
     pub repair_crate: FxHashMap<Side, Crate>,
+    /// Global artillery fire-support system. When set, a "Request Fires" item
+    /// appears automatically in Actions for any player whose side has alive
+    /// artillery groups (BLR/RLR/BMR/RMR prefix). No per-unit action entries
+    /// needed. Set to null/omit to disable.
+    #[serde(default)]
+    pub artillery: Option<ArtilleryCfg>,
     /// If the warehouse system is to be used then this should be specified,
     /// otherwise warehouses will be ignored and you should set them to unlimited
     pub warehouse: Option<WarehouseConfig>,
@@ -1868,6 +2158,24 @@ pub struct Cfg {
     /// an objective will cull it's units if there are no enemy ground units
     /// within this distance (Meters)
     pub ground_vehicle_cull_distance: u32,
+    /// cull distance override for long-range ground units (LR tag) such as
+    /// MLRS, HIMARS, Smerch. Defaults to 150 000 m so LR units fully threaten
+    /// the objective map. Set to 0 to fall back to ground_vehicle_cull_distance.
+    #[serde(default = "default_lr_cull_distance")]
+    pub lr_cull_distance: u32,
+    /// cull distance override for EWR units. Defaults to 300 000 m.
+    /// Set to 0 to fall back to ground_vehicle_cull_distance.
+    #[serde(default = "default_ewr_cull_distance")]
+    pub ewr_cull_distance: u32,
+    /// spawn objectives within this radius (m) of a recent weapon launch
+    /// position. Allows objectives to be awake when missiles or artillery rounds
+    /// are inbound. Default: 60 000 m.
+    #[serde(default = "default_weapon_spawn_radius")]
+    pub weapon_spawn_radius: u32,
+    /// how long (seconds) a weapon-launch event keeps nearby objectives awake.
+    /// Default: 120 s.
+    #[serde(default = "default_weapon_spawn_expiry_secs")]
+    pub weapon_spawn_expiry_secs: u32,
     /// If a base has been inactive for this long then cull it's units (Seconds)
     #[serde(default = "default_cull_after")]
     pub cull_after: u32,
@@ -2029,6 +2337,18 @@ pub struct Cfg {
     /// Era restrictions: limit which airframes are available based on the active era.
     #[serde(default)]
     pub era: Option<EraCfg>,
+    /// Advanced radar physics simulation. Disabled if absent (legacy binary detection).
+    #[serde(default)]
+    pub radar_physics: Option<RadarPhysicsCfg>,
+    /// Integrated Air Defence Network — fused multi-sensor air picture and SAM cueing.
+    #[serde(default)]
+    pub iadn: Option<IadnConfig>,
+    /// ELINT/SIGINT persistent intel database with decay and classified contacts.
+    #[serde(default)]
+    pub elint: Option<ElintConfig>,
+    /// Ground vehicle cargo (IFV/APC troop transport). Keyed by vehicle type.
+    #[serde(default)]
+    pub ground_vehicle_cargo: FxHashMap<Vehicle, GroundVehicleCargo>,
 }
 
 fn default_supply_alert_threshold() -> u8 {

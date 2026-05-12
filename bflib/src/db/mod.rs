@@ -40,6 +40,7 @@ pub mod cargo;
 pub mod ephemeral;
 pub mod events;
 pub mod group;
+pub mod intel;
 pub mod logistics;
 pub mod map_layer;
 pub mod markup;
@@ -191,9 +192,18 @@ pub struct RadarDonor {
     pub side: Side,
     pub range: u32,
     pub aspect_half_angle: Option<u16>,
-    /// True if this is an airborne donor (player aircraft).
-    /// Ground/naval donors are false.
     pub airborne: bool,
+    pub sensor_type: bfprotocols::cfg::SensorType,
+    pub pulse_doppler: bool,
+    pub look_down_capable: bool,
+    /// Stored for future chaff mechanic — not yet consumed by physics.
+    #[allow(dead_code)]
+    pub chaff_susceptibility: f32,
+    /// Stored for future jamming mechanic — not yet consumed by physics.
+    #[allow(dead_code)]
+    pub ecm_susceptibility: f32,
+    pub scan_interval_secs: u32,
+    pub frequency_band: bfprotocols::cfg::RadarBand,
 }
 
 impl Db {
@@ -353,6 +363,13 @@ impl Db {
                 range: ewr.range,
                 aspect_half_angle: None,
                 airborne: false,
+                sensor_type: bfprotocols::cfg::SensorType::GroundEwr,
+                pulse_doppler: false,
+                look_down_capable: false,
+                chaff_susceptibility: 0.3,
+                ecm_susceptibility: 0.5,
+                scan_interval_secs: 8,
+                frequency_band: bfprotocols::cfg::RadarBand::Vhf,
             })
         });
         // AI ground / naval units listed in ground_radar_ewrs
@@ -366,12 +383,25 @@ impl Db {
                     .cfg
                     .ground_radar_ewrs
                     .get(&u.typ)
-                    .map(|ewr_cfg| RadarDonor {
-                        pos: u.position,
-                        side: u.side,
-                        range: ewr_cfg.range,
-                        aspect_half_angle: ewr_cfg.aspect_half_angle,
-                        airborne: false,
+                    .map(|ewr_cfg| {
+                        let sensor_type = match ewr_cfg.aspect_half_angle {
+                            Some(_) => bfprotocols::cfg::SensorType::SamSearchRadar,
+                            None => bfprotocols::cfg::SensorType::NavalRadar,
+                        };
+                        RadarDonor {
+                            pos: u.position,
+                            side: u.side,
+                            range: ewr_cfg.range,
+                            aspect_half_angle: ewr_cfg.aspect_half_angle,
+                            airborne: false,
+                            sensor_type,
+                            pulse_doppler: ewr_cfg.pulse_doppler,
+                            look_down_capable: ewr_cfg.look_down_capable,
+                            chaff_susceptibility: ewr_cfg.chaff_susceptibility,
+                            ecm_susceptibility: ewr_cfg.ecm_susceptibility,
+                            scan_interval_secs: ewr_cfg.scan_interval_secs,
+                            frequency_band: ewr_cfg.frequency_band,
+                        }
                     })
             });
         // Player aircraft listed in airborne_ewrs
@@ -383,12 +413,25 @@ impl Db {
                     .cfg
                     .airborne_ewrs
                     .get(&inst.typ)
-                    .map(|ewr_cfg| RadarDonor {
-                        pos: inst.position,
-                        side: player.side,
-                        range: ewr_cfg.range,
-                        aspect_half_angle: ewr_cfg.aspect_half_angle,
-                        airborne: true,
+                    .map(|ewr_cfg| {
+                        let sensor_type = match ewr_cfg.aspect_half_angle {
+                            Some(_) => bfprotocols::cfg::SensorType::AirborneFighter,
+                            None => bfprotocols::cfg::SensorType::Awacs,
+                        };
+                        RadarDonor {
+                            pos: inst.position,
+                            side: player.side,
+                            range: ewr_cfg.range,
+                            aspect_half_angle: ewr_cfg.aspect_half_angle,
+                            airborne: true,
+                            sensor_type,
+                            pulse_doppler: ewr_cfg.pulse_doppler,
+                            look_down_capable: ewr_cfg.look_down_capable,
+                            chaff_susceptibility: ewr_cfg.chaff_susceptibility,
+                            ecm_susceptibility: ewr_cfg.ecm_susceptibility,
+                            scan_interval_secs: ewr_cfg.scan_interval_secs,
+                            frequency_band: ewr_cfg.frequency_band,
+                        }
                     })
             });
         deployed.chain(ai_ground).chain(airborne)
@@ -424,7 +467,7 @@ impl Db {
                         pos,
                         id: JtId::Group(*gid),
                         side: group.side,
-                        spec: *jtac,
+                        spec: jtac.clone(),
                         air: false,
                     }),
                     DeployKind::Action {
@@ -438,7 +481,7 @@ impl Db {
                         pos,
                         id: JtId::Group(*gid),
                         side: group.side,
-                        spec: *jtac,
+                        spec: jtac.clone(),
                         air: true,
                     }),
                     DeployKind::Crate { .. }
@@ -460,7 +503,7 @@ impl Db {
                         pos,
                         id,
                         side: p.side,
-                        spec: *jt,
+                        spec: jt.clone(),
                         air: true,
                     }),
                     None => match self.ephemeral.cargo.get(&slot) {
@@ -472,7 +515,7 @@ impl Db {
                                         pos,
                                         id,
                                         side: p.side,
-                                        spec: *jt,
+                                        spec: jt.clone(),
                                         air: false,
                                     });
                                 }

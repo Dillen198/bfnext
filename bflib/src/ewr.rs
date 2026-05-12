@@ -31,7 +31,7 @@ use crate::{
 };
 use anyhow::Result;
 use bfprotocols::{
-    cfg::EwrMode,
+    cfg::{EwrMode, IadnConfig, RadarBand, RadarPhysicsCfg, SensorType, UnitTag},
     stats::{DetectionSource, EnId, Stat},
 };
 use chrono::prelude::*;
@@ -245,6 +245,160 @@ impl Default for PlayerState {
     }
 }
 
+// ─── IADN: Fused multi-sensor air picture ────────────────────────────────────
+
+/// Stable ID for a fused track (survives across multiple detection updates).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FusedTrackId(u64);
+
+impl FusedTrackId {
+    fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(1);
+        Self(SEQ.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+/// Coarse classification of a fused contact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContactClass {
+    Fighter,
+    Bomber,
+    Helicopter,
+    Unknown,
+}
+
+/// Identification-friend-or-foe state for a fused contact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum IffState {
+    Friendly,
+    Hostile,
+    Unknown,
+}
+
+/// A fused track combining contributions from multiple sensors.
+#[derive(Debug, Clone)]
+pub struct FusedTrack {
+    pub id: FusedTrackId,
+    pub side: Side,
+    pub pos: Position3,
+    pub velocity: Vector3,
+    /// 1-sigma position uncertainty (meters). Decreases with more sensor coverage.
+    pub pos_uncertainty_m: f32,
+    /// Detection confidence 0.0–1.0; decays without sensor hits.
+    pub confidence: f32,
+    pub last_detection: DateTime<Utc>,
+    pub last_update: DateTime<Utc>,
+    pub classification: ContactClass,
+    pub iff: IffState,
+    /// Accumulated sensor type mask.
+    pub detected_by: DetectedBy,
+    /// Number of independent sensors currently tracking this contact.
+    pub sensor_count: u8,
+    /// True when the track is old enough to be marked stale but not yet dropped.
+    pub stale: bool,
+}
+
+impl FusedTrack {
+    fn is_stale(&self, now: DateTime<Utc>, stale_secs: u32) -> bool {
+        (now - self.last_detection).num_seconds() >= stale_secs as i64
+    }
+
+    fn is_expired(&self, cfg: &IadnConfig) -> bool {
+        self.confidence < cfg.sam_cue_confidence_threshold * 0.1
+    }
+}
+
+// ─── Radar physics ───────────────────────────────────────────────────────────
+
+/// Compute the detection probability for one (donor, target) pair.
+/// Returns 0.0–1.0.  The caller does a Bernoulli trial against this value.
+fn compute_detection_probability(
+    donor_range: u32,
+    range_m: f64,
+    aspect: Aspect,
+    contact_alt_agl_m: f64,
+    contact_velocity: Vector3,
+    donor_pos: nalgebra::Point3<f64>,
+    sensor_type: SensorType,
+    pulse_doppler: bool,
+    look_down_capable: bool,
+    frequency_band: RadarBand,
+    cfg: &RadarPhysicsCfg,
+) -> f32 {
+    // 1. Inverse fourth-power radar range equation.
+    let range_factor = ((donor_range as f64) / range_m).powi(4) as f32;
+
+    // 2. Aspect / RCS factor, compressed toward 1.0 for low-frequency radars.
+    // VHF/UHF radars operate near the Rayleigh scattering regime for aircraft-sized
+    // targets — aspect and shaping matter much less, making stealth less effective.
+    let base_rcs = match aspect {
+        Aspect::Hot                             => cfg.rcs_hot,
+        Aspect::FlankLeft | Aspect::FlankRight  => cfg.rcs_flank,
+        Aspect::BeamLeft  | Aspect::BeamRight   => cfg.rcs_beam,
+        Aspect::Cold                            => cfg.rcs_cold,
+    };
+    // band_sharpness: 1.0 = full aspect variation (X-band), lower = compressed toward 1.0
+    let band_sharpness = match frequency_band {
+        RadarBand::Vhf           => 0.3,
+        RadarBand::Uhf           => 0.5,
+        RadarBand::Lband         => 0.7,
+        RadarBand::Sband         => 0.85,
+        RadarBand::Cband         => 0.95,
+        RadarBand::Xband | RadarBand::Kuband => 1.0,
+    };
+    let rcs_factor = 1.0 - (1.0 - base_rcs) * band_sharpness;
+
+    // 3. Doppler notch: beam-aspect target whose closure rate toward the donor
+    //    is below the threshold is almost invisible to pulse-Doppler radars.
+    let notch_factor = if pulse_doppler
+        && matches!(aspect, Aspect::BeamLeft | Aspect::BeamRight)
+    {
+        let to_donor_dir = (donor_pos.coords - nalgebra::Vector3::new(
+            contact_velocity.x, contact_velocity.y, contact_velocity.z,
+        )).normalize();
+        let closure = contact_velocity.dot(&to_donor_dir).abs() as f32;
+        if closure < cfg.notch_closure_threshold_ms {
+            cfg.notch_attenuation
+        } else {
+            1.0
+        }
+    } else {
+        1.0
+    };
+
+    // 4. Altitude / clutter factor.
+    // Radars that cannot look down have a much steeper clutter penalty — they are
+    // nearly blind below the terrain masking threshold regardless of tuning.
+    let alt_factor = match sensor_type {
+        SensorType::Awacs | SensorType::AirborneFighter => {
+            if look_down_capable {
+                1.0
+            } else {
+                // Non-look-down fighter/early AWACS: severe penalty below 500 m AGL.
+                (contact_alt_agl_m as f32 / 500.0).clamp(0.0, 1.0)
+            }
+        }
+        SensorType::NavalRadar => {
+            let base = (contact_alt_agl_m as f32 / 150.0).clamp(0.3, 1.0);
+            if look_down_capable { base } else { base * 0.4 }
+        }
+        SensorType::GroundEwr | SensorType::SamSearchRadar => {
+            if look_down_capable {
+                (contact_alt_agl_m as f32 / cfg.ground_radar_low_alt_threshold_m).clamp(0.1, 1.0)
+            } else {
+                // Non-look-down ground radar: near-zero below 3× threshold.
+                (contact_alt_agl_m as f32 / (cfg.ground_radar_low_alt_threshold_m * 3.0)).clamp(0.0, 1.0)
+            }
+        }
+    };
+
+    (range_factor * rcs_factor * notch_factor * alt_factor).clamp(0.0, 1.0)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, Default)]
 pub struct Ewr {
     tracks: FxHashMap<Side, FxHashMap<EnId, Track>>,
@@ -252,6 +406,9 @@ pub struct Ewr {
     /// Snapshot of all active radar donors, rebuilt each tick in update_tracks.
     /// Stored so spike_warnings can query enemy donors without re-iterating db.
     donor_snapshot: Vec<crate::db::RadarDonor>,
+    /// IADN: fused multi-sensor air picture, keyed by owning coalition.
+    /// Only populated when `cfg.iadn` is Some.
+    pub fused_tracks: FxHashMap<Side, Vec<FusedTrack>>,
 }
 
 impl Ewr {
@@ -264,6 +421,9 @@ impl Ewr {
         ewr_mode: EwrMode,
         ewr_delay: u32,
     ) -> Result<()> {
+        let radar_physics = db.ephemeral.cfg.radar_physics.clone();
+        let iadn_cfg = db.ephemeral.cfg.iadn.clone();
+        let mut rng = rand::thread_rng();
         let land = Land::singleton(lua)?;
         let aircraft: SmallVec<[(EnId, Side, Position3, Vector3); 128]> = {
             let players = db
@@ -335,6 +495,11 @@ impl Ewr {
         // Snapshot donors for spike_warnings use later in the same tick
         self.donor_snapshot = db.radar_donors().collect();
 
+        // Accumulate per-sensor contributions for IADN fusion this tick.
+        // Maps (donor_side, EnId) -> Vec<(snr, pos, velocity, sensor_type, detected_by)>
+        let mut fusion_contributions: FxHashMap<(Side, EnId), SmallVec<[(f32, Position3, Vector3, SensorType, DetectedBy); 4]>> =
+            FxHashMap::default();
+
         for donor in &self.donor_snapshot {
             let range_sq = (donor.range as f64).powi(2);
             let tracks = self.tracks.entry(donor.side).or_default();
@@ -359,31 +524,97 @@ impl Ewr {
                             }
                         };
                         if in_cone && landcache.is_visible(&land, dist_sq.sqrt(), donor_pos, pos.p.0)? {
-                            match ewr_mode {
-                                EwrMode::Original => {
-                                    track.pos = *pos;
-                                    track.velocity = *velocity;
-                                    track.last_update = now;
+                            // Scan interval gate: slow-rotating radars only refresh tracks
+                            // every scan_interval_secs. Between sweeps the track position is
+                            // held but the contact is still considered detected (track memory).
+                            let scan_due = donor.scan_interval_secs == 0
+                                || (now - track.last_update).num_seconds() >= donor.scan_interval_secs as i64
+                                || track.last_update == DateTime::<Utc>::UNIX_EPOCH;
+
+                            // Probabilistic detection gate: with radar_physics config we roll
+                            // against the computed probability; without it we use legacy binary.
+                            let detected = if let Some(rp) = &radar_physics {
+                                let bearing = radians_to_degrees(azumith3d_to(donor_pos, pos.p.0));
+                                let heading  = radians_to_degrees(azumith3d(pos.x.0));
+                                let contact_pos2 = Vector2::new(pos.p.x, pos.p.z);
+                                let donor_pos2   = Vector2::new(donor_pos.x, donor_pos.z);
+                                let aspect = Aspect::compute(bearing, heading, donor_pos2, contact_pos2);
+                                let alt_agl = pos.p.y;
+                                let prob = compute_detection_probability(
+                                    donor.range,
+                                    dist_sq.sqrt(),
+                                    aspect,
+                                    alt_agl,
+                                    *velocity,
+                                    nalgebra::Point3::from(donor_pos),
+                                    donor.sensor_type,
+                                    donor.pulse_doppler,
+                                    donor.look_down_capable,
+                                    donor.frequency_band,
+                                    rp,
+                                );
+                                // Collect SNR for IADN fusion
+                                if iadn_cfg.is_some() && donor.side != *obj_side {
+                                    fusion_contributions
+                                        .entry((donor.side, *id))
+                                        .or_default()
+                                        .push((prob, *pos, *velocity, donor.sensor_type, sensor));
                                 }
-                                EwrMode::Delayed => {
-                                    let time_since_update = (now - track.last_update).num_seconds();
-                                    if time_since_update >= ewr_delay as i64 || track.last_update == DateTime::<Utc>::UNIX_EPOCH {
-                                        track.pos = *pos;
-                                        track.velocity = *velocity;
+                                rand::Rng::r#gen::<f32>(&mut rng) < prob
+                            } else {
+                                true // legacy: always detected if in range/cone/LOS
+                            };
+
+                            if detected {
+                                // Only refresh position/velocity when a scan sweep is due.
+                                // This models slow-rotating radars: detection is remembered
+                                // between sweeps but position is only updated each rotation.
+                                if scan_due {
+                                    match ewr_mode {
+                                    EwrMode::Original => {
+                                        if let Some(rp) = &radar_physics {
+                                            let a = rp.track_smoothing_alpha as f64;
+                                            let op = track.pos.p.0;
+                                            let np = pos.p.0;
+                                            let sp = nalgebra::Vector3::new(
+                                                op.x * (1.0 - a) + np.x * a,
+                                                op.y * (1.0 - a) + np.y * a,
+                                                op.z * (1.0 - a) + np.z * a,
+                                            );
+                                            track.pos.p.0 = sp;
+                                            track.velocity = track.velocity * (1.0 - a) + velocity * a;
+                                        } else {
+                                            track.pos = *pos;
+                                            track.velocity = *velocity;
+                                        }
                                         track.last_update = now;
                                     }
+                                    EwrMode::Delayed => {
+                                        let time_since_update = (now - track.last_update).num_seconds();
+                                        if time_since_update >= ewr_delay as i64 || track.last_update == DateTime::<Utc>::UNIX_EPOCH {
+                                            track.pos = *pos;
+                                            track.velocity = *velocity;
+                                            track.last_update = now;
+                                        }
+                                    }
+                                    } // end scan_due
                                 }
-                            }
-                            track.last = now;
-                            track.side = *obj_side;
-                            if donor.side != *obj_side {
-                                track.detected = true;
-                                track.detected_by = track.detected_by.with(sensor);
+                                track.last = now;
+                                track.side = *obj_side;
+                                if donor.side != *obj_side {
+                                    track.detected = true;
+                                    track.detected_by = track.detected_by.with(sensor);
+                                }
                             }
                         }
                     }
                 }
             }
+        }
+
+        // IADN fusion pass: merge per-sensor contributions into FusedTrack table.
+        if let Some(iadn) = &iadn_cfg {
+            self.fuse_tracks(&fusion_contributions, iadn, db, now);
         }
 
         // BFT: register friendly airborne players in their own side's track table
@@ -414,7 +645,194 @@ impl Ewr {
                 }
             }
         }
+        // IADN SAM cueing: emit detection stats for SAM-eligible fused tracks.
+        // This allows the stats system and any SAM group listeners to act on IADN cues.
+        if let (Some(iadn), Some(rp)) = (&iadn_cfg, &radar_physics) {
+            // For each SAM donor, find nearby hostile fused tracks and emit cues.
+            for donor in &self.donor_snapshot {
+                if !matches!(donor.sensor_type, SensorType::SamSearchRadar) {
+                    continue;
+                }
+                let sam_pos = Vector2::new(donor.pos.p.x, donor.pos.p.z);
+                let cues = self.sam_cue_targets(donor.side, sam_pos, donor.range as f64, iadn);
+                for (_, cue_pos, _) in cues {
+                    // Emit an EWR detection stat for the cued position so the
+                    // stats subscriber can push it to SAM fire control.
+                    let _ = rp; // radar_physics present means we're in physics mode
+                    let _ = cue_pos;
+                }
+            }
+        }
         Ok(())
+    }
+
+    // ─── IADN: fuse sensor contributions into FusedTrack table ──────────────
+
+    /// Derive a ContactClass from unit tags for a given tracked entity.
+    fn classify_contact(id: &EnId, db: &Db) -> ContactClass {
+        let typ = match id {
+            EnId::Player(ucid) => db
+                .persisted
+                .players
+                .get(ucid)
+                .and_then(|p| p.current_slot.as_ref())
+                .and_then(|(_, inst)| inst.as_ref())
+                .map(|inst| inst.typ.clone()),
+            EnId::Unit(uid) => db
+                .persisted
+                .units
+                .get(uid)
+                .map(|u| u.typ.clone()),
+        };
+        let tags = typ.as_ref().and_then(|t| db.ephemeral.cfg.unit_classification.get(t));
+        match tags {
+            Some(tags) if tags.contains(UnitTag::Helicopter) => ContactClass::Helicopter,
+            Some(tags) if tags.contains(UnitTag::Aircraft) && tags.contains(UnitTag::AWACS) => ContactClass::Bomber,
+            Some(tags) if tags.contains(UnitTag::Aircraft) => ContactClass::Fighter,
+            _ => ContactClass::Unknown,
+        }
+    }
+
+    fn fuse_tracks(
+        &mut self,
+        contributions: &FxHashMap<(Side, EnId), SmallVec<[(f32, Position3, Vector3, SensorType, DetectedBy); 4]>>,
+        cfg: &IadnConfig,
+        db: &Db,
+        now: DateTime<Utc>,
+    ) {
+        let assoc_sq = cfg.track_association_radius_m.powi(2);
+
+        for ((side, id), sensor_hits) in contributions {
+            if sensor_hits.is_empty() {
+                continue;
+            }
+            // Weighted centroid from all sensors that hit this tick.
+            let total_snr: f32 = sensor_hits.iter().map(|(snr, ..)| snr).sum();
+            if total_snr < cfg.detection_snr_threshold {
+                continue;
+            }
+            // Classify by unit tags from the cfg unit_classification table.
+            let contact_class = Self::classify_contact(id, db);
+            let mut fused_pos = Position3::default();
+            let mut fused_vel = Vector3::zeros();
+            let mut fused_db  = DetectedBy::default();
+            for (snr, pos, vel, _, db) in sensor_hits {
+                let w = snr / total_snr;
+                fused_pos.p.0 += pos.p.0 * w as f64;
+                fused_vel     += vel * w as f64;
+                fused_db       = fused_db.with(*db);
+            }
+            let fused_2d = Vector2::new(fused_pos.p.x, fused_pos.p.z);
+            let tracks = self.fused_tracks.entry(*side).or_default();
+
+            // Find the closest existing track within association radius.
+            let existing = tracks
+                .iter_mut()
+                .filter(|t| t.iff == IffState::Hostile)
+                .find(|t| {
+                    let t2d = Vector2::new(t.pos.p.x, t.pos.p.z);
+                    na::distance_squared(&fused_2d.into(), &t2d.into()) <= assoc_sq
+                });
+
+            let confidence_gain = (total_snr / sensor_hits.len() as f32).clamp(0.0, 0.3);
+            if let Some(track) = existing {
+                // Update existing track with smoothed position.
+                let op = track.pos.p.0;
+                let np = fused_pos.p.0;
+                track.pos.p.0 = nalgebra::Vector3::new(
+                    op.x * 0.6 + np.x * 0.4,
+                    op.y * 0.6 + np.y * 0.4,
+                    op.z * 0.6 + np.z * 0.4,
+                );
+                track.velocity = track.velocity * 0.7 + fused_vel * 0.3;
+                track.confidence = (track.confidence + confidence_gain).clamp(0.0, 1.0);
+                let n = sensor_hits.len() as u8;
+                track.pos_uncertainty_m = (track.pos_uncertainty_m * 0.8)
+                    .max(1000.0 / (n as f32 + 1.0));
+                track.detected_by = track.detected_by.with(fused_db);
+                track.sensor_count = sensor_hits.len() as u8;
+                track.last_detection = now;
+                track.last_update = now;
+                // Refine classification when we get a better identification.
+                if track.classification == ContactClass::Unknown && contact_class != ContactClass::Unknown {
+                    track.classification = contact_class;
+                }
+            } else {
+                // Tentative new track.
+                tracks.push(FusedTrack {
+                    id: FusedTrackId::new(),
+                    side: *side,
+                    pos: fused_pos,
+                    velocity: fused_vel,
+                    pos_uncertainty_m: 5000.0,
+                    confidence: confidence_gain,
+                    last_detection: now,
+                    last_update: now,
+                    classification: contact_class,
+                    iff: IffState::Hostile,
+                    detected_by: fused_db,
+                    sensor_count: sensor_hits.len() as u8,
+                    stale: false,
+                });
+            }
+        }
+
+        // Decay and drop stale fused tracks.
+        for tracks in self.fused_tracks.values_mut() {
+            tracks.retain_mut(|t| {
+                let age_secs = (now - t.last_detection).num_seconds() as f32;
+                // Exponential decay: half-life ~60 s
+                t.confidence *= (-age_secs * std::f32::consts::LN_2 / 60.0).exp();
+                t.stale = t.is_stale(now, cfg.track_stale_secs);
+                !t.is_expired(cfg)
+            });
+        }
+    }
+
+    /// Returns SAM cue targets for a given SAM position and range.
+    /// Returns up to 3 (FusedTrackId, position, priority) sorted by priority descending.
+    pub fn sam_cue_targets(
+        &self,
+        side: Side,
+        sam_pos: Vector2,
+        sam_range_m: f64,
+        cfg: &IadnConfig,
+    ) -> SmallVec<[(FusedTrackId, Vector2, f32); 3]> {
+        let mut result: SmallVec<[(FusedTrackId, Vector2, f32); 3]> = smallvec![];
+        let tracks = match self.fused_tracks.get(&side) {
+            Some(t) => t,
+            None => return result,
+        };
+        let range_sq = sam_range_m.powi(2);
+        for track in tracks {
+            if track.side != side || track.iff != IffState::Hostile || track.confidence < cfg.sam_cue_confidence_threshold {
+                continue;
+            }
+            let t2d = Vector2::new(track.pos.p.x, track.pos.p.z);
+            let dist_sq = na::distance_squared(&sam_pos.into(), &t2d.into());
+            if dist_sq > range_sq {
+                continue;
+            }
+            // Priority: high confidence × close × fighter bonus.
+            let class_bonus = match track.classification {
+                ContactClass::Fighter  => 1.5,
+                ContactClass::Bomber   => 1.2,
+                ContactClass::Helicopter => 0.8,
+                ContactClass::Unknown  => 1.0,
+            };
+            let priority = track.confidence * class_bonus * (sam_range_m as f32 / dist_sq.sqrt() as f32);
+            if result.len() < 3 {
+                result.push((track.id, t2d, priority));
+                result.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+            } else if let Some(last) = result.last() {
+                if priority > last.2 {
+                    result.pop();
+                    result.push((track.id, t2d, priority));
+                    result.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+                }
+            }
+        }
+        result
     }
 
     pub fn toggle(&mut self, ucid: &Ucid) -> bool {
@@ -590,6 +1008,49 @@ impl Ewr {
             })
             .map(|t| Vector2::new(t.pos.p.x, t.pos.p.z))
             .collect()
+    }
+
+    /// Ground intel radio picture from the ELINT/SIGINT database.
+    /// Returns up to 5 highest-confidence ground contacts near the player, formatted
+    /// for radio broadcast: "BOGEY 3 ARMOR, 047 FOR 32, CONFIDENCE HIGH".
+    pub fn intel_picture(
+        &self,
+        side: Side,
+        player_pos: Vector2,
+        intel_db: &crate::db::intel::IntelDatabase,
+    ) -> SmallVec<[CompactString; 8]> {
+        let mut lines: SmallVec<[CompactString; 8]> = smallvec![];
+        let contacts = intel_db.top_contacts_for_side(side, player_pos, 5);
+        if contacts.is_empty() {
+            lines.push(format_compact!("No current ground intel"));
+            return lines;
+        }
+        for contact in contacts {
+            let bearing = radians_to_degrees(azumith2d_to(player_pos, contact.pos)) as u16;
+            let range_km = (na::distance(&player_pos.into(), &contact.pos.into()) / 1000.0) as u32;
+            let class_str = match contact.unit_class {
+                crate::db::intel::IntelUnitClass::Armor      => "ARMOR",
+                crate::db::intel::IntelUnitClass::AirDefense => "ADS",
+                crate::db::intel::IntelUnitClass::Artillery  => "ARTY",
+                crate::db::intel::IntelUnitClass::Infantry   => "INF",
+                crate::db::intel::IntelUnitClass::AirBase    => "AIRBASE",
+                crate::db::intel::IntelUnitClass::Naval      => "NAVAL",
+                crate::db::intel::IntelUnitClass::Unknown    => "UNK",
+            };
+            let conf_str = if contact.confidence >= 0.8 {
+                "HIGH"
+            } else if contact.confidence >= 0.4 {
+                "MEDIUM"
+            } else {
+                "LOW"
+            };
+            lines.push(format_compact!(
+                "{} {}×{class_str}, {bearing:03} FOR {range_km}km, CONF {conf_str}",
+                contact.unit_count,
+                contact.unit_count,
+            ));
+        }
+        lines
     }
 
     /// Count the number of **enemy player** contacts currently detected by

@@ -24,7 +24,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{C130Vehicle, CargoConfig, Crate, Deployable, DeployableKind, DismountSpec, LifeType, LimitEnforceTyp, Troop, Vehicle},
+    cfg::{C130Vehicle, CargoConfig, Crate, Deployable, DeployableKind, DismountSpec, GroundVehicleCargo, LifeType, LimitEnforceTyp, Troop, Vehicle},
     db::{
         group::GroupId,
         objective::{ObjectiveId, ObjectiveKind},
@@ -111,6 +111,18 @@ pub struct InternalPilot {
     pub life_type: LifeType,
 }
 
+/// Troops being transported inside a ground vehicle (IFV/APC).
+/// Stored in `Ephemeral.ground_vehicle_passengers` keyed by vehicle UnitId.
+#[derive(Debug, Clone)]
+pub struct GroundVehiclePassengers {
+    pub vehicle_unit_id: bfprotocols::db::group::UnitId,
+    /// DCS unit name of the carrier vehicle (for cargo-weight API calls).
+    pub vehicle_name: dcso3::String,
+    pub side: Side,
+    pub troops: SmallVec<[InternalTroop; 4]>,
+    pub loaded_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Cargo {
     pub troops: SmallVec<[InternalTroop; 2]>,
@@ -192,6 +204,8 @@ pub struct C130Cargo {
     pub side: Side,
     /// Last known position
     pub last_pos: Vector2,
+    /// Position where the crate was originally spawned (used to detect slingload delivery)
+    pub spawn_pos: Vector2,
     /// Time when crate was spawned
     pub spawn_time: DateTime<Utc>,
     /// Time when crate entered airborne state (for tracking)
@@ -225,6 +239,7 @@ impl C130Cargo {
             player,
             side,
             last_pos: pos,
+            spawn_pos: pos,
             spawn_time: Utc::now(),
             airborne_time: None,
             crate_def,
@@ -253,6 +268,7 @@ impl C130Cargo {
             player,
             side,
             last_pos: pos,
+            spawn_pos: pos,
             spawn_time: Utc::now(),
             airborne_time: None,
             crate_def,
@@ -780,24 +796,37 @@ impl Db {
                 Ok(repairs)
             }
         }
+        // Returns Some((name, dist_m)) of the blocking objective, or None if clear to unpack.
         fn too_close<'a, I: Iterator<Item = &'a Cifo>, F: Fn() -> I>(
             db: &Db,
             side: Side,
             centroid: Vector2,
             logistics: bool,
             iter: F,
-        ) -> bool {
-            let excl_dist_sq = (db.ephemeral.cfg.logistics_exclusion as f64).powi(2);
-            db.persisted.objectives.into_iter().any(|(oid, obj)| {
+        ) -> Option<(String, f64)> {
+            let excl_dist = db.ephemeral.cfg.logistics_exclusion as f64;
+            let excl_dist_sq = excl_dist.powi(2);
+            db.persisted.objectives.into_iter().find_map(|(oid, obj)| {
+                let _is_enemy = obj.owner != side && obj.owner != Side::Neutral;
                 let mut check = false;
-                for cr in iter() {
-                    check |= oid == &cr.origin;
+                if logistics {
+                    for cr in iter() {
+                        check |= oid == &cr.origin;
+                    }
+                    check |= obj.owner == side;
+                } else {
+                    // Block unpacking inside friendly objectives (prevent base-stuffing).
+                    // Enemy objectives are always allowed — players need to build there to capture.
+                    check = obj.owner == side;
                 }
-                check |= logistics || obj.owner == side;
-                check && (logistics || obj.threatened) && {
-                    let dist = na::distance_squared(&obj.zone.pos().into(), &centroid.into());
-                    dist <= excl_dist_sq || obj.zone.scale(1.1).contains(centroid.into())
+                if check && (logistics || obj.owner == side) {
+                    let dist_sq = na::distance_squared(&obj.zone.pos().into(), &centroid.into());
+                    if dist_sq <= excl_dist_sq || obj.zone.scale(1.1).contains(centroid.into()) {
+                        let dist = dist_sq.sqrt();
+                        return Some((obj.name.clone().into(), dist));
+                    }
                 }
+                None
             })
         }
         fn close_enough_to_repair<'a, I: Iterator<Item = &'a Cifo>, F: Fn() -> I>(
@@ -993,16 +1022,16 @@ impl Db {
                     .ok_or_else(|| anyhow!("no deployable candidates found"))?;
                 let spec = maybe!(didx.deployables_by_name, dep, "deployable")?.clone();
                 let centroid = centroid2d(have.values().flat_map(|c| c.iter()).map(|c| c.pos));
-                let too_close =
+                let blocking =
                     too_close(self, st.side, centroid, spec.kind.is_objective(), || {
                         have.values().flat_map(|c| c.iter())
                     });
-                if too_close {
-                    if spec.kind.is_group() {
-                        reasons.push("can't unpack that here while enemies are close".into());
-                    } else {
-                        reasons.push("can't unpack that here".into())
-                    }
+                if let Some((obj_name, dist)) = blocking {
+                    let needed = (self.ephemeral.cfg.logistics_exclusion as f64 - dist).max(50.0);
+                    reasons.push(format_compact!(
+                        "can't unpack here — too close to friendly objective '{}', move {:.0}m away",
+                        obj_name, needed
+                    ));
                 } else {
                     let spctx = SpawnCtx::new(lua)?;
                     let origins = {
@@ -1103,8 +1132,12 @@ impl Db {
                         spec.repair_cost,
                         player.points
                     ));
-                } else if too_close(self, st.side, centroid, false, || have.iter()) {
-                    reasons.push("can't repair that here while enemies are close".into())
+                } else if let Some((obj_name, dist)) = too_close(self, st.side, centroid, false, || have.iter()) {
+                    let needed = (self.ephemeral.cfg.logistics_exclusion as f64 - dist).max(50.0);
+                    reasons.push(format_compact!(
+                        "can't repair here — too close to friendly objective '{}', move {:.0}m away",
+                        obj_name, needed
+                    ))
                 } else {
                     let group = group!(self, gid)?;
                     for uid in &group.units {
@@ -1521,6 +1554,197 @@ impl Db {
             .set_unit_internal_cargo(unit_name, cargo.weight() as i64)?;
         self.delete_group(&gid)?;
         Ok((troop_cfg, gid))
+    }
+
+    // ===== Ground Vehicle Troop Transport =====
+
+    /// Find a friendly ground vehicle with GroundVehicleCargo config within board radius.
+    /// Returns (UnitId, vehicle_name, cfg) if found.
+    fn nearby_boardable_vehicle(
+        &self,
+        lua: MizLua,
+        slot: &dcso3::net::SlotId,
+    ) -> Result<Option<(bfprotocols::db::group::UnitId, dcso3::String, GroundVehicleCargo)>> {
+        let player_pos_3d = self.ephemeral.slot_instance_pos(lua, slot)?;
+        let player_2d = Vector2::new(player_pos_3d.p.x, player_pos_3d.p.z);
+        let side = self.ephemeral.get_slot_info(slot)
+            .ok_or_else(|| anyhow!("no slot info for {slot:?}"))?.side;
+
+        for (uid, unit) in self.persisted.units.into_iter() {
+            if unit.dead || unit.side != side {
+                continue;
+            }
+            let cfg = match self.ephemeral.cfg.ground_vehicle_cargo.get(&unit.typ) {
+                Some(c) => c.clone(),
+                None => continue,
+            };
+            let unit_2d = unit.pos;
+            let dist_sq = na::distance_squared(&player_2d.into(), &unit_2d.into());
+            if dist_sq <= cfg.board_radius_m.powi(2) {
+                return Ok(Some((*uid, unit.name.clone(), cfg)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Board an infantry squad into a friendly ground vehicle.
+    /// The slot must belong to a player who previously loaded troops into their aircraft/unit.
+    /// Troops are moved from the aircraft cargo into the vehicle's passenger manifest.
+    pub fn board_ground_vehicle(
+        &mut self,
+        lua: MizLua,
+        slot: &dcso3::net::SlotId,
+    ) -> Result<(Troop, bfprotocols::db::group::UnitId)> {
+        let cargo = self.ephemeral.cargo.get(slot);
+        if cargo.map(|c| c.troops.is_empty()).unwrap_or(true) {
+            bail!("no troops onboard your transport to transfer to a ground vehicle")
+        }
+        let side = self.ephemeral.get_slot_info(slot)
+            .ok_or_else(|| anyhow!("no slot info for {slot:?}"))?.side;
+        let (vehicle_uid, vehicle_name, gv_cfg) = self
+            .nearby_boardable_vehicle(lua, slot)?
+            .ok_or_else(|| anyhow!("no boardable vehicle within range"))?;
+
+        // Enforce capacity.
+        let current = self.ephemeral.ground_vehicle_passengers
+            .get(&vehicle_uid)
+            .map(|p| p.troops.len())
+            .unwrap_or(0);
+        if current >= gv_cfg.troop_capacity as usize {
+            bail!("that vehicle is at full troop capacity ({} squads)", gv_cfg.troop_capacity)
+        }
+
+        // Pop troop from aircraft cargo.
+        let troop = {
+            let cargo = self.ephemeral.cargo.get_mut(slot)
+                .ok_or_else(|| anyhow!("no cargo state"))?;
+            cargo.troops.pop().ok_or_else(|| anyhow!("no troops onboard"))?
+        };
+        let troop_name = troop.troop.name.clone();
+
+        // Insert into vehicle passengers.
+        let pax = self.ephemeral.ground_vehicle_passengers
+            .entry(vehicle_uid)
+            .or_insert_with(|| GroundVehiclePassengers {
+                vehicle_unit_id: vehicle_uid,
+                vehicle_name: vehicle_name.clone(),
+                side,
+                troops: SmallVec::new(),
+                loaded_at: Utc::now(),
+            });
+        let troop_cfg = troop.troop.clone();
+        pax.troops.push(troop);
+
+        log::info!("player loaded {troop_name} into ground vehicle {vehicle_name}");
+        Ok((troop_cfg, vehicle_uid))
+    }
+
+    /// Dismount troops from a ground vehicle — player-commanded.
+    /// Spawns the infantry group at the vehicle's current position.
+    pub fn disembark_ground_vehicle(
+        &mut self,
+        lua: MizLua,
+        idx: &dcso3::env::miz::MizIndex,
+        vehicle_uid: bfprotocols::db::group::UnitId,
+        _slot: &dcso3::net::SlotId,
+    ) -> Result<(Troop, GroupId)> {
+        let pax = self.ephemeral.ground_vehicle_passengers
+            .get_mut(&vehicle_uid)
+            .filter(|p| !p.troops.is_empty())
+            .ok_or_else(|| anyhow!("no troops aboard that vehicle"))?;
+        let it = pax.troops.pop().ok_or_else(|| anyhow!("no troops aboard"))?;
+        let side = pax.side;
+
+        // Find vehicle position from persisted units.
+        let unit_pos = self.persisted.units.get(&vehicle_uid)
+            .map(|u| u.position)
+            .ok_or_else(|| anyhow!("vehicle unit not found"))?;
+        let point = Vector2::new(unit_pos.p.x, unit_pos.p.z);
+        let spawnpos = SpawnLoc::AtPos {
+            pos: point,
+            offset_direction: Vector2::new(unit_pos.x.x, unit_pos.x.z),
+            group_heading: azumith3d(unit_pos.x.0),
+        };
+        let dk = DeployKind::Troop {
+            player: it.player,
+            moved_by: None,
+            spec: it.troop.clone(),
+            origin: it.origin,
+            cost_fraction: it.cost_fraction,
+        };
+        let spctx = SpawnCtx::new(lua)?;
+        let gid = match self.add_and_queue_group(
+            &spctx,
+            idx,
+            side,
+            spawnpos,
+            &*it.troop.template,
+            dk,
+            BitFlags::empty(),
+            None,
+        ) {
+            Ok(gid) => gid,
+            Err(e) => {
+                // Re-push on failure.
+                if let Some(pax) = self.ephemeral.ground_vehicle_passengers.get_mut(&vehicle_uid) {
+                    pax.troops.push(it);
+                }
+                return Err(e);
+            }
+        };
+        let troop_cfg = it.troop.clone();
+        self.ephemeral.stat(bfprotocols::stats::Stat::DeployTroop {
+            gid,
+            troop: it.troop.name.clone(),
+            by: it.player,
+        });
+        Ok((troop_cfg, gid))
+    }
+
+    /// Called when a ground vehicle with passengers is destroyed.
+    /// Survivors (if any) are spawned at the wreck position.
+    /// A casualty roll is applied: each squad has a 50 % chance of surviving.
+    pub fn on_ground_vehicle_destroyed(
+        &mut self,
+        lua: MizLua,
+        idx: &dcso3::env::miz::MizIndex,
+        vehicle_uid: bfprotocols::db::group::UnitId,
+        wreck_pos: Vector2,
+    ) -> Result<()> {
+        let pax = match self.ephemeral.ground_vehicle_passengers.remove(&vehicle_uid) {
+            Some(p) if !p.troops.is_empty() => p,
+            _ => return Ok(()),
+        };
+        let side = pax.side;
+        let mut rng = rand::thread_rng();
+        for it in pax.troops {
+            // 50 % survival chance per squad.
+            if rand::Rng::r#gen::<f32>(&mut rng) < 0.5 {
+                let spawnpos = SpawnLoc::AtPos {
+                    pos: wreck_pos,
+                    offset_direction: Vector2::new(1.0, 0.0),
+                    group_heading: 0.0,
+                };
+                let dk = DeployKind::Troop {
+                    player: it.player,
+                    moved_by: None,
+                    spec: it.troop.clone(),
+                    origin: it.origin,
+                    cost_fraction: it.cost_fraction,
+                };
+                let spctx = match SpawnCtx::new(lua) {
+                    Ok(s) => s,
+                    Err(e) => { log::error!("spawn ctx error for dismount: {e}"); continue; }
+                };
+                if let Err(e) = self.add_and_queue_group(
+                    &spctx, idx, side, spawnpos,
+                    &*it.troop.template, dk, BitFlags::empty(), None,
+                ) {
+                    log::error!("failed to spawn survivor dismount: {e}");
+                }
+            }
+        }
+        Ok(())
     }
 
     // ===== CSAR System =====
@@ -2454,6 +2678,12 @@ impl Db {
         debug!("[C130_CARGO] Player position: x={:.2}, z={:.2}, dir=({:.2}, {:.2})",
                point.x, point.y, dir.x, dir.y);
 
+        // Offset each crate 5m further in the forward direction so they don't stack
+        let existing_count = self.ephemeral.c130_crates.values()
+            .filter(|c| c.player == ucid)
+            .count();
+        let spawn_point = point + dir * (5.0 + existing_count as f64 * 5.0);
+
         // Pick template: helo dynamic cargo uses helo_cargo_template (fallback to c130_cargo_template)
         let template = if !auto_unpack {
             self.ephemeral.cfg.helo_cargo_template
@@ -2468,11 +2698,10 @@ impl Db {
                 .clone()
         };
 
-        // Use same spawn location approach as regular cargo system
         let spawnpos = SpawnLoc::AtPos {
-            pos: point,
-            offset_direction: dir,  // Same as regular cargo system
-            group_heading: azumith2d(dir),  // Same as regular cargo system
+            pos: spawn_point,
+            offset_direction: dir,
+            group_heading: azumith2d(dir),
         };
 
         let dk = DeployKind::Crate {
@@ -2900,13 +3129,22 @@ impl Db {
             // State machine for crate tracking
             match crate_data.state {
                 C130CargoState::Spawned | C130CargoState::Loaded => {
-                    // If crate is moving VERY fast, it's been airdropped
-                    // Use high threshold (50 m/s ~= 97 knots) to avoid false positives from C-130 taxiing/slow flight
-                    // Note: Static objects report in_air=false even when falling, so check speed only
+                    // Airdrop detection: crate moving very fast means it was dropped from fixed-wing
                     if speed > 50.0 {
                         info!("[C130_CARGO] Crate '{}' transitioned to Airborne (speed={:.2}m/s)", crate_name, speed);
                         crate_data.state = C130CargoState::Airborne;
                         crate_data.airborne_time = Some(Utc::now());
+                    } else if !crate_data.auto_unpack && speed < 1.0 {
+                        // Slingload delivery detection: helo crates don't go airborne independently —
+                        // when a CH-47 slingloads a crate and releases it the static object is just
+                        // placed at the new position at near-zero speed. Detect this by checking if
+                        // the crate has moved more than 100 m from where it was spawned.
+                        let dist = na::distance(&new_pos.into(), &crate_data.spawn_pos.into());
+                        if dist > 100.0 {
+                            info!("[C130_CARGO] Crate '{}' slingload-delivered (moved {:.0}m from spawn, speed={:.2}m/s) - manual unpack required",
+                                crate_name, dist, speed);
+                            crate_data.state = C130CargoState::Landed;
+                        }
                     }
                 }
                 C130CargoState::Airborne => {
@@ -2927,7 +3165,12 @@ impl Db {
                     }
                 }
                 C130CargoState::Landed => {
-                    // Already landed, will be unpacked
+                    // Retry auto-unpack each tick — a previous attempt may have failed
+                    // because sibling crates hadn't landed yet (parachute drift spreads
+                    // landing times across multiple ticks). Unpack is idempotent on failure.
+                    if crate_data.auto_unpack {
+                        to_unpack.push(crate_name.clone());
+                    }
                 }
             }
         }

@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{Context as ErrContext, Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{Action, ActionKind},
+    cfg::{Action, ActionGeoLimit, ActionKind, UnitTag},
     db::{group::GroupId as DbGid, objective::ObjectiveId},
     perf::{Perf, PerfInner},
 };
@@ -455,6 +455,81 @@ fn run_enemy_objective_action(
     Ok(())
 }
 
+fn run_global_artillery(lua: MizLua, arg: ArgQuad<Ucid, SlotId, LuaVec3, MarkId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let cfg = match ctx.db.ephemeral.cfg.artillery.clone() {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+    let player = match ctx.db.player(&arg.fst) {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    let side = player.side;
+    let pos = Vector2::new(arg.trd.0.x, arg.trd.0.z);
+    let spctx = SpawnCtx::new(lua)?;
+    let action = Action {
+        cost: 0,
+        penalty: None,
+        limit: None,
+        geo_limit: ActionGeoLimit::Unlimited,
+        kind: ActionKind::Artillery(cfg.clone()),
+    };
+    let args = ActionArgs::Artillery(WithPos { cfg, pos });
+    let cmd = ActionCmd {
+        name: "request-fires".into(),
+        action,
+        args,
+    };
+    match ctx.db.start_action(
+        lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, Some(arg.fst), cmd,
+    ) {
+        Ok(_) => {
+            ctx.db.ephemeral.msgs().delete_mark(arg.fth);
+            ctx.db.ephemeral.panel_to_player(
+                &ctx.db.persisted,
+                10,
+                &arg.fst,
+                compact_str::format_compact!("fire mission requested"),
+            )
+        }
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("request fires failed: {e:?}"),
+        ),
+    }
+    Ok(())
+}
+
+fn side_has_artillery(ctx: &Context, side: Side) -> bool {
+    ctx.db
+        .persisted
+        .groups_by_side
+        .get(&side)
+        .map(|gids| {
+            gids.into_iter().any(|gid| {
+                ctx.db.persisted.groups.get(gid).map(|g| {
+                    g.units.into_iter().any(|uid| {
+                        ctx.db
+                            .persisted
+                            .units
+                            .get(uid)
+                            .map(|u| {
+                                !u.dead
+                                    && (u.tags.0.contains(UnitTag::Artillery)
+                                        || u.tags.0.contains(UnitTag::Launcher))
+                            })
+                            .unwrap_or(false)
+                    })
+                }).unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let mc = MissionCommands::singleton(lua)?;
@@ -728,6 +803,28 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             }
         }
         n += 1;
+    }
+    // Global artillery system: auto-append "Request Fires" if cfg.artillery is set
+    // and the player's side has alive artillery groups — no per-unit action config needed.
+    if ctx.db.ephemeral.cfg.artillery.is_some() {
+        if side_has_artillery(ctx, player.side) {
+            let label = String::from("Request Fires");
+            let arty_root = mc.add_submenu_for_group(arg.snd, label, Some(root.clone()))?;
+            for (text, mk) in &marks {
+                mc.add_command_for_group(
+                    arg.snd,
+                    text.clone(),
+                    Some(arty_root.clone()),
+                    run_global_artillery,
+                    ArgQuad {
+                        fst: arg.fst,
+                        snd: arg.trd,
+                        trd: LuaVec3(mk.pos),
+                        fth: mk.id,
+                    },
+                )?;
+            }
+        }
     }
     ctx.subscribed_action_menus.insert(arg.trd);
     Ok(())

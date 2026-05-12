@@ -1,4 +1,4 @@
-/*
+﻿/*
 Copyright 2024 Eric Stokes.
 
 This file is part of bflib.
@@ -30,6 +30,7 @@ fn default_red_troops() -> Vec<Troop> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -46,6 +47,7 @@ fn default_red_troops() -> Vec<Troop> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -62,6 +64,7 @@ fn default_red_troops() -> Vec<Troop> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -95,6 +98,7 @@ fn default_blue_troops() -> Vec<Troop> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -111,6 +115,7 @@ fn default_blue_troops() -> Vec<Troop> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -127,6 +132,7 @@ fn default_blue_troops() -> Vec<Troop> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -143,6 +149,7 @@ fn default_blue_troops() -> Vec<Troop> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             limit: 10,
             limit_enforce: LimitEnforceTyp::DeleteOldest,
@@ -437,6 +444,7 @@ fn default_red_deployables() -> Vec<Deployable> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             deprecated_logistics: None,
             deprecated_template: None,
@@ -465,6 +473,7 @@ fn default_red_deployables() -> Vec<Deployable> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             deprecated_logistics: None,
             deprecated_template: None,
@@ -780,6 +789,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             deprecated_logistics: None,
             deprecated_template: None,
@@ -808,6 +818,7 @@ fn default_blue_deployables() -> Vec<Deployable> {
                 range: 8000,
                 nolos: false,
                 default_laser_code: 1688,
+                name: None,
             }),
             deprecated_logistics: None,
             deprecated_template: None,
@@ -1385,6 +1396,7 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
                         range: 16000,
                         nolos: true,
                         default_laser_code: 1688,
+                name: None,
                     },
                 }),
             },
@@ -1685,6 +1697,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
                         range: 16000,
                         nolos: true,
                         default_laser_code: 1688,
+                name: None,
                     },
                 }),
             },
@@ -1950,6 +1963,11 @@ impl Default for Cfg {
             logistics_exclusion: 10000,
             unit_cull_distance: 37040, // 20 nm
             ground_vehicle_cull_distance: 10000,
+            artillery: None,
+            lr_cull_distance: 80_000,
+            ewr_cull_distance: 300_000,
+            weapon_spawn_radius: 60_000,
+            weapon_spawn_expiry_secs: 120,
             cull_after: 1800,
             slow_timed_events_freq: 10,
             threatened_distance: default_threatened_distance(),
@@ -1999,6 +2017,7 @@ impl Default for Cfg {
                         range: 16000,
                         nolos: true,
                         default_laser_code: 1688,
+                name: None,
                     },
                 ),
                 (
@@ -2007,6 +2026,7 @@ impl Default for Cfg {
                         range: 16000,
                         nolos: true,
                         default_laser_code: 1688,
+                name: None,
                     },
                 ),
             ]),
@@ -2016,6 +2036,12 @@ impl Default for Cfg {
                 AirborneEwr {
                     range: 370000,
                     aspect_half_angle: None,
+                    pulse_doppler: true,
+                    look_down_capable: true,
+                    chaff_susceptibility: 0.1,
+                    ecm_susceptibility: 0.1,
+                    scan_interval_secs: 10,
+                    frequency_band: crate::cfg::RadarBand::Sband,
                 },
             )]),
             ground_radar_ewrs: FxHashMap::default(),
@@ -2049,6 +2075,10 @@ impl Default for Cfg {
             under_attack: None,
             counter_battery: None,
             era: None,
+            radar_physics: None,
+            iadn: None,
+            elint: None,
+            ground_vehicle_cargo: FxHashMap::default(),
             smart_commander: Some(SmartCommanderCfg {
                 tick_period_secs: 60,
                 treasury_start: 2000,
@@ -2069,3 +2099,6 @@ impl Default for Cfg {
         }
     }
 }
+
+
+

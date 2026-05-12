@@ -15,9 +15,10 @@ for more details.
 */
 
 use super::{
-    cargo::{Cargo, C130Cargo},
+    cargo::{Cargo, C130Cargo, GroundVehiclePassengers},
     events::EventId,
     group::{DeployKind, SpawnedGroup, SpawnedUnit},
+    intel::IntelDatabase,
     logistics::LogiStage,
     map_layer::MapLayer,
     markup::ObjectiveMarkup,
@@ -198,6 +199,9 @@ pub struct Ephemeral {
     pub(super) units_able_to_move: IndexSet<UnitId, FxBuildHasher>,
     pub(super) groups_with_move_missions: FxHashMap<GroupId, Vector2>,
     pub(super) units_potentially_close_to_enemies: FxHashSet<UnitId>,
+    /// Recent weapon-launch events: (shooter_pos, attacking_side, timestamp).
+    /// Used to keep enemy objectives awake while weapons are inbound.
+    pub(crate) recent_shots: Vec<(Vector2, Side, DateTime<Utc>)>,
     pub(super) production_by_side: FxHashMap<Side, Arc<Production>>,
     pub(super) actions_taken: FxHashMap<Side, FxHashMap<String, u32>>,
     pub(super) delayspawnq: BTreeMap<DateTime<Utc>, SmallVec<[GroupId; 8]>>,
@@ -251,6 +255,10 @@ pub struct Ephemeral {
     pub(crate) last_under_attack_notif: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Last time a counter-battery report was sent per grid cell (x_cell, y_cell).
     pub(crate) counter_battery_reports: FxHashMap<(i64, i64), DateTime<Utc>>,
+    /// ELINT/SIGINT persistent intel database (populated when cfg.elint is Some).
+    pub(crate) intel_db: IntelDatabase,
+    /// Ground vehicle passenger manifests: vehicle UnitId -> passengers.
+    pub(crate) ground_vehicle_passengers: FxHashMap<bfprotocols::db::group::UnitId, GroundVehiclePassengers>,
 }
 
 impl Default for Ephemeral {
@@ -291,6 +299,7 @@ impl Default for Ephemeral {
             units_able_to_move: IndexSet::default(),
             groups_with_move_missions: FxHashMap::default(),
             units_potentially_close_to_enemies: FxHashSet::default(),
+            recent_shots: Vec::new(),
             production_by_side: FxHashMap::default(),
             actions_taken: FxHashMap::default(),
             delayspawnq: BTreeMap::default(),
@@ -319,6 +328,8 @@ impl Default for Ephemeral {
             last_stand_state: None,
             last_under_attack_notif: FxHashMap::default(),
             counter_battery_reports: FxHashMap::default(),
+            intel_db: IntelDatabase::default(),
+            ground_vehicle_passengers: FxHashMap::default(),
         }
     }
 }
@@ -427,6 +438,23 @@ impl Ephemeral {
     /// Remove all F10 map layer marks (e.g. on mission reset).
     pub fn remove_map_layer(&mut self) {
         self.map_layer.remove_all(&mut self.msgs);
+    }
+
+    pub fn tick_intel_decay(&mut self, now: DateTime<Utc>) {
+        let elint_cfg = match self.cfg.elint.as_ref() {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let (updated, removed) = self.intel_db.tick_decay(&elint_cfg, now, 1.0);
+        for (rect, label) in removed {
+            self.map_layer.remove_intel_contact_marks(rect, label, &mut self.msgs);
+        }
+        let ids = updated;
+        for id in ids {
+            if let Some(contact) = self.intel_db.contacts.get_mut(&id) {
+                self.map_layer.update_intel_contact_mark(contact, &elint_cfg, &mut self.msgs);
+            }
+        }
     }
 
     pub fn on_recon_result(

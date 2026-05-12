@@ -44,6 +44,24 @@ use log::error;
 use smallvec::{SmallVec, smallvec};
 use std::sync::Arc;
 
+fn jtac_nine_line(_: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let jtac = ctx
+        .jtac
+        .get(&arg.snd)
+        .with_context(|| format_compact!("get jtac {}", arg.snd))?;
+    match jtac.nine_line(&ctx.db) {
+        Ok(msg) => ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, 15, &arg.fst, msg),
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("9-line unavailable: {e}"),
+        ),
+    }
+    Ok(())
+}
+
 pub fn jtac_status(_: MizLua, arg: ArgTuple<Option<Ucid>, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = ctx
@@ -769,7 +787,10 @@ pub(super) fn add_menu_for_jtac(
         .get(&slot)
         .map(|subd| subd.pinned.contains(&jtac.gid()))
         .unwrap_or(false);
-    let name = match jtac.gid() {
+    let name = if let Some(cs) = jtac.callsign() {
+        format_compact!("{cs}")
+    } else {
+        match jtac.gid() {
         JtId::Group(gid) => match db.group(&gid) {
             Err(_) => format_compact!("{gid}"),
             Ok(group) => match &group.origin {
@@ -806,6 +827,7 @@ pub(super) fn add_menu_for_jtac(
                 .unwrap_or_else(|| Vehicle::from(""));
             format_compact!("sl{sl}({typ} {name})")
         }
+        }
     };
     let root = mc.add_submenu_for_group(mizgid, name.clone().into(), Some(root))?;
     mc.add_command_for_group(
@@ -829,6 +851,16 @@ pub(super) fn add_menu_for_jtac(
         jtac_status,
         ArgTuple {
             fst: Some(*ucid),
+            snd: jtac.gid(),
+        },
+    )?;
+    mc.add_command_for_group(
+        mizgid,
+        "9-Line".into(),
+        Some(root.clone()),
+        jtac_nine_line,
+        ArgTuple {
+            fst: *ucid,
             snd: jtac.gid(),
         },
     )?;

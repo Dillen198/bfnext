@@ -1381,7 +1381,7 @@ impl Db {
                                 .units
                                 .into_iter()
                                 .filter_map(|uid| self.persisted.units.get(uid))
-                                .any(|u| obj.zone.contains(u.pos));
+                                .any(|u| !u.dead && obj.zone.contains(u.pos));
                             if in_range {
                                 captured
                                     .entry(*oid)
@@ -1407,7 +1407,7 @@ impl Db {
                                 .units
                                 .into_iter()
                                 .filter_map(|uid| self.persisted.units.get(uid))
-                                .any(|u| obj.zone.contains(u.pos));
+                                .any(|u| !u.dead && obj.zone.contains(u.pos));
                             if in_range {
                                 captured
                                     .entry(*oid)
@@ -1455,7 +1455,7 @@ impl Db {
                         let enemy = side.opposite();
                         self.ephemeral.msgs().panel_to_side(
                             15, false, *side,
-                            format_compact!("⚔ Capturing {}… hold position! ({} sec)", obj_name, capture_secs),
+                            format_compact!("⚔ Capturing {}… ({} sec)", obj_name, capture_secs),
                         );
                         self.ephemeral.msgs().panel_to_side(
                             15, false, enemy,
@@ -1901,7 +1901,7 @@ impl Db {
                         15,
                         false,
                         captor_side,
-                        format_compact!("⚔ Boarding {}… hold position! ({} sec)", obj_name, capture_secs),
+                        format_compact!("⚔ Boarding {}… ({} sec)", obj_name, capture_secs),
                     );
                     self.ephemeral.msgs().panel_to_side(
                         15,

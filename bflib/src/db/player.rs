@@ -1404,4 +1404,18 @@ impl Db {
             }
         }
     }
+
+    pub fn adjust_points_silent(&mut self, ucid: &Ucid, amount: i32, why: &str) {
+        if let Some(player) = self.persisted.players.get_mut_cow(ucid) {
+            player.points += amount;
+            if amount != 0 {
+                self.ephemeral.stat(Stat::Points {
+                    points: amount,
+                    reason: compact_str::format_compact!("{}({}) points {}", player.points, amount, why).into(),
+                    id: *ucid,
+                });
+                self.ephemeral.dirty();
+            }
+        }
+    }
 }

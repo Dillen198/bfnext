@@ -1,4 +1,4 @@
-/*
+﻿/*
 Copyright 2024 Eric Stokes.
 
 This file is part of bflib.
@@ -17,8 +17,8 @@ for more details.
 //! Centralised F10 map drawing layer.
 //!
 //! Every feature in the engine that needs a map overlay goes through this
-//! module.  The goal is to use the full DCS draw toolkit — line, circle,
-//! rect, quad, text, arrow, and mark pins — deliberately and consistently,
+//! module.  The goal is to use the full DCS draw toolkit â€” line, circle,
+//! rect, quad, text, arrow, and mark pins â€” deliberately and consistently,
 //! so the F10 map gives players a rich tactical picture without cluttering
 //! the code across a dozen separate files.
 //!
@@ -35,6 +35,7 @@ for more details.
 
 use super::{
     group::DeployKind,
+    intel::{IntelContact, IntelDatabase},
     logistics::{AirLogisticsRoute, ConvoyId, LogiRouteId, SeaLogisticsRoute, SupplyConvoy},
     persisted::Persisted,
 };
@@ -53,9 +54,9 @@ use fxhash::{FxHashMap, FxHashSet};
 
 use crate::msgq::MsgQ;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn side_color(side: Side, alpha: f32) -> Color {
     match side {
@@ -98,13 +99,13 @@ fn direction_arrow(pos: Vector2, heading_deg: f64, len_m: f64) -> (Vector2, Vect
     (pos - dir * (len_m * 0.5), pos + dir * (len_m * 0.5))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Per-feature mark bundles
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[derive(Debug)]
 struct ConvoyMarks {
-    /// Long-dash line: origin → destination
+    /// Long-dash line: origin â†’ destination
     route: MarkId,
     /// Arrow at current convoy position showing direction of travel
     arrow: MarkId,
@@ -163,7 +164,7 @@ impl ConvoyMarks {
             TextSpec {
                 pos: v3(current_pos.x + 500., current_pos.y + 500.),
                 color: col,
-                fill_color: Color::black(0.4),
+                fill_color: Color::black(0.0),
                 font_size: 9,
                 read_only: true,
                 text: cargo_label.into(),
@@ -269,7 +270,7 @@ impl AirRouteMarks {
             TextSpec {
                 pos: v3(orbit_center.x, orbit_center.y),
                 color: col,
-                fill_color: Color::black(0.45),
+                fill_color: Color::black(0.0),
                 font_size: 10,
                 read_only: true,
                 text: label_text.into(),
@@ -340,7 +341,7 @@ impl SeaRouteMarks {
             TextSpec {
                 pos: v3(midpoint.x + 500., midpoint.y + 500.),
                 color: col,
-                fill_color: Color::black(0.4),
+                fill_color: Color::black(0.0),
                 font_size: 9,
                 read_only: true,
                 text: label_text.into(),
@@ -369,11 +370,11 @@ const FIRE_MARK_TTL: i64 = 300; // seconds
 impl FireOverlay {
     /// Draw a new fire mission overlay.
     ///
-    /// * `gun_pos`    – centroid of the firing battery
-    /// * `target_pos` – impact point
-    /// * `radius_m`   – burst radius
-    /// * `gun_count`  – number of firing groups
-    /// * `side`       – which coalition is firing
+    /// * `gun_pos`    â€“ centroid of the firing battery
+    /// * `target_pos` â€“ impact point
+    /// * `radius_m`   â€“ burst radius
+    /// * `gun_count`  â€“ number of firing groups
+    /// * `side`       â€“ which coalition is firing
     pub fn new(
         gun_pos: Vector2,
         target_pos: Vector2,
@@ -427,7 +428,7 @@ impl FireOverlay {
             TextSpec {
                 pos: v3(target_pos.x, target_pos.y),
                 color: col,
-                fill_color: Color::black(0.5),
+                fill_color: Color::black(0.0),
                 font_size: 11,
                 read_only: true,
                 text: txt.into(),
@@ -447,7 +448,7 @@ impl FireOverlay {
 
 #[derive(Debug)]
 struct CsarMarks {
-    /// Dashed white circle — search area around downed pilot
+    /// Dashed white circle â€” search area around downed pilot
     search_ring: MarkId,
     /// Text label with pilot name + capture countdown
     label: MarkId,
@@ -484,7 +485,7 @@ impl CsarMarks {
             TextSpec {
                 pos: v3(pos.x, pos.y),
                 color: Color::white(0.9),
-                fill_color: Color::black(0.5),
+                fill_color: Color::black(0.0),
                 font_size: 11,
                 read_only: true,
                 text: label_text.into(),
@@ -495,7 +496,7 @@ impl CsarMarks {
     }
 
     /// Change the ring border color as the capture timer runs down:
-    /// white → yellow → red.
+    /// white â†’ yellow â†’ red.
     fn set_urgency(&self, level: UrgencyLevel, msgs: &mut MsgQ) {
         let (border, fill) = match level {
             UrgencyLevel::Low => (Color::white(0.8), Color::white(0.03)),
@@ -527,7 +528,7 @@ pub struct JtacLayerMarks {
     lase_ring: MarkId,
     /// Small dotted circle at the lased target (~200 m radius)
     target_ring: MarkId,
-    /// Straight line from JTAC to target — bearing / range aid
+    /// Straight line from JTAC to target â€” bearing / range aid
     bearing_line: MarkId,
     /// Rich text 9-line panel beside the target
     nine_line: MarkId,
@@ -600,7 +601,7 @@ impl JtacLayerMarks {
             TextSpec {
                 pos: v3(target_pos.x + 500., target_pos.y + 500.),
                 color: col,
-                fill_color: Color::black(0.55),
+                fill_color: Color::black(0.0),
                 font_size: 10,
                 read_only: true,
                 text: nine_line_text.into(),
@@ -654,11 +655,11 @@ impl JtacLayerMarks {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MapLayer — top-level owner of all marks
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// MapLayer â€” top-level owner of all marks
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-/// Generic timed mark bundle — up to 3 MarkIds that expire together.
+/// Generic timed mark bundle â€” up to 3 MarkIds that expire together.
 #[derive(Debug)]
 struct TimedMark {
     ids: [Option<MarkId>; 3],
@@ -697,7 +698,7 @@ pub struct MapLayer {
 }
 
 impl MapLayer {
-    // ── Fire missions (explicit event) ──────────────────────────────────────
+    // â”€â”€ Fire missions (explicit event) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Draw a fire-mission overlay.  Call this from `db/actions.rs` instead
     /// of the inline `circle_to_all` that currently lives there.
@@ -717,7 +718,7 @@ impl MapLayer {
         self.fire_marks.push(overlay);
     }
 
-    // ── JTAC layer (explicit events from jtac.rs) ───────────────────────────
+    // â”€â”€ JTAC layer (explicit events from jtac.rs) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Draw JTAC layer marks when a target is acquired.
     pub fn on_jtac_target(
@@ -746,7 +747,7 @@ impl MapLayer {
         }
     }
 
-    // ── Supply critical warnings ────────────────────────────────────────────
+    // â”€â”€ Supply critical warnings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Draw a persistent F10 map marker when an objective's supply is critical.
     pub fn on_supply_critical(
@@ -770,10 +771,10 @@ impl MapLayer {
             TextSpec {
                 pos: v3(pos.x, pos.y),
                 color: col,
-                fill_color: Color::black(0.55),
+                fill_color: Color::black(0.0),
                 font_size: 12,
                 read_only: true,
-                text: format_compact!("⚠ LOW SUPPLY\n{}\n< {}%", name, threshold).into(),
+                text: format_compact!("âš  LOW SUPPLY\n{}\n< {}%", name, threshold).into(),
             },
         );
         self.supply_critical_marks.insert(oid, mark);
@@ -786,7 +787,7 @@ impl MapLayer {
         }
     }
 
-    // ── Transient tactical events ────────────────────────────────────────────
+    // â”€â”€ Transient tactical events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Dotted square bounding the recon scan area + text label.
     pub fn on_recon_result(
@@ -822,7 +823,7 @@ impl MapLayer {
             TextSpec {
                 pos: v3(target_pos.x, target_pos.y),
                 color: col,
-                fill_color: Color::black(0.5),
+                fill_color: Color::black(0.0),
                 font_size: 11,
                 read_only: true,
                 text: format_compact!("RECON\n~{} enemy units", unit_count).into(),
@@ -831,9 +832,81 @@ impl MapLayer {
         self.timed_marks.push(TimedMark::two(rect, label, 120, now));
     }
 
+    /// Place or refresh an F10 map marker for an ELINT/SIGINT intel contact.
+    /// The marker label and opacity track the contact's confidence score.
+    /// Old marks are deleted and replaced when refreshed.
+    pub fn update_intel_contact_mark(
+        &mut self,
+        contact: &mut IntelContact,
+        cfg: &bfprotocols::cfg::ElintConfig,
+        msgs: &mut MsgQ,
+    ) {
+        // Remove stale marks first.
+        if let Some(rect_id) = contact.map_mark_rect.take() {
+            msgs.delete_mark(rect_id);
+        }
+        if let Some(label_id) = contact.map_mark_label.take() {
+            msgs.delete_mark(label_id);
+        }
+
+        // The mark is shown only to the side that owns the intel.
+        let sf = side_filter(contact.side);
+        // Color fades from bright hostile-red towards dark as confidence drops.
+        let alpha = (contact.confidence * 0.9 + 0.05).clamp(0.1, 0.95);
+        let fill_alpha = alpha * 0.15;
+        let (enemy_col, fill_col) = match contact.side {
+            Side::Blue => (Color::new(0.9, 0.2, 0.2, alpha), Color::new(0.9, 0.2, 0.2, fill_alpha)),
+            Side::Red  => (Color::new(0.2, 0.4, 0.9, alpha), Color::new(0.2, 0.4, 0.9, fill_alpha)),
+            _          => (Color::white(alpha),                Color::white(fill_alpha)),
+        };
+        let r = 300.0_f64; // display square half-size in meters
+        let pos = contact.pos;
+        let rect_id = MarkId::new();
+        msgs.rect_to_all(
+            sf,
+            rect_id,
+            RectSpec {
+                start: v3(pos.x - r, pos.y - r),
+                end:   v3(pos.x + r, pos.y + r),
+                color: enemy_col,
+                fill_color: fill_col,
+                line_type: LineType::Dashed,
+                read_only: true,
+            },
+            None,
+        );
+        let label_id = MarkId::new();
+        let text = IntelDatabase::marker_text(contact, cfg);
+        msgs.text_to_all(
+            sf,
+            label_id,
+            TextSpec {
+                pos: v3(pos.x, pos.y),
+                color: enemy_col,
+                fill_color: Color::black(0.0),
+                font_size: 10,
+                read_only: true,
+                text: text.into(),
+            },
+        );
+        contact.map_mark_rect  = Some(rect_id);
+        contact.map_mark_label = Some(label_id);
+    }
+
+    /// Remove F10 map marks for a deleted intel contact.
+    pub fn remove_intel_contact_marks(
+        &mut self,
+        rect: Option<dcso3::trigger::MarkId>,
+        label: Option<dcso3::trigger::MarkId>,
+        msgs: &mut MsgQ,
+    ) {
+        if let Some(id) = rect  { msgs.delete_mark(id); }
+        if let Some(id) = label { msgs.delete_mark(id); }
+    }
+
     /// NATO hostile unit symbol (diamond) at the detected enemy arty position.
     ///
-    /// A diamond (◇) is the NATO APP-6 symbol for a hostile ground unit.
+    /// A diamond (â—‡) is the NATO APP-6 symbol for a hostile ground unit.
     /// Shown only to the friendly side so they can call counter-fire.
     pub fn on_counter_battery(
         &mut self,
@@ -871,7 +944,7 @@ impl MapLayer {
             TextSpec {
                 pos: v3(enemy_pos.x, enemy_pos.y),
                 color: enemy_col,
-                fill_color: Color::black(0.5),
+                fill_color: Color::black(0.0),
                 font_size: 11,
                 read_only: true,
                 text: "ARTY\nCOUNTER-BATTERY".into(),
@@ -880,7 +953,7 @@ impl MapLayer {
         self.timed_marks.push(TimedMark::two(diamond, label, 60, now));
     }
 
-    /// Enemy axis-of-advance arrow pointing at the objective — the standard
+    /// Enemy axis-of-advance arrow pointing at the objective â€” the standard
     /// military symbol for a ground threat approaching a position.
     pub fn on_objective_threatened(
         &mut self,
@@ -919,7 +992,7 @@ impl MapLayer {
             TextSpec {
                 pos: v3(obj_pos.x, obj_pos.y),
                 color: enemy_col,
-                fill_color: Color::black(0.55),
+                fill_color: Color::black(0.0),
                 font_size: 12,
                 read_only: true,
                 text: format_compact!("ENEMY CONTACT\n{}", obj_name).into(),
@@ -929,7 +1002,7 @@ impl MapLayer {
     }
 
     /// Bold enemy axis-of-advance arrow at an objective that is actively under
-    /// attack — heavier weight and shorter range than the "threatened" arrow to
+    /// attack â€” heavier weight and shorter range than the "threatened" arrow to
     /// show immediate close combat.
     pub fn on_objective_under_attack(
         &mut self,
@@ -945,7 +1018,7 @@ impl MapLayer {
             Side::Blue => Color::red(1.),
             _ => Color::blue(1.),
         };
-        // Two converging attack arrows from NW and NE — standard hasty-attack
+        // Two converging attack arrows from NW and NE â€” standard hasty-attack
         // symbol showing multi-axis pressure on the position.
         let offset = 2_500_f64;
         let arrow_nw = MarkId::new();
@@ -983,7 +1056,7 @@ impl MapLayer {
             TextSpec {
                 pos: v3(obj_pos.x, obj_pos.y),
                 color: enemy_col,
-                fill_color: Color::black(0.6),
+                fill_color: Color::black(0.0),
                 font_size: 13,
                 read_only: true,
                 text: format_compact!("UNDER ATTACK\n{}", obj_name).into(),
@@ -993,7 +1066,7 @@ impl MapLayer {
     }
 
     /// NATO friendly unit symbol (rectangle) at the objective + a movement
-    /// arrow showing the axis of advance — standard symbol for friendly forces
+    /// arrow showing the axis of advance â€” standard symbol for friendly forces
     /// arriving at a position.
     pub fn on_reinforcements_arrived(
         &mut self,
@@ -1043,7 +1116,7 @@ impl MapLayer {
             TextSpec {
                 pos: v3(obj_pos.x, obj_pos.y),
                 color: col,
-                fill_color: Color::black(0.5),
+                fill_color: Color::black(0.0),
                 font_size: 12,
                 read_only: true,
                 text: format_compact!("REINFORCEMENTS\nARRIVED [{:?}]", side).into(),
@@ -1064,7 +1137,7 @@ impl MapLayer {
         }
     }
 
-    // ── Full diff-based update (call from slow tick) ─────────────────────────
+    // â”€â”€ Full diff-based update (call from slow tick) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Performs a full diff of the entire map layer against current DB state.
     ///
@@ -1091,7 +1164,7 @@ impl MapLayer {
         self.expire_timed_marks(now, msgs);
     }
 
-    // ── Ground convoys ───────────────────────────────────────────────────────
+    // â”€â”€ Ground convoys â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn update_convoys(
         &mut self,
@@ -1129,7 +1202,7 @@ impl MapLayer {
                     .map(|o| o.zone.pos())
                     .unwrap_or(convoy.last_pos);
                 let cargo_str = format_compact!(
-                    "Convoy [{:?}]\n{:?} → {}",
+                    "Convoy [{:?}]\n{:?} â†’ {}",
                     convoy.side,
                     convoy.cargo_type,
                     persisted
@@ -1163,7 +1236,7 @@ impl MapLayer {
         });
     }
 
-    // ── Air logistics routes ─────────────────────────────────────────────────
+    // â”€â”€ Air logistics routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn update_air_routes(
         &mut self,
@@ -1193,7 +1266,7 @@ impl MapLayer {
                 .unwrap_or(Side::Neutral);
 
             let label = format_compact!(
-                "Air Logi [{:?}]\n{:?} → {}",
+                "Air Logi [{:?}]\n{:?} â†’ {}",
                 side,
                 route.cargo_type,
                 persisted
@@ -1222,7 +1295,7 @@ impl MapLayer {
         });
     }
 
-    // ── Sea logistics routes ─────────────────────────────────────────────────
+    // â”€â”€ Sea logistics routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn update_sea_routes(
         &mut self,
@@ -1251,7 +1324,7 @@ impl MapLayer {
                 .unwrap_or(Side::Neutral);
 
             let label = format_compact!(
-                "Sea Logi [{:?}]\n{:?} → {}",
+                "Sea Logi [{:?}]\n{:?} â†’ {}",
                 side,
                 route.cargo_type,
                 persisted
@@ -1276,7 +1349,7 @@ impl MapLayer {
         });
     }
 
-    // ── CSAR / downed pilots ─────────────────────────────────────────────────
+    // â”€â”€ CSAR / downed pilots â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn update_csar(
         &mut self,
@@ -1334,7 +1407,7 @@ impl MapLayer {
                 marks.set_urgency(urgency, msgs);
                 marks.update_label(label, msgs);
             } else {
-                // Position: take the first unit from the group — O(1), no full scan needed
+                // Position: take the first unit from the group â€” O(1), no full scan needed
                 let pos = group.units.into_iter()
                     .next()
                     .and_then(|uid| persisted.units.get(uid))
@@ -1359,7 +1432,7 @@ impl MapLayer {
         });
     }
 
-    // ── Fire mark expiry ─────────────────────────────────────────────────────
+    // â”€â”€ Fire mark expiry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn expire_fire_marks(&mut self, now: DateTime<Utc>, msgs: &mut MsgQ) {
         self.fire_marks.retain(|overlay| {
@@ -1374,7 +1447,7 @@ impl MapLayer {
         });
     }
 
-    // ── Full removal (e.g. on mission reset) ────────────────────────────────
+    // â”€â”€ Full removal (e.g. on mission reset) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     pub fn remove_all(&mut self, msgs: &mut MsgQ) {
         for (_, c) in self.convoy_marks.drain() {
@@ -1416,3 +1489,4 @@ impl MapLayer {
         }
     }
 }
+

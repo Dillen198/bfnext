@@ -880,7 +880,7 @@ fn tick_holding_bonuses(
             None => continue,
         };
         for ucid in ucids {
-            db.adjust_points(ucid, bonus, "holding bonus");
+            db.adjust_points_silent(ucid, bonus, "holding bonus");
         }
         info!(
             "[Commander] {:?} holding bonus +{} pts ({}/{} objectives)",

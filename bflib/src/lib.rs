@@ -636,6 +636,29 @@ fn spawn_dismount(lua: MizLua, ctx: &mut Context, info: Option<DismountInfo>) {
     }
 }
 
+/// If the destroyed unit was carrying troops in the ground vehicle transport system,
+/// spawn any survivors at the wreck position.
+fn try_gv_passenger_eject(lua: MizLua, ctx: &mut Context, unit: &Unit) {
+    let id = match unit.object_id() {
+        Ok(id) => id,
+        Err(_) => return,
+    };
+    let uid = match ctx.db.ephemeral.get_uid_by_object_id(&id) {
+        Some(u) => *u,
+        None => return,
+    };
+    if !ctx.db.ephemeral.ground_vehicle_passengers.contains_key(&uid) {
+        return;
+    }
+    let wreck_pos = match unit.get_position() {
+        Ok(p) => dcso3::Vector2::new(p.p.x, p.p.z),
+        Err(_) => return,
+    };
+    if let Err(e) = ctx.db.on_ground_vehicle_destroyed(lua, &ctx.idx, uid, wreck_pos) {
+        error!("ground vehicle passenger eject failed: {:?}", e)
+    }
+}
+
 fn unit_killed(
     lua: MizLua,
     ctx: &mut Context,
@@ -729,6 +752,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 }
                 if dead {
                     let dismount = try_capture_dismount_info(ctx, &target);
+                    try_gv_passenger_eject(lua, ctx, &target);
                     if let Err(e) = unit_killed(lua, ctx, target.object_id()?, start_ts) {
                         error!("0 unit killed failed {:?}", e)
                     }
@@ -747,6 +771,18 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         Event::Shot(e) => {
             if let Err(e) = ctx.shots_out.shot(&ctx.db, start_ts, &e) {
                 error!("error processing shot event {:?}", e)
+            }
+            // Record shot position for artillery/launcher units only so nearby enemy
+            // objectives stay awake while shells/missiles are inbound.
+            if let Ok(obj_id) = e.initiator.object_id() {
+                let shooter_info = ctx.db.ephemeral.get_uid_by_object_id(&obj_id)
+                    .and_then(|uid| ctx.db.unit(uid).ok())
+                    .map(|u| (u.side, u.tags.0, u.pos));
+                if let Some((side, tags, pos)) = shooter_info {
+                    if tags.contains(UnitTag::Artillery) || tags.contains(UnitTag::Launcher) {
+                        ctx.db.ephemeral.recent_shots.push((pos, side, start_ts));
+                    }
+                }
             }
             // Counter-battery detection
             let cb_params = ctx.db.ephemeral.cfg.counter_battery.as_ref()
@@ -776,6 +812,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         Event::Dead(e) | Event::UnitLost(e) => {
             if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
                 let dismount = try_capture_dismount_info(ctx, &unit);
+                try_gv_passenger_eject(lua, ctx, &unit);
                 let id = unit.object_id()?;
                 if let Err(e) = unit_killed(lua, ctx, id, start_ts) {
                     error!("1 unit killed failed {:?}", e)
@@ -2940,6 +2977,10 @@ fn run_slow_timed_events(
             error!("could not update ewr tracks {e}")
         }
         record_perf(&mut perf.ewr_tracks, ts);
+
+        // ELINT/SIGINT: decay intel contacts and refresh/remove their F10 marks.
+        ctx.db.ephemeral.tick_intel_decay(ts);
+
         let ts = Utc::now();
         if let Err(e) = generate_ewr_reports(ctx, ts) {
             error!("could not generate ewr reports {e}")

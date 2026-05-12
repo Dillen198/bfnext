@@ -22,7 +22,7 @@ use crate::{
 use anyhow::{Context as ErrContext, Result};
 use chrono::prelude::*;
 use compact_str::format_compact;
-use dcso3::{env::miz::GroupId, mission_commands::MissionCommands, MizLua};
+use dcso3::{Vector2, env::miz::GroupId, mission_commands::MissionCommands, MizLua};
 use std::fmt::Write;
 
 fn toggle_ewr(lua: MizLua, gid: GroupId) -> Result<()> {
@@ -118,6 +118,27 @@ fn ewr_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
     Ok(())
 }
 
+fn ground_intel_report(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let mut report = format_compact!("Ground Intel\n");
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
+        if let Some(player) = ctx.db.player(ucid) {
+            if let Some((_, Some(inst))) = &player.current_slot {
+                let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
+                let lines = ctx.ewr.intel_picture(side, pos, &ctx.db.ephemeral.intel_db);
+                for line in lines {
+                    write!(report, "{line}\n")?;
+                }
+            } else {
+                write!(report, "Not in a slot")?;
+            }
+        }
+    }
+    ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, report);
+    Ok(())
+}
+
 pub(super) fn add_ewr_menu_for_group(mc: &MissionCommands, group: GroupId) -> Result<()> {
     let root = mc.add_submenu_for_group(group, "EWR".into(), None)?;
     mc.add_command_for_group(
@@ -153,6 +174,13 @@ pub(super) fn add_ewr_menu_for_group(mc: &MissionCommands, group: GroupId) -> Re
         "Units to Metric".into(),
         Some(root.clone()),
         ewr_units_metric,
+        group,
+    )?;
+    mc.add_command_for_group(
+        group,
+        "Ground Intel".into(),
+        Some(root.clone()),
+        ground_intel_report,
         group,
     )?;
     Ok(())
