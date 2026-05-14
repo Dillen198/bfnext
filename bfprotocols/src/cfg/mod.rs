@@ -1580,6 +1580,10 @@ fn default_territory_zone_alpha() -> f32 {
     0.15  // 15% opacity for subtle territory shading
 }
 
+fn default_frontline_max_marks() -> usize {
+    200
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrontLineConfig {
@@ -1592,6 +1596,11 @@ pub struct FrontLineConfig {
     /// Range: 50-200 recommended
     #[serde(default = "default_frontline_samples")]
     pub samples_per_boundary: usize,
+    /// Maximum number of F10 map marks to draw for territory zones.
+    /// Fewer marks = better server and client performance. Default: 200.
+    /// The draw step is derived automatically: step = ceil(sqrt(grid² / max_marks)).
+    #[serde(default = "default_frontline_max_marks")]
+    pub max_marks: usize,
     /// Transparency for filled territory zones (0.0-1.0, where 1.0 is opaque)
     /// Recommended: 0.1-0.3 for subtle shading
     #[serde(default = "default_territory_zone_alpha")]
@@ -1604,6 +1613,7 @@ impl Default for FrontLineConfig {
             enabled: false,
             update_on_objective_change_only: default_frontline_on_change_only(),
             samples_per_boundary: default_frontline_samples(),
+            max_marks: default_frontline_max_marks(),
             territory_zone_alpha: default_territory_zone_alpha(),
         }
     }

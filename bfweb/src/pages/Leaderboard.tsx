@@ -1,67 +1,64 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api, type Pilot } from '../api'
 import PageHeader from '../components/PageHeader'
-import { Award } from 'lucide-react'
+import { Trophy, Plane, ChevronUp, ChevronDown } from 'lucide-react'
 
 type SortKey = keyof Omit<Pilot, 'ucid' | 'name'> | 'kd' | 'score'
 
-const COLS: { key: SortKey; label: string; color?: string; title?: string }[] = [
-  { key: 'air_kills',        label: 'Air',     color: 'text-blue-400',   title: 'Air kills' },
-  { key: 'ground_kills',     label: 'Ground',  color: 'text-orange-400', title: 'Ground kills' },
-  { key: 'kd',               label: 'K/D',     color: 'text-green-400',  title: 'Kill/death ratio' },
-  { key: 'captures',         label: 'Cap',     color: 'text-yellow-400', title: 'Objective captures' },
-  { key: 'score',            label: 'Score',   color: 'text-purple-400', title: 'Combined efficiency score' },
-  { key: 'deaths',           label: 'Deaths',  color: 'text-red-400',    title: 'Deaths' },
-  { key: 'repairs',          label: 'Repairs', title: 'Repairs performed' },
-  { key: 'supply_transfers', label: 'Supply',  title: 'Supply transfers' },
-  { key: 'troops',           label: 'Troops',  title: 'Troops transported' },
-  { key: 'farps',            label: 'FARPs',   title: 'FARPs deployed' },
-  { key: 'deploys',          label: 'Deploys', title: 'Unit deployments' },
-  { key: 'actions',          label: 'Actions', title: 'Actions taken' },
-  { key: 'donated_points',   label: 'Donated', color: 'text-cyan-400',   title: 'Points donated to coalition' },
-  { key: 'hours',            label: 'Hours',   title: 'Flight hours' },
+const COLS: { key: SortKey; label: string; color?: string; title?: string; width?: number }[] = [
+  { key: 'air_kills',        label: 'Air',     color: '#60a5fa',  title: 'Air kills',          width: 52 },
+  { key: 'ground_kills',     label: 'Ground',  color: '#fb923c',  title: 'Ground kills',       width: 60 },
+  { key: 'kd',               label: 'K/D',     color: '#4ade80',  title: 'Kill / Death ratio', width: 52 },
+  { key: 'deaths',           label: 'Deaths',  color: '#f87171',  title: 'Deaths',             width: 56 },
+  { key: 'captures',         label: 'Cap',     color: '#fbbf24',  title: 'Objective captures', width: 44 },
+  { key: 'hours',            label: 'Hours',   color: '#a78bfa',  title: 'Flight hours',       width: 56 },
+  { key: 'score',            label: 'Score',   color: '#22d3ee',  title: 'Combined efficiency score', width: 60 },
+  { key: 'repairs',          label: 'Rep',     title: 'Repairs',                               width: 40 },
+  { key: 'supply_transfers', label: 'Sup',     title: 'Supply transfers',                      width: 40 },
+  { key: 'deploys',          label: 'Dep',     title: 'Deployments',                           width: 40 },
+  { key: 'donated_points',   label: 'Pts',     color: '#22d3ee',  title: 'Points donated',     width: 44 },
 ]
 
 function computeKd(p: Pilot): number {
-  const kills = p.air_kills + p.ground_kills
-  return p.deaths > 0 ? kills / p.deaths : kills > 0 ? 999 : 0
+  const k = p.air_kills + p.ground_kills
+  return p.deaths > 0 ? k / p.deaths : k > 0 ? 999 : 0
 }
-
 function computeScore(p: Pilot): number {
   return (p.air_kills * 3) + (p.ground_kills * 2) + (p.captures * 5) +
     p.repairs + p.supply_transfers + (p.troops * 0.5) + (p.farps * 4) +
     (p.deploys * 2) + p.actions - (p.deaths * 2)
 }
-
 function fmtKd(p: Pilot): string {
-  const kills = p.air_kills + p.ground_kills
-  return p.deaths > 0 ? (kills / p.deaths).toFixed(2) : kills > 0 ? '∞' : '0.00'
+  const k = p.air_kills + p.ground_kills
+  return p.deaths > 0 ? (k / p.deaths).toFixed(2) : k > 0 ? '∞' : '0.00'
 }
-
 function fmtVal(col: SortKey, p: Pilot): string {
-  if (col === 'kd') return fmtKd(p)
-  if (col === 'score') return Math.round(computeScore(p)).toString()
+  if (col === 'kd')    return fmtKd(p)
+  if (col === 'score') return Math.round(computeScore(p)).toLocaleString()
   if (col === 'hours') return `${p.hours.toFixed(1)}h`
   const v = p[col as keyof Pilot]
-  return String(typeof v === 'number' ? v : 0)
+  return typeof v === 'number' ? v.toLocaleString() : String(v ?? 0)
 }
 
-const MEDALS = ['🥇', '🥈', '🥉']
-const MEDAL_COLORS = ['rank-gold', 'rank-silver', 'rank-bronze']
+const MEDAL_ICON  = ['🥇', '🥈', '🥉']
+const MEDAL_COLOR = ['#fbbf24', '#94a3b8', '#d97706']
+const MEDAL_CLASS = ['rank-gold', 'rank-silver', 'rank-bronze']
 
 export default function Leaderboard() {
+  const navigate = useNavigate()
   const { data: pilots = [], isLoading } = useQuery({
     queryKey: ['leaderboard'],
     queryFn: api.leaderboard,
     refetchInterval: 30_000,
   })
-  const [sort, setSort] = useState<SortKey>('air_kills')
-  const [asc, setAsc] = useState(false)
+  const [sort, setSort] = useState<SortKey>('score')
+  const [asc,  setAsc]  = useState(false)
   const [search, setSearch] = useState('')
 
-  function getSortValue(p: Pilot, key: SortKey): number {
-    if (key === 'kd') return computeKd(p)
+  function getSortVal(p: Pilot, key: SortKey): number {
+    if (key === 'kd')    return computeKd(p)
     if (key === 'score') return computeScore(p)
     const v = p[key as keyof Pilot]
     return typeof v === 'number' ? v : 0
@@ -70,9 +67,8 @@ export default function Leaderboard() {
   const sorted = useMemo(() => {
     const filtered = pilots.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()))
     return [...filtered].sort((a, b) => {
-      const av = getSortValue(a, sort)
-      const bv = getSortValue(b, sort)
-      return asc ? av - bv : bv - av
+      const d = getSortVal(a, sort) - getSortVal(b, sort)
+      return asc ? d : -d
     })
   }, [pilots, sort, asc, search])
 
@@ -81,60 +77,72 @@ export default function Leaderboard() {
     else { setSort(key); setAsc(false) }
   }
 
-  // Top 3 by combined score for highlight
-  const top3Ucids = useMemo(() => {
-    return [...pilots].sort((a, b) => computeScore(b) - computeScore(a)).slice(0, 3).map(p => p.ucid)
-  }, [pilots])
+  const top3 = useMemo(() =>
+    [...pilots].sort((a, b) => computeScore(b) - computeScore(a)).slice(0, 3),
+    [pilots]
+  )
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       <PageHeader
         title="RANKINGS"
-        sub={`${pilots.length} pilots registered · click column to sort`}
+        sub={`${pilots.length} pilots registered`}
         right={
-          <input
-            type="text"
-            placeholder="Search pilot…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="vs-input w-44"
-          />
+          <input type="text" placeholder="Search pilot…" value={search}
+            onChange={e => setSearch(e.target.value)} className="vs-input"
+            style={{ width: 180 }} />
         }
       />
 
-      <div className="flex-1 overflow-auto p-4 space-y-4 grid-bg" style={{ background: 'var(--bg)' }}>
-        {/* Top 3 podium */}
-        {pilots.length >= 3 && (
-          <div className="grid grid-cols-3 gap-4">
-            {top3Ucids.slice(0, 3).map((ucid, i) => {
-              const p = pilots.find(x => x.ucid === ucid)
-              if (!p) return null
-              const kills = p.air_kills + p.ground_kills
+      <div className="flex-1 overflow-auto vs-page">
+
+        {/* ── Podium ── */}
+        {top3.length >= 3 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            {top3.map((p, i) => {
               const score = Math.round(computeScore(p))
-              const colors = ['#fbbf24', '#94a3b8', '#d97706']
+              const mc = MEDAL_COLOR[i]
               return (
-                <div
-                  key={ucid}
-                  className="vs-card p-4 flex flex-col items-center text-center"
-                  style={{ borderColor: `${colors[i]}22` } as React.CSSProperties}
+                <div key={p.ucid}
+                  onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)}
+                  style={{
+                    background: 'var(--bg-card)', border: `1px solid ${mc}22`,
+                    borderTop: `3px solid ${mc}`, borderRadius: 8, padding: '16px 20px',
+                    cursor: 'pointer', transition: 'box-shadow 0.15s',
+                    display: 'flex', flexDirection: 'column', gap: 8, position: 'relative',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 4px 24px ${mc}18`)}
+                  onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
                 >
-                  <div className="absolute inset-x-0 top-0 h-px" style={{ background: `linear-gradient(to right,transparent,${colors[i]}55,transparent)` }} />
-                  <div className="text-2xl mb-1">{MEDALS[i]}</div>
-                  <div className={`text-[12px] font-bold mb-0.5 ${MEDAL_COLORS[i]}`}>#{i + 1}</div>
-                  <div className="text-[14px] font-bold text-slate-100 mb-1">{p.name}</div>
-                  <div className="flex gap-4 text-[11px]">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: '1.6rem', lineHeight: 1 }}>{MEDAL_ICON[i]}</span>
                     <div>
-                      <div className="font-mono font-bold text-blue-400">{kills}</div>
-                      <div className="text-slate-700">kills</div>
+                      <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: mc }}
+                        className={MEDAL_CLASS[i]}>
+                        RANK #{i + 1}
+                      </div>
+                      <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text)', lineHeight: 1.2, marginTop: 2 }}>
+                        {p.name}
+                      </div>
                     </div>
-                    <div>
-                      <div className="font-mono font-bold text-green-400">{fmtKd(p)}</div>
-                      <div className="text-slate-700">K/D</div>
-                    </div>
-                    <div>
-                      <div className="font-mono font-bold text-purple-400">{score}</div>
-                      <div className="text-slate-700">score</div>
-                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 16 }}>
+                    {[
+                      { label: 'A2A',   value: p.air_kills,              color: '#60a5fa' },
+                      { label: 'A2G',   value: p.ground_kills,           color: '#fb923c' },
+                      { label: 'K/D',   value: fmtKd(p),                 color: '#4ade80' },
+                      { label: 'Hours', value: `${p.hours.toFixed(1)}h`, color: '#a78bfa' },
+                      { label: 'Score', value: score,                    color: '#22d3ee' },
+                    ].map(s => (
+                      <div key={s.label}>
+                        <div className="font-mono-vs" style={{ fontSize: '0.95rem', fontWeight: 700, color: s.color, lineHeight: 1 }}>
+                          {s.value}
+                        </div>
+                        <div style={{ fontSize: '0.58rem', color: 'var(--text-dim)', marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                          {s.label}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )
@@ -142,95 +150,113 @@ export default function Leaderboard() {
           </div>
         )}
 
-        {/* Score legend */}
-        <div className="vs-card px-5 py-3 flex items-center gap-2 flex-wrap">
-          <Award size={12} className="text-purple-400 flex-shrink-0" />
-          <span className="text-[11px] text-slate-600 uppercase tracking-widest">Score formula:</span>
-          <span className="text-[11px] text-slate-500 font-mono">
-            Air×3 + Ground×2 + Capture×5 + FARP×4 + Deploy×2 + Repair + Supply + Troop×0.5 + Action − Death×2
+        {/* ── Score formula ── */}
+        <div style={{
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 6, padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        }}>
+          <Trophy size={13} style={{ color: '#22d3ee', flexShrink: 0 }} />
+          <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>Score:</span>
+          <span className="font-mono-vs" style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+            Air×3 + Ground×2 + Cap×5 + FARP×4 + Deploy×2 + Repair + Supply + Troop×0.5 + Action − Death×2
           </span>
         </div>
 
-        {/* Main table */}
-        <div className="vs-card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-b border-[#2a2a2a] sticky top-0 bg-[#191919] z-10">
-                <tr>
-                  <th className="px-4 py-3 text-left text-[11px] uppercase tracking-widest text-slate-700 w-8">#</th>
-                  <th className="px-4 py-3 text-left text-[11px] uppercase tracking-widest text-slate-700">Pilot</th>
+        {/* ── Main table ── */}
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)' }}>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', width: 36, fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>#</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>Pilot</th>
                   {COLS.map(c => (
-                    <th
-                      key={c.key}
-                      title={c.title}
-                      onClick={() => handleSort(c.key)}
-                      className={`px-3 py-3 text-right text-[11px] uppercase tracking-widest cursor-pointer select-none whitespace-nowrap transition-colors ${
-                        sort === c.key ? (c.color ?? 'text-blue-400') : 'text-slate-700 hover:text-slate-500'
-                      }`}
+                    <th key={c.key} title={c.title} onClick={() => handleSort(c.key)}
+                      style={{
+                        padding: '10px 10px', textAlign: 'right', whiteSpace: 'nowrap',
+                        width: c.width, fontSize: '0.62rem', fontWeight: 700,
+                        letterSpacing: '0.1em', textTransform: 'uppercase',
+                        cursor: 'pointer', userSelect: 'none', transition: 'color 0.12s',
+                        color: sort === c.key ? (c.color ?? 'var(--accent)') : 'var(--text-dim)',
+                      }}
                     >
-                      {c.label}{sort === c.key ? (asc ? ' ↑' : ' ↓') : ''}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        {c.label}
+                        {sort === c.key
+                          ? asc ? <ChevronUp size={10} /> : <ChevronDown size={10} />
+                          : <ChevronDown size={10} style={{ opacity: 0.2 }} />}
+                      </span>
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {isLoading && (
-                  <tr><td colSpan={COLS.length + 2} className="text-center py-10 text-slate-700 text-sm">Loading…</td></tr>
+                  <tr><td colSpan={COLS.length + 2} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>Loading…</td></tr>
                 )}
                 {sorted.map((p, i) => {
-                  const medalIdx = top3Ucids.indexOf(p.ucid)
-                  const isTop3 = medalIdx >= 0
-                  const totalKills = p.air_kills + p.ground_kills
+                  const medalIdx = top3.findIndex(x => x.ucid === p.ucid)
+                  const isTop3   = medalIdx >= 0
 
                   return (
-                    <tr
-                      key={p.ucid}
-                      className={`border-b border-[#2a2a2a] kill-row transition-colors group ${
-                        isTop3 ? 'bg-white/[0.01]' : ''
-                      }`}
+                    <tr key={p.ucid}
+                      onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)}
+                      style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
+                      className="kill-row"
                     >
-                      <td className="px-4 py-3">
+                      <td style={{ padding: '9px 14px', width: 36 }}>
                         {isTop3 ? (
-                          <span className={`text-base ${MEDAL_COLORS[medalIdx]}`}>{MEDALS[medalIdx]}</span>
+                          <span style={{ fontSize: '1rem' }}>{MEDAL_ICON[medalIdx]}</span>
                         ) : (
-                          <span className="text-[12px] text-slate-700 font-mono">{i + 1}</span>
+                          <span className="font-mono-vs" style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{i + 1}</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className={`w-7 h-7 rounded flex items-center justify-center text-[12px] font-bold flex-shrink-0 ${
-                            isTop3 ? 'bg-[#4d7c0f15] text-green-300 border border-[#4d7c0f25]' : 'bg-[#191919] text-slate-500 border border-[#2a2a2a]'
-                          }`}>
+                      <td style={{ padding: '9px 14px', minWidth: 180 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{
+                            width: 30, height: 30, borderRadius: 6, flexShrink: 0,
+                            background: isTop3 ? `${MEDAL_COLOR[medalIdx]}18` : 'var(--bg-elevated)',
+                            border: `1px solid ${isTop3 ? MEDAL_COLOR[medalIdx] + '33' : 'var(--border)'}`,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '0.75rem', fontWeight: 700,
+                            color: isTop3 ? MEDAL_COLOR[medalIdx] : 'var(--text-dim)',
+                          }}>
                             {p.name[0]?.toUpperCase()}
                           </div>
                           <div>
-                            <div className="text-[13px] font-semibold text-slate-100">{p.name}</div>
-                            <div className="text-[10px] text-slate-700 font-mono">{totalKills} kills · {p.hours.toFixed(1)}h</div>
+                            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)', lineHeight: 1 }}>{p.name}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                              <Plane size={9} style={{ color: 'var(--text-dim)', opacity: 0.7 }} />
+                              <span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>
+                                {p.air_kills}a·{p.ground_kills}g · {p.hours.toFixed(1)}h
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </td>
                       {COLS.map(c => (
-                        <td
-                          key={c.key}
-                          className={`px-3 py-3 text-right text-[12px] font-mono tabular-nums ${
-                            sort === c.key
-                              ? (c.color ?? 'text-blue-400')
-                              : `${c.color ?? 'text-slate-500'} opacity-60 group-hover:opacity-100`
-                          }`}
-                        >
-                          {fmtVal(c.key, p)}
+                        <td key={c.key} style={{ padding: '9px 10px', textAlign: 'right' }}>
+                          <span className="font-mono-vs" style={{
+                            fontSize: '0.78rem', fontWeight: 600,
+                            color: sort === c.key ? (c.color ?? 'var(--accent)') : (c.color ?? 'var(--text-muted)'),
+                            opacity: sort === c.key ? 1 : 0.65,
+                          }}>
+                            {fmtVal(c.key, p)}
+                          </span>
                         </td>
                       ))}
                     </tr>
                   )
                 })}
                 {!isLoading && sorted.length === 0 && (
-                  <tr><td colSpan={COLS.length + 2} className="text-center py-10 text-slate-700 text-sm">No pilots found</td></tr>
+                  <tr><td colSpan={COLS.length + 2} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No pilots found</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         </div>
+
       </div>
     </div>
   )

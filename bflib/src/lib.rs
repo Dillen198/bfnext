@@ -2733,6 +2733,7 @@ fn check_sf_missions(ctx: &mut Context) {
                                 ObjGroupClass::Logi
                                 | ObjGroupClass::Services
                                 | ObjGroupClass::Naval
+                                | ObjGroupClass::Infantry
                                 | ObjGroupClass::Other => other += 1,
                             }
                         }

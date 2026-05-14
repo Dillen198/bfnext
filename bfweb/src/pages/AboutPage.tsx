@@ -182,9 +182,9 @@ export default function AboutPage() {
                     className="flex items-center justify-between"
                     style={{
                       padding: '0.5rem 0.75rem',
-                      background: 'rgba(77,124,15,0.05)',
-                      border: '1px solid rgba(77,124,15,0.12)',
-                      borderRadius: '2px',
+                      background: 'rgba(56,189,248,0.05)',
+                      border: '1px solid rgba(56,189,248,0.12)',
+                      borderRadius: '4px',
                     }}
                   >
                     <div className="flex items-center gap-3">

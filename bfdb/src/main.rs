@@ -7,7 +7,12 @@ use netidx::{config::Config, path::Path as NetidxPath, subscriber::SubscriberBui
 use regex::Regex;
 use rust_embed::RustEmbed;
 use serde_derive::{Deserialize, Serialize};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    collections::VecDeque,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 use tokio::{sync::broadcast, task};
 use uuid::Uuid;
 use warp::{
@@ -88,6 +93,9 @@ struct Args {
     /// Local admin password for password-based login
     #[arg(long)]
     admin_password: Option<String>,
+    /// SRS server URL to proxy for the dashboard radio panel (e.g. http://localhost:5002)
+    #[arg(long)]
+    srs_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +130,57 @@ impl Reply for Error {
 impl From<anyhow::Error> for Error {
     fn from(value: anyhow::Error) -> Self {
         Self(value)
+    }
+}
+
+// ── Real-time log broadcaster ─────────────────────────────────────────────────
+
+const LOG_HISTORY_CAP: usize = 500;
+
+type LogHistory = Arc<Mutex<VecDeque<String>>>;
+
+#[derive(Debug, Clone, Serialize)]
+struct LogLine {
+    ts:     String,
+    level:  String,
+    target: String,
+    msg:    String,
+}
+
+struct BroadcastLogger {
+    inner:   env_logger::Logger,
+    tx:      broadcast::Sender<String>,
+    history: LogHistory,
+}
+
+impl log::Log for BroadcastLogger {
+    fn enabled(&self, meta: &log::Metadata) -> bool {
+        self.inner.enabled(meta)
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        self.inner.log(record);
+        let line = LogLine {
+            ts:     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            level:  record.level().to_string(),
+            target: record.target().to_string(),
+            msg:    record.args().to_string(),
+        };
+        if let Ok(json) = serde_json::to_string(&line) {
+            let mut hist = self.history.lock().unwrap();
+            if hist.len() >= LOG_HISTORY_CAP {
+                hist.pop_front();
+            }
+            hist.push_back(json.clone());
+            let _ = self.tx.send(json);
+        }
+    }
+
+    fn flush(&self) {
+        self.inner.flush();
     }
 }
 
@@ -168,11 +227,8 @@ async fn api_rounds(db: StatsDb) -> std::result::Result<impl warp::Reply, Error>
 
 async fn api_leaderboard(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
-        // Use the active round so rankings reset on mission restart
-        let active_round = db.latest_rounds()?.into_iter()
-            .find(|(_, _, r)| r.end.is_none())
-            .map(|(_, rid, _)| rid);
-        let pilots = db.pilot_leaderboard(active_round)?;
+        // Use all-time totals so pilot stats are never empty
+        let pilots = db.pilot_leaderboard(None)?;
         let entries: Vec<_> = pilots
             .iter()
             .map(|(ucid, name, agg)| {
@@ -287,6 +343,7 @@ async fn api_kills(
                             "ucid": s.shooter.ucid().map(|u| u.to_string()),
                             "side": format!("{:?}", s.shooter.side()),
                             "weapon": s.weapon_name.as_ref().map(|w| w.to_string()),
+                            "airframe": s.shooter_typ.as_deref(),
                         })
                     });
                 serde_json::json!({
@@ -399,6 +456,7 @@ async fn api_pilot_kills(
         let entries: Vec<_> = kills.iter().map(|(round_id, dead)| {
             let shot = dead.shots.iter().find(|s| s.hit || dead.shots.len() == 1);
             let weapon = shot.and_then(|s| s.weapon_name.as_ref().map(|w| w.to_string()));
+            let airframe = shot.and_then(|s| s.shooter_typ.as_deref().map(|t| t.to_string()));
             let target_type = shot.map(|s| s.target_typ.to_string());
             let victim_ucid = dead.victim.ucid().map(|u| u.to_string());
             let victim_side = format!("{:?}", dead.victim.side());
@@ -409,6 +467,7 @@ async fn api_pilot_kills(
                 "victim_side": victim_side,
                 "target_type": target_type,
                 "weapon": weapon,
+                "killer_airframe": airframe,
             })
         }).collect();
         Ok(serde_json::to_string(&entries)?)
@@ -854,8 +913,219 @@ async fn api_admin_reset(
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
     task::block_in_place(|| db.reset_campaign_data())?;
-    eprintln!("ADMIN: campaign data reset by admin");
+    log::info!("ADMIN: campaign data reset by admin");
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
+/// GET /api/admin/perf  — last session's DCS engine performance stats (admin only)
+async fn api_admin_perf(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let data = task::block_in_place(|| -> Result<String> {
+        let end = db.latest_session_end()?;
+        let json = match end {
+            None => serde_json::json!({ "available": false }),
+            Some(e) => {
+                let ps = e.engine.stat(&e.frame);
+                fn row(s: &dcso3::perf::HistStat) -> serde_json::Value {
+                    serde_json::json!({
+                        "name":  s.name,
+                        "unit":  s.unit,
+                        "n":     s.n,
+                        "mean":  s.mean,
+                        "p50":   s.fifty,
+                        "p90":   s.ninety,
+                        "p99":   s.ninety_nine,
+                        "p999":  s.ninety_nine_nine,
+                    })
+                }
+                let engine_rows: Vec<serde_json::Value> = vec![
+                    row(&ps.frame), row(&ps.timed_events), row(&ps.slow_timed),
+                    row(&ps.dcs_events), row(&ps.dcs_hooks),
+                    row(&ps.unit_positions), row(&ps.player_positions),
+                    row(&ps.ewr_tracks), row(&ps.ewr_reports),
+                    row(&ps.unit_culling), row(&ps.remark_objectives),
+                    row(&ps.update_jtac_contacts), row(&ps.do_repairs),
+                    row(&ps.spawn_queue), row(&ps.spawn), row(&ps.despawn),
+                    row(&ps.advise_captured), row(&ps.advise_capturable),
+                    row(&ps.jtac_target_positions), row(&ps.process_messages),
+                    row(&ps.snapshot), row(&ps.logistics), row(&ps.logistics_distribute),
+                    row(&ps.logistics_deliver), row(&ps.logistics_transfer),
+                    row(&ps.logistics_sync_from), row(&ps.logistics_sync_to),
+                    row(&ps.logistics_convoy), row(&ps.logistics_air_routes),
+                    row(&ps.logistics_sea_routes), row(&ps.frontline),
+                ];
+                use dcso3::perf::HistStat as HS;
+                let a = &e.api;
+                let api_rows: Vec<serde_json::Value> = vec![
+                    row(&HS::new(&a.get_position, "Unit.getPosition", false)),
+                    row(&HS::new(&a.get_point, "Unit.getPoint", false)),
+                    row(&HS::new(&a.get_velocity, "Unit.getVelocity", false)),
+                    row(&HS::new(&a.in_air, "Unit.inAir", false)),
+                    row(&HS::new(&a.get_ammo, "Unit.getAmmo", false)),
+                    row(&HS::new(&a.add_group, "Coalition.addGroup", false)),
+                    row(&HS::new(&a.add_static_object, "Coalition.addStaticObject", false)),
+                    row(&HS::new(&a.unit_is_exist, "Unit.isExist", false)),
+                    row(&HS::new(&a.unit_get_by_name, "Unit.getByName", false)),
+                    row(&HS::new(&a.unit_get_desc, "Unit.getDesc", false)),
+                    row(&HS::new(&a.land_is_visible, "Land.isVisible", false)),
+                    row(&HS::new(&a.land_get_height, "Land.getHeight", false)),
+                    row(&HS::new(&a.timer_schedule_function, "Timer.scheduleFunction", false)),
+                    row(&HS::new(&a.timer_remove_function, "Timer.removeFunction", false)),
+                    row(&HS::new(&a.timer_get_time, "Timer.getTime", false)),
+                    row(&HS::new(&a.timer_get_abs_time, "Timer.getAbsTime", false)),
+                    row(&HS::new(&a.timer_get_time0, "Timer.getTime0", false)),
+                ];
+                let logistics_items = ps.logistics_items;
+                serde_json::json!({
+                    "available": true,
+                    "time": e.time.to_rfc3339(),
+                    "engine": engine_rows,
+                    "api": api_rows,
+                    "logistics_items": logistics_items,
+                })
+            }
+        };
+        Ok(serde_json::to_string(&json)?)
+    })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/admin/banned  — combined ban list (bfdb + last session cfg)
+async fn api_admin_banned(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let data = task::block_in_place(|| -> Result<String> {
+        let web_bans = db.list_admin_bans()?;
+        let cfg_bans = db.session_bans_from_cfg()?;
+        let entries: Vec<_> = web_bans.iter().map(|(ucid, rec)| serde_json::json!({
+            "ucid":      ucid.to_string(),
+            "name":      rec.name,
+            "banned_at": rec.banned_at.to_rfc3339(),
+            "until":     rec.until.map(|t| t.to_rfc3339()),
+            "reason":    rec.reason,
+            "source":    "web",
+        })).chain(cfg_bans.iter().filter_map(|(ucid, name, until)| {
+            // Don't duplicate entries already in web_bans
+            if web_bans.iter().any(|(u, _)| u == ucid) { return None }
+            Some(serde_json::json!({
+                "ucid":      ucid.to_string(),
+                "name":      name,
+                "banned_at": serde_json::Value::Null,
+                "until":     until.map(|t| t.to_rfc3339()),
+                "reason":    "",
+                "source":    "engine",
+            }))
+        })).collect();
+        Ok(serde_json::to_string(&entries)?)
+    })?;
+    Ok(json_response(data))
+}
+
+#[derive(serde::Deserialize)]
+struct BanBody {
+    ucid:   std::string::String,
+    name:   std::string::String,
+    #[serde(default)]
+    reason: std::string::String,
+    until:  Option<std::string::String>,   // ISO-8601 or null
+}
+
+/// POST /api/admin/ban  — add or update a ban record
+async fn api_admin_ban(
+    session_id: Option<Uuid>,
+    body: BanBody,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let ucid = body.ucid.parse::<dcso3::net::Ucid>()
+        .map_err(|e| Error(anyhow::anyhow!("invalid ucid: {e}")))?;
+    let until = body.until.as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<chrono::DateTime<chrono::Utc>>())
+        .transpose()
+        .map_err(|e| Error(anyhow::anyhow!("invalid until date: {e}")))?;
+    let record = crate::db::BanRecord {
+        name: body.name.clone(),
+        banned_at: chrono::Utc::now(),
+        until,
+        reason: body.reason.clone(),
+    };
+    task::block_in_place(|| db.ban_player(ucid, record))?;
+    log::info!("ADMIN: banned {} ({})", body.name, body.ucid);
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
+#[derive(serde::Deserialize)]
+struct UnbanBody2 {
+    ucid: std::string::String,
+}
+
+/// POST /api/admin/unban  — remove a ban record
+async fn api_admin_unban2(
+    session_id: Option<Uuid>,
+    body: UnbanBody2,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let ucid = body.ucid.parse::<dcso3::net::Ucid>()
+        .map_err(|e| Error(anyhow::anyhow!("invalid ucid: {e}")))?;
+    let removed = task::block_in_place(|| db.unban_player(&ucid))?;
+    log::info!("ADMIN: unbanned {}", body.ucid);
+    Ok(warp::reply::json(&serde_json::json!({"ok": true, "was_banned": removed})))
+}
+
+/// GET /api/admin/perf-history  — per-session perf data for charts (admin only)
+async fn api_admin_perf_history(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let data = task::block_in_place(|| -> Result<String> {
+        let history = db.session_perf_history(50)?;
+        fn row(s: &dcso3::perf::HistStat) -> serde_json::Value {
+            serde_json::json!({ "name": s.name, "mean": s.mean, "p50": s.fifty, "p90": s.ninety, "p99": s.ninety_nine, "p999": s.ninety_nine_nine, "n": s.n, "unit": s.unit })
+        }
+        let entries: Vec<_> = history.iter().map(|e| {
+            let ps = e.engine.stat(&e.frame);
+            serde_json::json!({
+                "time": e.time.to_rfc3339(),
+                "frame":             { "mean": ps.frame.mean,             "p99": ps.frame.ninety_nine },
+                "timed_events":      { "mean": ps.timed_events.mean,      "p99": ps.timed_events.ninety_nine },
+                "slow_timed":        { "mean": ps.slow_timed.mean,        "p99": ps.slow_timed.ninety_nine },
+                "dcs_events":        { "mean": ps.dcs_events.mean,        "p99": ps.dcs_events.ninety_nine },
+                "spawn":             { "mean": ps.spawn.mean,             "p99": ps.spawn.ninety_nine },
+                "despawn":           { "mean": ps.despawn.mean,           "p99": ps.despawn.ninety_nine },
+                "logistics":         { "mean": ps.logistics.mean,         "p99": ps.logistics.ninety_nine },
+                "logistics_deliver": { "mean": ps.logistics_deliver.mean, "p99": ps.logistics_deliver.ninety_nine },
+                "frontline":         { "mean": ps.frontline.mean,         "p99": ps.frontline.ninety_nine },
+                "unit_positions":    { "mean": ps.unit_positions.mean,    "p99": ps.unit_positions.ninety_nine },
+                "ewr_tracks":        { "mean": ps.ewr_tracks.mean,        "p99": ps.ewr_tracks.ninety_nine },
+                "snapshot":          { "mean": ps.snapshot.mean,          "p99": ps.snapshot.ninety_nine },
+            })
+        }).collect();
+        // Also include per-metric rows for full detail view
+        let full: Vec<_> = history.iter().map(|e| {
+            let ps = e.engine.stat(&e.frame);
+            let engine_rows: Vec<serde_json::Value> = vec![
+                row(&ps.frame), row(&ps.timed_events), row(&ps.slow_timed),
+                row(&ps.dcs_events), row(&ps.dcs_hooks),
+                row(&ps.unit_positions), row(&ps.player_positions),
+                row(&ps.spawn_queue), row(&ps.spawn), row(&ps.despawn),
+                row(&ps.logistics), row(&ps.logistics_deliver), row(&ps.logistics_distribute),
+                row(&ps.logistics_convoy), row(&ps.logistics_air_routes), row(&ps.logistics_sea_routes),
+                row(&ps.frontline), row(&ps.snapshot), row(&ps.ewr_tracks), row(&ps.ewr_reports),
+                row(&ps.jtac_target_positions), row(&ps.update_jtac_contacts), row(&ps.do_repairs),
+            ];
+            serde_json::json!({ "time": e.time.to_rfc3339(), "metrics": engine_rows })
+        }).collect();
+        Ok(serde_json::to_string(&serde_json::json!({ "timeline": entries, "sessions": full }))?)
+    })?;
+    Ok(json_response(data))
 }
 
 /// GET /api/trails  — return recent trail points for the active round
@@ -968,6 +1238,64 @@ struct WsUnitsMsg<'a> {
 
 type LiveState = Arc<tokio::sync::RwLock<(f64, Vec<LiveUnit>, Vec<Bullseye>)>>;
 
+/// WebSocket handler for `/ws/logs` — streams real-time bfdb log lines (admin only).
+async fn ws_logs_handler(
+    ws: warp::ws::Ws,
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    tx: broadcast::Sender<String>,
+    history: LogHistory,
+) -> impl Reply {
+    let authed = match session_id {
+        Some(id) => task::block_in_place(|| db.get_session(id))
+            .ok()
+            .flatten()
+            .map(|s| s.is_admin)
+            .unwrap_or(false),
+        None => false,
+    };
+    if !authed {
+        return ws
+            .on_upgrade(|sock| async move { drop(sock) })
+            .into_response();
+    }
+    ws.on_upgrade(move |socket| ws_logs(socket, tx.subscribe(), history))
+        .into_response()
+}
+
+async fn ws_logs(
+    ws: WebSocket,
+    mut rx: broadcast::Receiver<String>,
+    history: LogHistory,
+) {
+    let (mut sink, mut stream) = ws.split();
+    // Collect history without holding the lock across await points
+    let snapshot: Vec<String> = history.lock().unwrap().iter().cloned().collect();
+    for line in snapshot {
+        if sink.send(Message::text(line)).await.is_err() {
+            return;
+        }
+    }
+    loop {
+        tokio::select! {
+            msg = stream.next() => {
+                match msg {
+                    Some(Ok(m)) if m.is_close() => break,
+                    None => break,
+                    _ => {}
+                }
+            }
+            msg = rx.recv() => {
+                match msg {
+                    Ok(json) => { if sink.send(Message::text(json)).await.is_err() { break; } }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+}
+
 /// Background task: listens on UDP 42001, accumulates batches, and
 /// broadcasts the full unit list to all WebSocket clients each tick.
 /// Also samples unit positions every ~10s into the trail_points DB.
@@ -975,11 +1303,11 @@ async fn udp_export_listener(state: LiveState, tx: broadcast::Sender<String>, db
     let sock = match tokio::net::UdpSocket::bind("0.0.0.0:42001").await {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Failed to bind UDP 42001 for DCS export: {e}");
+            log::error!("Failed to bind UDP 42001 for DCS export: {e}");
             return;
         }
     };
-    eprintln!("DCS export listener on UDP 0.0.0.0:42001");
+    log::info!("DCS export listener on UDP 0.0.0.0:42001");
 
     let mut buf = vec![0u8; 65536];
     // Accumulate batches for one tick before broadcasting
@@ -1084,6 +1412,23 @@ async fn ws_units(ws: WebSocket, state: LiveState, mut rx: broadcast::Receiver<S
     }
 }
 
+// ── SRS proxy ───────────────────────────────────────────────────────
+
+async fn api_srs(srs_url: Arc<Option<String>>) -> Response {
+    let empty = warp::reply::json(&serde_json::json!({"version": null, "clients": []}));
+    let url = match srs_url.as_deref() {
+        Some(u) => u.to_string(),
+        None => return empty.into_response(),
+    };
+    match reqwest::get(&url).await {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(json) => warp::reply::json(&json).into_response(),
+            Err(_)   => empty.into_response(),
+        },
+        Err(_) => empty.into_response(),
+    }
+}
+
 // ── Static file serving ─────────────────────────────────────────────
 
 fn serve_site_asset(path: &str) -> Response {
@@ -1140,7 +1485,25 @@ fn with_db(db: StatsDb) -> impl Filter<Extract = (StatsDb,), Error = std::conver
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    env_logger::init();
+    // ── Broadcast logger: forwards to env_logger + WebSocket stream ───────
+    let (log_tx, _) = broadcast::channel::<String>(512);
+    let log_history: LogHistory = Arc::new(Mutex::new(VecDeque::new()));
+    {
+        let mut builder = env_logger::Builder::from_default_env();
+        // Default to Info when RUST_LOG is not set so the log viewer has useful output
+        if std::env::var("RUST_LOG").is_err() {
+            builder.filter_level(log::LevelFilter::Info);
+        }
+        let env_log = builder.build();
+        let max_level = env_log.filter();
+        let logger = BroadcastLogger {
+            inner:   env_log,
+            tx:      log_tx.clone(),
+            history: log_history.clone(),
+        };
+        log::set_boxed_logger(Box::new(logger)).expect("logger already set");
+        log::set_max_level(max_level);
+    }
     let args = Args::parse();
     let db = match args.base {
         Some(base) => {
@@ -1150,7 +1513,7 @@ async fn main() -> Result<()> {
             StatsDb::new(subscriber, args.db, base, args.stats_dir, args.include, args.exclude)?
         }
         None => {
-            eprintln!("Running in offline mode (no --base specified, Netidx disabled)");
+            log::info!("Running in offline mode (no --base specified, Netidx disabled)");
             StatsDb::new_offline(args.db, args.stats_dir, args.stats_jsonl)?
         }
     };
@@ -1163,7 +1526,7 @@ async fn main() -> Result<()> {
         args.discord_admin_role_id,
     ) {
         (Some(id), Some(secret), Some(uri), Some(guild), Some(role)) => {
-            eprintln!("Discord OAuth enabled (guild={guild}, admin_role={role})");
+            log::info!("Discord OAuth enabled (guild={guild}, admin_role={role})");
             Some(AuthConfig {
                 client_id:     id,
                 client_secret: secret,
@@ -1173,41 +1536,49 @@ async fn main() -> Result<()> {
             })
         }
         _ => {
-            eprintln!("Discord OAuth disabled (pass --discord-* flags to enable)");
+            log::info!("Discord OAuth disabled (pass --discord-* flags to enable)");
             None
         }
     };
 
     let local_admin_cfg: Option<LocalAdminConfig> = match (args.admin_username, args.admin_password) {
         (Some(u), Some(p)) => {
-            eprintln!("Local admin login enabled (username={u})");
+            log::info!("Local admin login enabled (username={u})");
             Some(LocalAdminConfig { username: u, password: p })
         }
         _ => {
-            eprintln!("Local admin login disabled (pass --admin-username and --admin-password to enable)");
+            log::info!("Local admin login disabled (pass --admin-username and --admin-password to enable)");
             None
         }
     };
 
     // ── Load campaign config JSON (served at /api/config) ────────────────
-    let campaign_json: Arc<String> = Arc::new(match &args.config {
+    let (campaign_json, srs_url_from_cfg): (Arc<String>, Option<String>) = match &args.config {
         Some(path) => {
             let raw = std::fs::read_to_string(path)
-                .unwrap_or_else(|e| { eprintln!("Warning: could not read --config {path:?}: {e}"); "{}".to_string() });
-            // Validate it's valid JSON; fall back to empty object on error
-            if serde_json::from_str::<serde_json::Value>(&raw).is_ok() {
-                eprintln!("Campaign config loaded from {:?}", path);
-                raw
-            } else {
-                eprintln!("Warning: --config file is not valid JSON, using empty config");
-                "{}".to_string()
+                .unwrap_or_else(|e| { log::warn!("Could not read --config {path:?}: {e}"); "{}".to_string() });
+            match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(v) => {
+                    log::info!("Campaign config loaded from {:?}", path);
+                    let srs = v.get("srsUrl").and_then(|u| u.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                    (Arc::new(raw), srs)
+                }
+                Err(_) => {
+                    log::warn!("--config file is not valid JSON, using empty config");
+                    (Arc::new("{}".to_string()), None)
+                }
             }
         }
         None => {
-            eprintln!("No --config file specified; /api/config will return {{}}");
-            "{}".to_string()
+            log::info!("No --config file specified; /api/config will return {{}}");
+            (Arc::new("{}".to_string()), None)
         }
-    });
+    };
+    // CLI --srs-url takes precedence over campaign.json srsUrl
+    let effective_srs_url = args.srs_url.clone().or(srs_url_from_cfg);
+    if let Some(ref u) = effective_srs_url {
+        log::info!("SRS proxy enabled → {u}");
+    }
 
     let cors = warp::cors()
         .allow_any_origin()
@@ -1299,6 +1670,17 @@ async fn main() -> Result<()> {
         .and(warp::any().map(move || ws_tx.clone()))
         .then(ws_units_handler);
 
+    // ── Log WebSocket (/ws/logs) — admin only ────────────────────────
+    let log_tx_ws  = log_tx.clone();
+    let log_hist_ws = log_history.clone();
+    let ws_logs_route = warp::path!("ws" / "logs")
+        .and(warp::ws())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(warp::any().map(move || log_tx_ws.clone()))
+        .and(warp::any().map(move || log_hist_ws.clone()))
+        .then(ws_logs_handler);
+
     // ── Auth routes ──────────────────────────────────────────────────
     let auth_login = warp::path!("api" / "auth" / "login")
         .and(with_auth_cfg(auth_cfg.clone()))
@@ -1364,6 +1746,35 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_admin_reset);
 
+    let admin_perf = warp::path!("api" / "admin" / "perf")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(api_admin_perf);
+
+    let admin_perf_history = warp::path!("api" / "admin" / "perf-history")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(api_admin_perf_history);
+
+    let admin_banned = warp::path!("api" / "admin" / "banned")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(api_admin_banned);
+
+    let admin_ban_route = warp::path!("api" / "admin" / "ban")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::json::<BanBody>())
+        .and(with_db(db.clone()))
+        .then(api_admin_ban);
+
+    let admin_unban_route = warp::path!("api" / "admin" / "unban")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::json::<UnbanBody2>())
+        .and(with_db(db.clone()))
+        .then(api_admin_unban2);
+
     let trails = warp::path!("api" / "trails")
         .and(with_db(db.clone()))
         .then(api_trails);
@@ -1371,6 +1782,11 @@ async fn main() -> Result<()> {
     let config_route = warp::path!("api" / "config")
         .and(warp::any().map(move || campaign_json.clone()))
         .then(api_config);
+
+    let srs_url_arc: Arc<Option<String>> = Arc::new(effective_srs_url);
+    let srs_route = warp::path!("api" / "srs")
+        .and(warp::any().map(move || srs_url_arc.clone()))
+        .then(api_srs);
 
     // /site/* → embedded bfsite SPA
     let site_files = warp::path("site")
@@ -1400,6 +1816,7 @@ async fn main() -> Result<()> {
         .or(trails)
         .or(all_pilots)
         .or(config_route)
+        .or(srs_route)
         .boxed();
 
     let auth_routes = auth_login
@@ -1409,6 +1826,9 @@ async fn main() -> Result<()> {
         .or(auth_local_enabled)
         .or(admin_links)
         .or(admin_sessions)
+        .or(admin_perf)
+        .or(admin_perf_history)
+        .or(admin_banned)
         .boxed();
 
     let routes = warp::get()
@@ -1416,6 +1836,7 @@ async fn main() -> Result<()> {
             api_routes
                 .or(auth_routes)
                 .or(ws_units_route)
+                .or(ws_logs_route)
                 .or(site_files)
                 .or(static_files),
         )
@@ -1423,9 +1844,11 @@ async fn main() -> Result<()> {
         .or(auth_local_login)
         .or(admin_unlink)
         .or(admin_reset)
+        .or(admin_ban_route)
+        .or(admin_unban_route)
         .with(cors);
 
-    eprintln!("API server listening on http://{}", args.listen_address);
+    log::info!("API server listening on http://{}", args.listen_address);
 
     // Optional separate site server
     if let Some(site_addr) = args.site_address {
@@ -1437,7 +1860,7 @@ async fn main() -> Result<()> {
             .and(warp::path::tail())
             .map(|tail: warp::path::Tail| serve_site_asset(tail.as_str()))
             .with(site_cors);
-        eprintln!("Site server listening on http://{}", site_addr);
+        log::info!("Site server listening on http://{}", site_addr);
         tokio::spawn(warp::serve(site_only).run(site_addr));
     }
 

@@ -163,8 +163,10 @@ impl FrontLine {
         let cell_width = (max.x - min.x) / cols as f64;
         let cell_height = (max.y - min.y) / rows as f64;
 
-        // Sample grid at lower resolution for performance (every Nth cell)
-        let sample_step = 4;  // Sample every 4th cell
+        // Derive sample_step so total marks ≤ max_marks.
+        // step = ceil(sqrt(rows*cols / max_marks)), minimum 1.
+        let max_marks = self.config.max_marks.max(1);
+        let sample_step = (((rows * cols) as f64 / max_marks as f64).sqrt().ceil() as usize).max(1);
 
         let mut red_quads = Vec::new();
         let mut blue_quads = Vec::new();

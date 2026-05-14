@@ -2,7 +2,8 @@ import React from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Map, Target, BarChart3, Users, Crosshair,
-  WifiOff, Zap, LogOut, Shield, Settings, Info, Server,
+  Zap, LogOut, Shield, Settings, Info, Server, Radio,
+  ChevronRight, Plane,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Weather } from '../api'
@@ -10,7 +11,7 @@ import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
 
-// ── Nav items ─────────────────────────────────────────────────────────────────
+// ── Nav config ────────────────────────────────────────────────────────────────
 
 const NAV = [
   { to: '/',            icon: LayoutDashboard, label: 'SITREP'     },
@@ -25,14 +26,12 @@ const ADMIN_NAV = { to: '/admin', icon: Settings, label: 'ADMIN' }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = Math.floor(seconds % 60)
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+function pad(n: number) { return String(n).padStart(2, '0') }
+function fmtDuration(s: number) {
+  return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(Math.floor(s % 60))}`
 }
 
-// ── Top-bar sub-components ────────────────────────────────────────────────────
+// ── Clock ─────────────────────────────────────────────────────────────────────
 
 function Clock() {
   const [now, setNow] = React.useState(new Date())
@@ -40,14 +39,14 @@ function Clock() {
     const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
-  const d = now.toUTCString()
+  const utc = now.toUTCString()
   return (
-    <div style={{ lineHeight: 1, textAlign: 'center' }}>
-      <div className="font-mono-vs tabular-nums" style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '0.06em' }}>
-        {d.slice(17, 25)}
+    <div style={{ textAlign: 'right', lineHeight: 1.2 }}>
+      <div className="font-mono-vs tabular-nums" style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '0.05em' }}>
+        {utc.slice(17, 25)} <span style={{ color: 'var(--accent)', fontSize: '0.62rem', letterSpacing: '0.1em' }}>Z</span>
       </div>
-      <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 2 }}>
-        {d.slice(0, 16)} UTC
+      <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.06em' }}>
+        {utc.slice(5, 16)}
       </div>
     </div>
   )
@@ -58,18 +57,14 @@ function SessionTimer({ start }: { start: string }) {
   React.useEffect(() => {
     const startMs = new Date(start).getTime()
     const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startMs) / 1000)))
-    tick()
-    const t = setInterval(tick, 1000)
-    return () => clearInterval(t)
+    tick(); const t = setInterval(tick, 1000); return () => clearInterval(t)
   }, [start])
   return (
-    <div style={{ lineHeight: 1, textAlign: 'center' }}>
-      <div className="font-mono-vs tabular-nums" style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.06em' }}>
-        {formatDuration(elapsed)}
+    <div style={{ textAlign: 'right', lineHeight: 1.2 }}>
+      <div className="font-mono-vs tabular-nums" style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+        {fmtDuration(elapsed)}
       </div>
-      <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 2 }}>
-        Elapsed
-      </div>
+      <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Mission</div>
     </div>
   )
 }
@@ -79,27 +74,23 @@ function RestartCountdown({ restartAt }: { restartAt: string }) {
   React.useEffect(() => {
     const endMs = new Date(restartAt).getTime()
     const tick = () => setRemaining(Math.max(0, Math.floor((endMs - Date.now()) / 1000)))
-    tick()
-    const t = setInterval(tick, 1000)
-    return () => clearInterval(t)
+    tick(); const t = setInterval(tick, 1000); return () => clearInterval(t)
   }, [restartAt])
   const urgent = remaining < 1800
   return (
-    <div style={{ lineHeight: 1, textAlign: 'center' }}>
-      <div className="font-mono-vs tabular-nums" style={{ fontSize: '0.85rem', fontWeight: 700, color: urgent ? 'var(--accent)' : 'var(--text-muted)', letterSpacing: '0.06em' }}>
-        {formatDuration(remaining)}
+    <div style={{ textAlign: 'right', lineHeight: 1.2 }}>
+      <div className="font-mono-vs tabular-nums" style={{ fontSize: '0.85rem', fontWeight: 700, color: urgent ? '#fbbf24' : 'var(--text-dim)', letterSpacing: '0.05em' }}>
+        {fmtDuration(remaining)}
       </div>
-      <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 2 }}>
-        Restart
-      </div>
+      <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Restart</div>
     </div>
   )
 }
 
-// ── Weather pill (condensed for top bar) ──────────────────────────────────────
+// ── Weather pill ──────────────────────────────────────────────────────────────
 
 const COMPASS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW']
-function windDirName(deg: number) { return COMPASS[Math.round(deg / 22.5) % 16] }
+const windDir = (deg: number) => COMPASS[Math.round(deg / 22.5) % 16]
 
 type FlightRule = 'VFR' | 'MVFR' | 'IFR' | 'LIFR'
 function flightRule(ceilingFt: number | null, visM: number | null): FlightRule {
@@ -111,108 +102,64 @@ function flightRule(ceilingFt: number | null, visM: number | null): FlightRule {
   return 'VFR'
 }
 const RULE_COLOR: Record<FlightRule, string> = {
-  VFR: '#22c55e', MVFR: '#3b82f6', IFR: '#ef4444', LIFR: '#a855f7',
+  VFR: '#4ade80', MVFR: '#60a5fa', IFR: '#f87171', LIFR: '#c084fc',
 }
+const CLOUD: Record<number, string> = { 0:'SKC',1:'FEW',2:'FEW',3:'FEW',4:'FEW',5:'SCT',6:'SCT',7:'BKN',8:'OVC' }
+const cloudCover = (d: number | null) => d === null ? 'CLR' : (CLOUD[Math.round(Math.max(0, Math.min(8, d)))] ?? 'CLR')
 
-const CLOUD_LABEL: Record<number, string> = {
-  0:'SKC', 1:'FEW', 2:'FEW', 3:'FEW', 4:'FEW', 5:'SCT', 6:'SCT', 7:'BKN', 8:'OVC',
-}
-function cloudCover(density: number | null) {
-  if (density === null) return 'CLR'
-  return CLOUD_LABEL[Math.round(Math.max(0, Math.min(8, density)))] ?? 'CLR'
-}
-
-function WeatherPill({ weather }: { weather: Weather }) {
-  const density    = weather.cloud_density ?? null
-  const hasCeiling = density !== null && density >= 5
-  const cloudFt    = Math.round(weather.cloud_base_m * 3.281 / 100) * 100
-  const ceilingFt  = hasCeiling ? cloudFt : null
-  const rule       = flightRule(ceilingFt, weather.visibility_m ?? null)
+function WeatherPill({ w }: { w: Weather }) {
+  const hasCeiling = (w.cloud_density ?? 0) >= 5
+  const cloudFt    = Math.round(w.cloud_base_m * 3.281 / 100) * 100
+  const rule       = flightRule(hasCeiling ? cloudFt : null, w.visibility_m ?? null)
   const color      = RULE_COLOR[rule]
-  const calm       = weather.wind_speed_kts < 1
-  const visMStr    = weather.visibility_m !== null
-    ? weather.visibility_m >= 9999 ? '10+km' : `${(weather.visibility_m / 1000).toFixed(1)}km`
+  const cover      = cloudCover(w.cloud_density ?? null)
+  const vis        = w.visibility_m !== null
+    ? w.visibility_m >= 9999 ? '10+km' : `${(w.visibility_m / 1000).toFixed(1)}km`
     : null
-  const coverLabel = cloudCover(density)
-  const ceilStr    = hasCeiling
-    ? cloudFt >= 10000 ? `${Math.round(cloudFt / 1000)}k` : `${cloudFt}`
-    : null
-
-  const stat = (label: string, val: string, valColor = 'var(--text-muted)') => (
-    <div style={{ textAlign: 'center', lineHeight: 1 }}>
-      <div style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 2 }}>{label}</div>
-      <div className="font-mono-vs" style={{ fontSize: '0.7rem', color: valColor, fontWeight: 600 }}>{val}</div>
+  const cell = (label: string, val: string, c = 'var(--text-muted)') => (
+    <div style={{ lineHeight: 1.2, textAlign: 'center' }}>
+      <div style={{ fontSize: '0.52rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>{label}</div>
+      <div className="font-mono-vs" style={{ fontSize: '0.72rem', color: c, fontWeight: 600 }}>{val}</div>
     </div>
   )
-
+  const calm = w.wind_speed_kts < 1
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-      {/* Flight rule badge */}
-      <div style={{ textAlign: 'center', lineHeight: 1 }}>
-        <div style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.12em', marginBottom: 3 }}>COND</div>
-        <span style={{
-          fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.1em',
-          color, border: `1px solid ${color}55`, padding: '2px 7px', borderRadius: 2,
-          background: `${color}0d`, lineHeight: 1.5, display: 'inline-block',
-        }}>
-          {rule}
-        </span>
-      </div>
-
-      <div style={{ width: 1, height: 28, background: 'var(--border)', flexShrink: 0 }} />
-
-      {/* Wind */}
-      {stat('WIND', calm ? 'CALM' : `${windDirName(weather.wind_from_deg)} ${Math.round(weather.wind_speed_kts)}kt`)}
-
-      {/* Temp */}
-      {stat('TEMP', `${Math.round(weather.temp_c)}°C`)}
-
-      {/* QNH */}
-      {stat('QNH', `${Math.round(weather.qnh_hpa)}`)}
-
-      {/* Clouds / ceiling */}
-      {stat('SKY', ceilStr ? `${coverLabel} ${ceilStr}ft` : coverLabel)}
-
-      {/* Visibility */}
-      {visMStr && stat('VIS', visMStr)}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+      <span style={{
+        fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.1em',
+        color, border: `1px solid ${color}44`, padding: '3px 8px', borderRadius: 4,
+        background: `${color}10`, lineHeight: 1,
+      }}>{rule}</span>
+      <div style={{ width: 1, height: 26, background: 'var(--border-light)', flexShrink: 0 }} />
+      {cell('WIND', calm ? 'CALM' : `${windDir(w.wind_from_deg)} ${Math.round(w.wind_speed_kts)}kt`)}
+      {cell('TEMP', `${Math.round(w.temp_c)}°C`)}
+      {cell('QNH',  `${Math.round(w.qnh_hpa)}`)}
+      {cell('SKY',  hasCeiling ? `${cover} ${cloudFt}ft` : cover)}
+      {vis && cell('VIS', vis)}
     </div>
   )
 }
 
-// ── Territory mini-bar ────────────────────────────────────────────────────────
+// ── Territory bar ─────────────────────────────────────────────────────────────
 
-function TerritoryPill({
-  bluePct, redPct,
-}: {
-  bluePct: number; redPct: number;
-}) {
+function TerritoryBar({ bluePct, redPct }: { bluePct: number; redPct: number }) {
   const neutPct = Math.max(0, 100 - bluePct - redPct)
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-      <div style={{ lineHeight: 1 }}>
-        <div style={{ width: 84, height: 6, overflow: 'hidden', display: 'flex', background: 'rgba(75,85,99,0.12)', borderRadius: 1 }}>
-          <div style={{ width: `${bluePct}%`, height: '100%', background: 'var(--blue)', transition: 'width 0.5s' }} />
-          <div style={{ width: `${neutPct}%`, height: '100%', background: '#374151',   transition: 'width 0.5s' }} />
-          <div style={{ width: `${redPct}%`,  height: '100%', background: 'var(--red)', transition: 'width 0.5s' }} />
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
-          <span className="font-mono-vs" style={{ fontSize: '0.68rem', color: 'var(--blue)' }}>{bluePct}%</span>
-          <span className="font-mono-vs" style={{ fontSize: '0.68rem', color: 'var(--red)' }}>{redPct}%</span>
-        </div>
+    <div style={{ flexShrink: 0 }}>
+      <div style={{ width: 90, height: 5, overflow: 'hidden', display: 'flex', background: 'var(--border-light)', borderRadius: 3 }}>
+        <div style={{ width: `${bluePct}%`, background: 'var(--blue)',  transition: 'width 0.5s' }} />
+        <div style={{ width: `${neutPct}%`, background: '#2d3748',     transition: 'width 0.5s' }} />
+        <div style={{ width: `${redPct}%`,  background: 'var(--red)',   transition: 'width 0.5s' }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3 }}>
+        <span className="font-mono-vs" style={{ fontSize: '0.62rem', color: 'var(--blue)', fontWeight: 700 }}>{bluePct}%</span>
+        <span className="font-mono-vs" style={{ fontSize: '0.62rem', color: 'var(--red)',  fontWeight: 700 }}>{redPct}%</span>
       </div>
     </div>
   )
 }
 
-// ── Icon nav ──────────────────────────────────────────────────────────────────
-
-function HeartIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-    </svg>
-  )
-}
+// ── Discord icon ──────────────────────────────────────────────────────────────
 
 function DiscordIcon({ size = 11 }: { size?: number }) {
   return (
@@ -228,21 +175,9 @@ export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
 
-  const { data: stats } = useQuery({
-    queryKey: ['stats'],
-    queryFn: api.stats,
-    refetchInterval: 30_000,
-  })
-  const { data: objectives = [] } = useQuery({
-    queryKey: ['objectives'],
-    queryFn: () => api.objectives(),
-    refetchInterval: 30_000,
-  })
-  const { data: rounds = [] } = useQuery({
-    queryKey: ['rounds'],
-    queryFn: api.rounds,
-    refetchInterval: 60_000,
-  })
+  const { data: stats }       = useQuery({ queryKey: ['stats'],      queryFn: api.stats,      refetchInterval: 30_000 })
+  const { data: objectives = [] } = useQuery({ queryKey: ['objectives'], queryFn: () => api.objectives(), refetchInterval: 30_000 })
+  const { data: rounds = [] } = useQuery({ queryKey: ['rounds'],     queryFn: api.rounds,     refetchInterval: 60_000 })
 
   const { selectedRound, setSelectedRound } = useRound()
 
@@ -256,109 +191,87 @@ export default function Layout() {
   const activeRound = rounds.find(r => r.active)
   const pastRounds  = rounds.filter(r => !r.active)
 
-  function roundLabel(r: { id: number; scenario: string; start: string; end: string | null; active: boolean }) {
-    if (r.active) return `${r.scenario} (Active)`
-    const start = new Date(r.start).toLocaleDateString()
-    const end   = r.end ? new Date(r.end).toLocaleDateString() : '?'
-    return `${r.scenario} · ${start}–${end}`
-  }
-
   const allNav = [...NAV, ...(user?.is_admin ? [ADMIN_NAV] : [])]
 
   const Sep = () => <div className="topbar-sep" />
 
+  function roundLabel(r: { id: number; scenario: string; start: string; end: string | null; active: boolean }) {
+    if (r.active) return `${r.scenario} — Active`
+    const start = new Date(r.start).toLocaleDateString([], { month: 'short', day: 'numeric' })
+    const end   = r.end ? new Date(r.end).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '?'
+    return `${r.scenario} · ${start}–${end}`
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
 
-      {/* ── TOP BAR ────────────────────────────────────────────────────────── */}
-      <header style={{
-        height: 52,
-        flexShrink: 0,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '0 14px',
-        background: '#050505',
-        borderBottom: '1px solid var(--border)',
-      }}>
+      {/* ══════════════════════════════════════════════════════════
+          TOP BAR
+          ══════════════════════════════════════════════════════════ */}
+      <header className="topbar" style={{ padding: '0 16px', gap: 0 }}>
 
-        {/* Identity */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        {/* Brand */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingRight: 16 }}>
           {campaign.logoUrl ? (
-            <img
-              src={campaign.logoUrl}
-              alt={campaign.shortName}
-              style={{ width: 30, height: 30, objectFit: 'contain', borderRadius: 2, flexShrink: 0 }}
-            />
+            <img src={campaign.logoUrl} alt={campaign.shortName}
+              style={{ width: 28, height: 28, objectFit: 'contain', borderRadius: 4, flexShrink: 0 }} />
           ) : (
             <div style={{
-              width: 30, height: 30, background: 'var(--accent)', borderRadius: 2, flexShrink: 0,
+              width: 28, height: 28, borderRadius: 4, flexShrink: 0,
+              background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.78rem', letterSpacing: '0.04em', color: '#fff',
+              fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.7rem', color: '#000', letterSpacing: '0.04em',
             }}>
-              {campaign.shortName}
+              {campaign.shortName.slice(0, 2)}
             </div>
           )}
-          <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1rem', letterSpacing: '0.2em', color: 'var(--text)', whiteSpace: 'nowrap' }}>
-            {campaign.name}
-          </span>
-          {isLive ? (
-            <span className="vs-badge vs-badge-live">
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#4ade80', display: 'inline-block' }} className="vs-pulse" />
-              LIVE
-            </span>
-          ) : (
-            <span className="vs-badge vs-badge-offline">
-              <WifiOff size={8} />
-              OFFLINE
-            </span>
-          )}
+          <div>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.9rem', letterSpacing: '0.2em', color: 'var(--text)', lineHeight: 1 }}>
+              {campaign.name}
+            </div>
+            <div style={{ marginTop: 2 }}>
+              {isLive ? (
+                <span className="vs-badge vs-badge-live">
+                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#4ade80', display: 'inline-block' }} className="vs-pulse" />
+                  LIVE
+                </span>
+              ) : (
+                <span className="vs-badge vs-badge-offline">OFFLINE</span>
+              )}
+            </div>
+          </div>
         </div>
 
         <Sep />
-        <Clock />
+        <div style={{ padding: '0 4px' }}><Clock /></div>
 
         {stats?.active_round && (
-          <>
-            <Sep />
-            <SessionTimer start={stats.active_round.start} />
-          </>
+          <><Sep /><div style={{ padding: '0 4px' }}><SessionTimer start={stats.active_round.start} /></div></>
         )}
-
         {stats?.restart_at && (
-          <>
-            <Sep />
-            <RestartCountdown restartAt={stats.restart_at} />
-          </>
+          <><Sep /><div style={{ padding: '0 4px' }}><RestartCountdown restartAt={stats.restart_at} /></div></>
         )}
-
         {stats?.weather && (
-          <>
-            <Sep />
-            <WeatherPill weather={stats.weather} />
-          </>
+          <><Sep /><WeatherPill w={stats.weather} /></>
         )}
-
         {total > 0 && (
-          <>
-            <Sep />
-            <TerritoryPill bluePct={bluePct} redPct={redPct} />
-          </>
+          <><Sep /><TerritoryBar bluePct={bluePct} redPct={redPct} /></>
         )}
 
-        {/* Push right */}
+        {/* Spacer */}
         <div style={{ flex: 1 }} />
 
-        {/* Online count */}
+        {/* Online pilots */}
         {stats && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-            <span className="font-mono-vs" style={{ fontSize: '0.8rem', color: campaign.blueColor, fontWeight: 700 }}>
-              {campaign.blueLabel.slice(0, 1)}:{stats.blue_online}
-            </span>
-            <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>·</span>
-            <span className="font-mono-vs" style={{ fontSize: '0.8rem', color: campaign.redColor, fontWeight: 700 }}>
-              {campaign.redLabel.slice(0, 1)}:{stats.red_online}
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: campaign.blueColor, display: 'inline-block' }} />
+              <span className="font-mono-vs" style={{ fontSize: '0.8rem', color: campaign.blueColor, fontWeight: 700 }}>{stats.blue_online}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: campaign.redColor, display: 'inline-block' }} />
+              <span className="font-mono-vs" style={{ fontSize: '0.8rem', color: campaign.redColor, fontWeight: 700 }}>{stats.red_online}</span>
+            </div>
           </div>
         )}
 
@@ -370,13 +283,11 @@ export default function Layout() {
               value={selectedRound ?? ''}
               onChange={e => setSelectedRound(e.target.value === '' ? undefined : Number(e.target.value))}
               className="vs-input"
-              style={{ fontSize: '0.6rem', padding: '2px 5px', height: 26, maxWidth: 160, cursor: 'pointer' }}
+              style={{ fontSize: '0.68rem', padding: '4px 8px', height: 28, maxWidth: 180, cursor: 'pointer' }}
             >
-              {activeRound && <option value="">{roundLabel(activeRound)}</option>}
+              {activeRound  && <option value="">{roundLabel(activeRound)}</option>}
               {!activeRound && <option value="">Latest Round</option>}
-              {pastRounds.map(r => (
-                <option key={r.id} value={r.id}>{roundLabel(r)}</option>
-              ))}
+              {pastRounds.map(r => <option key={r.id} value={r.id}>{roundLabel(r)}</option>)}
             </select>
           </>
         )}
@@ -386,8 +297,8 @@ export default function Layout() {
           <>
             <Sep />
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-              <Server size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-              <span className="font-mono-vs" style={{ fontSize: '0.72rem', color: '#64748b', letterSpacing: '0.04em' }}>
+              <Server size={11} style={{ color: 'var(--text-dim)' }} />
+              <span className="font-mono-vs" style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>
                 {campaign.serverIp}
               </span>
             </div>
@@ -398,32 +309,31 @@ export default function Layout() {
 
         {/* User */}
         {user ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             {user.avatar ? (
               <img
                 src={`https://cdn.discordapp.com/avatars/${user.discord_id}/${user.avatar}.webp?size=32`}
                 alt=""
-                style={{ width: 26, height: 26, borderRadius: '50%', flexShrink: 0 }}
+                style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, border: '2px solid var(--border-light)' }}
               />
             ) : (
-              <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
+              <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#000', flexShrink: 0 }}>
+                {user.username[0]?.toUpperCase()}
+              </div>
             )}
-            <div style={{ lineHeight: 1 }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, maxWidth: 96, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ lineHeight: 1.2 }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text)', fontWeight: 600, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {user.username}
               </div>
               {user.is_admin && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 1 }}>
-                  <Shield size={10} style={{ color: '#f59e0b' }} />
-                  <span style={{ fontSize: '0.65rem', color: '#f59e0b', letterSpacing: '0.1em' }}>ADMIN</span>
+                  <Shield size={9} style={{ color: '#fbbf24' }} />
+                  <span style={{ fontSize: '0.58rem', color: '#fbbf24', letterSpacing: '0.1em' }}>ADMIN</span>
                 </div>
               )}
             </div>
-            <button
-              onClick={logout}
-              title="Logout"
-              style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 0 }}
-            >
+            <button onClick={logout} title="Logout"
+              style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 0 }}>
               <LogOut size={14} />
             </button>
           </div>
@@ -431,68 +341,70 @@ export default function Layout() {
           <button
             onClick={() => navigate('/login')}
             style={{
-              display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
-              fontSize: '0.7rem', color: '#5865F2', background: 'none',
-              border: '1px solid rgba(88,101,242,0.3)', cursor: 'pointer', padding: '4px 10px',
-              borderRadius: 2, letterSpacing: '0.1em',
-              fontFamily: "'Bebas Neue', sans-serif", whiteSpace: 'nowrap',
+              display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+              fontSize: '0.72rem', fontWeight: 600, color: '#7289DA',
+              background: 'rgba(114,137,218,0.08)',
+              border: '1px solid rgba(114,137,218,0.25)', cursor: 'pointer',
+              padding: '5px 12px', borderRadius: 5, letterSpacing: '0.06em', whiteSpace: 'nowrap',
             }}
           >
-            <DiscordIcon size={10} />
-            LOGIN
+            <DiscordIcon size={11} /> Login
           </button>
         )}
-
       </header>
 
-      {/* ── BODY ────────────────────────────────────────────────────────────── */}
+      {/* ══════════════════════════════════════════════════════════
+          BODY
+          ══════════════════════════════════════════════════════════ */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
-        {/* ICON SIDEBAR */}
-        <aside style={{
-          width: 60,
-          flexShrink: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          background: '#060606',
-          borderRight: '1px solid var(--border)',
-          zIndex: 50,
-        }}>
-          <nav style={{ flex: 1, paddingTop: 4 }}>
+        {/* SIDEBAR */}
+        <aside className="sidebar">
+
+          {/* Nav section */}
+          <div className="nav-group-label">Navigation</div>
+          <nav style={{ flex: 1 }}>
             {allNav.map(({ to, icon: Icon, label }) => (
               <NavLink
                 key={to}
                 to={to}
                 end={to === '/'}
-                className={({ isActive }) => `nav-icon-btn${isActive ? ' active' : ''}`}
+                className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
               >
-                <Icon size={20} />
-                <span className="nav-tooltip">{label}</span>
+                <Icon size={16} style={{ flexShrink: 0 }} />
+                <span>{label}</span>
+                {to === '/kills' && (
+                  <span style={{ marginLeft: 'auto', opacity: 0.4 }}><ChevronRight size={12} /></span>
+                )}
               </NavLink>
             ))}
           </nav>
 
+          {/* Donation link */}
           {campaign.donationUrl && (
-            <div style={{ padding: '6px 4px', borderTop: '1px solid var(--border)' }}>
+            <div style={{ padding: '8px 10px', borderTop: '1px solid var(--border)' }}>
               <a
                 href={campaign.donationUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="nav-icon-btn"
-                style={{ color: '#f97316', height: 44 }}
+                className="nav-item"
+                style={{ color: '#fb923c', borderRadius: 5, height: 36 }}
               >
-                <HeartIcon />
-                <span className="nav-tooltip">SUPPORT</span>
+                <Zap size={14} style={{ flexShrink: 0 }} />
+                <span>SUPPORT</span>
               </a>
             </div>
           )}
 
-          <div style={{ padding: '5px 0', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            <Zap size={11} style={{ color: 'var(--accent)', opacity: 0.3 }} />
+          {/* Footer */}
+          <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Radio size={10} style={{ color: 'var(--accent)', opacity: 0.5 }} />
+            <span style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>FOWL ENGINE</span>
+            <Plane size={9} style={{ color: 'var(--text-dim)', opacity: 0.4, marginLeft: 'auto' }} />
           </div>
         </aside>
 
-        {/* MAIN CONTENT */}
+        {/* MAIN */}
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--bg)' }}>
           <Outlet />
         </main>

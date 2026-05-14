@@ -41,7 +41,7 @@ export interface Pilot {
 export interface Kill {
   time: string
   victim: { ucid: string | null; side: string }
-  killer: { ucid: string | null; side: string; weapon: string | null } | null
+  killer: { ucid: string | null; side: string; weapon: string | null; airframe: string | null } | null
   target_type: string | null
 }
 
@@ -107,6 +107,29 @@ export interface WsUnitsMsg {
   t:     number        // DCS model time (seconds)
   units: LiveUnit[]
   bull:  Bullseye[]
+}
+
+export interface LogLine {
+  ts:     string   // ISO timestamp with millis
+  level:  string   // ERROR | WARN | INFO | DEBUG | TRACE
+  target: string   // Rust module path
+  msg:    string
+}
+
+/** Connect to the admin log WebSocket. Returns a cleanup function. Requires admin session. */
+export function connectLiveLogs(
+  onLine: (line: LogLine) => void,
+  onStatus: (s: 'open' | 'closed' | 'error') => void,
+): () => void {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const ws = new WebSocket(`${proto}://${window.location.host}/ws/logs`)
+  ws.onopen  = () => onStatus('open')
+  ws.onclose = () => onStatus('closed')
+  ws.onerror = () => onStatus('error')
+  ws.onmessage = (e) => {
+    try { onLine(JSON.parse(e.data as string) as LogLine) } catch { /* ignore */ }
+  }
+  return () => ws.close()
 }
 
 /** Connect to the live unit WebSocket.
@@ -215,11 +238,90 @@ export interface PilotKill {
   victim_side: string
   target_type: string | null
   weapon: string | null
+  killer_airframe: string | null
 }
 
 export interface PilotName {
   ucid: string
   name: string
+}
+
+export interface SrsRadio {
+  freq:       number
+  modulation: number  // 0=AM, 1=FM, 2=intercom
+  name:       string
+  enabled:    boolean
+  secFreq:    number
+}
+
+export interface SrsClient {
+  ClientGuid: string
+  Name:       string
+  Coalition:  number  // 0=spectator, 1=red, 2=blue
+  RadioInfo:  {
+    radios:        SrsRadio[]
+    inAircraft:    boolean
+    intercomHotMic: boolean
+  } | null
+}
+
+export interface SrsStatus {
+  version: string | null
+  clients: SrsClient[]
+}
+
+export interface PerfRow {
+  name:  string
+  unit:  string
+  n:     number
+  mean:  number
+  p50:   number
+  p90:   number
+  p99:   number
+  p999:  number
+}
+
+export interface PerfData {
+  available:       boolean
+  time?:           string
+  engine?:         PerfRow[]
+  api?:            PerfRow[]
+  logistics_items?: number
+}
+
+export interface BanRecord {
+  ucid:      string
+  name:      string
+  banned_at: string | null
+  until:     string | null
+  reason:    string
+  source:    'web' | 'engine'
+}
+
+export interface PerfTimelinePoint {
+  time:            string
+  frame:           { mean: number; p99: number }
+  timed_events:    { mean: number; p99: number }
+  slow_timed:      { mean: number; p99: number }
+  dcs_events:      { mean: number; p99: number }
+  spawn:           { mean: number; p99: number }
+  despawn:         { mean: number; p99: number }
+  logistics:       { mean: number; p99: number }
+  logistics_deliver: { mean: number; p99: number }
+  frontline:       { mean: number; p99: number }
+  unit_positions:  { mean: number; p99: number }
+  ewr_tracks:      { mean: number; p99: number }
+  snapshot:        { mean: number; p99: number }
+}
+
+export interface PerfSession {
+  time:    string
+  metrics: PerfRow[]
+}
+
+export interface PerfHistory {
+  timeline: PerfTimelinePoint[]
+  sessions: PerfSession[]
 }
 
 const BASE = '/api'
@@ -258,6 +360,7 @@ export const api = {
   points: () => get<PilotPoints[]>('/points'),
   captures: () => get<CaptureCount[]>('/captures'),
   aircraftUsage: () => get<AircraftUsage[]>('/aircraft-usage'),
+  srs:   () => get<SrsStatus>('/srs'),
   units: () => get<MapUnit[]>('/units'),
   trails: () => get<TrailPoint[]>('/trails'),
   auth: {
@@ -281,9 +384,15 @@ export const api = {
     },
   },
   admin: {
-    links:    () => get<AdminLink[]>('/admin/links'),
-    sessions: () => get<AdminSession[]>('/admin/sessions'),
-    unlink:   (discord_id: string) => post<{ ok: boolean }>('/admin/unlink', { discord_id }),
-    reset:    () => post<{ ok: boolean }>('/admin/reset', {}),
+    links:       () => get<AdminLink[]>('/admin/links'),
+    sessions:    () => get<AdminSession[]>('/admin/sessions'),
+    unlink:      (discord_id: string) => post<{ ok: boolean }>('/admin/unlink', { discord_id }),
+    reset:       () => post<{ ok: boolean }>('/admin/reset', {}),
+    perf:        () => get<PerfData>('/admin/perf'),
+    perfHistory: () => get<PerfHistory>('/admin/perf-history'),
+    banned:      () => get<BanRecord[]>('/admin/banned'),
+    ban:         (ucid: string, name: string, reason = '', until?: string) =>
+                   post<{ ok: boolean }>('/admin/ban', { ucid, name, reason, until: until ?? null }),
+    unban:       (ucid: string) => post<{ ok: boolean }>('/admin/unban', { ucid }),
   },
 }

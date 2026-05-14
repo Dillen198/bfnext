@@ -312,7 +312,7 @@ impl Db {
         self.ephemeral
             .capture_progress
             .iter()
-            .filter_map(|(oid, (capturing_side, _))| {
+            .filter_map(|(oid, (capturing_side, _, _))| {
                 if *capturing_side != side {
                     // capturing_side is the ENEMY — oid is a friendly objective being taken
                     let obj = self.persisted.objectives.get(oid)?;

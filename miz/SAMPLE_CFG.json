@@ -1,0 +1,763 @@
+﻿{
+
+  "netidx_base": "/local/fowl/campaign",
+
+  "admins": {
+    "STEAM_HEX_ID_HERE": "AdminName"
+  },
+
+  "banned": {
+    "STEAM_HEX_ID_HERE": "reason"
+  },
+
+  "rules": {
+    "actions":  "AlwaysAllowed",
+    "cargo":    "AlwaysAllowed",
+    "troops":   "AlwaysAllowed",
+    "jtac":     "AlwaysAllowed",
+    "ca":       "AlwaysAllowed"
+  },
+
+  "name_filter": ".*",
+
+  "max_msgs_per_second": 3,
+
+  "shutdown": 10,
+
+  "points": {
+    "new_player_join": 10000,
+    "air_kill": 25,
+    "ground_kill": 2,
+    "lr_sam_bonus": 5,
+    "logistics_repair": 25,
+    "logistics_transfer": 15,
+    "capture": 15,
+    "tk_window": 5,
+    "provisional": false,
+    "strict": false,
+    "airframe_cost": {
+      "F-15C": 500,
+      "Su-27": 500
+    },
+    "weapon_cost": {
+      "AIM_120": 50
+    },
+    "periodic_point_gain": [0, 0],
+    "award_kill_points": true,
+    "convoy_interdiction_points": 10,
+    "kill_streak_bonuses": [
+      [3, 1.5],
+      [5, 2.0],
+      [10, 2.5]
+    ]
+  },
+
+  "weapon_target_exclusions": [],
+
+  "auto_reset": {
+    "condition": { "MapOwned": { "fraction": 0.75 } },
+    "delay": 300
+  },
+
+  "repair_time": 1800,
+
+  "repair_crate": {
+    "Red":  { "name": "Logistics Repair", "weight": 2000, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 },
+    "Blue": { "name": "Logistics Repair", "weight": 1500, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 }
+  },
+
+  "warehouse": {
+    "hub_max": 25,
+    "airbase_max": 5,
+    "tick": 10,
+    "ticks_per_delivery": 6,
+    "supply_transfer_size": 25,
+    "supply_transfer_fuel_crate": {
+      "Red":  { "name": "Fuel Transfer",    "weight": 2000, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 },
+      "Blue": { "name": "Fuel Transfer",    "weight": 1200, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 }
+    },
+    "supply_transfer_weapons_crate": {
+      "Red":  { "name": "Weapons Transfer", "weight": 1500, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 },
+      "Blue": { "name": "Weapons Transfer", "weight": 1200, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 }
+    }
+  },
+
+  "logistics_exclusion": 10000,
+
+  "unit_cull_distance": 80000,
+
+  "ground_vehicle_cull_distance": 40000,
+
+  "lr_cull_distance": 80000,
+
+  "ewr_cull_distance": 300000,
+
+  "weapon_spawn_radius": 60000,
+
+  "weapon_spawn_expiry_secs": 120,
+
+  "cull_after": 600,
+
+  "slow_timed_events_freq": 5,
+
+  "threatened_distance": {
+    "M-1 Abrams": 15000,
+    "T-80UD": 15000
+  },
+
+  "threatened_cooldown": 120,
+
+  "crate_load_distance": 100,
+
+  "crate_spread": 500,
+
+  "artillery_mission_range": 20000,
+
+  "artillery": {
+    "units": {
+      "M142 HIMARS":           { "max_range_m": 70000,  "min_range_m": 15000 },
+      "CHAP_M142_GMLRS_M31":   { "max_range_m": 70000,  "min_range_m": 15000 },
+      "MLRS":                  { "max_range_m": 32000,  "min_range_m": 10000 },
+      "M-109":                 { "max_range_m": 30000,  "min_range_m": 4000  },
+      "T155_Firtina":          { "max_range_m": 40000,  "min_range_m": 4000  },
+      "2B11 mortar":           { "max_range_m": 7000,   "min_range_m": 500   },
+      "M-30 mortar":           { "max_range_m": 4500,   "min_range_m": 200   },
+      "SAU Msta":              { "max_range_m": 29000,  "min_range_m": 4000  },
+      "SAU Gvozdika":          { "max_range_m": 15000,  "min_range_m": 4000  },
+      "2S3 Akatsia":           { "max_range_m": 18000,  "min_range_m": 4000  },
+      "SAU 2-C9":              { "max_range_m": 8000,   "min_range_m": 500   },
+      "Uragan_BM-27":          { "max_range_m": 35000,  "min_range_m": 5000  },
+      "9A52 Smerch":           { "max_range_m": 70000,  "min_range_m": 20000 },
+      "9A52-2 Smerch-M":       { "max_range_m": 70000,  "min_range_m": 20000 },
+      "Grad_FDDM":             { "max_range_m": 20000,  "min_range_m": 5000  },
+      "CHAP_TOS1A":            { "max_range_m": 6000,   "min_range_m": 400   },
+      "HL_B8M1":               { "max_range_m": 6000,   "min_range_m": 400   },
+      "Scud_B":                { "max_range_m": 300000, "min_range_m": 50000 },
+      "SS_1B_Scud_A":          { "max_range_m": 180000, "min_range_m": 30000 },
+      "SS-21_Scarab_TEL":      { "max_range_m": 70000,  "min_range_m": 15000 },
+      "9K720_Iskander_TEL":    { "max_range_m": 500000, "min_range_m": 50000 },
+      "4K51_Rubezh":           { "max_range_m": 80000,  "min_range_m": 5000  },
+      "Bastion_LN":            { "max_range_m": 300000, "min_range_m": 10000 },
+      "P-15_Termit_S":         { "max_range_m": 80000,  "min_range_m": 5000  }
+    },
+    "default_max_range_m": 30000,
+    "default_min_range_m": 4000,
+    "radius_m": 200.0,
+    "max_groups": 3
+  },
+
+  "alcm_mission_range": 100000,
+
+  "lock_sides": false,
+
+  "side_switches": null,
+
+  "max_crates": 4,
+
+  "limited_lives": true,
+
+  "life_types": {
+    "F-15C":  "Intercept",
+    "Su-27":  "Intercept",
+    "A-10C":  "CAS",
+    "Ka-50":  "CAS",
+    "Mi-8MT": "Transport",
+    "UH-1H":  "Transport"
+  },
+
+  "default_lives": {
+    "Intercept": [2, 28800],
+    "CAS":        [3, 28800],
+    "Transport":  [5, 28800]
+  },
+
+  "supply_alert_threshold": 20,
+
+  "supply_auto_convoy_delay_secs": 300,
+
+  "ewr_mode": "Delayed",
+
+  "ewr_delay": 60,
+
+  "frontline": {
+    "enabled": true,
+    "update_on_objective_change_only": true,
+    "samples_per_boundary": 100,
+    "territory_zone_alpha": 0.15
+  },
+
+  "carrier": {
+    "repair_cost": 5000,
+    "respawn_cost": 15000,
+    "movement_speed": 5.0,
+    "repair_time": 600
+  },
+
+  "last_stand": {
+    "trigger_count": 2,
+    "countdown_secs": 3600
+  },
+
+  "under_attack": {
+    "cooldown_secs": 120,
+    "display_secs": 15
+  },
+
+  "counter_battery": {
+    "report_radius_m": 1000,
+    "cooldown_secs": 60
+  },
+
+  "weather_effects": {
+    "rain_speed_multiplier": 0.85,
+    "thunderstorm_speed_multiplier": 0.6,
+    "snow_speed_multiplier": 0.7,
+    "min_visibility_fixed_wing": 1500.0,
+    "no_helo_in_thunderstorm": true,
+    "ewr_weather_range_multiplier": 0.9
+  },
+
+  "time_of_day_effects": {
+    "night_kill_bonus": 1.5,
+    "night_start_hour": 22,
+    "night_end_hour": 6
+  },
+
+  "pilot_experience": {
+    "kills_for_veteran": 5,
+    "kills_for_ace": 15,
+    "veteran_bonus": 1.2,
+    "ace_bonus": 1.5
+  },
+
+  "csar": {
+    "pilot_survive_chance": 0.6,
+    "rescue_radius_m": 500,
+    "rescue_time_limit_secs": 1800,
+    "points_for_rescue": 50
+  },
+
+  "era": {
+    "default": "Modern",
+    "available": ["Cold War", "Modern"]
+  },
+
+  "smart_commander": {
+    "treasury_per_tick": 10,
+    "tick_secs": 60,
+    "objective_funding_fraction": 0.5,
+    "holding_bonus_per_obj": 5,
+    "mission_reward_multiplier": 1.0
+  },
+
+  "objective_start_points": {
+    "Blue": 1000,
+    "Red":  1000
+  },
+
+  "dismount": {
+    "T-80UD": { "template": "RU_Infantry", "count": 4, "survive_chance": 0.5 },
+    "M-1 Abrams": { "template": "US_Infantry", "count": 3, "survive_chance": 0.5 }
+  },
+
+  "factory": {
+    "production_tick_secs": 300,
+    "units_per_tick": 1,
+    "max_stockpile": 20
+  },
+
+  "campaign_events": {
+    "enable_random_events": true,
+    "event_interval_secs": 7200
+  },
+
+  "special_sam_sites": [],
+
+  "jtac_priority": [
+    ["SAM", "LR", "RadarGuided", "TrackRadar"],
+    ["SAM", "MR", "RadarGuided", "TrackRadar"],
+    ["SAM", "SR", "RadarGuided", "TrackRadar"],
+    ["SAM", "OpticallyGuided"],
+    ["SAM", "IRGuided"],
+    ["AAA", "LR"],
+    ["APC", "ATGM"],
+    ["AAA"],
+    ["Logistics"],
+    ["Infantry"],
+    ["Armor"],
+    ["Artillery"]
+  ],
+
+  "extra_fixed_wing_objectives": [],
+
+  "airborne_jtacs": {
+    "MB-339A": { "range": 16000, "nolos": true,  "default_laser_code": 1688 },
+    "C-101CC":  { "range": 16000, "nolos": true,  "default_laser_code": 1688 },
+    "L-39ZA":   { "range": 16000, "nolos": false, "default_laser_code": 1688 }
+  },
+
+
+  "airborne_ewrs": {
+    "E-3A":               { "range": 370000, "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.1, "scan_interval_secs": 10, "frequency_band": "Sband"  },
+    "E-2C":               { "range": 278000, "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.1, "scan_interval_secs": 10, "frequency_band": "Uhf"   },
+    "A-50":               { "range": 350000, "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.2, "scan_interval_secs": 10, "frequency_band": "Sband"  },
+
+    "MiG-31":             { "range": 185000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "MiG-25PD":           { "range": 100000, "aspect_half_angle": 55,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.3, "ecm_susceptibility": 0.3, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "Su-27":              { "range": 100000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "Su-30":              { "range": 120000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "Su-30MKA":           { "range": 120000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "Su-30MKI":           { "range": 120000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "Su-30MKM":           { "range": 120000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "Su-30SM":            { "range": 120000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "Su-33":              { "range": 100000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "MiG-29 Fulcrum":     { "range": 70000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.3, "ecm_susceptibility": 0.3, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "MiG-29A":            { "range": 70000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.3, "ecm_susceptibility": 0.3, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "MiG-29G":            { "range": 70000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.3, "ecm_susceptibility": 0.3, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "MiG-29S":            { "range": 80000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.3, "ecm_susceptibility": 0.3, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "J-11A":              { "range": 100000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "JF-17":              { "range": 80000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.3, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+
+    "F-14A":              { "range": 185000, "aspect_half_angle": 65,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "F-14A-135-GR":       { "range": 185000, "aspect_half_angle": 65,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "F-14A-135-GR-Early": { "range": 185000, "aspect_half_angle": 65,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "F-14B":              { "range": 185000, "aspect_half_angle": 65,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "F-15C":              { "range": 160000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.1, "scan_interval_secs": 1,  "frequency_band": "Xband"  },
+    "F-15E":              { "range": 160000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.1, "scan_interval_secs": 1,  "frequency_band": "Xband"  },
+    "F-15ESE":            { "range": 160000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.1, "scan_interval_secs": 1,  "frequency_band": "Xband"  },
+    "F-16A MLU":          { "range": 85000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 1,  "frequency_band": "Xband"  },
+    "F-16C_50":           { "range": 85000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 1,  "frequency_band": "Xband"  },
+    "F-16C bl.52d":       { "range": 85000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 1,  "frequency_band": "Xband"  },
+    "F/A-18A":            { "range": 80000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 1,  "frequency_band": "Xband"  },
+    "F/A-18C":            { "range": 80000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 1,  "frequency_band": "Xband"  },
+    "FA-18C_hornet":      { "range": 80000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.2, "scan_interval_secs": 1,  "frequency_band": "Xband"  },
+    "M-2000C":            { "range": 100000, "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.3, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "AV8BNA":             { "range": 80000,  "aspect_half_angle": 60,   "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.3, "ecm_susceptibility": 0.3, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+
+    "MiG-25RBT":          { "range": 100000, "aspect_half_angle": 55,   "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.6, "ecm_susceptibility": 0.5, "scan_interval_secs": 3,  "frequency_band": "Xband"  },
+    "MiG-21Bis":          { "range": 30000,  "aspect_half_angle": 50,   "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.9, "ecm_susceptibility": 0.8, "scan_interval_secs": 3,  "frequency_band": "Xband"  },
+    "F-4E-45MC":          { "range": 80000,  "aspect_half_angle": 60,   "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.8, "ecm_susceptibility": 0.7, "scan_interval_secs": 3,  "frequency_band": "Xband"  },
+    "F-5E-3":             { "range": 40000,  "aspect_half_angle": 55,   "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.9, "ecm_susceptibility": 0.8, "scan_interval_secs": 4,  "frequency_band": "Xband"  },
+    "F-16A":              { "range": 75000,  "aspect_half_angle": 60,   "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.7, "ecm_susceptibility": 0.6, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "Mirage-F1EE":        { "range": 60000,  "aspect_half_angle": 60,   "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.8, "ecm_susceptibility": 0.7, "scan_interval_secs": 3,  "frequency_band": "Xband"  },
+    "AJS37":              { "range": 120000, "aspect_half_angle": 60,   "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.7, "ecm_susceptibility": 0.6, "scan_interval_secs": 3,  "frequency_band": "Xband"  }
+  },
+
+  "ground_radar_ewrs": {
+    "55G6 EWR":            { "range": 600000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.3, "ecm_susceptibility": 0.6, "scan_interval_secs": 10, "frequency_band": "Vhf"   },
+    "P14_SR":              { "range": 600000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.3, "ecm_susceptibility": 0.6, "scan_interval_secs": 10, "frequency_band": "Vhf"   },
+    "1L13 EWR":            { "range": 400000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.3, "ecm_susceptibility": 0.6, "scan_interval_secs": 8,  "frequency_band": "Vhf"   },
+    "FPS-117":             { "range": 450000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.3, "scan_interval_secs": 6,  "frequency_band": "Lband"  },
+    "FPS-117 Dome":        { "range": 450000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.3, "scan_interval_secs": 6,  "frequency_band": "Lband"  },
+
+    "Hawk sr":             { "range": 100000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.5, "ecm_susceptibility": 0.5, "scan_interval_secs": 5,  "frequency_band": "Xband"  },
+    "p-19 s-125 sr":       { "range": 400000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.4, "ecm_susceptibility": 0.6, "scan_interval_secs": 8,  "frequency_band": "Uhf"   },
+    "Kub 1S91 str":        { "range": 70000,  "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.5, "ecm_susceptibility": 0.5, "scan_interval_secs": 4,  "frequency_band": "Xband"  },
+    "SA-11 Buk SR 9S18M1": { "range": 140000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": true,  "chaff_susceptibility": 0.3, "ecm_susceptibility": 0.4, "scan_interval_secs": 4,  "frequency_band": "Sband"  },
+    "S-300PS 40B6MD sr":   { "range": 300000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.3, "scan_interval_secs": 5,  "frequency_band": "Lband"  },
+    "S-300PS 64H6E sr":    { "range": 300000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.3, "scan_interval_secs": 5,  "frequency_band": "Lband"  },
+    "NASAMS_Radar_MPQ64F1":{ "range": 80000,  "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.2, "scan_interval_secs": 3,  "frequency_band": "Xband"  },
+    "Patriot str":         { "range": 150000, "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.1, "scan_interval_secs": 3,  "frequency_band": "Cband"  },
+    "Tor 9A331":           { "range": 25000,  "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "Osa 9A33 ln":         { "range": 35000,  "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.4, "ecm_susceptibility": 0.5, "scan_interval_secs": 5,  "frequency_band": "Xband"  },
+    "Roland ADS":          { "range": 15000,  "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.4, "ecm_susceptibility": 0.5, "scan_interval_secs": 5,  "frequency_band": "Xband"  },
+    "CHAP_TorM2":          { "range": 25000,  "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.2, "scan_interval_secs": 2,  "frequency_band": "Xband"  },
+    "CHAP_IRISTSLM_STR":   { "range": 20000,  "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": true,  "chaff_susceptibility": 0.2, "ecm_susceptibility": 0.3, "scan_interval_secs": 3,  "frequency_band": "Xband"  },
+    "SON_9":               { "range": 20000,  "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.6, "ecm_susceptibility": 0.6, "scan_interval_secs": 4,  "frequency_band": "Xband"  },
+
+    "TICONDEROG":          { "range": 500000, "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.1, "scan_interval_secs": 3,  "frequency_band": "Sband"  },
+    "PERRY":               { "range": 450000, "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.1, "scan_interval_secs": 3,  "frequency_band": "Sband"  },
+    "MOSCOW":              { "range": 500000, "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.2, "scan_interval_secs": 3,  "frequency_band": "Sband"  },
+    "PIOTR":               { "range": 500000, "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.2, "scan_interval_secs": 3,  "frequency_band": "Sband"  },
+    "CVN_73":              { "range": 400000, "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.1, "scan_interval_secs": 3,  "frequency_band": "Sband"  },
+    "CV_1143_5":           { "range": 300000, "aspect_half_angle": null, "pulse_doppler": true,  "look_down_capable": true,  "chaff_susceptibility": 0.1, "ecm_susceptibility": 0.2, "scan_interval_secs": 3,  "frequency_band": "Sband"  },
+    "ELNYA":               { "range": 200000, "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.4, "ecm_susceptibility": 0.5, "scan_interval_secs": 6,  "frequency_band": "Sband"  },
+    "Ship_Tilde_Supply":   { "range": 50000,  "aspect_half_angle": null, "pulse_doppler": false, "look_down_capable": false, "chaff_susceptibility": 0.6, "ecm_susceptibility": 0.7, "scan_interval_secs": 8,  "frequency_band": "Xband"  }
+  },
+
+  "radar_physics": {
+    "rcs_hot":   1.0,
+    "rcs_flank": 0.7,
+    "rcs_beam":  0.35,
+    "rcs_cold":  0.15,
+
+    "notch_attenuation":           0.05,
+    "notch_closure_threshold_ms":  50.0,
+
+    "ground_radar_low_alt_threshold_m": 300.0,
+
+    "track_smoothing_alpha": 0.3,
+
+    "awacs_look_down_bonus": 1.5
+  },
+
+  "iadn": {
+    "track_association_radius_m": 3000.0,
+
+    "detection_snr_threshold": 0.5,
+
+    "track_stale_secs": 60,
+
+    "track_drop_secs": 120,
+
+    "sam_cue_enabled": true,
+
+    "sam_cue_confidence_threshold": 0.4
+  },
+
+  "elint": {
+    "contact_cluster_radius_m": 500.0,
+
+    "half_life_recon_secs":  600,
+    "half_life_sf_secs":    1800,
+    "half_life_awacs_secs":  300,
+    "half_life_ewr_secs":    180,
+
+    "confidence_delete_threshold": 0.05,
+
+    "max_contacts_per_side": 200,
+
+    "show_unit_class": true,
+
+    "show_confidence_on_map": true
+  },
+
+  "ground_vehicle_cargo": {
+    "M-2 Bradley":        { "troop_capacity": 2, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false },
+    "BMP-2":              { "troop_capacity": 2, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false },
+    "BMP-3":              { "troop_capacity": 2, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false },
+    "BMP-1":              { "troop_capacity": 2, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false },
+    "BTR-82A":            { "troop_capacity": 3, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false },
+    "BTR_D":              { "troop_capacity": 3, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false },
+    "BMD-1":              { "troop_capacity": 2, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false },
+    "Marder":             { "troop_capacity": 2, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false },
+    "M1128 Stryker MGS":  { "troop_capacity": 2, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false },
+    "M1134 Stryker ATGM": { "troop_capacity": 2, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false },
+    "CHAP_MATV":          { "troop_capacity": 2, "board_radius_m": 50.0, "board_speed_threshold_ms": 1.0, "dismount_radius_m": 30.0, "can_board_while_moving": false }
+  },
+
+  "unit_classification": {
+
+    "F-15C":    ["Aircraft"],
+    "Su-27":    ["Aircraft"],
+    "A-10C":    ["Aircraft"],
+    "Ka-50":    ["Aircraft", "Helicopter"],
+    "Mi-8MT":   ["Aircraft", "Helicopter"],
+    "E-3A":     ["Aircraft", "AWACS", "Link16"],
+    "M-1 Abrams":  ["Armor", "MR", "HeavyCannon", "SmallArms", "Driveable"],
+    "T-80UD":      ["Armor", "MR", "ATGM", "HeavyCannon", "SmallArms", "Driveable"],
+    "BMP-2":       ["APC", "MR", "ATGM", "SmallArms", "Driveable"],
+    "55G6 EWR":    ["EWR", "Unarmed"],
+    "Patriot str": ["SAM", "LR", "RadarGuided", "SearchRadar"],
+    "Patriot ln":  ["SAM", "LR", "RadarGuided", "Launcher", "EngagesWeapons"],
+    "TICONDEROG":  ["Boat"],
+    "M978 HEMTT Tanker": ["Logistics", "Unarmed"],
+
+    "M-109":             ["Armor", "MR", "Artillery", "Driveable"],
+    "MLRS":              ["Armor", "LR", "Artillery", "Driveable"],
+    "M142 HIMARS":       ["Armor", "LR", "Artillery", "Driveable"],
+    "T155_Firtina":      ["Armor", "LR", "Artillery", "SmallArms", "Driveable"],
+    "2B11 mortar":       ["Infantry", "LR", "Artillery"],
+    "M-30 mortar":       ["Infantry", "SR", "Artillery"],
+
+    "SAU Msta":          ["Armor", "MR", "Artillery", "SmallArms", "Driveable"],
+    "SAU Gvozdika":      ["Armor", "MR", "Artillery", "Driveable"],
+    "2S3 Akatsia":       ["Armor", "MR", "Artillery", "Driveable"],
+    "SAU 2-C9":          ["Armor", "MR", "Artillery", "Driveable"],
+    "Uragan_BM-27":      ["Armor", "LR", "Artillery", "Driveable"],
+    "9A52 Smerch":       ["Armor", "LR", "Artillery", "Driveable"],
+    "9A52-2 Smerch-M":   ["Armor", "LR", "Artillery", "Driveable"],
+    "Grad_FDDM":         ["Armor", "MR", "Artillery", "Driveable"],
+
+    "Scud_B":            ["Armor", "LR", "Launcher", "Driveable"],
+    "SS_1B_Scud_A":      ["Armor", "LR", "Launcher", "Driveable"],
+    "SS-21_Scarab_TEL":  ["Armor", "LR", "Launcher", "Driveable"],
+    "9K720_Iskander_TEL":["Armor", "LR", "Launcher", "Driveable"],
+
+    "4K51_Rubezh":       ["Armor", "LR", "Launcher", "Driveable"],
+    "Bastion_LN":        ["Armor", "LR", "Launcher", "Driveable"],
+    "P-15_Termit_S":     ["Armor", "LR", "Launcher", "Driveable"]
+  },
+
+  "crate_template": {
+    "Blue": "US_Crate",
+    "Red":  "RU_Crate"
+  },
+
+  "c130_cargo_template": {
+    "Blue": "US_C130_Cargo",
+    "Red":  "RU_IL76_Cargo"
+  },
+
+  "helo_cargo_template": {
+    "Blue": "US_Helo_Cargo",
+    "Red":  "RU_Helo_Cargo"
+  },
+
+  "cargo": {
+    "UH-1H":  { "troop_slots": 2, "crate_slots": 1, "total_slots": 3, "pilot_slots": 0 },
+    "Mi-8MT": { "troop_slots": 3, "crate_slots": 1, "total_slots": 4, "pilot_slots": 0 },
+    "CH-47D": { "troop_slots": 5, "crate_slots": 2, "total_slots": 6, "pilot_slots": 0 },
+    "Mi-26":  { "troop_slots": 6, "crate_slots": 3, "total_slots": 8, "pilot_slots": 0 }
+  },
+
+  "c130_cargo": {
+    "enabled_vehicles": ["C-130"],
+    "spawn_delay": 1,
+    "max_spawn_all": 50,
+    "loadable_vehicles": {
+      "Blue": [],
+      "Red":  []
+    }
+  },
+
+  "helo_cargo": {
+    "enabled_vehicles": ["UH-1H", "Mi-8MT", "CH-47D"],
+    "spawn_delay": 1,
+    "max_spawn_all": 50,
+    "auto_unpack": false
+  },
+
+  "deployables": {
+    "Blue": [
+      {
+        "path": ["FARP", "Small FARP"],
+        "kind": { "Group": { "template": "US_FARP_Small" } },
+        "persist": "Objective",
+        "limit": 4,
+        "limit_enforce": "Deny",
+        "cost": 0,
+        "repair_cost": 0,
+        "crates": [
+          { "name": "FARP Crate",   "weight": 1000, "required": 2, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 }
+        ],
+        "repair_crate": null,
+        "ewr": null,
+        "jtac": null
+      },
+      {
+        "path": ["EWR", "AN/TPS-75"],
+        "kind": { "Group": { "template": "US_EWR_TPS75" } },
+        "persist": "Spawn",
+        "limit": 3,
+        "limit_enforce": "Deny",
+        "cost": 50,
+        "repair_cost": 25,
+        "crates": [
+          { "name": "EWR Crate", "weight": 1500, "required": 3, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 }
+        ],
+        "repair_crate": { "name": "EWR Repair", "weight": 500, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 },
+        "ewr": { "range": 300000 },
+        "jtac": null
+      }
+    ],
+    "Red": [
+      {
+        "path": ["FARP", "Small FARP"],
+        "kind": { "Group": { "template": "RU_FARP_Small" } },
+        "persist": "Objective",
+        "limit": 4,
+        "limit_enforce": "Deny",
+        "cost": 0,
+        "repair_cost": 0,
+        "crates": [
+          { "name": "FARP Crate", "weight": 1000, "required": 2, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 }
+        ],
+        "repair_crate": null,
+        "ewr": null,
+        "jtac": null
+      }
+    ]
+  },
+
+  "actions": {
+    "Blue": {
+      "Tanker": {
+        "cost": 200,
+        "penalty": null,
+        "limit": 2,
+        "geo_limit": "Unlimited",
+        "kind": { "Tanker": { "kind": "FixedWing", "duration": 7200, "template": "US_KC135", "altitude": 7620, "altitude_typ": "BARO", "speed": 250, "freq": 251000000 } }
+      },
+      "AWACS": {
+        "cost": 300,
+        "penalty": null,
+        "limit": 1,
+        "geo_limit": "Unlimited",
+        "kind": { "Awacs": {
+          "plane": { "kind": "FixedWing", "duration": 7200, "template": "US_E3A", "altitude": 9144, "altitude_typ": "BARO", "speed": 220, "freq": 253000000 },
+          "ewr": { "range": 370000 }
+        }}
+      },
+      "CAP": {
+        "cost": 100,
+        "penalty": 50,
+        "limit": 4,
+        "geo_limit": "Unlimited",
+        "kind": { "Fighters": { "kind": "FixedWing", "duration": 3600, "template": "US_F15C_CAP", "altitude": 6096, "altitude_typ": "BARO", "speed": 280, "freq": null } }
+      },
+      "CAS": {
+        "cost": 75,
+        "penalty": 50,
+        "limit": 4,
+        "geo_limit": { "NearFriendlyObjective": { "max": 80000 } },
+        "kind": { "Attackers": { "kind": "FixedWing", "duration": 3600, "template": "US_A10C_CAS", "altitude": 3048, "altitude_typ": "BARO", "speed": 180, "freq": null } }
+      },
+      "SEAD": {
+        "cost": 150,
+        "penalty": 75,
+        "limit": 2,
+        "geo_limit": "Unlimited",
+        "kind": { "Sead": { "kind": "FixedWing", "duration": 3600, "template": "US_F16C_SEAD", "altitude": 5000, "altitude_typ": "BARO", "speed": 280, "freq": null } }
+      },
+      "Logistics Repair": {
+        "cost": 100,
+        "penalty": null,
+        "limit": 2,
+        "geo_limit": "Unlimited",
+        "kind": { "LogisticsRepair": { "kind": "FixedWing", "duration": null, "template": "US_C130_Logistics", "altitude": 3000, "altitude_typ": "BARO", "speed": 200, "freq": null } }
+      },
+      "Move": {
+        "cost": 5,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited",
+        "kind": { "Move": { "troop": 10000, "deployable": 5000 } }
+      },
+      "Recon": {
+        "cost": 50,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited",
+        "kind": { "Recon": {
+          "plane": { "kind": "FixedWing", "duration": null, "template": "US_F15E_Recon", "altitude": 8000, "altitude_typ": "BARO", "speed": 300, "freq": null },
+          "scan_radius_m": 10000.0,
+          "duration_secs": 300
+        }}
+      },
+      "HIMARS Strike": {
+        "cost": 150,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited",
+        "kind": { "Artillery": {
+          "max_range_m": 80000,
+          "min_range_m": 15000,
+          "radius_m": 150,
+          "max_groups": 2
+        }}
+      },
+      "Artillery Strike": {
+        "cost": 75,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited",
+        "kind": { "Artillery": {
+          "max_range_m": 30000,
+          "min_range_m": 4000,
+          "radius_m": 200,
+          "max_groups": 3
+        }}
+      }
+    },
+    "Red": {
+      "Tanker": {
+        "cost": 200,
+        "penalty": null,
+        "limit": 2,
+        "geo_limit": "Unlimited",
+        "kind": { "Tanker": { "kind": "FixedWing", "duration": 7200, "template": "RU_IL78", "altitude": 7620, "altitude_typ": "BARO", "speed": 250, "freq": 251000000 } }
+      },
+      "AWACS": {
+        "cost": 300,
+        "penalty": null,
+        "limit": 1,
+        "geo_limit": "Unlimited",
+        "kind": { "Awacs": {
+          "plane": { "kind": "FixedWing", "duration": 7200, "template": "RU_A50", "altitude": 9144, "altitude_typ": "BARO", "speed": 220, "freq": 253000000 },
+          "ewr": { "range": 350000 }
+        }}
+      },
+      "CAP": {
+        "cost": 100,
+        "penalty": 50,
+        "limit": 4,
+        "geo_limit": "Unlimited",
+        "kind": { "Fighters": { "kind": "FixedWing", "duration": 3600, "template": "RU_Su27_CAP", "altitude": 6096, "altitude_typ": "BARO", "speed": 280, "freq": null } }
+      },
+      "CAS": {
+        "cost": 75,
+        "penalty": 50,
+        "limit": 4,
+        "geo_limit": { "NearFriendlyObjective": { "max": 80000 } },
+        "kind": { "Attackers": { "kind": "FixedWing", "duration": 3600, "template": "RU_Su25_CAS", "altitude": 3048, "altitude_typ": "BARO", "speed": 180, "freq": null } }
+      },
+      "Move": {
+        "cost": 5,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited",
+        "kind": { "Move": { "troop": 10000, "deployable": 5000 } }
+      },
+      "Smerch Strike": {
+        "cost": 150,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited",
+        "kind": { "Artillery": {
+          "max_range_m": 70000,
+          "min_range_m": 20000,
+          "radius_m": 150,
+          "max_groups": 2
+        }}
+      },
+      "Artillery Strike": {
+        "cost": 75,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited",
+        "kind": { "Artillery": {
+          "max_range_m": 30000,
+          "min_range_m": 4000,
+          "radius_m": 200,
+          "max_groups": 3
+        }}
+      }
+    }
+  },
+
+  "troops": {
+    "Blue": [
+      {
+        "name": "Rifle Squad",
+        "template": "US_RifleSquad",
+        "persist": "Spawn",
+        "can_capture": true,
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "weight": 800,
+        "cost": 0,
+        "move_cost": 0,
+        "capture_distance": 150,
+        "jtac": null,
+        "special_forces": false
+      }
+    ],
+    "Red": [
+      {
+        "name": "Rifle Squad",
+        "template": "RU_RifleSquad",
+        "persist": "Spawn",
+        "can_capture": true,
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "weight": 800,
+        "cost": 0,
+        "move_cost": 0,
+        "capture_distance": 150,
+        "jtac": null,
+        "special_forces": false
+      }
+    ]
+  }
+}

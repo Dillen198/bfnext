@@ -3325,6 +3325,37 @@ impl Db {
             Utc::now(),
         );
 
+        // Wake up any culled objective whose zone contains the target position so its
+        // units are present in DCS to absorb the incoming fire.  We search for the
+        // objective (owned by the enemy side) that either contains target_pos directly
+        // or is closest to it within a generous 3 km fallback radius.
+        {
+            let now = Utc::now();
+            let fallback_sq = 3000.0_f64.powi(2);
+            let mut best: Option<(ObjectiveId, f64)> = None;
+            for (oid, obj) in &self.persisted.objectives {
+                if obj.owner == side {
+                    continue;
+                }
+                let d = if obj.zone.contains(target_pos) {
+                    0.0_f64
+                } else {
+                    let d = na::distance_squared(&obj.zone.pos().into(), &target_pos.into());
+                    if d > fallback_sq {
+                        continue;
+                    }
+                    d
+                };
+                if best.as_ref().map(|(_, bd)| d < *bd).unwrap_or(true) {
+                    best = Some((*oid, d));
+                }
+            }
+            if let Some((oid, _)) = best {
+                self.ephemeral.artillery_targeted.insert(oid, now);
+                info!("artillery_strike: marking objective {:?} as targeted for respawn", oid);
+            }
+        }
+
         Ok(None)
     }
 }

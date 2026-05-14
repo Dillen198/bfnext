@@ -34,20 +34,20 @@ const REST_INT = 5_000
 
 // ── Colors ─────────────────────────────────────────────────────────────
 // Sneaker palette: enemies=cyan, allies=red/pink, watches=yellow
-const COL_ENEMY = '#ff8080'   // red coalition  (Sneaker: cyan)
-const COL_ALLY = '#17c2f6'   // blue coalition  (Sneaker: red/pink)
-const COL_NEUTRAL = '#888888'
+const COL_ENEMY = '#cc4444'   // tactical red
+const COL_ALLY = '#4a8fd4'    // NATO blue
+const COL_NEUTRAL = '#6a7a5a'
 // Standard faction colors used for objectives (not sneaker-style)
-const COL_RED = '#ef4444'
-const COL_BLUE = '#3b82f6'
-const COL_WATCH = '#ffd600'   // watched tracks
-const GREEN = '#39ff14'
-const HUD_BG = 'rgba(4,10,4,0.82)'
-const HUD_BORDER = 'rgba(57,255,20,0.22)'
-const HUD_TEXT = '#39ff14'
-const HUD_DIM = 'rgba(57,255,20,0.45)'
-const PANEL_BG = 'rgba(6,12,6,0.90)'
-const FONT_MONO = "'Share Tech Mono','Courier New',monospace"
+const COL_RED = '#cc4444'
+const COL_BLUE = '#4a8fd4'
+const COL_WATCH = '#c9a227'   // mil amber
+const GREEN = '#6aab1f'
+const HUD_BG = 'rgba(8,11,6,0.90)'
+const HUD_BORDER = 'rgba(106,171,31,0.25)'
+const HUD_TEXT = '#8ec83f'
+const HUD_DIM = 'rgba(142,200,63,0.45)'
+const PANEL_BG = 'rgba(8,11,6,0.95)'
+const FONT_MONO = "'JetBrains Mono','Share Tech Mono','Courier New',monospace"
 const FONT_HEAD = "'Bebas Neue',sans-serif"
 
 function unitColor(coa: number, watched: boolean) {

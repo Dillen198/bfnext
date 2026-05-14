@@ -265,12 +265,12 @@ function KillLog({ kills, allPilots, breakdown }: {
     return arr
   }, [kills, sort])
 
+  const victimSideColor = (side: string) => side === 'Blue' ? '#3b82f6' : side === 'Red' ? '#ef4444' : '#64748b'
+
   const totalPages = Math.ceil(sorted.length / PER_PAGE)
   const page_kills = sorted.slice(page * PER_PAGE, (page + 1) * PER_PAGE)
 
   const cell: React.CSSProperties = { padding: '5px 10px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid rgba(42,42,42,0.5)' }
-
-  const sideColor = (side: string) => side === 'Blue' ? '#3b82f6' : side === 'Red' ? '#ef4444' : '#64748b'
 
   return (
     <div className="vs-card">
@@ -305,35 +305,43 @@ function KillLog({ kills, allPilots, breakdown }: {
           <thead>
             <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
               <SortHeader col="time" label="Zulu" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
-              <SortHeader col="target_type" label="Target Type" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
-              <SortHeader col="victim" label="Target Pilot" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
+              <SortHeader col="target_type" label="Target Unit" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
+              <SortHeader col="victim" label="Victim Pilot" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
+              <th style={{ padding: '6px 10px', fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, textAlign: 'left', borderBottom: '1px solid var(--border)' }}>Airframe</th>
               <SortHeader col="weapon" label="Weapon" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
               <th style={{ padding: '6px 10px', fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, textAlign: 'left', borderBottom: '1px solid var(--border)' }}>Theater</th>
             </tr>
           </thead>
           <tbody>
             {page_kills.map((k, i) => {
-              const victimName = k.victim_ucid ? (ucidToName[k.victim_ucid] ?? 'AI') : 'AI'
-              const isPlayerKill = !!k.victim_ucid
+              const victimName = k.victim_ucid ? (ucidToName[k.victim_ucid] ?? 'Unknown') : null
               return (
                 <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.12)' }}>
                   <td style={{ ...cell, fontFamily: 'monospace', color: '#64748b', whiteSpace: 'nowrap' }}>
                     {fmtDate(k.time)} {fmtTime(k.time)}
                   </td>
                   <td style={{ ...cell }}>
-                    <span style={{ color: sideColor(k.victim_side) }}>●</span>
+                    <span style={{ color: victimSideColor(k.victim_side), fontSize: '0.6em' }}>●</span>
                     {' '}
                     <span style={{ color: 'var(--text-muted)' }}>{k.target_type ?? '—'}</span>
                   </td>
                   <td style={cell}>
-                    {isPlayerKill ? (
-                      <span style={{ color: '#f59e0b' }}>{victimName}</span>
+                    {victimName ? (
+                      <span style={{ color: '#f59e0b', fontWeight: 600 }}>{victimName}</span>
                     ) : (
-                      <span style={{ color: '#64748b' }}>AI</span>
+                      <span style={{ color: '#475569' }}>AI / env</span>
                     )}
                   </td>
-                  <td style={{ ...cell, color: '#94a3b8' }}>{k.weapon ?? 'Guns'}</td>
-                  <td style={{ ...cell, color: '#64748b' }}>{ridToScenario[k.round_id] ?? `Round ${k.round_id}`}</td>
+                  <td style={{ ...cell, color: '#60a5fa', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                    {k.killer_airframe ? (
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <Plane size={9} style={{ opacity: 0.6 }} />
+                        {k.killer_airframe}
+                      </span>
+                    ) : <span style={{ color: '#374151' }}>—</span>}
+                  </td>
+                  <td style={{ ...cell, color: '#fbbf24', fontFamily: 'monospace' }}>{k.weapon ?? <span style={{ color: '#374151' }}>—</span>}</td>
+                  <td style={{ ...cell, color: '#475569' }}>{ridToScenario[k.round_id] ?? `Round ${k.round_id}`}</td>
                 </tr>
               )
             })}

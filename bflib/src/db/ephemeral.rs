@@ -202,6 +202,10 @@ pub struct Ephemeral {
     /// Recent weapon-launch events: (shooter_pos, attacking_side, timestamp).
     /// Used to keep enemy objectives awake while weapons are inbound.
     pub(crate) recent_shots: Vec<(Vector2, Side, DateTime<Utc>)>,
+    /// Objectives that have been targeted by artillery/missile strikes, keyed by
+    /// ObjectiveId. Entries expire after ARTY_WAKE_SECS seconds and cause the
+    /// objective's units to be (re)spawned so they are present to absorb fire.
+    pub(crate) artillery_targeted: FxHashMap<ObjectiveId, DateTime<Utc>>,
     pub(super) production_by_side: FxHashMap<Side, Arc<Production>>,
     pub(super) actions_taken: FxHashMap<Side, FxHashMap<String, u32>>,
     pub(super) delayspawnq: BTreeMap<DateTime<Utc>, SmallVec<[GroupId; 8]>>,
@@ -237,8 +241,9 @@ pub struct Ephemeral {
     /// Maps pilot SlotId → mission (moved here from sf_missions when SF is extracted).
     pub(crate) sf_cargo: FxHashMap<SlotId, SfMission>,
     /// Tracks when enemy troops first entered an objective zone (for capture momentum timer).
-    /// Maps ObjectiveId -> (capturing Side, entry DateTime). Cleared if troops leave.
-    pub(super) capture_progress: FxHashMap<ObjectiveId, (dcso3::coalition::Side, DateTime<Utc>)>,
+    /// Maps ObjectiveId -> (capturing Side, entry DateTime, last_seen DateTime).
+    /// last_seen is updated each tick troops are in zone; cleared only after a grace period.
+    pub(super) capture_progress: FxHashMap<ObjectiveId, (dcso3::coalition::Side, DateTime<Utc>, DateTime<Utc>)>,
     /// Last time treasury income was deposited (Smart Commander).
     pub(crate) last_treasury_income: DateTime<Utc>,
     /// Last time objectives were funded (Smart Commander).
@@ -300,6 +305,7 @@ impl Default for Ephemeral {
             groups_with_move_missions: FxHashMap::default(),
             units_potentially_close_to_enemies: FxHashSet::default(),
             recent_shots: Vec::new(),
+            artillery_targeted: FxHashMap::default(),
             production_by_side: FxHashMap::default(),
             actions_taken: FxHashMap::default(),
             delayspawnq: BTreeMap::default(),

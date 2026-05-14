@@ -9,8 +9,8 @@ import { Target, AlertTriangle, Shield, MapPin } from 'lucide-react'
 import { useRound } from '../context/RoundContext'
 
 const TT = {
-  contentStyle: { background: '#111111', border: '1px solid #2a2a2a', borderRadius: 2, color: '#f1f5f9', fontSize: 12 },
-  cursor: { fill: 'rgba(77,124,15,0.04)' },
+  contentStyle: { background: 'var(--bg-elevated)', border: '1px solid var(--border-light)', borderRadius: 4, color: 'var(--text)', fontSize: 12 },
+  cursor: { fill: 'rgba(56,189,248,0.04)' },
 }
 
 type Filter = 'All' | 'Red' | 'Blue' | 'Neutral'
@@ -28,14 +28,20 @@ const KIND_COLORS: Record<string, string> = {
 function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return <div className={`vs-card ${className}`}>{children}</div>
 }
+const ICON_COLOR: Record<string, string> = {
+  'text-blue-400': '#60a5fa',
+  'text-green-400': '#4ade80',
+  'text-cyan-400': '#22d3ee',
+  'text-amber-400': '#fbbf24',
+}
 function CardHeader({ title, icon: Icon, color = 'text-slate-400', right }: {
   title: string; icon: React.ElementType; color?: string; right?: React.ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between px-5 pt-4 pb-3.5" style={{ borderBottom: '1px solid var(--border)' }}>
-      <div className="flex items-center gap-2">
-        <Icon size={13} className={color} />
-        <span className="vs-section-title" style={{ fontSize: '0.72rem' }}>{title}</span>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px 12px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Icon size={13} style={{ color: ICON_COLOR[color] ?? 'var(--text-dim)' }} />
+        <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>{title}</span>
       </div>
       {right}
     </div>
@@ -116,28 +122,28 @@ export default function Objectives() {
         }
       />
 
-      <div className="flex-1 overflow-auto p-4 space-y-4 grid-bg" style={{ background: 'var(--bg)' }}>
+      <div className="flex-1 overflow-auto vs-page" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
         {/* ── Territory bar ── */}
         {total > 0 && (
           <div className="vs-card px-5 py-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[12px] text-slate-600 uppercase tracking-widest flex items-center gap-1.5">
-                <MapPin size={11} className="text-slate-600" />
+              <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.12em', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <MapPin size={11} style={{ color: 'var(--text-dim)' }} />
                 Territory Control
               </span>
-              <div className="flex items-center gap-4 text-[11px] font-mono">
-                <span className="text-blue-400">{Math.round(bluePct)}% Blue</span>
-                <span className="text-slate-600">·</span>
-                <span className="text-red-400">{Math.round(redPct)}% Red</span>
-                <span className="text-slate-600">·</span>
-                <span className="text-slate-500">{Math.round(neutralPct)}% Neutral</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: '0.65rem', fontFamily: 'var(--font-mono)' }}>
+                <span style={{ color: '#60a5fa' }}>{Math.round(bluePct)}% Blue</span>
+                <span style={{ color: 'var(--border-light)' }}>·</span>
+                <span style={{ color: '#f87171' }}>{Math.round(redPct)}% Red</span>
+                <span style={{ color: 'var(--border-light)' }}>·</span>
+                <span style={{ color: 'var(--text-dim)' }}>{Math.round(neutralPct)}% Neutral</span>
               </div>
             </div>
-            <div className="h-2.5 overflow-hidden flex" style={{ background: 'rgba(75,85,99,0.12)', borderRadius: '1px' }}>
-              <div className="h-full health-fill" style={{ width: `${bluePct}%`, background: 'linear-gradient(90deg,#1d4ed8,#3b82f6)' }} />
-              <div className="h-full health-fill" style={{ width: `${neutralPct}%`, background: '#374151' }} />
-              <div className="h-full health-fill" style={{ width: `${redPct}%`, background: 'linear-gradient(90deg,#dc2626,#991b1b)' }} />
+            <div style={{ height: 8, overflow: 'hidden', display: 'flex', background: 'var(--bg-elevated)', borderRadius: 2 }}>
+              <div className="health-fill" style={{ width: `${bluePct}%`, height: '100%', background: 'linear-gradient(90deg,#1d4ed8,#3b82f6)' }} />
+              <div className="health-fill" style={{ width: `${neutralPct}%`, height: '100%', background: 'var(--border-light)' }} />
+              <div className="health-fill" style={{ width: `${redPct}%`, height: '100%', background: 'linear-gradient(90deg,#dc2626,#991b1b)' }} />
             </div>
           </div>
         )}
@@ -149,21 +155,21 @@ export default function Objectives() {
               title="Critical Objectives"
               icon={AlertTriangle}
               color="text-amber-400"
-              right={<span className="text-[10px] text-amber-600 font-mono">{criticalObjs.length} CRITICAL</span>}
+              right={<span style={{ fontSize: '0.6rem', color: '#f59e0b', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}>{criticalObjs.length} CRITICAL</span>}
             />
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-0 divide-y sm:divide-y-0 divide-[#0a1520]">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
               {criticalObjs.map(obj => (
-                <div key={obj.id} className="flex items-center gap-3 px-5 py-3.5 border-b border-[#2a2a2a] hover:bg-amber-500/[0.02]">
-                  <div className="text-lg" style={{ color: KIND_COLORS[obj.kind] ?? '#4b5563' }}>
+                <div key={obj.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '1.2rem', color: KIND_COLORS[obj.kind] ?? 'var(--text-dim)', flexShrink: 0 }}>
                     {KIND_ICONS[obj.kind] ?? '■'}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-[13px] font-semibold text-slate-100 truncate">{obj.name}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)' }}>{obj.name}</span>
                       <SideBadge side={obj.owner} size="xs" />
                     </div>
                     <HealthBar value={obj.health} />
-                    <div className="flex gap-3 mt-1 text-[10px] font-mono text-slate-600">
+                    <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: '0.6rem', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
                       <span>L:{obj.logi}%</span>
                       <span>S:{obj.supply}%</span>
                       <span>F:{obj.fuel}%</span>
@@ -180,17 +186,17 @@ export default function Objectives() {
           {/* Ownership bars */}
           <Card>
             <CardHeader title="Ownership" icon={Shield} color="text-blue-400" />
-            <div className="px-5 py-4 space-y-3">
-              {([['Blue', counts.Blue, '#3b82f6'], ['Red', counts.Red, '#ef4444'], ['Neutral', counts.Neutral, '#4b5563']] as const).map(([side, count, color]) => {
+            <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {([['Blue', counts.Blue, '#3b82f6'], ['Red', counts.Red, '#ef4444'], ['Neutral', counts.Neutral, '#4a5568']] as const).map(([side, count, color]) => {
                 const pct = total > 0 ? count / total * 100 : 0
                 return (
                   <div key={side}>
-                    <div className="flex justify-between text-[12px] mb-1">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: 4 }}>
                       <span style={{ color }}>{side}</span>
-                      <span className="font-mono text-slate-400">{count} <span className="text-slate-600">({Math.round(pct)}%)</span></span>
+                      <span className="font-mono-vs" style={{ color: 'var(--text-muted)' }}>{count} <span style={{ color: 'var(--text-dim)' }}>({Math.round(pct)}%)</span></span>
                     </div>
-                    <div className="h-2 bg-[#191919] rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: color }} />
+                    <div style={{ height: 6, background: 'var(--bg-elevated)', borderRadius: 2, overflow: 'hidden' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: color, transition: 'width 0.5s' }} />
                     </div>
                   </div>
                 )
@@ -204,8 +210,8 @@ export default function Objectives() {
             <div className="p-5">
               <ResponsiveContainer width="100%" height={100}>
                 <BarChart data={healthBuckets} margin={{ left: -10, right: 4 }}>
-                  <XAxis dataKey="range" tick={{ fill: '#374151', fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#374151', fontSize: 11 }} axisLine={false} tickLine={false} width={20} />
+                  <XAxis dataKey="range" tick={{ fill: 'var(--text-dim)', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: 'var(--text-dim)', fontSize: 11 }} axisLine={false} tickLine={false} width={20} />
                   <Tooltip {...TT} />
                   <Bar dataKey="count" radius={[3, 3, 0, 0]}>
                     {healthBuckets.map((b, i) => <Cell key={i} fill={b.fill} />)}
@@ -229,13 +235,13 @@ export default function Objectives() {
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-[100px] flex items-center justify-center text-slate-700 text-sm">No data</div>
+                <div style={{ height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No data</div>
               )}
-              <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-2">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', marginTop: 8 }}>
                 {kindData.map(d => (
-                  <div key={d.name} className="flex items-center gap-1 text-[10px]">
-                    <span className="w-2 h-2 rounded-full" style={{ background: d.fill }} />
-                    <span className="text-slate-600">{d.name} <span className="text-slate-400 font-mono">{d.count}</span></span>
+                  <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.6rem' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: d.fill, display: 'inline-block' }} />
+                    <span style={{ color: 'var(--text-dim)' }}>{d.name} <span className="font-mono-vs" style={{ color: 'var(--text-muted)' }}>{d.count}</span></span>
                   </div>
                 ))}
               </div>
@@ -255,8 +261,8 @@ export default function Objectives() {
                   fontSize: '0.75rem',
                   letterSpacing: '0.1em',
                   padding: '0.3rem 0.75rem',
-                  background: filter === f ? 'rgba(77,124,15,0.12)' : 'transparent',
-                  color: filter === f ? '#65a30d' : 'var(--text-muted)',
+                  background: filter === f ? 'rgba(56,189,248,0.1)' : 'transparent',
+                  color: filter === f ? 'var(--accent)' : 'var(--text-muted)',
                   border: 'none',
                   cursor: 'pointer',
                   transition: 'all 0.15s',
@@ -277,8 +283,8 @@ export default function Objectives() {
                   fontSize: '0.75rem',
                   letterSpacing: '0.1em',
                   padding: '0.3rem 0.75rem',
-                  background: sortBy === s ? 'rgba(77,124,15,0.12)' : 'transparent',
-                  color: sortBy === s ? '#65a30d' : 'var(--text-muted)',
+                  background: sortBy === s ? 'rgba(56,189,248,0.1)' : 'transparent',
+                  color: sortBy === s ? 'var(--accent)' : 'var(--text-muted)',
                   border: 'none',
                   cursor: 'pointer',
                   transition: 'all 0.15s',
@@ -295,42 +301,42 @@ export default function Objectives() {
         <div className="vs-card overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="border-b border-[#2a2a2a]">
+              <thead style={{ background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)' }}>
                 <tr>
                   {['Name', 'Type', 'Owner', 'Health', 'Logistics', 'Supply', 'Fuel', 'Last Change'].map(h => (
-                    <th key={h} className="px-4 py-3 text-left text-[11px] uppercase tracking-widest text-slate-700 whitespace-nowrap">{h}</th>
+                    <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', fontWeight: 700, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {isLoading && (
-                  <tr><td colSpan={8} className="text-center py-10 text-slate-700 text-sm">Loading…</td></tr>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>Loading…</td></tr>
                 )}
                 {filtered.map(obj => {
                   const isCrit = obj.health < 40
                   return (
-                    <tr key={obj.id} className={`border-b border-[#080f1b] kill-row transition-colors ${isCrit ? 'bg-red-500/[0.02]' : ''}`}>
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <span style={{ color: KIND_COLORS[obj.kind] ?? '#4b5563' }}>{KIND_ICONS[obj.kind] ?? '■'}</span>
-                          <span className="text-[13px] font-semibold text-slate-100">{obj.name}</span>
-                          {isCrit && <AlertTriangle size={11} className="text-amber-500 flex-shrink-0" />}
+                    <tr key={obj.id} className="kill-row" style={{ borderBottom: '1px solid var(--border)', background: isCrit ? 'rgba(239,68,68,0.02)' : 'transparent' }}>
+                      <td style={{ padding: '9px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ color: KIND_COLORS[obj.kind] ?? 'var(--text-dim)' }}>{KIND_ICONS[obj.kind] ?? '■'}</span>
+                          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)' }}>{obj.name}</span>
+                          {isCrit && <AlertTriangle size={11} style={{ color: '#f59e0b', flexShrink: 0 }} />}
                         </div>
                       </td>
-                      <td className="px-4 py-2.5 text-[11px] text-slate-600">{obj.kind}</td>
-                      <td className="px-4 py-2.5"><SideBadge side={obj.owner} size="xs" /></td>
-                      <td className="px-4 py-2.5 w-32"><HealthBar value={obj.health} /></td>
-                      <td className="px-4 py-2.5 w-32"><HealthBar value={obj.logi} /></td>
-                      <td className="px-4 py-2.5 w-32"><HealthBar value={obj.supply} /></td>
-                      <td className="px-4 py-2.5 w-32"><HealthBar value={obj.fuel} /></td>
-                      <td className="px-4 py-2.5 text-[10px] text-slate-700 whitespace-nowrap font-mono">
+                      <td style={{ padding: '9px 14px', fontSize: '0.7rem', color: 'var(--text-dim)' }}>{obj.kind}</td>
+                      <td style={{ padding: '9px 14px' }}><SideBadge side={obj.owner} size="xs" /></td>
+                      <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.health} /></td>
+                      <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.logi} /></td>
+                      <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.supply} /></td>
+                      <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.fuel} /></td>
+                      <td className="font-mono-vs" style={{ padding: '9px 14px', fontSize: '0.62rem', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
                         {new Date(obj.last_change).toLocaleString()}
                       </td>
                     </tr>
                   )
                 })}
                 {!isLoading && filtered.length === 0 && (
-                  <tr><td colSpan={8} className="text-center py-10 text-slate-700 text-sm">No objectives match</td></tr>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No objectives match</td></tr>
                 )}
               </tbody>
             </table>

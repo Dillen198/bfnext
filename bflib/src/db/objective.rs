@@ -69,6 +69,7 @@ pub enum ObjGroupClass {
     Armor,
     Services,
     Naval,
+    Infantry,
     Other,
 }
 
@@ -76,7 +77,7 @@ impl ObjGroupClass {
     pub fn is_services(&self) -> bool {
         match self {
             Self::Services => true,
-            Self::Logi | Self::Aaa | Self::Lr | Self::Mr | Self::Sr | Self::Armor | Self::Naval | Self::Other => {
+            Self::Logi | Self::Aaa | Self::Lr | Self::Mr | Self::Sr | Self::Armor | Self::Naval | Self::Infantry | Self::Other => {
                 false
             }
         }
@@ -92,8 +93,13 @@ impl ObjGroupClass {
             | Self::Sr
             | Self::Armor
             | Self::Naval
+            | Self::Infantry
             | Self::Other => false,
         }
+    }
+
+    pub fn is_infantry(&self) -> bool {
+        matches!(self, Self::Infantry)
     }
 }
 
@@ -143,6 +149,12 @@ impl From<&str> for ObjGroupClass {
             || s.starts_with("ARMOR")
         {
             ObjGroupClass::Armor
+        } else if s.starts_with("BINF")
+            || s.starts_with("RINF")
+            || s.starts_with("NINF")
+            || s.starts_with("INF")
+        {
+            ObjGroupClass::Infantry
         } else if s.starts_with("BCARRIER")
             || s.starts_with("RCARRIER")
             || s.starts_with("NCARRIER")
@@ -294,6 +306,8 @@ pub struct Objective {
     pub(super) health: u8,
     pub(super) logi: u8,
     #[serde(default)]
+    pub(super) infantry: u8,
+    #[serde(default)]
     pub(super) supply: u8,
     #[serde(default)]
     pub(super) fuel: u8,
@@ -332,7 +346,7 @@ impl Objective {
     }
 
     pub fn captureable(&self) -> bool {
-        self.logi == 0
+        self.health <= 20 && self.infantry == 0
     }
 
     pub fn owner(&self) -> Side {
@@ -445,7 +459,7 @@ impl Db {
         obj.map(|obj| (dist.sqrt(), azumith2d_to(obj.zone.pos(), pos), obj))
     }
 
-    fn compute_objective_status(&self, obj: &Objective) -> Result<(u8, u8)> {
+    fn compute_objective_status(&self, obj: &Objective) -> Result<(u8, u8, u8)> {
         obj.groups
             .get(&obj.owner)
             .map(|groups| {
@@ -453,15 +467,15 @@ impl Db {
                 let mut alive = 0;
                 let mut logi_total = 0;
                 let mut logi_alive = 0;
+                let mut infantry_total = 0;
+                let mut infantry_alive = 0;
                 let mut has_supply_ship = false;
                 let mut supply_ship_alive = false;
 
                 for gid in groups {
                     let group = group!(self, gid)?;
-                    let logi = match &group.class {
-                        ObjGroupClass::Logi => true,
-                        _ => false,
-                    };
+                    let is_logi = group.class.is_logi();
+                    let is_infantry = group.class.is_infantry();
                     for uid in &group.units {
                         let unit = unit!(self, uid)?;
 
@@ -477,13 +491,19 @@ impl Db {
 
                         if !unit.tags.contains(UnitTag::Invincible) {
                             total += 1;
-                            if logi {
+                            if is_logi {
                                 logi_total += 1;
+                            }
+                            if is_infantry {
+                                infantry_total += 1;
                             }
                             if !unit.dead {
                                 alive += 1;
-                                if logi {
+                                if is_logi {
                                     logi_alive += 1;
+                                }
+                                if is_infantry {
+                                    infantry_alive += 1;
                                 }
                             }
                         }
@@ -492,6 +512,7 @@ impl Db {
 
                 let health = ((alive as f32 / total as f32) * 100.).trunc() as u8;
                 let mut logi = ((logi_alive as f32 / logi_total as f32) * 100.).trunc() as u8;
+                let infantry = ((infantry_alive as f32 / infantry_total as f32) * 100.).trunc() as u8;
 
                 // For carrier groups with supply ships, logi becomes 0 if supply ship is dead
                 if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
@@ -500,9 +521,9 @@ impl Db {
                     }
                 }
 
-                Ok((health, logi))
+                Ok((health, logi, infantry))
             })
-            .unwrap_or(Ok((0, 0)))
+            .unwrap_or(Ok((0, 0, 0)))
     }
 
     pub(super) fn delete_objective(&mut self, oid: &ObjectiveId) -> Result<()> {
@@ -707,6 +728,7 @@ impl Db {
             owner: side,
             health: 100,
             logi: 100,
+            infantry: 0,
             supply: 0,
             fuel: 0,
             spawned: true,
@@ -781,10 +803,11 @@ impl Db {
         let (kind, health, logi, _prev_logi) = {
             let obj = objective!(self, oid)?;
             let prev_logi = obj.logi;
-            let (health, logi) = self.compute_objective_status(obj)?;
+            let (health, logi, infantry) = self.compute_objective_status(obj)?;
             let obj = objective_mut!(self, oid)?;
             obj.health = health;
             obj.logi = logi;
+            obj.infantry = infantry;
             obj.last_change_ts = now;
 
             // For carrier groups, mark warehouse as damaged if supply ship is destroyed (logi drops to 0)
@@ -841,6 +864,7 @@ impl Db {
             for class in [
                 ObjGroupClass::Logi,
                 ObjGroupClass::Services,
+                ObjGroupClass::Infantry,
                 ObjGroupClass::Sr,
                 ObjGroupClass::Aaa,
                 ObjGroupClass::Mr,
@@ -966,6 +990,32 @@ impl Db {
         let mut became_threatened: SmallVec<[ObjectiveId; 4]> = smallvec![];
         let mut became_clear: SmallVec<[ObjectiveId; 4]> = smallvec![];
         let cooldown = Duration::seconds(self.ephemeral.cfg.threatened_cooldown as i64);
+        const ARTY_WAKE_SECS: i64 = 300; // keep objective alive 5 min after last artillery targeting
+        const DEPLOY_WAKE_DIST_SQ: f64 = 10_000.0 * 10_000.0; // 10 km radius for deployed-unit wake
+        // Precompute live deployed-unit positions once (deployed + troops + dismounts).
+        // This avoids repeating O(groups × units) hashmap lookups for every objective
+        // and gives the inner wake check a tight, cache-friendly vec to scan instead.
+        let mut deployed_positions: SmallVec<[(Vector2, Side); 64]> = SmallVec::new();
+        for gid in self
+            .persisted
+            .deployed
+            .into_iter()
+            .chain(self.persisted.troops.into_iter())
+            .chain(self.persisted.dismounts.into_iter())
+        {
+            let group = match self.persisted.groups.get(gid) {
+                Some(g) => g,
+                None => continue,
+            };
+            let side = group.side;
+            for uid in &group.units {
+                if let Some(unit) = self.persisted.units.get(uid) {
+                    if !unit.dead {
+                        deployed_positions.push((unit.pos, side));
+                    }
+                }
+            }
+        }
         for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
             let mut spawn = false;
             let mut is_threatened = false;
@@ -981,6 +1031,31 @@ impl Db {
                 &mut is_threatened,
             ) {
                 error!("failed to check close units {} {e}", obj.id)
+            }
+            // If enemy artillery has recently targeted this objective, force it to
+            // spawn (or stay spawned) so units are present to absorb the incoming fire.
+            if let Some(t) = self.ephemeral.artillery_targeted.get(oid) {
+                if now - *t <= Duration::seconds(ARTY_WAKE_SECS) {
+                    spawn = true;
+                }
+            }
+            // If any enemy-side player-deployed unit (troop, vehicle, or dismount) is
+            // within 10 km of this objective, keep it spawned.  Unlike the main
+            // check_close_units path, this covers deployed units that have been
+            // stationary long enough to age out of units_potentially_close_to_enemies.
+            // Uses precomputed deployed_positions to avoid O(groups × units) hashmap
+            // lookups per objective — now just a linear scan over a flat vec.
+            if !spawn {
+                let obj_pos: na::Point2<f64> = obj.zone.pos().into();
+                for (pos, side) in &deployed_positions {
+                    if *side != obj.owner {
+                        let d = na::distance_squared(&obj_pos, &(*pos).into());
+                        if d <= DEPLOY_WAKE_DIST_SQ {
+                            spawn = true;
+                            break;
+                        }
+                    }
+                }
             }
             if spawn {
                 obj.last_activate = now;
@@ -1100,6 +1175,10 @@ impl Db {
         self.ephemeral
             .units_potentially_close_to_enemies
             .retain(|uid| is_close_to_enemies.contains(uid));
+        // Expire stale artillery-targeting entries so the map doesn't grow unbounded.
+        self.ephemeral
+            .artillery_targeted
+            .retain(|_, t| now - *t <= Duration::seconds(ARTY_WAKE_SECS));
         Ok((became_threatened, became_clear))
     }
 
@@ -1445,9 +1524,19 @@ impl Db {
                 };
 
                 if capture_secs > 0 {
-                    // Momentum timer: record OR reset entry time.
-                    // Pre-collect messages before mutably borrowing capture_progress.
                     let is_new = !self.ephemeral.capture_progress.contains_key(&oid);
+                    let entry = self.ephemeral.capture_progress
+                        .entry(oid)
+                        .or_insert((*side, now, now));
+                    // Reset timer if a different side takes over
+                    if entry.0 != *side {
+                        *entry = (*side, now, now);
+                    } else {
+                        // Refresh last_seen so the grace-period retain keeps this entry alive
+                        entry.2 = now;
+                    }
+                    let elapsed = (now - entry.1).num_seconds();
+                    let remaining = capture_secs - elapsed;
                     if is_new {
                         let obj_name = self.persisted.objectives.get(&oid)
                             .map(|o| o.name.clone())
@@ -1455,22 +1544,13 @@ impl Db {
                         let enemy = side.opposite();
                         self.ephemeral.msgs().panel_to_side(
                             15, false, *side,
-                            format_compact!("⚔ Capturing {}… ({} sec)", obj_name, capture_secs),
+                            format_compact!("⚔ Capturing {}… ({} sec)", obj_name, remaining.max(0)),
                         );
                         self.ephemeral.msgs().panel_to_side(
                             15, false, enemy,
                             format_compact!("⚠ {} is being captured! Eliminate enemy troops!", obj_name),
                         );
                     }
-                    let entry = self.ephemeral.capture_progress
-                        .entry(oid)
-                        .or_insert((*side, now));
-                    // If a different side now has troops (shouldn't happen given the all-same-side
-                    // check above), reset the timer
-                    if entry.0 != *side {
-                        *entry = (*side, now);
-                    }
-                    let elapsed = (now - entry.1).num_seconds();
                     if elapsed < capture_secs {
                         // Not enough time yet — skip capture this tick
                         continue;
@@ -1556,8 +1636,13 @@ impl Db {
                 self.ephemeral.dirty();
             }
         }
-        // Clear capture progress for objectives where troops are no longer present
-        self.ephemeral.capture_progress.retain(|oid, _| in_zone_objectives.contains(oid));
+        // Clear capture progress only after a grace period with no troops in zone.
+        // This prevents brief position-update gaps from resetting the timer.
+        const CAPTURE_GRACE_SECS: i64 = 10;
+        self.ephemeral.capture_progress.retain(|oid, entry| {
+            in_zone_objectives.contains(oid)
+                || (now - entry.2).num_seconds() < CAPTURE_GRACE_SECS
+        });
         if actually_captured.len() > 0 {
             self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses {
                 objectives: self
@@ -1889,6 +1974,18 @@ impl Db {
             // --- Momentum timer ---
             if capture_secs > 0 {
                 let is_new = !self.ephemeral.capture_progress.contains_key(&oid);
+                let entry = self
+                    .ephemeral
+                    .capture_progress
+                    .entry(oid)
+                    .or_insert((captor_side, now, now));
+                if entry.0 != captor_side {
+                    *entry = (captor_side, now, now);
+                } else {
+                    entry.2 = now;
+                }
+                let elapsed = (now - entry.1).num_seconds();
+                let remaining = capture_secs - elapsed;
                 if is_new {
                     let obj_name = self
                         .persisted
@@ -1901,7 +1998,7 @@ impl Db {
                         15,
                         false,
                         captor_side,
-                        format_compact!("⚔ Boarding {}… ({} sec)", obj_name, capture_secs),
+                        format_compact!("⚔ Boarding {}… ({} sec)", obj_name, remaining.max(0)),
                     );
                     self.ephemeral.msgs().panel_to_side(
                         15,
@@ -1910,15 +2007,6 @@ impl Db {
                         format_compact!("⚠ {} is being boarded! Eliminate enemy troops!", obj_name),
                     );
                 }
-                let entry = self
-                    .ephemeral
-                    .capture_progress
-                    .entry(oid)
-                    .or_insert((captor_side, now));
-                if entry.0 != captor_side {
-                    *entry = (captor_side, now);
-                }
-                let elapsed = (now - entry.1).num_seconds();
                 if elapsed < capture_secs {
                     continue; // Not enough time yet
                 }
@@ -2029,10 +2117,13 @@ impl Db {
             );
         }
 
-        // Clear capture_progress for carriers no longer being contested
+        // Clear capture_progress for carriers no longer being contested (with grace period)
         self.ephemeral
             .capture_progress
-            .retain(|oid, _| in_zone_oids.contains(oid));
+            .retain(|oid, entry| {
+                in_zone_oids.contains(oid)
+                    || (now - entry.2).num_seconds() < 10
+            });
 
         Ok(actually_captured)
     }

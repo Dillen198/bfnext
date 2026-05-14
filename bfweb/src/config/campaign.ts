@@ -39,22 +39,31 @@ export interface CampaignConfig {
   // Faction labels
   blueLabel: string
   redLabel:  string
-  // Colors
-  accentColor:       string
-  accentHoverColor:  string
-  blueColor:         string
-  redColor:          string
-  bgColor:           string
-  bgCardColor:       string
-  bgElevatedColor:   string
-  borderColor:       string
+  // Colors — override the military palette if desired
+  accentColor:       string   // primary OD-green accent
+  accentHoverColor:  string   // brighter accent on hover
+  blueColor:         string   // BLUFOR faction color
+  redColor:          string   // REDFOR faction color
+  bgColor:           string   // page background
+  bgCardColor:       string   // card background
+  bgElevatedColor:   string   // elevated / input background
+  borderColor:       string   // border color
   // Map
-  mapCenter: [number, number]
+  mapCenter: [number, number]   // [lat, lon]
   mapZoom:   number
   // Dashboard layout
-  dashboardRightPanelWidth:  number   // px width of the live panel on the right
-  dashboardObjectivesHeight: number   // px max-height of the objectives strip
-  dashboardKillFeedCount:    number   // number of recent kills to show
+  dashboardRightPanelWidth:  number   // px — right panel column width (unused in new layout)
+  dashboardObjectivesHeight: number   // px — objectives strip max-height (unused in new layout)
+  dashboardKillFeedCount:    number   // number of recent kills shown in the engagement log
+  // Background / theme
+  backgroundImage:        string   // URL to a background image — leave empty for none
+  backgroundImageOpacity: number   // 0–1 opacity of the background image, default 0.08
+  backgroundImageSize:    string   // CSS background-size value, default 'cover'
+  backgroundImageBlend:   string   // CSS mix-blend-mode, default 'overlay'
+  camoPattern:            string   // built-in pattern: 'none' | 'digital' | 'hex' | 'terrain' | 'multicam'
+  camoOpacity:            number   // 0–1 opacity of the camo overlay, default 0.05
+  // Integrations
+  srsUrl: string   // SRS server URL e.g. "http://localhost:5002" — leave empty to hide SRS panel
   // Credits
   engineCredits: EngineCredit[]
   serverCredits: ServerCredit[]
@@ -91,6 +100,15 @@ export const campaignDefaults: CampaignConfig = {
   dashboardRightPanelWidth:  300,
   dashboardObjectivesHeight: 220,
   dashboardKillFeedCount:    30,
+
+  backgroundImage:        '',
+  backgroundImageOpacity: 0.08,
+  backgroundImageSize:    'cover',
+  backgroundImageBlend:   'overlay',
+  camoPattern:            'none',
+  camoOpacity:            0.05,
+
+  srsUrl: '',
 
   engineCredits: [
     { name: 'EvilKipper', handle: '',               role: 'Creator'              },

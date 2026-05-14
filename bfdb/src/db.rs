@@ -49,6 +49,14 @@ db_id!(RoundId);
 db_id!(SortieId);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct BanRecord {
+    pub(crate) name:      std::string::String,
+    pub(crate) banned_at: DateTime<Utc>,
+    pub(crate) until:     Option<DateTime<Utc>>,
+    pub(crate) reason:    std::string::String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WeatherSnapshot {
     pub(crate) temp_c: f64,
     pub(crate) wind_speed_kts: f64,
@@ -204,14 +212,11 @@ impl Pilots {
         mut f: F,
     ) -> Result<()> {
         self.aggregates
-            .fetch_and_update(&k, |a| match a {
-                None => None,
-                Some(mut a) => {
-                    f(&mut a);
-                    Some(a)
-                }
-            })?
-            .ok_or_else(|| anyhow!("aggregates {k:?} is missing"))?;
+            .fetch_and_update(&k, |a| {
+                let mut a = a.unwrap_or_default();
+                f(&mut a);
+                Some(a)
+            })?;
         Ok(())
     }
 
@@ -405,6 +410,8 @@ pub(crate) struct StatsDbInner {
     objective_captures: Tree<(RoundId, ObjectiveId), u32>,
     // Aircraft sortie counts per round: (RoundId, vehicle_type) -> (sortie_count, total_hours_f32)
     aircraft_sorties: Tree<(RoundId, std::string::String), (u32, f32)>,
+    // Admin-managed ban list (bfdb-native, separate from bflib's cfg.banned)
+    admin_bans: Tree<Ucid, BanRecord>,
 }
 
 pub(crate) struct StatsDb(Arc<StatsDbInner>);
@@ -572,6 +579,7 @@ impl StatsDb {
             latest_weather: Arc::new(RwLock::new(None)),
             objective_captures: Tree::open(&db, "objective_captures")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
+            admin_bans: Tree::open(&db, "admin_bans")?,
         }));
         let _t = t.clone();
         task::spawn(async move {
@@ -613,6 +621,7 @@ impl StatsDb {
             latest_weather: Arc::new(RwLock::new(None)),
             objective_captures: Tree::open(&db, "objective_captures")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
+            admin_bans: Tree::open(&db, "admin_bans")?,
         }));
         let _t = t.clone();
         task::spawn(async move {
@@ -1175,6 +1184,71 @@ impl StatsDb {
         self.latest_weather.read().ok()?.clone()
     }
 
+    pub(crate) fn latest_session_end(&self) -> Result<Option<SessionEnd>> {
+        // Walk all sessions, newest last, return the most recent one that has a SessionEnd
+        let mut latest: Option<SessionEnd> = None;
+        for r in self.session.iter() {
+            let (_, session) = r?;
+            if let Some(end) = session.end {
+                latest = Some(end);
+            }
+        }
+        Ok(latest)
+    }
+
+    // ── Admin ban management ─────────────────────────────────────────────────
+
+    pub(crate) fn ban_player(&self, ucid: Ucid, record: BanRecord) -> Result<()> {
+        self.admin_bans.insert(&ucid, &record)?;
+        Ok(())
+    }
+
+    pub(crate) fn unban_player(&self, ucid: &Ucid) -> Result<bool> {
+        let had = self.admin_bans.remove(ucid)?.is_some();
+        Ok(had)
+    }
+
+    pub(crate) fn list_admin_bans(&self) -> Result<Vec<(Ucid, BanRecord)>> {
+        let mut out = Vec::new();
+        for r in self.admin_bans.iter() {
+            let (ucid, rec) = r?;
+            out.push((ucid, rec));
+        }
+        Ok(out)
+    }
+
+    /// Bans recorded by bflib in the latest session's Cfg (read-only mirror)
+    pub(crate) fn session_bans_from_cfg(&self) -> Result<Vec<(Ucid, std::string::String, Option<DateTime<Utc>>)>> {
+        let mut latest_cfg: Option<Cfg> = None;
+        for r in self.session.iter() {
+            let (_, s) = r?;
+            latest_cfg = Some(s.cfg);
+        }
+        let mut out = Vec::new();
+        if let Some(cfg) = latest_cfg {
+            for (ucid, (until, name)) in &cfg.banned {
+                out.push((*ucid, name.to_string(), *until));
+            }
+        }
+        Ok(out)
+    }
+
+    // ── Perf history ─────────────────────────────────────────────────────────
+
+    pub(crate) fn session_perf_history(&self, limit: usize) -> Result<Vec<SessionEnd>> {
+        let mut ends: Vec<SessionEnd> = Vec::new();
+        for r in self.session.iter() {
+            let (_, s) = r?;
+            if let Some(end) = s.end {
+                ends.push(end);
+            }
+        }
+        if ends.len() > limit {
+            ends.drain(0..ends.len() - limit);
+        }
+        Ok(ends)
+    }
+
     pub(crate) fn active_session_stop(&self, round: RoundId) -> Option<DateTime<Utc>> {
         self.session
             .scan_prefix(&round)
@@ -1697,6 +1771,13 @@ impl StatsDb {
                     let ac_key = (ctx.round, v);
                     let (cnt, prev_hrs) = self.aircraft_sorties.get(&ac_key)?.unwrap_or((0, 0.0));
                     self.aircraft_sorties.insert(&ac_key, &(cnt, prev_hrs + hours))?;
+                    // Also credit hours to pilot total and per-round aggregates
+                    self.pilots.with_pilot_and_aggregates(
+                        id,
+                        ctx.round,
+                        |p| p.total.hours += hours,
+                        |a| a.hours += hours,
+                    )?;
                 }
             }
             Stat::Life { id, lives } => {

@@ -1361,8 +1361,12 @@ impl Db {
         if last < total {
             let mut uids: SmallVec<[UnitId; 64]> = smallvec![];
             let elts = self.ephemeral.units_able_to_move.as_slice();
-            let stop = last + max(1, total >> 4);
-            while last < total && uids.len() < stop {
+            // Process 1/16 of units per tick, capped at 32 to bound frame time.
+            // Bug fix: compare uids.len() to the CHUNK SIZE, not the absolute
+            // stop index — the old `uids.len() < stop` doubled the batch each
+            // successive tick (tick 2 processed 2× the intended amount, etc.).
+            let chunk = max(1, total >> 4).min(32);
+            while last < total && uids.len() < chunk {
                 uids.push(elts[last]);
                 last += 1;
             }

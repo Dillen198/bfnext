@@ -58,7 +58,7 @@ export default function LoginPage() {
       <div style={{
         padding: '2rem', width: '100%', maxWidth: '340px',
         border: '1px solid var(--border)', borderRadius: '4px',
-        background: '#0d0d0d',
+        background: 'var(--bg-card)',
       }}>
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
