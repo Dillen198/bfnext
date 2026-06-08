@@ -2104,6 +2104,7 @@ impl Db {
                 rtb: _,
                 origin: _,
                 ammo: _,
+                jtac: _,
             } => match &spec.kind {
                 ActionKind::Tanker(ai_plane_cfg) => (
                     ai_plane_cfg.altitude,
@@ -2276,6 +2277,7 @@ impl Db {
             rtb: Some(pos),
             origin: Some(obj.id),
             ammo: 0,
+            jtac: None,
         };
         let gid = self
             .add_group(
@@ -2811,6 +2813,7 @@ impl Db {
                     spec: spec.clone(),
                     cost_fraction: 1.,
                     origin: None,
+                    jtac: None,
                 };
                 let gid = self.add_and_queue_group(
                     &spctx,
@@ -2862,6 +2865,7 @@ impl Db {
             spec: troop_cfg.clone(),
             origin: Some(origin),
             cost_fraction: 1.,
+            jtac: None,
         };
         let spctx = SpawnCtx::new(lua)?;
         let (n, oldest) = self.number_troops_deployed(side, troop_cfg.name.as_str())?;

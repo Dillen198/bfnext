@@ -62,6 +62,7 @@ pub struct JtDesc {
     pub id: JtId,
     pub side: Side,
     pub spec: DeployableJtac,
+    pub state: Option<bfprotocols::cfg::JtacState>,
     pub air: bool,
 }
 
@@ -455,19 +456,29 @@ impl Db {
                             Troop {
                                 jtac: Some(jtac), ..
                             },
-                        ..
-                    }
-                    | DeployKind::Deployed {
-                        spec:
-                            Deployable {
-                                jtac: Some(jtac), ..
-                            },
+                        jtac: jtac_state,
                         ..
                     } => Some(JtDesc {
                         pos,
                         id: JtId::Group(*gid),
                         side: group.side,
                         spec: jtac.clone(),
+                        state: jtac_state.clone(),
+                        air: false,
+                    }),
+                    DeployKind::Deployed {
+                        spec:
+                            Deployable {
+                                jtac: Some(jtac), ..
+                            },
+                        jtac: jtac_state,
+                        ..
+                    } => Some(JtDesc {
+                        pos,
+                        id: JtId::Group(*gid),
+                        side: group.side,
+                        spec: jtac.clone(),
+                        state: jtac_state.clone(),
                         air: false,
                     }),
                     DeployKind::Action {
@@ -476,12 +487,14 @@ impl Db {
                                 kind: ActionKind::Drone(DroneCfg { jtac, .. }),
                                 ..
                             },
+                        jtac: jtac_state,
                         ..
                     } => Some(JtDesc {
                         pos,
                         id: JtId::Group(*gid),
                         side: group.side,
                         spec: jtac.clone(),
+                        state: jtac_state.clone(),
                         air: true,
                     }),
                     DeployKind::Crate { .. }
@@ -504,6 +517,7 @@ impl Db {
                         id,
                         side: p.side,
                         spec: jt.clone(),
+                        state: None,
                         air: true,
                     }),
                     None => match self.ephemeral.cargo.get(&slot) {
@@ -516,6 +530,7 @@ impl Db {
                                         id,
                                         side: p.side,
                                         spec: jt.clone(),
+                                        state: it.jtac.clone(),
                                         air: false,
                                     });
                                 }

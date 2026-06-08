@@ -254,6 +254,7 @@ impl Db {
                                 moved_by: _,
                                 cost_fraction: _,
                                 origin: _,
+                                jtac: _,
                             } => Some(player.clone()),
                             DeployKind::Troop {
                                 player,
@@ -261,6 +262,7 @@ impl Db {
                                 moved_by: _,
                                 origin: _,
                                 cost_fraction: _,
+                                ..
                             } => Some(*player),
                             DeployKind::Action { player, .. } => player.clone(),
                             DeployKind::Crate { .. }

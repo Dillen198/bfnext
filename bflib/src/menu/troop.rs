@@ -105,7 +105,7 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
 fn extract_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    match ctx.db.extract_troops(lua, &slot) {
+    match ctx.db.extract_troops(lua, &ctx.jtac, &slot) {
         Ok((tr, _extracted_gid)) => {
             let player = player_name(&ctx.db, &slot);
 
@@ -185,7 +185,7 @@ fn disembark_ground_vehicle(lua: MizLua, arg: ArgTuple<GroupId, bfprotocols::db:
 
 fn list_ground_vehicle_passengers(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
-    let (_, _slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let (side, _slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
     if cfg.ground_vehicle_cargo.is_empty() {
         ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("No ground vehicle cargo configured"));
@@ -197,13 +197,13 @@ fn list_ground_vehicle_passengers(lua: MizLua, gid: GroupId) -> Result<()> {
         .ephemeral
         .ground_vehicle_passengers
         .values()
-        .any(|p| !p.troops.is_empty());
+        .any(|p| p.side == side && !p.troops.is_empty());
     if !has_pax {
-        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("No troops aboard nearby vehicles"));
+        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("No troops aboard friendly vehicles"));
     } else {
         let now = chrono::Utc::now();
         let manifests: Vec<_> = ctx.db.ephemeral.ground_vehicle_passengers.values()
-            .filter(|p| !p.troops.is_empty())
+            .filter(|p| p.side == side && !p.troops.is_empty())
             .map(|pax| {
                 let names: Vec<_> = pax.troops.iter().map(|t| t.troop.name.as_str()).collect();
                 let age_min = (now - pax.loaded_at).num_minutes();

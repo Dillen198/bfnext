@@ -1447,6 +1447,7 @@ impl Db {
                             origin,
                             moved_by: _,
                             cost_fraction: _,
+                            ..
                         } if spec.can_capture => {
                             let in_range = group
                                 .units

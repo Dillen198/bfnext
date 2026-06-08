@@ -20,7 +20,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{UnitTag, UnitTags, Vehicle},
+    cfg::{UnitTag, UnitTags, Vehicle, JtacState},
     db::{
         group::{GroupId, UnitId},
         objective::ObjectiveId,
@@ -258,6 +258,45 @@ pub struct Jtac {
 }
 
 impl Jtac {
+    pub fn state(&self) -> JtacState {
+        JtacState {
+            filter: self.filter,
+            priority: self.priority.clone(),
+            autoshift: self.autoshift,
+            ir_pointer: self.ir_pointer,
+            code: self.code,
+        }
+    }
+
+    pub fn apply_state(&mut self, state: JtacState) {
+        self.filter = state.filter;
+        self.priority = state.priority;
+        self.autoshift = state.autoshift;
+        self.ir_pointer = state.ir_pointer;
+        self.code = state.code;
+    }
+
+    fn persist_state(&self, db: &mut Db) {
+        use crate::db::group::DeployKind;
+        if let JtId::Group(gid) = self.gid {
+            if let Some(group) = db.persisted.groups.get_mut_cow(&gid) {
+                let state = bfprotocols::cfg::JtacState {
+                    filter: self.filter,
+                    priority: self.priority.clone(),
+                    autoshift: self.autoshift,
+                    ir_pointer: self.ir_pointer,
+                    code: self.code,
+                };
+                match &mut group.origin {
+                    DeployKind::Deployed { jtac, .. } => *jtac = Some(state),
+                    DeployKind::Action { jtac, .. } => *jtac = Some(state),
+                    DeployKind::Troop { jtac, .. } => *jtac = Some(state),
+                    _ => {}
+                }
+            }
+        }
+    }
+
     fn new(
         db: &Db,
         gid: JtId,
@@ -622,19 +661,24 @@ impl Jtac {
     }
 
     fn set_code(&mut self, lua: MizLua, code_part: u16) -> Result<()> {
+        let thousands = code_part / 1000;
         let hundreds = code_part / 100;
         let tens = code_part / 10;
-        if hundreds > 9 || (hundreds > 0 && code_part % 100 > 0) || (tens > 0 && code_part % 10 > 0)
+        if thousands > 9 || (thousands > 0 && code_part % 1000 > 0) || (hundreds > 0 && code_part % 100 > 0) || (tens > 0 && code_part % 10 > 0)
         {
             bail!("invalid code part {code_part}, mixed scales")
         }
-        if hundreds > 0 {
+        if thousands > 0 {
+            let rest = self.code % 1000;
+            self.code = code_part + rest;
+        } else if hundreds > 0 {
+            let thou = self.code / 1000;
             let tens_ones = self.code % 100;
-            self.code = 1000 + code_part + tens_ones;
+            self.code = 1000 * thou + code_part + tens_ones;
         } else if tens > 0 {
-            let hundreds = self.code / 100;
+            let thou_hund = self.code / 100;
             let ones = self.code % 10;
-            self.code = 100 * hundreds + code_part + ones;
+            self.code = 100 * thou_hund + code_part + ones;
         } else {
             let c = self.code / 10;
             self.code = 10 * c + code_part;
@@ -1191,22 +1235,26 @@ impl Jtac {
                 self.set_target(db, lua, 0)?;
             }
         }
+        self.persist_state(db);
         Ok(())
     }
 
     pub fn toggle_ir_pointer(&mut self, db: &mut Db, lua: MizLua) -> Result<()> {
         self.ir_pointer = !self.ir_pointer;
+        self.persist_state(db);
         self.reset_target(db, lua).context("resetting target")?;
         Ok(())
     }
 
     pub fn clear_filter(&mut self, db: &mut Db, lua: MizLua) -> Result<bool> {
         self.filter = BitFlags::empty();
+        self.persist_state(db);
         self.sort_contacts(db, lua)
     }
 
     pub fn add_filter(&mut self, db: &mut Db, lua: MizLua, tag: BitFlags<UnitTag>) -> Result<bool> {
         self.filter |= tag;
+        self.persist_state(db);
         self.sort_contacts(db, lua)
     }
 
@@ -1515,13 +1563,14 @@ impl Jtacs {
     /// set part of the laser code, defined by the scale of the passed in number. For example,
     /// passing 600 sets the hundreds part of the code to 6. passing 8 sets the ones part of the code to 8.
     /// other parts of the existing code are left alone.
-    pub fn set_code_part(&mut self, lua: MizLua, gid: &JtId, code_part: u16) -> Result<()> {
+    pub fn set_code_part(&mut self, db: &mut Db, lua: MizLua, gid: &JtId, code_part: u16) -> Result<()> {
         let jt = self.get_mut(gid)?;
         let prev_code = jt.code;
         let oid = jt.location.oid;
         let side = jt.side;
         jt.set_code(lua, code_part)?;
         let code = jt.code;
+        jt.persist_state(db);
         Self::remove_code_by_location(&mut self.code_by_location, side, oid, prev_code, *gid);
         Self::add_code_by_location(&mut self.code_by_location, side, oid, code, *gid);
         Ok(())
@@ -1734,6 +1783,7 @@ impl Jtacs {
             side,
             spec,
             air,
+            state,
         } = jt;
         if !saw_jtacs.contains(&id) {
             saw_jtacs.push(id)
@@ -1746,7 +1796,7 @@ impl Jtacs {
             .or_default()
             .entry(id)
             .or_insert_with(|| {
-                let jt = Jtac::new(
+                let mut jt = Jtac::new(
                     db,
                     id,
                     spec.name.as_deref().map(CompactString::new),
@@ -1757,6 +1807,19 @@ impl Jtacs {
                     spec.default_laser_code,
                     spec.range as f64,
                 );
+                if let Some(st) = state.clone() {
+                    jt.apply_state(st);
+                    let obj_name = db.objective(&jt.location.oid).map(|o| o.name()).unwrap_or("Unknown location");
+                    let bearing = (jt.location.bearing * 180.0 / std::f64::consts::PI).round();
+                    let name_str = jt.name.as_deref().unwrap_or("");
+                    let display = if name_str.is_empty() {
+                        format_compact!("{}", jt.gid)
+                    } else {
+                        format_compact!("{} ({})", name_str, jt.gid)
+                    };
+                    let msg = format_compact!("JTAC {} is online at {} degrees {:.0} meters from {}", display, bearing, jt.location.distance, obj_name);
+                    db.ephemeral.msgs().panel_to_side(10, false, jt.side, msg);
+                }
                 self.menu_dirty
                     .entry(side)
                     .or_default()

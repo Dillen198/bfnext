@@ -102,6 +102,8 @@ pub struct InternalTroop {
     pub origin: Option<ObjectiveId>,
     pub cost_fraction: f32,
     pub troop: Troop,
+    #[serde(default)]
+    pub jtac: Option<bfprotocols::cfg::JtacState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1120,6 +1122,7 @@ impl Db {
                                     spec: spec.clone(),
                                     cost_fraction: 1.,
                                     origin: Some(from_obj),
+                                    jtac: None,
                                 };
                                 let gid = self.add_and_queue_group(
                                     &spctx,
@@ -1390,6 +1393,7 @@ impl Db {
             origin: Some(origin),
             cost_fraction,
             troop: troop_cfg.clone(),
+            jtac: None,
         });
         Trigger::singleton(lua)?
             .action()?
@@ -1467,6 +1471,7 @@ impl Db {
             spec: it.troop.clone(),
             origin: it.origin,
             cost_fraction: it.cost_fraction,
+            jtac: it.jtac.clone(),
         };
         let spctx = SpawnCtx::new(lua)?;
         if let Some(gid) = to_delete {
@@ -1541,7 +1546,7 @@ impl Db {
         Ok(it.troop)
     }
 
-    pub fn extract_troops(&mut self, lua: MizLua, slot: &SlotId) -> Result<(Troop, GroupId)> {
+    pub fn extract_troops(&mut self, lua: MizLua, jtacs: &crate::jtac::Jtacs, slot: &SlotId) -> Result<(Troop, GroupId)> {
         let (cargo_capacity, side, unit_name) = self.unit_cargo_cfg(slot)?;
         let pos = self.ephemeral.slot_instance_pos(lua, slot)?;
         let point = Vector2::new(pos.p.x, pos.p.z);
@@ -1558,6 +1563,8 @@ impl Db {
                         origin,
                         moved_by: _,
                         cost_fraction,
+                        jtac,
+                        ..
                     } = &g.origin
                     {
                         if g.side == side {
@@ -1576,6 +1583,7 @@ impl Db {
                                         origin: *origin,
                                         cost_fraction: *cost_fraction,
                                         troop: spec.clone(),
+                                        jtac: jtacs.get(&crate::jtac::JtId::Group(gid)).ok().map(|j| j.state()),
                                     },
                                 ));
                             }
@@ -1689,9 +1697,36 @@ impl Db {
         &mut self,
         lua: MizLua,
         idx: &dcso3::env::miz::MizIndex,
-        vehicle_uid: bfprotocols::db::group::UnitId,
-        _slot: &dcso3::net::SlotId,
+        mut vehicle_uid: bfprotocols::db::group::UnitId,
+        slot: &dcso3::net::SlotId,
     ) -> Result<(Troop, GroupId)> {
+        let side = self.ephemeral.get_slot_info(slot)
+            .ok_or_else(|| anyhow!("no slot info for {slot:?}"))?.side;
+
+        if vehicle_uid.inner() == 0 {
+            // Find nearest friendly vehicle with troops
+            let player_pos_3d = self.ephemeral.slot_instance_pos(lua, slot)?;
+            let p2d = Vector2::new(player_pos_3d.p.x, player_pos_3d.p.z);
+            let mut nearest = None;
+            let mut nearest_dist = f64::MAX;
+            for pax in self.ephemeral.ground_vehicle_passengers.values() {
+                if pax.side != side || pax.troops.is_empty() { continue; }
+                if let Some(unit) = self.persisted.units.get(&pax.vehicle_unit_id) {
+                    let u2d = Vector2::new(unit.pos.x, unit.pos.y);
+                    let dist = na::distance_squared(&p2d.into(), &u2d.into());
+                    if dist < nearest_dist {
+                        nearest_dist = dist;
+                        nearest = Some(pax.vehicle_unit_id);
+                    }
+                }
+            }
+            if let Some(uid) = nearest {
+                vehicle_uid = uid;
+            } else {
+                bail!("no friendly ground vehicles with troops found nearby");
+            }
+        }
+
         let pax = self.ephemeral.ground_vehicle_passengers
             .get_mut(&vehicle_uid)
             .filter(|p| !p.troops.is_empty())
@@ -1715,6 +1750,7 @@ impl Db {
             spec: it.troop.clone(),
             origin: it.origin,
             cost_fraction: it.cost_fraction,
+            jtac: it.jtac.clone(),
         };
         let spctx = SpawnCtx::new(lua)?;
         let gid = match self.add_and_queue_group(
@@ -1775,6 +1811,7 @@ impl Db {
                     spec: it.troop.clone(),
                     origin: it.origin,
                     cost_fraction: it.cost_fraction,
+                    jtac: it.jtac.clone(),
                 };
                 let spctx = match SpawnCtx::new(lua) {
                     Ok(s) => s,
@@ -3364,6 +3401,7 @@ impl Db {
                             spec: deployable.clone(),
                             cost_fraction: 1.0,
                             origin: Some(crate_data.origin),
+                            jtac: None,
                         };
 
                         match self.add_and_queue_group(
@@ -3715,6 +3753,7 @@ impl Db {
                     spec: synthetic_deployable,
                     cost_fraction: 1.0,
                     origin: Some(crate_data.origin),
+                    jtac: None,
                 };
 
                 match self.add_and_queue_group(

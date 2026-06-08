@@ -465,7 +465,7 @@ fn jtac_filter(lua: MizLua, arg: ArgTriple<JtId, u64, Ucid>) -> Result<()> {
 pub fn jtac_set_code(lua: MizLua, arg: ArgTriple<JtId, u16, Ucid>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     ctx.jtac
-        .set_code_part(lua, &arg.fst, arg.snd)
+        .set_code_part(&mut ctx.db, lua, &arg.fst, arg.snd)
         .context("setting jtac laser code")?;
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.fst)?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.trd);
@@ -933,12 +933,12 @@ pub(super) fn add_menu_for_jtac(
         )?;
     }
     let code_root = mc.add_submenu_for_group(mizgid, "Code".into(), Some(root.clone()))?;
-    let hundreds_root =
-        mc.add_submenu_for_group(mizgid, "Hundreds".into(), Some(code_root.clone()))?;
-    let tens_root = mc.add_submenu_for_group(mizgid, "Tens".into(), Some(code_root.clone()))?;
-    let ones_root = mc.add_submenu_for_group(mizgid, "Ones".into(), Some(code_root.clone()))?;
-    for (scale, root) in [(100, &hundreds_root), (10, &tens_root), (1, &ones_root)] {
-        let range = if scale == 100 { 0..=6 } else { 0..=8 };
+    let thou_root = mc.add_submenu_for_group(mizgid, "Xxxx".into(), Some(code_root.clone()))?;
+    let hund_root = mc.add_submenu_for_group(mizgid, "xXxx".into(), Some(code_root.clone()))?;
+    let tens_root = mc.add_submenu_for_group(mizgid, "xxXx".into(), Some(code_root.clone()))?;
+    let ones_root = mc.add_submenu_for_group(mizgid, "xxxX".into(), Some(code_root.clone()))?;
+    for (scale, root) in [(1000, &thou_root), (100, &hund_root), (10, &tens_root), (1, &ones_root)] {
+        let range = if scale == 1000 { 1..=1 } else if scale == 100 { 1..=7 } else { 1..=8 };
         for n in range {
             mc.add_command_for_group(
                 mizgid,

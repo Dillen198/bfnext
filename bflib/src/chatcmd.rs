@@ -311,6 +311,7 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                         moved_by: _,
                         cost_fraction,
                         origin,
+                        jtac: _,
                     } => {
                         let player = player.clone();
                         let points = (spec.cost as f32 / 2.).ceil() as i32;
@@ -351,6 +352,7 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                         moved_by: _,
                         origin,
                         cost_fraction,
+                        ..
                     } => {
                         let player = player.clone();
                         let points = (spec.cost as f32 / 2.).ceil() as i32;

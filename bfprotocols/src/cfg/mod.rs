@@ -628,6 +628,15 @@ fn default_laser_code() -> u16 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JtacState {
+    pub filter: BitFlags<UnitTag>,
+    pub priority: Vec<UnitTags>,
+    pub autoshift: Option<usize>,
+    pub ir_pointer: bool,
+    pub code: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DeployableKind {
     Group { template: String },
     Objective(DeployableObjective),

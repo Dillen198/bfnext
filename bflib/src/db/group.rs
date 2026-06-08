@@ -84,6 +84,8 @@ pub enum DeployKind {
         cost_fraction: f32,
         #[serde(default)]
         origin: Option<ObjectiveId>,
+        #[serde(default)]
+        jtac: Option<bfprotocols::cfg::JtacState>,
     },
     Troop {
         player: Ucid,
@@ -93,6 +95,8 @@ pub enum DeployKind {
         spec: Troop,
         #[serde(default = "default_cost_fraction")]
         cost_fraction: f32,
+        #[serde(default)]
+        jtac: Option<bfprotocols::cfg::JtacState>,
     },
     DownedPilot {
         ucid: Ucid,
@@ -118,6 +122,8 @@ pub enum DeployKind {
         origin: Option<ObjectiveId>,
         #[serde(skip)]
         ammo: i32,
+        #[serde(default)]
+        jtac: Option<bfprotocols::cfg::JtacState>,
     },
     /// Infantry that bailed out of a destroyed vehicle
     Dismount {
@@ -288,6 +294,7 @@ impl Db {
                 moved_by,
                 cost_fraction: _,
                 origin: _,
+                jtac: _,
             } => {
                 let name = self.persisted.players[player].name.clone();
                 let resp = moved_by
@@ -308,7 +315,7 @@ impl Db {
                     msg,
                 ))
             }
-            DeployKind::Troop { player, spec, moved_by, origin: _, cost_fraction: _ } => {
+            DeployKind::Troop { player, spec, moved_by, origin: _, cost_fraction: _, .. } => {
                 let name = self.persisted.players[player].name.clone();
                 let resp = moved_by
                     .as_ref()

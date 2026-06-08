@@ -508,11 +508,12 @@ fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String
                         .ok_or_else(|| anyhow!("no troop called {name} on {side}"))?
                         .clone();
                     let origin = DeployKind::Troop {
-                        player: ucid,
+                        player: ucid.clone(),
                         moved_by: None,
                         spec: spec.clone(),
                         origin: None,
                         cost_fraction: 1.,
+                        jtac: None,
                     };
                     ctx.db
                         .add_and_queue_group(
@@ -548,11 +549,12 @@ fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String
                         }
                         DeployableKind::Group { template } => {
                             let origin = DeployKind::Deployed {
-                                player: ucid,
+                                player: ucid.clone(),
                                 moved_by: None,
                                 spec: spec.clone(),
                                 origin: None,
                                 cost_fraction: 1.,
+                                jtac: None,
                             };
                             ctx.db
                                 .add_and_queue_group(
@@ -1275,8 +1277,9 @@ fn api_spawn_deployable(
                 player: Ucid::default(),
                 moved_by: None,
                 spec: spec.clone(),
+                cost_fraction: 1.0,
                 origin: None,
-                cost_fraction: 1.,
+                jtac: None,
             };
             let gid = ctx.db.add_and_queue_group(
                 &spctx,
@@ -1328,6 +1331,7 @@ fn api_spawn_troop(
         spec: spec.clone(),
         origin: None,
         cost_fraction: 1.,
+        jtac: None,
     };
 
     let gid = ctx.db.add_and_queue_group(
