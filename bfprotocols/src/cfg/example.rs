@@ -1,4 +1,4 @@
-﻿/*
+/*
 Copyright 2024 Eric Stokes.
 
 This file is part of bflib.
@@ -36,7 +36,7 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 0,
             weight: 800,
-            special_forces: false,
+
         },
         Troop {
             name: "Anti Tank".into(),
@@ -53,7 +53,7 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 1,
             weight: 1000,
-            special_forces: false,
+
         },
         Troop {
             name: "Mortar".into(),
@@ -70,7 +70,7 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 1200,
-            special_forces: false,
+
         },
         Troop {
             name: "Igla".into(),
@@ -82,7 +82,7 @@ fn default_red_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 500,
-            special_forces: false,
+
         },
     ]
 }
@@ -104,7 +104,7 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 0,
             weight: 800,
-            special_forces: false,
+
         },
         Troop {
             name: "Anti Tank".into(),
@@ -121,7 +121,7 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 1,
             weight: 1000,
-            special_forces: false,
+
         },
         Troop {
             name: "Mortar".into(),
@@ -138,7 +138,7 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 1200,
-            special_forces: false,
+
         },
         Troop {
             name: "Stinger".into(),
@@ -155,7 +155,7 @@ fn default_blue_troops() -> Vec<Troop> {
             limit_enforce: LimitEnforceTyp::DeleteOldest,
             cost: 5,
             weight: 500,
-            special_forces: false,
+
         },
     ]
 }
@@ -958,6 +958,7 @@ fn default_cargo() -> FxHashMap<Vehicle, CargoConfig> {
                 crate_slots: 1,
                 total_slots: 2,
                 pilot_slots: 2,
+                spawn_distance: None,
             },
         ),
         (
@@ -967,6 +968,7 @@ fn default_cargo() -> FxHashMap<Vehicle, CargoConfig> {
                 crate_slots: 1,
                 total_slots: 2,
                 pilot_slots: 3,
+                spawn_distance: None,
             },
         ),
         (
@@ -976,6 +978,7 @@ fn default_cargo() -> FxHashMap<Vehicle, CargoConfig> {
                 crate_slots: 1,
                 total_slots: 1,
                 pilot_slots: 1,
+                spawn_distance: None,
             },
         ),
         (
@@ -985,6 +988,7 @@ fn default_cargo() -> FxHashMap<Vehicle, CargoConfig> {
                 crate_slots: 1,
                 total_slots: 1,
                 pilot_slots: 1,
+                spawn_distance: None,
             },
         ),
         (
@@ -994,6 +998,7 @@ fn default_cargo() -> FxHashMap<Vehicle, CargoConfig> {
                 crate_slots: 1,
                 total_slots: 1,
                 pilot_slots: 1,
+                spawn_distance: None,
             },
         ),
     ])
@@ -2088,8 +2093,6 @@ impl Default for Cfg {
                 objective_fund_period_secs: 120,
                 holding_bonus_per_objective: 5,
                 objective_start_points: 500,
-                reinforcement_cost: 300,
-                counter_offensive_cost: 500,
                 barrage_cost: 150,
                 ambush_cost: 100,
                 cap_cost: 250,

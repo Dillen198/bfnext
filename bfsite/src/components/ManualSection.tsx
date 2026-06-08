@@ -1103,63 +1103,9 @@ export default function ManualSection() {
         </Subsection>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
-        {/* 10 — SPECIAL FORCES & HVT MISSIONS                               */}
+        {/* 10 — CAMPAIGN EVENTS                                              */}
         {/* ══════════════════════════════════════════════════════════════════ */}
-        <Subsection number="10" title="SPECIAL FORCES &amp;" accent="HVT MISSIONS">
-          <div style={{ marginBottom: '1.5rem' }}>
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                background: 'rgba(77,124,15,0.08)',
-                border: '1px solid rgba(77,124,15,0.3)',
-                borderRadius: '2px',
-                padding: '0.3rem 0.8rem',
-                marginBottom: '1.25rem',
-              }}
-            >
-              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.65rem', letterSpacing: '0.22em', color: 'var(--accent)' }}>
-                ✦ SPECIAL ROLE — REQUIRES HELICOPTER
-              </span>
-            </div>
-            <p style={{ ...BODY_TEXT, maxWidth: 700, marginBottom: '1rem' }}>
-              High-Value Target (HVT) missions task Special Forces ground teams with locating and
-              securing a designated enemy VIP before they can be extracted. The HVT vehicle spawns
-              at a randomised offset from the target objective — its exact position is not
-              broadcast. SF teams must hunt it down on foot.
-            </p>
-            <p style={{ ...BODY_TEXT, maxWidth: 700 }}>
-              Only troops flagged as <strong style={{ color: 'var(--text)' }}>Special Forces</strong> can
-              participate. SF squads are inserted by helicopter — the helo must land within the
-              SF detection radius of the objective. Once on the ground, the team begins the search
-              automatically.
-            </p>
-          </div>
-
-          <div style={{ marginBottom: '2rem' }}>
-            {[
-              { label: 'Insertion', value: 'Land your helicopter within ~10 km of the target objective to trigger SF deployment. The system detects the landing and spawns the SF team automatically.' },
-              { label: 'HVT Location', value: 'A circle is drawn on the F10 map showing the general area. The HVT vehicle is somewhere inside — it does not show on the map. Your SF team navigates on foot.' },
-              { label: 'Capture Trigger', value: 'The SF team captures the HVT when they reach within ~300 m of the spawn point. Mission completes automatically — no menu action required.' },
-              { label: 'Extraction Window', value: 'After capture, the SF team has a limited time (~10 min) to be extracted by helo before the mission times out. Get back in the air and pick them up.' },
-              { label: 'Failure', value: 'If the extraction timer expires before pickup, the mission fails. The HVT may respawn at a future campaign event.' },
-            ].map((item) => (
-              <InfoRow key={item.label} label={item.label} value={item.value} />
-            ))}
-          </div>
-
-          <Callout type="warn">
-            SF insertion helicopters are soft targets. Escort with a fighter or suppress the area
-            with CAS before committing to the landing. A downed helo ends the insertion before it
-            begins.
-          </Callout>
-        </Subsection>
-
-        {/* ══════════════════════════════════════════════════════════════════ */}
-        {/* 11 — CAMPAIGN EVENTS                                              */}
-        {/* ══════════════════════════════════════════════════════════════════ */}
-        <Subsection number="11" title="CAMPAIGN" accent="EVENTS">
+        <Subsection number="10" title="CAMPAIGN" accent="EVENTS">
           <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
             The AI Smart Commander continuously monitors the battlefield and spends a campaign
             treasury on automated military actions. These events fire without warning — watch the
@@ -1180,18 +1126,7 @@ export default function ManualSection() {
                 heading: 'REACTIVE CAP',
                 body: 'If your aircraft flies within the threat radius of an enemy-held objective, the enemy AI may scramble a Combat Air Patrol. Expect fighters without prior warning.',
               },
-              {
-                heading: 'AIR ASSAULT',
-                body: 'The enemy launches a combined helicopter and C-130 assault on a friendly objective. An air-raid siren will sound. Intercept the transport aircraft before they reach the LZ.',
-              },
-              {
-                heading: 'COUNTER-OFFENSIVE',
-                body: 'The enemy commander funds a ground counter-offensive against a weakly held objective. Additional armour and infantry will push toward the target. Reinforce or repel.',
-              },
-              {
-                heading: 'REINFORCEMENT',
-                body: 'Additional friendly or enemy ground units are purchased by the commander and spawned at a rear objective. Watch for fresh armour columns moving up.',
-              },
+
             ].map((card) => (
               <div
                 key={card.heading}

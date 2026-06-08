@@ -1,4 +1,4 @@
-﻿/*
+/*
 Copyright 2024 Eric Stokes.
 
 This file is part of bflib.
@@ -1002,7 +1002,7 @@ impl MapLayer {
     }
 
     /// Bold enemy axis-of-advance arrow at an objective that is actively under
-    /// attack â€” heavier weight and shorter range than the "threatened" arrow to
+    /// attack — heavier weight and shorter range than the "threatened" arrow to
     /// show immediate close combat.
     pub fn on_objective_under_attack(
         &mut self,
@@ -1018,7 +1018,7 @@ impl MapLayer {
             Side::Blue => Color::red(1.),
             _ => Color::blue(1.),
         };
-        // Two converging attack arrows from NW and NE â€” standard hasty-attack
+        // Two converging attack arrows from NW and NE — standard hasty-attack
         // symbol showing multi-axis pressure on the position.
         let offset = 2_500_f64;
         let arrow_nw = MarkId::new();
@@ -1065,65 +1065,7 @@ impl MapLayer {
         self.timed_marks.push(TimedMark::three(arrow_nw, arrow_ne, label, ttl_secs, now));
     }
 
-    /// NATO friendly unit symbol (rectangle) at the objective + a movement
-    /// arrow showing the axis of advance â€” standard symbol for friendly forces
-    /// arriving at a position.
-    pub fn on_reinforcements_arrived(
-        &mut self,
-        obj_pos: Vector2,
-        side: Side,
-        now: DateTime<Utc>,
-        msgs: &mut MsgQ,
-    ) {
-        let sf = side_filter(side);
-        let col = side_color(side, 0.9);
-        // Movement arrow: axis of advance pointing into the objective from the north
-        let arrow = MarkId::new();
-        msgs.arrow_to(
-            sf,
-            arrow,
-            ArrowSpec {
-                start: v3(obj_pos.x, obj_pos.y + 3_500.),
-                end:   v3(obj_pos.x, obj_pos.y),
-                color: col,
-                fill_color: col,
-                line_type: LineType::Solid,
-                read_only: true,
-            },
-            None,
-        );
-        // Friendly unit rectangle at the destination (NATO APP-6 friendly ground symbol)
-        let h = 800_f64;
-        let w = 1_400_f64;
-        let unit_box = MarkId::new();
-        msgs.rect_to_all(
-            sf,
-            unit_box,
-            RectSpec {
-                start: v3(obj_pos.x - w, obj_pos.y - h),
-                end:   v3(obj_pos.x + w, obj_pos.y + h),
-                color: col,
-                fill_color: Color::new(0., 0.5, 1., 0.08),
-                line_type: LineType::Solid,
-                read_only: true,
-            },
-            None,
-        );
-        let label = MarkId::new();
-        msgs.text_to_all(
-            sf,
-            label,
-            TextSpec {
-                pos: v3(obj_pos.x, obj_pos.y),
-                color: col,
-                fill_color: Color::black(0.0),
-                font_size: 12,
-                read_only: true,
-                text: format_compact!("REINFORCEMENTS\nARRIVED [{:?}]", side).into(),
-            },
-        );
-        self.timed_marks.push(TimedMark::three(arrow, unit_box, label, 120, now));
-    }
+
 
     fn expire_timed_marks(&mut self, now: DateTime<Utc>, msgs: &mut MsgQ) {
         let mut i = 0;

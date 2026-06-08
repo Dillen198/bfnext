@@ -407,15 +407,7 @@ impl Objective {
         &self.warehouse
     }
 
-    /// Objective that supplies this one in the logistics network, if any.
-    pub fn warehouse_supplier(&self) -> Option<ObjectiveId> {
-        self.warehouse.supplier
-    }
 
-    /// True if this objective's warehouse is damaged (reduced capacity/output).
-    pub fn warehouse_damaged(&self) -> bool {
-        self.warehouse.damaged
-    }
 
     pub fn points(&self) -> i32 {
         self.points

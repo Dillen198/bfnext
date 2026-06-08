@@ -1006,9 +1006,6 @@ impl EventScheduler {
         let event_type = self.choose_event_type(db, &mut rng);
 
         match event_type {
-            EventType::HighValueTarget => {
-                self.spawn_hvt_event(db, time)?;
-            }
             EventType::CivilianEvacuation => {
                 self.spawn_evacuation_event(db, time)?;
             }
@@ -1018,40 +1015,7 @@ impl EventScheduler {
         Ok(())
     }
 
-    fn spawn_hvt_event(&mut self, db: &mut Db, time: f64) -> Result<()> {
-        // Find a contested objective
-        let contested = db.persisted.objectives.values()
-            .filter(|o| o.is_contested(db))
-            .collect::<Vec<_>>();
 
-        if contested.is_empty() {
-            return Ok(());
-        }
-
-        let target_obj = contested[rand::thread_rng().gen_range(0..contested.len())];
-
-        // Spawn HVT unit (command vehicle, radar, etc.)
-        let hvt_group = spawn_hvt_group(db, target_obj)?;
-
-        let event = CampaignEvent::HighValueTarget {
-            id: EventId::new(),
-            target_group: hvt_group,
-            location: target_obj.id,
-            expires_at: time + 1800.0,  // 30 minutes
-            reward_points: 500,
-            announced: false,
-        };
-
-        self.active_events.push(event);
-
-        // Announce to all players
-        broadcast_message(db, format!(
-            "INTEL: High-value target detected near {}. Destroy within 30 minutes for bonus.",
-            target_obj.name
-        ))?;
-
-        Ok(())
-    }
 }
 ```
 
@@ -1111,7 +1075,7 @@ fn on_troops_loaded(db: &mut Db, player: &Player, troops: &[TroopId]) -> Result<
 - `bflib/src/db/mod.rs` - Add EventScheduler to Db
 - `bflib/src/lib.rs` - Call event tick in slow_timed_events
 - `bflib/src/db/cargo.rs` - VIP pickup detection
-- `bflib/src/shots.rs` - HVT kill detection
+
 - `bfprotocols/src/cfg/mod.rs` - Event configuration
 
 ---

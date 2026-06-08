@@ -34,6 +34,7 @@ use std::{mem, ops::Deref};
 string_enum!(PointType, u8, [
     TakeOffGround => "TakeOffGround",
     TakeOffGroundHot => "TakeOffGroundHot",
+    TakeOffParkingHot => "TakeOffParkingHot",
     TurningPoint => "Turning Point",
     TakeOffParking => "TakeOffParking",
     TakeOff => "TakeOff",
@@ -57,7 +58,8 @@ string_enum!(OrbitPattern, u8, [
 
 string_enum!(TurnMethod, u8, [
     FlyOverPoint => "Fly Over Point",
-    OffRoad => "Off Road"
+    OffRoad => "Off Road",
+    FromParkingAreaHot => "From Parking Area Hot"
 ]);
 
 string_enum!(Designation, u8, [

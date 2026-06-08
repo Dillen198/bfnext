@@ -166,6 +166,7 @@ pub enum UnitTag {
     Boat,
     ALCM,
     NavalSpawnPoint,
+    CAP,
 }
 
 #[derive(
@@ -714,9 +715,6 @@ pub struct Troop {
     pub cost: u32,
     /// Can laser designate and scout
     pub jtac: Option<DeployableJtac>,
-    /// If true, these troops are Special Forces and can capture HVTs.
-    #[serde(default)]
-    pub special_forces: bool,
 }
 
 /// Configuration for infantry that dismount from a destroyed vehicle
@@ -776,6 +774,9 @@ pub struct CargoConfig {
     /// Pilots count against total_slots.
     #[serde(default)]
     pub pilot_slots: u8,
+    /// The default distance (meters) to spawn crates from this vehicle.
+    #[serde(default)]
+    pub spawn_distance: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -855,6 +856,9 @@ pub struct C130CargoConfig {
     /// Maximum number of crates that can be spawned at once with "Spawn All"
     #[serde(default = "default_c130_max_spawn")]
     pub max_spawn_all: u32,
+    /// The default distance (meters) to spawn crates from C-130s.
+    #[serde(default)]
+    pub spawn_distance: Option<f64>,
     /// Vehicles that can be loaded into C-130 cargo for each side
     #[serde(default)]
     pub loadable_vehicles: FxHashMap<Side, Vec<C130Vehicle>>,
@@ -882,6 +886,9 @@ pub struct HeloCargoConfig {
     /// Maximum number of crates that can be spawned at once with "Spawn All"
     #[serde(default = "default_c130_max_spawn")]
     pub max_spawn_all: u32,
+    /// The default distance (meters) to spawn crates from helicopters.
+    #[serde(default)]
+    pub spawn_distance: Option<f64>,
     /// If true, crates auto-unpack when they land after being dropped (like C-130 airdrop).
     /// If false (default), the player must use "Unpack Nearby Crate(s)" manually.
     #[serde(default)]
@@ -1819,24 +1826,12 @@ pub struct CampaignEventsCfg {
     /// Maximum number of concurrent active events
     #[serde(default = "default_max_events")]
     pub max_concurrent_events: u32,
-    /// Points awarded for destroying a high-value target
-    #[serde(default = "default_hvt_reward")]
-    pub hvt_reward_points: i32,
-    /// Duration in seconds for high-value target events
-    #[serde(default = "default_hvt_duration")]
-    pub hvt_duration_secs: u32,
     /// Points awarded for successful VIP extraction
     #[serde(default = "default_vip_reward")]
     pub vip_reward_points: i32,
     /// Points per civilian evacuated
     #[serde(default = "default_evac_reward")]
     pub evacuation_reward_per_civilian: i32,
-    /// Enable reinforcement wave events
-    #[serde(default = "default_true")]
-    pub reinforcement_waves_enabled: bool,
-    /// Enable counter-offensive events
-    #[serde(default)]
-    pub counter_offensives_enabled: bool,
     /// Enable artillery barrage events
     #[serde(default = "default_true")]
     pub barrage_enabled: bool,
@@ -1855,15 +1850,6 @@ pub struct CampaignEventsCfg {
     /// Duration in seconds before an ambush expires without contact
     #[serde(default = "default_ambush_duration")]
     pub ambush_duration_secs: u32,
-    /// Enable escalation chains (reinforcement arrival → counter-offensive, HVT kill → revenge)
-    #[serde(default = "default_true")]
-    pub escalation_enabled: bool,
-    /// Seconds after a reinforcement wave arrives before the counter-offensive escalation triggers
-    #[serde(default = "default_escalation_delay")]
-    pub escalation_delay_secs: u32,
-    /// Seconds after an HVT is killed before the revenge counter-offensive triggers
-    #[serde(default = "default_revenge_delay")]
-    pub revenge_delay_secs: u32,
     /// Enable automatic enemy CAP intercept spawns when players are deep in enemy territory
     #[serde(default)]
     pub enemy_cap_enabled: bool,
@@ -1891,49 +1877,6 @@ pub struct CampaignEventsCfg {
     /// Example: 0.30 requires 30% of defenders to be killed first.
     #[serde(default)]
     pub capture_min_unit_pct_destroyed: f64,
-    /// Minimum random offset (metres) from the objective where an HVT spawns. Default: 5000.
-    #[serde(default = "default_hvt_offset_min")]
-    pub hvt_spawn_offset_min_m: f64,
-    /// Maximum random offset (metres) from the objective where an HVT spawns. Default: 20000.
-    #[serde(default = "default_hvt_offset_max")]
-    pub hvt_spawn_offset_max_m: f64,
-    /// How close (metres) an SF team must be to the HVT spawn position to trigger capture. Default: 300.
-    #[serde(default = "default_hvt_capture_radius")]
-    pub hvt_capture_radius_m: f64,
-    /// Radius (metres) within which a helicopter must drop SF troops to start an HVT mission. Default: 10000.
-    #[serde(default = "default_hvt_sf_detection_radius")]
-    pub hvt_sf_detection_radius_m: f64,
-    /// Seconds after HVT is secured before the SF team starts retreating (no extraction). Default: 600.
-    #[serde(default = "default_hvt_extraction_timeout")]
-    pub hvt_extraction_timeout_secs: u32,
-    /// Template name for Special Forces ground unit (Red side). Default: "RSFTEAM".
-    #[serde(default = "default_sf_template_red")]
-    pub sf_template_red: String,
-    /// Template name for Special Forces ground unit (Blue side). Default: "BSFTEAM".
-    #[serde(default = "default_sf_template_blue")]
-    pub sf_template_blue: String,
-    /// Template name for the HVT vehicle unit (Red side). Default: "RHVT".
-    #[serde(default = "default_hvt_template_red")]
-    pub hvt_template_red: String,
-    /// Template name for the HVT vehicle unit (Blue side). Default: "BHVT".
-    #[serde(default = "default_hvt_template_blue")]
-    pub hvt_template_blue: String,
-    /// Radius (metres) of the F10 map circle drawn at the HVT position. Default: 3000.
-    #[serde(default = "default_hvt_circle_radius")]
-    pub hvt_circle_radius_m: f64,
-    /// Seconds after session start before HVT events can activate. Default: 300 (5 min).
-    /// Prevents HVTs from firing the instant a server restarts with no players connected.
-    #[serde(default = "default_hvt_startup_delay")]
-    pub hvt_startup_delay_secs: u32,
-    /// Minimum number of connected players before HVT events activate. Default: 0 (no minimum).
-    #[serde(default)]
-    pub hvt_min_players: u32,
-    /// Player count increment at which the HVT check interval shrinks by one step.
-    /// Default: 0 (disabled — interval is always check_interval_secs).
-    /// Example: set to 5 → at 5 players interval halves, at 10 players interval is 1/3, etc.
-    /// The interval is clamped to a minimum of 60 seconds regardless.
-    #[serde(default)]
-    pub hvt_players_per_interval_step: u32,
     /// Distance (metres) from an enemy-owned objective within which an in-air player aircraft
     /// is considered a threat and triggers a reactive CAP spawn. Default: 60000 (60 km).
     #[serde(default = "default_cap_trigger_radius")]
@@ -1970,14 +1913,10 @@ fn default_cap_respawn_cooldown() -> u64 { 120 }
 fn default_event_check_interval() -> u32 { 300 }
 fn default_event_probability() -> f64 { 0.15 }
 fn default_max_events() -> u32 { 3 }
-fn default_hvt_reward() -> i32 { 500 }
-fn default_hvt_duration() -> u32 { 1800 }
 fn default_vip_reward() -> i32 { 300 }
 fn default_evac_reward() -> i32 { 50 }
 fn default_barrage_duration() -> u32 { 300 }
 fn default_ambush_duration() -> u32 { 600 }
-fn default_escalation_delay() -> u32 { 600 }
-fn default_revenge_delay() -> u32 { 600 }
 fn default_cap_template_red() -> String { "RCAP".into() }
 fn default_cap_template_blue() -> String { "BCAP".into() }
 fn default_cap_duration() -> u32 { 600 }
@@ -1986,18 +1925,7 @@ fn default_cap_probability() -> f64 { 0.35 }
 fn default_capture_time() -> u32 { 60 }
 fn default_barrage_radius_m() -> f64 { 500.0 }
 fn default_barrage_max_groups() -> usize { 5 }
-fn default_hvt_offset_min() -> f64 { 5_000.0 }
-fn default_hvt_offset_max() -> f64 { 20_000.0 }
-fn default_hvt_capture_radius() -> f64 { 300.0 }
-fn default_hvt_sf_detection_radius() -> f64 { 10_000.0 }
-fn default_hvt_extraction_timeout() -> u32 { 600 }
-fn default_sf_template_red() -> String { "RSFTEAM".into() }
-fn default_sf_template_blue() -> String { "BSFTEAM".into() }
-fn default_hvt_template_red() -> String { String::from("RHVT") }
-fn default_hvt_template_blue() -> String { String::from("BHVT") }
-fn default_hvt_circle_radius() -> f64 { 3_000.0 }
-fn default_hvt_startup_delay() -> u32 { 300 }
-fn default_cap_trigger_radius() -> f64 { 60_000.0 }
+fn default_cap_trigger_radius() -> f64 { 90_000.0 }
 fn default_cap_max_concurrent() -> usize { 3 }
 fn default_cap_max_per_side() -> usize { 2 }
 fn default_cap_min_threat() -> u32 { 2 }
@@ -2011,19 +1939,12 @@ impl Default for CampaignEventsCfg {
             check_interval_secs: default_event_check_interval(),
             event_probability: default_event_probability(),
             max_concurrent_events: default_max_events(),
-            hvt_reward_points: default_hvt_reward(),
-            hvt_duration_secs: default_hvt_duration(),
             vip_reward_points: default_vip_reward(),
             evacuation_reward_per_civilian: default_evac_reward(),
-            reinforcement_waves_enabled: true,
-            counter_offensives_enabled: false,
             barrage_enabled: true,
             barrage_duration_secs: default_barrage_duration(),
             ambush_enabled: true,
             ambush_duration_secs: default_ambush_duration(),
-            escalation_enabled: true,
-            escalation_delay_secs: default_escalation_delay(),
-            revenge_delay_secs: default_revenge_delay(),
             enemy_cap_enabled: false,
             cap_template_red: default_cap_template_red(),
             cap_template_blue: default_cap_template_blue(),
@@ -2034,19 +1955,6 @@ impl Default for CampaignEventsCfg {
             capture_min_unit_pct_destroyed: 0.0,
             barrage_radius_m: default_barrage_radius_m(),
             barrage_max_groups: default_barrage_max_groups(),
-            hvt_spawn_offset_min_m: default_hvt_offset_min(),
-            hvt_spawn_offset_max_m: default_hvt_offset_max(),
-            hvt_capture_radius_m: default_hvt_capture_radius(),
-            hvt_sf_detection_radius_m: default_hvt_sf_detection_radius(),
-            hvt_extraction_timeout_secs: default_hvt_extraction_timeout(),
-            sf_template_red: default_sf_template_red(),
-            sf_template_blue: default_sf_template_blue(),
-            hvt_template_red: default_hvt_template_red(),
-            hvt_template_blue: default_hvt_template_blue(),
-            hvt_circle_radius_m: default_hvt_circle_radius(),
-            hvt_startup_delay_secs: default_hvt_startup_delay(),
-            hvt_min_players: 0,
-            hvt_players_per_interval_step: 0,
             cap_trigger_radius_m: default_cap_trigger_radius(),
             cap_max_concurrent: default_cap_max_concurrent(),
             cap_max_per_side: default_cap_max_per_side(),
@@ -2390,12 +2298,6 @@ fn default_holding_bonus() -> i32 {
 fn default_objective_start_points() -> i32 {
     500
 }
-fn default_reinforcement_cost() -> i64 {
-    300
-}
-fn default_counter_offensive_cost() -> i64 {
-    500
-}
 fn default_barrage_cost() -> i64 {
     150
 }
@@ -2439,12 +2341,6 @@ pub struct SmartCommanderCfg {
     /// Points seeded into each owned objective on a fresh map init. Default: 500.
     #[serde(default = "default_objective_start_points")]
     pub objective_start_points: i32,
-    /// Treasury cost per side to spawn a reinforcement wave. Default: 300.
-    #[serde(default = "default_reinforcement_cost")]
-    pub reinforcement_cost: i64,
-    /// Treasury cost per side to launch a counter-offensive. Default: 500.
-    #[serde(default = "default_counter_offensive_cost")]
-    pub counter_offensive_cost: i64,
     /// Treasury cost per side to order an artillery barrage. Default: 150.
     #[serde(default = "default_barrage_cost")]
     pub barrage_cost: i64,

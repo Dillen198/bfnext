@@ -281,6 +281,7 @@ impl C130Cargo {
 #[derive(Debug, Clone)]
 pub struct SlotStats {
     pub name: String,
+    pub typ: String,
     pub side: Side,
     pub agl: f64,
     pub speed: f64,
@@ -297,6 +298,7 @@ impl SlotStats {
         let unit = db.ephemeral.slot_instance_unit(lua, slot)?;
         let in_air = unit.in_air()?;
         let name = unit.get_name()?;
+        let typ = unit.get_type_name()?.clone();
         let pos = unit.get_position()?;
         let point = Vector2::new(pos.p.x, pos.p.z);
         let ground_alt = Land::singleton(lua)?.get_height(LuaVec2(point))?;
@@ -304,6 +306,7 @@ impl SlotStats {
         let speed = unit.get_velocity()?.0.magnitude() * 3600. / 1000.;
         Ok(Self {
             name,
+            typ,
             side,
             agl,
             speed,
@@ -351,12 +354,49 @@ impl Db {
             bail!("you must land to spawn crates")
         }
         let dir = Vector2::new(st.pos.x.x, st.pos.x.z);
-        let approx_spawn_pos = st.point + dir * 20.;
-        if !self
-            .list_crates_near_point(approx_spawn_pos, 10.)?
-            .is_empty()
-        {
-            bail!("move away from other crates or pick up the existing crate")
+        
+        let is_c130 = self.ephemeral.cfg.c130_cargo.as_ref()
+            .map(|c| c.loadable_vehicles.values()
+                .flat_map(|v| v.iter())
+                .any(|v| v.name == st.typ))
+            .unwrap_or(false);
+
+        let spawn_distance = self.ephemeral.cfg.cargo
+            .get(&Vehicle(st.typ.clone()))
+            .and_then(|cc| cc.spawn_distance)
+            .unwrap_or_else(|| {
+                if is_c130 {
+                    self.ephemeral.cfg.c130_cargo.as_ref()
+                        .and_then(|c| c.spawn_distance)
+                        .unwrap_or(20.0)
+                } else {
+                    self.ephemeral.cfg.helo_cargo.as_ref()
+                        .and_then(|c| c.spawn_distance)
+                        .unwrap_or(20.0)
+                }
+            }).abs();
+
+        let forward = if is_c130 { -dir } else { dir };
+        let right = Vector2::new(-dir.y, dir.x);
+
+        let mut approx_spawn_pos = st.point + forward * spawn_distance;
+        let mut found_spot = false;
+
+        // 3-wide grid: 3 rows, 3 columns
+        for i in 0..9 {
+            let row = (i / 3) as f64;
+            let col = (i % 3) as f64 - 1.0;
+            let test_pos = st.point + forward * (spawn_distance + row * 5.0) + right * (col * 5.0);
+            
+            if self.list_crates_near_point(test_pos, 4.0)?.is_empty() {
+                approx_spawn_pos = test_pos;
+                found_spot = true;
+                break;
+            }
+        }
+
+        if !found_spot {
+            bail!("no clear space to spawn crate, move away from other crates")
         }
         let to_delete = self.ephemeral.cfg.max_crates.and_then(|max_crates| {
             let crates = &self.persisted.players[&st.ucid].crates;
@@ -413,10 +453,9 @@ impl Db {
             .get(&st.side)
             .ok_or_else(|| anyhow!("missing crate template for {:?} side", st.side))?
             .clone();
-        let spawnpos = SpawnLoc::AtPos {
-            pos: st.point,
-            offset_direction: dir,
-            group_heading: azumith2d(dir),
+        let spawnpos = SpawnLoc::AtPosWithCenter {
+            pos: approx_spawn_pos,
+            center: approx_spawn_pos,
         };
         let dk = DeployKind::Crate {
             origin: oid,
@@ -1268,6 +1307,11 @@ impl Db {
         let (gid, oid, crate_def) = {
             let mut nearby = self.list_nearby_crates(&st)?;
             nearby.retain(|nc| nc.group.side == side);
+            // Filter out physical/dynamic crates — those must be loaded via DCS slingload,
+            // not the old slot-based system which would destroy them
+            nearby.retain(|nc| {
+                !self.ephemeral.c130_crates.values().any(|c| c.group_id == nc.group.id)
+            });
             if nearby.is_empty() {
                 bail!(
                     "no friendly crates within {} meters",
@@ -2679,10 +2723,35 @@ impl Db {
                point.x, point.y, dir.x, dir.y);
 
         // Offset each crate 5m further in the forward direction so they don't stack
+        // Per-vehicle spawn_distance takes priority, then global c130/helo config
+        let unit_typ = unit.get_type_name()?;
+        let spawn_distance = self.ephemeral.cfg.cargo
+            .get(&Vehicle(unit_typ.clone()))
+            .and_then(|cc| cc.spawn_distance)
+            .unwrap_or_else(|| {
+                if auto_unpack {
+                    self.ephemeral.cfg.c130_cargo.as_ref()
+                        .and_then(|c| c.spawn_distance)
+                        .unwrap_or(-45.0)
+                } else {
+                    self.ephemeral.cfg.helo_cargo.as_ref()
+                        .and_then(|c| c.spawn_distance)
+                        .unwrap_or(4.0)
+                }
+            }).abs();
+
         let existing_count = self.ephemeral.c130_crates.values()
             .filter(|c| c.player == ucid)
             .count();
-        let spawn_point = point + dir * (5.0 + existing_count as f64 * 5.0);
+            
+        let forward = if auto_unpack { -dir } else { dir };
+        let right = Vector2::new(-dir.y, dir.x);
+
+        // 3-wide grid based on existing crates from this player
+        let row = (existing_count / 3) as f64;
+        let col = (existing_count % 3) as f64 - 1.0;
+        
+        let spawn_point = point + forward * (spawn_distance + row * 5.0) + right * (col * 5.0);
 
         // Pick template: helo dynamic cargo uses helo_cargo_template (fallback to c130_cargo_template)
         let template = if !auto_unpack {
@@ -3244,7 +3313,7 @@ impl Db {
                                     let dist = na::distance(&crate_pos.into(), &other_data.last_pos.into());
                                     info!("[C130_CARGO]   - Found potential crate '{}' for same deployable, distance={:.2}m",
                                         other_name, dist);
-                                    if dist < 100.0 {
+                                    if dist < 500.0 {
                                         nearby_crates
                                             .entry(other_crate_name.clone())
                                             .or_default()

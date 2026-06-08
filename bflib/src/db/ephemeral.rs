@@ -16,7 +16,7 @@ for more details.
 
 use super::{
     cargo::{Cargo, C130Cargo, GroundVehiclePassengers},
-    events::EventId,
+
     group::{DeployKind, SpawnedGroup, SpawnedUnit},
     intel::IntelDatabase,
     logistics::LogiStage,
@@ -88,39 +88,6 @@ pub struct SlotInfo {
     pub side: Side,
 }
 
-/// Tracks the phase of an active SF HVT capture mission.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SfPhase {
-    /// SF team is moving toward the HVT position.
-    MovingToHvt,
-    /// SF team has captured the HVT and is retreating toward extraction.
-    Captured,
-}
-
-/// State for a deployed Special Forces team on an HVT capture mission.
-#[derive(Debug, Clone)]
-pub struct SfMission {
-    /// The HVT campaign event this mission targets.
-    pub event_id: EventId,
-    /// Side that owns the SF team (the capturing side).
-    pub side: Side,
-    /// World position of the HVT unit.
-    pub hvt_pos: Vector2,
-    /// Position where the SF team was dropped (extraction return point).
-    pub drop_pos: Vector2,
-    /// Current phase of the SF mission.
-    pub phase: SfPhase,
-    /// Timestamp when capture was achieved (used for extraction timeout).
-    pub captured_at: Option<DateTime<Utc>>,
-    /// UCID of the pilot who deployed the SF team.
-    pub ucid: Ucid,
-    /// Reward points to award on successful extraction.
-    pub reward_points: i32,
-    /// The objective the HVT departed from (for scoring on capture/kill).
-    pub hvt_objective: ObjectiveId,
-    /// Side that owns the HVT (the side losing points on capture/kill).
-    pub hvt_side: dcso3::coalition::Side,
-}
 
 /// Metadata for a group that was created from inline config rather than a .miz template.
 /// Stored in Ephemeral so that spawn_group can build a synthetic Lua group table for DCS.
@@ -235,11 +202,6 @@ pub struct Ephemeral {
     /// Set of objective IDs for which a "supply critical" alert has been broadcast,
     /// mapped to the time the alert first fired. Cleared when supply recovers.
     pub(super) supply_warned: FxHashMap<ObjectiveId, DateTime<Utc>>,
-    /// Active SF HVT capture missions. Maps the deployed SF group ID → mission state.
-    pub(crate) sf_missions: FxHashMap<GroupId, SfMission>,
-    /// SF missions currently in the helicopter awaiting delivery back to base.
-    /// Maps pilot SlotId → mission (moved here from sf_missions when SF is extracted).
-    pub(crate) sf_cargo: FxHashMap<SlotId, SfMission>,
     /// Tracks when enemy troops first entered an objective zone (for capture momentum timer).
     /// Maps ObjectiveId -> (capturing Side, entry DateTime, last_seen DateTime).
     /// last_seen is updated each tick troops are in zone; cleared only after a grace period.
@@ -324,8 +286,6 @@ impl Default for Ephemeral {
             csar_last_renotify: FxHashMap::default(),
             csar_smoke_cooldown: FxHashMap::default(),
             supply_warned: FxHashMap::default(),
-            sf_missions: FxHashMap::default(),
-            sf_cargo: FxHashMap::default(),
             capture_progress: FxHashMap::default(),
             last_treasury_income: DateTime::<Utc>::default(),
             last_objective_fund: DateTime::<Utc>::default(),
@@ -493,14 +453,6 @@ impl Ephemeral {
         self.map_layer.on_objective_threatened(obj_pos, side, obj_name, now, &mut self.msgs);
     }
 
-    pub fn on_reinforcements_arrived(
-        &mut self,
-        obj_pos: dcso3::Vector2,
-        side: dcso3::coalition::Side,
-        now: DateTime<Utc>,
-    ) {
-        self.map_layer.on_reinforcements_arrived(obj_pos, side, now, &mut self.msgs);
-    }
 
     pub fn on_objective_under_attack(
         &mut self,
@@ -1504,13 +1456,34 @@ impl Ephemeral {
             template.group.set("hidden", false)?;
             template.group.set("visible", true)?;
             template.group.set_name(group.name.clone())?;
-            if mission.len() > 0 {
-                template
-                    .group
-                    .route()
-                    .context("getting route")?
-                    .set_points(mission)
-                    .context("setting points")?;
+            let group_clone = template.group.clone();
+            let route = group_clone.route().context("getting route")?;
+            let mut points: Vec<dcso3::controller::MissionPoint> = if mission.len() > 0 {
+                mission
+            } else {
+                route.points().ok().map(|seq| seq.into_iter().filter_map(|p| p.ok()).collect()).unwrap_or_default()
+            };
+
+            if group.tags.contains(UnitTag::CAP) {
+                if let Some(first) = points.first_mut() {
+                    first.typ = dcso3::controller::PointType::TakeOffParkingHot;
+                    first.action = Some(dcso3::controller::ActionTyp::Air(dcso3::controller::TurnMethod::FromParkingAreaHot));
+                    first.alt = 0.0;
+                    first.alt_typ = Some(dcso3::controller::AltType::BARO);
+
+                    let opts = vec![
+                        dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::Roe(dcso3::controller::AirRoe::WeaponFree))),
+                        dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::RadarUsing(dcso3::controller::AirRadarUsing::ForContinuousSearch))),
+                        dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::ReactionOnThreat(dcso3::controller::AirReactionToThreat::EvadeFire))),
+                        dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::Silence(false))),
+                        *first.task.clone()
+                    ];
+                    first.task = Box::new(dcso3::controller::Task::ComboTask(opts));
+                }
+            }
+
+            if points.len() > 0 {
+                route.set_points(points).context("setting points")?;
             }
             let by_tname: FxHashMap<&str, &SpawnedUnit> = alive_units
                 .iter()

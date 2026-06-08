@@ -16,7 +16,7 @@ for more details.
 
 //! ELINT/SIGINT intelligence database.
 //!
-//! Accumulates geo-located ground unit contacts from recon flights, special forces,
+//! Accumulates geo-located ground unit contacts from recon flights,
 //! AWACS detections, and EWR fusion.  Each contact carries a confidence score that
 //! decays exponentially with a configurable half-life and is removed when it falls
 //! below a threshold.  F10 map markers are maintained in sync with contact state.
