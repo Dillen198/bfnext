@@ -41,7 +41,8 @@
       "Bash(powershell -Command \"Expand-Archive -Path ''vs-golan-testbed.v1.7.miz'' -DestinationPath ''vs_extracted'' -Force\")",
       "Bash(powershell -Command \"Copy-Item ''vs-golan-testbed.v1.7.miz'' ''vs-golan-testbed.v1.7.zip''; Expand-Archive -Path ''vs-golan-testbed.v1.7.zip'' -DestinationPath ''vs_extracted'' -Force; Remove-Item ''vs-golan-testbed.v1.7.zip''\")",
       "Bash(dir:*)",
-      "Bash(powershell -Command \". .\\\\setup-build.ps1; cargo check --package=bflib\")"
+      "Bash(powershell -Command \". .\\\\setup-build.ps1; cargo check --package=bflib\")",
+      "Bash(python3 -c ' *)"
     ],
     "deny": [],
     "ask": []

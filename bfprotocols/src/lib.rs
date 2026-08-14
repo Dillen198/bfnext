@@ -4,3 +4,4 @@ pub mod db;
 pub mod perf;
 pub mod shots;
 pub mod stats;
+pub mod gci;

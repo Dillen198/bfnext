@@ -1,3 +1,42 @@
+// ── API/WS base URLs ────────────────────────────────────────────────
+// Default: relative '/api' and same-origin WS, for when bfweb is embedded
+// directly in bfdb (rust-embed) and served from the same origin. Set
+// VITE_API_BASE (e.g. "https://api.example.com") at build time to point a
+// standalone-hosted dashboard at a remotely-hosted bfdb instead — see
+// deploy/README.md. VITE_API_BASE must NOT have a trailing slash.
+const API_ROOT: string = import.meta.env.VITE_API_BASE ?? ''
+
+function wsUrl(path: string): string {
+  if (API_ROOT) {
+    return API_ROOT.replace(/^http/, 'ws') + path
+  }
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  return `${proto}://${window.location.host}${path}`
+}
+
+// ── JSON Schema (draft-07, as produced by the `schemars` crate) ───────
+export interface JsonSchema {
+  $schema?: string
+  title?: string
+  description?: string
+  type?: string | string[]
+  format?: string
+  enum?: (string | number)[]
+  const?: string | number | boolean
+  default?: unknown
+  properties?: Record<string, JsonSchema>
+  required?: string[]
+  additionalProperties?: JsonSchema | boolean
+  items?: JsonSchema
+  anyOf?: JsonSchema[]
+  oneOf?: JsonSchema[]
+  allOf?: JsonSchema[]
+  $ref?: string
+  minimum?: number
+  maximum?: number
+  definitions?: Record<string, JsonSchema>
+}
+
 export interface Round {
   id: number
   scenario: string
@@ -121,14 +160,28 @@ export function connectLiveLogs(
   onLine: (line: LogLine) => void,
   onStatus: (s: 'open' | 'closed' | 'error') => void,
 ): () => void {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const ws = new WebSocket(`${proto}://${window.location.host}/ws/logs`)
+  const ws = new WebSocket(wsUrl('/ws/logs'))
   ws.onopen  = () => onStatus('open')
   ws.onclose = () => onStatus('closed')
   ws.onerror = () => onStatus('error')
   ws.onmessage = (e) => {
     try { onLine(JSON.parse(e.data as string) as LogLine) } catch { /* ignore */ }
   }
+  return () => ws.close()
+}
+
+/** Connect to the live bflib engine log WebSocket (raw text lines from the
+ *  running DCS mission, distinct from bfdb's own process log). Requires
+ *  admin session and bfdb started with --base. */
+export function connectEngineLogs(
+  onLine: (line: string) => void,
+  onStatus: (s: 'open' | 'closed' | 'error') => void,
+): () => void {
+  const ws = new WebSocket(wsUrl('/ws/engine-logs'))
+  ws.onopen  = () => onStatus('open')
+  ws.onclose = () => onStatus('closed')
+  ws.onerror = () => onStatus('error')
+  ws.onmessage = (e) => onLine(e.data as string)
   return () => ws.close()
 }
 
@@ -141,8 +194,7 @@ export function connectLiveUnits(
   onMsg: (msg: WsUnitsMsg) => void,
   onStatus: (s: 'open' | 'closed' | 'error') => void,
 ): () => void {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const ws = new WebSocket(`${proto}://${window.location.host}/ws/units`)
+  const ws = new WebSocket(wsUrl('/ws/units'))
   ws.onopen  = () => onStatus('open')
   ws.onclose = () => onStatus('closed')
   ws.onerror = () => onStatus('error')
@@ -324,11 +376,19 @@ export interface PerfHistory {
   sessions: PerfSession[]
 }
 
-const BASE = '/api'
+const BASE = `${API_ROOT}/api`
+
+async function errorMessage(res: Response): Promise<string> {
+  try {
+    const j = await res.json()
+    if (j && typeof j.error === 'string') return j.error
+  } catch { /* body wasn't JSON */ }
+  return `HTTP ${res.status}`
+}
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { credentials: 'include' })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) throw new Error(await errorMessage(res))
   return res.json()
 }
 
@@ -339,7 +399,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) throw new Error(await errorMessage(res))
   return res.json()
 }
 
@@ -394,5 +454,12 @@ export const api = {
     ban:         (ucid: string, name: string, reason = '', until?: string) =>
                    post<{ ok: boolean }>('/admin/ban', { ucid, name, reason, until: until ?? null }),
     unban:       (ucid: string) => post<{ ok: boolean }>('/admin/unban', { ucid }),
+    cfg:         () => get<Record<string, unknown>>('/admin/cfg'),
+    cfgSchema:   () => get<JsonSchema>('/admin/cfg/schema'),
+    cfgSave:     (cfg: Record<string, unknown>) => post<{ ok: boolean }>('/admin/cfg', { cfg }),
+  },
+  commander: {
+    spawnLogistics: (airbase: string, itemType: string) => 
+      post<{ ok: boolean }>('/commander/spawn', { airbase, type: itemType }),
   },
 }

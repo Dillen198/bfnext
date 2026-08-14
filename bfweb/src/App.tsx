@@ -11,7 +11,9 @@ import Pilots from './pages/Pilots'
 import KillFeed from './pages/KillFeed'
 import LoginPage from './pages/LoginPage'
 import AdminPage from './pages/AdminPage'
+import ConfigEditorPage from './pages/ConfigEditorPage'
 import AboutPage from './pages/AboutPage'
+import { PilotPage } from './pages/PilotPage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, retry: 1 } },
@@ -33,7 +35,9 @@ export default function App() {
                 <Route path="pilots" element={<Pilots />} />
                 <Route path="kills" element={<KillFeed />} />
               <Route path="admin" element={<AdminPage />} />
+              <Route path="admin/config" element={<ConfigEditorPage />} />
               <Route path="about" element={<AboutPage />} />
+              <Route path="pilot/:ucid" element={<PilotPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
               </Route>
             </Routes>

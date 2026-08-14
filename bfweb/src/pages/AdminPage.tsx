@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { api, connectLiveLogs, type LogLine, type PerfRow, type PerfTimelinePoint } from '../api'
+import { api, connectLiveLogs, connectEngineLogs, type LogLine, type PerfRow, type PerfTimelinePoint } from '../api'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
 import {
@@ -286,6 +286,134 @@ function LogAnalyzer() {
               <span style={{ color: lc, flexShrink: 0, width: 38, textAlign: 'right', fontWeight: 700 }}>{l.level}</span>
               <span style={{ color: '#4a8fd4', flexShrink: 0, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={l.target}>{l.target}</span>
               <span style={{ color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{l.msg}</span>
+            </div>
+          )
+        })}
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  )
+}
+
+// ── engine log analyzer (live bflib logs from the running DCS mission) ────────
+
+interface EngineLine { raw: string; level: string; text: string }
+
+const LEVEL_RE = /\[(TRACE|DEBUG|INFO|WARN|ERROR)\]\s*(?:([\w:.]+):\s*)?/
+
+function parseEngineLine(raw: string): EngineLine {
+  const m = raw.match(LEVEL_RE)
+  if (!m) return { raw, level: 'INFO', text: raw }
+  return { raw, level: m[1], text: raw }
+}
+
+function EngineLogAnalyzer() {
+  const [lines,      setLines]      = useState<EngineLine[]>([])
+  const [filter,     setFilter]     = useState<LevelFilter>('ALL')
+  const [search,     setSearch]     = useState('')
+  const [autoScroll, setAutoScroll] = useState(true)
+  const [wsStatus,   setWsStatus]   = useState<'connecting' | 'open' | 'closed' | 'error'>('connecting')
+  const bottomRef  = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const addLine = useCallback((raw: string) => {
+    setLines(prev => {
+      const next = [...prev, parseEngineLine(raw)]
+      return next.length > LOG_MAX ? next.slice(next.length - LOG_MAX) : next
+    })
+  }, [])
+
+  useEffect(() => {
+    setWsStatus('connecting')
+    const cleanup = connectEngineLogs(addLine, s => setWsStatus(s === 'open' ? 'open' : s === 'closed' ? 'closed' : 'error'))
+    return cleanup
+  }, [addLine])
+
+  useEffect(() => {
+    if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: 'auto' })
+  }, [lines, autoScroll])
+
+  function onScroll() {
+    const el = containerRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    if (!atBottom && autoScroll) setAutoScroll(false)
+  }
+
+  const levelOrder: Record<string, number> = { ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3, TRACE: 4 }
+  const filterLevel = filter === 'ALL' ? 999 : (levelOrder[filter] ?? 999)
+
+  const visible = lines.filter(l => {
+    if (filter !== 'ALL' && (levelOrder[l.level] ?? 999) > filterLevel) return false
+    if (search && !l.text.toLowerCase().includes(search.toLowerCase())) return false
+    return true
+  })
+
+  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' ? '#f59e0b' : '#ef4444'
+  const statusLabel = wsStatus === 'open' ? 'LIVE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
+
+  return (
+    <div className="vs-card" style={{ display: 'flex', flexDirection: 'column', height: 520 }}>
+      <CardHeader
+        icon={<Terminal size={13} style={{ color: 'var(--accent)' }} />}
+        label="Engine Log (live mission)"
+        badge={
+          <span style={{ fontSize: '0.6rem', color: statusCol, fontFamily: 'var(--font-mono)', border: `1px solid ${statusCol}`, padding: '1px 6px', letterSpacing: '0.1em' }}>
+            {statusLabel}
+          </span>
+        }
+      />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0, background: 'rgba(0,0,0,0.15)', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 3 }}>
+          {LEVELS.map(lv => (
+            <button key={lv} onClick={() => setFilter(lv)} style={{
+              fontSize: '0.58rem', padding: '2px 7px', borderRadius: 2, cursor: 'pointer',
+              fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
+              background: filter === lv ? (LEVEL_COLOR[lv] ?? 'var(--accent)') : 'transparent',
+              color:      filter === lv ? (lv === 'ALL' ? '#000' : '#fff') : (LEVEL_COLOR[lv] ?? 'var(--text-dim)'),
+              border:     `1px solid ${filter === lv ? (LEVEL_COLOR[lv] ?? 'var(--accent)') : 'var(--border)'}`,
+            }}>{lv}</button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--bg-input)', border: '1px solid var(--border)', padding: '2px 8px', flex: 1, minWidth: 140 }}>
+          <Search size={9} style={{ color: 'var(--text-dim)', flexShrink: 0 }} />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Filter message…"
+            style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: '0.65rem', fontFamily: 'var(--font-mono)', width: '100%' }}
+          />
+          {search && <button onClick={() => setSearch('')} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: 0, fontSize: '0.6rem' }}>✕</button>}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{visible.length}/{lines.length}</span>
+          <button
+            onClick={() => { setAutoScroll(true); bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }}
+            title="Scroll to bottom / enable auto-scroll"
+            style={{ background: autoScroll ? 'var(--accent)' : 'transparent', border: `1px solid ${autoScroll ? 'var(--accent)' : 'var(--border)'}`, color: autoScroll ? '#000' : 'var(--text-dim)', borderRadius: 2, cursor: 'pointer', padding: '2px 5px', display: 'flex', alignItems: 'center' }}>
+            <ChevronsDown size={10} />
+          </button>
+          <button onClick={() => setLines([])}
+            style={{ fontSize: '0.58rem', background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', padding: '2px 8px', borderRadius: 2, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>CLR</button>
+        </div>
+      </div>
+
+      <div ref={containerRef} onScroll={onScroll} style={{ flex: 1, overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.63rem', lineHeight: 1.55 }}>
+        {visible.length === 0 && (
+          <div style={{ padding: '1rem', color: 'var(--text-dim)', textAlign: 'center', fontSize: '0.62rem', letterSpacing: '0.1em' }}>
+            {wsStatus === 'connecting' ? 'CONNECTING…' : wsStatus !== 'open' ? 'DISCONNECTED' : lines.length === 0 ? 'WAITING FOR ENGINE LOGS (mission must be running, bfdb needs --base)…' : 'NO MATCHING LOGS'}
+          </div>
+        )}
+        {visible.map((l, i) => {
+          const lc = LEVEL_COLOR[l.level] ?? 'var(--text-dim)'
+          const bg = LEVEL_BG[l.level] ?? ''
+          return (
+            <div key={i} style={{ display: 'flex', gap: 8, padding: '1px 10px', background: bg, borderBottom: '1px solid rgba(255,255,255,0.018)', alignItems: 'baseline' }}>
+              <span style={{ color: lc, flexShrink: 0, width: 38, textAlign: 'right', fontWeight: 700 }}>{l.level}</span>
+              <span style={{ color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{l.text}</span>
             </div>
           )
         })}
@@ -628,6 +756,9 @@ export default function AdminPage() {
 
         {/* ── Log analyzer ── */}
         <LogAnalyzer />
+
+        {/* ── Engine log analyzer (live bflib logs, requires bfdb --base) ── */}
+        <EngineLogAnalyzer />
 
         {/* ── Linked accounts ── */}
         <div className="vs-card">

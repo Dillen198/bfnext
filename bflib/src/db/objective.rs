@@ -908,10 +908,12 @@ impl Db {
         let cfg = Arc::clone(&self.ephemeral.cfg);
         let cull_distance = (cfg.unit_cull_distance as f64).powi(2);
         let ground_cull_distance = (cfg.ground_vehicle_cull_distance as f64).powi(2);
+        let lr_cull_distance = (cfg.lr_cull_distance as f64).powi(2);
         let mut is_close_to_enemies: FxHashSet<UnitId> = FxHashSet::default();
         let mut check_close_units = |units: &Map<UnitId, SpawnedUnit>,
                                      close_units: &FxHashSet<UnitId>,
                                      obj: &Objective,
+                                     air_cull_dist: f64,
                                      spawn: &mut bool,
                                      threat: &mut bool| {
             for uid in close_units {
@@ -923,7 +925,7 @@ impl Db {
                         || unit.tags.0.contains(UnitTag::Helicopter);
                     let unarmed = unit.tags.0.contains(UnitTag::Unarmed);
                     let cull_dist = if air {
-                        cull_distance
+                        air_cull_dist
                     } else {
                         ground_cull_distance
                     };
@@ -948,6 +950,7 @@ impl Db {
         };
         let mut check_close_players = |obj: &Objective,
                                        pos3: Vector3,
+                                       air_cull_dist: f64,
                                        spawn: &mut bool,
                                        threat: &mut bool| {
             for (side, pos, v, typ) in &players {
@@ -966,7 +969,7 @@ impl Db {
                     let dist = na::distance_squared(&obj_pos.into(), &ppos.into());
                     let fdist30 = na::distance_squared(&obj_pos.into(), &future_ppos30.into());
                     let fdist60 = na::distance_squared(&obj_pos.into(), &future_ppos60.into());
-                    if dist <= cull_distance || fdist30 <= cull_distance || fdist60 <= cull_distance
+                    if dist <= air_cull_dist || fdist30 <= air_cull_dist || fdist60 <= air_cull_dist
                     {
                         *spawn = true;
                     }
@@ -1012,13 +1015,49 @@ impl Db {
             let mut spawn = false;
             let mut is_threatened = false;
             let pos3 = obj.threat_pos3;
-            if let Err(e) = check_close_players(obj, pos3, &mut spawn, &mut is_threatened) {
+            // Special SAM sites wake from farther away if they contain a
+            // long-range component, e.g. an SA-10/S-300 or Patriot battery,
+            // so it has its full detection/engagement range against an
+            // approaching aircraft instead of only reacting once the
+            // aircraft is already within a generic ground-objective wake
+            // distance. Per-unit-type distances (special_sam_wake_distance)
+            // take priority so e.g. an SA-10 site can wake from farther out
+            // than an SA-11 site even though both are LR-tagged; anything
+            // not explicitly listed falls back to lr_cull_distance (if
+            // LR-tagged) or the generic aircraft cull distance.
+            let air_cull_dist = if obj.kind.is_special_sam_site() {
+                let mut max_dist = cull_distance;
+                for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
+                    if let Some(group) = self.persisted.groups.get(gid) {
+                        for uid in &group.units {
+                            if let Some(unit) = self.persisted.units.get(uid) {
+                                let unit_dist = match cfg.special_sam_wake_distance.get(&unit.typ)
+                                {
+                                    Some(d) => (*d as f64).powi(2),
+                                    None if unit.tags.0.contains(UnitTag::LR) => lr_cull_distance,
+                                    None => cull_distance,
+                                };
+                                if unit_dist > max_dist {
+                                    max_dist = unit_dist;
+                                }
+                            }
+                        }
+                    }
+                }
+                max_dist
+            } else {
+                cull_distance
+            };
+            if let Err(e) =
+                check_close_players(obj, pos3, air_cull_dist, &mut spawn, &mut is_threatened)
+            {
                 error!("failed to check for close players {} {e}", obj.id)
             }
             if let Err(e) = check_close_units(
                 &self.persisted.units,
                 &self.ephemeral.units_potentially_close_to_enemies,
                 obj,
+                air_cull_dist,
                 &mut spawn,
                 &mut is_threatened,
             ) {
@@ -1068,10 +1107,6 @@ impl Db {
                     self.ephemeral.dirty = true;
                 }
             }
-            // Special SAM sites are always spawned — they are static strategic installations
-            if obj.kind.is_special_sam_site() {
-                spawn = true;
-            }
             if !obj.spawned && spawn {
                 obj.spawned = true;
                 let is_mobile = obj.kind.is_carrier_group();
@@ -1098,8 +1133,8 @@ impl Db {
                 && !obj.threatened
                 && now - obj.last_activate >= Duration::seconds(cfg.cull_after as i64)
             {
-                // Don't cull carrier groups or special SAM sites — they are always present
-                if obj.kind.is_carrier_group() || obj.kind.is_special_sam_site() {
+                // Don't cull carrier groups — they are always present
+                if obj.kind.is_carrier_group() {
                     continue;
                 }
                 obj.spawned = false;

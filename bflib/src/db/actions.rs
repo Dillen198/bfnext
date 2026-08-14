@@ -840,7 +840,7 @@ impl Db {
                 cfg: args.cfg.plane,
             },
             None,
-            BitFlags::empty(),
+            UnitTag::HotStart.into(),
             move |db, gid, pos| {
                 db.drone_mission(
                     side,

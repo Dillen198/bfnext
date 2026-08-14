@@ -10,7 +10,7 @@ function uuid(): string {
 }
 import { useQuery } from '@tanstack/react-query'
 import {
-  MapContainer, TileLayer, CircleMarker, Marker, Popup,
+  MapContainer, TileLayer, CircleMarker, Marker, Popup, Tooltip,
   useMap, ScaleControl, Polyline, Circle, useMapEvents,
 } from 'react-leaflet'
 import type { LatLngBoundsExpression, LatLngExpression } from 'leaflet'
@@ -24,10 +24,11 @@ import {
 } from '../api'
 import { type IconStyle } from '../lib/mapIcons'
 import { useRound } from '../context/RoundContext'
+import { useAuth } from '../context/AuthContext'
 
 // ── Constants ──────────────────────────────────────────────────────────
-const TRAIL_MAX = 12
-const TRAIL_SEC = 30
+const TRAIL_MAX = 10000
+const TRAIL_SEC = 86400 * 2 // 2 days of history in memory for replay
 const VEL_SECS = 60      // project position this many seconds ahead
 const OBJ_INT = 30_000
 const REST_INT = 5_000
@@ -92,7 +93,7 @@ interface BraaLine { id: string; from: { lat: number; lon: number }; to: { lat: 
 interface HackTimer { id: string; label: string; startedAt: number }  // startedAt = Date.now() ms
 
 // ── Trail storage ──────────────────────────────────────────────────────
-interface TrailPt { lat: number; lon: number; ts: number }
+interface TrailPt { lat: number; lon: number; ts: number; alt?: number; hdg?: number }
 type Trails = Map<string, TrailPt[]>
 
 // ── Geo helpers ────────────────────────────────────────────────────────
@@ -433,8 +434,11 @@ export default function MapPage() {
   const [showVectors, setShowVectors] = usePersisted('showVectors', true)
   const [showTrails, setShowTrails] = usePersisted('showTrails', true)
   const [showPlan, setShowPlan] = usePersisted('showPlan', false)
+  const [showLogistics, setShowLogistics] = usePersisted('showLogistics', false)
+  const [showReplay, setShowReplay] = usePersisted('showReplay', false)
   const [speed, setSpeed] = usePersisted('speed', 400)
   const [scratchText, setScratchText] = usePersisted('scratch', '')
+  const [kneeboardMode, setKneeboardMode] = usePersisted('kneeboardMode', false)
 
   // ── Persisted planning data ─────────────────────────────────────────
   const [waypoints, setWaypoints] = usePersisted<Waypoint[]>('waypoints', [])
@@ -446,6 +450,8 @@ export default function MapPage() {
   const [planMode, setPlanMode] = useState<PlanMode>('none')
   const [markerType, setMarkerType] = useState<MarkerType>('IP')
   const [wsStatus, setWsStatus] = useState<'open' | 'closed' | 'error'>('closed')
+
+  const [replayPct, setReplayPct] = useState(100)
 
   // BRAA
   const [braaStart, setBraaStart] = useState<{ lat: number; lon: number } | null>(null)
@@ -473,6 +479,22 @@ export default function MapPage() {
   const [bullseyes, setBullseyes] = useState<Bullseye[]>([])
   const trailsRef = useRef<Trails>(new Map())
 
+  // ── Calculate Replay Bounds ─────────────────────────────────────────
+  const [minTs, maxTs] = useMemo(() => {
+    let min = Infinity
+    let max = -Infinity
+    for (const pts of trailsRef.current.values()) {
+      if (pts.length > 0) {
+        if (pts[0].ts < min) min = pts[0].ts
+        if (pts[pts.length - 1].ts > max) max = pts[pts.length - 1].ts
+      }
+    }
+    const now = Date.now() / 1000
+    if (min === Infinity) return [now - TRAIL_SEC, now]
+    return [min, Math.max(max, now)]
+  }, [liveTime])
+  const replayTs = showReplay ? minTs + (maxTs - minTs) * (replayPct / 100) : Date.now() / 1000
+
   // Cursor coords (ref + 5Hz display to avoid re-render on every mouse move)
   const cursorLatLon = useRef<{ lat: number; lon: number } | null>(null)
   const [cursorCoord, setCursorCoord] = useState('')
@@ -483,6 +505,7 @@ export default function MapPage() {
   }, [])
 
   const { selectedRound } = useRound()
+  const { user } = useAuth()
 
   // ── REST queries ────────────────────────────────────────────────────
   const { data: objectives = [], isLoading } = useQuery({
@@ -504,7 +527,7 @@ export default function MapPage() {
       const trails = trailsRef.current
       for (const p of points) {
         const pts = trails.get(p.id) ?? []
-        pts.push({ lat: p.lat, lon: p.lon, ts: p.ts })
+        pts.push({ lat: p.lat, lon: p.lon, ts: p.ts, alt: p.alt, hdg: p.hdg })
         trails.set(p.id, pts)
       }
     }).catch(() => {/* trails are optional */ })
@@ -520,7 +543,7 @@ export default function MapPage() {
       const trails = trailsRef.current
       for (const u of msg.units) {
         const pts = trails.get(u.id) ?? []
-        pts.push({ lat: u.lat, lon: u.lon, ts: now })
+        pts.push({ lat: u.lat, lon: u.lon, ts: now, alt: u.alt, hdg: u.hdg })
         const trimmed = pts.filter(p => p.ts >= now - TRAIL_SEC)
         if (trimmed.length > TRAIL_MAX) trimmed.splice(0, trimmed.length - TRAIL_MAX)
         trails.set(u.id, trimmed)
@@ -547,10 +570,20 @@ export default function MapPage() {
   const useLive = wsStatus === 'open' && showLive
   const activeUnits: LiveUnit[] = useMemo(() => {
     if (!useLive) return []
-    if (!searchQuery) return liveUnits
+    let src = liveUnits
+    if (showReplay) {
+      src = liveUnits.map(u => {
+        const pts = trailsRef.current.get(u.id)
+        if (!pts) return u
+        const p = [...pts].reverse().find(pt => pt.ts <= replayTs)
+        if (p) return { ...u, lat: p.lat, lon: p.lon, alt: p.alt ?? u.alt, hdg: p.hdg ?? u.hdg }
+        return u
+      })
+    }
+    if (!searchQuery) return src
     const q = searchQuery.toLowerCase()
-    return liveUnits.filter(u => u.nm.toLowerCase().includes(q) || u.typ.toLowerCase().includes(q))
-  }, [useLive, liveUnits, searchQuery])
+    return src.filter(u => u.nm.toLowerCase().includes(q) || u.typ.toLowerCase().includes(q))
+  }, [useLive, liveUnits, searchQuery, showReplay, replayTs])
 
   const activeRestUnits: MapUnit[] = useMemo(() => {
     if (useLive || !showRadar) return []
@@ -643,7 +676,7 @@ export default function MapPage() {
     <div style={{ position: 'relative', flex: 1, overflow: 'hidden', display: 'flex' }}>
 
       {/* ── LEFT CONSOLE PANEL (Sneaker-style) ────────────────────────── */}
-      {showConsole && (
+      {showConsole && !kneeboardMode && (
         <div style={{
           width: '240px', flexShrink: 0, display: 'flex', flexDirection: 'column',
           background: PANEL_BG, borderRight: `1px solid ${HUD_BORDER}`,
@@ -912,6 +945,16 @@ export default function MapPage() {
             return (
               <CircleMarker key={obj.id} center={[obj.lat, obj.lon]} radius={r}
                 pathOptions={{ color: c, fillColor: c, fillOpacity: 0.15, weight: 1.5 }}>
+                {showLogistics && obj.owner !== 'Neutral' && (
+                  <Tooltip permanent direction="top" offset={[0, -r]} opacity={0.9} className="logi-tip">
+                    <div style={{ background: '#0f172a', border: '1px solid #a855f7', padding: '4px 6px', borderRadius: '4px', fontSize: '0.65rem', color: '#f8fafc', fontFamily: 'var(--font-mono)', minWidth: '70px' }}>
+                      <div style={{ color: '#a855f7', fontWeight: 600, marginBottom: 2 }}>{obj.name}</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>L:</span><span style={{ color: obj.logi > 40 ? '#10b981' : '#ef4444' }}>{obj.logi}%</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>S:</span><span style={{ color: obj.supply > 40 ? '#10b981' : '#ef4444' }}>{obj.supply}%</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>F:</span><span style={{ color: obj.fuel > 40 ? '#10b981' : '#ef4444' }}>{obj.fuel}%</span></div>
+                    </div>
+                  </Tooltip>
+                )}
                 <Popup minWidth={200} maxWidth={240}>
                   <div style={{ background: '#060a06', color: HUD_TEXT, fontFamily: FONT_MONO, fontSize: '0.72rem', padding: '2px 0' }}>
                     <div style={{ fontFamily: FONT_HEAD, letterSpacing: '0.12em', marginBottom: '6px', fontSize: '0.85rem' }}>
@@ -935,6 +978,37 @@ export default function MapPage() {
                         </div>
                       )
                     })}
+                    
+                    {/* COMMANDER ACTIONS */}
+                    {user?.is_admin && obj.owner !== 'Neutral' && (
+                      <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: `1px solid ${HUD_BORDER}` }}>
+                        <div style={{ fontSize: '0.58rem', color: '#ffcc00', letterSpacing: '0.1em', marginBottom: '6px' }}>
+                          COMMANDER ACTIONS
+                        </div>
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          {['ammo', 'fuel', 'infantry'].map(item => (
+                            <button
+                              key={item}
+                              onClick={async () => {
+                                try {
+                                  await api.commander.spawnLogistics(obj.name, item)
+                                  alert(`Spawned ${item} at ${obj.name}`)
+                                } catch (err) {
+                                  alert(`Failed to spawn: ${err}`)
+                                }
+                              }}
+                              style={{
+                                background: 'rgba(255,204,0,0.1)', border: '1px solid rgba(255,204,0,0.3)',
+                                color: '#ffcc00', borderRadius: '2px', padding: '3px 6px',
+                                fontSize: '0.55rem', fontFamily: FONT_MONO, cursor: 'pointer'
+                              }}
+                            >
+                              + {item.toUpperCase()}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </Popup>
               </CircleMarker>
@@ -945,11 +1019,12 @@ export default function MapPage() {
           {showTrails && activeUnits.filter(u => u.cat <= 2).flatMap(u => {
             const pts = trailsRef.current.get(u.id)
             if (!pts || pts.length < 2) return []
+            const validPts = showReplay ? pts.filter(p => p.ts <= replayTs) : pts
+            if (validPts.length < 2) return []
             const col = unitColor(u.coa, watches.has(u.id))
-            const now = Date.now() / 1000
-            // Render each historical point as a small circle, older = more transparent
-            return pts.slice(0, -1).map((p, i) => {
-              const age = (now - p.ts) / TRAIL_SEC          // 0=fresh 1=oldest
+            const now = showReplay ? replayTs : Date.now() / 1000
+            return validPts.slice(0, -1).map((p, i) => {
+              const age = (now - p.ts) / TRAIL_SEC
               const opacity = Math.max(0.08, 0.55 * (1 - age))
               return (
                 <CircleMarker key={`trail-${u.id}-${i}`}
@@ -1098,8 +1173,31 @@ export default function MapPage() {
             <HudBtn active={showVectors} onClick={() => setShowVectors(v => !v)}>VECTORS</HudBtn>
             <HudBtn active={showTrails} onClick={() => setShowTrails(v => !v)}>TRAILS</HudBtn>
             <HudBtn active={showThreats} onClick={() => setShowThreats(v => !v)}>THREATS</HudBtn>
+            <HudBtn active={showLogistics} onClick={() => setShowLogistics(v => !v)} color="#a855f7">LOGISTICS</HudBtn>
+            <HudBtn active={showReplay} onClick={() => setShowReplay(v => !v)} color="#10b981">REPLAY</HudBtn>
             <HudBtn active={showHeat} onClick={() => setShowHeat(v => !v)}>HEAT</HudBtn>
+            <div style={{ width: '1px', background: HUD_BORDER, margin: '0 2px' }} />
+            <HudBtn active={kneeboardMode} onClick={() => setKneeboardMode(v => !v)} color="#facc15">KNEEBOARD</HudBtn>
           </div>
+
+          {/* Scrubber UI (appears below toggles if showReplay is true) */}
+          {showReplay && (
+            <div style={{ ...hudPanel, marginTop: 5, padding: '10px', width: '320px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#10b981', fontSize: '0.7rem', fontFamily: 'var(--font-mono)', marginBottom: '5px' }}>
+                <span>REPLAY: {new Date(replayTs * 1000).toLocaleTimeString()}</span>
+                <span>{replayPct}%</span>
+              </div>
+              <input 
+                type="range" min="0" max="100" step="1" 
+                value={replayPct} onChange={e => setReplayPct(parseInt(e.target.value))}
+                style={{ width: '100%', accentColor: '#10b981', cursor: 'pointer' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: HUD_DIM, fontSize: '0.6rem', marginTop: '5px' }}>
+                <span>{new Date(minTs * 1000).toLocaleTimeString()}</span>
+                <span>{new Date(maxTs * 1000).toLocaleTimeString()}</span>
+              </div>
+            </div>
+          )}
 
           {/* Side filter */}
           <div style={{ ...hudPanel, display: 'flex', gap: '3px', padding: '5px 9px' }}>

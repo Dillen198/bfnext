@@ -914,7 +914,7 @@ fn remark(ctx: &mut Context, objective: &String) -> Result<()> {
 
 // ==================== Query API Functions ====================
 
-fn query_objectives(ctx: &Context) -> Vec<ObjectiveInfo> {
+pub(crate) fn query_objectives(ctx: &Context) -> Vec<ObjectiveInfo> {
     ctx.db
         .objectives()
         .map(|(_, obj)| {
@@ -939,7 +939,7 @@ fn query_objectives(ctx: &Context) -> Vec<ObjectiveInfo> {
         .collect()
 }
 
-fn query_objective_details(ctx: &Context, name: &str) -> Result<ObjectiveDetails> {
+pub(crate) fn query_objective_details(ctx: &Context, name: &str) -> Result<ObjectiveDetails> {
     let oid = get_airbase(&ctx.db, name)?;
     let obj = ctx
         .db
@@ -983,7 +983,7 @@ fn query_objective_details(ctx: &Context, name: &str) -> Result<ObjectiveDetails
     })
 }
 
-fn query_players(ctx: &Context) -> Vec<PlayerInfo> {
+pub(crate) fn query_players(ctx: &Context) -> Vec<PlayerInfo> {
     ctx.db
         .persisted
         .players()
@@ -1021,7 +1021,7 @@ fn query_players(ctx: &Context) -> Vec<PlayerInfo> {
         .collect()
 }
 
-fn query_player_details(ctx: &Context, name: &str) -> Result<PlayerInfo> {
+pub(crate) fn query_player_details(ctx: &Context, name: &str) -> Result<PlayerInfo> {
     let ucid = get_player_ucid(ctx, name)?;
     let player = ctx
         .db
@@ -1057,7 +1057,7 @@ fn query_player_details(ctx: &Context, name: &str) -> Result<PlayerInfo> {
     })
 }
 
-fn query_groups(ctx: &Context, side_filter: Option<Side>) -> Vec<GroupInfo> {
+pub(crate) fn query_groups(ctx: &Context, side_filter: Option<Side>) -> Vec<GroupInfo> {
     ctx.db
         .persisted
         .groups
@@ -1110,7 +1110,7 @@ fn query_groups(ctx: &Context, side_filter: Option<Side>) -> Vec<GroupInfo> {
         .collect()
 }
 
-fn query_group_details(ctx: &Context, id: &GroupId) -> Result<GroupInfo> {
+pub(crate) fn query_group_details(ctx: &Context, id: &GroupId) -> Result<GroupInfo> {
     let group = ctx.db.group(id)?;
     let alive_count = group
         .units
@@ -1154,7 +1154,7 @@ fn query_group_details(ctx: &Context, id: &GroupId) -> Result<GroupInfo> {
     })
 }
 
-fn query_units(ctx: &Context, group_id: &GroupId) -> Result<Vec<UnitInfo>> {
+pub(crate) fn query_units(ctx: &Context, group_id: &GroupId) -> Result<Vec<UnitInfo>> {
     let group = ctx.db.group(group_id)?;
     let units: Vec<UnitInfo> = group
         .units
@@ -1174,7 +1174,7 @@ fn query_units(ctx: &Context, group_id: &GroupId) -> Result<Vec<UnitInfo>> {
     Ok(units)
 }
 
-fn query_warehouse(ctx: &Context, objective_name: &str) -> Result<WarehouseInfo> {
+pub(crate) fn query_warehouse(ctx: &Context, objective_name: &str) -> Result<WarehouseInfo> {
     let oid = get_airbase(&ctx.db, objective_name)?;
     let obj = ctx
         .db
@@ -1201,7 +1201,7 @@ fn query_warehouse(ctx: &Context, objective_name: &str) -> Result<WarehouseInfo>
     })
 }
 
-fn query_logistics(ctx: &Context) -> LogisticsInfo {
+pub(crate) fn query_logistics(ctx: &Context) -> LogisticsInfo {
     let stage = format!("{:?}", ctx.db.ephemeral.logistics_stage());
     LogisticsInfo {
         stage,
@@ -1210,7 +1210,7 @@ fn query_logistics(ctx: &Context) -> LogisticsInfo {
     }
 }
 
-fn query_campaign_state(ctx: &Context) -> CampaignState {
+pub(crate) fn query_campaign_state(ctx: &Context) -> CampaignState {
     let mut objectives_by_side: HashMap<std::string::String, usize> = HashMap::new();
     let mut players_by_side: HashMap<std::string::String, usize> = HashMap::new();
     let mut points_by_side: HashMap<std::string::String, i64> = HashMap::new();
@@ -1239,7 +1239,7 @@ fn query_campaign_state(ctx: &Context) -> CampaignState {
 
 // ==================== Action API Functions ====================
 
-fn api_spawn_deployable(
+pub(crate) fn api_spawn_deployable(
     ctx: &mut Context,
     lua: MizLua,
     side: Side,
@@ -1296,7 +1296,7 @@ fn api_spawn_deployable(
     }
 }
 
-fn api_spawn_troop(
+pub(crate) fn api_spawn_troop(
     ctx: &mut Context,
     lua: MizLua,
     side: Side,
@@ -1347,7 +1347,7 @@ fn api_spawn_troop(
     Ok(gid)
 }
 
-fn api_move_group(ctx: &mut Context, lua: MizLua, id: &GroupId, pos: Vector2) -> Result<()> {
+pub(crate) fn api_move_group(ctx: &mut Context, lua: MizLua, id: &GroupId, pos: Vector2) -> Result<()> {
     use dcso3::controller::{MissionPoint, PointType, ActionTyp, AltType, Task, VehicleFormation};
     use dcso3::group::Group;
     use dcso3::LuaVec2;
@@ -1383,7 +1383,7 @@ fn api_move_group(ctx: &mut Context, lua: MizLua, id: &GroupId, pos: Vector2) ->
     Ok(())
 }
 
-fn api_add_points(ctx: &mut Context, player: &str, amount: i32, reason: &str) -> Result<()> {
+pub(crate) fn api_add_points(ctx: &mut Context, player: &str, amount: i32, reason: &str) -> Result<()> {
     let ucid = get_player_ucid(ctx, player)?;
     let player_data = ctx
         .db

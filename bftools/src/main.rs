@@ -6,6 +6,28 @@ use std::path::PathBuf;
 mod mission_edit;
 
 #[derive(Args, Clone, Debug, Serialize)]
+struct SpecialSamCmd {
+    /// a mission editor template with special SAM site groups. Every
+    /// vehicle/static group placed under the Red or Blue coalition whose
+    /// name matches "<Location> - <Label>" (e.g. "Hayjanah - SA-1") becomes
+    /// one site; all of that group's units belong to it. The site's starting
+    /// coalition is whichever side (Red/Blue country tree) the group is
+    /// actually placed under in the editor. The opposite side's unit list is
+    /// synthesized as a mirror of the placed units so the site can flip on
+    /// capture.
+    #[clap(long)]
+    template: PathBuf,
+    /// the output json file: an array of special_sam_sites entries, ready to
+    /// be spliced into the main campaign config
+    #[clap(long)]
+    output: PathBuf,
+    /// optionally merge the generated sites directly into a campaign config
+    /// file's "special_sam_sites" array, writing the result back in place
+    #[clap(long)]
+    merge_into: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Debug, Serialize)]
 struct MizCmd {
     /// the final miz file to output
     #[clap(long)]
@@ -31,6 +53,7 @@ struct MizCmd {
 #[derive(Subcommand, Clone, Debug, Serialize)]
 enum Tools {
     Miz(MizCmd),
+    SpecialSam(SpecialSamCmd),
 }
 
 #[derive(Parser)]
@@ -45,6 +68,7 @@ fn main() -> Result<()> {
 
     match bftools_args.tool {
         Tools::Miz(cfg) => mission_edit::run(&cfg)?,
+        Tools::SpecialSam(cfg) => mission_edit::run_special_sam(&cfg)?,
     };
     Ok(())
 }

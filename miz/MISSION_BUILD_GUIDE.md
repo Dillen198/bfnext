@@ -22,6 +22,12 @@
 - **SR** = SHORAD (Short Range Air Defense template)
 - **DEP** = Deployable (player-dropped units via crates)
 
+### Special SAM Site Naming **[NEW]**
+Special SAM sites use a *different* convention from everything else in this
+guide — see [Special SAM Sites](#special-sam-sites-new) below. Group names
+are `<Location> - <Label>` (no `B`/`R`/`N` prefix); the group's coalition
+placement in the editor is what determines its starting owner instead.
+
 ---
 
 ## Objective Compositions
@@ -79,6 +85,17 @@ Strategic production facility:
 - Small LOGI presence
 - **Produces supplies/tickets over time when active**
 - **Destroying reduces enemy production capacity**
+
+### Special SAM Site (SAM) **[NEW]**
+Hidden, map-fixed IADS installation — not built via a trigger zone like the
+other objective types above. See [Special SAM Sites](#special-sam-sites-new)
+below for the full workflow.
+- No slots, no logistics connection, always spawned (never culled)
+- **Hidden from the F10 map and dashboard** until the enemy coalition
+  physically finds and destroys it
+- Capturable by ground troops like any other objective
+- Equipment and starting owner come entirely from a dedicated mission
+  editor template, generated into campaign config via `bftools special-sam`
 
 ---
 
@@ -252,6 +269,62 @@ For deployable naval FARPs, use:
 
 ---
 
+## Special SAM Sites **[NEW]**
+
+Unlike every other objective type in this guide, Special SAM Sites are
+**not** built from an `O`-prefixed trigger zone. They're hidden, map-fixed
+IADS installations meant to be found and destroyed by players, not seen on
+the F10 map ahead of time — so they live entirely in the campaign config
+(`special_sam_sites`), generated from a *dedicated* mission editor template
+via `bftools special-sam`, not from the main mission file.
+
+### Building the template
+
+1. In a separate `.miz` (or a dedicated area of one), place each site's
+   vehicles/statics as **one DCS group**, under whichever coalition
+   (Red/Blue) the site should start owned by. All of a site's equipment
+   must be in that one group — the group boundary is exactly what defines
+   the site.
+2. Name the **group itself** (not the individual units) `<Location> - <Label>`,
+   e.g. `Hayjanah - SA-1`. No `B`/`R`/`N` prefix — the coalition you placed
+   the group under is what determines the starting owner, not the name text.
+3. Every group matching that two-part naming pattern under Red or Blue
+   becomes its own site. The opposite coalition's mirror (same unit
+   types/positions/headings) is synthesized automatically, so the site can
+   flip ownership when captured — you only ever place one side by hand.
+
+### Generating the config
+
+```bash
+bftools.exe special-sam \
+  --template "path/to/special-sam-template.miz" \
+  --output special_sam_sites.json \
+  --merge-into "path/to/campaign-config.json"
+```
+
+`--merge-into` writes the generated sites straight into the target
+config's `special_sam_sites` array in place (with a timestamped backup of
+the previous file); omit it to just inspect the standalone
+`special_sam_sites.json` output first.
+
+**Capture radius** is shared by every special SAM site (they have no
+mission-editor trigger zone of their own to derive one from) — set it once
+via the top-level `special_sam_capture_radius_m` config field, not per
+site.
+
+### Things to double-check before merging
+
+- **One group per site.** If a site's units end up spread across more than
+  one DCS group (e.g. from copy-pasting), only the group actually named
+  `<Location> - <Label>` gets picked up — the rest are silently skipped.
+- **Group name, not unit names.** Unit-level names inside the group are
+  ignored entirely; only the group's own name is read.
+- Sites with only 1-2 units after generation are usually a sign of an
+  incomplete/mis-scoped group in the editor, not an intentional
+  single-launcher site — worth a second look before merging.
+
+---
+
 ## F10 Map Color Coding **[NEW]**
 
 ### Objective Health Status
@@ -309,12 +382,30 @@ For deployable naval FARPs, use:
    ```
    Or use your specific mission folder path
 
-### Post-Build Fix (If Needed)
+### Generating the Final Mission (bftools) **[UPDATED]**
 
-Run payload fix command:
+`bftools miz` merges your base mission with per-slot payloads/Link-16
+assignments (from a weapon template) and warehouse/dynamic-spawn config —
+this is the actual current build step; there is no separate payload-fix
+script anymore.
+
 ```powershell
-luae payloadfix.lua "C:\Users\Adam\Documents\GitHub\bfnext\miz\Scenarios\80s\caucasus\Caucasus 0.2.miz" "C:\Users\Adam\Documents\GitHub\bfnext\miz\Scenarios\80s\caucasus\BFConfig.json"
+cargo build --release --package=bftools
+.\target\release\bftools.exe miz `
+  --output final.miz --base base.miz `
+  --weapon weapons.miz --options options.miz `
+  --warehouse warehouse.miz
 ```
+
+If you're adding or updating Special SAM Sites, run `bftools special-sam`
+too — see [Special SAM Sites](#special-sam-sites-new) above.
+
+The generated mission's campaign config (the JSON file `bflib` loads at
+startup — e.g. `ODFv2_CFG`, named whatever you point bflib's state path at,
+not a fixed filename) can also be edited live from the web dashboard's
+**Config Editor** (`/admin/config` in bfweb, enabled by passing
+`--engine-config <path>` to `bfdb`) instead of hand-editing JSON — see the
+root [README.md](../README.md) for setup.
 
 ---
 
@@ -358,7 +449,7 @@ luae payloadfix.lua "C:\Users\Adam\Documents\GitHub\bfnext\miz\Scenarios\80s\cau
   - Delivers carrier repair crate to Naval Base to start repair
   - Progress notifications every 5 minutes
   - Message when complete: "{Carrier} has been fully repaired and is operational"
-  - Time configurable in BFConfig.json `carrier.repair_time` (in seconds)
+  - Time configurable in the campaign config JSON `carrier.repair_time` (in seconds)
 - **Repair Cost**: Requires supplies from parent Naval Base (default: 5000 supplies)
 - **Respawn Cost**: Requires supplies from parent Naval Base (default: 15000 supplies)
 - **Capture Mechanics** (NEW):
@@ -373,8 +464,13 @@ luae payloadfix.lua "C:\Users\Adam\Documents\GitHub\bfnext\miz\Scenarios\80s\cau
   - When supply ship destroyed: logistics drops to 0%, warehouse disabled
   - No aircraft spawns, no supplies until carrier is repaired
   - Repairing carrier also repairs/respawns supply ship
-- **Movement Speed**: Configurable in BFConfig.json (default: 5.0 m/s ≈ 10 knots)
-- **Template Naming**: Carrier template group must be named with `BCARRIER`/`RCARRIER` prefix and late-activated in mission file
+- **Movement Speed**: Configurable in the campaign config JSON (default: 5.0 m/s ≈ 10 knots)
+- **Template Naming**: Carrier template group must be named with `BCARRIER`/`RCARRIER` prefix and late-activated in mission file —
+  or explicitly listed in `carrier.groups` (`[{"template": "BCARRIER1", "display_name": "CVN-73 Washington"}, ...]`) **[NEW]**
+  if you'd rather not rely on prefix auto-detection
+- **Spawn Repositioning Speed** **[NEW]**: `carrier.spawn_repositioning_speed` (default: 100.0 m/s) — carriers always
+  spawn at their mission-editor position on load; this controls how fast they navigate back to their last saved
+  position afterward
 - **NOT Deployable**: Carrier Groups are mission objectives, NOT deployable units via actions menu
   - Do NOT use "naval-farp-carrier" deployable action (conflicts with Carrier Group objectives)
   - Use "naval-farp-frigate" or "naval-farp-destroyer" for deployable naval FARPs instead
@@ -413,6 +509,7 @@ Voronoi-based territory zones show areas of control on the F10 map:
   "enabled": true,
   "update_on_objective_change_only": true,
   "samples_per_boundary": 100,
+  "max_marks": 200,
   "territory_zone_alpha": 0.15
 }
 ```
@@ -421,6 +518,8 @@ Voronoi-based territory zones show areas of control on the F10 map:
 - **enabled**: `true` to enable territory visualization
 - **update_on_objective_change_only**: Only recalculate when objectives change owner (recommended for performance)
 - **samples_per_boundary**: Grid resolution (50-200, higher = finer detail but slower)
+- **max_marks** **[NEW]**: Cap on F10 map marks drawn for territory zones (default: 200). Fewer marks = better
+  server/client performance; the draw step is derived automatically from this and the grid resolution.
 - **territory_zone_alpha**: Transparency (0.0-1.0, 0.1-0.3 recommended for subtle shading)
 
 ### Supply Convoy System **[NEW]**
@@ -561,7 +660,7 @@ Players can use C-130s or helicopters to:
 - **Combined Arms**: Coordinate convoy escorts with air cover
 
 ### Configuration
-All new features can be configured in BFConfig.json:
+All new features can be configured in the campaign config JSON:
 ```json
 {
   "factory": {
@@ -572,8 +671,13 @@ All new features can be configured in BFConfig.json:
     "repair_cost": 5000,
     "respawn_cost": 15000,
     "movement_speed": 5.0,
-    "repair_time": 600
+    "spawn_repositioning_speed": 100.0,
+    "repair_time": 600,
+    "groups": [
+      { "template": "BCARRIER1", "display_name": "CVN-73 Washington" }
+    ]
   },
+  "special_sam_capture_radius_m": 300.0,
   "warehouse": {
     "supply_transfer_fuel_crate": {
       "Red": { "name": "Fuel Transfer", "weight": 2000, "required": 1 },
@@ -601,6 +705,7 @@ All new features can be configured in BFConfig.json:
     "enabled": true,
     "update_on_objective_change_only": true,
     "samples_per_boundary": 100,
+    "max_marks": 200,
     "territory_zone_alpha": 0.15
   },
   "points": {
@@ -613,6 +718,10 @@ All new features can be configured in BFConfig.json:
 - `repair_cost`: Supply cost to initiate repair (default: 5000)
 - `respawn_cost`: Supply cost to spawn new carrier (default: 15000)
 - `movement_speed`: Carrier speed in m/s (default: 5.0 ≈ 10 knots)
+- `spawn_repositioning_speed` **[NEW]**: Speed in m/s used to navigate back to the carrier's last saved position
+  after a restart (default: 100.0 ≈ 194 knots)
+- `groups` **[NEW]**: Optional explicit list of `{template, display_name}` pairs, if you'd rather not rely on
+  `BCARRIER`/`RCARRIER` prefix auto-detection
 - `repair_time`: Time in seconds to complete repair (default: 600 = 10 min)
   - 300 = 5 minutes
   - 600 = 10 minutes (recommended)
@@ -631,10 +740,35 @@ All new features can be configured in BFConfig.json:
 | NB | Naval Base | No | Port facility, supports carriers |
 | CG | Carrier Group | **Yes** | Mobile carrier task force |
 | FAC | Factory | No | Production facility |
+| SAM | Special SAM Site | No | Hidden IADS, not built from a trigger zone — see [Special SAM Sites](#special-sam-sites-new) |
 
 ---
 
 ## Changelog
+
+### Version 2.4 (2026-08-13)
+**Added: Special SAM Sites, config editor, and doc corrections**
+- **Special SAM Sites** (NEW objective type): hidden, map-fixed IADS
+  installations built from a dedicated mission editor template instead of
+  a trigger zone. Generated into campaign config via the new
+  `bftools special-sam` command — see [Special SAM Sites](#special-sam-sites-new).
+- **Carrier config additions**: `carrier.groups` (explicit template list,
+  alternative to `BCARRIER`/`RCARRIER` prefix detection) and
+  `carrier.spawn_repositioning_speed`.
+- **Frontline config addition**: `frontline.max_marks`, capping F10 mark
+  count for territory zone drawing.
+- **Web-based Config Editor**: the campaign config JSON can now be edited
+  from the dashboard (`/admin/config` in bfweb, behind `bfdb --engine-config`)
+  instead of by hand — a form generated live from the engine's real config
+  schema, validated on save. See the root `README.md`.
+- **Corrected stale build step**: removed the old `luae payloadfix.lua`
+  reference (script no longer exists in this repo) in favor of the actual
+  current `bftools miz` mission-generation command.
+- **Corrected filename**: `BFConfig.json` throughout this doc was a
+  personal/stale filename that doesn't appear anywhere in the current
+  codebase — replaced with generic "campaign config JSON" wording, since
+  the actual filename is whatever you point `bflib`'s state path at
+  (e.g. `ODFv2_CFG`).
 
 ### Version 2.3 (2025-12-22)
 **Added: C-130 Physical Cargo System & Territory Visualization**
@@ -649,7 +783,7 @@ All new features can be configured in BFConfig.json:
   - Configuration uses `supply_transfer_fuel_crate` and `supply_transfer_weapons_crate`
 - **Territory Zone Visualization** (NEW): Voronoi-based territory zones on F10 map
   - Shows areas of control for each side with semi-transparent shading
-  - Configurable via `frontline` section in BFConfig.json
+  - Configurable via `frontline` section in the campaign config JSON
   - Updates automatically when objectives change ownership
   - Performance-optimized with configurable grid resolution
 - **Kill Points Toggle**: New `award_kill_points` config option
@@ -670,7 +804,7 @@ All new features can be configured in BFConfig.json:
 - **Timed Carrier Repair**: Configurable repair duration (default: 10 minutes)
   - Progress notifications every 5 minutes
   - Completion message when repair finishes
-  - Configurable via `carrier.repair_time` in BFConfig.json
+  - Configurable via `carrier.repair_time` in the campaign config JSON
 - **Carrier Capture System**: Carriers can change ownership when destroyed
   - Requires enemy units within 10km
   - Captured carrier starts at 50% health
@@ -698,5 +832,5 @@ All new features can be configured in BFConfig.json:
 
 ---
 
-*Document Version: 2.3*
-*Last Updated: 2025-12-22*
+*Document Version: 2.4*
+*Last Updated: 2026-08-13*

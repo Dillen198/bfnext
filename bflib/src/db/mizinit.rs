@@ -609,7 +609,7 @@ impl Db {
             let site_pos = Vector2::new(cfg_site.pos.x, cfg_site.pos.y);
             let zone = Zone::Circle {
                 pos: site_pos,
-                radius: cfg_site.capture_radius_m,
+                radius: self.ephemeral.cfg.special_sam_capture_radius_m,
             };
             let obj = Objective {
                 id,
@@ -838,6 +838,13 @@ impl Db {
             }
         }
         for side in Side::ALL {
+            // Neutral objectives are never given defenders, regardless of
+            // what's placed in the trigger zone (e.g. a "Neut" AAA/SR/LOGI
+            // template) — they're meant to be undefended and immediately
+            // capturable by whichever side gets there first.
+            if side == Side::Neutral {
+                continue;
+            }
             let _coa = miz.coalition(side)?;
             for zone in miz.triggers()? {
                 let zone = zone?;

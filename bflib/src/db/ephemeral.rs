@@ -139,6 +139,7 @@ pub struct Ephemeral {
     pub(super) active_air_routes: FxHashMap<super::logistics::LogiRouteId, super::logistics::AirLogisticsRoute>,
     /// Track last air route spawn time per side to throttle spawning
     pub(super) last_air_route_spawn: FxHashMap<Side, DateTime<Utc>>,
+    pub(crate) pending_achievements: Vec<String>,
     /// Counter for generating unique air route IDs
     pub(super) air_route_counter: u32,
     /// Sea logistics route tracking: route_id -> SeaLogisticsRoute
@@ -243,6 +244,7 @@ impl Default for Ephemeral {
             convoy_counter: 0,
             active_air_routes: FxHashMap::default(),
             last_air_route_spawn: FxHashMap::default(),
+            pending_achievements: Vec::new(),
             air_route_counter: 0,
             active_sea_routes: FxHashMap::default(),
             last_sea_route_spawn: FxHashMap::default(),
@@ -1464,21 +1466,23 @@ impl Ephemeral {
                 route.points().ok().map(|seq| seq.into_iter().filter_map(|p| p.ok()).collect()).unwrap_or_default()
             };
 
-            if group.tags.contains(UnitTag::CAP) {
+            if group.tags.contains(UnitTag::CAP) || group.tags.contains(UnitTag::HotStart) {
                 if let Some(first) = points.first_mut() {
                     first.typ = dcso3::controller::PointType::TakeOffParkingHot;
                     first.action = Some(dcso3::controller::ActionTyp::Air(dcso3::controller::TurnMethod::FromParkingAreaHot));
                     first.alt = 0.0;
                     first.alt_typ = Some(dcso3::controller::AltType::BARO);
 
-                    let opts = vec![
-                        dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::Roe(dcso3::controller::AirRoe::WeaponFree))),
-                        dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::RadarUsing(dcso3::controller::AirRadarUsing::ForContinuousSearch))),
-                        dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::ReactionOnThreat(dcso3::controller::AirReactionToThreat::EvadeFire))),
-                        dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::Silence(false))),
-                        *first.task.clone()
-                    ];
-                    first.task = Box::new(dcso3::controller::Task::ComboTask(opts));
+                    if group.tags.contains(UnitTag::CAP) {
+                        let opts = vec![
+                            dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::Roe(dcso3::controller::AirRoe::WeaponFree))),
+                            dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::RadarUsing(dcso3::controller::AirRadarUsing::ForContinuousSearch))),
+                            dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::ReactionOnThreat(dcso3::controller::AirReactionToThreat::EvadeFire))),
+                            dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::Silence(false))),
+                            *first.task.clone()
+                        ];
+                        first.task = Box::new(dcso3::controller::Task::ComboTask(opts));
+                    }
                 }
             }
 

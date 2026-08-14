@@ -15,6 +15,7 @@ for more details.
 */
 
 mod admin;
+mod api;
 mod atis;
 mod bg;
 mod chatcmd;
@@ -1019,7 +1020,8 @@ fn advise_captured(ctx: &mut Context, lua: MizLua, ts: DateTime<Utc>) -> Result<
             (obj.name().to_owned(), obj.pos())
         };
         let mark_text = format_compact!("{} captured by {:?}", name, side);
-        ctx.db.ephemeral.msgs().mark_to_all(pos, true, mark_text);
+        ctx.db.ephemeral.msgs().mark_to_all(pos, true, mark_text.clone());
+        crate::api::dispatch_event(lua, "alert", &mark_text);
         ctx.captureable.remove(&oid);
     }
     Ok(has_captures)
@@ -2329,6 +2331,13 @@ fn run_slow_timed_events(
     if ts - ctx.last_slow_timed_events >= freq {
         let start_ts = Utc::now();
         ctx.last_slow_timed_events = start_ts;
+        
+        // Dispatch pending achievements
+        let achievements = std::mem::take(&mut ctx.db.ephemeral.pending_achievements);
+        for achievement in achievements {
+            crate::api::dispatch_event(lua, "achievement", &achievement);
+        }
+
         match check_auto_shutdown(ctx, lua, ts) {
             Ok(AdminResult::Continue) => (),
             Ok(AdminResult::Shutdown) => return Ok(AdminResult::Shutdown),
@@ -2870,6 +2879,9 @@ fn init_hooks(lua: HooksLua) -> Result<()> {
 fn init_miz(lua: MizLua) -> Result<()> {
     info!("initializing mission");
     let timer = Timer::singleton(lua)?;
+    
+    // Register the Lua API
+    api::register(lua)?;
     let when = timer.get_time()? + 1.;
     timer.schedule_function(when, mlua::Value::Nil, move |lua, _, now| {
         let ctx = unsafe { Context::get_mut() };

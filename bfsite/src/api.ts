@@ -1,5 +1,11 @@
 // Minimal API client for the campaign website (live stats section)
 
+// Default: relative '/api', for when bfsite is embedded in bfdb (rust-embed)
+// and served from the same origin. Set VITE_API_BASE (e.g.
+// "https://api.example.com", no trailing slash) at build time to point a
+// standalone-hosted site at a remotely-hosted bfdb instead — see deploy/README.md.
+const API_ROOT: string = import.meta.env.VITE_API_BASE ?? ''
+
 export interface Stats {
   total_pilots: number
   total_rounds: number
@@ -23,7 +29,7 @@ export interface Pilot {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path)
+  const res = await fetch(`${API_ROOT}${path}`)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
 }

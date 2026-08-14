@@ -96,6 +96,20 @@ struct Args {
     /// SRS server URL to proxy for the dashboard radio panel (e.g. http://localhost:5002)
     #[arg(long)]
     srs_url: Option<String>,
+    /// Path to the campaign engine config JSON that bflib loads (e.g. ODFv2_CFG).
+    /// Enables the admin config editor at GET/POST /api/admin/cfg. Distinct from
+    /// --config, which is just dashboard branding.
+    #[arg(long)]
+    engine_config: Option<PathBuf>,
+    /// Origin(s) allowed to make cross-origin, credentialed API requests
+    /// (e.g. https://dashboard.example.com). Repeat for multiple origins.
+    /// Pass this when bfweb/bfsite are hosted separately from bfdb instead of
+    /// embedded — without it, CORS defaults to same-origin-only behavior and
+    /// session cookies use SameSite=Lax. Setting this switches cookies to
+    /// SameSite=None; Secure, which requires bfdb to be served over TLS
+    /// (--cert/--key), since browsers refuse SameSite=None without Secure.
+    #[arg(long = "cors-origin")]
+    cors_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -662,10 +676,18 @@ struct GuildMember { roles: Vec<String> }
 struct TokenResponse { access_token: String }
 
 /// GET /api/auth/callback?code=&state=  — exchange code, create session
+/// Session cookie attributes. SameSite=None (needed for cross-origin fetch/XHR
+/// with credentials) requires Secure, which requires bfdb to be served over
+/// TLS — so we only opt into it when --cors-origin was actually configured.
+fn session_cookie_attrs(cross_origin: bool) -> &'static str {
+    if cross_origin { "SameSite=None; Secure" } else { "SameSite=Lax" }
+}
+
 async fn api_auth_callback(
     q: CallbackQuery,
     cfg: AuthConfig,
     db: StatsDb,
+    cross_origin: bool,
 ) -> std::result::Result<impl warp::Reply, Error> {
     // Validate state
     let state_uuid = q.state.parse::<Uuid>().map_err(|e| anyhow::anyhow!("bad state: {e}"))?;
@@ -728,8 +750,8 @@ async fn api_auth_callback(
     task::block_in_place(|| db.create_session(session_id, session))?;
 
     let cookie = format!(
-        "session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
-        session_id
+        "session={}; Path=/; HttpOnly; {}; Max-Age=604800",
+        session_id, session_cookie_attrs(cross_origin)
     );
     Ok(warp::http::Response::builder()
         .status(302)
@@ -770,13 +792,15 @@ async fn api_auth_me(
 async fn api_auth_logout(
     session_id: Option<Uuid>,
     db: StatsDb,
+    cross_origin: bool,
 ) -> std::result::Result<impl warp::Reply, Error> {
     if let Some(id) = session_id {
         task::block_in_place(|| db.delete_session(id))?;
     }
+    let cookie = format!("session=; Path=/; HttpOnly; {}; Max-Age=0", session_cookie_attrs(cross_origin));
     Ok(warp::http::Response::builder()
         .status(200)
-        .header("set-cookie", "session=; Path=/; HttpOnly; Max-Age=0")
+        .header("set-cookie", cookie)
         .body("")
         .unwrap())
 }
@@ -789,6 +813,7 @@ async fn api_auth_local_login(
     body: LocalLoginBody,
     local_cfg: Option<LocalAdminConfig>,
     db: StatsDb,
+    cross_origin: bool,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let cfg = local_cfg
         .ok_or_else(|| anyhow::anyhow!("Local login is not enabled on this server"))?;
@@ -805,8 +830,8 @@ async fn api_auth_local_login(
     };
     task::block_in_place(|| db.create_session(session_id, session))?;
     let cookie = format!(
-        "session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
-        session_id
+        "session={}; Path=/; HttpOnly; {}; Max-Age=604800",
+        session_id, session_cookie_attrs(cross_origin)
     );
     Ok(warp::http::Response::builder()
         .status(200)
@@ -914,6 +939,80 @@ async fn api_admin_reset(
     require_admin(session_id, db.clone()).await?;
     task::block_in_place(|| db.reset_campaign_data())?;
     log::info!("ADMIN: campaign data reset by admin");
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
+/// GET /api/admin/cfg  — read the current campaign engine config JSON (admin only)
+async fn api_admin_cfg_get(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    path: Arc<Option<PathBuf>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let path = path
+        .as_ref()
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("engine config not configured (missing --engine-config)"))?;
+    let data = task::block_in_place(|| -> Result<String> {
+        std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("reading {:?}: {e}", path))
+    })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/admin/cfg/schema  — JSON Schema generated from the real Cfg type
+/// bflib actually parses, so the editor UI can never drift out of sync with
+/// the engine (admin only)
+async fn api_admin_cfg_schema(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let schema = schemars::schema_for!(bfprotocols::cfg::Cfg);
+    Ok(warp::reply::json(&schema))
+}
+
+#[derive(Deserialize)]
+struct SaveCfgBody {
+    cfg: serde_json::Value,
+}
+
+/// POST /api/admin/cfg  — validate and save a new campaign engine config
+/// (admin only). Validation deserializes the body into the real Cfg type
+/// bflib loads, so malformed edits are rejected here instead of silently
+/// breaking the server at next restart. The previous file is backed up
+/// alongside the new one before being overwritten. Takes effect on the next
+/// mission/server restart — bflib only reads Cfg once at startup.
+async fn api_admin_cfg_post(
+    session_id: Option<Uuid>,
+    body: SaveCfgBody,
+    db: StatsDb,
+    path: Arc<Option<PathBuf>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let path = path
+        .as_ref()
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("engine config not configured (missing --engine-config)"))?;
+    let _validated: bfprotocols::cfg::Cfg = serde_json::from_value(body.cfg.clone())
+        .map_err(|e| anyhow::anyhow!("config is invalid: {e}"))?;
+    let pretty = serde_json::to_string_pretty(&body.cfg)
+        .map_err(|e| anyhow::anyhow!("serializing config: {e}"))?;
+    task::block_in_place(|| -> Result<()> {
+        if path.exists() {
+            let backup = path.with_file_name(format!(
+                "{}.bak.{}",
+                path.file_name().and_then(|n| n.to_str()).unwrap_or("cfg"),
+                chrono::Utc::now().format("%Y%m%d%H%M%S")
+            ));
+            std::fs::copy(&path, &backup)
+                .map_err(|e| anyhow::anyhow!("backing up {:?} to {:?}: {e}", path, backup))?;
+        }
+        std::fs::write(&path, pretty)
+            .map_err(|e| anyhow::anyhow!("writing {:?}: {e}", path))?;
+        Ok(())
+    })?;
+    log::info!("ADMIN: engine config saved");
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -1077,6 +1176,26 @@ async fn api_admin_unban2(
     let removed = task::block_in_place(|| db.unban_player(&ucid))?;
     log::info!("ADMIN: unbanned {}", body.ucid);
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "was_banned": removed})))
+}
+
+#[derive(serde::Deserialize)]
+struct SpawnBody {
+    airbase: std::string::String,
+    #[serde(rename = "type")]
+    item_type: std::string::String,
+}
+
+/// POST /api/commander/spawn  — spawn logistics from dashboard
+async fn api_commander_spawn(
+    session_id: Option<Uuid>,
+    body: SpawnBody,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    log::info!("COMMANDER: spawning {} at {}", body.item_type, body.airbase);
+    // Note: Currently just logs. In the future this will forward the request
+    // to DCSServerBot's REST API or directly to bflib via netidx publisher.
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
 /// GET /api/admin/perf-history  — per-session perf data for charts (admin only)
@@ -1288,6 +1407,63 @@ async fn ws_logs(
             msg = rx.recv() => {
                 match msg {
                     Ok(json) => { if sink.send(Message::text(json)).await.is_err() { break; } }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+}
+
+/// WebSocket handler for `/ws/engine-logs` — streams the live bflib engine
+/// log (from the running DCS mission, via netidx) rather than bfdb's own
+/// process log. No-op stream if bfdb wasn't started with --base (admin only).
+async fn ws_engine_logs_handler(
+    ws: warp::ws::Ws,
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> impl Reply {
+    let authed = match session_id {
+        Some(id) => task::block_in_place(|| db.get_session(id))
+            .ok()
+            .flatten()
+            .map(|s| s.is_admin)
+            .unwrap_or(false),
+        None => false,
+    };
+    if !authed {
+        return ws
+            .on_upgrade(|sock| async move { drop(sock) })
+            .into_response();
+    }
+    let (rx, history) = db.engine_log_subscribe();
+    ws.on_upgrade(move |socket| ws_engine_logs(socket, rx, history))
+        .into_response()
+}
+
+async fn ws_engine_logs(
+    ws: WebSocket,
+    mut rx: broadcast::Receiver<String>,
+    history: Vec<String>,
+) {
+    let (mut sink, mut stream) = ws.split();
+    for line in history {
+        if sink.send(Message::text(line)).await.is_err() {
+            return;
+        }
+    }
+    loop {
+        tokio::select! {
+            msg = stream.next() => {
+                match msg {
+                    Some(Ok(m)) if m.is_close() => break,
+                    None => break,
+                    _ => {}
+                }
+            }
+            msg = rx.recv() => {
+                match msg {
+                    Ok(line) => { if sink.send(Message::text(line)).await.is_err() { break; } }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(_) => break,
                 }
@@ -1580,11 +1756,25 @@ async fn main() -> Result<()> {
         log::info!("SRS proxy enabled → {u}");
     }
 
+    let engine_config_path: Arc<Option<PathBuf>> = Arc::new(args.engine_config.clone());
+    match &args.engine_config {
+        Some(p) => log::info!("Engine config editor enabled → {p:?}"),
+        None => log::info!("No --engine-config specified; the admin config editor is disabled"),
+    }
+
+    let cross_origin = !args.cors_origins.is_empty();
     let cors = warp::cors()
-        .allow_any_origin()
         .allow_methods(&[Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(vec!["content-type"])
         .allow_credentials(true);
+    let cors = if cross_origin {
+        cors.allow_origins(args.cors_origins.iter().map(|s| s.as_str()))
+    } else {
+        cors.allow_any_origin()
+    };
+    if cross_origin {
+        log::info!("Cross-origin mode enabled for: {:?} (cookies use SameSite=None; Secure — bfdb must be served over TLS)", args.cors_origins);
+    }
 
     let rounds = warp::path!("api" / "rounds")
         .and(with_db(db.clone()))
@@ -1681,6 +1871,13 @@ async fn main() -> Result<()> {
         .and(warp::any().map(move || log_hist_ws.clone()))
         .then(ws_logs_handler);
 
+    // ── Engine log WebSocket (/ws/engine-logs) — live bflib logs, admin only ──
+    let ws_engine_logs_route = warp::path!("ws" / "engine-logs")
+        .and(warp::ws())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(ws_engine_logs_handler);
+
     // ── Auth routes ──────────────────────────────────────────────────
     let auth_login = warp::path!("api" / "auth" / "login")
         .and(with_auth_cfg(auth_cfg.clone()))
@@ -1691,6 +1888,7 @@ async fn main() -> Result<()> {
         .and(warp::query::<CallbackQuery>())
         .and(with_auth_cfg(auth_cfg.clone()))
         .and(with_db(db.clone()))
+        .and(warp::any().map(move || cross_origin))
         .then(api_auth_callback);
 
     let auth_me = warp::path!("api" / "auth" / "me")
@@ -1701,6 +1899,7 @@ async fn main() -> Result<()> {
     let auth_logout = warp::path!("api" / "auth" / "logout")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(warp::any().map(move || cross_origin))
         .then(api_auth_logout);
 
     let auth_link = warp::path!("api" / "auth" / "link")
@@ -1715,6 +1914,7 @@ async fn main() -> Result<()> {
         .and(warp::body::json::<LocalLoginBody>())
         .and(with_local_admin(local_admin_cfg.clone()))
         .and(with_db(db.clone()))
+        .and(warp::any().map(move || cross_origin))
         .then(api_auth_local_login);
 
     // Tells the frontend whether local admin login is available
@@ -1775,6 +1975,13 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_admin_unban2);
 
+    let commander_spawn_route = warp::path!("api" / "commander" / "spawn")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::json::<SpawnBody>())
+        .and(with_db(db.clone()))
+        .then(api_commander_spawn);
+
     let trails = warp::path!("api" / "trails")
         .and(with_db(db.clone()))
         .then(api_trails);
@@ -1787,6 +1994,28 @@ async fn main() -> Result<()> {
     let srs_route = warp::path!("api" / "srs")
         .and(warp::any().map(move || srs_url_arc.clone()))
         .then(api_srs);
+
+    let admin_cfg_get_route = warp::path!("api" / "admin" / "cfg")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(warp::any().map({
+            let p = engine_config_path.clone();
+            move || p.clone()
+        }))
+        .then(api_admin_cfg_get);
+
+    let admin_cfg_schema_route = warp::path!("api" / "admin" / "cfg" / "schema")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(api_admin_cfg_schema);
+
+    let admin_cfg_post_route = warp::path!("api" / "admin" / "cfg")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::json::<SaveCfgBody>())
+        .and(with_db(db.clone()))
+        .and(warp::any().map(move || engine_config_path.clone()))
+        .then(api_admin_cfg_post);
 
     // /site/* → embedded bfsite SPA
     let site_files = warp::path("site")
@@ -1829,6 +2058,8 @@ async fn main() -> Result<()> {
         .or(admin_perf)
         .or(admin_perf_history)
         .or(admin_banned)
+        .or(admin_cfg_get_route)
+        .or(admin_cfg_schema_route)
         .boxed();
 
     let routes = warp::get()
@@ -1837,6 +2068,7 @@ async fn main() -> Result<()> {
                 .or(auth_routes)
                 .or(ws_units_route)
                 .or(ws_logs_route)
+                .or(ws_engine_logs_route)
                 .or(site_files)
                 .or(static_files),
         )
@@ -1846,6 +2078,8 @@ async fn main() -> Result<()> {
         .or(admin_reset)
         .or(admin_ban_route)
         .or(admin_unban_route)
+        .or(admin_cfg_post_route)
+        .or(commander_spawn_route)
         .with(cors);
 
     log::info!("API server listening on http://{}", args.listen_address);

@@ -61,9 +61,9 @@ function Start-GVAW {
         if ($using:srsUrl -ne "") {
             $argList += "--srs-url", $using:srsUrl
         }
-        if ($using:logFile -ne "") {
-            $argList += "--log-file", $using:logFile
-        }
+        # if ($using:logFile -ne "") {
+        #     $argList += "--log-file", $using:logFile
+        # }
         & $using:bfdbExe @argList
     } | Out-Null
 

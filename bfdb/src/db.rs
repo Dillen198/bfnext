@@ -32,15 +32,15 @@ use serde::{Deserialize, Serialize};
 use sled::{transaction::TransactionError, Db};
 use smallvec::SmallVec;
 use std::{
-    collections::Bound,
+    collections::{Bound, VecDeque},
     io::{Read as IoRead, Write as IoWrite},
     ops::Deref,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex as StdMutex, RwLock},
     time::Duration,
 };
-use tokio::task;
+use tokio::{sync::broadcast, task};
 use uuid::Uuid;
 use yats::Tree;
 
@@ -412,7 +412,13 @@ pub(crate) struct StatsDbInner {
     aircraft_sorties: Tree<(RoundId, std::string::String), (u32, f32)>,
     // Admin-managed ban list (bfdb-native, separate from bflib's cfg.banned)
     admin_bans: Tree<Ucid, BanRecord>,
+    // Live bflib engine log, streamed over netidx from the running DCS mission
+    // (distinct from bfdb's own process log)
+    engine_log_tx: broadcast::Sender<std::string::String>,
+    engine_log_history: Arc<StdMutex<VecDeque<std::string::String>>>,
 }
+
+const ENGINE_LOG_HISTORY_CAP: usize = 500;
 
 pub(crate) struct StatsDb(Arc<StatsDbInner>);
 
@@ -521,6 +527,7 @@ fn stat_variant_name(s: &Stat) -> &'static str {
         Stat::SeaRouteDelivered { .. } => "SeaRouteDelivered",
         Stat::SeaRouteDestroyed { .. } => "SeaRouteDestroyed",
         Stat::Weather { .. } => "Weather",
+        Stat::GciPicture(_) => "GciPicture",
     }
 }
 
@@ -580,11 +587,19 @@ impl StatsDb {
             objective_captures: Tree::open(&db, "objective_captures")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
+            engine_log_tx: broadcast::channel(1024).0,
+            engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
         }));
         let _t = t.clone();
         task::spawn(async move {
             if let Err(e) = _t.background_loop().await {
                 error!("background task failed {e:?}")
+            }
+        });
+        let _t = t.clone();
+        task::spawn(async move {
+            if let Err(e) = _t.engine_log_loop().await {
+                error!("engine log subscription failed {e:?}")
             }
         });
         Ok(t)
@@ -622,6 +637,8 @@ impl StatsDb {
             objective_captures: Tree::open(&db, "objective_captures")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
+            engine_log_tx: broadcast::channel(1024).0,
+            engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
         }));
         let _t = t.clone();
         task::spawn(async move {
@@ -631,6 +648,56 @@ impl StatsDb {
         });
         info!("running in offline mode (no Netidx subscription)");
         Ok(t)
+    }
+
+    /// A live subscription to the running bflib engine's log stream,
+    /// published over netidx at `<base>/log` by `bflib::bg::logpub`.
+    /// No-op if bfdb wasn't started with --base. Each update from the
+    /// publisher carries the *entire* accumulated log content (not just the
+    /// new line), so we track how much we've already seen and only forward
+    /// the newly-appended lines.
+    async fn engine_log_loop(self) -> Result<()> {
+        use futures::{channel::mpsc, StreamExt};
+        use netidx::subscriber::{Event, UpdatesFlags};
+        use netidx::publisher::Value;
+
+        let (subscriber, base) = match (&self.0.subscriber, &self.0.base) {
+            (Some(s), Some(b)) => (s.clone(), b.clone()),
+            _ => return Ok(()),
+        };
+        let dval = subscriber.subscribe(base.append("log"));
+        let (tx, mut rx) = mpsc::channel(10);
+        dval.updates(UpdatesFlags::empty(), tx);
+        let mut seen_len = 0usize;
+        while let Some(batch) = rx.next().await {
+            for (_id, ev) in batch.iter() {
+                let Event::Update(Value::String(chars)) = ev else { continue };
+                let full: &str = chars.as_ref();
+                // publisher truncated/restarted (new mission) — resend everything as new
+                let start = if full.len() >= seen_len { seen_len } else { 0 };
+                let new_part = &full[start..];
+                seen_len = full.len();
+                for line in new_part.lines().filter(|l| !l.is_empty()) {
+                    let line = std::string::String::from(line);
+                    let mut hist = self.0.engine_log_history.lock().unwrap();
+                    if hist.len() >= ENGINE_LOG_HISTORY_CAP {
+                        hist.pop_front();
+                    }
+                    hist.push_back(line.clone());
+                    drop(hist);
+                    let _ = self.0.engine_log_tx.send(line);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Subscribe to the live engine log stream, plus a snapshot of recent
+    /// history for a newly-connected client to catch up with.
+    pub(crate) fn engine_log_subscribe(&self) -> (broadcast::Receiver<std::string::String>, Vec<std::string::String>) {
+        let rx = self.0.engine_log_tx.subscribe();
+        let hist = self.0.engine_log_history.lock().unwrap().iter().cloned().collect();
+        (rx, hist)
     }
 
     async fn background_loop(self) -> Result<()> {
@@ -1844,7 +1911,8 @@ impl StatsDb {
             | Stat::AirRouteDelivered { .. }
             | Stat::AirRouteDestroyed { .. }
             | Stat::SeaRouteDelivered { .. }
-            | Stat::SeaRouteDestroyed { .. } => {
+            | Stat::SeaRouteDestroyed { .. }
+            | Stat::GciPicture(_) => {
                 // Future: track in dedicated tables
             }
         };

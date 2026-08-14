@@ -12,8 +12,8 @@
 //edit mission table (crack open templates 1 at a time)
 
 //repack miz
-use crate::MizCmd;
-use anyhow::{bail, Context, Result};
+use crate::{MizCmd, SpecialSamCmd};
+use anyhow::{anyhow, bail, Context, Result};
 use compact_str::format_compact;
 use dcso3::{
     azumith2d, change_heading,
@@ -27,6 +27,7 @@ use dcso3::{
 use log::{info, warn};
 use mlua::{FromLua, IntoLua, Lua, Table, Value};
 use nalgebra as na;
+use serde_derive::Serialize;
 use std::{
     collections::HashMap,
     f64::consts::PI,
@@ -1447,5 +1448,218 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
     info!("replaced options file from {:?}", &cfg.options);
     info!("saving finalized mission to {:?}", cfg.output);
     base.miz.pack(&cfg.output).context("repacking mission")?;
+    Ok(())
+}
+
+#[derive(Serialize, Clone)]
+struct OutPos2d {
+    x: f64,
+    y: f64,
+}
+
+#[derive(Serialize, Clone)]
+struct OutSpecialSamUnitCfg {
+    #[serde(rename = "type")]
+    typ: std::string::String,
+    pos: OutPos2d,
+    heading: f64,
+}
+
+#[derive(Serialize)]
+struct OutSpecialSamSiteCfg {
+    name: std::string::String,
+    pos: OutPos2d,
+    coalition: Side,
+    red_units: Vec<OutSpecialSamUnitCfg>,
+    blue_units: Vec<OutSpecialSamUnitCfg>,
+    red_country: Country,
+    blue_country: Country,
+    red_template: Option<std::string::String>,
+    blue_template: Option<std::string::String>,
+    repair_crate: Option<serde_json::Value>,
+}
+
+/// A site placement actually found in the template: the units labeled for
+/// one starting-owner side, keyed by (side, location, label) parsed from the
+/// group name. The opposite side's unit list is synthesized later as a
+/// mirror of `units`.
+///
+/// The starting side is the physical DCS coalition the group is placed under
+/// in the editor (Red or Blue country tree) - the group's name carries only
+/// location/label, no side prefix.
+struct FoundSite {
+    side: Side,
+    location: std::string::String,
+    label: std::string::String,
+    country: Country,
+    /// The DCS group's own x/y (its editor anchor point), used as the site's
+    /// capture-zone center. More stable than averaging every unit's position,
+    /// which can get pulled off-center by an outlying support vehicle.
+    group_pos: OutPos2d,
+    units: Vec<OutSpecialSamUnitCfg>,
+}
+
+/// Parse a group name of the form "<Location> - <Label>" into (location,
+/// label). Returns None if the name doesn't have that "X - Y" shape (exactly
+/// two ' - '-separated segments).
+fn parse_special_sam_group_name(name: &str) -> Option<(std::string::String, std::string::String)> {
+    let mut parts = name.split(" - ");
+    let location = parts.next()?;
+    let label = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((
+        std::string::String::from(location),
+        std::string::String::from(label),
+    ))
+}
+
+/// Scan every vehicle/static group placed under the Red or Blue coalition and
+/// bucket them into per-(side, location, label) sites based on the
+/// location/label parsed from each group's own name; `side` is the physical
+/// DCS coalition the group is placed under.
+fn collect_special_sam_sites(mission: &Miz<'static>) -> Result<Vec<FoundSite>> {
+    let mut sites: HashMap<(Side, std::string::String, std::string::String), FoundSite> =
+        HashMap::default();
+    let mut skipped = 0usize;
+    for side in [Side::Red, Side::Blue] {
+        let coa = mission.coalition(side)?;
+        for country in coa.countries()? {
+            let country = country?;
+            let cid = country.id()?;
+            for group in country
+                .vehicles()
+                .context("getting vehicles")?
+                .into_iter()
+                .chain(country.statics().context("getting statics")?.into_iter())
+            {
+                let group = group?;
+                let name = group.name()?.to_string();
+                let Some((location, label)) = parse_special_sam_group_name(&name) else {
+                    skipped += 1;
+                    continue;
+                };
+                let gpos = group.pos()?;
+                let group_pos = OutPos2d { x: gpos.x, y: gpos.y };
+                let mut out_units = vec![];
+                for unit in group.units().context("getting units")? {
+                    let unit = unit?;
+                    let pos = unit.pos()?;
+                    out_units.push(OutSpecialSamUnitCfg {
+                        typ: unit.typ()?.to_string(),
+                        pos: OutPos2d { x: pos.x, y: pos.y },
+                        heading: unit.heading()?,
+                    });
+                }
+                let key = (side, location.clone(), label.clone());
+                match sites.get_mut(&key) {
+                    Some(site) => {
+                        if site.country != cid {
+                            bail!(
+                                "special sam site \"{location} - {label}\" ({side}) has groups from more than one country"
+                            )
+                        }
+                        site.units.extend(out_units);
+                    }
+                    None => {
+                        sites.insert(
+                            key,
+                            FoundSite {
+                                side,
+                                location,
+                                label,
+                                country: cid,
+                                group_pos,
+                                units: out_units,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+    if skipped > 0 {
+        info!("skipped {skipped} group(s) whose name didn't match \"<Location> - <Label>\"");
+    }
+    let mut sites: Vec<FoundSite> = sites.into_values().collect();
+    sites.sort_by(|a, b| {
+        (&a.location, &a.label, a.side.to_str()).cmp(&(&b.location, &b.label, b.side.to_str()))
+    });
+    Ok(sites)
+}
+
+/// Generate special_sam_sites JSON entries from a mission editor template
+/// containing SAM site groups placed under their starting-owner coalition.
+/// Every found placement becomes its own site; the opposite coalition's unit
+/// list is synthesized as a position/equipment mirror of the placed units
+/// under the default CJTF country, so the site can flip on capture.
+pub fn run_special_sam(cfg: &SpecialSamCmd) -> Result<()> {
+    let lua = Box::leak(Box::new(Lua::new()));
+    lua.gc_stop();
+    let base = LoadedMiz::new(lua, &cfg.template).context("loading special sam template")?;
+    let found = collect_special_sam_sites(&base.mission).context("collecting sam sites")?;
+    if found.is_empty() {
+        bail!("no special sam sites found in template (no group names matched \"<Location> - <Label>\" under the Red or Blue coalition)")
+    }
+    let mut out = Vec::with_capacity(found.len());
+    for site in found {
+        let pos = site.group_pos;
+        let (red_country, blue_country) = match site.side {
+            Side::Red => (site.country, Country::CJTF_BLUE),
+            Side::Blue => (Country::CJTF_RED, site.country),
+            Side::Neutral => unreachable!(),
+        };
+        out.push(OutSpecialSamSiteCfg {
+            name: std::string::String::from(format_compact!(
+                "{} - {} ({})",
+                site.location,
+                site.label,
+                site.side
+            )),
+            pos,
+            coalition: site.side,
+            red_units: site.units.clone(),
+            blue_units: site.units,
+            red_country,
+            blue_country,
+            red_template: None,
+            blue_template: None,
+            repair_crate: None,
+        });
+    }
+    let s = serde_json::to_string_pretty(&out).context("serializing special sam sites")?;
+    fs::write(&cfg.output, &s).with_context(|| format_compact!("writing {:?}", cfg.output))?;
+    info!(
+        "wrote {} special sam site(s) to {:?}",
+        out.len(),
+        cfg.output
+    );
+    if let Some(cfg_path) = &cfg.merge_into {
+        let sites_value = serde_json::to_value(&out).context("converting sites to json value")?;
+        merge_special_sam_sites(cfg_path, sites_value).context("merging into campaign config")?;
+        info!(
+            "merged {} special sam site(s) into {:?}",
+            out.len(),
+            cfg_path
+        );
+    }
+    Ok(())
+}
+
+/// Replace the "special_sam_sites" array in an existing campaign config file
+/// with `sites`, writing the result back to the same path. The rest of the
+/// document is left untouched; key order is preserved.
+fn merge_special_sam_sites(cfg_path: &Path, sites: serde_json::Value) -> Result<()> {
+    let content = fs::read_to_string(cfg_path)
+        .with_context(|| format_compact!("reading {cfg_path:?}"))?;
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&content).with_context(|| format_compact!("parsing {cfg_path:?}"))?;
+    let obj = doc
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("{cfg_path:?} is not a json object"))?;
+    obj.insert(std::string::String::from("special_sam_sites"), sites);
+    let out = serde_json::to_string_pretty(&doc).context("serializing merged config")?;
+    fs::write(cfg_path, out).with_context(|| format_compact!("writing {cfg_path:?}"))?;
     Ok(())
 }

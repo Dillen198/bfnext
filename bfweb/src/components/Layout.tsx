@@ -2,7 +2,7 @@ import React from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Map, Target, BarChart3, Users, Crosshair,
-  Zap, LogOut, Shield, Settings, Info, Server, Radio,
+  Zap, LogOut, Shield, Settings, Settings2, Info, Server, Radio,
   ChevronRight, Plane,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
@@ -23,6 +23,8 @@ const NAV = [
   { to: '/about',       icon: Info,            label: 'ABOUT'      },
 ]
 const ADMIN_NAV = { to: '/admin', icon: Settings, label: 'ADMIN' }
+const CONFIG_NAV = { to: '/admin/config', icon: Settings2, label: 'CONFIG' }
+const PROFILE_NAV = (ucid: string) => ({ to: `/pilot/${ucid}`, icon: Users, label: 'MY PROFILE' })
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -191,7 +193,11 @@ export default function Layout() {
   const activeRound = rounds.find(r => r.active)
   const pastRounds  = rounds.filter(r => !r.active)
 
-  const allNav = [...NAV, ...(user?.is_admin ? [ADMIN_NAV] : [])]
+  const allNav = [
+    ...NAV, 
+    ...(user?.ucid ? [PROFILE_NAV(user.ucid)] : []),
+    ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV] : [])
+  ]
 
   const Sep = () => <div className="topbar-sep" />
 
@@ -368,7 +374,7 @@ export default function Layout() {
               <NavLink
                 key={to}
                 to={to}
-                end={to === '/'}
+                end={to === '/' || to === '/admin'}
                 className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
               >
                 <Icon size={16} style={{ flexShrink: 0 }} />

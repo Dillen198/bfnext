@@ -1362,6 +1362,15 @@ impl Db {
                         // Increment streak and total kills
                         player.kill_streak = player.kill_streak.saturating_add(1);
                         player.total_kills = player.total_kills.saturating_add(1);
+                        
+                        if player.kill_streak == 5 {
+                            self.ephemeral.pending_achievements.push(format!("{} is now an Ace! (5 kill streak)", player.name).into());
+                        } else if player.kill_streak == 10 {
+                            self.ephemeral.pending_achievements.push(format!("{} is unstoppable! (10 kill streak)", player.name).into());
+                        } else if player.kill_streak == 15 {
+                            self.ephemeral.pending_achievements.push(format!("{} is a god of war! (15 kill streak)", player.name).into());
+                        }
+                        
                         let pm = if provisional { " provisional" } else { "" };
                         let streak_msg = if streak_mult > 1.0 {
                             format_compact!(" [x{:.1} streak]", streak_mult)

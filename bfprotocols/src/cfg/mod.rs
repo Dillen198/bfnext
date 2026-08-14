@@ -36,7 +36,7 @@ use std::{
 
 mod example;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default, schemars::JsonSchema)]
 pub struct Vehicle(pub String);
 
 impl fmt::Display for Vehicle {
@@ -69,7 +69,7 @@ impl Vehicle {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum Rule {
     Whitelist { allowed: FxHashMap<Ucid, String> },
     Blacklist { denied: FxHashMap<Ucid, String> },
@@ -126,7 +126,7 @@ impl Rule {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[bitflags]
 #[repr(u64)]
 pub enum UnitTag {
@@ -167,13 +167,15 @@ pub enum UnitTag {
     ALCM,
     NavalSpawnPoint,
     CAP,
+    HotStart,
 }
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(from = "Vec<UnitTag>", into = "Vec<UnitTag>")]
-pub struct UnitTags(pub BitFlags<UnitTag>);
+pub struct UnitTags(#[schemars(with = "Vec<UnitTag>")] pub BitFlags<UnitTag>);
 
 impl fmt::Display for UnitTags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -222,7 +224,7 @@ impl Into<Vec<UnitTag>> for UnitTags {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, schemars::JsonSchema)]
 pub enum LifeType {
     Standard,
     Intercept,
@@ -266,7 +268,7 @@ impl LifeType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum PersistTyp {
     /// The deployable persists until it is destroyed
     Forever,
@@ -280,7 +282,7 @@ pub enum PersistTyp {
     Restarts(u32),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
 pub enum LimitEnforceTyp {
     /// Handle the limit by removing the oldest instance of the deployable when
     /// a new one is unpacked. (lifo)
@@ -291,7 +293,7 @@ pub enum LimitEnforceTyp {
     DenyCrate,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Crate {
     /// The name of the crate in the menu
     pub name: String,
@@ -310,8 +312,8 @@ pub struct Crate {
     pub max_drop_speed: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct DeployableObjective {
     pub pad_templates: Vec<String>,
     #[serde(default)]
@@ -324,8 +326,8 @@ pub struct DeployableObjective {
     pub barracks_template: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct DeployableEwr {
     /// range for likely detection (Meters)
     pub range: u32,
@@ -335,7 +337,7 @@ pub struct DeployableEwr {
 /// Radar frequency band — determines aspect/RCS variation and stealth effectiveness.
 /// Lower bands (VHF/UHF) have compressed aspect variation, making shaping less effective.
 /// Higher bands (X/Ku) have sharp aspect dependence and are best countered by shaping.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub enum RadarBand {
     Vhf,   // 30–300 MHz   — EWR (55G6, P-14, 1L13). Least affected by stealth shaping.
     Uhf,   // 300–3000 MHz — some older SAMs
@@ -347,8 +349,8 @@ pub enum RadarBand {
     Kuband,// 12–18 GHz    — some precision track/fire-control radars
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct AirborneEwr {
     /// Radar detection range in meters
     pub range: u32,
@@ -390,8 +392,8 @@ fn default_chaff_susceptibility() -> f32 { 0.3 }
 fn default_ecm_susceptibility() -> f32 { 0.4 }
 fn default_scan_interval_secs() -> u32 { 2 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub enum EwrMode {
     /// Original EWR implementation with immediate track updates
     Original,
@@ -406,7 +408,7 @@ impl Default for EwrMode {
 }
 
 /// Sensor category used by the IADN fusion layer to apply appropriate detection physics.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub enum SensorType {
     /// Ground-based omnidirectional EWR / deployed radar.
     GroundEwr,
@@ -421,8 +423,8 @@ pub enum SensorType {
 }
 
 /// Advanced probabilistic radar physics configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct RadarPhysicsCfg {
     /// RCS factor for Hot aspect (nose-on). Default 1.0.
     #[serde(default = "default_rcs_hot")]
@@ -480,8 +482,8 @@ fn default_track_smoothing_alpha() -> f32 { 0.3 }
 fn default_awacs_look_down_bonus() -> f32 { 1.5 }
 
 /// Integrated Air Defence Network configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct IadnConfig {
     /// Radius (m) within which two detections are fused into one track. Default 3000.
     #[serde(default = "default_track_association_radius_m")]
@@ -524,8 +526,8 @@ fn default_sam_cue_enabled() -> bool { true }
 fn default_sam_cue_confidence_threshold() -> f32 { 0.4 }
 
 /// ELINT/SIGINT intelligence system configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct ElintConfig {
     /// Radius (m) within which units are clustered into one intel contact. Default 500.
     #[serde(default = "default_contact_cluster_radius_m")]
@@ -583,8 +585,8 @@ fn default_show_unit_class() -> bool { true }
 fn default_show_confidence_on_map() -> bool { true }
 
 /// Ground vehicle cargo configuration for a specific vehicle type (IFV/APC).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct GroundVehicleCargo {
     /// Maximum infantry squads this vehicle can carry.
     pub troop_capacity: u8,
@@ -606,8 +608,8 @@ fn default_board_radius_m() -> f64 { 50.0 }
 fn default_board_speed_threshold_ms() -> f64 { 1.0 }
 fn default_dismount_radius_m() -> f64 { 30.0 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct DeployableJtac {
     /// jtac detection and lasing range (Meters)
     pub range: u32,
@@ -627,8 +629,9 @@ fn default_laser_code() -> u16 {
     1688
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct JtacState {
+    #[schemars(with = "Vec<UnitTag>")]
     pub filter: BitFlags<UnitTag>,
     pub priority: Vec<UnitTags>,
     pub autoshift: Option<usize>,
@@ -636,7 +639,7 @@ pub struct JtacState {
     pub code: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum DeployableKind {
     Group { template: String },
     Objective(DeployableObjective),
@@ -664,8 +667,8 @@ fn default_deployable_kind() -> DeployableKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct Deployable {
     /// The full menu path of the deployable in the menu
     pub path: Vec<String>,
@@ -701,8 +704,8 @@ pub struct Deployable {
     pub deprecated_logistics: Option<DeployableObjective>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct Troop {
     /// The name of the squad in the menu
     pub name: String,
@@ -727,8 +730,8 @@ pub struct Troop {
 }
 
 /// Configuration for infantry that dismount from a destroyed vehicle
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct DismountSpec {
     /// DCS group template name per side. If a side has no entry no dismounts spawn for it.
     pub template: FxHashMap<Side, String>,
@@ -741,8 +744,8 @@ pub struct DismountSpec {
 }
 
 /// Configuration for vehicles that can be loaded into C-130 cargo
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct C130Vehicle {
     /// The display name of the vehicle in the menu
     pub name: String,
@@ -768,8 +771,8 @@ fn default_c130_vehicle_limit() -> u32 {
     10
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct CargoConfig {
     /// How many troop slots does this vehicle have
     pub troop_slots: u8,
@@ -788,7 +791,7 @@ pub struct CargoConfig {
     pub spawn_distance: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CsarConfig {
     /// If false, no downed pilots will be spawned and CSAR is disabled
     #[serde(default = "default_csar_enabled")]
@@ -854,8 +857,8 @@ fn default_csar_smoke_cooldown() -> u32 {
     300
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct C130CargoConfig {
     /// List of vehicle types that can use C-130 physical cargo system (e.g., "C-130")
     pub enabled_vehicles: FxHashSet<Vehicle>,
@@ -884,8 +887,8 @@ fn default_c130_max_spawn() -> u32 {
 /// Configuration for helicopters using dynamic (physical) cargo system.
 /// Helicopters with dynamic cargo spawn physical crate objects via the DCS cargo menu.
 /// Crate slot limits from CargoConfig are ignored for vehicles in this list.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct HeloCargoConfig {
     /// Vehicle types that use dynamic physical cargo instead of the old slot-based system
     pub enabled_vehicles: FxHashSet<Vehicle>,
@@ -904,8 +907,8 @@ pub struct HeloCargoConfig {
     pub auto_unpack: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct WarehouseConfig {
     /// Logistics hub max supply stock as a multiple of the delivery amount
     pub hub_max: u32,
@@ -956,8 +959,8 @@ impl WarehouseConfig {
 }
 
 /// Configuration for supply convoy system
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct ConvoyConfig {
     /// Enable convoy system. If false, LOGISTICS_DETACHED objectives get no automatic supplies.
     pub enabled: bool,
@@ -1003,8 +1006,8 @@ impl Default for ConvoyConfig {
 }
 
 /// Configuration for automated AI air logistics routes
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct AirLogisticsConfig {
     /// Enable air logistics. When enabled, AI cargo aircraft fly from logistics hubs to
     /// understocked destinations instead of instant warehouse transfers.
@@ -1064,8 +1067,8 @@ impl Default for AirLogisticsConfig {
 }
 
 /// Configuration for automated AI sea logistics routes
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct SeaLogisticsConfig {
     /// Enable sea logistics. When enabled, AI ships transport supplies from naval bases
     /// to carrier groups.
@@ -1128,8 +1131,8 @@ fn default_convoy_interdiction() -> u32 {
     10
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct PointsCfg {
     /// Bonus issued to new players when they register
     pub new_player_join: u32,
@@ -1191,13 +1194,13 @@ pub struct PointsCfg {
     pub kill_streak_bonuses: Vec<(u8, f64)>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum AiPlaneKind {
     FixedWing,
     Helicopter,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiPlaneCfg {
     pub kind: AiPlaneKind,
     pub duration: Option<u32>,
@@ -1209,13 +1212,13 @@ pub struct AiPlaneCfg {
     pub freq: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AwacsCfg {
     pub ewr: DeployableEwr,
     pub plane: AiPlaneCfg,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BomberCfg {
     pub targets: u32,
     pub power: u32,
@@ -1224,19 +1227,19 @@ pub struct BomberCfg {
     pub plane: AiPlaneCfg,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeployableCfg {
     pub name: String,
     pub plane: Option<AiPlaneCfg>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DroneCfg {
     pub jtac: DeployableJtac,
     pub plane: AiPlaneCfg,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NukeCfg {
     /// using a nuke reduces the cost of nukes for everyone by this
     /// factor. e.g. cost_scale: 4, with initial cost 1000. The first
@@ -1248,7 +1251,7 @@ pub struct NukeCfg {
     pub power: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MoveCfg {
     /// max distance for troop moves in meters per unit cost
     pub troop: u32,
@@ -1256,7 +1259,7 @@ pub struct MoveCfg {
     pub deployable: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NavalCruiseMissileCfg {
     /// number of missiles to fire per strike
     pub missiles_per_strike: u8,
@@ -1267,7 +1270,7 @@ pub struct NavalCruiseMissileCfg {
 }
 
 /// Per-unit-type range override entry inside ArtilleryCfg.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
 pub struct UnitRangeCfg {
     pub max_range_m: f64,
     #[serde(default)]
@@ -1275,7 +1278,7 @@ pub struct UnitRangeCfg {
 }
 
 /// Configuration for a player-callable artillery / indirect fire support action.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtilleryCfg {
     /// Per-unit-type range config. Keys are DCS unit type names (e.g. "M142 HIMARS", "Scud_B").
     /// Any unit type not listed falls back to default_max_range_m / default_min_range_m.
@@ -1312,7 +1315,7 @@ impl Default for ArtilleryCfg {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ActionKind {
     Tanker(AiPlaneCfg),
     Awacs(AwacsCfg),
@@ -1345,7 +1348,7 @@ pub enum ActionKind {
     Recon(ReconCfg),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ActionGeoLimit {
     Unlimited,
     /// This action can only be run within `max` in meters of a friendly objective
@@ -1360,7 +1363,7 @@ impl Default for ActionGeoLimit {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Action {
     pub kind: ActionKind,
     pub cost: u32,
@@ -1371,8 +1374,8 @@ pub struct Action {
     pub geo_limit: ActionGeoLimit,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct Rules {
     /// who can use actions
     pub actions: Rule,
@@ -1386,9 +1389,9 @@ pub struct Rules {
     pub ca: Rule,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "String", into = "String")]
-pub struct NameFilter(Regex);
+pub struct NameFilter(#[schemars(with = "std::string::String")] Regex);
 
 impl TryFrom<String> for NameFilter {
     type Error = anyhow::Error;
@@ -1423,7 +1426,7 @@ impl NameFilter {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum VictoryCondition {
     /// Victory is triggered when the specified percentage of the map
     /// is owned by a given team, or is neutral. Every objective is
@@ -1431,7 +1434,7 @@ pub enum VictoryCondition {
     MapOwned { fraction: f64 },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AutoResetOnVictory {
     /// What victory condition triggers an automatic reset
     pub condition: VictoryCondition,
@@ -1440,8 +1443,8 @@ pub struct AutoResetOnVictory {
     pub delay: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct LastStandCfg {
     /// Seconds of countdown once a side is at or below `trigger_count` primary objectives.
     /// Primary objectives are Airbase, NavalBase, and Farp. Default: 3600.
@@ -1469,8 +1472,8 @@ impl Default for LastStandCfg {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct UnderAttackCfg {
     /// Cooldown in seconds between repeat under-attack notifications per objective. Default: 120.
     #[serde(default = "default_under_attack_cooldown")]
@@ -1489,8 +1492,8 @@ impl Default for UnderAttackCfg {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct CounterBatteryCfg {
     /// Cooldown in seconds between counter-battery reports for the same grid cell. Default: 60.
     #[serde(default = "default_cb_cooldown")]
@@ -1517,8 +1520,8 @@ impl Default for CounterBatteryCfg {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct EraCfg {
     /// Name of the currently active era. Must match a key in `eras`.
     pub current: String,
@@ -1527,8 +1530,8 @@ pub struct EraCfg {
     pub eras: FxHashMap<String, Vec<Vehicle>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct ReconCfg {
     /// AI plane template to spawn for the recon mission.
     pub plane: AiPlaneCfg,
@@ -1600,8 +1603,8 @@ fn default_frontline_max_marks() -> usize {
     200
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct FrontLineConfig {
     /// Enable territory zone drawing on F10 map
     pub enabled: bool,
@@ -1635,16 +1638,16 @@ impl Default for FrontLineConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct FactoryCfg {
     pub production_rate: u32,
     pub production_interval: u32,
 }
 
 /// Configuration for a carrier group
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct CarrierGroupCfg {
     /// The template name in the mission file (e.g., "BCARRIER", "RCARRIER")
     pub template: String,
@@ -1652,8 +1655,8 @@ pub struct CarrierGroupCfg {
     pub display_name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct CarrierCfg {
     pub repair_cost: u32,
     pub respawn_cost: u32,
@@ -1681,7 +1684,7 @@ fn default_carrier_repair_time() -> u32 {
 }
 
 fn default_sam_capture_radius() -> f64 {
-    300.0
+    609.6 // 2000 ft
 }
 
 fn default_red_country() -> Country {
@@ -1695,7 +1698,7 @@ fn default_blue_country() -> Country {
 /// A plain 2-D position in DCS LO coordinates that serializes as `{"x":…,"y":…}`.
 /// Used instead of `nalgebra::Vector2` in config structs because nalgebra serializes
 /// as a matrix array, not a named-field map.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Pos2d {
     /// North-south (DCS x)
     pub x: f64,
@@ -1705,7 +1708,7 @@ pub struct Pos2d {
 
 /// A single unit definition for an inline SAM site group.
 /// Positions are absolute DCS LO coordinates (x = north-south, y = east-west).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpecialSamUnitCfg {
     /// DCS unit type string (e.g. "SNR_75V", "ZSU-23-4 Shilka")
     #[serde(rename = "type")]
@@ -1716,7 +1719,7 @@ pub struct SpecialSamUnitCfg {
     pub heading: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpecialSamSiteCfg {
     pub name: String,
     /// Centroid of the site in DCS LO space.
@@ -1739,17 +1742,14 @@ pub struct SpecialSamSiteCfg {
     pub red_template: Option<String>,
     /// Template group name in the .miz for the Blue coalition (legacy; use blue_units instead).
     pub blue_template: Option<String>,
-    /// Capture zone radius in metres
-    #[serde(default = "default_sam_capture_radius")]
-    pub capture_radius_m: f64,
     /// Crate type that repairs the site; if None the site is not repairable
     #[serde(default)]
     pub repair_crate: Option<Crate>,
 }
 
 /// Weather effects on logistics and operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct WeatherEffectsCfg {
     /// Convoy speed multiplier in rain (0.0-1.0)
     #[serde(default = "default_rain_speed_mult")]
@@ -1791,8 +1791,8 @@ impl Default for WeatherEffectsCfg {
 }
 
 /// Time-of-day effects on gameplay
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct TimeOfDayEffectsCfg {
     /// Points multiplier for kills during night hours (e.g. 1.5 = 50% bonus)
     #[serde(default = "default_night_kill_bonus")]
@@ -1820,8 +1820,8 @@ impl Default for TimeOfDayEffectsCfg {
 }
 
 /// Dynamic campaign events configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct CampaignEventsCfg {
     /// Enable the dynamic events system
     #[serde(default)]
@@ -1976,8 +1976,8 @@ impl Default for CampaignEventsCfg {
 }
 
 /// Pilot experience and progression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct PilotExperienceCfg {
     /// Enable the pilot experience system
     #[serde(default)]
@@ -2028,10 +2028,11 @@ impl Default for PilotExperienceCfg {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
 pub struct Cfg {
     #[serde(default)]
+    #[schemars(with = "Option<std::string::String>")]
     pub netidx_base: Option<NetIdxPath>,
     /// if specified, automatically reset the server state and record
     /// a victory in the stats when the condition is met.
@@ -2094,6 +2095,15 @@ pub struct Cfg {
     /// Set to 0 to fall back to ground_vehicle_cull_distance.
     #[serde(default = "default_ewr_cull_distance")]
     pub ewr_cull_distance: u32,
+    /// Per-unit-type aircraft wake distance (metres) for special SAM sites,
+    /// keyed by DCS unit type (e.g. "S-300PS 54K6 cp"). A site's effective
+    /// wake distance is the maximum across its own units' configured
+    /// distances here; units not listed fall back to lr_cull_distance (if
+    /// LR-tagged in unit_classification) or unit_cull_distance otherwise.
+    /// Lets e.g. an SA-10 site wake from farther out than an SA-11 site even
+    /// though both are LR-tagged.
+    #[serde(default)]
+    pub special_sam_wake_distance: FxHashMap<Vehicle, u32>,
     /// spawn objectives within this radius (m) of a recent weapon launch
     /// position. Allows objectives to be awake when missiles or artillery rounds
     /// are inbound. Default: 60 000 m.
@@ -2214,6 +2224,10 @@ pub struct Cfg {
     /// Map-fixed SAM sites that can change hands via troop capture
     #[serde(default)]
     pub special_sam_sites: Vec<SpecialSamSiteCfg>,
+    /// Capture zone radius in metres, shared by every special SAM site (they have
+    /// no mission-editor trigger zone of their own to derive one from)
+    #[serde(default = "default_sam_capture_radius")]
+    pub special_sam_capture_radius_m: f64,
     /// Weather effects on gameplay
     #[serde(default)]
     pub weather_effects: Option<WeatherEffectsCfg>,
@@ -2324,7 +2338,7 @@ fn default_cap_cooldown_secs() -> u32 {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SmartCommanderCfg {
     /// Seconds between commander ticks (holding bonuses, objective funding).
     #[serde(default = "default_commander_period")]

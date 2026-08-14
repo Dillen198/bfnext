@@ -145,6 +145,10 @@
 | 7.8 | Warehouse sync | After supply delivery, check DCS warehouse in-game | Ammo/fuel counts in DCS match engine's tracked values | |
 | 7.9 | Map markup on capture | Capture objective, check F10 | Label updates to new side color; health/supply bar resets | |
 | 7.10 | Objective re-defense | After capture, new defenders spawn | Spawned groups appear and are attributed to new owner side | |
+| 7.11 | Neutral objective undefended | Load mission, check any Neutral-owned objective | Zero defenders spawn regardless of any Neut-coalition template placed in the trigger zone; objective shows as immediately capturable | |
+| 7.12 | Special SAM site culling | Fly an aircraft toward a non-LR special SAM site, then away | Site spawns once inside its wake distance, culls again after `cull_after` once no threat is nearby (no longer always-spawned) | |
+| 7.13 | Special SAM site LR wake distance | Approach an SA-10/S-300 special SAM site from `lr_cull_distance`/`special_sam_wake_distance` range | Site spawns/activates at that longer distance, well before the generic `unit_cull_distance` | |
+| 7.14 | Special SAM site short-range wake distance | Approach a Roland/SA-15 special SAM site configured in `special_sam_wake_distance` | Site stays culled until well inside the shorter configured distance, not the generic default | |
 
 ---
 

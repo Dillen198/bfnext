@@ -33,3 +33,4 @@ hdrhistogram = { workspace = true }
 chrono = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
+schemars = { workspace = true }

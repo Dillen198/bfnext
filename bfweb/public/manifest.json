@@ -1,0 +1,16 @@
+{
+  "short_name": "VectorStrike",
+  "name": "Vector Strike Ops Dashboard",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#080b06",
+  "theme_color": "#080b06",
+  "display": "standalone",
+  "orientation": "portrait"
+}

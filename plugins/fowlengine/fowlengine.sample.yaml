@@ -1,0 +1,65 @@
+# Fowl Engine DCSServerBot Plugin Configuration
+# Rename this file to `fowlengine.yaml` and place it in your DCSServerBot `config/plugins/` directory.
+
+DEFAULT:
+  # ---------------------------------------------
+  # Presentation Configuration
+  # ---------------------------------------------
+  # The brand name to show in Discord Embeds (e.g. "Vector Strike", "Desert Fury", "Fowl Engine").
+  brand_name: "Vector Strike"
+
+  # ---------------------------------------------
+  # Channel Configurations
+  # ---------------------------------------------
+  # The ID of the Discord channel where the live campaign status embed will be updated.
+  status_channel: 123456789012345678
+  
+  # The ID of the Discord channel where killstreak achievements (Ace, God of War) will be announced.
+  achievements_channel: 123456789012345678
+  
+  # The ID of the Discord channel where objective captures and high-priority alerts will be sent.
+  alerts_channel: 123456789012345678
+
+  # ---------------------------------------------
+  # Web Dashboard Configurations
+  # ---------------------------------------------
+  # The base URL to your bfweb or custom Fowl Engine web dashboard.
+  dashboard_url: "https://bfweb.your-domain.com"
+  
+  # A highly secure, secret string used to generate auto-login tokens.
+  # Ensure this matches the secret used in your web backend to verify the HMAC tokens!
+  dashboard_secret: "REPLACE_WITH_A_LONG_SECURE_RANDOM_STRING_HERE"
+  
+  # ---------------------------------------------
+  # Fowl Engine DB (bfdb) Integration
+  # ---------------------------------------------
+  # The base URL to your Fowl Engine REST API (bfdb).
+  api_url: "http://localhost:8765"
+  # (Optional) Direct path to the mission's ODFv2_CFG json file.
+  # If specified, the bot will parse deployables directly from this file
+  # rather than querying the bfdb API over HTTP.
+  cfg_path: "C:\\path\\to\\your\\miz\\ODFv2_CFG"
+  
+  
+  # ---------------------------------------------
+  # Localization & Message Formats
+  # ---------------------------------------------
+  # Customize the text used by the bot when posting alerts and achievements.
+  messages:
+    capture: "🏆 **[CAPTURED]** {message}"
+    neutral: "🏳️ **[NEUTRAL]** {message}"
+    ready_to_capture: "⏳ **[READY TO CAPTURE]** {message}"
+    achievement: "🎖️ **[ACHIEVEMENT]** {message}"
+    alert: "🚨 **[ALERT]** {message}"
+    
+  # ---------------------------------------------
+  # Discord Role Syncing
+  # ---------------------------------------------
+  # Automatically assigns Discord roles based on a pilot's total in-game score/points.
+  # Map your EXACT Discord role names to the minimum point threshold required.
+  rank_thresholds:
+    "Pilot Officer": 0
+    "Flight Lieutenant": 500
+    "Squadron Leader": 2000
+    "Wing Commander": 5000
+    "Group Captain": 10000

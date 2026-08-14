@@ -263,4 +263,5 @@ pub enum Stat {
         #[serde(default)]
         visibility_m: Option<f64>,
     },
+    GciPicture(crate::gci::GciPicture),
 }
