@@ -116,7 +116,9 @@ export const campaignDefaults: CampaignConfig = {
     { name: 'EagleEye',   handle: '[.ID] EagleEye',   role: 'Tester & Contributor' },
   ],
 
-  serverCredits: [],
+  serverCredits: [
+    { name: 'Hacker', role: 'Server Host — Founder, 61st ATP' },
+  ],
 }
 
 // This is the live config object — populated at startup by main.tsx after

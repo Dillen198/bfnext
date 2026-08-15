@@ -1,4 +1,4 @@
-import { ExternalLink, Zap } from 'lucide-react'
+import { ExternalLink, Server, Zap } from 'lucide-react'
 
 export default function SpecialThanksSection() {
   return (
@@ -129,6 +129,39 @@ export default function SpecialThanksSection() {
                 digitalcombatsimulator.com
               </a>
             </div>
+          </div>
+
+          {/* 61st ATP — server host */}
+          <div
+            style={{
+              background: '#0d0d0d',
+              border: '1px solid var(--border)',
+              borderLeft: '3px solid var(--accent)',
+              borderRadius: '3px',
+              padding: '1.75rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1rem',
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <Server size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+              <div
+                style={{
+                  fontFamily: "'Bebas Neue', sans-serif",
+                  fontSize: '1.1rem',
+                  letterSpacing: '0.14em',
+                  color: 'var(--text)',
+                }}
+              >
+                61st ATP
+              </div>
+            </div>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-dim)', lineHeight: 1.65, margin: 0 }}>
+              Vector Strike runs on a server generously donated by <strong style={{ color: 'var(--text)' }}>Hacker</strong>,
+              founder of <strong style={{ color: 'var(--text)' }}>61st ATP — Arctic Terns &amp; Penguins</strong>.
+              The campaign stays online because of that support.
+            </p>
           </div>
 
         </div>
