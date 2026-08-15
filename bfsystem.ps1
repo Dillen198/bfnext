@@ -19,7 +19,7 @@ $statsJsonl = "C:\Users\Administrator\Saved Games\server_2\Logs\stats.jsonl"
 $logFile = "C:\Users\Administrator\Saved Games\server_2\Logs\bfdb.log"
 
 # Dashboard address (stats + API + map)
-$listenAddress = "0.0.0.0:8765"
+$listenAddress = "0.0.0.0:8880"
 
 # Public website address (separate port)
 $siteAddress = "0.0.0.0:8766"
