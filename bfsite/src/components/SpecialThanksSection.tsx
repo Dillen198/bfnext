@@ -158,10 +158,70 @@ export default function SpecialThanksSection() {
               </div>
             </div>
             <p style={{ fontSize: '0.82rem', color: 'var(--text-dim)', lineHeight: 1.65, margin: 0 }}>
-              Vector Strike runs on a server generously donated by <strong style={{ color: 'var(--text)' }}>Hacker</strong>,
-              founder of <strong style={{ color: 'var(--text)' }}>61st ATP — Arctic Terns &amp; Penguins</strong>.
-              The campaign stays online because of that support.
+              A persistent, 24/7 campaign lives or dies on having a machine that never goes offline —
+              and Vector Strike has one because <strong style={{ color: 'var(--text)' }}>Hacker</strong>, founder of{' '}
+              <strong style={{ color: 'var(--text)' }}>61st ATP — Arctic Terns &amp; Penguins</strong>, generously
+              donated the server it runs on. Every objective captured, every sortie flown, and every name on the
+              leaderboard is only possible because of that support. On behalf of the whole squadron: thank you.
             </p>
+          </div>
+
+          {/* DCSServerBot */}
+          <div
+            style={{
+              background: '#0d0d0d',
+              border: '1px solid var(--border)',
+              borderRadius: '3px',
+              padding: '1.75rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1rem',
+            }}
+          >
+            <img
+              src="https://github.com/Special-K-s-Flightsim-Bots.png"
+              alt="DCSServerBot"
+              style={{ width: 64, height: 64, borderRadius: '8px', objectFit: 'contain' }}
+            />
+
+            <div>
+              <div
+                style={{
+                  fontFamily: "'Bebas Neue', sans-serif",
+                  fontSize: '1.1rem',
+                  letterSpacing: '0.14em',
+                  color: 'var(--text)',
+                  marginBottom: '0.5rem',
+                }}
+              >
+                DCSServerBot
+              </div>
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-dim)', lineHeight: 1.65, margin: '0 0 0.75rem 0' }}>
+                Built by <strong style={{ color: 'var(--text)' }}>Special K</strong>, DCSServerBot is the Discord
+                framework that runs our server bot — mission control, player management, and the live campaign
+                integration that ties Vector Strike's Discord presence to the fight in the air.
+              </p>
+              <a
+                href="https://github.com/Special-K-s-Flightsim-Bots/DCSServerBot"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  fontSize: '0.68rem',
+                  color: 'var(--accent)',
+                  textDecoration: 'none',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.opacity = '0.75')}
+                onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+              >
+                <ExternalLink size={10} />
+                github.com/DCSServerBot
+              </a>
+            </div>
           </div>
 
         </div>

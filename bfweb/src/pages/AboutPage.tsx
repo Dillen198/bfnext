@@ -206,32 +206,92 @@ export default function AboutPage() {
         {/* ── Special Thanks ── */}
         <section>
           <SectionHeading>SPECIAL THANKS</SectionHeading>
-          <div className="vs-card p-5">
-            <div className="flex items-start gap-4">
-              <img
-                src="https://www.digitalcombatsimulator.com/images/logos/Eagle_Dynamics.png"
-                alt="Eagle Dynamics"
-                style={{ width: 200, height: 'auto', flexShrink: 0, objectFit: 'contain' }}
-              />
-              <div>
-                <div className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)', marginBottom: '0.4rem' }}>
-                  Eagle Dynamics
+          <div className="space-y-3">
+
+            <div className="vs-card p-5">
+              <div className="flex items-start gap-4">
+                <img
+                  src="https://www.digitalcombatsimulator.com/images/logos/Eagle_Dynamics.png"
+                  alt="Eagle Dynamics"
+                  style={{ width: 200, height: 'auto', flexShrink: 0, objectFit: 'contain' }}
+                />
+                <div>
+                  <div className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)', marginBottom: '0.4rem' }}>
+                    Eagle Dynamics
+                  </div>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: '0.5rem' }}>
+                    Developers of DCS World — the premier military flight simulator that
+                    Fowl Engine is built upon.
+                  </p>
+                  <a
+                    href="https://www.digitalcombatsimulator.com"
+                    target="_blank" rel="noreferrer"
+                    className="flex items-center gap-1.5 transition-opacity hover:opacity-80"
+                    style={{ fontSize: '0.65rem', color: 'var(--accent)', textDecoration: 'none', letterSpacing: '0.1em' }}
+                  >
+                    <ExternalLink size={10} />
+                    DIGITALCOMBATSIMULATOR.COM
+                  </a>
                 </div>
-                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: '0.5rem' }}>
-                  Developers of DCS World — the premier military flight simulator that
-                  Fowl Engine is built upon.
-                </p>
-                <a
-                  href="https://www.digitalcombatsimulator.com"
-                  target="_blank" rel="noreferrer"
-                  className="flex items-center gap-1.5 transition-opacity hover:opacity-80"
-                  style={{ fontSize: '0.65rem', color: 'var(--accent)', textDecoration: 'none', letterSpacing: '0.1em' }}
-                >
-                  <ExternalLink size={10} />
-                  DIGITALCOMBATSIMULATOR.COM
-                </a>
               </div>
             </div>
+
+            <div className="vs-card p-5">
+              <div className="flex items-start gap-4">
+                <div
+                  style={{
+                    width: 48, height: 48, borderRadius: '8px', flexShrink: 0,
+                    background: 'var(--bg-elevated)', border: '1px solid var(--accent)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <Server size={22} style={{ color: 'var(--accent)' }} />
+                </div>
+                <div>
+                  <div className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)', marginBottom: '0.4rem' }}>
+                    61st ATP
+                  </div>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                    A persistent, 24/7 campaign lives or dies on having a machine that never goes offline —
+                    and Vector Strike has one because <strong style={{ color: 'var(--text)' }}>Hacker</strong>,
+                    founder of <strong style={{ color: 'var(--text)' }}>61st ATP — Arctic Terns &amp; Penguins</strong>,
+                    generously donated the server it runs on. Every objective captured, every sortie flown, and
+                    every name on the leaderboard is only possible because of that support. On behalf of the
+                    whole squadron: thank you.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="vs-card p-5">
+              <div className="flex items-start gap-4">
+                <img
+                  src="https://github.com/Special-K-s-Flightsim-Bots.png"
+                  alt="DCSServerBot"
+                  style={{ width: 48, height: 48, borderRadius: '8px', flexShrink: 0, objectFit: 'contain' }}
+                />
+                <div>
+                  <div className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)', marginBottom: '0.4rem' }}>
+                    DCSServerBot
+                  </div>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: '0.5rem' }}>
+                    Built by <strong style={{ color: 'var(--text)' }}>Special K</strong>, DCSServerBot is the
+                    Discord framework running our server bot — mission control, player management, and the live
+                    campaign integration that ties Vector Strike's Discord presence to the fight in the air.
+                  </p>
+                  <a
+                    href="https://github.com/Special-K-s-Flightsim-Bots/DCSServerBot"
+                    target="_blank" rel="noreferrer"
+                    className="flex items-center gap-1.5 transition-opacity hover:opacity-80"
+                    style={{ fontSize: '0.65rem', color: 'var(--accent)', textDecoration: 'none', letterSpacing: '0.1em' }}
+                  >
+                    <ExternalLink size={10} />
+                    GITHUB.COM/DCSSERVERBOT
+                  </a>
+                </div>
+              </div>
+            </div>
+
           </div>
         </section>
 
