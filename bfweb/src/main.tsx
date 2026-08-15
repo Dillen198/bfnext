@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { campaign, campaignDefaults, type CampaignConfig } from './config/campaign'
+import { API_ROOT } from './api'
 
 // ── Camo patterns (SVG data URIs) ────────────────────────────────────────────
 
@@ -153,12 +154,12 @@ async function bootstrap() {
 
   // Fetch server-provided config (set via --config flag on bfdb) and overlay it
   try {
-    const res = await fetch('/api/config')
+    const res = await fetch(`${API_ROOT}/api/config`)
     if (res.ok) {
       const remote: Partial<CampaignConfig> = await res.json()
       if (remote && typeof remote === 'object' && Object.keys(remote).length > 0) {
         applyCampaignConfig(remote)
-        console.info('[campaign] Config loaded from /api/config')
+        console.info(`[campaign] Config loaded from ${API_ROOT}/api/config`)
       }
     }
   } catch {

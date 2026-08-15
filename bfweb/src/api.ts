@@ -4,7 +4,7 @@
 // VITE_API_BASE (e.g. "https://api.example.com") at build time to point a
 // standalone-hosted dashboard at a remotely-hosted bfdb instead — see
 // deploy/README.md. VITE_API_BASE must NOT have a trailing slash.
-const API_ROOT: string = import.meta.env.VITE_API_BASE ?? ''
+export const API_ROOT: string = import.meta.env.VITE_API_BASE ?? ''
 
 function wsUrl(path: string): string {
   if (API_ROOT) {
