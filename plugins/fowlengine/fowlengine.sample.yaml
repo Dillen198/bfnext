@@ -14,11 +14,21 @@ DEFAULT:
   # The ID of the Discord channel where the live campaign status embed will be updated.
   status_channel: 123456789012345678
   
-  # The ID of the Discord channel where killstreak achievements (Ace, God of War) will be announced.
+  # The ID of the Discord channel where killstreak achievements (Ace, Unstoppable,
+  # God of War) will be announced. Detected by polling /api/kills every ~20s and
+  # tracking consecutive kills per pilot (resets when they die); no admin auth needed.
   achievements_channel: 123456789012345678
-  
-  # The ID of the Discord channel where objective captures and high-priority alerts will be sent.
+
+  # The ID of the Discord channel where objective captures, neutrals, and
+  # ready-to-capture alerts are sent. Detected by polling /api/objectives every
+  # ~20s and diffing owner/health against the previous poll; no admin auth needed.
   alerts_channel: 123456789012345678
+
+  # (Optional) The ID of the Discord channel where the live bflib engine log will be
+  # relayed in real time. A single message is continuously edited with a rolling tail,
+  # and ERROR/WARN lines are additionally posted as standalone alerts. Leave unset to
+  # disable the relay entirely. Requires admin_username/admin_password below.
+  engine_log_channel: 123456789012345678
 
   # ---------------------------------------------
   # Web Dashboard Configurations
@@ -39,8 +49,16 @@ DEFAULT:
   # If specified, the bot will parse deployables directly from this file
   # rather than querying the bfdb API over HTTP.
   cfg_path: "C:\\path\\to\\your\\miz\\ODFv2_CFG"
-  
-  
+
+  # Admin username/password for bfdb's local-login (matches bfdb's own
+  # --admin-username/--admin-password startup flags). Required for the
+  # engine_log_channel relay above (since /ws/engine-logs is admin-only) and
+  # for the commander terminal / spawn_deployable commands (POST /api/commander/spawn
+  # is also admin-only -- these always fail without it).
+  admin_username: ""
+  admin_password: ""
+
+
   # ---------------------------------------------
   # Localization & Message Formats
   # ---------------------------------------------

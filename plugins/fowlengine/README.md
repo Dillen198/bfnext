@@ -5,8 +5,9 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 ## Features
 
 - **Live Campaign Status Embed:** A single, continuously updating Discord embed showing live points, objective counts, and player counts per faction.
-- **Event Callbacks:** Directly routes Lua callbacks from `bflib` engine to Discord for real-time objective capture alerts and player achievements.
-- **Killstreak Achievements:** Announces when a pilot hits streaks of 5 (Ace), 10 (Unstoppable), and 15 (God of War) kills in a single sortie.
+- **Live Engine Log Relay:** Tails bfdb's `/ws/engine-logs` websocket (the raw `bflib` engine log) into a Discord channel — one message is continuously edited with a rolling tail, and `[ERROR]`/`[WARN]` lines are additionally posted as standalone alerts so they don't get missed.
+- **Capture/Neutral/Ready-to-Capture Alerts:** Polls bfdb's public `/api/objectives` every ~20s and diffs owner/health against the previous poll to detect captures, objectives going neutral, and objectives dropping to capturable health.
+- **Killstreak Achievements:** Polls bfdb's public `/api/kills` every ~20s to track each pilot's consecutive kills (reset on death) and announces streaks of 5 (Ace), 10 (Unstoppable), and 15 (God of War).
 - **Dual-Login Dashboard:** Supports both standard Discord OAuth web-login and securely generated HMAC bot-tokens to seamlessly bridge the `bfweb` dashboard.
 - **Interactive Commander Terminal:** A slick UI terminal allowing commanders to drop crates and infantry squads at airbases directly from Discord.
 
@@ -36,6 +37,17 @@ DEFAULT:
   
   # Secret key to sign one-time auto-login tokens
   dashboard_secret: "YOUR_SUPER_SECRET_KEY"
+
+  # The base URL to your bfdb REST API
+  api_url: "http://localhost:8765"
+
+  # (Optional) Discord channel for the live engine log relay. Omit to disable.
+  engine_log_channel: 123456789012345678
+
+  # Required if engine_log_channel is set -- must match bfdb's own
+  # --admin-username/--admin-password startup flags.
+  admin_username: "admin"
+  admin_password: "YOUR_BFDB_ADMIN_PASSWORD"
 ```
 
 ## Slash Commands
@@ -51,5 +63,9 @@ DEFAULT:
 - `/vs priority [objective]` - Marks an objective as a high priority target for your team.
 
 ## Architecture & Integration
-This plugin actively interfaces with the `bflib` Rust engine of Vector Strike. 
-It requires the `lua/callbacks.lua` and `lua/commands.lua` endpoints to be loaded into the DCS scripting environment so DCSServerBot can communicate synchronously with the engine instance.
+This plugin talks to bfdb, not directly to the DCS process. Two integration paths:
+
+- **Read-only data** (`/status`, `fe_objectives`, `fe_stats`, capture/achievement polling, the engine log relay's history replay): plain HTTP/WebSocket calls to bfdb, no DCS-side setup needed beyond running bfdb itself.
+- **Commander actions** (`fe_priority`, `fe_spawn_deployable`, `fe_terminal`): bfdb calls into bflib's live netidx RPC server (`bflib/src/bg/rpcs.rs`) -- e.g. `spawn-deployable`, `set-objective-priority` -- which requires `admin_username`/`admin_password` to authenticate against bfdb, and requires bfdb to have been started with `--base` pointing at the mission's netidx path so it can reach bflib's RPCs.
+
+`lua/callbacks.lua` and `lua/commands.lua` are legacy from an earlier design (a direct Lua-hooks bridge) and are not used by any of the above -- they're unwired stubs kept only in case a lower-latency native bridge is built later.

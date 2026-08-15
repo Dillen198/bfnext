@@ -1,8 +1,7 @@
+# plugins/fowlengine/__init__.py
+from .commands import FowlEngine
+
 __version__ = "1.0.0"
 
-from core import Plugin
-from .commands import VectorStrike
-from .listener import VectorStrikeEventListener
-
 async def setup(bot):
-    await bot.add_cog(VectorStrike(bot, VectorStrikeEventListener))
+    await bot.add_cog(FowlEngine(bot))
