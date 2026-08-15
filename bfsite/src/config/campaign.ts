@@ -16,7 +16,7 @@ export const campaign = {
     'achievements recorded. The war never stops.',
   discord: 'https://discord.gg/XyGkb3WAXS',
   server: 'The Coop · Operation Vector Strike',
-  dashboardUrl: 'http://localhost:5173',
+  dashboardUrl: 'https://dashboard.vectorstrike.org',
   blueLabel: 'BLUFOR',
   redLabel: 'REDFOR',
 
