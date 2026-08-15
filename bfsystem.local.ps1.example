@@ -1,0 +1,10 @@
+# ==========================================================
+# Copy this file to bfsystem.local.ps1 (same folder) and fill in real
+# values. bfsystem.local.ps1 is gitignored -- bfsystem.local.ps1.example
+# (this file) is the only one that should ever be committed.
+# ==========================================================
+
+# Local admin login password for the bfweb dashboard (paired with
+# $adminUsername in bfsystem.ps1). Generate one with:
+#   openssl rand -hex 24
+$adminPassword = "REPLACE_WITH_A_REAL_RANDOM_PASSWORD"

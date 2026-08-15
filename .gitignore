@@ -5,6 +5,7 @@ bfdb_log.txt
 netidx_out.txt
 test_stats.jsonl
 netidx-resolver.json
+bfsystem.local.ps1
 **/*.rs.bk
 Cargo.lock
 **/Cargo.lock

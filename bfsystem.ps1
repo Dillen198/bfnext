@@ -27,11 +27,26 @@ $siteAddress = "0.0.0.0:8766"
 # Admin panel local login (username + password — no Discord required)
 # Leave blank to disable local login (Discord-only)
 $adminUsername = "admin"
-$adminPassword = "changeme"
 
 # SRS radio panel — URL of the SRS server (e.g. "http://localhost:5002")
 # Leave blank to disable the SRS panel on the dashboard (or set srsUrl in campaign.json instead)
 $srsUrl = ""
+
+# ==========================================================
+# Secrets: bfsystem.ps1 is tracked in git (public repo). $adminPassword lives
+# in bfsystem.local.ps1 instead, which is gitignored and never committed.
+# Copy bfsystem.local.ps1.example to bfsystem.local.ps1 and fill in a real
+# password to get started.
+$localSecrets = Join-Path $PSScriptRoot "bfsystem.local.ps1"
+if (-not (Test-Path $localSecrets)) {
+    Write-Host "Missing $localSecrets -- copy bfsystem.local.ps1.example and set a real `$adminPassword." -ForegroundColor Red
+    exit 1
+}
+. $localSecrets
+if ([string]::IsNullOrWhiteSpace($adminPassword)) {
+    Write-Host "`$adminPassword is empty in $localSecrets -- set a real password." -ForegroundColor Red
+    exit 1
+}
 
 # ==========================================================
 
