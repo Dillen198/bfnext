@@ -322,6 +322,10 @@ pub struct Objective {
     pub(super) logistics_detached: bool,
     #[serde(default)]
     pub points: i32,
+    /// Commander's intent marker, settable via the fowlengine Discord bot / bfdb
+    /// admin API. Display/coordination only -- does not affect AI or logistics.
+    #[serde(default)]
+    pub(super) priority: bool,
     #[serde(skip)]
     pub(super) spawned: bool,
     #[serde(skip)]
@@ -351,6 +355,10 @@ impl Objective {
 
     pub fn owner(&self) -> Side {
         self.owner
+    }
+
+    pub fn priority(&self) -> bool {
+        self.priority
     }
 
     pub fn is_farp(&self) -> bool {
@@ -421,6 +429,14 @@ impl Objective {
 impl Db {
     pub fn objective(&self, id: &ObjectiveId) -> Result<&Objective> {
         objective!(self, id)
+    }
+
+    /// Set or clear the commander's-intent priority marker on an objective.
+    /// Display/coordination only; intentionally does not touch AI targeting,
+    /// logistics weighting, or any other gameplay logic.
+    pub fn set_objective_priority(&mut self, id: &ObjectiveId, priority: bool) -> Result<()> {
+        objective_mut!(self, *id)?.priority = priority;
+        Ok(())
     }
 
     pub fn objectives(&self) -> impl Iterator<Item = (&ObjectiveId, &Objective)> {
@@ -728,6 +744,7 @@ impl Db {
             threatened: true,
             warehouse: Warehouse::default(),
             logistics_detached: false,
+            priority: false,
             points: 0,
             last_threatened_ts: now,
             last_change_ts: now,

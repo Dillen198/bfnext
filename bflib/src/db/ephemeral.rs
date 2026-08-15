@@ -107,6 +107,15 @@ pub(super) struct DeployableIndex {
     pub(super) pad_templates: FxHashMap<String, FxHashSet<String>>,
 }
 
+/// A neutral-coalition static object placed inside an objective zone that should
+/// never appear destroyed. Tracked by its live DCS object id; when that object
+/// dies, the static is respawned from its original template so it looks immortal.
+#[derive(Debug, Clone)]
+pub(super) struct ProtectedStatic {
+    pub(super) template_name: String,
+    pub(super) side: Side,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Equipment {
     pub(super) production: u32,
@@ -158,6 +167,9 @@ pub struct Ephemeral {
     pub(super) object_id_by_gid: FxHashMap<GroupId, DcsOid<ClassObject>>,
     pub(super) gid_by_object_id: FxHashMap<DcsOid<ClassObject>, GroupId>,
     pub(super) uid_by_static: FxHashMap<DcsOid<ClassStatic>, UnitId>,
+    /// Neutral decoration statics inside objective zones that get respawned in place
+    /// whenever they're destroyed, so they behave as if immortal.
+    pub(super) protected_statics: FxHashMap<DcsOid<ClassStatic>, ProtectedStatic>,
     pub(super) slot_by_miz_gid: FxHashMap<miz::GroupId, SlotId>,
     pub(super) airbase_by_oid: FxHashMap<ObjectiveId, DcsOid<ClassAirbase>>,
     pub(super) slot_info: FxHashMap<SlotId, SlotInfo>,
@@ -260,6 +272,7 @@ impl Default for Ephemeral {
             object_id_by_gid: FxHashMap::default(),
             gid_by_object_id: FxHashMap::default(),
             uid_by_static: FxHashMap::default(),
+            protected_statics: FxHashMap::default(),
             airbase_by_oid: FxHashMap::default(),
             slot_info: FxHashMap::default(),
             used_pad_templates: FxHashSet::default(),

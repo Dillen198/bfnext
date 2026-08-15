@@ -221,6 +221,10 @@ pub enum AdminCommand {
     ReinitWarehouse {
         airbase: String,
     },
+    SetObjectivePriority {
+        objective: String,
+        priority: bool,
+    },
 }
 
 impl AdminCommand {
@@ -934,6 +938,7 @@ pub(crate) fn query_objectives(ctx: &Context) -> Vec<ObjectiveInfo> {
                 fuel: obj.fuel(),
                 threatened: obj.threatened(),
                 group_count,
+                priority: obj.priority(),
             }
         })
         .collect()
@@ -976,6 +981,7 @@ pub(crate) fn query_objective_details(ctx: &Context, name: &str) -> Result<Objec
             fuel: obj.fuel(),
             threatened: obj.threatened(),
             group_count,
+            priority: obj.priority(),
         },
         equipment,
         liquids,
@@ -1724,6 +1730,15 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                         reply_ok!("{{\"success\":true,\"new_balance\":{}}}", new_balance)
                     },
                     Err(e) => reply_err!("failed to add points: {e:?}"),
+                }
+            }
+            AdminCommand::SetObjectivePriority { objective, priority } => {
+                match get_airbase(&ctx.db, &objective) {
+                    Err(e) => reply_err!("objective not found: {e:?}"),
+                    Ok(oid) => match ctx.db.set_objective_priority(&oid, priority) {
+                        Ok(()) => reply_ok!("{{\"success\":true,\"priority\":{}}}", priority),
+                        Err(e) => reply_err!("failed to set priority: {e:?}"),
+                    },
                 }
             }
             AdminCommand::Blacklist { rule, player } => {

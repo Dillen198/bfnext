@@ -62,6 +62,7 @@ pub struct Rpcs {
     _spawn_troop: Proc,
     _move_group: Proc,
     _add_points: Proc,
+    _set_objective_priority: Proc,
 }
 
 async fn wait_task(mut ch: mpsc::Receiver<(RpcCall, oneshot::Receiver<Value>)>) {
@@ -708,6 +709,24 @@ impl Rpcs {
             amount: i32 = Value::Null; "The points to add (negative to subtract)",
             reason: Chars = Value::Null; "The reason for the points change"
         )?;
+        let _q = Arc::clone(&q);
+        let set_objective_priority = define_rpc!(
+            publisher,
+            base.append("set-objective-priority"),
+            "Set or clear the commander's-intent priority marker on an objective (display/coordination only)",
+            |c: RpcCall, objective: Chars, priority: bool| {
+                let (tx, rx) = oneshot::channel();
+                let cmd = AdminCommand::SetObjectivePriority {
+                    objective: objective.as_ref().into(),
+                    priority,
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            objective: Chars = Value::Null; "The objective name or partial match",
+            priority: bool = false; "Whether the objective should be marked high priority"
+        )?;
         Ok(Self {
             _reduce_inventory: reduce_inventory,
             _transfer_supply: transfer_supply,
@@ -750,6 +769,7 @@ impl Rpcs {
             _spawn_troop: spawn_troop,
             _move_group: move_group,
             _add_points: add_points,
+            _set_objective_priority: set_objective_priority,
         })
     }
 }

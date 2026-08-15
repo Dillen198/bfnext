@@ -34,7 +34,7 @@ use chrono::prelude::*;
 use compact_str::{format_compact, CompactString};
 use dcso3::{
     azumith3d, centroid2d, change_heading,
-    coalition::Side,
+    coalition::{Side, Static},
     coord::Coord,
     country::Country,
     env::miz,
@@ -1281,6 +1281,39 @@ impl Db {
                         }
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// If `id` is a tracked "immortal" decoration static (see `init_protected_statics`),
+    /// respawn it from its original template so it looks like it was never destroyed.
+    /// Safe to call for any dead static id; no-ops if it isn't a protected one.
+    pub fn respawn_protected_static(
+        &mut self,
+        lua: MizLua,
+        idx: &MizIndex,
+        id: &DcsOid<ClassStatic>,
+    ) -> Result<()> {
+        if let Some(protected) = self.ephemeral.protected_statics.remove(id) {
+            let spctx = SpawnCtx::new(lua)?;
+            let template = spctx.get_template(
+                idx,
+                GroupKind::Static,
+                protected.side,
+                protected.template_name.as_str(),
+            )?;
+            spctx.spawn(template)?;
+            match StaticObject::get_by_name(lua, protected.template_name.as_str()) {
+                Ok(Static::Static(obj)) => {
+                    let new_id = obj.object_id()?;
+                    self.ephemeral.protected_statics.insert(new_id, protected);
+                }
+                Ok(Static::Airbase(_)) => (),
+                Err(e) => warn!(
+                    "respawned protected static '{}' but couldn't re-find it: {e:?}",
+                    protected.template_name
+                ),
             }
         }
         Ok(())

@@ -168,6 +168,7 @@ impl Db {
             warehouse: Warehouse::default(),
             points: 0,
             logistics_detached,
+            priority: false,
             last_activate: DateTime::<Utc>::default(),
             // initialized by load
             threat_pos3: Vector3::default(),
@@ -353,6 +354,7 @@ impl Db {
                                     warehouse: Warehouse::default(),
                                     points: 0,
                                     logistics_detached: true,
+                                    priority: false,
                                     last_activate: DateTime::<Utc>::default(),
                                     threat_pos3: Vector3::default(),
                                 };
@@ -631,6 +633,7 @@ impl Db {
                 warehouse: Warehouse::default(),
                 points: 0,
                 logistics_detached: false,
+                priority: false,
                 last_activate: DateTime::<Utc>::default(),
                 threat_pos3: Vector3::default(),
             };
@@ -700,6 +703,59 @@ impl Db {
             }
             self.update_objective_status(&id, Utc::now())?;
         }
+        Ok(())
+    }
+
+    /// Find every neutral-coalition static object placed inside an objective zone
+    /// and register it so that if it's ever destroyed, `respawn_protected_static`
+    /// (called from the death event handlers) puts it right back — this is the
+    /// only way to make a DCS static object effectively immortal, since the
+    /// StaticObject class has no controller and no setImmortal/setLife API.
+    fn init_protected_statics(&mut self, miz: &Miz, lua: MizLua) -> Result<()> {
+        use dcso3::{coalition::Static, object::DcsObject, static_object::StaticObject};
+        let zones: Vec<Zone> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .map(|(_, o)| o.zone)
+            .collect();
+        if zones.is_empty() {
+            return Ok(());
+        }
+        for country in miz.coalition(Side::Neutral)?.countries()? {
+            let country = country?;
+            for g in country.statics()? {
+                let g = g?;
+                let pos = match g.pos() {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+                if !zones.iter().any(|z| z.contains(pos)) {
+                    continue;
+                }
+                let name = g.name()?;
+                match StaticObject::get_by_name(lua, name.as_str()) {
+                    Ok(Static::Static(obj)) => {
+                        let id = obj.object_id()?;
+                        self.ephemeral.protected_statics.insert(
+                            id,
+                            super::ephemeral::ProtectedStatic {
+                                template_name: name,
+                                side: Side::Neutral,
+                            },
+                        );
+                    }
+                    Ok(Static::Airbase(_)) => (),
+                    Err(e) => {
+                        debug!("protected static '{name}' not found live in the world: {e:?}")
+                    }
+                }
+            }
+        }
+        info!(
+            "[PROTECTED_STATICS] registered {} neutral statics inside objective zones",
+            self.ephemeral.protected_statics.len()
+        );
         Ok(())
     }
 
@@ -882,6 +938,8 @@ impl Db {
         info!("[CARRIER_SETUP] Carrier initialization complete");
         t.init_special_sam_sites(&spctx, idx, lua)
             .context("init_special_sam_sites failed")?;
+        t.init_protected_statics(miz, lua)
+            .context("init_protected_statics failed")?;
 
         // Now initialize slots - carrier objectives are available for slot association
         for side in Side::ALL {

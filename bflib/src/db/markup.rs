@@ -27,7 +27,7 @@ use compact_str::{CompactString, format_compact};
 use dcso3::{
     Color, LuaVec3, Vector2, Vector3,
     coalition::Side,
-    trigger::{ArrowSpec, CircleSpec, LineType, MarkId, PolylineSpec, QuadSpec, RectSpec, SideFilter, TextSpec},
+    trigger::{ArrowSpec, CircleSpec, LineType, MarkId, PolylineSpec, QuadSpec, SideFilter, TextSpec},
 };
 use fxhash::FxHashMap;
 
@@ -261,7 +261,6 @@ pub(super) struct ObjectiveMarkup {
     label: MarkId,
     pos: Vector2,
     supply_connections: FxHashMap<ObjectiveId, MarkId>,
-    status_box: MarkId,
     kind_symbol: KindSymbol,
 }
 
@@ -295,24 +294,6 @@ fn objective_label(name: &str, obj: &Objective) -> CompactString {
     }
 }
 
-fn health_status_color(health: u8) -> Color {
-    match health {
-        80..=100 => Color::green(0.8),
-        40..=79 => Color::yellow(0.8),
-        1..=39 => Color::red(0.8),
-        0 => Color::gray(0.8),
-        _ => Color::white(0.8),
-    }
-}
-
-fn supply_status_color(supply: u8) -> Color {
-    match supply {
-        70..=100 => Color::green(0.8),
-        30..=69 => Color::yellow(0.8),
-        _ => Color::red(0.8),
-    }
-}
-
 fn arrow_coords(obj: &Objective, dst: &Objective) -> (Vector2, Vector2) {
     let pos = obj.zone.pos();
     let dpos = dst.zone.pos();
@@ -340,14 +321,12 @@ impl ObjectiveMarkup {
             threatened_ring,
             supply_connections,
             label,
-            status_box,
             kind_symbol,
         } = self;
         msgq.delete_mark(owner_ring);
         msgq.delete_mark(threatened_ring);
         msgq.delete_mark(capturable_ring);
         msgq.delete_mark(label);
-        msgq.delete_mark(status_box);
         kind_symbol.remove(msgq);
         for (_, id) in supply_connections {
             msgq.delete_mark(id)
@@ -402,8 +381,6 @@ impl ObjectiveMarkup {
             self.fuel = obj.fuel;
             self.points = obj.points;
             msgq.set_markup_text(self.label, objective_label(&self.name, obj).into());
-            msgq.set_markup_color(self.status_box, supply_status_color(obj.supply));
-            msgq.set_markup_fill_color(self.status_box, health_status_color(obj.health));
         }
         if let Zone::Circle { pos, .. } = obj.zone
             && self.pos != pos
@@ -416,14 +393,6 @@ impl ObjectiveMarkup {
             msgq.set_markup_pos_start(
                 self.label,
                 LuaVec3(Vector3::new(pos.x + 1500., 1., pos.y + 1500.)),
-            );
-            msgq.set_markup_pos_start(
-                self.status_box,
-                LuaVec3(Vector3::new(pos.x - 1700., 0., pos.y + 1200.)),
-            );
-            msgq.set_markup_pos_end(
-                self.status_box,
-                LuaVec3(Vector3::new(pos.x - 1500., 0., pos.y + 1400.)),
             );
         }
         for oid in moved {
@@ -585,20 +554,6 @@ impl ObjectiveMarkup {
                 text: objective_label(&t.name, obj).into(),
             },
         );
-        msgq.rect_to_all(
-            all_spec,
-            t.status_box,
-            RectSpec {
-                start: LuaVec3(Vector3::new(pos3.x - 1700., 0., pos3.z + 1200.)),
-                end: LuaVec3(Vector3::new(pos3.x - 1500., 0., pos3.z + 1400.)),
-                color: supply_status_color(obj.supply),
-                fill_color: health_status_color(obj.health),
-                line_type: LineType::Solid,
-                read_only: true,
-            },
-            None,
-        );
-
         // Draw kind-specific icon symbol inside the objective zone
         let sym_r = obj.zone.radius().max(500.) * 0.45;
         let sym_color = text_color(0.85);

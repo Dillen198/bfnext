@@ -763,7 +763,11 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 e.target.as_ref().and_then(|t| t.as_static().ok())
             {
                 if target.get_life()? < 1 {
-                    if let Err(e) = ctx.db.static_dead(&target.object_id()?, start_ts) {
+                    let id = target.object_id()?;
+                    if let Err(e) = ctx.db.respawn_protected_static(lua, &ctx.idx, &id) {
+                        error!("respawn protected static failed {e:?}")
+                    }
+                    if let Err(e) = ctx.db.static_dead(&id, start_ts) {
                         error!("static dead failed {e:?}")
                     }
                 }
@@ -821,7 +825,11 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 spawn_dismount(lua, ctx, dismount);
             } else if let Some(st) = e.initiator.as_ref().and_then(|s| s.as_static().ok())
             {
-                if let Err(e) = ctx.db.static_dead(&st.object_id()?, start_ts) {
+                let id = st.object_id()?;
+                if let Err(e) = ctx.db.respawn_protected_static(lua, &ctx.idx, &id) {
+                    error!("respawn protected static failed {e:?}")
+                }
+                if let Err(e) = ctx.db.static_dead(&id, start_ts) {
                     error!("static killed failed {e:?}")
                 }
             }
