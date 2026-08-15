@@ -1,4 +1,4 @@
-import { ExternalLink, Server, Zap } from 'lucide-react'
+import { ExternalLink, Zap } from 'lucide-react'
 
 export default function SpecialThanksSection() {
   return (
@@ -144,8 +144,12 @@ export default function SpecialThanksSection() {
               gap: '1rem',
             }}
           >
-            <div className="flex items-center gap-2">
-              <Server size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+            <div className="flex items-center gap-3">
+              <img
+                src="/hacker.jpg"
+                alt="Hacker"
+                style={{ width: 56, height: 56, borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }}
+              />
               <div
                 style={{
                   fontFamily: "'Bebas Neue', sans-serif",
@@ -179,8 +183,8 @@ export default function SpecialThanksSection() {
             }}
           >
             <img
-              src="https://github.com/Special-K-s-Flightsim-Bots.png"
-              alt="DCSServerBot"
+              src="/special-k.png"
+              alt="Special K"
               style={{ width: 64, height: 64, borderRadius: '8px', objectFit: 'contain' }}
             />
 

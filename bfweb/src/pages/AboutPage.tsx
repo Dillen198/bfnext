@@ -238,15 +238,11 @@ export default function AboutPage() {
 
             <div className="vs-card p-5">
               <div className="flex items-start gap-4">
-                <div
-                  style={{
-                    width: 48, height: 48, borderRadius: '8px', flexShrink: 0,
-                    background: 'var(--bg-elevated)', border: '1px solid var(--accent)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                >
-                  <Server size={22} style={{ color: 'var(--accent)' }} />
-                </div>
+                <img
+                  src="/hacker.jpg"
+                  alt="Hacker"
+                  style={{ width: 48, height: 48, borderRadius: '8px', flexShrink: 0, objectFit: 'cover' }}
+                />
                 <div>
                   <div className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)', marginBottom: '0.4rem' }}>
                     61st ATP
@@ -266,8 +262,8 @@ export default function AboutPage() {
             <div className="vs-card p-5">
               <div className="flex items-start gap-4">
                 <img
-                  src="https://github.com/Special-K-s-Flightsim-Bots.png"
-                  alt="DCSServerBot"
+                  src="/special-k.png"
+                  alt="Special K"
                   style={{ width: 48, height: 48, borderRadius: '8px', flexShrink: 0, objectFit: 'contain' }}
                 />
                 <div>
