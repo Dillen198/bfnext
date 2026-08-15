@@ -6,7 +6,7 @@
 - **O** = Objective (e.g., OABRKOBULETI)
 - **G** = Group (e.g., GLOGI)
 - **AB** = Airbase (e.g., OABRKOBULETI)
-- **FOB** = Forward Operating Base (no slots, refuel/rearm/repair/get crates)
+- **FO** = Forward Operating Base (no slots, refuel/rearm/repair/get crates)
 - **LO** = Logistics Objective (e.g., OLOBMukhrani)
 - **NB** = Naval Base (fixed port facility)
 - **CG** = Carrier Group (mobile naval objective)
