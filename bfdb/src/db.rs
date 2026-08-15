@@ -700,6 +700,29 @@ impl StatsDb {
         (rx, hist)
     }
 
+    /// Call one of bflib's netidx RPC procs (published under `<base>/api/<name>`,
+    /// see bflib/src/bg/rpcs.rs) and return its raw reply. Errors if bfdb wasn't
+    /// started with --base (netidx disabled) or if the mission isn't running /
+    /// hasn't published that proc yet.
+    ///
+    /// A successful RPC call still returns `Ok` even when the *engine* reported
+    /// a logical error (bflib replies with `Value::Error` in that case, per its
+    /// `reply_err!` macro) -- callers should check the returned Value's variant.
+    pub(crate) async fn call_engine_rpc(
+        &self,
+        proc_name: &str,
+        args: Vec<(&str, netidx::publisher::Value)>,
+    ) -> Result<netidx::publisher::Value> {
+        use netidx_protocols::rpc::client::Proc;
+        let (subscriber, base) = match (&self.0.subscriber, &self.0.base) {
+            (Some(s), Some(b)) => (s, b),
+            _ => bail!("netidx is disabled (bfdb started without --base)"),
+        };
+        let path = base.append("api").append(proc_name);
+        let proc = Proc::new(subscriber, path)?;
+        proc.call(args).await
+    }
+
     async fn background_loop(self) -> Result<()> {
         // If stats_jsonl is configured, use the JSONL reader instead of archive
         if let Some(jsonl_path) = self.stats_jsonl.clone() {

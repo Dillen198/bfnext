@@ -30,6 +30,10 @@ pub struct ObjectiveInfo {
     pub threatened: bool,
     /// Number of groups stationed at this objective per side
     pub group_count: HashMap<String, usize>,
+    /// Commander's intent marker -- a display/coordination flag only, does not
+    /// affect AI targeting or logistics behavior.
+    #[serde(default)]
+    pub priority: bool,
 }
 
 /// Detailed objective info including inventory

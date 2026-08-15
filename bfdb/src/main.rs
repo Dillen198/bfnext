@@ -281,22 +281,39 @@ async fn api_all_pilots(db: StatsDb) -> std::result::Result<impl warp::Reply, Er
     Ok(json_response(data))
 }
 
+/// Call one of bflib's netidx RPC procs and return its reply as an owned
+/// String (bail on Value::Error or an unexpected reply shape).
+async fn call_engine_rpc_str(
+    db: &StatsDb,
+    proc_name: &str,
+    args: Vec<(&str, netidx::publisher::Value)>,
+) -> std::result::Result<std::string::String, Error> {
+    use netidx::publisher::Value;
+    match db.call_engine_rpc(proc_name, args).await? {
+        Value::Error(e) => Err(Error(anyhow::anyhow!("{e}"))),
+        Value::String(s) => Ok(s.to_string()),
+        other => Err(Error(anyhow::anyhow!("unexpected RPC reply: {other:?}"))),
+    }
+}
+
 async fn api_objectives(
     db: StatsDb,
     round_id: Option<u64>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let (mut entries, is_active) = task::block_in_place(|| -> Result<(Vec<serde_json::Value>, bool)> {
         let rounds = db.latest_rounds()?;
+        let active_rid = rounds.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, _)| *rid);
         let rid = match round_id {
             Some(id) => db::RoundId(id),
-            None => match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
-                Some((_, rid, _)) => *rid,
+            None => match active_rid {
+                Some(rid) => rid,
                 None => match rounds.first() {
                     Some((_, rid, _)) => *rid,
-                    None => return Ok("[]".to_string()),
+                    None => return Ok((vec![], false)),
                 },
             },
         };
+        let is_active = active_rid == Some(rid);
         let objs = db.objectives_for_round(rid)?;
         let entries: Vec<_> = objs
             .iter()
@@ -317,11 +334,34 @@ async fn api_objectives(
                     "supply": obj.supply,
                     "fuel": obj.fuel,
                     "last_change": obj.last_change.to_rfc3339(),
+                    // Overwritten below with a live value for the active round,
+                    // when bflib is reachable. Historical rounds keep this default.
+                    "priority": false,
                 }))
             })
             .collect();
-        Ok(serde_json::to_string(&entries)?)
+        Ok((entries, is_active))
     })?;
+
+    // The priority flag is live engine state, not something bfdb persists on
+    // its own -- refresh it from bflib for the currently active round only.
+    if is_active {
+        if let Ok(json) = call_engine_rpc_str(&db, "query-objectives", vec![]).await {
+            if let Ok(live) = serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(&json) {
+                let priorities: std::collections::HashMap<&str, bool> =
+                    live.iter().map(|o| (o.name.as_str(), o.priority)).collect();
+                for entry in entries.iter_mut() {
+                    if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
+                        if let Some(&p) = priorities.get(name) {
+                            entry["priority"] = serde_json::Value::Bool(p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let data = serde_json::to_string(&entries).map_err(|e| Error(e.into()))?;
     Ok(json_response(data))
 }
 
@@ -1185,7 +1225,9 @@ struct SpawnBody {
     item_type: std::string::String,
 }
 
-/// POST /api/commander/spawn  — spawn logistics from dashboard
+/// POST /api/commander/spawn  — spawn logistics from dashboard.
+/// Resolves the airbase name to its live DCS position + owning side via
+/// bflib's query-objective RPC, then calls its spawn-deployable RPC.
 async fn api_commander_spawn(
     session_id: Option<Uuid>,
     body: SpawnBody,
@@ -1193,9 +1235,50 @@ async fn api_commander_spawn(
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
     log::info!("COMMANDER: spawning {} at {}", body.item_type, body.airbase);
-    // Note: Currently just logs. In the future this will forward the request
-    // to DCSServerBot's REST API or directly to bflib via netidx publisher.
-    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+
+    use netidx::publisher::Value;
+
+    let details_json = call_engine_rpc_str(
+        &db, "query-objective", vec![("name", Value::from(body.airbase.clone()))],
+    ).await?;
+    let details: bfprotocols::api::ObjectiveDetails = serde_json::from_str(&details_json)
+        .map_err(|e| Error(anyhow::anyhow!("bad objective details from engine: {e}")))?;
+    let (x, z) = details.info.pos;
+    let side = details.info.owner;
+
+    let spawn_json = call_engine_rpc_str(&db, "spawn-deployable", vec![
+        ("side", Value::from(side.to_str())),
+        ("name", Value::from(body.item_type.clone())),
+        ("x", Value::from(x)),
+        ("z", Value::from(z)),
+        ("heading", Value::from(0.0)),
+    ]).await?;
+    let result: serde_json::Value = serde_json::from_str(&spawn_json)
+        .unwrap_or_else(|_| serde_json::json!({"success": true}));
+    Ok(warp::reply::json(&result))
+}
+
+#[derive(serde::Deserialize)]
+struct PriorityBody {
+    objective: std::string::String,
+    priority: bool,
+}
+
+/// POST /api/admin/priority  — mark/unmark an objective as commander's-intent
+/// priority (display/coordination only, see bflib's SetObjectivePriority).
+async fn api_admin_priority(
+    session_id: Option<Uuid>,
+    body: PriorityBody,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    use netidx::publisher::Value;
+    call_engine_rpc_str(&db, "set-objective-priority", vec![
+        ("objective", Value::from(body.objective.clone())),
+        ("priority", Value::from(body.priority)),
+    ]).await?;
+    log::info!("ADMIN: set priority={} on objective {}", body.priority, body.objective);
+    Ok(warp::reply::json(&serde_json::json!({"ok": true, "priority": body.priority})))
 }
 
 /// GET /api/admin/perf-history  — per-session perf data for charts (admin only)
@@ -1982,6 +2065,13 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_commander_spawn);
 
+    let admin_priority_route = warp::path!("api" / "admin" / "priority")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::json::<PriorityBody>())
+        .and(with_db(db.clone()))
+        .then(api_admin_priority);
+
     let trails = warp::path!("api" / "trails")
         .and(with_db(db.clone()))
         .then(api_trails);
@@ -2080,6 +2170,7 @@ async fn main() -> Result<()> {
         .or(admin_unban_route)
         .or(admin_cfg_post_route)
         .or(commander_spawn_route)
+        .or(admin_priority_route)
         .with(cors);
 
     log::info!("API server listening on http://{}", args.listen_address);
