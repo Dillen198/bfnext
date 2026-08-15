@@ -3,7 +3,7 @@
 # ==========================================================
 
 # Path to bfdb.exe (copy it here from target\release\bfdb.exe)
-$bfdbExe = "C:\GVAW\Tools\BFWeb\bfdb.exe"
+$bfdbExe = "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\bfdb.exe" 
 
 # Path where the Sled database will be stored (dedicated folder)
 $dbPath = "C:\Users\Administrator\Saved Games\server_2\bfdb"
@@ -37,6 +37,7 @@ $srsUrl = ""
 # Also flips the session cookie to SameSite=None; Secure, required for that.
 $corsOrigins = @(
     "https://vectorstrike.org",
+    "https://www.vectorstrike.org",
     "https://dashboard.vectorstrike.org"
 )
 
@@ -67,7 +68,7 @@ if ([string]::IsNullOrWhiteSpace($adminPassword)) {
 
 # ==========================================================
 
-function Start-GVAW {
+function Start-VECTOR {
     Write-Host "Cleaning up existing processes..." -ForegroundColor Gray
     Stop-Process -Name "bfdb" -Force -ErrorAction SilentlyContinue
     Get-Job -Name "DBEngine" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
@@ -114,7 +115,7 @@ function Start-GVAW {
     while ($true) {
         if ([console]::KeyAvailable) {
             $key = [console]::ReadKey($true)
-            if ($key.Key -eq 'Q') { Stop-GVAW; break }
+            if ($key.Key -eq 'Q') { Stop-VECTOR; break }
         }
 
         Clear-Host
@@ -128,7 +129,7 @@ function Start-GVAW {
     }
 }
 
-function Stop-GVAW {
+function Stop-VECTOR {
     Write-Host "`nShutting down..." -ForegroundColor Red
     Get-Job | Stop-Job  -ErrorAction SilentlyContinue
     Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
@@ -138,4 +139,4 @@ function Stop-GVAW {
     exit
 }
 
-Start-GVAW
+Start-VECTOR
