@@ -32,6 +32,23 @@ $adminUsername = "admin"
 # Leave blank to disable the SRS panel on the dashboard (or set srsUrl in campaign.json instead)
 $srsUrl = ""
 
+# Allow the dashboard/site to call this API cross-origin (they're on separate
+# domains now: vectorstrike.org and dashboard.vectorstrike.org via Vercel).
+# Also flips the session cookie to SameSite=None; Secure, required for that.
+$corsOrigins = @(
+    "https://vectorstrike.org",
+    "https://dashboard.vectorstrike.org"
+)
+
+# Netidx base path bflib publishes under (matches cfg.netidx_base + the
+# mission's sortie name in the campaign engine config). Leave blank to run
+# bfdb without netidx -- REST endpoints backed by --stats-jsonl still work,
+# but live engine-side features (the Discord bot's engine log relay, and the
+# priority/commander-spawn RPCs) won't, since those need a live subscription
+# to bflib. Find the real value from bflib's own startup log (it logs the
+# base path it publishes to), or from whatever config sets cfg.netidx_base.
+$netidxBase = ""
+
 # ==========================================================
 # Secrets: bfsystem.ps1 is tracked in git (public repo). $adminPassword lives
 # in bfsystem.local.ps1 instead, which is gitignored and never committed.
@@ -75,6 +92,12 @@ function Start-GVAW {
         )
         if ($using:srsUrl -ne "") {
             $argList += "--srs-url", $using:srsUrl
+        }
+        if ($using:netidxBase -ne "") {
+            $argList += "--base", $using:netidxBase
+        }
+        foreach ($origin in $using:corsOrigins) {
+            $argList += "--cors-origin", $origin
         }
         # if ($using:logFile -ne "") {
         #     $argList += "--log-file", $using:logFile
