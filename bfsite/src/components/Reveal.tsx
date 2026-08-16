@@ -8,19 +8,16 @@ export default function Reveal({
   delay = 0,
   className,
   style,
-  as: Tag = 'div',
 }: {
   children: React.ReactNode
   delay?: number
   className?: string
   style?: React.CSSProperties
-  as?: keyof JSX.IntrinsicElements
 }) {
   const { ref, inView } = useInView<HTMLDivElement>()
 
   return (
-    <Tag
-      // @ts-expect-error -- ref type varies with the polymorphic `as` tag, safe at runtime
+    <div
       ref={ref}
       className={className}
       style={{
@@ -31,6 +28,6 @@ export default function Reveal({
       }}
     >
       {children}
-    </Tag>
+    </div>
   )
 }
