@@ -19,8 +19,8 @@ export default function HeroSection() {
         }}
       />
       {/* Dark overlay layers */}
-      <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.72)' }} />
-      <div className="absolute inset-0" style={{ background: 'linear-gradient(to right, rgba(10,10,10,0.9) 0%, rgba(10,10,10,0.4) 60%, transparent 100%)' }} />
+      <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.32)' }} />
+      <div className="absolute inset-0" style={{ background: 'linear-gradient(to right, rgba(10,10,10,0.88) 0%, rgba(10,10,10,0.35) 60%, transparent 100%)' }} />
       <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, #0a0a0a 0%, transparent 40%)' }} />
 
       {/* Red accent diagonal line */}

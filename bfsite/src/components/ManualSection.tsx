@@ -32,11 +32,11 @@ const LABEL_STYLE: React.CSSProperties = {
 
 // ── Manual illustration ──────────────────────────────────────────────────────
 
-function ManualImg({ src, alt, height = 180 }: { src: string; alt: string; height?: number }) {
+function ManualImg({ src, alt, aspect = '16 / 9' }: { src: string; alt: string; aspect?: string }) {
   return (
     <div
       style={{
-        height,
+        aspectRatio: aspect,
         borderRadius: '2px',
         overflow: 'hidden',
         border: '1px solid var(--border)',
@@ -449,7 +449,7 @@ export default function ManualSection() {
               </Callout>
             </div>
 
-            <ManualImg src="/server-browser.jpeg" alt="Finding Vector Strike in the DCS multiplayer server browser" height={220} />
+            <ManualImg src="/server-browser.jpeg" alt="Finding Vector Strike in the DCS multiplayer server browser" />
           </div>
         </Subsection>
 
@@ -599,7 +599,7 @@ export default function ManualSection() {
               </div>
             </div>
 
-            <ManualImg src="/objective-types.jpeg" alt="Overview of objective types across the campaign map" height={260} />
+            <ManualImg src="/objective-types.jpeg" alt="Overview of objective types across the campaign map" />
           </div>
         </Subsection>
 
@@ -678,6 +678,9 @@ export default function ManualSection() {
             >
               CSAR — COMBAT SEARCH & RESCUE
             </h4>
+            <div style={{ marginBottom: '1rem' }}>
+              <ManualImg src="/csar-rescue.jpeg" alt="Rescue helicopter hoisting a downed pilot" />
+            </div>
             <p style={{ ...BODY_TEXT, marginBottom: '1rem' }}>
               When a pilot ejects, a downed pilot unit spawns at their crash site. A friendly
               helicopter crew can locate and extract them, restoring the lost life. The rescuing
@@ -822,7 +825,7 @@ export default function ManualSection() {
             </div>
 
             <div>
-              <ManualImg src="/nine-line-brief.jpeg" alt="JTAC calling in a 9-line CAS brief" height={220} />
+              <ManualImg src="/nine-line-brief.jpeg" alt="JTAC calling in a 9-line CAS brief" />
               <div
                 style={{
                   marginTop: '1rem',
@@ -866,6 +869,9 @@ export default function ManualSection() {
         {/* 08 — C-130 HERCULES                                               */}
         {/* ══════════════════════════════════════════════════════════════════ */}
         <Subsection number="08" title="C-130" accent="HERCULES">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <ManualImg src="/c130-hero.jpeg" alt="C-130 Hercules banking low over the front line" />
+          </div>
           <div style={{ marginBottom: '1.5rem' }}>
             <div
               style={{
@@ -933,8 +939,8 @@ export default function ManualSection() {
                 </Callout>
               </div>
               <div className="space-y-4">
-                <ManualImg src="/airdrop-parachute.jpeg" alt="C-130 airdrop delivery via parachute" height={180} />
-                <ManualImg src="/lapes-extraction.jpeg" alt="C-130 LAPES low altitude extraction run" height={150} />
+                <ManualImg src="/airdrop-parachute.jpeg" alt="C-130 airdrop delivery via parachute" />
+                <ManualImg src="/lapes-extraction.jpeg" alt="C-130 LAPES low altitude extraction run" />
               </div>
             </div>
           </div>
