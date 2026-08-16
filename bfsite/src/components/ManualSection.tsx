@@ -250,30 +250,6 @@ function TipCard({ number, text }: { number: number; text: string }) {
   )
 }
 
-// ── Era tag pill (for the aircraft roster) ──────────────────────────────────────
-
-function EraTag({ era }: { era: 'Cold War' | 'Modern' }) {
-  const isModern = era === 'Modern'
-  return (
-    <span
-      style={{
-        fontFamily: "'Bebas Neue', sans-serif",
-        fontSize: '0.62rem',
-        letterSpacing: '0.15em',
-        color: isModern ? 'var(--accent)' : 'var(--text-dim)',
-        border: `1px solid ${isModern ? 'rgba(77,124,15,0.35)' : 'var(--border)'}`,
-        background: isModern ? 'rgba(77,124,15,0.08)' : 'transparent',
-        borderRadius: '2px',
-        padding: '0.15rem 0.5rem',
-        flexShrink: 0,
-        whiteSpace: 'nowrap' as const,
-      }}
-    >
-      {era.toUpperCase()}
-    </span>
-  )
-}
-
 // ── Inline info row (for lists without a table) ────────────────────────────────
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -572,7 +548,7 @@ export default function ManualSection() {
                   { label: 'Logistics Hub', value: 'Supplies resources to nearby objectives via automated convoys. Critical chokepoint.' },
                   { label: 'Factory', value: 'Produces ground units over time. Destroy enemy factories to starve their offensive.' },
                   { label: 'Naval Base', value: 'Spawns and resupplies naval assets. Controls coastal and maritime operations.' },
-                  { label: 'Special SAM Site', value: 'High-value integrated air defence site. Position is classified — not shown on the F10 map or the dashboard. Must be located and destroyed by players. Can be recaptured by either side.' },
+                  { label: 'SAM Site', value: 'High-value integrated air defence site. Position is classified — not shown on the F10 map or the dashboard. Must be located and destroyed by players. Can be recaptured by either side.' },
                 ].map((item) => (
                   <InfoRow key={item.label} label={item.label} value={item.value} />
                 ))}
@@ -582,7 +558,7 @@ export default function ManualSection() {
                 An objective becomes capturable once its health is at 20% or below and every
                 defending infantry unit is eliminated — logistics and structures alone won't do
                 it. Move capture-capable troops into the zone once it's capturable to begin the
-                takeover. Special SAM Sites work differently — see{' '}
+                takeover. SAM Sites work differently — see{' '}
                 <strong style={{ color: 'var(--text)' }}>VICTORY &amp; CAPTURE</strong> below for
                 the full breakdown.
               </Callout>
@@ -604,17 +580,19 @@ export default function ManualSection() {
         {/* ══════════════════════════════════════════════════════════════════ */}
         <Subsection number="05" title="THE LIVES" accent="SYSTEM">
           <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
-            Vector Strike uses a persistent lives system to keep engagements meaningful. Every pilot
-            starts a campaign round with a fixed pool of lives. Expendable assets matter — waste
-            them carelessly and you will bench yourself.
+            Vector Strike ties losses to consequences, but not with a single shared pool. Lives are
+            tracked separately per aircraft role — Standard, Intercept, Attack, Recon, and
+            Logistics (see <strong style={{ color: 'var(--text)' }}>AIRCRAFT ROSTER</strong> below
+            for the exact counts) — so running dry in a Standard-role fighter doesn't ground you
+            from flying Recon or Logistics.
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
             {[
-              { heading: 'SHOT DOWN', body: 'Being destroyed by enemy fire costs one life. Eject if you can — a downed pilot is still recoverable.' },
+              { heading: 'SHOT DOWN', body: 'Being destroyed by enemy fire costs one life of that role. Eject if you can — a downed pilot is still recoverable.' },
               { heading: 'CRASH / ACCIDENT', body: 'Controlled flight into terrain, mid-air collision, or running out of fuel all count as deaths.' },
               { heading: 'EJECTING', body: 'Ejecting spawns a downed pilot unit at your location. A friendly helicopter can rescue you via the CSAR menu and restore your life.' },
-              { heading: 'ROUND RESET', body: 'Lives fully reset at the start of each new campaign round. The slate is wiped clean.' },
+              { heading: 'LIFE REFILL', body: 'Each role\'s life pool refills on its own rolling timer rather than at round start — check -lives in-game to see your current count and role.' },
             ].map((card) => (
               <div
                 key={card.heading}
@@ -642,6 +620,14 @@ export default function ManualSection() {
             ))}
           </div>
 
+          <Callout type="info">
+            Life limits are a campaign setting and can be switched off entirely — if lives aren't
+            being taken on death, that's the server running with unlimited lives, not a bug.
+            Check <strong style={{ color: 'var(--text)' }}>-status</strong> or{' '}
+            <strong style={{ color: 'var(--text)' }}>-lives</strong> in-game to see what's active.
+          </Callout>
+          <div style={{ height: '1.5rem' }} />
+
           {/* CSAR */}
           <div
             style={{
@@ -667,7 +653,9 @@ export default function ManualSection() {
             <p style={{ ...BODY_TEXT, marginBottom: '1rem' }}>
               When a pilot ejects, a downed pilot unit spawns at their crash site. A friendly
               helicopter crew can locate and extract them, restoring the lost life. The rescuing
-              pilot also earns bonus campaign points for the recovery.
+              pilot also earns bonus campaign points for the recovery. If you're already at max
+              lives for the rescued role, the credit rolls down to the next role instead of being
+              wasted.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {[
@@ -1155,7 +1143,7 @@ export default function ManualSection() {
                 body: 'Bring the objective\'s health to 20% or below and eliminate every defending infantry unit — CAS, artillery, whatever it takes. Move capture-capable troops into the zone; once it\'s held uncontested a countdown starts (both sides get a panel warning). Enemy troops re-entering the zone reset the timer. Some objectives also require a minimum share of the garrison destroyed before the timer can even start.',
               },
               {
-                heading: 'CAPTURE A SPECIAL SAM SITE',
+                heading: 'CAPTURE A SAM SITE',
                 body: 'SAM sites capture the instant your troops hold the zone — there is no timer. But the site\'s launchers, radars, and infantry are still live threats: clear them first or your troop transport won\'t survive the approach. Position is classified — not shown on the F10 map or dashboard, so you have to find it yourself (EWR tracks help).',
               },
               {
@@ -1204,11 +1192,24 @@ export default function ManualSection() {
         {/* 11 — AIRCRAFT ROSTER                                              */}
         {/* ══════════════════════════════════════════════════════════════════ */}
         <Subsection number="11" title="AIRCRAFT" accent="ROSTER">
-          <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
-            The current campaign spans two generations of combat aircraft flying side by side —
-            Cold War-era airframes alongside modern 4th-generation multirole fighters. Pick your
-            coalition first, then choose your airframe at the slot-selection screen.
+          <p style={{ ...BODY_TEXT, marginBottom: '1rem', maxWidth: 680 }}>
+            Every airframe belongs to a role, and every role has its own life pool — how many
+            times you can lose that class of aircraft before you're grounded, and how long until
+            it refills. Lives are tracked per role, not per airframe: burn through your Standard
+            pool and you can still fly Recon.
           </p>
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            {[
+              { role: 'Standard', lives: 3, resetHrs: 6, blurb: 'Front-line multirole fighters — the core combat pool.' },
+              { role: 'Intercept', lives: 4, resetHrs: 6, blurb: 'Dedicated air-to-air fighters for defending your airspace.' },
+              { role: 'Attack', lives: 4, resetHrs: 6, blurb: 'CAS jets and attack helicopters built for hitting ground targets.' },
+              { role: 'Recon', lives: 6, resetHrs: 6, blurb: 'Light and reconnaissance airframes — lowest risk, most lives.' },
+              { role: 'Logistics', lives: 6, resetHrs: 6, blurb: 'Transports and utility helicopters that move cargo and troops.' },
+            ].map((r) => (
+              <InfoRow key={r.role} label={r.role} value={`${r.blurb} ${r.lives} lives, refills every ${r.resetHrs}h.`} />
+            ))}
+          </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             {/* BLUFOR panel */}
@@ -1233,24 +1234,33 @@ export default function ManualSection() {
                 BLUFOR
               </h4>
               {[
-                { name: 'F-4E Phantom II', era: 'Cold War' as const },
-                { name: 'F-14B Tomcat', era: 'Cold War' as const },
-                { name: 'F-16C Viper (Block 50)', era: 'Modern' as const },
-                { name: 'F/A-18C Hornet', era: 'Modern' as const },
-              ].map((ac) => (
-                <div
-                  key={ac.name}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    padding: '0.55rem 0',
-                    borderBottom: '1px solid var(--border)',
-                  }}
-                >
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text)' }}>{ac.name}</span>
-                  <EraTag era={ac.era} />
+                { role: 'Standard', lives: 3, aircraft: ['F-14A Tomcat', 'F-14B Tomcat', 'F-15C Eagle', 'F-15E Strike Eagle', 'F-16C Viper (Block 50)', 'F/A-18C Hornet', 'Su-27 Flanker'] },
+                { role: 'Intercept', lives: 4, aircraft: ['F-4E Phantom II', 'F-5E Tiger II', 'Mirage 2000C'] },
+                { role: 'Attack', lives: 4, aircraft: ['A-10A Warthog', 'A-10C II Warthog', 'AH-64D Apache', 'AV-8B N/A Harrier II', 'OH-58D Kiowa Warrior'] },
+                { role: 'Recon', lives: 6, aircraft: ['MB-339A', 'P-47D Thunderbolt', 'P-51D Mustang'] },
+                { role: 'Logistics', lives: 6, aircraft: ['C-130J-30 Super Hercules', 'CH-47F Chinook', 'UH-1H Huey'] },
+              ].map((grp) => (
+                <div key={grp.role} style={{ marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                    <span style={{ ...LABEL_STYLE, color: 'var(--text)' }}>{grp.role}</span>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>{grp.lives} lives / 6h</span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: '0.4rem' }}>
+                    {grp.aircraft.map((name) => (
+                      <span
+                        key={name}
+                        style={{
+                          fontSize: '0.78rem',
+                          color: 'var(--text-muted)',
+                          border: '1px solid var(--border)',
+                          borderRadius: '2px',
+                          padding: '0.2rem 0.55rem',
+                        }}
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1277,33 +1287,44 @@ export default function ManualSection() {
                 REDFOR
               </h4>
               {[
-                { name: 'F-4E Phantom II', era: 'Cold War' as const },
-                { name: 'F-14A Tomcat', era: 'Cold War' as const },
-                { name: 'F-14A Tomcat (Early)', era: 'Cold War' as const },
-                { name: 'F-16C Viper (Block 50)', era: 'Modern' as const },
-                { name: 'J-11A Flanker', era: 'Modern' as const },
-              ].map((ac) => (
-                <div
-                  key={ac.name}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    padding: '0.55rem 0',
-                    borderBottom: '1px solid var(--border)',
-                  }}
-                >
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text)' }}>{ac.name}</span>
-                  <EraTag era={ac.era} />
+                { role: 'Standard', lives: 3, aircraft: ['F-14A Tomcat', 'F-14A Tomcat (Early)', 'F-14B Tomcat', 'F-16C Viper (Block 50)', 'J-11A Flanker', 'JF-17 Thunder', 'Su-27 Flanker', 'Su-33 Flanker-D'] },
+                { role: 'Intercept', lives: 4, aircraft: ['F-4E Phantom II', 'F-5E Tiger II', 'MiG-21bis', 'MiG-29A Fulcrum', 'MiG-29S Fulcrum', 'Mirage F1BE', 'Mirage F1C', 'Mirage F1CE', 'Mirage F1EE'] },
+                { role: 'Attack', lives: 4, aircraft: ['AJS37 Viggen', 'Ka-50 Black Shark', 'Ka-50-3 Black Shark', 'Mi-24P Hind', 'SA342 Gazelle (Minigun)', 'Su-25T Frogfoot'] },
+                { role: 'Recon', lives: 6, aircraft: ['FW-190D9 Dora', 'L-39C Albatros', 'Spitfire LF Mk.IX'] },
+                { role: 'Logistics', lives: 6, aircraft: ['C-130J-30 Super Hercules', 'CH-47F Chinook', 'Mi-8MT Hip', 'SA342 Gazelle (Mistral)', 'SA342L Gazelle', 'SA342M Gazelle', 'UH-1H Huey'] },
+              ].map((grp) => (
+                <div key={grp.role} style={{ marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                    <span style={{ ...LABEL_STYLE, color: 'var(--text)' }}>{grp.role}</span>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>{grp.lives} lives / 6h</span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: '0.4rem' }}>
+                    {grp.aircraft.map((name) => (
+                      <span
+                        key={name}
+                        style={{
+                          fontSize: '0.78rem',
+                          color: 'var(--text-muted)',
+                          border: '1px solid var(--border)',
+                          borderRadius: '2px',
+                          padding: '0.2rem 0.55rem',
+                        }}
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
           </div>
 
           <Callout type="info">
-            The F-16C (Block 50) and F-4E Phantom II are flyable on both coalitions — the same
-            airframe, opposing colours. Everything else is coalition-exclusive.
+            A handful of airframes — the F-14 Tomcat family, F-16C (Block 50), F-4E Phantom II,
+            F-5E, Su-27, the C-130J-30, the CH-47F, and the UH-1H — are available to both
+            coalitions. Everything else is side-exclusive. Lives shown here are per-round design
+            values; check <strong style={{ color: 'var(--text)' }}>-lives</strong> in-game for
+            whether life limits are currently active.
           </Callout>
         </Subsection>
 
