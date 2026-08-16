@@ -869,9 +869,6 @@ export default function ManualSection() {
                   </p>
                 ))}
               </div>
-              <div style={{ marginTop: '1rem' }}>
-                <ManualImg src="/himars-strike.jpeg" alt="HIMARS rocket artillery firing on a target" />
-              </div>
             </div>
           </div>
         </Subsection>
@@ -1356,6 +1353,99 @@ export default function ManualSection() {
             check <strong style={{ color: 'var(--text)' }}>-lives</strong> in-game for whether
             life limits are currently active.
           </Callout>
+        </Subsection>
+
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {/* 12 — ACTIONS & ARTILLERY                                          */}
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        <Subsection number="12" title="ACTIONS &amp;" accent="ARTILLERY">
+          <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
+            The AI Smart Commander isn't the only one who can call in support. Every pilot has
+            direct access to a configurable set of commander actions via chat, plus a separate,
+            always-on artillery-calling system.
+          </p>
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            <ManualImg src="/himars-strike.jpeg" alt="HIMARS rocket artillery firing on a target" />
+          </div>
+
+          <h4
+            style={{
+              fontFamily: "'Bebas Neue', sans-serif",
+              fontSize: '1.1rem',
+              letterSpacing: '0.15em',
+              color: 'var(--text)',
+              margin: '0 0 1rem 0',
+              borderLeft: '3px solid var(--accent)',
+              paddingLeft: '0.75rem',
+            }}
+          >
+            COMMANDER ACTIONS
+          </h4>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+            {[
+              { heading: 'AWACS / TANKER', body: 'Spawn a friendly AWACS orbit or a fuel tanker (Blue can call a basket or boom tanker separately) for a limited duration.' },
+              { heading: 'BOMBER / DRONE', body: 'Call in an AI bomber flight against a target area, or a reconnaissance/JTAC drone to watch a sector.' },
+              { heading: 'MOVE', body: 'Redeploy an existing troop squad or deployable unit to a new position without walking it there.' },
+              { heading: 'CARRIER WAYPOINT / NAVAL STRIKE', body: 'Reposition your carrier group\'s patrol point, or launch a naval cruise missile strike from a friendly ship.' },
+            ].map((card) => (
+              <div
+                key={card.heading}
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border)',
+                  borderLeft: '3px solid var(--accent)',
+                  borderRadius: '2px',
+                  padding: '1rem 1.25rem',
+                }}
+              >
+                <h4
+                  style={{
+                    fontFamily: "'Bebas Neue', sans-serif",
+                    fontSize: '0.9rem',
+                    letterSpacing: '0.15em',
+                    color: 'var(--text)',
+                    margin: '0 0 0.4rem 0',
+                  }}
+                >
+                  {card.heading}
+                </h4>
+                <p style={{ ...BODY_TEXT }}>{card.body}</p>
+              </div>
+            ))}
+          </div>
+
+          <Callout type="info">
+            Actions are called with <strong style={{ color: 'var(--text)' }}>-action &lt;name&gt; &lt;args&gt;</strong> —
+            run <strong style={{ color: 'var(--text)' }}>-action help</strong> in chat for the exact
+            list and syntax available to your side. Every action has a points cost charged up
+            front; some also carry a penalty deducted if the spawned asset is shot down before
+            it finishes, and a few are capped to a limited number of uses.
+          </Callout>
+
+          <h4
+            style={{
+              fontFamily: "'Bebas Neue', sans-serif",
+              fontSize: '1.1rem',
+              letterSpacing: '0.15em',
+              color: 'var(--text)',
+              margin: '2rem 0 1rem 0',
+              borderLeft: '3px solid var(--accent)',
+              paddingLeft: '0.75rem',
+            }}
+          >
+            ARTILLERY
+          </h4>
+          <div style={{ marginBottom: '1.5rem' }}>
+            {[
+              { label: 'F10 Menu', value: 'Menu → Action → Artillery. Fires from friendly artillery groups within range of the target point. Costs supply.' },
+              { label: 'Via JTAC', value: '-jtac <id> arty <id|all> <n> — direct a specific gun or every friendly battery in range to fire N rounds at the JTAC\'s current target.' },
+              { label: 'Range', value: 'Varies hugely by unit — towed/self-propelled guns and MLRS reach roughly 4-70km, while tactical ballistic systems can range into the hundreds of kilometres. Check what\'s actually in range before calling it in.' },
+              { label: 'Fire-for-Effect', value: 'Impacts scatter across roughly a 200m radius, and up to 3 friendly artillery groups can fire simultaneously per mission.' },
+            ].map((item) => (
+              <InfoRow key={item.label} label={item.label} value={item.value} />
+            ))}
+          </div>
         </Subsection>
 
         {/* ── Footer note ────────────────────────────────────────────────── */}
