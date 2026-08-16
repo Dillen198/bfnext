@@ -6,6 +6,7 @@
 
 import React, { useState } from 'react'
 import { SERVERS, DEFAULT_SERVER_ID } from '../config/servers'
+import Reveal from './Reveal'
 
 const SUBSECTION_HEADING: React.CSSProperties = {
   fontFamily: "'Bebas Neue', sans-serif",
@@ -412,6 +413,7 @@ export default function ManualSection() {
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 01 — GETTING STARTED                                              */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="01" title="GETTING" accent="STARTED">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
             <div>
@@ -452,10 +454,12 @@ export default function ManualSection() {
             <ManualImg src="/server-browser.jpeg" alt="Finding Vector Strike in the DCS multiplayer server browser" />
           </div>
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 02 — F10 RADIO MENU                                               */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="02" title="THE F10" accent="RADIO MENU">
           <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
             The <strong style={{ color: 'var(--text)' }}>F10 Radio Menu</strong> is your primary
@@ -517,10 +521,12 @@ export default function ManualSection() {
             indicate insufficient supply or no valid targets in range.
           </p>
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 03 — CHAT COMMANDS                                                */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="03" title="CHAT" accent="COMMANDS">
           <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 640 }}>
             All in-game chat commands use the <code style={{
@@ -555,10 +561,12 @@ export default function ManualSection() {
             ]}
           />
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 04 — TERRITORY & OBJECTIVES                                       */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="04" title="TERRITORY &amp;" accent="OBJECTIVES">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
             <div>
@@ -606,10 +614,12 @@ export default function ManualSection() {
             </div>
           </div>
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 05 — LIVES SYSTEM                                                 */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="05" title="THE LIVES" accent="SYSTEM">
           <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
             Vector Strike ties losses to consequences, but not with a single shared pool. Lives are
@@ -735,10 +745,12 @@ export default function ManualSection() {
             Check the F10 map and confirm targets before firing.
           </Callout>
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 06 — LOGISTICS & SUPPLY                                           */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="06" title="LOGISTICS &amp;" accent="SUPPLY">
           <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
             The supply chain is the backbone of any sustained offensive. Objectives need a steady
@@ -801,10 +813,12 @@ export default function ManualSection() {
             ))}
           </div>
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 07 — JTAC & CAS                                                   */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="07" title="JTAC &amp;" accent="CAS">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
             <div>
@@ -872,10 +886,12 @@ export default function ManualSection() {
             </div>
           </div>
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 08 — C-130 HERCULES                                               */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="08" title="C-130" accent="HERCULES">
           <div style={{ marginBottom: '1.5rem' }}>
             <ManualImg src="/c130-hero.jpeg" alt="C-130 Hercules banking low over the front line" />
@@ -1145,10 +1161,12 @@ export default function ManualSection() {
             ))}
           </div>
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 09 — TIPS & BEST PRACTICES                                        */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="09" title="TIPS &amp;" accent="BEST PRACTICES">
           <p style={{ ...BODY_TEXT, marginBottom: '2rem', maxWidth: 640 }}>
             Hard-earned lessons from pilots who have already lost lives learning them.
@@ -1167,10 +1185,12 @@ export default function ManualSection() {
             ))}
           </div>
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 10 — VICTORY & CAPTURE                                            */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="10" title="VICTORY &amp;" accent="CAPTURE">
           <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
             A round is won by territory, not kill count. The coalition that controls the required
@@ -1233,10 +1253,12 @@ export default function ManualSection() {
             the new owner immediately.
           </Callout>
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 11 — AIRCRAFT ROSTER                                              */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="11" title="AIRCRAFT" accent="ROSTER">
           <p style={{ ...BODY_TEXT, marginBottom: '1rem', maxWidth: 680 }}>
             Every airframe belongs to a role, and every role has its own life pool — how many
@@ -1354,10 +1376,12 @@ export default function ManualSection() {
             life limits are currently active.
           </Callout>
         </Subsection>
+        </Reveal>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* 12 — ACTIONS & ARTILLERY                                          */}
         {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
         <Subsection number="12" title="ACTIONS &amp;" accent="ARTILLERY">
           <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
             The AI Smart Commander isn't the only one who can call in support. Every pilot has
@@ -1447,6 +1471,7 @@ export default function ManualSection() {
             ))}
           </div>
         </Subsection>
+        </Reveal>
 
         {/* ── Footer note ────────────────────────────────────────────────── */}
         <div className="vs-divider" style={{ marginBottom: '2.5rem' }} />

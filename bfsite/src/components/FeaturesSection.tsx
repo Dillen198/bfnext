@@ -1,6 +1,7 @@
 import { campaign } from '../config/campaign'
 import { Map, Package, Radio, Crosshair, Layers, BarChart3, Truck, Users, Radar, Eye, Shield, Menu } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import Reveal from './Reveal'
 
 const ICONS: Record<string, LucideIcon> = {
   Map, Package, Radio, Crosshair, Layers, BarChart3, Truck, Users, Radar, Eye, Shield, Menu,
@@ -32,7 +33,7 @@ export default function FeaturesSection() {
           {campaign.features.map((f, i) => {
             const Icon = ICONS[f.icon] ?? Crosshair
             return (
-              <div key={i} className="feature-card">
+              <Reveal key={i} delay={(i % 3) * 100} className="feature-card">
                 <div
                   className="flex items-center justify-center w-10 h-10 mb-4"
                   style={{ background: 'rgba(77,124,15,0.1)', borderRadius: '2px', border: '1px solid rgba(77,124,15,0.2)' }}
@@ -53,7 +54,7 @@ export default function FeaturesSection() {
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.65, margin: 0 }}>
                   {f.description}
                 </p>
-              </div>
+              </Reveal>
             )
           })}
         </div>

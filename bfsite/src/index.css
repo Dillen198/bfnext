@@ -114,6 +114,44 @@ body {
 .territory-bar-neutral { background: #374151; transition: width 0.7s ease; }
 .territory-bar-red { background: linear-gradient(90deg, #dc2626, #991b1b); transition: width 0.7s ease; }
 
+/* ── Territory bar loading state — arrows advancing toward the front line ── */
+.territory-loading {
+  height: 22px;
+  border-radius: 2px;
+  overflow: hidden;
+  display: flex;
+  background: rgba(75,85,99,0.12);
+}
+.territory-loading-half {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+.territory-loading-half::before {
+  content: '';
+  position: absolute;
+  inset: -1px -28px;
+  background-repeat: repeat;
+  background-size: 28px 100%;
+  opacity: 0.6;
+}
+.territory-loading-blue::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='22'%3E%3Cpath d='M4 2 L16 11 L4 20' stroke='%233b82f6' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  animation: chevrons-right 0.9s linear infinite;
+}
+.territory-loading-red::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='22'%3E%3Cpath d='M24 2 L12 11 L24 20' stroke='%23ef4444' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  animation: chevrons-left 0.9s linear infinite;
+}
+@keyframes chevrons-right {
+  from { background-position-x: 0; }
+  to   { background-position-x: 28px; }
+}
+@keyframes chevrons-left {
+  from { background-position-x: 0; }
+  to   { background-position-x: -28px; }
+}
+
 /* ── Animations ── */
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(24px); }

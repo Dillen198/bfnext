@@ -1,5 +1,6 @@
 import { campaign } from '../config/campaign'
 import { Zap } from 'lucide-react'
+import Reveal from './Reveal'
 
 export default function HowToJoin() {
   return (
@@ -25,7 +26,7 @@ export default function HowToJoin() {
         {/* Steps */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-14">
           {campaign.joinSteps.map((step, i) => (
-            <div key={i} className="relative">
+            <Reveal key={i} delay={i * 120} className="relative">
               {/* Connector line (not on last item) */}
               {i < campaign.joinSteps.length - 1 && (
                 <div
@@ -68,12 +69,12 @@ export default function HowToJoin() {
                   {step.description}
                 </p>
               </div>
-            </div>
+            </Reveal>
           ))}
         </div>
 
         {/* CTA block */}
-        <div
+        <Reveal
           style={{
             background: '#0d0d0d',
             border: '1px solid var(--border)',
@@ -113,7 +114,7 @@ export default function HowToJoin() {
             <Zap size={16} />
             JOIN DISCORD NOW
           </a>
-        </div>
+        </Reveal>
       </div>
     </section>
   )

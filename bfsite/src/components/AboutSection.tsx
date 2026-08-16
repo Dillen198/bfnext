@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { campaign } from '../config/campaign'
 import { Users, Target, Crosshair, Flag } from 'lucide-react'
+import Reveal from './Reveal'
 
 export default function AboutSection() {
   const { data: stats } = useQuery({
@@ -23,7 +24,7 @@ export default function AboutSection() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
 
           {/* Left — text */}
-          <div>
+          <Reveal>
             <div className="vs-section-label mb-4">About the Campaign</div>
             <h2
               style={{
@@ -52,12 +53,12 @@ export default function AboutSection() {
                 "Best persistent campaign on DCS. Every session feels like it actually matters."
               </blockquote>
             </div>
-          </div>
+          </Reveal>
 
           {/* Right — live stats grid */}
           <div className="grid grid-cols-2 gap-4">
-            {statBoxes.map(s => (
-              <div key={s.label} className="stat-box" style={{ borderLeftColor: s.color }}>
+            {statBoxes.map((s, i) => (
+              <Reveal key={s.label} delay={i * 100} className="stat-box" style={{ borderLeftColor: s.color }}>
                 <s.icon size={16} style={{ color: s.color, marginBottom: '0.75rem' }} />
                 <div
                   style={{
@@ -74,7 +75,7 @@ export default function AboutSection() {
                 <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
                   {s.label}
                 </div>
-              </div>
+              </Reveal>
             ))}
             <div
               className="col-span-2 flex items-center gap-2 px-3 py-2"

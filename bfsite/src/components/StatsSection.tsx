@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { campaign } from '../config/campaign'
 import { ArrowRight, Trophy } from 'lucide-react'
+import Reveal from './Reveal'
 
 function kd(air: number, ground: number, deaths: number): string {
   const k = air + ground
@@ -15,9 +16,9 @@ function score(p: { air_kills: number; ground_kills: number; deaths: number; hou
 const MEDAL_COLORS = ['#fbbf24', '#94a3b8', '#d97706']
 
 export default function StatsSection() {
-  const { data: stats } = useQuery({ queryKey: ['site-stats'],    queryFn: api.stats,       refetchInterval: 30_000 })
-  const { data: objectives = [] } = useQuery({ queryKey: ['site-objectives'], queryFn: api.objectives, refetchInterval: 30_000 })
-  const { data: pilots = [] }     = useQuery({ queryKey: ['site-pilots'],     queryFn: api.leaderboard, refetchInterval: 60_000 })
+  const { data: stats, isLoading: statsLoading } = useQuery({ queryKey: ['site-stats'],    queryFn: api.stats,       refetchInterval: 30_000 })
+  const { data: objectives = [], isLoading: objectivesLoading } = useQuery({ queryKey: ['site-objectives'], queryFn: api.objectives, refetchInterval: 30_000 })
+  const { data: pilots = [], isLoading: pilotsLoading }     = useQuery({ queryKey: ['site-pilots'],     queryFn: api.leaderboard, refetchInterval: 60_000 })
 
   const total       = objectives.length
   const blueCount   = objectives.filter(o => o.owner === 'Blue').length
@@ -64,7 +65,7 @@ export default function StatsSection() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
           {/* Territory control */}
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '2px', padding: '1.5rem' }}>
+          <Reveal style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '2px', padding: '1.5rem' }}>
             <h3
               style={{
                 fontFamily: "'Bebas Neue', sans-serif",
@@ -81,40 +82,55 @@ export default function StatsSection() {
               TERRITORY CONTROL
             </h3>
 
-            {/* Bar */}
-            <div className="territory-bar mb-3">
-              <div className="territory-bar-blue"  style={{ width: `${bluePct}%` }} />
-              <div className="territory-bar-neutral" style={{ width: `${neutralPct}%` }} />
-              <div className="territory-bar-red"   style={{ width: `${redPct}%` }} />
-            </div>
+            {objectivesLoading ? (
+              <>
+                {/* Loading bar — arrows advancing toward the front line */}
+                <div className="territory-loading mb-3">
+                  <div className="territory-loading-half territory-loading-blue" />
+                  <div className="territory-loading-half territory-loading-red" />
+                </div>
+                <div className="text-center" style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+                  Syncing front line…
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Bar */}
+                <div className="territory-bar mb-3">
+                  <div className="territory-bar-blue"  style={{ width: `${bluePct}%` }} />
+                  <div className="territory-bar-neutral" style={{ width: `${neutralPct}%` }} />
+                  <div className="territory-bar-red"   style={{ width: `${redPct}%` }} />
+                </div>
 
-            {/* Labels */}
-            <div className="flex justify-between">
-              <div>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.2rem', color: '#3b82f6', fontWeight: 700 }}>
-                  {Math.round(bluePct)}%
+                {/* Labels */}
+                <div className="flex justify-between">
+                  <div>
+                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.2rem', color: '#3b82f6', fontWeight: 700 }}>
+                      {Math.round(bluePct)}%
+                    </div>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+                      {campaign.blueLabel ?? 'BLUFOR'} · {blueCount} obj
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.2rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                      {Math.round(neutralPct)}%
+                    </div>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+                      NEUTRAL · {neutralCount}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.2rem', color: 'var(--accent)', fontWeight: 700 }}>
+                      {Math.round(redPct)}%
+                    </div>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+                      {campaign.redLabel ?? 'REDFOR'} · {redCount} obj
+                    </div>
+                  </div>
                 </div>
-                <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
-                  {campaign.blueLabel ?? 'BLUFOR'} · {blueCount} obj
-                </div>
-              </div>
-              <div className="text-center">
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.2rem', color: 'var(--text-muted)', fontWeight: 700 }}>
-                  {Math.round(neutralPct)}%
-                </div>
-                <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
-                  NEUTRAL · {neutralCount}
-                </div>
-              </div>
-              <div className="text-right">
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.2rem', color: 'var(--accent)', fontWeight: 700 }}>
-                  {Math.round(redPct)}%
-                </div>
-                <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
-                  {campaign.redLabel ?? 'REDFOR'} · {redCount} obj
-                </div>
-              </div>
-            </div>
+              </>
+            )}
 
             {/* Summary stats */}
             <div className="vs-divider" style={{ margin: '1.25rem 0' }} />
@@ -125,7 +141,10 @@ export default function StatsSection() {
                 { label: 'Total Kills',      value: stats?.total_kills    ?? '—' },
               ].map(s => (
                 <div key={s.label} className="text-center">
-                  <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.8rem', color: 'var(--text)', letterSpacing: '0.04em', lineHeight: 1 }}>
+                  <div
+                    className={statsLoading ? 'vs-pulse' : undefined}
+                    style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.8rem', color: 'var(--text)', letterSpacing: '0.04em', lineHeight: 1 }}
+                  >
                     {typeof s.value === 'number' ? s.value.toLocaleString() : s.value}
                   </div>
                   <div style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.18em', textTransform: 'uppercase', marginTop: '3px' }}>
@@ -134,10 +153,10 @@ export default function StatsSection() {
                 </div>
               ))}
             </div>
-          </div>
+          </Reveal>
 
           {/* Top 3 pilots */}
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '2px', padding: '1.5rem' }}>
+          <Reveal delay={120} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '2px', padding: '1.5rem' }}>
             <h3
               style={{
                 fontFamily: "'Bebas Neue', sans-serif",
@@ -155,14 +174,18 @@ export default function StatsSection() {
             </h3>
 
             {top3.length === 0 ? (
-              <div style={{ color: 'var(--text-dim)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem 0' }}>
-                Awaiting pilot data…
+              <div
+                className={pilotsLoading ? 'vs-pulse' : undefined}
+                style={{ color: 'var(--text-dim)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem 0' }}
+              >
+                {pilotsLoading ? 'Loading pilot data…' : 'Awaiting pilot data…'}
               </div>
             ) : (
               <div className="space-y-3">
                 {top3.map((p, i) => (
-                  <div
+                  <Reveal
                     key={p.ucid}
+                    delay={i * 100}
                     className="flex items-center gap-4"
                     style={{
                       background: 'var(--bg-elevated)',
@@ -222,7 +245,7 @@ export default function StatsSection() {
                     </div>
 
                     {i === 0 && <Trophy size={14} style={{ color: '#fbbf24', flexShrink: 0 }} />}
-                  </div>
+                  </Reveal>
                 ))}
               </div>
             )}
@@ -234,7 +257,7 @@ export default function StatsSection() {
             >
               VIEW FULL LEADERBOARD <ArrowRight size={12} />
             </a>
-          </div>
+          </Reveal>
         </div>
       </div>
     </section>

@@ -1,4 +1,5 @@
 import { ExternalLink, Zap } from 'lucide-react'
+import Reveal from './Reveal'
 
 export default function SpecialThanksSection() {
   return (
@@ -23,7 +24,8 @@ export default function SpecialThanksSection() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 
           {/* Fowl Engine */}
-          <div
+          <Reveal
+            delay={0}
             style={{
               background: '#0d0d0d',
               border: '1px solid var(--border)',
@@ -53,6 +55,7 @@ export default function SpecialThanksSection() {
               Fowl Engine manages territory control, logistics, objective capture,
               cargo transport, troop deployments, kill tracking, and real-time
               stat synchronisation — all running live inside DCS World.
+              Originally created by <strong style={{ color: 'var(--text)' }}>Eric Stokes</strong>.
             </p>
             <div className="flex flex-wrap gap-1.5">
               {['Territory Control', 'Logistics', 'Cargo Transport', 'Troop Deployments', 'JTAC', 'EWR', 'Kill Tracking', 'Commander System', 'Pilot Lives', 'F10 Menus', 'Persistent Stats', 'Combined Arms'].map(tag => (
@@ -72,10 +75,11 @@ export default function SpecialThanksSection() {
                 </span>
               ))}
             </div>
-          </div>
+          </Reveal>
 
           {/* Eagle Dynamics */}
-          <div
+          <Reveal
+            delay={100}
             style={{
               background: '#0d0d0d',
               border: '1px solid var(--border)',
@@ -129,10 +133,11 @@ export default function SpecialThanksSection() {
                 digitalcombatsimulator.com
               </a>
             </div>
-          </div>
+          </Reveal>
 
           {/* 61st ATP — server host */}
-          <div
+          <Reveal
+            delay={200}
             style={{
               background: '#0d0d0d',
               border: '1px solid var(--border)',
@@ -168,10 +173,11 @@ export default function SpecialThanksSection() {
               donated the server it runs on. Every objective captured, every sortie flown, and every name on the
               leaderboard is only possible because of that support. On behalf of the whole squadron: thank you.
             </p>
-          </div>
+          </Reveal>
 
           {/* DCSServerBot */}
-          <div
+          <Reveal
+            delay={300}
             style={{
               background: '#0d0d0d',
               border: '1px solid var(--border)',
@@ -226,7 +232,7 @@ export default function SpecialThanksSection() {
                 github.com/DCSServerBot
               </a>
             </div>
-          </div>
+          </Reveal>
 
         </div>
 
