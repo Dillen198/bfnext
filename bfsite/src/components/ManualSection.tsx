@@ -599,7 +599,11 @@ export default function ManualSection() {
               </div>
             </div>
 
-            <ManualImg src="/objective-types.jpeg" alt="Overview of objective types across the campaign map" />
+            <div className="space-y-4">
+              <ManualImg src="/objective-types.jpeg" alt="Overview of objective types across the campaign map" />
+              <ManualImg src="/patriot-site.jpeg" alt="Hidden SAM site tucked into rocky terrain" />
+              <ManualImg src="/carrier-group.jpeg" alt="Naval carrier strike group at sea" />
+            </div>
           </div>
         </Subsection>
 
@@ -742,6 +746,10 @@ export default function ManualSection() {
             decisive than destroying their aircraft.
           </p>
 
+          <div style={{ marginBottom: '1.5rem' }}>
+            <ManualImg src="/convoy-interdiction.jpeg" alt="Supply convoy under aerial attack" />
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
             {[
               {
@@ -860,6 +868,9 @@ export default function ManualSection() {
                     {line}
                   </p>
                 ))}
+              </div>
+              <div style={{ marginTop: '1rem' }}>
+                <ManualImg src="/himars-strike.jpeg" alt="HIMARS rocket artillery firing on a target" />
               </div>
             </div>
           </div>
@@ -1169,6 +1180,10 @@ export default function ManualSection() {
             share of all objectives on the map wins the round — contested or neutral objectives
             don't count toward either side. Here's exactly what that takes.
           </p>
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            <ManualImg src="/objective-capture.jpeg" alt="Troops fast-roping from a helicopter to capture an objective" />
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
             {[
