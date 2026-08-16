@@ -4,7 +4,8 @@
 // No admin commands. No server config. Pilot-facing only.
 // ──────────────────────────────────────────────────────────────────────────────
 
-import React from 'react'
+import React, { useState } from 'react'
+import { SERVERS, DEFAULT_SERVER_ID } from '../config/servers'
 
 const SUBSECTION_HEADING: React.CSSProperties = {
   fontFamily: "'Bebas Neue', sans-serif",
@@ -280,11 +281,61 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   )
 }
 
+// ── Server selector (only interactive once more than one server exists) ────────
+
+function ServerSelector({
+  activeId,
+  onChange,
+}: {
+  activeId: string
+  onChange: (id: string) => void
+}) {
+  if (SERVERS.length <= 1) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '1.5rem' }}>
+        <span style={{ ...LABEL_STYLE, color: 'var(--text-dim)' }}>Server</span>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{SERVERS[0].label}</span>
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '1.5rem', flexWrap: 'wrap' as const }}>
+      <span style={{ ...LABEL_STYLE, color: 'var(--text-dim)' }}>Server</span>
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' as const }}>
+        {SERVERS.map((s) => {
+          const active = s.id === activeId
+          return (
+            <button
+              key={s.id}
+              onClick={() => onChange(s.id)}
+              style={{
+                fontFamily: "'Bebas Neue', sans-serif",
+                fontSize: '0.75rem',
+                letterSpacing: '0.1em',
+                color: active ? 'var(--bg)' : 'var(--text-muted)',
+                background: active ? 'var(--accent)' : 'transparent',
+                border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: '2px',
+                padding: '0.3rem 0.8rem',
+                cursor: 'pointer',
+              }}
+            >
+              {s.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Main Component
 // ──────────────────────────────────────────────────────────────────────────────
 
 export default function ManualSection() {
+  const [serverId, setServerId] = useState(DEFAULT_SERVER_ID)
+  const server = SERVERS.find((s) => s.id === serverId) ?? SERVERS[0]
   return (
     <section
       id="manual"
@@ -376,6 +427,8 @@ export default function ManualSection() {
               </span>
             ))}
           </div>
+
+          <ServerSelector activeId={serverId} onChange={setServerId} />
         </div>
 
         {/* ── Divider ──────────────────────────────────────────────────────── */}
@@ -1200,13 +1253,7 @@ export default function ManualSection() {
           </p>
 
           <div style={{ marginBottom: '1.5rem' }}>
-            {[
-              { role: 'Standard', lives: 3, resetHrs: 6, blurb: 'Front-line multirole fighters — the core combat pool.' },
-              { role: 'Intercept', lives: 4, resetHrs: 6, blurb: 'Dedicated air-to-air fighters for defending your airspace.' },
-              { role: 'Attack', lives: 4, resetHrs: 6, blurb: 'CAS jets and attack helicopters built for hitting ground targets.' },
-              { role: 'Recon', lives: 6, resetHrs: 6, blurb: 'Light and reconnaissance airframes — lowest risk, most lives.' },
-              { role: 'Logistics', lives: 6, resetHrs: 6, blurb: 'Transports and utility helicopters that move cargo and troops.' },
-            ].map((r) => (
+            {server.lifeRoles.map((r) => (
               <InfoRow key={r.role} label={r.role} value={`${r.blurb} ${r.lives} lives, refills every ${r.resetHrs}h.`} />
             ))}
           </div>
@@ -1233,13 +1280,7 @@ export default function ManualSection() {
               >
                 BLUFOR
               </h4>
-              {[
-                { role: 'Standard', lives: 3, aircraft: ['F-14A Tomcat', 'F-14B Tomcat', 'F-15C Eagle', 'F-15E Strike Eagle', 'F-16C Viper (Block 50)', 'F/A-18C Hornet', 'Su-27 Flanker'] },
-                { role: 'Intercept', lives: 4, aircraft: ['F-4E Phantom II', 'F-5E Tiger II', 'Mirage 2000C'] },
-                { role: 'Attack', lives: 4, aircraft: ['A-10A Warthog', 'A-10C II Warthog', 'AH-64D Apache', 'AV-8B N/A Harrier II', 'OH-58D Kiowa Warrior'] },
-                { role: 'Recon', lives: 6, aircraft: ['MB-339A', 'P-47D Thunderbolt', 'P-51D Mustang'] },
-                { role: 'Logistics', lives: 6, aircraft: ['C-130J-30 Super Hercules', 'CH-47F Chinook', 'UH-1H Huey'] },
-              ].map((grp) => (
+              {server.roster.blue.map((grp) => (
                 <div key={grp.role} style={{ marginBottom: '1rem' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '0.4rem' }}>
                     <span style={{ ...LABEL_STYLE, color: 'var(--text)' }}>{grp.role}</span>
@@ -1286,13 +1327,7 @@ export default function ManualSection() {
               >
                 REDFOR
               </h4>
-              {[
-                { role: 'Standard', lives: 3, aircraft: ['F-14A Tomcat', 'F-14A Tomcat (Early)', 'F-14B Tomcat', 'F-16C Viper (Block 50)', 'J-11A Flanker', 'JF-17 Thunder', 'Su-27 Flanker', 'Su-33 Flanker-D'] },
-                { role: 'Intercept', lives: 4, aircraft: ['F-4E Phantom II', 'F-5E Tiger II', 'MiG-21bis', 'MiG-29A Fulcrum', 'MiG-29S Fulcrum', 'Mirage F1BE', 'Mirage F1C', 'Mirage F1CE', 'Mirage F1EE'] },
-                { role: 'Attack', lives: 4, aircraft: ['AJS37 Viggen', 'Ka-50 Black Shark', 'Ka-50-3 Black Shark', 'Mi-24P Hind', 'SA342 Gazelle (Minigun)', 'Su-25T Frogfoot'] },
-                { role: 'Recon', lives: 6, aircraft: ['FW-190D9 Dora', 'L-39C Albatros', 'Spitfire LF Mk.IX'] },
-                { role: 'Logistics', lives: 6, aircraft: ['C-130J-30 Super Hercules', 'CH-47F Chinook', 'Mi-8MT Hip', 'SA342 Gazelle (Mistral)', 'SA342L Gazelle', 'SA342M Gazelle', 'UH-1H Huey'] },
-              ].map((grp) => (
+              {server.roster.red.map((grp) => (
                 <div key={grp.role} style={{ marginBottom: '1rem' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '0.4rem' }}>
                     <span style={{ ...LABEL_STYLE, color: 'var(--text)' }}>{grp.role}</span>
@@ -1320,11 +1355,10 @@ export default function ManualSection() {
           </div>
 
           <Callout type="info">
-            A handful of airframes — the F-14 Tomcat family, F-16C (Block 50), F-4E Phantom II,
-            F-5E, Su-27, the C-130J-30, the CH-47F, and the UH-1H — are available to both
-            coalitions. Everything else is side-exclusive. Lives shown here are per-round design
-            values; check <strong style={{ color: 'var(--text)' }}>-lives</strong> in-game for
-            whether life limits are currently active.
+            A handful of airframes — {server.sharedAircraft} — are available to both coalitions.
+            Everything else is side-exclusive. Lives shown here are per-round design values;
+            check <strong style={{ color: 'var(--text)' }}>-lives</strong> in-game for whether
+            life limits are currently active.
           </Callout>
         </Subsection>
 
