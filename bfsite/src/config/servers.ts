@@ -37,7 +37,7 @@ export const SERVERS: ServerProfile[] = [
   {
     id: 'vector-golan',
     label: 'The Coop · Operation Vector Strike',
-    era: 'Cold War / Modern mix',
+    era: 'Modern',
     lifeRoles: [
       { role: 'Standard', lives: 3, resetHrs: 6, blurb: 'Front-line multirole fighters — the core combat pool.' },
       { role: 'Intercept', lives: 4, resetHrs: 6, blurb: 'Dedicated air-to-air fighters for defending your airspace.' },
@@ -47,21 +47,21 @@ export const SERVERS: ServerProfile[] = [
     ],
     roster: {
       blue: [
-        { role: 'Standard', lives: 3, aircraft: ['F-14A Tomcat', 'F-14B Tomcat', 'F-15C Eagle', 'F-15E Strike Eagle', 'F-16C Viper (Block 50)', 'F/A-18C Hornet', 'Su-27 Flanker'] },
+        { role: 'Standard', lives: 3, aircraft: ['F-14A Tomcat', 'F-14B Tomcat', 'F-15C Eagle', 'F-15E Strike Eagle', 'F-16C Viper (Block 50)', 'F/A-18C Hornet'] },
         { role: 'Intercept', lives: 4, aircraft: ['F-4E Phantom II', 'F-5E Tiger II', 'Mirage 2000C'] },
         { role: 'Attack', lives: 4, aircraft: ['A-10A Warthog', 'A-10C II Warthog', 'AH-64D Apache', 'AV-8B N/A Harrier II', 'OH-58D Kiowa Warrior'] },
         { role: 'Recon', lives: 6, aircraft: ['MB-339A', 'P-47D Thunderbolt', 'P-51D Mustang'] },
         { role: 'Logistics', lives: 6, aircraft: ['C-130J-30 Super Hercules', 'CH-47F Chinook', 'UH-1H Huey'] },
       ],
       red: [
-        { role: 'Standard', lives: 3, aircraft: ['F-14A Tomcat', 'F-14A Tomcat (Early)', 'F-14B Tomcat', 'F-16C Viper (Block 50)', 'J-11A Flanker', 'JF-17 Thunder', 'Su-27 Flanker', 'Su-33 Flanker-D'] },
+        { role: 'Standard', lives: 3, aircraft: ['F-14A Tomcat (Early)', 'F-14B(U) Tomcat', 'F-16C Viper (Block 50)', 'J-11A Flanker', 'JF-17 Thunder', 'Su-27 Flanker', 'Su-33 Flanker-D'] },
         { role: 'Intercept', lives: 4, aircraft: ['F-4E Phantom II', 'F-5E Tiger II', 'MiG-21bis', 'MiG-29A Fulcrum', 'MiG-29S Fulcrum', 'Mirage F1BE', 'Mirage F1C', 'Mirage F1CE', 'Mirage F1EE'] },
         { role: 'Attack', lives: 4, aircraft: ['AJS37 Viggen', 'Ka-50 Black Shark', 'Ka-50-3 Black Shark', 'Mi-24P Hind', 'SA342 Gazelle (Minigun)', 'Su-25T Frogfoot'] },
         { role: 'Recon', lives: 6, aircraft: ['FW-190D9 Dora', 'L-39C Albatros', 'Spitfire LF Mk.IX'] },
         { role: 'Logistics', lives: 6, aircraft: ['C-130J-30 Super Hercules', 'CH-47F Chinook', 'Mi-8MT Hip', 'SA342 Gazelle (Mistral)', 'SA342L Gazelle', 'SA342M Gazelle', 'UH-1H Huey'] },
       ],
     },
-    sharedAircraft: 'the F-14 Tomcat family, F-16C (Block 50), F-4E Phantom II, F-5E, Su-27, the C-130J-30, the CH-47F, and the UH-1H',
+    sharedAircraft: 'the F-14 Tomcat family, F-16C (Block 50), F-4E Phantom II, F-5E, the C-130J-30, the CH-47F, and the UH-1H',
   },
 ]
 
