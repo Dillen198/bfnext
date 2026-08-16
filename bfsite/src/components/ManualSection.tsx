@@ -250,6 +250,30 @@ function TipCard({ number, text }: { number: number; text: string }) {
   )
 }
 
+// ── Era tag pill (for the aircraft roster) ──────────────────────────────────────
+
+function EraTag({ era }: { era: 'Cold War' | 'Modern' }) {
+  const isModern = era === 'Modern'
+  return (
+    <span
+      style={{
+        fontFamily: "'Bebas Neue', sans-serif",
+        fontSize: '0.62rem',
+        letterSpacing: '0.15em',
+        color: isModern ? 'var(--accent)' : 'var(--text-dim)',
+        border: `1px solid ${isModern ? 'rgba(77,124,15,0.35)' : 'var(--border)'}`,
+        background: isModern ? 'rgba(77,124,15,0.08)' : 'transparent',
+        borderRadius: '2px',
+        padding: '0.15rem 0.5rem',
+        flexShrink: 0,
+        whiteSpace: 'nowrap' as const,
+      }}
+    >
+      {era.toUpperCase()}
+    </span>
+  )
+}
+
 // ── Inline info row (for lists without a table) ────────────────────────────────
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -555,12 +579,20 @@ export default function ManualSection() {
               </div>
 
               <Callout type="info">
-                Capture an objective by positioning coalition ground forces within the capture
-                radius. Some objectives require a minimum percentage of the defending garrison to
-                be destroyed before capture can begin — softening the defences with CAS or
-                artillery first is not optional, it is mandatory. Contested objectives show as
-                neutral on the F10 map.
+                An objective becomes capturable once its health is at 20% or below and every
+                defending infantry unit is eliminated — logistics and structures alone won't do
+                it. Move capture-capable troops into the zone once it's capturable to begin the
+                takeover. Special SAM Sites work differently — see{' '}
+                <strong style={{ color: 'var(--text)' }}>VICTORY &amp; CAPTURE</strong> below for
+                the full breakdown.
               </Callout>
+
+              <div style={{ marginTop: '1.5rem' }}>
+                <p style={{ ...LABEL_STYLE, marginBottom: '0.5rem' }}>How To Capture — Step By Step</p>
+                <InfoRow label="1. Soften" value="Reduce the objective's health to 20% or below and kill every defending infantry unit — CAS, artillery, or ground troops all count." />
+                <InfoRow label="2. Deploy Troops" value="F10 → Menu → Troop → move a capture-capable squad into the objective's zone." />
+                <InfoRow label="3. Hold It" value="Keep enemy troops out of the zone until the capture timer runs out. Track progress in the panel messages or with -status." />
+              </div>
             </div>
 
             <ImgPlaceholder label="OBJECTIVE TYPES" height={260} />
@@ -700,6 +732,10 @@ export default function ManualSection() {
               {
                 title: 'INTERDICT ENEMY SUPPLY',
                 body: 'Destroying enemy convoys degrades their objective supply over time. Sustained interdiction can neutralize entire sectors.',
+              },
+              {
+                title: 'STRATEGIC INFRASTRUCTURE',
+                body: 'Real map buildings near objectives — warehouses, fuel depots, industrial complexes — are marked with orange boxes on the F10 map. Destroy them and that objective\'s logistics rating drops permanently, on top of anything convoy interdiction achieves.',
               },
               {
                 title: 'FARP RESUPPLY',
@@ -1103,30 +1139,33 @@ export default function ManualSection() {
         </Subsection>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
-        {/* 10 — CAMPAIGN EVENTS                                              */}
+        {/* 10 — VICTORY & CAPTURE                                            */}
         {/* ══════════════════════════════════════════════════════════════════ */}
-        <Subsection number="10" title="CAMPAIGN" accent="EVENTS">
+        <Subsection number="10" title="VICTORY &amp;" accent="CAPTURE">
           <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
-            The AI Smart Commander continuously monitors the battlefield and spends a campaign
-            treasury on automated military actions. These events fire without warning — watch the
-            kill feed and Discord for alerts.
+            A round is won by territory, not kill count. The coalition that controls the required
+            share of all objectives on the map wins the round — contested or neutral objectives
+            don't count toward either side. Here's exactly what that takes.
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
             {[
               {
-                heading: 'BARRAGE',
-                body: 'Friendly or enemy artillery fires a sustained bombardment on a contested objective. Area is danger-close for the duration. Pull back or stay low.',
+                heading: 'CAPTURE AN OBJECTIVE',
+                body: 'Bring the objective\'s health to 20% or below and eliminate every defending infantry unit — CAS, artillery, whatever it takes. Move capture-capable troops into the zone; once it\'s held uncontested a countdown starts (both sides get a panel warning). Enemy troops re-entering the zone reset the timer. Some objectives also require a minimum share of the garrison destroyed before the timer can even start.',
               },
               {
-                heading: 'CONVOY AMBUSH',
-                body: 'Enemy forces intercept a friendly supply convoy in transit. The convoy may be destroyed before it reaches its destination — monitor logistics routes.',
+                heading: 'CAPTURE A SPECIAL SAM SITE',
+                body: 'SAM sites capture the instant your troops hold the zone — there is no timer. But the site\'s launchers, radars, and infantry are still live threats: clear them first or your troop transport won\'t survive the approach. Position is classified — not shown on the F10 map or dashboard, so you have to find it yourself (EWR tracks help).',
               },
               {
-                heading: 'REACTIVE CAP',
-                body: 'If your aircraft flies within the threat radius of an enemy-held objective, the enemy AI may scramble a Combat Air Patrol. Expect fighters without prior warning.',
+                heading: 'HURT ENEMY SUPPLY',
+                body: 'Two ways in: destroy the automated convoys running between logistics hubs and forward objectives, or bomb the real map buildings — warehouses, fuel depots, industrial complexes — marked with orange boxes near objectives. Both directly and permanently degrade that objective\'s logistics rating.',
               },
-
+              {
+                heading: 'LAST STAND',
+                body: 'When a coalition is reduced to its last primary objective (an airbase, naval base, or FARP), a countdown timer arms. If they can\'t retake ground before it expires, that coalition loses the round outright.',
+              },
             ].map((card) => (
               <div
                 key={card.heading}
@@ -1155,9 +1194,116 @@ export default function ManualSection() {
           </div>
 
           <Callout type="info">
-            Campaign events are funded from the commander's treasury, which grows over time as
-            objectives are held. Destroying enemy objectives and logistics directly reduces the
-            enemy treasury — starving them of funds prevents large-scale events.
+            Capturing an airbase or naval base flips its coalition and repairs one step of its
+            logistics and services automatically. Warehouse stock and supply routes transfer to
+            the new owner immediately.
+          </Callout>
+        </Subsection>
+
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {/* 11 — AIRCRAFT ROSTER                                              */}
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        <Subsection number="11" title="AIRCRAFT" accent="ROSTER">
+          <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 680 }}>
+            The current campaign spans two generations of combat aircraft flying side by side —
+            Cold War-era airframes alongside modern 4th-generation multirole fighters. Pick your
+            coalition first, then choose your airframe at the slot-selection screen.
+          </p>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            {/* BLUFOR panel */}
+            <div
+              style={{
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border)',
+                borderLeft: '3px solid var(--blue)',
+                borderRadius: '2px',
+                padding: '1.25rem 1.5rem',
+              }}
+            >
+              <h4
+                style={{
+                  fontFamily: "'Bebas Neue', sans-serif",
+                  fontSize: '1rem',
+                  letterSpacing: '0.2em',
+                  color: 'var(--blue)',
+                  margin: '0 0 1rem 0',
+                }}
+              >
+                BLUFOR
+              </h4>
+              {[
+                { name: 'F-4E Phantom II', era: 'Cold War' as const },
+                { name: 'F-14B Tomcat', era: 'Cold War' as const },
+                { name: 'F-16C Viper (Block 50)', era: 'Modern' as const },
+                { name: 'F/A-18C Hornet', era: 'Modern' as const },
+              ].map((ac) => (
+                <div
+                  key={ac.name}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    padding: '0.55rem 0',
+                    borderBottom: '1px solid var(--border)',
+                  }}
+                >
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text)' }}>{ac.name}</span>
+                  <EraTag era={ac.era} />
+                </div>
+              ))}
+            </div>
+
+            {/* REDFOR panel */}
+            <div
+              style={{
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border)',
+                borderLeft: '3px solid var(--red)',
+                borderRadius: '2px',
+                padding: '1.25rem 1.5rem',
+              }}
+            >
+              <h4
+                style={{
+                  fontFamily: "'Bebas Neue', sans-serif",
+                  fontSize: '1rem',
+                  letterSpacing: '0.2em',
+                  color: 'var(--red)',
+                  margin: '0 0 1rem 0',
+                }}
+              >
+                REDFOR
+              </h4>
+              {[
+                { name: 'F-4E Phantom II', era: 'Cold War' as const },
+                { name: 'F-14A Tomcat', era: 'Cold War' as const },
+                { name: 'F-14A Tomcat (Early)', era: 'Cold War' as const },
+                { name: 'F-16C Viper (Block 50)', era: 'Modern' as const },
+                { name: 'J-11A Flanker', era: 'Modern' as const },
+              ].map((ac) => (
+                <div
+                  key={ac.name}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    padding: '0.55rem 0',
+                    borderBottom: '1px solid var(--border)',
+                  }}
+                >
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text)' }}>{ac.name}</span>
+                  <EraTag era={ac.era} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <Callout type="info">
+            The F-16C (Block 50) and F-4E Phantom II are flyable on both coalitions — the same
+            airframe, opposing colours. Everything else is coalition-exclusive.
           </Callout>
         </Subsection>
 
