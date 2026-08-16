@@ -30,49 +30,24 @@ const LABEL_STYLE: React.CSSProperties = {
   color: 'var(--accent)',
 }
 
-// ── Shared image placeholder ─────────────────────────────────────────────────
+// ── Manual illustration ──────────────────────────────────────────────────────
 
-function ImgPlaceholder({ label, height = 180 }: { label: string; height?: number }) {
+function ManualImg({ src, alt, height = 180 }: { src: string; alt: string; height?: number }) {
   return (
     <div
       style={{
         height,
-        background: '#0d0d0d',
-        border: '1px solid var(--border)',
         borderRadius: '2px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'column' as const,
-        gap: '0.5rem',
-        userSelect: 'none',
+        overflow: 'hidden',
+        border: '1px solid var(--border)',
       }}
     >
-      {/* corner brackets */}
-      <div style={{ position: 'relative', padding: '0.75rem 1.25rem' }}>
-        <div style={{
-          position: 'absolute', top: 0, left: 0,
-          width: 12, height: 12,
-          borderTop: '2px solid var(--accent)',
-          borderLeft: '2px solid var(--accent)',
-        }} />
-        <div style={{
-          position: 'absolute', bottom: 0, right: 0,
-          width: 12, height: 12,
-          borderBottom: '2px solid var(--accent)',
-          borderRight: '2px solid var(--accent)',
-        }} />
-        <span
-          style={{
-            fontFamily: "'Bebas Neue', sans-serif",
-            fontSize: '0.85rem',
-            letterSpacing: '0.25em',
-            color: 'var(--text-muted)',
-          }}
-        >
-          {label}
-        </span>
-      </div>
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+      />
     </div>
   )
 }
@@ -474,7 +449,7 @@ export default function ManualSection() {
               </Callout>
             </div>
 
-            <ImgPlaceholder label="SERVER BROWSER" height={220} />
+            <ManualImg src="/server-browser.jpeg" alt="Finding Vector Strike in the DCS multiplayer server browser" height={220} />
           </div>
         </Subsection>
 
@@ -624,7 +599,7 @@ export default function ManualSection() {
               </div>
             </div>
 
-            <ImgPlaceholder label="OBJECTIVE TYPES" height={260} />
+            <ManualImg src="/objective-types.jpeg" alt="Overview of objective types across the campaign map" height={260} />
           </div>
         </Subsection>
 
@@ -847,7 +822,7 @@ export default function ManualSection() {
             </div>
 
             <div>
-              <ImgPlaceholder label="9-LINE BRIEF" height={220} />
+              <ManualImg src="/nine-line-brief.jpeg" alt="JTAC calling in a 9-line CAS brief" height={220} />
               <div
                 style={{
                   marginTop: '1rem',
@@ -958,8 +933,8 @@ export default function ManualSection() {
                 </Callout>
               </div>
               <div className="space-y-4">
-                <ImgPlaceholder label="AIRDROP — PARACHUTE RUN" height={180} />
-                <ImgPlaceholder label="LAPES — LOW ALTITUDE EXTRACTION" height={150} />
+                <ManualImg src="/airdrop-parachute.jpeg" alt="C-130 airdrop delivery via parachute" height={180} />
+                <ManualImg src="/lapes-extraction.jpeg" alt="C-130 LAPES low altitude extraction run" height={150} />
               </div>
             </div>
           </div>

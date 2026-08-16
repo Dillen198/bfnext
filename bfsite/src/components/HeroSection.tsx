@@ -12,7 +12,7 @@ export default function HeroSection() {
       <div
         className="absolute inset-0"
         style={{
-          backgroundImage: 'url(/hero.png)',
+          backgroundImage: 'url(/hero.jpeg)',
           backgroundSize: 'cover',
           backgroundPosition: 'center 30%',
           backgroundRepeat: 'no-repeat',
