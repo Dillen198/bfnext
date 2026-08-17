@@ -753,6 +753,14 @@ impl Db {
                 self.ephemeral.dirty()
             }
         }
+        // Register only fires once, the first time a ucid is ever seen, so a
+        // returning player reconnecting into a new round would otherwise never
+        // get a side recorded for that round in bfdb, leaving them out of the
+        // per-round registered/online counts. Reaffirm their known side on
+        // every connect so bfdb always has a current-round side for them.
+        if let Some(player) = self.persisted.players.get(&ucid) {
+            self.ephemeral.stat(Stat::Sideswitch { id: ucid, side: player.side });
+        }
     }
 
     pub fn register_player(&mut self, ucid: Ucid, name: String, side: Side) -> Result<(), RegErr> {
