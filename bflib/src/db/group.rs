@@ -709,9 +709,15 @@ impl Db {
             | SpawnLoc::AtPosWithCenter { .. }
             | SpawnLoc::AtPosWithComponents { .. }
             | SpawnLoc::AtTrigger { .. } => {
-                if let Some(tmpl) = self.ephemeral.cfg.crate_template.get(&side)
-                    && &template_name == tmpl
-                {
+                let is_crate_template = [
+                    self.ephemeral.cfg.crate_template.get(&side),
+                    self.ephemeral.cfg.c130_cargo_template.get(&side),
+                    self.ephemeral.cfg.helo_cargo_template.get(&side),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|tmpl| tmpl == &template_name);
+                if is_crate_template {
                     () // it's ok to spawn crates on ships
                 } else if spawned.tags.contains(UnitTag::Boat) {
                     check_land(&land, &gpos.positions, &gpos.by_type)
