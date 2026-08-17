@@ -47,10 +47,9 @@ export const PilotPage: React.FC = () => {
     <div style={{ padding: '20px 40px', maxWidth: 1200, margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30 }}>
         <div>
-          <h1 style={{ margin: '0 0 5px 0', fontSize: '2rem', fontWeight: 600, color: '#f8fafc' }}>
+          <h1 style={{ margin: 0, fontSize: '2rem', fontWeight: 600, color: '#f8fafc' }}>
             {name}
           </h1>
-          <div style={{ color: '#94a3b8', fontSize: '0.9rem', fontFamily: 'var(--font-mono)' }}>UCID: {ucid}</div>
         </div>
         <Link to="/stats" style={{ color: '#0ea5e9', textDecoration: 'none', background: BOX_BG, padding: '8px 16px', borderRadius: 4, border: BOX_BORDER }}>
           ← Back to Stats

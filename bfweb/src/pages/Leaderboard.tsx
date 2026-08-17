@@ -104,7 +104,7 @@ export default function Leaderboard() {
               const mc = MEDAL_COLOR[i]
               return (
                 <div key={p.ucid}
-                  onClick={() => navigate(`/pilot/${encodeURIComponent(p.ucid)}`)}
+                  onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)}
                   style={{
                     background: 'var(--bg-card)', border: `1px solid ${mc}22`,
                     borderTop: `3px solid ${mc}`, borderRadius: 8, padding: '16px 20px',
@@ -201,7 +201,7 @@ export default function Leaderboard() {
 
                   return (
                     <tr key={p.ucid}
-                      onClick={() => navigate(`/pilot/${encodeURIComponent(p.ucid)}`)}
+                      onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)}
                       style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
                       className="kill-row"
                     >
