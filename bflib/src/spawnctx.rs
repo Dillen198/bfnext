@@ -58,6 +58,15 @@ pub enum SpawnLoc {
         /// rotate the group to this heading in radians
         group_heading: f64,
     },
+    /// like AtPos, but places the group's center exactly at pos with no
+    /// added clearance offset. Use this when the caller has already picked
+    /// a specific, deconflicted spawn point (e.g. a crate grid scan) and an
+    /// extra automatic offset would defeat that placement.
+    AtPosExact {
+        pos: Vector2,
+        /// rotate the group to this heading in radians
+        group_heading: f64,
+    },
     AtPosWithComponents {
         pos: Vector2,
         /// the position of sub components of the group by unit type

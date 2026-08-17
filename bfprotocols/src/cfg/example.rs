@@ -2004,6 +2004,7 @@ impl Default for Cfg {
             ]),
             c130_cargo_template: FxHashMap::default(),
             helo_cargo_template: FxHashMap::default(),
+            carrier_cargo_spawn_point: FxHashMap::default(),
             c130_cargo: None,
             helo_cargo: None,
             deployables: FxHashMap::from_iter([

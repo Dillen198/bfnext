@@ -2489,6 +2489,7 @@ impl Db {
                                 }
                             }
                             SpawnLoc::AtPos { .. }
+                            | SpawnLoc::AtPosExact { .. }
                             | SpawnLoc::AtPosWithCenter { .. }
                             | SpawnLoc::AtPosWithComponents { .. }
                             | SpawnLoc::AtTrigger { .. } => {

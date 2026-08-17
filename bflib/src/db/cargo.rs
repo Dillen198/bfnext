@@ -2645,6 +2645,62 @@ impl Db {
         Ok(None)
     }
 
+    /// Find a pre-placed cargo spawn point marker (configured via
+    /// cfg.carrier_cargo_spawn_point) within a carrier group near `pos`.
+    /// Returns the marker's current live position and DCS unit name (for
+    /// linking a newly spawned crate to move with the ship). Returns None
+    /// if no marker is configured for this side, or none is found nearby.
+    fn find_carrier_cargo_spawn_point(
+        &self,
+        lua: MizLua,
+        pos: Vector2,
+        side: Side,
+    ) -> Result<Option<(Vector2, String)>> {
+        let marker = match self.ephemeral.cfg.carrier_cargo_spawn_point.get(&side) {
+            Some(m) if !m.is_empty() => m,
+            _ => return Ok(None),
+        };
+        const MAX_CARRIER_DISTANCE: f64 = 500.0;
+        for (_, obj) in &self.persisted.objectives {
+            if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &obj.kind {
+                if obj.owner != side || carrier_template.is_empty() {
+                    continue;
+                }
+                for (_, group) in &self.persisted.groups {
+                    if group.template_name.starts_with(carrier_template.as_str()) && group.side == side {
+                        for uid in group.units.into_iter() {
+                            let Some(unit) = self.persisted.units.get(uid) else { continue };
+                            if unit.dead || !unit.template_name.starts_with(marker.as_str()) {
+                                continue;
+                            }
+                            if na::distance(&pos.into(), &unit.pos.into()) > MAX_CARRIER_DISTANCE {
+                                continue;
+                            }
+                            let link_name = if Unit::get_by_name(lua, &unit.template_name).is_ok() {
+                                unit.template_name.clone()
+                            } else if Unit::get_by_name(lua, &unit.name).is_ok() {
+                                unit.name.clone()
+                            } else {
+                                continue;
+                            };
+                            // Use the marker's live DCS position, not the
+                            // possibly-stale DB-tracked one, so the crate
+                            // lands where the marker actually is right now.
+                            let live_pos = Unit::get_by_name(lua, &link_name)
+                                .and_then(|u| u.get_position())
+                                .map(|p| Vector2::new(p.p.x, p.p.z))
+                                .unwrap_or(unit.pos);
+                            info!("[CARRIER_LINK] Found cargo spawn point marker '{}' at ({:.0},{:.0})",
+                                  link_name, live_pos.x, live_pos.y);
+                            return Ok(Some((live_pos, link_name)));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Manually unpack nearby dynamic crates for helicopters (no auto-unpack on landing).
     /// Finds all tracked c130-style crates within `crate_load_distance` of the player
     /// that have `auto_unpack: false`, then calls `unpack_c130_crate` on each one.
@@ -2824,11 +2880,21 @@ impl Db {
                 }
             });
 
+        // If the player is on a carrier with a configured cargo spawn point
+        // marker, anchor the grid scan on the marker's live position instead
+        // of a player-relative offset -- an offset computed from the player
+        // can easily land off the edge of a small, moving deck.
+        let carrier_marker = self.find_carrier_cargo_spawn_point(lua, point, side)?;
+        let (spawn_base, spawn_base_offset) = match &carrier_marker {
+            Some((marker_pos, _)) => (*marker_pos, 0.0),
+            None => (point, spawn_distance),
+        };
+
         // Scan for a spot clear of any existing crate, from any player, so two
         // players dropping cargo near the same spot don't compute overlapping
         // spawn points and destroy each other's crates
         let spawn_point = self
-            .find_crate_spawn_point(point, dir, spawn_distance)?
+            .find_crate_spawn_point(spawn_base, dir, spawn_base_offset)?
             .ok_or_else(|| anyhow!("no clear space to spawn crate, move away from other crates"))?;
 
         // Pick template: helo dynamic cargo uses helo_cargo_template (fallback to c130_cargo_template)
@@ -2845,9 +2911,8 @@ impl Db {
                 .clone()
         };
 
-        let spawnpos = SpawnLoc::AtPos {
+        let spawnpos = SpawnLoc::AtPosExact {
             pos: spawn_point,
-            offset_direction: dir,
             group_heading: azumith2d(dir),
         };
 
@@ -2861,7 +2926,10 @@ impl Db {
                template, dir.x, dir.y);
 
         // Check if player is on a carrier - if so, link the crate to the carrier unit
-        let carrier_link_id = self.find_carrier_unit_at_position(lua, point, side)?;
+        let carrier_link_id = match carrier_marker {
+            Some((_, link_name)) => Some(link_name),
+            None => self.find_carrier_unit_at_position(lua, point, side)?,
+        };
         if carrier_link_id.is_some() {
             debug!("[C130_CARGO] Player is on carrier, will link crate to carrier unit");
         }
@@ -2978,32 +3046,26 @@ impl Db {
         let spawn_distance = self.ephemeral.cfg.c130_cargo.as_ref()
             .and_then(|c| c.spawn_distance)
             .unwrap_or(-45.0);
-        let forward = dir;
-        let right = Vector2::new(-dir.y, dir.x);
-        let row_sign = if spawn_distance < 0.0 { -1.0 } else { 1.0 };
 
-        // 3-wide grid: scan for a spot clear of any existing crate, from any
-        // player, so two players dropping cargo near the same spot don't
-        // spawn on top of each other and destroy each other's cargo
-        let mut spawn_point = point + forward * spawn_distance;
-        let mut found_spot = false;
-        for i in 0..9 {
-            let row = (i / 3) as f64;
-            let col = (i % 3) as f64 - 1.0;
-            let test_pos = point + forward * (spawn_distance + row_sign * row * 5.0) + right * (col * 5.0);
-            if self.list_crates_near_point(test_pos, 4.0)?.is_empty() {
-                spawn_point = test_pos;
-                found_spot = true;
-                break;
-            }
-        }
-        if !found_spot {
-            bail!("no clear space to spawn vehicle cargo, move away from other crates")
-        }
+        // If the player is on a carrier with a configured cargo spawn point
+        // marker, anchor the grid scan on the marker's live position instead
+        // of a player-relative offset, which can easily land off a small,
+        // moving deck.
+        let carrier_marker = self.find_carrier_cargo_spawn_point(lua, point, side)?;
+        let (spawn_base, spawn_base_offset) = match &carrier_marker {
+            Some((marker_pos, _)) => (*marker_pos, 0.0),
+            None => (point, spawn_distance),
+        };
 
-        let spawnpos = SpawnLoc::AtPos {
+        // Scan for a spot clear of any existing crate, from any player, so
+        // two players dropping cargo near the same spot don't spawn on top
+        // of each other and destroy each other's cargo
+        let spawn_point = self
+            .find_crate_spawn_point(spawn_base, dir, spawn_base_offset)?
+            .ok_or_else(|| anyhow!("no clear space to spawn vehicle cargo, move away from other crates"))?;
+
+        let spawnpos = SpawnLoc::AtPosExact {
             pos: spawn_point,
-            offset_direction: dir,
             group_heading: azumith2d(dir),
         };
 
@@ -3026,7 +3088,10 @@ impl Db {
         debug!("[C130_CARGO] Spawning vehicle cargo with template='{}'", template);
 
         // Check if player is on a carrier - if so, link the cargo to the carrier unit
-        let carrier_link_id = self.find_carrier_unit_at_position(lua, point, side)?;
+        let carrier_link_id = match carrier_marker {
+            Some((_, link_name)) => Some(link_name),
+            None => self.find_carrier_unit_at_position(lua, point, side)?,
+        };
         if carrier_link_id.is_some() {
             debug!("[C130_CARGO] Player is on carrier, will link vehicle cargo to carrier unit");
         }
@@ -3179,7 +3244,19 @@ impl Db {
                                     .unwrap_or(4.0)
                             }
                         });
-                    let point = match self.find_crate_spawn_point(point, dir, spawn_distance) {
+                    // If the player is on a carrier with a configured cargo
+                    // spawn point marker, anchor the grid scan on the
+                    // marker's live position instead of a player-relative
+                    // offset, which can easily land off a small, moving deck.
+                    let carrier_marker = match self.find_carrier_cargo_spawn_point(lua, point, side) {
+                        Ok(m) => m,
+                        Err(_) => None,
+                    };
+                    let (spawn_base, spawn_base_offset) = match &carrier_marker {
+                        Some((marker_pos, _)) => (*marker_pos, 0.0),
+                        None => (point, spawn_distance),
+                    };
+                    let point = match self.find_crate_spawn_point(spawn_base, dir, spawn_base_offset) {
                         Ok(Some(p)) => p,
                         Ok(None) | Err(_) => continue, // no clear space, skip this crate
                     };
@@ -3207,9 +3284,8 @@ impl Db {
                         C130CargoType::Deployable { name: crate_name.clone() }
                     };
 
-                    let spawnpos = SpawnLoc::AtPos {
+                    let spawnpos = SpawnLoc::AtPosExact {
                         pos: point,
-                        offset_direction: dir,
                         group_heading: azumith2d(dir),
                     };
 
@@ -3217,6 +3293,14 @@ impl Db {
                         origin,
                         player: ucid,
                         spec: crate_def.clone(),
+                    };
+
+                    // Check if the player is on a carrier -- if so, link the
+                    // crate to the carrier unit so it moves with the ship
+                    // instead of being left behind at a static world point.
+                    let carrier_link_id = match carrier_marker {
+                        Some((_, link_name)) => Some(link_name),
+                        None => self.find_carrier_unit_at_position(lua, point, side)?,
                     };
 
                     match self.add_and_queue_group(
@@ -3230,6 +3314,10 @@ impl Db {
                         None,
                     ) {
                         Ok(group_id) => {
+                            if let Some(link_id) = carrier_link_id {
+                                self.ephemeral.carrier_linked_groups.insert(group_id, link_id);
+                            }
+
                             // Get the group name for tracking (persists across DCS cargo load/drop)
                             let group_name = match self.persisted.groups.get(&group_id) {
                                 Some(g) => g.name.clone(),

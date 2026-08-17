@@ -2172,6 +2172,13 @@ pub struct Cfg {
     /// Falls back to c130_cargo_template if not set.
     #[serde(default)]
     pub helo_cargo_template: FxHashMap<Side, String>,
+    /// The unit type name of a pre-placed cargo spawn point marker on each
+    /// side's carrier deck (e.g. "RCARGO_SPAWN"/"BCARGO_SPAWN"). When set and
+    /// the player is on that carrier, crates spawn at this marker's exact
+    /// live position instead of an offset computed from the player, since a
+    /// player-relative offset can easily land off the (small, moving) deck.
+    #[serde(default)]
+    pub carrier_cargo_spawn_point: FxHashMap<Side, String>,
     /// C-130 physical cargo configuration
     #[serde(default)]
     pub c130_cargo: Option<C130CargoConfig>,

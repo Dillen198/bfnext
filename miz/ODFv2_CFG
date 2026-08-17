@@ -1469,6 +1469,10 @@
     "Red": "RCRATE_HELO",
     "Blue": "BCRATE_HELO"
   },
+  "carrier_cargo_spawn_point": {
+    "Red": "RCARGO_SPAWN",
+    "Blue": "BCARGO_SPAWN"
+  },
   "c130_cargo": {
     "enabled_vehicles": [
       "C-130J-30"

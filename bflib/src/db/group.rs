@@ -569,6 +569,18 @@ impl Db {
                     }
                     Ok(GroupPosition { positions, by_type: FxHashMap::default() })
                 }
+                SpawnLoc::AtPosExact { pos, group_heading } => {
+                    let group_center = centroid2d(positions.iter().map(|p| p.position));
+                    for p in positions.iter_mut() {
+                        p.position = p.position - group_center + pos;
+                        p.heading = change_heading(p.heading, group_heading);
+                        p.altitude = None;
+                    }
+                    rotate2d_gen(group_heading, positions.make_contiguous(), |p| {
+                        &mut p.position
+                    });
+                    Ok(GroupPosition { positions, by_type: FxHashMap::default() })
+                }
                 SpawnLoc::AtPosWithComponents { pos, group_heading, component_pos } => {
                     let group_center = centroid2d(positions.iter().map(|p| p.position));
                     let center_by_typ: FxHashMap<String, Vector2> = {
@@ -706,6 +718,7 @@ impl Db {
         }
         match &location {
             SpawnLoc::AtPos { .. }
+            | SpawnLoc::AtPosExact { .. }
             | SpawnLoc::AtPosWithCenter { .. }
             | SpawnLoc::AtPosWithComponents { .. }
             | SpawnLoc::AtTrigger { .. } => {
