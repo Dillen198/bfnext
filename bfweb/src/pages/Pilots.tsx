@@ -70,14 +70,14 @@ function mostFlownAircraft(sorties: PilotSortie[]): string | null {
   return best
 }
 
-// Aircraft image: served from /images/aircraft/{type}.png
-// Falls back to a placeholder if not found
+// Aircraft image: served from /images/aircraft/{type}.jpg
+// Falls back to a placeholder icon if not found
 function AircraftImage({ type }: { type: string }) {
   const [err, setErr] = useState(false)
-  const src = `/images/aircraft/${encodeURIComponent(type)}.png`
+  const src = `/images/aircraft/${encodeURIComponent(type)}.jpg`
   if (err) {
     return (
-      <div style={{ width: 120, height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.15 }}>
+      <div style={{ width: 160, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.15, flexShrink: 0 }}>
         <Plane size={40} />
       </div>
     )
@@ -87,7 +87,7 @@ function AircraftImage({ type }: { type: string }) {
       src={src}
       alt={type}
       onError={() => setErr(true)}
-      style={{ maxWidth: 140, maxHeight: 70, objectFit: 'contain', filter: 'brightness(0) invert(1)', opacity: 0.85 }}
+      style={{ width: 160, height: 90, objectFit: 'cover', borderRadius: 4, border: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}
     />
   )
 }
