@@ -77,8 +77,8 @@ function AircraftImage({ type }: { type: string }) {
   const src = `/images/aircraft/${encodeURIComponent(type)}.jpg`
   if (err) {
     return (
-      <div style={{ width: 160, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.15, flexShrink: 0 }}>
-        <Plane size={40} />
+      <div style={{ width: 280, height: 158, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.15, flexShrink: 0 }}>
+        <Plane size={64} />
       </div>
     )
   }
@@ -87,7 +87,7 @@ function AircraftImage({ type }: { type: string }) {
       src={src}
       alt={type}
       onError={() => setErr(true)}
-      style={{ width: 160, height: 90, objectFit: 'cover', borderRadius: 4, border: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}
+      style={{ width: 280, height: 158, objectFit: 'cover', borderRadius: 4, border: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}
     />
   )
 }
