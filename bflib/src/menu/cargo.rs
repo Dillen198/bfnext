@@ -317,7 +317,7 @@ fn spawn_all_c130_crates_for_deployable(lua: MizLua, arg: ArgTuple<GroupId, Stri
     // Build list of all required crates for this deployable (excluding repair crate)
     let crate_list: Vec<_> = deployable.crates
         .iter()
-        .map(|cr| (cr.name.clone(), cr.clone()))
+        .flat_map(|cr| std::iter::repeat((cr.name.clone(), cr.clone())).take(cr.required as usize))
         .collect();
 
     if crate_list.is_empty() {
@@ -940,7 +940,7 @@ fn spawn_all_helo_crates_for_deployable(lua: MizLua, arg: ArgTuple<GroupId, Stri
 
     let crate_list: Vec<_> = deployable.crates
         .iter()
-        .map(|cr| (cr.name.clone(), cr.clone()))
+        .flat_map(|cr| std::iter::repeat((cr.name.clone(), cr.clone())).take(cr.required as usize))
         .collect();
 
     if crate_list.is_empty() {

@@ -537,6 +537,31 @@ impl Db {
         Ok(res)
     }
 
+    /// Find a spawn point offset `spawn_distance` from `point` along `dir`
+    /// (negative = behind, positive = ahead), scanning a 3-wide grid of rows
+    /// further out along that offset so successive crates land next to each
+    /// other instead of stacking on top of one another or on other players'
+    /// crates. Returns `None` if every cell in the grid is occupied.
+    fn find_crate_spawn_point(
+        &self,
+        point: Vector2,
+        dir: Vector2,
+        spawn_distance: f64,
+    ) -> Result<Option<Vector2>> {
+        let forward = dir;
+        let right = Vector2::new(-dir.y, dir.x);
+        let row_sign = if spawn_distance < 0.0 { -1.0 } else { 1.0 };
+        for i in 0..9 {
+            let row = (i / 3) as f64;
+            let col = (i % 3) as f64 - 1.0;
+            let test_pos = point + forward * (spawn_distance + row_sign * row * 5.0) + right * (col * 5.0);
+            if self.list_crates_near_point(test_pos, 4.0)?.is_empty() {
+                return Ok(Some(test_pos));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn list_nearby_crates<'a>(
         &'a self,
         st: &SlotStats,
@@ -2781,28 +2806,12 @@ impl Db {
                 }
             });
 
-        let forward = dir;
-        let right = Vector2::new(-dir.y, dir.x);
-        let row_sign = if spawn_distance < 0.0 { -1.0 } else { 1.0 };
-
-        // 3-wide grid: scan for a spot clear of any existing crate, from any
-        // player, so two players dropping cargo near the same spot don't
-        // compute overlapping spawn points and destroy each other's crates
-        let mut spawn_point = point + forward * spawn_distance;
-        let mut found_spot = false;
-        for i in 0..9 {
-            let row = (i / 3) as f64;
-            let col = (i % 3) as f64 - 1.0;
-            let test_pos = point + forward * (spawn_distance + row_sign * row * 5.0) + right * (col * 5.0);
-            if self.list_crates_near_point(test_pos, 4.0)?.is_empty() {
-                spawn_point = test_pos;
-                found_spot = true;
-                break;
-            }
-        }
-        if !found_spot {
-            bail!("no clear space to spawn crate, move away from other crates")
-        }
+        // Scan for a spot clear of any existing crate, from any player, so two
+        // players dropping cargo near the same spot don't compute overlapping
+        // spawn points and destroy each other's crates
+        let spawn_point = self
+            .find_crate_spawn_point(point, dir, spawn_distance)?
+            .ok_or_else(|| anyhow!("no clear space to spawn crate, move away from other crates"))?;
 
         // Pick template: helo dynamic cargo uses helo_cargo_template (fallback to c130_cargo_template)
         let template = if !auto_unpack {
@@ -3124,14 +3133,37 @@ impl Db {
                 for (side, crate_name, origin, ucid, crate_def, _crate_idx, auto_unpack) in crates {
                     // Get player's current position and direction (might have moved)
                     let unit_result = self.ephemeral.slot_instance_unit(lua, slot);
-                    let (point, dir) = match unit_result {
+                    let (point, dir, unit_typ) = match unit_result {
                         Ok(unit) => {
                             let pos = unit.get_position()?;
                             let pt = Vector2::new(pos.p.x, pos.p.z);
                             let direction = Vector2::new(pos.x.x, pos.x.z);
-                            (pt, direction)
+                            let typ = unit.get_type_name()?;
+                            (pt, direction, typ)
                         }
                         Err(_) => continue, // Player might have disconnected
+                    };
+
+                    // Same spawn_distance resolution as the single-crate path,
+                    // so batch spawns land behind the aircraft (not on top of
+                    // the player) and grid out instead of stacking.
+                    let cargo_cfg = self.ephemeral.cfg.cargo.get(&Vehicle(unit_typ));
+                    let spawn_distance = cargo_cfg
+                        .and_then(|cc| cc.spawn_distance)
+                        .unwrap_or_else(|| {
+                            if auto_unpack {
+                                self.ephemeral.cfg.c130_cargo.as_ref()
+                                    .and_then(|c| c.spawn_distance)
+                                    .unwrap_or(-45.0)
+                            } else {
+                                self.ephemeral.cfg.helo_cargo.as_ref()
+                                    .and_then(|c| c.spawn_distance)
+                                    .unwrap_or(4.0)
+                            }
+                        });
+                    let point = match self.find_crate_spawn_point(point, dir, spawn_distance) {
+                        Ok(Some(p)) => p,
+                        Ok(None) | Err(_) => continue, // no clear space, skip this crate
                     };
 
                     let template = if !auto_unpack {
@@ -3157,12 +3189,10 @@ impl Db {
                         C130CargoType::Deployable { name: crate_name.clone() }
                     };
 
-                    // Use same spawn location approach as regular cargo system
-                    // Note: crate_idx is kept for future use but not currently used for positioning
                     let spawnpos = SpawnLoc::AtPos {
                         pos: point,
-                        offset_direction: dir,  // Same as regular cargo system
-                        group_heading: azumith2d(dir),  // Same as regular cargo system
+                        offset_direction: dir,
+                        group_heading: azumith2d(dir),
                     };
 
                     let dk = DeployKind::Crate {
