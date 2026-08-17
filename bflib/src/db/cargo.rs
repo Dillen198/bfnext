@@ -584,6 +584,24 @@ impl Db {
         self.delete_group(&gid)
     }
 
+    pub fn destroy_all_nearby_crates(&mut self, lua: MizLua, slot: &SlotId) -> Result<usize> {
+        let st = SlotStats::get(self, lua, slot)?;
+        if st.in_air {
+            bail!("you must land to destroy crates")
+        }
+        let nearby = self.list_nearby_crates(&st)?;
+        if nearby.is_empty() {
+            bail!("no nearby crates")
+        }
+        let gids: SmallVec<[GroupId; 4]> = nearby.iter().map(|nc| nc.group.id).collect();
+        drop(nearby);
+        let n = gids.len();
+        for gid in gids {
+            self.delete_group(&gid)?;
+        }
+        Ok(n)
+    }
+
     pub fn list_cargo(&self, slot: &SlotId) -> Option<&Cargo> {
         self.ephemeral.cargo.get(slot)
     }

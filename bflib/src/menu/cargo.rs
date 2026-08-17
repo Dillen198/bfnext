@@ -236,6 +236,23 @@ fn destroy_nearby_crate(lua: MizLua, gid: GroupId) -> Result<()> {
     Ok(())
 }
 
+fn destroy_all_nearby_crates(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    match ctx.db.destroy_all_nearby_crates(lua, &slot) {
+        Ok(n) => {
+            let msg = format_compact!("destroyed {} nearby crate{}", n, if n == 1 { "" } else { "s" });
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg)
+        }
+        Err(e) => ctx
+            .db
+            .ephemeral
+            .msgs()
+            .panel_to_group(10, false, gid, format_compact!("{}", e)),
+    }
+    Ok(())
+}
+
 fn spawn_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
@@ -732,9 +749,23 @@ pub(super) fn add_c130_cargo_menu_for_group(
     // Add utility commands at top level
     mc.add_command_for_group(
         group,
+        "List Nearby Crates".into(),
+        Some(root.clone()),
+        list_nearby_crates,
+        group,
+    )?;
+    mc.add_command_for_group(
+        group,
         "Delete Nearby Crate".into(),
         Some(root.clone()),
         destroy_nearby_crate,
+        group,
+    )?;
+    mc.add_command_for_group(
+        group,
+        "Delete All Nearby Crates".into(),
+        Some(root.clone()),
+        destroy_all_nearby_crates,
         group,
     )?;
 
