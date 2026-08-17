@@ -77,7 +77,7 @@ function AircraftImage({ type }: { type: string }) {
   const src = `/images/aircraft/${encodeURIComponent(type)}.jpg`
   if (err) {
     return (
-      <div style={{ width: 280, height: 158, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.15, flexShrink: 0 }}>
+      <div style={{ width: '100%', aspectRatio: '16 / 9', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.15 }}>
         <Plane size={64} />
       </div>
     )
@@ -87,7 +87,7 @@ function AircraftImage({ type }: { type: string }) {
       src={src}
       alt={type}
       onError={() => setErr(true)}
-      style={{ width: 280, height: 158, objectFit: 'cover', borderRadius: 4, border: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}
+      style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' }}
     />
   )
 }
@@ -607,11 +607,11 @@ export default function Pilots() {
 
             {/* ── Most flown airframe ── */}
             {mostFlown && (
-              <div className="vs-card px-4 py-3">
-                <div style={dim}>Most Flown Airframe</div>
-                <div className="flex items-center gap-4 mt-2">
-                  <AircraftImage type={mostFlown} />
-                  <div style={{ fontSize: '0.9rem', color: '#60a5fa', fontWeight: 700, letterSpacing: '0.05em' }}>{mostFlown}</div>
+              <div className="vs-card p-0" style={{ overflow: 'hidden' }}>
+                <AircraftImage type={mostFlown} />
+                <div className="px-4 py-3">
+                  <div style={dim}>Most Flown Airframe</div>
+                  <div style={{ fontSize: '1.15rem', color: '#60a5fa', fontWeight: 700, letterSpacing: '0.05em', marginTop: 2 }}>{mostFlown}</div>
                 </div>
               </div>
             )}
