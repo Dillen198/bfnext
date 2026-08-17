@@ -526,6 +526,10 @@ pub(super) fn sync_obj_to_warehouse(obj: &Objective, warehouse: &warehouse::Ware
     let perf = Arc::make_mut(&mut perf.inner);
     for (item, inv) in &obj.warehouse.equipment {
         perf.logistics_items.insert((item.clone(), obj.id));
+        if item.as_str() == "AJS37" || item.as_str() == "C-130J-30" || item.as_str().starts_with("CH-47F") {
+            info!("[WAREHOUSE_SYNC] pushing obj={} owner={:?} {item}=stored:{}",
+                  obj.name, obj.owner, inv.stored);
+        }
         warehouse
             .set_item(item.clone(), inv.stored)
             .context("setting item")?
@@ -647,8 +651,43 @@ impl Db {
                 Ok(())
             })
             .context("iterating resource map")?;
+            // Backfill explicit zero entries: the loop above only inserts an
+            // item when qty > 0, so an item that's deliberately 0 in one
+            // side's supply source (e.g. an aircraft type that side isn't
+            // meant to have) but nonzero for another side never became a
+            // tracked entry for the excluded side at all. That meant nothing
+            // ever called set_item(name, 0) to actually zero it out on that
+            // side's warehouses -- whatever the built mission file already
+            // had for it (from bftools/the base .miz) was silently left in
+            // place forever. Explicitly tracking it as production=0 makes
+            // the normal init/capture sync paths push a real zero.
+            let all_managed: fxhash::FxHashSet<String> = self
+                .ephemeral
+                .production_by_side
+                .values()
+                .flat_map(|p| p.equipment.keys().cloned())
+                .collect();
+            for side in Side::ALL {
+                let production =
+                    Arc::make_mut(self.ephemeral.production_by_side.entry(side).or_default());
+                for name in &all_managed {
+                    if !production.equipment.contains_key(name) {
+                        production
+                            .equipment
+                            .insert(name.clone(), Equipment { production: 0 });
+                    }
+                }
+            }
             info!("[WAREHOUSE] Resource map initialized. Sides with production: {:?}",
                   self.ephemeral.production_by_side.keys().collect::<Vec<_>>());
+            for (side, production) in &self.ephemeral.production_by_side {
+                for probe in ["AJS37", "C-130J-30", "CH-47Fbl1"] {
+                    match production.equipment.get(probe) {
+                        Some(equip) => info!("[WAREHOUSE_PROBE] {side:?} {probe}: production={}", equip.production),
+                        None => info!("[WAREHOUSE_PROBE] {side:?} {probe}: not tracked at all"),
+                    }
+                }
+            }
         } else {
             info!("[WAREHOUSE] Production data already exists, skipping resource map init");
         }
@@ -979,6 +1018,7 @@ impl Db {
                         .persisted
                         .objectives
                         .into_iter()
+                        .filter(|(_, obj)| !obj.kind.is_special_sam_site())
                         .map(|(id, _)| *id)
                         .collect();
                     self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives }
@@ -988,6 +1028,7 @@ impl Db {
                         .persisted
                         .objectives
                         .into_iter()
+                        .filter(|(_, obj)| !obj.kind.is_special_sam_site())
                         .map(|(id, _)| *id)
                         .collect();
                     self.ephemeral.logistics_stage = LogiStage::SyncFromWarehouses { objectives };
@@ -1483,6 +1524,7 @@ impl Db {
                             .persisted
                             .objectives
                             .into_iter()
+                            .filter(|(_, obj)| !obj.kind.is_special_sam_site())
                             .map(|(id, _)| *id)
                             .collect();
                         self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
@@ -1526,8 +1568,22 @@ impl Db {
         map.for_each(|name, _| {
             match production.equipment.get(&name) {
                 Some(equip) => {
-                    let inv = obj.warehouse.equipment.get_or_default_cow(name);
-                    inv.capacity = whcfg.capacity(hub, equip.production);
+                    let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
+                    let capacity = whcfg.capacity(hub, equip.production);
+                    inv.capacity = capacity;
+                    // Also (re)stock, not just resize -- this only ran on
+                    // capacity before, so a freshly-captured base never got
+                    // its warehouse actually filled with the new owner's
+                    // stock (airframes included, since they're plain entries
+                    // in this same equipment map) until whatever it already
+                    // had happened to reach the new capacity through normal
+                    // resupply. New owner should start fully stocked, same
+                    // as at mission init.
+                    inv.stored = capacity;
+                    if name.as_str() == "AJS37" || name.as_str() == "C-130J-30" || name.as_str().starts_with("CH-47F") {
+                        info!("[WAREHOUSE_CAPTURE] {:?} obj={} {name}: production={} capacity={capacity}",
+                              obj.owner, obj.name, equip.production);
+                    }
                 }
                 None => {
                     if let Some(equip) = other_production.equipment.get(&name) {
