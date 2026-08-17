@@ -1158,13 +1158,35 @@ impl WarehouseTemplate {
         Ok(id_map)
     }
 
+    /// Same as `apply`, but also returns a human-readable report of what it
+    /// did: which dynSpawnTemplate groups were found, what each inventory
+    /// entry specifies, and exactly which airport/warehouse + aircraft type
+    /// combinations got a linkDynTempl/initialAmount written and what the
+    /// value changed from/to. Aircraft types that aren't linked at all (no
+    /// linkDynTempl in either inventory) are called out explicitly, since
+    /// their per-airport quantities are inherited as-is from the base
+    /// mission file and this code never touches them.
     fn apply(
         &self,
         lua: &Lua,
         cfg: &MizCmd,
         base: &mut LoadedMiz,
         id_map: &HashMap<i64, i64>,
-    ) -> Result<()> {
+    ) -> Result<std::string::String> {
+        use std::fmt::Write as _;
+        let mut report = std::string::String::new();
+        let _ = writeln!(report, "=== dynSpawnTemplate groups (from --warehouse file) ===");
+        if self.dyn_spawn_groups.is_empty() {
+            let _ = writeln!(report, "(none found)");
+        }
+        for (side, is_heli, orig_gid, _group) in &self.dyn_spawn_groups {
+            let new_gid = id_map.get(orig_gid).copied();
+            let _ = writeln!(
+                report,
+                "  {side:?} {} orig_groupId={orig_gid} -> new_groupId={new_gid:?}",
+                if *is_heli { "helicopter" } else { "plane" }
+            );
+        }
         let mut blue_inventory = 0;
         let mut red_inventory = 0;
         let mut whids = vec![];
@@ -1291,15 +1313,42 @@ impl WarehouseTemplate {
         // airport and non-inventory warehouse, so all airbases/FARPs/naval units get
         // Apply dynSpawnTemplate links from both inventories to every warehouse —
         // templates are common to all sides so coalition is not used to filter.
-        let both_invs: [Table; 2] = [
-            warehouses
-                .raw_get::<_, Table>(blue_inventory)
-                .context("getting blue inventory for propagation")?,
-            warehouses
-                .raw_get::<_, Table>(red_inventory)
-                .context("getting red inventory for propagation")?,
+        let both_invs: [(&str, Table); 2] = [
+            (
+                "blue",
+                warehouses
+                    .raw_get::<_, Table>(blue_inventory)
+                    .context("getting blue inventory for propagation")?,
+            ),
+            (
+                "red",
+                warehouses
+                    .raw_get::<_, Table>(red_inventory)
+                    .context("getting red inventory for propagation")?,
+            ),
         ];
-        let propagate_links = |wh: Table| -> Result<()> {
+        let _ = writeln!(report, "\n=== Inventory template entries (--warehouse file blue/red inventory) ===");
+        for (side_name, inv) in &both_invs {
+            if let Ok(inv_ac) = inv.raw_get::<_, Table>("aircrafts") {
+                for cat in ["planes", "helicopters"] {
+                    if let Ok(inv_cat) = inv_ac.raw_get::<_, Table>(cat) {
+                        for pair in inv_cat.pairs::<std::string::String, Table>() {
+                            let (ac_type, inv_entry) = pair?;
+                            let amt = inv_entry.raw_get::<_, i64>("initialAmount").unwrap_or(0);
+                            let link = inv_entry.raw_get::<_, i64>("linkDynTempl").unwrap_or(0);
+                            if link != 0 {
+                                let _ = writeln!(report, "  [{side_name}/{cat}] {ac_type}: initialAmount={amt} linkDynTempl={link} (propagated to every airport/warehouse below)");
+                            } else {
+                                let _ = writeln!(report, "  [{side_name}/{cat}] {ac_type}: initialAmount={amt} NOT LINKED (linkDynTempl=0/absent) -- quantity at each airport is inherited as-is from the base mission file, this tool never touches it");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let both_invs: [Table; 2] = [both_invs[0].1.clone(), both_invs[1].1.clone()];
+        let propagation_log: std::cell::RefCell<Vec<std::string::String>> = std::cell::RefCell::new(Vec::new());
+        let propagate_links = |id: i64, wh: Table| -> Result<()> {
             let wh_ac: Table = match wh.raw_get("aircrafts") {
                 Ok(t) => t,
                 Err(_) => return Ok(()),
@@ -1334,18 +1383,28 @@ impl WarehouseTemplate {
                                             }
                                         };
                                     wh_entry.raw_set("linkDynTempl", link)?;
-                                    let cur_amt = wh_entry
+                                    // Always sync to the inventory template's amount, not
+                                    // just when the warehouse has none. dynSpawnTemplate
+                                    // types are meant to be centrally controlled by the
+                                    // template -- but the base mission file can already
+                                    // carry a nonzero initialAmount for these types at
+                                    // specific airports (baked in by the map/editor
+                                    // independent of this system), and that stale value
+                                    // was silently winning over the template's intended
+                                    // stock, leaving a handful of airports stuck with
+                                    // whatever the base file happened to have instead of
+                                    // the amount configured in the inventory template.
+                                    let inv_amt = inv_entry
                                         .raw_get::<_, i64>("initialAmount")
                                         .unwrap_or(0);
-                                    if cur_amt == 0 {
-                                        let inv_amt = inv_entry
-                                            .raw_get::<_, i64>("initialAmount")
-                                            .unwrap_or(0);
-                                        wh_entry.raw_set(
-                                            "initialAmount",
-                                            if inv_amt > 0 { inv_amt } else { 1 },
-                                        )?;
-                                    }
+                                    let old_amt = wh_entry
+                                        .raw_get::<_, i64>("initialAmount")
+                                        .unwrap_or(0);
+                                    let new_amt = if inv_amt > 0 { inv_amt } else { 1 };
+                                    wh_entry.raw_set("initialAmount", new_amt)?;
+                                    propagation_log.borrow_mut().push(std::format!(
+                                        "  id={id} [{cat}] {ac_type}: initialAmount {old_amt} -> {new_amt} (linkDynTempl={link})"
+                                    ));
                                     any_link = true;
                                 }
                             }
@@ -1360,12 +1419,13 @@ impl WarehouseTemplate {
             Ok(())
         };
         for wh_pair in airports.clone().pairs::<i64, Table>() {
-            propagate_links(wh_pair?.1)?;
+            let (id, wh) = wh_pair?;
+            propagate_links(id, wh)?;
         }
         for wh_pair in warehouses.clone().pairs::<i64, Table>() {
             let (id, wh) = wh_pair?;
             if id != blue_inventory && id != red_inventory {
-                propagate_links(wh)?;
+                propagate_links(id, wh)?;
             }
         }
         info!(
@@ -1373,7 +1433,19 @@ impl WarehouseTemplate {
         );
         base.warehouses.set("airports", airports)?;
         base.warehouses.set("warehouses", warehouses)?;
-        Ok(())
+        let log = propagation_log.into_inner();
+        let _ = writeln!(
+            report,
+            "\n=== Per-airport/warehouse propagation log ({} entries touched) ===",
+            log.len()
+        );
+        if log.is_empty() {
+            let _ = writeln!(report, "(nothing was linked -- no aircraft in the inventory had a nonzero linkDynTempl)");
+        }
+        for line in log {
+            let _ = writeln!(report, "{line}");
+        }
+        Ok(report)
     }
 }
 
@@ -1433,11 +1505,15 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
     fs::write(&base.miz.files["mission"], &s).context("writing mission file")?;
     info!("wrote serialized mission to mission file.");
     if let Some(wht) = warehouse_template {
-        wht.apply(lua, &cfg, &mut base, &dyn_templ_id_map)
+        let report = wht
+            .apply(lua, &cfg, &mut base, &dyn_templ_id_map)
             .context("applying warehouse template")?;
         let s = serialize_to_lua("warehouses", Value::Table(base.warehouses.clone()))?;
         fs::write(&base.miz.files["warehouses"], &*s).context("writing warehouse file")?;
         info!("wrote serialized warehouses to warehouse file.");
+        let report_path = cfg.output.with_extension("warehouse-report.txt");
+        fs::write(&report_path, &report).context("writing warehouse report")?;
+        info!("wrote warehouse report to {:?}", report_path);
     }
     //replace options file
     let options_template = UnpackedMiz::new(&cfg.options).context("loading options template")?;
