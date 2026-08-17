@@ -575,133 +575,129 @@ export default function Pilots() {
         )}
 
         {pilot && (
-          <>
-            {/* ── Pilot name card ── */}
-            <div className="vs-card px-4 py-3 flex items-center gap-3">
-              <div style={{ width: 32, height: 32, background: 'rgba(77,124,15,0.12)', border: '1px solid rgba(77,124,15,0.25)', borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Users size={14} style={{ color: 'var(--accent)' }} />
+          <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 items-start">
+
+            {/* ══════════ LEFT — profile sidebar ══════════ */}
+            <div className="space-y-4">
+
+              {/* ── Pilot name card ── */}
+              <div className="vs-card px-4 py-3 flex items-center gap-3">
+                <div style={{ width: 32, height: 32, background: 'rgba(77,124,15,0.12)', border: '1px solid rgba(77,124,15,0.25)', borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Users size={14} style={{ color: 'var(--accent)' }} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '0.03em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pilot.name}</div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {pilotRank && pilotRank <= 3 && (
+                      <span style={{ fontSize: '0.9rem' }}>{['🥇', '🥈', '🥉'][pilotRank - 1]}</span>
+                    )}
+                    {pilotRank && (
+                      <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
+                        Rank #{pilotRank}
+                      </span>
+                    )}
+                    {user?.ucid === pilot.ucid && (
+                      <span style={{ fontSize: '0.5rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0 4px', borderRadius: 2, letterSpacing: '0.08em' }}>YOU</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setSelected(null); setSearch('') }}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.62rem', flexShrink: 0 }}
+                >
+                  <RotateCcw size={10} /> Clear
+                </button>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '0.03em' }}>{pilot.name}</div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  {pilotRank && pilotRank <= 3 && (
-                    <span style={{ fontSize: '0.9rem' }}>{['🥇', '🥈', '🥉'][pilotRank - 1]}</span>
-                  )}
-                  {pilotRank && (
-                    <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
-                      Rank #{pilotRank}
-                    </span>
-                  )}
-                  {user?.ucid === pilot.ucid && (
-                    <span style={{ fontSize: '0.5rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0 4px', borderRadius: 2, letterSpacing: '0.08em' }}>YOU</span>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={() => { setSelected(null); setSearch('') }}
-                style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.62rem' }}
-              >
-                <RotateCcw size={10} /> Clear
-              </button>
-            </div>
 
-            {/* ── Most flown airframe ── */}
-            {mostFlown && (
-              <div className="vs-card p-0" style={{ overflow: 'hidden' }}>
-                <AircraftImage type={mostFlown} />
-                <div className="px-4 py-3">
-                  <div style={dim}>Most Flown Airframe</div>
-                  <div style={{ fontSize: '1.15rem', color: '#60a5fa', fontWeight: 700, letterSpacing: '0.05em', marginTop: 2 }}>{mostFlown}</div>
-                </div>
-              </div>
-            )}
-
-            {/* ── Primary stat row 1 ── */}
-            <div className="grid grid-cols-4 gap-3">
-              {[
-                { label: 'A/A Victories', value: pilot.air_kills, color: '#60a5fa' },
-                { label: 'A/G Victories', value: pilot.ground_kills, color: '#f97316' },
-                { label: 'V/L Ratio', value: kd(pilot.air_kills, pilot.ground_kills, pilot.deaths), color: '#22c55e' },
-                { label: 'S/L Ratio', value: sl(totalSorties, totalLandings), color: '#a78bfa' },
-              ].map(s => (
-                <div key={s.label} className="vs-card text-center py-4">
-                  <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
-                    {s.label}
-                  </div>
-                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: s.color, fontFamily: 'monospace', lineHeight: 1 }}>
-                    {s.value}
+              {/* ── Most flown airframe (hero) ── */}
+              {mostFlown && (
+                <div className="vs-card p-0" style={{ overflow: 'hidden' }}>
+                  <AircraftImage type={mostFlown} />
+                  <div className="px-4 py-3">
+                    <div style={dim}>Most Flown Airframe</div>
+                    <div style={{ fontSize: '1.15rem', color: '#60a5fa', fontWeight: 700, letterSpacing: '0.05em', marginTop: 2 }}>{mostFlown}</div>
                   </div>
                 </div>
-              ))}
-            </div>
+              )}
 
-            {/* ── Primary stat row 2 ── */}
-            <div className="grid grid-cols-5 gap-3">
-              {[
-                { label: 'Flight Time', value: fmtHours(pilot.hours), color: '#f1f5f9' },
-                { label: 'Cur Streak', value: curStreakVal, color: '#22c55e' },
-                { label: 'Best Streak', value: bestStreakVal, color: '#f59e0b' },
-                { label: 'Best A/A', value: bestAA, color: '#60a5fa' },
-                { label: 'Best A/G', value: bestAG, color: '#f97316' },
-              ].map(s => (
-                <div key={s.label} className="vs-card text-center py-3">
-                  <div style={{ fontSize: '0.58rem', color: 'var(--text-dim)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>
-                    {s.label}
-                  </div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: s.color, fontFamily: 'monospace', lineHeight: 1 }}>
-                    {s.value}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* ── Theater breakdown ── */}
-            {breakdown.length > 0 && (
+              {/* ── Career stats ── */}
               <div className="vs-card p-0">
-                <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
-                  <Shield size={12} style={{ color: 'var(--accent)' }} />
-                  <span style={dim}>Theater Breakdown</span>
-                  <span className="ml-auto font-mono" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>{breakdown.length}</span>
+                <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
+                  <Crosshair size={12} style={{ color: 'var(--accent)' }} />
+                  <span style={dim}>Career Stats</span>
                 </div>
-                <div className="p-3 grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(breakdown.length, 3)}, 1fr)` }}>
-                  {breakdown.map(td => (
-                    <TheaterCard key={td.round_id} td={td} />
+                <div className="px-4 py-1">
+                  {[
+                    { label: 'A/A Victories', value: pilot.air_kills, color: '#60a5fa' },
+                    { label: 'A/G Victories', value: pilot.ground_kills, color: '#f97316' },
+                    { label: 'V/L Ratio', value: kd(pilot.air_kills, pilot.ground_kills, pilot.deaths), color: '#22c55e' },
+                    { label: 'S/L Ratio', value: sl(totalSorties, totalLandings), color: '#a78bfa' },
+                    { label: 'Flight Time', value: fmtHours(pilot.hours), color: 'var(--text)' },
+                    { label: 'Current Streak', value: curStreakVal, color: '#22c55e' },
+                    { label: 'Best Streak', value: bestStreakVal, color: '#f59e0b' },
+                    { label: 'Best A/A (round)', value: bestAA, color: '#60a5fa' },
+                    { label: 'Best A/G (round)', value: bestAG, color: '#f97316' },
+                  ].map(s => (
+                    <div key={s.label} className="flex justify-between items-center" style={{ padding: '0.5rem 0', borderBottom: '1px solid rgba(42,42,42,0.5)' }}>
+                      <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>{s.label}</span>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: s.color, fontFamily: 'monospace' }}>{s.value}</span>
+                    </div>
                   ))}
                 </div>
               </div>
-            )}
 
-            {/* ── Flight log ── */}
-            <FlightLog sorties={sorties} breakdown={breakdown} />
-
-            {/* ── Kill log ── */}
-            <KillLog kills={kills} allPilots={pilots} breakdown={breakdown} />
-
-            {/* ── Additional stats ── */}
-            <div className="vs-card p-0">
-              <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
-                <Award size={12} style={{ color: 'var(--accent)' }} />
-                <span style={dim}>Contributions</span>
-              </div>
-              <div className="grid grid-cols-4 gap-0">
-                {[
-                  { label: 'Captures',     value: pilot.captures },
-                  { label: 'Repairs',      value: pilot.repairs },
-                  { label: 'Supply Runs',  value: pilot.supply_transfers },
-                  { label: 'Troops',       value: pilot.troops },
-                  { label: 'FARPs',        value: pilot.farps },
-                  { label: 'Deploys',      value: pilot.deploys },
-                  { label: 'Actions',      value: pilot.actions },
-                  { label: 'Donated Pts',  value: pilot.donated_points },
-                ].map((s, i) => (
-                  <div key={s.label} style={{ padding: '0.75rem 1rem', borderRight: i % 4 < 3 ? '1px solid var(--border)' : 'none', borderBottom: i < 4 ? '1px solid var(--border)' : 'none' }}>
-                    <div style={{ fontSize: '0.58rem', color: 'var(--text-dim)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '0.2rem' }}>{s.label}</div>
-                    <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{s.value}</div>
-                  </div>
-                ))}
+              {/* ── Contributions ── */}
+              <div className="vs-card p-0">
+                <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
+                  <Award size={12} style={{ color: 'var(--accent)' }} />
+                  <span style={dim}>Contributions</span>
+                </div>
+                <div className="grid grid-cols-2 gap-0">
+                  {[
+                    { label: 'Captures',     value: pilot.captures },
+                    { label: 'Repairs',      value: pilot.repairs },
+                    { label: 'Supply Runs',  value: pilot.supply_transfers },
+                    { label: 'Troops',       value: pilot.troops },
+                    { label: 'FARPs',        value: pilot.farps },
+                    { label: 'Deploys',      value: pilot.deploys },
+                    { label: 'Actions',      value: pilot.actions },
+                    { label: 'Donated Pts',  value: pilot.donated_points },
+                  ].map((s, i) => (
+                    <div key={s.label} style={{ padding: '0.65rem 1rem', borderRight: i % 2 === 0 ? '1px solid var(--border)' : 'none', borderBottom: i < 6 ? '1px solid var(--border)' : 'none' }}>
+                      <div style={{ fontSize: '0.56rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.2rem' }}>{s.label}</div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{s.value}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
-          </>
+
+            {/* ══════════ RIGHT — detail tables ══════════ */}
+            <div className="space-y-4" style={{ minWidth: 0 }}>
+
+              {/* ── Theater breakdown ── */}
+              {breakdown.length > 0 && (
+                <div className="vs-card p-0">
+                  <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
+                    <Shield size={12} style={{ color: 'var(--accent)' }} />
+                    <span style={dim}>Theater Breakdown</span>
+                    <span className="ml-auto font-mono" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>{breakdown.length}</span>
+                  </div>
+                  <div className="p-3 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+                    {breakdown.map(td => (
+                      <TheaterCard key={td.round_id} td={td} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Flight log ── */}
+              <FlightLog sorties={sorties} breakdown={breakdown} />
+
+              {/* ── Kill log ── */}
+              <KillLog kills={kills} allPilots={pilots} breakdown={breakdown} />
+            </div>
+          </div>
         )}
       </div>
     </div>
