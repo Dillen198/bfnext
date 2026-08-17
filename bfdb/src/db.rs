@@ -1364,6 +1364,19 @@ impl StatsDb {
         Ok(rounds)
     }
 
+    /// Every round ever recorded, not just the latest per scenario. Used for
+    /// the round-history selector -- `latest_rounds` intentionally discards
+    /// history and can't serve that purpose.
+    pub(crate) fn all_rounds(&self) -> Result<Vec<(Scenario, RoundId, Round)>> {
+        let mut rounds = Vec::new();
+        for r in self.round.iter() {
+            let ((scenario, rid), round) = r?;
+            rounds.push((scenario, rid, round));
+        }
+        rounds.sort_by(|a, b| b.2.start.cmp(&a.2.start));
+        Ok(rounds)
+    }
+
     /// Get objectives for a given round
     pub(crate) fn objectives_for_round(&self, round: RoundId) -> Result<Vec<(ObjectiveId, Objective)>> {
         let mut objs = Vec::new();

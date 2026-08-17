@@ -2486,6 +2486,9 @@ fn run_slow_timed_events(
         if let Err(e) = ctx.db.run_factory_production(ts) {
             error!("could not run factory production {e}")
         }
+        if let Err(e) = ctx.db.check_scenery_buildings(lua, ts) {
+            error!("could not check scenery buildings {e}")
+        }
         record_perf(&mut perf.slow_timed, ts);
         let ts = Utc::now();
         match ctx.db.check_carrier_repairs(ts) {
@@ -2768,9 +2771,13 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
     debug!("path to saved state is {:?}", path);
     info!("initializing db");
     let to_bg = ctx.to_background.as_ref().unwrap().clone();
-    ctx.do_bg_task(Task::Stat(Stat::NewRound { sortie: ctx.sortie.clone() }));
     if !path.exists() {
         debug!("saved state doesn't exist, starting from default");
+        // Only announce a genuinely new round when there's no saved state to
+        // resume. Sending this unconditionally made bfdb close and reopen the
+        // round on every technical restart (crash recovery, scheduled
+        // restart), not just real campaign resets.
+        ctx.do_bg_task(Task::Stat(Stat::NewRound { sortie: ctx.sortie.clone() }));
         ctx.db = Db::init(lua, cfg, &ctx.idx, &miz, to_bg)
             .context("initalizing the mission")?;
     } else {

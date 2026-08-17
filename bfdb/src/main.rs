@@ -220,7 +220,7 @@ async fn api_config(cfg_json: Arc<String>) -> impl warp::Reply {
 
 async fn api_rounds(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.all_rounds()?;
         let entries: Vec<_> = rounds
             .iter()
             .map(|(scenario, rid, round)| {
@@ -536,7 +536,13 @@ async fn api_stats(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> 
         let active_rid = active_round.map(|(_, rid, _)| *rid);
         let pilots = db.pilot_leaderboard(active_rid)?;
         let obj_count = if let Some((_, rid, _)) = active_round {
-            db.objectives_for_round(*rid)?.len()
+            // Match the anti-cheat filtering in api_objectives (hides carrier
+            // groups and special SAM sites) so this count stays consistent
+            // with what /api/objectives actually reports.
+            db.objectives_for_round(*rid)?
+                .iter()
+                .filter(|(_, obj)| !obj.kind.is_carrier_group() && !obj.kind.is_special_sam_site())
+                .count()
         } else {
             0
         };
@@ -1057,15 +1063,111 @@ async fn api_admin_cfg_post(
 }
 
 /// GET /api/admin/perf  — last session's DCS engine performance stats (admin only)
+/// Snapshot this host's CPU/RAM/disk/GPU usage and available temperature
+/// sensors. Two CPU refreshes with a short sleep in between are required
+/// because CPU usage in `sysinfo` is a delta measurement -- a single refresh
+/// right after process start always reads 0.
+fn collect_hardware() -> serde_json::Value {
+    use sysinfo::{Components, Disks, System};
+
+    let mut sys = System::new_all();
+    sys.refresh_cpu_usage();
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+
+    let cpus = sys.cpus();
+    let cpu_usage: f32 = if cpus.is_empty() {
+        0.
+    } else {
+        cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32
+    };
+
+    let disks = Disks::new_with_refreshed_list();
+    let disk_rows: Vec<serde_json::Value> = disks
+        .iter()
+        .map(|d| {
+            let total = d.total_space();
+            let avail = d.available_space();
+            let used = total.saturating_sub(avail);
+            serde_json::json!({
+                "mount": d.mount_point().to_string_lossy(),
+                "total_bytes": total,
+                "used_bytes": used,
+            })
+        })
+        .collect();
+
+    // Best-effort: not every sensor DCS servers expose is visible to Windows,
+    // so this can legitimately come back empty depending on drivers/hardware.
+    let components = Components::new_with_refreshed_list();
+    let temp_rows: Vec<serde_json::Value> = components
+        .iter()
+        .filter(|c| !c.temperature().is_nan())
+        .map(|c| {
+            serde_json::json!({
+                "label": c.label(),
+                "celsius": c.temperature(),
+            })
+        })
+        .collect();
+
+    let gpu = collect_gpu();
+
+    serde_json::json!({
+        "cpu_count": cpus.len(),
+        "cpu_usage_pct": cpu_usage,
+        "mem_total_bytes": sys.total_memory(),
+        "mem_used_bytes": sys.used_memory(),
+        "disks": disk_rows,
+        "temps": temp_rows,
+        "gpu": gpu,
+    })
+}
+
+/// Best-effort NVIDIA GPU stats via NVML. Returns null if NVML isn't
+/// available (no NVIDIA driver, or no GPU) rather than failing the whole
+/// hardware snapshot -- this endpoint should degrade gracefully.
+fn collect_gpu() -> serde_json::Value {
+    use nvml_wrapper::{enum_wrappers::device::TemperatureSensor, Nvml};
+
+    let result: anyhow::Result<serde_json::Value> = (|| {
+        let nvml = Nvml::init()?;
+        let device = nvml.device_by_index(0)?;
+        let name = device.name()?;
+        let util = device.utilization_rates()?;
+        let mem = device.memory_info()?;
+        let temp = device.temperature(TemperatureSensor::Gpu).ok();
+        Ok(serde_json::json!({
+            "available": true,
+            "name": name,
+            "usage_pct": util.gpu,
+            "mem_usage_pct": util.memory,
+            "mem_total_bytes": mem.total,
+            "mem_used_bytes": mem.used,
+            "celsius": temp,
+        }))
+    })();
+
+    match result {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("GPU stats unavailable: {e:?}");
+            serde_json::json!({ "available": false })
+        }
+    }
+}
+
 async fn api_admin_perf(
     session_id: Option<Uuid>,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
     let data = task::block_in_place(|| -> Result<String> {
+        let hardware = collect_hardware();
         let end = db.latest_session_end()?;
         let json = match end {
-            None => serde_json::json!({ "available": false }),
+            None => serde_json::json!({ "available": false, "hardware": hardware }),
             Some(e) => {
                 let ps = e.engine.stat(&e.frame);
                 fn row(s: &dcso3::perf::HistStat) -> serde_json::Value {
@@ -1124,6 +1226,7 @@ async fn api_admin_perf(
                     "engine": engine_rows,
                     "api": api_rows,
                     "logistics_items": logistics_items,
+                    "hardware": hardware,
                 })
             }
         };
