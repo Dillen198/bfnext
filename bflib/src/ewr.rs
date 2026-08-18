@@ -691,11 +691,29 @@ impl Ewr {
                         .get(&gid)
                         .map(|until| now < *until)
                         .unwrap_or(false);
+                    // IADN network gating: this site only gets smart,
+                    // network-fused cueing if its linked command center is
+                    // alive and still friendly. Cut off (never linked, or
+                    // the command center died/was captured) -> it doesn't
+                    // just get abandoned in whatever EMCON state it was
+                    // last forced into; it's explicitly returned to Auto,
+                    // DCS's own always-on default, same as a site with no
+                    // IADN involvement at all.
+                    let networked = db
+                        .persisted
+                        .objectives_by_group
+                        .get(&gid)
+                        .and_then(|sam_oid| db.persisted.sam_command_center_link.get(sam_oid))
+                        .and_then(|cc_oid| db.persisted.objectives.get(cc_oid))
+                        .map(|cc| cc.owner == donor.side && cc.health() > 0)
+                        .unwrap_or(false);
                     let desired = if under_harm_threat {
-                        // Survival overrides targeting: go dark even if a
-                        // good cue exists, rather than trading the site for
-                        // one more shot.
+                        // Survival overrides everything else, networked or
+                        // not: go dark even if a good cue exists, rather
+                        // than trading the site for one more shot.
                         dcso3::controller::AlarmState::Green
+                    } else if !networked {
+                        dcso3::controller::AlarmState::Auto
                     } else {
                         let cues = self.sam_cue_targets(donor.side, sam_pos, donor.range as f64, iadn);
                         if cues.is_empty() {

@@ -210,11 +210,11 @@ function TerritoryBar({ objectives }: { objectives: Objective[] }) {
 
 const OBJ_ICON: Record<string, string> = {
   Airbase: '✈', FARP: '⬡', FOB: '▲', Factory: '⚙',
-  'Logistics Hub': '◈', 'Naval Base': '⚓', 'Carrier Group': '⚓',
+  'Logistics Hub': '◈', 'Naval Base': '⚓', 'Carrier Group': '⚓', 'Command Center': '◆',
 }
 const OBJ_KIND_SHORT: Record<string, string> = {
   Airbase: 'AB', FARP: 'FARP', FOB: 'FOB', Factory: 'FAC',
-  'Logistics Hub': 'LOG', 'Naval Base': 'NB', 'Carrier Group': 'CVN',
+  'Logistics Hub': 'LOG', 'Naval Base': 'NB', 'Carrier Group': 'CVN', 'Command Center': 'CC',
 }
 
 function CriticalObjectives({ objectives }: { objectives: Objective[] }) {
@@ -269,7 +269,7 @@ function ObjectiveRoster({ objectives }: { objectives: Objective[] }) {
   const sorted = useMemo(() =>
     [...objectives].filter(o => o.lat !== 0 || o.lon !== 0)
       .sort((a, b) => {
-        const order: Record<string, number> = { Airbase: 0, 'Naval Base': 1, 'Carrier Group': 2, Factory: 3, 'Logistics Hub': 4, FARP: 5, FOB: 6 }
+        const order: Record<string, number> = { Airbase: 0, 'Naval Base': 1, 'Carrier Group': 2, Factory: 3, 'Logistics Hub': 4, FARP: 5, FOB: 6, 'Command Center': 7 }
         return (order[a.kind] ?? 9) - (order[b.kind] ?? 9) || a.name.localeCompare(b.name)
       }),
     [objectives]

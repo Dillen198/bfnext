@@ -11,6 +11,7 @@
 - **NB** = Naval Base (fixed port facility)
 - **CG** = Carrier Group (mobile naval objective)
 - **FAC** = Factory (strategic production facility)
+- **CC** = Command Center (IADN network node — see [Command Center](#command-center-cc-new))
 
 ### Coalition Prefixes
 - **B** = Blue (starting color)
@@ -96,6 +97,30 @@ below for the full workflow.
 - Capturable by ground troops like any other objective
 - Equipment and starting owner come entirely from a dedicated mission
   editor template, generated into campaign config via `bftools special-sam`
+
+### Command Center (CC) **[NEW]**
+IADN network node — a pure trigger-zone objective like FOB/LO, no DCS
+airbase/pad needed and no aircraft slots:
+- LOGI (optional — a light garrison is enough, it isn't a supply hub)
+- AAA / SR for defense (recommended — losing it degrades your own IADS)
+- Captured/destroyed exactly like any standard objective (health + troops,
+  no special mechanic)
+
+At mission start, **every Special SAM Site auto-links to its nearest
+same-coalition Command Center** (no manual linking needed — closest wins,
+same distance-based auto-link Carrier Groups use for their parent Naval
+Base). A SAM site whose linked Command Center is alive and still friendly
+gets full IADN network cueing (shares detections with every other sensor
+on that coalition, powers its radar up only for a real threat, goes dark
+automatically if an anti-radiation missile is inbound). Lose the Command
+Center — destroyed, captured, or the SAM was never in range of one — and
+that SAM site falls back to plain always-on DCS AI, same as if none of
+this existed. Place Command Centers to actually cover your SAM sites,
+not as an afterthought; a SAM site more than one Command Center's
+coverage radius from any friendly CC will simply never link to one.
+
+See [IADN](#iadn-integrated-air-defence-network-new) below for the full
+mechanic (cueing, EMCON, HARM defense) and its config options.
 
 ---
 
@@ -322,6 +347,58 @@ site.
 - Sites with only 1-2 units after generation are usually a sign of an
   incomplete/mis-scoped group in the editor, not an intentional
   single-launcher site — worth a second look before merging.
+
+---
+
+## IADN (Integrated Air Defence Network) **[NEW]**
+
+A native (no external Lua framework) system that makes SAM search radars
+behave intelligently instead of just running DCS's bare default AI. Three
+parts, all driven by the same underlying multi-sensor track fusion the EWR
+system already runs every tick:
+
+### SAM cueing + EMCON
+Every tick, each SAM search radar checks the fused, multi-sensor track
+picture for its coalition (not just what its own radar alone could see)
+for a confirmed hostile within range. No qualifying threat → radar goes
+dark (`AlarmState::Green`, doesn't light up for nothing). A qualifying
+threat → radar comes up (`AlarmState::Auto`) and DCS's own native SAM
+engagement logic takes it from there.
+
+### Command Center dependency
+This smart behavior is **only** available to a SAM site whose nearest
+friendly [Command Center](#command-center-cc-new) is alive and still
+friendly. Lose that link and the site falls straight back to plain
+always-on DCS AI (`AlarmState::Auto`, no EMCON) — it isn't left stuck in
+whatever state it was last forced into.
+
+### HARM / anti-radiation missile defense
+If an enemy fires a weapon whose DCS type name is listed in
+`iadn.anti_radiation_weapons`, it's tracked in flight. One that comes
+within `iadn.harm_defense_radius_m` of a live SAM search radar on the
+threatened side forces that site dark for `iadn.harm_defense_cooldown_secs`
+— overriding the normal cueing decision, survival first. This is a
+proximity heuristic ("an ARM launched near an active radar might be
+targeting it"), not true seeker/guidance simulation, and it applies
+whether or not the site is currently networked to a Command Center.
+
+### Config reference (`iadn` block)
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `track_association_radius_m` | 3000 | Radius within which two sensor detections fuse into one track |
+| `detection_snr_threshold` | 0.5 | Minimum signal quality (0–1) to register a detection at all |
+| `track_stale_secs` | 60 | Seconds with no detection before a track is marked stale |
+| `track_drop_secs` | 120 | Seconds before a stale track is dropped entirely |
+| `sam_cue_enabled` | true | Master switch for SAM cueing + EMCON |
+| `sam_cue_confidence_threshold` | 0.4 | Minimum fused-track confidence before a SAM is allowed to engage it |
+| `anti_radiation_weapons` | *(empty — must configure)* | DCS weapon type names treated as ARMs, e.g. `AGM_88C`, `Kh25MPU`, `Kh58Ushke`, `ALARM` |
+| `harm_defense_radius_m` | 20000 | Distance from a tracked ARM within which a SAM site is considered threatened |
+| `harm_defense_cooldown_secs` | 20 | How long a threatened site stays forced dark |
+
+`anti_radiation_weapons` ships empty — HARM defense silently does nothing
+until you populate it with the actual weapon type names your theater's
+loadouts use. See `miz/SAMPLE_CFG.json`'s `iadn` block for a populated
+example.
 
 ---
 
@@ -741,10 +818,31 @@ All new features can be configured in the campaign config JSON:
 | CG | Carrier Group | **Yes** | Mobile carrier task force |
 | FAC | Factory | No | Production facility |
 | SAM | Special SAM Site | No | Hidden IADS, not built from a trigger zone — see [Special SAM Sites](#special-sam-sites-new) |
+| CC | Command Center | No | IADN network node — SAM sites auto-link to the nearest friendly one, see [Command Center](#command-center-cc-new) |
 
 ---
 
 ## Changelog
+
+### Version 2.5 (2026-08-18)
+**Added: IADN (Integrated Air Defence Network) and Command Center objective**
+- **Command Center** (NEW objective type, `CC` prefix): pure trigger-zone
+  IADN network node, no DCS airbase/pad, no slots. Every Special SAM Site
+  auto-links to its nearest same-coalition Command Center at mission
+  start — see [Command Center](#command-center-cc-new).
+- **IADN SAM cueing + EMCON**: SAM search radars now use the shared,
+  multi-sensor fused track picture (not just their own organic radar) to
+  decide when to power up, instead of running DCS's bare default AI with
+  radar always hot. Requires a live, friendly Command Center link — a
+  SAM site cut off from its network falls back to plain always-on AI.
+- **HARM / anti-radiation missile defense**: SAM sites now react to
+  inbound anti-radiation missiles by forcing radar dark for a
+  configurable cooldown, instead of having no defense against them at
+  all. Requires populating the new `iadn.anti_radiation_weapons` list
+  with your theater's actual ARM type names — ships empty by default.
+- See [IADN](#iadn-integrated-air-defence-network-new) for the full
+  mechanic and config reference, and `miz/SAMPLE_CFG.json`'s `iadn`
+  block for a populated example.
 
 ### Version 2.4 (2026-08-13)
 **Added: Special SAM Sites, config editor, and doc corrections**

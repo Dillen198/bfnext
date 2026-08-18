@@ -410,7 +410,7 @@ impl ObjectiveMarkup {
     pub(super) fn new(cfg: &Cfg, msgq: &mut MsgQ, obj: &Objective, persisted: &Persisted) -> Self {
         let text_color = |a| text_color(obj.owner, a);
         let all_spec = match obj.kind {
-            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. } => {
+            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. } | ObjectiveKind::CommandCenter => {
                 SideFilter::All
             }
             ObjectiveKind::Farp { .. } | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. } => obj.owner.into(),
@@ -572,7 +572,7 @@ impl ObjectiveMarkup {
         };
 
         match obj.kind {
-            ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Factory { .. } | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. } => (),
+            ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Factory { .. } | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. } | ObjectiveKind::CommandCenter => (),
             ObjectiveKind::Logistics => {
                 for oid in &obj.warehouse.destination {
                     let id = MarkId::new();

@@ -226,6 +226,7 @@ impl Db {
                 ObjectiveKind::NavalBase => 4,
                 ObjectiveKind::Factory { .. } => 4,
                 ObjectiveKind::Logistics => 3,
+                ObjectiveKind::CommandCenter => 3,
                 ObjectiveKind::Fob => 2,
                 ObjectiveKind::CarrierGroup { .. } => 2,
                 ObjectiveKind::Farp { .. } => 1,

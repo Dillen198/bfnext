@@ -990,7 +990,7 @@ impl Db {
                         missing.push(obj.name.clone());
                     }
                 }
-                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. } | ObjectiveKind::SpecialSamSite { .. } => {
+                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. } | ObjectiveKind::SpecialSamSite { .. } | ObjectiveKind::CommandCenter => {
                     // These objective types don't require airbase warehouses
                 }
             }
@@ -1687,7 +1687,7 @@ impl Db {
                     let hub = self.compute_supplier(obj)?;
                     suppliers.push((*oid, hub));
                 }
-                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. } => (),
+                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. } | ObjectiveKind::CommandCenter => (),
             }
         }
         let mut current: FxHashMap<ObjectiveId, SetS<ObjectiveId>> = FxHashMap::default();

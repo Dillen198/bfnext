@@ -51,6 +51,7 @@ const NATO_SIDC: Record<string, string> = {
   'Naval Base':    'S_GP------H----', // Naval installation
   'Carrier Group': 'S_NB------H----', // Naval - Battle group
   Factory:         'S_GPI-----H----', // Installation
+  'Command Center': 'S_GFIC----H----', // Signal/command installation
 }
 
 // Which SIDC to use based on kind, substituting the identity character

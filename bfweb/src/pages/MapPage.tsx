@@ -263,13 +263,13 @@ function restMilSymIcon(owner: string, tags: string[], typ: string, alt: number,
 // ── Threat / objective icons ───────────────────────────────────────────
 const OBJ_SYMBOL: Record<string, string> = {
   Airbase: '✈', FARP: '⬡', FOB: '⬡', 'Logistics Hub': '⬡',
-  'Naval Base': '⚓', 'Carrier Group': '⚓', Factory: '⚙',
+  'Naval Base': '⚓', 'Carrier Group': '⚓', Factory: '⚙', 'Command Center': '◆',
 }
 const OBJ_RADIUS: Record<string, number> = {
-  Airbase: 12, 'Naval Base': 11, 'Carrier Group': 11, Factory: 9, default: 7,
+  Airbase: 12, 'Naval Base': 11, 'Carrier Group': 11, Factory: 9, 'Command Center': 9, default: 7,
 }
 const THREAT_NM: Record<string, number> = {
-  Airbase: 25, 'Naval Base': 40, 'Carrier Group': 50, Factory: 15, 'Logistics Hub': 10, FARP: 5, FOB: 5,
+  Airbase: 25, 'Naval Base': 40, 'Carrier Group': 50, Factory: 15, 'Logistics Hub': 10, FARP: 5, FOB: 5, 'Command Center': 8,
 }
 const MK_STYLE: Record<MarkerType, { bg: string; bd: string }> = {
   IP: { bg: '#22c55e30', bd: '#22c55e' }, TGT: { bg: '#ef444430', bd: '#ef4444' },

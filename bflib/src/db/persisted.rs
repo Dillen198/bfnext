@@ -58,6 +58,15 @@ pub struct Persisted {
     #[serde(default)]
     pub special_sam_sites: SetS<ObjectiveId>,
     #[serde(default)]
+    pub command_centers: SetS<ObjectiveId>,
+    /// SAM site -> its auto-linked nearest friendly CommandCenter (set at
+    /// mission init, same pattern as CarrierGroup.parent_naval_base). A SAM
+    /// site missing an entry here, or whose linked command center is dead
+    /// or enemy-owned, loses IADN network cueing and falls back to plain
+    /// DCS AI.
+    #[serde(default)]
+    pub sam_command_center_link: MapS<ObjectiveId, ObjectiveId>,
+    #[serde(default)]
     pub downed_pilots: SetS<GroupId>,
     #[serde(default)]
     pub dismounts: SetS<GroupId>,

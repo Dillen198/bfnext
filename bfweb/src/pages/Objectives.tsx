@@ -15,14 +15,14 @@ const TT = {
 
 type Filter = 'All' | 'Red' | 'Blue' | 'Neutral'
 
-const OBJ_KINDS = ['Airbase', 'FARP', 'FOB', 'Factory', 'Logistics Hub', 'Naval Base', 'Carrier Group']
+const OBJ_KINDS = ['Airbase', 'FARP', 'FOB', 'Factory', 'Logistics Hub', 'Naval Base', 'Carrier Group', 'Command Center']
 const KIND_ICONS: Record<string, string> = {
   Airbase: '✈', FARP: '⬡', FOB: '▲', Factory: '⚙',
-  'Logistics Hub': '◈', 'Naval Base': '⚓', 'Carrier Group': '⚓',
+  'Logistics Hub': '◈', 'Naval Base': '⚓', 'Carrier Group': '⚓', 'Command Center': '◆',
 }
 const KIND_COLORS: Record<string, string> = {
   Airbase: '#3b82f6', FARP: '#22c55e', FOB: '#f97316', Factory: '#a78bfa',
-  'Logistics Hub': '#06b6d4', 'Naval Base': '#0ea5e9', 'Carrier Group': '#0ea5e9',
+  'Logistics Hub': '#06b6d4', 'Naval Base': '#0ea5e9', 'Carrier Group': '#0ea5e9', 'Command Center': '#eab308',
 }
 
 function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {

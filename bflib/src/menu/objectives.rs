@@ -40,6 +40,7 @@ fn fmt_kind(kind: &ObjectiveKind) -> &'static str {
         ObjectiveKind::CarrierGroup { .. } => "CVN",
         ObjectiveKind::Factory { .. } => "FACT",
         ObjectiveKind::SpecialSamSite => "SAM",
+        ObjectiveKind::CommandCenter => "CC",
     }
 }
 

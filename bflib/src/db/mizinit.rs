@@ -66,6 +66,8 @@ impl Db {
     /// - FO: Fob
     /// - SA: Sam site
     /// - LO: Logistics Objective
+    /// - CC: Command Center (IADN network node -- see mizinit's SAM-site
+    ///   auto-linking pass)
     ///
     /// Then a 1 character code for the default owner
     /// followed by the display name
@@ -118,8 +120,11 @@ impl Db {
                 production_rate,
                 last_production_ts: None,
             }, side, name)
+        } else if let Some(name) = name.strip_prefix("CC") {
+            let (side, name) = side_and_name(name)?;
+            (ObjectiveKind::CommandCenter, side, name)
         } else {
-            bail!("invalid objective type for {name}, expected AB, FO, LO, NB, CG, or FAC")
+            bail!("invalid objective type for {name}, expected AB, FO, LO, NB, CG, FAC, or CC")
         };
         let id = ObjectiveId::new();
         let mut logistics_detached = false;
@@ -208,6 +213,9 @@ impl Db {
             }
             ObjectiveKind::Factory { .. } => {
                 self.persisted.factories.insert_cow(id);
+            }
+            ObjectiveKind::CommandCenter => {
+                self.persisted.command_centers.insert_cow(id);
             }
             _ => {}
         }
@@ -582,6 +590,42 @@ impl Db {
             } else {
                 let cg_name = objective!(self, cg_id)?.name.clone();
                 debug!("no naval base found for carrier group {}", cg_name);
+            }
+        }
+
+        // IADN: link SAM sites to their nearest friendly command center.
+        // A SAM site with no link (or whose linked command center later
+        // dies/changes hands) falls back to plain DCS AI -- see the EMCON
+        // gating in ewr.rs.
+        for sam_id in &self.persisted.special_sam_sites.clone() {
+            let sam_obj = objective!(self, sam_id)?;
+            let sam_pos = sam_obj.zone.pos();
+            let sam_owner = sam_obj.owner;
+
+            let mut nearest_cc: Option<(ObjectiveId, f64)> = None;
+            for cc_id in &self.persisted.command_centers {
+                let cc_obj = objective!(self, cc_id)?;
+                if cc_obj.owner == sam_owner {
+                    let cc_pos = cc_obj.zone.pos();
+                    let dist_sq = na::distance_squared(&sam_pos.into(), &cc_pos.into());
+                    if let Some((_, best_dist)) = nearest_cc {
+                        if dist_sq < best_dist {
+                            nearest_cc = Some((*cc_id, dist_sq));
+                        }
+                    } else {
+                        nearest_cc = Some((*cc_id, dist_sq));
+                    }
+                }
+            }
+
+            if let Some((cc_id, _)) = nearest_cc {
+                let sam_name = objective!(self, sam_id)?.name.clone();
+                let cc_name = objective!(self, cc_id)?.name.clone();
+                self.persisted.sam_command_center_link.insert_cow(*sam_id, cc_id);
+                info!("linked SAM site {} to command center {}", sam_name, cc_name);
+            } else {
+                let sam_name = objective!(self, sam_id)?.name.clone();
+                debug!("no command center found for SAM site {}", sam_name);
             }
         }
 

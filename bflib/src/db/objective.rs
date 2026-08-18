@@ -377,14 +377,14 @@ impl Objective {
     pub fn is_farp(&self) -> bool {
         match &self.kind {
             ObjectiveKind::Farp { .. } => true,
-            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Factory { .. } | ObjectiveKind::SpecialSamSite { .. } => false,
+            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Factory { .. } | ObjectiveKind::SpecialSamSite { .. } | ObjectiveKind::CommandCenter => false,
         }
     }
 
     pub fn is_airbase(&self) -> bool {
         match &self.kind {
             ObjectiveKind::Airbase => true,
-            ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Factory { .. } | ObjectiveKind::SpecialSamSite { .. } => false,
+            ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::Factory { .. } | ObjectiveKind::SpecialSamSite { .. } | ObjectiveKind::CommandCenter => false,
         }
     }
 
