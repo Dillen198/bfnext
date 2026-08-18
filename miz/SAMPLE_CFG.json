@@ -404,7 +404,13 @@
 
     "sam_cue_enabled": true,
 
-    "sam_cue_confidence_threshold": 0.4
+    "sam_cue_confidence_threshold": 0.4,
+
+    "anti_radiation_weapons": ["AGM_88C", "AGM_88", "Kh25MPU", "Kh58Ushke", "Kh31P", "ALARM"],
+
+    "harm_defense_radius_m": 20000.0,
+
+    "harm_defense_cooldown_secs": 20
   },
 
   "elint": {

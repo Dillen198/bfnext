@@ -796,6 +796,20 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                     }
                 }
             }
+            // IADN HARM defense: if this shot is a configured anti-radiation
+            // weapon, start tracking it so nearby SAM sites on the opposite
+            // side can be warned to go dark before it arrives.
+            if let Some(iadn) = ctx.db.ephemeral.cfg.iadn.as_ref() {
+                if iadn.anti_radiation_weapons.contains(e.weapon_name.as_str()) {
+                    let shooter_side = e.initiator.object_id().ok()
+                        .and_then(|obj_id| ctx.db.ephemeral.get_uid_by_object_id(&obj_id))
+                        .and_then(|uid| ctx.db.unit(uid).ok())
+                        .map(|u| u.side);
+                    if let (Some(shooter_side), Ok(weapon_oid)) = (shooter_side, e.weapon.object_id()) {
+                        ctx.ewr.track_potential_arm(weapon_oid, shooter_side.opposite(), start_ts);
+                    }
+                }
+            }
             // Counter-battery detection
             let cb_params = ctx.db.ephemeral.cfg.counter_battery.as_ref()
                 .map(|c| (c.grid_resolution_m, c.cooldown_secs));

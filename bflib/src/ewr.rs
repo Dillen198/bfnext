@@ -32,6 +32,7 @@ use crate::{
 use anyhow::Result;
 use bfprotocols::{
     cfg::{EwrMode, IadnConfig, RadarBand, RadarPhysicsCfg, SensorType, UnitTag},
+    db::group::GroupId,
     stats::{DetectionSource, EnId, Stat},
 };
 use chrono::prelude::*;
@@ -39,8 +40,9 @@ use compact_str::{CompactString, format_compact};
 use dcso3::{
     MizLua, Position3, Vector2, Vector3, azumith2d_to, azumith3d, azumith3d_to, coalition::Side,
     land::Land, net::Ucid, radians_to_degrees,
-    object::DcsObject,
+    object::{DcsObject, DcsOid},
     unit::Unit,
+    weapon::{ClassWeapon, Weapon},
 
 };
 use fxhash::FxHashMap;
@@ -409,6 +411,17 @@ pub struct Ewr {
     /// IADN: fused multi-sensor air picture, keyed by owning coalition.
     /// Only populated when `cfg.iadn` is Some.
     pub fused_tracks: FxHashMap<Side, Vec<FusedTrack>>,
+    /// IADN HARM defense: anti-radiation missiles currently in flight,
+    /// tracked so nearby SAM sites of the threatened side can be warned to
+    /// go dark before impact. (weapon object id, side under threat, launch
+    /// time -- used for a safety expiry if the weapon object outlives any
+    /// reasonable ARM flight time).
+    tracked_arms: Vec<(DcsOid<ClassWeapon>, Side, DateTime<Utc>)>,
+    /// SAM site group -> timestamp its radar is forced dark until, due to a
+    /// detected ARM threat. Consulted by the EMCON logic in update_tracks,
+    /// which overrides the normal cue-based decision while an entry here is
+    /// still in the future.
+    harm_dark_until: FxHashMap<GroupId, DateTime<Utc>>,
 }
 
 impl Ewr {
@@ -661,6 +674,11 @@ impl Ewr {
         // despawn/respawn cycle, so there's nothing to go stale.
         if let (Some(iadn), Some(_rp)) = (&iadn_cfg, &radar_physics) {
             if iadn.sam_cue_enabled {
+                // HARM defense: poll in-flight tracked ARMs and mark any SAM
+                // site within harm_defense_radius_m as threatened. Must run
+                // before the cue loop below so a fresh threat overrides this
+                // tick's targeting decision, not next tick's.
+                self.update_harm_threats(lua, iadn, now);
                 for donor in &self.donor_snapshot {
                     if !matches!(donor.sensor_type, SensorType::SamSearchRadar) {
                         continue;
@@ -668,11 +686,23 @@ impl Ewr {
                     let Some(gid) = donor.gid else { continue };
                     let Some(group) = db.persisted.groups.get(&gid) else { continue };
                     let sam_pos = Vector2::new(donor.pos.p.x, donor.pos.p.z);
-                    let cues = self.sam_cue_targets(donor.side, sam_pos, donor.range as f64, iadn);
-                    let desired = if cues.is_empty() {
+                    let under_harm_threat = self
+                        .harm_dark_until
+                        .get(&gid)
+                        .map(|until| now < *until)
+                        .unwrap_or(false);
+                    let desired = if under_harm_threat {
+                        // Survival overrides targeting: go dark even if a
+                        // good cue exists, rather than trading the site for
+                        // one more shot.
                         dcso3::controller::AlarmState::Green
                     } else {
-                        dcso3::controller::AlarmState::Auto
+                        let cues = self.sam_cue_targets(donor.side, sam_pos, donor.range as f64, iadn);
+                        if cues.is_empty() {
+                            dcso3::controller::AlarmState::Green
+                        } else {
+                            dcso3::controller::AlarmState::Auto
+                        }
                     };
                     if let Ok(live) = dcso3::group::Group::get_by_name(lua, &group.name) {
                         if let Ok(con) = live.get_controller() {
@@ -808,6 +838,70 @@ impl Ewr {
                 !t.is_expired(cfg)
             });
         }
+    }
+
+    /// IADN HARM defense: register a freshly-launched weapon for in-flight
+    /// tracking, once the caller (Event::Shot handler) has already matched
+    /// its type name against cfg.iadn.anti_radiation_weapons. `threatened_side`
+    /// is the side whose SAM sites this missile might be homing on -- i.e.
+    /// the opposite of whoever fired it.
+    pub fn track_potential_arm(
+        &mut self,
+        oid: DcsOid<ClassWeapon>,
+        threatened_side: Side,
+        now: DateTime<Utc>,
+    ) {
+        self.tracked_arms.push((oid, threatened_side, now));
+    }
+
+    /// IADN HARM defense: poll all in-flight tracked ARMs and, for any
+    /// within `cfg.harm_defense_radius_m` of a live SAM search radar on the
+    /// threatened side, force that site's radar dark until
+    /// `now + cfg.harm_defense_cooldown_secs`. Drops a tracking entry once
+    /// its weapon object no longer exists (impacted, or DCS cleaned it up)
+    /// or a safety flight-time cap is exceeded -- this is a "might be
+    /// targeting us" proximity heuristic, not true seeker/guidance physics.
+    ///
+    /// Each tracked weapon is resolved fresh via Weapon::get_instance every
+    /// call -- never a cached handle across ticks beyond the DcsOid itself,
+    /// which is a lightweight identifier, not a live reference. A weapon
+    /// that no longer exists just fails that lookup and gets dropped from
+    /// tracking; no interaction with SAM culling either way, since this only
+    /// ever reads donor_snapshot (already culling-safe) and writes
+    /// timestamps keyed by GroupId, never touching a live DCS handle for the
+    /// SAM site itself.
+    fn update_harm_threats(&mut self, lua: MizLua, cfg: &IadnConfig, now: DateTime<Utc>) {
+        const MAX_ARM_FLIGHT_SECS: i64 = 90;
+        let range_sq = cfg.harm_defense_radius_m.powi(2);
+        let cooldown = chrono::Duration::seconds(cfg.harm_defense_cooldown_secs as i64);
+        let Self { tracked_arms, donor_snapshot, harm_dark_until, .. } = self;
+        tracked_arms.retain(|(oid, threatened_side, launched_at)| {
+            if (now - *launched_at).num_seconds() > MAX_ARM_FLIGHT_SECS {
+                return false;
+            }
+            let weapon = match Weapon::get_instance(lua, oid) {
+                Ok(w) => w,
+                Err(_) => return false, // impacted or otherwise gone
+            };
+            let pos = match weapon.as_object().and_then(|o| o.get_point()) {
+                Ok(p) => p,
+                Err(_) => return false,
+            };
+            let arm_pos = Vector2::new(pos.x, pos.z);
+            for donor in donor_snapshot.iter() {
+                if donor.side != *threatened_side
+                    || !matches!(donor.sensor_type, SensorType::SamSearchRadar)
+                {
+                    continue;
+                }
+                let Some(gid) = donor.gid else { continue };
+                let donor_pos = Vector2::new(donor.pos.p.x, donor.pos.p.z);
+                if na::distance_squared(&arm_pos.into(), &donor_pos.into()) <= range_sq {
+                    harm_dark_until.insert(gid, now + cooldown);
+                }
+            }
+            true // still in flight, keep tracking
+        });
     }
 
     /// Returns SAM cue targets for a given SAM position and range.

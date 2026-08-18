@@ -503,6 +503,23 @@ pub struct IadnConfig {
     /// Minimum fused track confidence (0–1) required before a SAM engages. Default 0.4.
     #[serde(default = "default_sam_cue_confidence_threshold")]
     pub sam_cue_confidence_threshold: f32,
+    /// DCS weapon type names (Weapon:getTypeName()) treated as anti-radiation
+    /// missiles for SAM HARM-defense purposes -- e.g. "AGM_88C", "Kh25MPU",
+    /// "Kh58Ushke", "ALARM". Not derived from DCS's own guidance metadata
+    /// since dcso3 doesn't parse Weapon:getDesc() yet; configure explicitly.
+    #[serde(default)]
+    pub anti_radiation_weapons: FxHashSet<std::string::String>,
+    /// Distance (m) from a tracked inbound ARM within which a SAM site is
+    /// considered threatened and forced dark. Default 20000 (~typical ARM
+    /// engagement envelope, deliberately generous -- this is a "might be
+    /// targeting us" heuristic, not missile guidance physics).
+    #[serde(default = "default_harm_defense_radius_m")]
+    pub harm_defense_radius_m: f64,
+    /// How long (s) a threatened SAM site's radar stays forced dark after
+    /// an ARM is detected nearby. Default 20 -- long enough for the missile
+    /// to lose lock/fly past, short enough not to blind the site for long.
+    #[serde(default = "default_harm_defense_cooldown_secs")]
+    pub harm_defense_cooldown_secs: u32,
 }
 
 impl Default for IadnConfig {
@@ -514,6 +531,9 @@ impl Default for IadnConfig {
             track_drop_secs: default_track_drop_secs(),
             sam_cue_enabled: default_sam_cue_enabled(),
             sam_cue_confidence_threshold: default_sam_cue_confidence_threshold(),
+            anti_radiation_weapons: FxHashSet::default(),
+            harm_defense_radius_m: default_harm_defense_radius_m(),
+            harm_defense_cooldown_secs: default_harm_defense_cooldown_secs(),
         }
     }
 }
@@ -524,6 +544,8 @@ fn default_track_stale_secs() -> u32 { 60 }
 fn default_track_drop_secs() -> u32 { 120 }
 fn default_sam_cue_enabled() -> bool { true }
 fn default_sam_cue_confidence_threshold() -> f32 { 0.4 }
+fn default_harm_defense_radius_m() -> f64 { 20_000.0 }
+fn default_harm_defense_cooldown_secs() -> u32 { 20 }
 
 /// ELINT/SIGINT intelligence system configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
