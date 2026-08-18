@@ -259,6 +259,21 @@ const MK_STYLE: Record<MarkerType, { bg: string; bd: string }> = {
   EGR: { bg: '#eab30830', bd: '#eab308' },
 }
 
+function objectiveIcon(kind: string, owner: string, health: number, size: number): L.DivIcon {
+  const c = owner === 'Red' ? COL_RED : owner === 'Blue' ? COL_BLUE : COL_NEUTRAL
+  const symbol = OBJ_SYMBOL[kind] ?? '●'
+  const alive = health > 0
+  return L.divIcon({
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;
+             background:${c}${alive ? '30' : '10'};border:1.5px solid ${c}${alive ? 'ff' : '55'};
+             display:flex;align-items:center;justify-content:center;
+             font-size:${Math.round(size * 0.55)}px;line-height:1;color:${c}${alive ? 'ff' : '66'};
+             box-shadow:0 0 ${alive ? 7 : 2}px ${c}${alive ? '88' : '00'};">${symbol}</div>`,
+    className: '',
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  })
+}
 function waypointIcon(n: number, last: boolean): L.DivIcon {
   const c = last ? '#ef4444' : '#00b4f5'
   return L.divIcon({
@@ -968,11 +983,12 @@ export default function MapPage() {
           {shownObjs.map(obj => {
             const c = obj.owner === 'Red' ? COL_RED : obj.owner === 'Blue' ? COL_BLUE : COL_NEUTRAL
             const r = OBJ_RADIUS[obj.kind] ?? OBJ_RADIUS.default
+            const size = r * 2 + 8
             return (
-              <CircleMarker key={obj.id} center={[obj.lat, obj.lon]} radius={r}
-                pathOptions={{ color: c, fillColor: c, fillOpacity: 0.15, weight: 1.5 }}>
+              <Marker key={obj.id} position={[obj.lat, obj.lon]}
+                icon={objectiveIcon(obj.kind, obj.owner, obj.health, size)}>
                 {showLogistics && obj.owner !== 'Neutral' && (
-                  <Tooltip permanent direction="top" offset={[0, -r]} opacity={0.9} className="logi-tip">
+                  <Tooltip permanent direction="top" offset={[0, -size / 2]} opacity={0.9} className="logi-tip">
                     <div style={{ background: '#0f172a', border: '1px solid #a855f7', padding: '4px 6px', borderRadius: '4px', fontSize: '0.65rem', color: '#f8fafc', fontFamily: 'var(--font-mono)', minWidth: '70px' }}>
                       <div style={{ color: '#a855f7', fontWeight: 600, marginBottom: 2 }}>{obj.name}</div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>L:</span><span style={{ color: obj.logi > 40 ? '#10b981' : '#ef4444' }}>{obj.logi}%</span></div>
@@ -1037,7 +1053,7 @@ export default function MapPage() {
                     )}
                   </div>
                 </Popup>
-              </CircleMarker>
+              </Marker>
             )
           })}
 
