@@ -47,6 +47,19 @@ use yats::Tree;
 db_id!(KillId);
 db_id!(RoundId);
 db_id!(SortieId);
+db_id!(CaptureId);
+
+/// A recorded capture event -- who took an objective and for which side,
+/// as opposed to objective_captures which only tracks a running count with
+/// no attribution or timeline. Lets API consumers (e.g. the Discord live
+/// capture alert) show who actually did it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct CaptureRecord {
+    pub(crate) time: DateTime<Utc>,
+    pub(crate) objective_name: std::string::String,
+    pub(crate) side: Side,
+    pub(crate) by: SmallVec<[Ucid; 1]>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct BanRecord {
@@ -408,6 +421,8 @@ pub(crate) struct StatsDbInner {
     latest_weather: Arc<RwLock<Option<WeatherSnapshot>>>,
     // Capture counts per objective per round
     objective_captures: Tree<(RoundId, ObjectiveId), u32>,
+    // Capture events (who, what, when) per round -- see CaptureRecord
+    captures: Tree<(RoundId, CaptureId), CaptureRecord>,
     // Aircraft sortie counts per round: (RoundId, vehicle_type) -> (sortie_count, total_hours_f32)
     aircraft_sorties: Tree<(RoundId, std::string::String), (u32, f32)>,
     // Admin-managed ban list (bfdb-native, separate from bflib's cfg.banned)
@@ -585,6 +600,7 @@ impl StatsDb {
             trail_points: Tree::open(&db, "trail_points")?,
             latest_weather: Arc::new(RwLock::new(None)),
             objective_captures: Tree::open(&db, "objective_captures")?,
+            captures: Tree::open(&db, "captures")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
             engine_log_tx: broadcast::channel(1024).0,
@@ -635,6 +651,7 @@ impl StatsDb {
             trail_points: Tree::open(&db, "trail_points")?,
             latest_weather: Arc::new(RwLock::new(None)),
             objective_captures: Tree::open(&db, "objective_captures")?,
+            captures: Tree::open(&db, "captures")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
             engine_log_tx: broadcast::channel(1024).0,
@@ -1215,6 +1232,20 @@ impl StatsDb {
         Ok(result)
     }
 
+    /// Recent capture events for a round, newest first, with pilot
+    /// attribution -- distinct from most_captured, which is just a count.
+    pub(crate) fn recent_captures(&self, round: RoundId, limit: usize) -> Result<Vec<CaptureRecord>> {
+        let mut result = Vec::new();
+        for r in self.captures.scan_prefix(&round)?.rev() {
+            let (_, rec) = r?;
+            result.push(rec);
+            if result.len() >= limit {
+                break;
+            }
+        }
+        Ok(result)
+    }
+
     /// Aircraft usage stats for a round, sorted by sortie count desc
     pub(crate) fn aircraft_usage(&self, round: RoundId) -> Result<Vec<(std::string::String, u32, f32)>> {
         // Returns Vec<(vehicle_type, sortie_count, total_hours)>
@@ -1653,11 +1684,23 @@ impl StatsDb {
                 })?;
             }
             Stat::Capture { id, by, side } => {
+                let objective_name = self
+                    .objectives
+                    .get(&(ctx.round, id))?
+                    .map(|o| o.name.to_string())
+                    .unwrap_or_else(|| format!("{:?}", id));
                 self.with_objective((ctx.round, id), |o| o.owner = side)?;
                 // Track capture count per objective
                 let cap_key = (ctx.round, id);
                 let prev = self.objective_captures.get(&cap_key)?.unwrap_or(0);
                 self.objective_captures.insert(&cap_key, &(prev + 1))?;
+                // Record the event itself (who/what/when) -- objective_captures
+                // above is just a running total with no attribution or timeline.
+                let cid = CaptureId::new(&self.db)?;
+                self.captures.insert(
+                    &(ctx.round, cid),
+                    &CaptureRecord { time, objective_name, side, by: by.clone() },
+                )?;
                 for ucid in by {
                     self.pilots.with_pilot_and_aggregates(
                         ucid,

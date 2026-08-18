@@ -173,6 +173,7 @@ class FowlEngine(Plugin):
         self._kill_cursor = {}          # server name -> last-processed kill ISO timestamp
         self._kill_streaks = {}         # server name -> {ucid: consecutive kill count}
         self._kill_announced = {}       # server name -> {ucid: highest threshold already announced}
+        self._capture_cursor = {}       # server name -> last-processed capture-event ISO timestamp
 
     async def cog_load(self) -> None:
         await super().cog_load()
@@ -420,6 +421,9 @@ class FowlEngine(Plugin):
                         await self._poll_objective_changes(
                             session, api_url, int(alerts_channel_id), messages, obj_state
                         )
+                        await self._poll_capture_events(
+                            session, api_url, server.name, int(alerts_channel_id), messages
+                        )
                     if achievements_channel_id:
                         await self._poll_kill_streaks(
                             session, api_url, server.name, int(achievements_channel_id), messages
@@ -457,12 +461,53 @@ class FowlEngine(Plugin):
                 if owner == "Neutral":
                     fmt = messages.get('neutral', "🏳️ **[NEUTRAL]** {message}")
                     await channel.send(fmt.format(message=f"{name} has gone neutral."))
-                else:
-                    fmt = messages.get('capture', "🏆 **[CAPTURED]** {message}")
-                    await channel.send(fmt.format(message=f"{name} was captured by {owner}."))
+                # Non-neutral ownership changes are announced by
+                # _poll_capture_events instead, which has pilot attribution
+                # this owner-diff can't provide.
             elif prev.get("health", 0) > 20 and health <= 20:
                 fmt = messages.get('ready_to_capture', "⏳ **[READY TO CAPTURE]** {message}")
                 await channel.send(fmt.format(message=f"{name} ({owner}) is ready to be captured."))
+
+    async def _poll_capture_events(self, session, api_url, server_name, channel_id, messages):
+        async with session.get(f"{api_url}/api/capture-events", params={"limit": 50}, timeout=10) as resp:
+            if resp.status != 200:
+                self.log.error(f"FowlEngine: /api/capture-events returned {resp.status} while polling for alerts")
+                return
+            events = await resp.json()
+        if not events:
+            return
+
+        cursor = self._capture_cursor.get(server_name)
+        new_events = [e for e in events if not cursor or e.get('time', '') > cursor]
+        if not new_events:
+            return
+        new_events.sort(key=lambda e: e.get('time', ''))
+        # First time we've ever polled this server: just establish the cursor.
+        # Don't replay potentially-huge capture history as fresh alerts.
+        first_poll = cursor is None
+        self._capture_cursor[server_name] = new_events[-1].get('time', cursor)
+        if first_poll:
+            return
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            self.log.error(f"FowlEngine: alerts_channel {channel_id} not found or bot lacks access")
+            return
+
+        names = None  # lazily fetched only if we actually need to announce something
+        for e in new_events:
+            obj_name = e.get('objective', 'Unknown')
+            owner = e.get('side', 'Unknown')
+            by = e.get('by') or []
+            if by:
+                if names is None:
+                    names = await self._fetch_pilot_names(session, api_url)
+                pilot_names = ", ".join(names.get(u, u[:8]) for u in by)
+                message = f"{obj_name} was captured by {owner} ({pilot_names})."
+            else:
+                message = f"{obj_name} was captured by {owner}."
+            fmt = messages.get('capture', "🏆 **[CAPTURED]** {message}")
+            await channel.send(fmt.format(message=message))
 
     async def _fetch_pilot_names(self, session, api_url):
         try:

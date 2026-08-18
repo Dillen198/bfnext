@@ -624,6 +624,43 @@ async fn api_captures(db: StatsDb) -> std::result::Result<impl warp::Reply, Erro
     Ok(json_response(data))
 }
 
+/// Recent capture events with pilot attribution -- distinct from
+/// /api/captures, which is just a per-objective running count with no
+/// timeline or "who did it".
+async fn api_capture_events(
+    db: StatsDb,
+    round_id: Option<u64>,
+    limit: Option<usize>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let rounds = db.latest_rounds()?;
+        let rid = match round_id {
+            Some(id) => db::RoundId(id),
+            None => match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
+                Some((_, rid, _)) => *rid,
+                None => match rounds.first() {
+                    Some((_, rid, _)) => *rid,
+                    None => return Ok("[]".to_string()),
+                },
+            },
+        };
+        let entries = db.recent_captures(rid, limit.unwrap_or(50))?;
+        let json: Vec<_> = entries
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "time": c.time.to_rfc3339(),
+                    "objective": c.objective_name,
+                    "side": format!("{:?}", c.side),
+                    "by": c.by.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        Ok(serde_json::to_string(&json)?)
+    })?;
+    Ok(json_response(data))
+}
+
 async fn api_aircraft_usage(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
         let rounds = db.latest_rounds()?;
@@ -2002,6 +2039,15 @@ async fn main() -> Result<()> {
             api_kills(db, round_id, limit)
         });
 
+    let capture_events = warp::path!("api" / "capture-events")
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .then(|db, q: std::collections::HashMap<String, String>| {
+            let round_id = q.get("round").and_then(|s| s.parse().ok());
+            let limit = q.get("limit").and_then(|s| s.parse().ok());
+            api_capture_events(db, round_id, limit)
+        });
+
     let pilot = warp::path!("api" / "pilot" / String)
         .and(with_db(db.clone()))
         .then(api_pilot);
@@ -2236,6 +2282,7 @@ async fn main() -> Result<()> {
         .or(leaderboard)
         .or(objectives)
         .or(kills)
+        .or(capture_events)
         .or(pilot_sorties)
         .or(pilot_breakdown)
         .or(pilot_kills_route)
