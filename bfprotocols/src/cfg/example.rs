@@ -1960,6 +1960,7 @@ impl Default for Cfg {
                     (Side::Red, "RINVENTORY".into()),
                 ]),
                 exempt_airframes: FxHashSet::from_iter(["Su-30SM".into()]),
+                unlimited_objectives: FxHashSet::default(),
                 convoy: None,
                 air_logistics: None,
                 sea_logistics: None,

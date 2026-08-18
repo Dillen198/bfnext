@@ -79,7 +79,9 @@
     "supply_transfer_weapons_crate": {
       "Red":  { "name": "Weapons Transfer", "weight": 1500, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 },
       "Blue": { "name": "Weapons Transfer", "weight": 1200, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 }
-    }
+    },
+    "_comment_unlimited_objectives": "Optional. Exact objective names that should never run low on aircraft or supplies, regardless of production/consumption -- e.g. a rear home base. Only affects item types the objective's side already has access to; does not grant anything new.",
+    "unlimited_objectives": []
   },
 
   "logistics_exclusion": 10000,

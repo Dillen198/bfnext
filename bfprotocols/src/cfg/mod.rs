@@ -937,6 +937,14 @@ pub struct WarehouseConfig {
     /// warehouse check
     #[serde(default)]
     pub exempt_airframes: FxHashSet<String>,
+    /// Objective names (exact match) that should never run low on aircraft or
+    /// supplies -- e.g. a home/rear airbase you want guaranteed always fully
+    /// stocked regardless of production or consumption. Only applies to
+    /// items the objective's side actually has access to (a nonzero entry in
+    /// its supply_source inventory); it does not grant types the side
+    /// doesn't otherwise have.
+    #[serde(default)]
+    pub unlimited_objectives: FxHashSet<String>,
     /// Convoy system configuration (optional, defaults to disabled)
     #[serde(default)]
     pub convoy: Option<ConvoyConfig>,
@@ -948,12 +956,31 @@ pub struct WarehouseConfig {
     pub sea_logistics: Option<SeaLogisticsConfig>,
 }
 
+/// Effectively unlimited for gameplay purposes, but small enough that
+/// percentage/ratio math elsewhere (stored as f32 / capacity as f32) stays
+/// well-behaved instead of flirting with u32::MAX overflow.
+pub const UNLIMITED_CAPACITY: u32 = 1_000_000;
+
 impl WarehouseConfig {
     pub fn capacity(&self, hub: bool, qty: u32) -> u32 {
         if hub {
             qty * self.hub_max
         } else {
             qty * self.airbase_max
+        }
+    }
+
+    /// Like `capacity`, but returns UNLIMITED_CAPACITY when `unlimited` is
+    /// true -- either because the objective's own UNLIMITED_SUPPLY trigger
+    /// zone property is set, or its name is listed in `unlimited_objectives`
+    /// here. Only meaningful for items the side already has access to
+    /// (qty > 0 upstream) -- this never grants a type the side doesn't
+    /// otherwise produce.
+    pub fn capacity_for(&self, obj_name: &str, unlimited: bool, hub: bool, qty: u32) -> u32 {
+        if qty > 0 && (unlimited || self.unlimited_objectives.contains(obj_name)) {
+            UNLIMITED_CAPACITY
+        } else {
+            self.capacity(hub, qty)
         }
     }
 }

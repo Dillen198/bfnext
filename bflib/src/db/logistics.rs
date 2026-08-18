@@ -521,6 +521,14 @@ impl Warehouse {
     }
 }
 
+/// Airframe entries sit as plain type-name keys in the same equipment map as
+/// weapons/vehicles ("weapons."/"vehicles."/"Fortifications." prefixed), so
+/// this is the established way (already used by the supply-transfer
+/// exemption logic) to tell them apart within that shared map.
+fn is_airframe_item(name: &str) -> bool {
+    !name.starts_with("weapons.") && !name.starts_with("vehicles.") && !name.starts_with("Fortifications.")
+}
+
 pub(super) fn sync_obj_to_warehouse(obj: &Objective, warehouse: &warehouse::Warehouse) -> Result<()> {
     let perf = unsafe { Perf::get_mut() };
     let perf = Arc::make_mut(&mut perf.inner);
@@ -705,16 +713,17 @@ impl Db {
             None => return Ok(()),
         };
         for (name, equip) in &production.equipment {
+            let unlimited = if is_airframe_item(name) { obj.unlimited_aircraft } else { obj.unlimited_supply };
             let inv = Inventory {
                 stored: 0,
-                capacity: equip.production * whcfg.airbase_max,
+                capacity: whcfg.capacity_for(&obj.name, unlimited, false, equip.production),
             };
             obj.warehouse.equipment.insert_cow(name.clone(), inv);
         }
         for (name, qty) in &production.liquids {
             let inv = Inventory {
                 stored: 0,
-                capacity: qty * whcfg.airbase_max,
+                capacity: whcfg.capacity_for(&obj.name, obj.unlimited_supply, false, *qty),
             };
             obj.warehouse.liquids.insert_cow(*name, inv);
         }
@@ -753,7 +762,8 @@ impl Db {
                     if obj.owner == side {
                         let is_carrier = self.persisted.carrier_groups.contains(&oid);
                         let hub = self.persisted.logistics_hubs.contains(&oid) || is_carrier;
-                        let capacity = whcfg.capacity(hub, equip.production);
+                        let unlimited = if is_airframe_item(name) { obj.unlimited_aircraft } else { obj.unlimited_supply };
+                        let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, equip.production);
                         let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
                         inv.capacity = capacity;
                         inv.stored = capacity;
@@ -769,7 +779,7 @@ impl Db {
                     if obj.owner == side {
                         let is_carrier = self.persisted.carrier_groups.contains(&oid);
                         let hub = self.persisted.logistics_hubs.contains(&oid) || is_carrier;
-                        let capacity = whcfg.capacity(hub, *qty);
+                        let capacity = whcfg.capacity_for(&obj.name, obj.unlimited_supply, hub, *qty);
                         let inv = obj.warehouse.liquids.get_or_default_cow(*name);
                         inv.capacity = capacity;
                         inv.stored = capacity;
@@ -807,7 +817,8 @@ impl Db {
 
         // Initialize equipment inventory
         for (name, equip) in &production.equipment {
-            let capacity = whcfg.capacity(hub, equip.production);
+            let unlimited = if is_airframe_item(name) { obj.unlimited_aircraft } else { obj.unlimited_supply };
+            let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, equip.production);
             let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
             inv.capacity = capacity;
             inv.stored = capacity;
@@ -815,7 +826,7 @@ impl Db {
 
         // Initialize liquids inventory
         for (name, qty) in &production.liquids {
-            let capacity = whcfg.capacity(hub, *qty);
+            let capacity = whcfg.capacity_for(&obj.name, obj.unlimited_supply, hub, *qty);
             let inv = obj.warehouse.liquids.get_or_default_cow(*name);
             inv.capacity = capacity;
             inv.stored = capacity;
@@ -943,12 +954,13 @@ impl Db {
                         obj.warehouse.liquids.remove_cow(&liq);
                     }
                     for (name, eqip) in &prod.equipment {
-                        let capacity = whcfg.capacity(hub, eqip.production);
+                        let unlimited = if is_airframe_item(name) { obj.unlimited_aircraft } else { obj.unlimited_supply };
+                        let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, eqip.production);
                         let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
                         inv.capacity = capacity;
                     }
                     for (name, prod) in &prod.liquids {
-                        let capacity = whcfg.capacity(hub, *prod);
+                        let capacity = whcfg.capacity_for(&obj.name, obj.unlimited_supply, hub, *prod);
                         let inv = obj.warehouse.liquids.get_or_default_cow(*name);
                         inv.capacity = capacity;
                     }
@@ -1569,7 +1581,8 @@ impl Db {
             match production.equipment.get(&name) {
                 Some(equip) => {
                     let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
-                    let capacity = whcfg.capacity(hub, equip.production);
+                    let unlimited = if is_airframe_item(name.as_str()) { obj.unlimited_aircraft } else { obj.unlimited_supply };
+                    let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, equip.production);
                     inv.capacity = capacity;
                     // Also (re)stock, not just resize -- this only ran on
                     // capacity before, so a freshly-captured base never got
@@ -1606,7 +1619,7 @@ impl Db {
             match production.liquids.get(&name) {
                 Some(qty) => {
                     let inv = obj.warehouse.liquids.get_or_default_cow(name);
-                    inv.capacity = whcfg.capacity(hub, *qty);
+                    inv.capacity = whcfg.capacity_for(&obj.name, obj.unlimited_supply, hub, *qty);
                 }
                 None => {
                     if let Some(_) = other_production.liquids.get(&name) {

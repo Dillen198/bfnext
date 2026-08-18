@@ -320,6 +320,19 @@ pub struct Objective {
     pub(super) zone: Zone,
     #[serde(default)]
     pub(super) logistics_detached: bool,
+    /// Set via the UNLIMITED_SUPPLY trigger zone property in the mission
+    /// editor (same mechanism as LOGISTICS_DETACHED). Never runs low on
+    /// weapons/vehicles/fuel, regardless of production/consumption -- only
+    /// affects item types this objective's side already has access to.
+    /// Does not cover aircraft; see unlimited_aircraft for that.
+    #[serde(default)]
+    pub(super) unlimited_supply: bool,
+    /// Set via the UNLIMITED_AIRCRAFTS trigger zone property. Same idea as
+    /// unlimited_supply but scoped to aircraft types only, so a base's
+    /// plane/helicopter roster can be made unlimited independently of its
+    /// weapons/fuel stock.
+    #[serde(default)]
+    pub(super) unlimited_aircraft: bool,
     #[serde(default)]
     pub points: i32,
     /// Commander's intent marker, settable via the fowlengine Discord bot / bfdb
@@ -468,9 +481,10 @@ impl Db {
     }
 
     fn compute_objective_status(&self, obj: &Objective) -> Result<(u8, u8, u8)> {
-        obj.groups
+        let (health, mut logi, infantry) = obj
+            .groups
             .get(&obj.owner)
-            .map(|groups| {
+            .map(|groups| -> Result<(u8, u8, u8)> {
                 let mut total = 0;
                 let mut alive = 0;
                 let mut logi_total = 0;
@@ -531,7 +545,30 @@ impl Db {
 
                 Ok((health, logi, infantry))
             })
-            .unwrap_or(Ok((0, 0, 0)))
+            .unwrap_or(Ok((0, 0, 0)))?;
+
+        // Logistics-relevant map buildings (warehouses, fuel depots, etc.)
+        // destroyed at this objective further degrade its logi rating,
+        // independent of the unit-group-based calculation above. See
+        // scan_objective_scenery / check_scenery_buildings.
+        let destroyed = self
+            .ephemeral
+            .scenery_destroyed_by_objective
+            .get(&obj.id)
+            .copied()
+            .unwrap_or(0);
+        let total = self
+            .ephemeral
+            .scenery_total_by_objective
+            .get(&obj.id)
+            .copied()
+            .unwrap_or(0);
+        if total > 0 && destroyed > 0 {
+            let remaining_frac = 1. - (destroyed as f32 / total as f32).min(1.);
+            logi = ((logi as f32) * remaining_frac).round() as u8;
+        }
+
+        Ok((health, logi, infantry))
     }
 
     pub(super) fn delete_objective(&mut self, oid: &ObjectiveId) -> Result<()> {
@@ -744,6 +781,8 @@ impl Db {
             threatened: true,
             warehouse: Warehouse::default(),
             logistics_detached: false,
+            unlimited_supply: false,
+            unlimited_aircraft: false,
             priority: false,
             points: 0,
             last_threatened_ts: now,

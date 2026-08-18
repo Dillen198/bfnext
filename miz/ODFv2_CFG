@@ -700,7 +700,8 @@
     },
     "exempt_airframes": [
       "Su-30SM"
-    ]
+    ],
+    "unlimited_objectives": []
   },
   "logistics_exclusion": 10000,
   "unit_cull_distance": 37040,

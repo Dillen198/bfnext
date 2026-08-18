@@ -41,7 +41,7 @@ use bfprotocols::{
     stats::Stat,
 };
 use chrono::prelude::*;
-use compact_str::CompactString;
+use compact_str::{CompactString, format_compact};
 use dcso3::{
     centroid2d, coalition::Side, controller::PointType, coord::Coord,
     country::Country,
@@ -123,6 +123,8 @@ impl Db {
         };
         let id = ObjectiveId::new();
         let mut logistics_detached = false;
+        let mut unlimited_supply = false;
+        let mut unlimited_aircraft = false;
         for pr in zone.properties()? {
             let pr = pr?;
             if &*pr.key == "LOGISTICS_DETACHED" {
@@ -133,6 +135,24 @@ impl Db {
                     logistics_detached = false;
                 } else {
                     bail!("invalid value of LOGISTICS_DETACHED {v}")
+                }
+            } else if &*pr.key == "UNLIMITED_SUPPLY" {
+                let v = pr.value.to_ascii_lowercase();
+                if &*v == "true" {
+                    unlimited_supply = true;
+                } else if &*v == "false" {
+                    unlimited_supply = false;
+                } else {
+                    bail!("invalid value of UNLIMITED_SUPPLY {v}")
+                }
+            } else if &*pr.key == "UNLIMITED_AIRCRAFTS" {
+                let v = pr.value.to_ascii_lowercase();
+                if &*v == "true" {
+                    unlimited_aircraft = true;
+                } else if &*v == "false" {
+                    unlimited_aircraft = false;
+                } else {
+                    bail!("invalid value of UNLIMITED_AIRCRAFTS {v}")
                 }
             } else {
                 bail!("invalid objective property {pr:?}")
@@ -168,6 +188,8 @@ impl Db {
             warehouse: Warehouse::default(),
             points: 0,
             logistics_detached,
+            unlimited_supply,
+            unlimited_aircraft,
             priority: false,
             last_activate: DateTime::<Utc>::default(),
             // initialized by load
@@ -354,6 +376,8 @@ impl Db {
                                     warehouse: Warehouse::default(),
                                     points: 0,
                                     logistics_detached: true,
+                                    unlimited_supply: false,
+                                    unlimited_aircraft: false,
                                     priority: false,
                                     last_activate: DateTime::<Utc>::default(),
                                     threat_pos3: Vector3::default(),
@@ -633,6 +657,8 @@ impl Db {
                 warehouse: Warehouse::default(),
                 points: 0,
                 logistics_detached: false,
+                unlimited_supply: false,
+                unlimited_aircraft: false,
                 priority: false,
                 last_activate: DateTime::<Utc>::default(),
                 threat_pos3: Vector3::default(),
@@ -756,6 +782,204 @@ impl Db {
             "[PROTECTED_STATICS] registered {} neutral statics inside objective zones",
             self.ephemeral.protected_statics.len()
         );
+        Ok(())
+    }
+
+    /// Find real map-terrain buildings (DCS "Scenery" category -- baked into
+    /// the terrain, not placed via the mission editor) inside each objective's
+    /// zone, draw a small box on each one (plus a warning marker on objectives
+    /// where none were found), and register them in `ephemeral.tracked_scenery`
+    /// so `check_scenery_buildings` can later detect when they're destroyed and
+    /// dock that objective's `logi` rating accordingly. Resets and re-registers
+    /// from scratch every time it runs (every mission load) -- this state is
+    /// intentionally not persisted, matching the fact that DCS's own terrain
+    /// destruction doesn't survive a server restart either.
+    ///
+    /// Raw "Scenery" search radius around an airbase sweeps in whole nearby
+    /// towns (tens of thousands of houses/props), so results are filtered to
+    /// type names that look like actual logistics infrastructure -- otherwise
+    /// this would flood the F10 map with tens of thousands of markers.
+    pub fn scan_objective_scenery(&mut self, lua: MizLua) -> Result<()> {
+        use dcso3::{
+            Color,
+            object::{ClassObject, DcsObject, DcsOid, ObjectCategory},
+            trigger::{LineType, MarkId, RectSpec, SideFilter},
+            world::{SearchVolume, World},
+        };
+        use mlua::Value;
+        use std::{cell::RefCell, rc::Rc};
+        const RELEVANT_KEYWORDS: &[&str] = &["WAREHOUSE", "INDUSTRIAL", "DEPOT", "FUEL", "STORAGE"];
+        const MAX_BOXES_PER_OBJECTIVE: usize = 20;
+        // Half-width of the drawn box around each building's point, in meters.
+        const BOX_HALF_SIZE: f64 = 15.;
+        let world = World::singleton(lua)?;
+        let land = Land::singleton(lua)?;
+
+        self.ephemeral.tracked_scenery.clear();
+        self.ephemeral.scenery_check_queue.clear();
+        self.ephemeral.scenery_destroyed_by_objective.clear();
+        self.ephemeral.scenery_total_by_objective.clear();
+
+        // Collect first so this loop doesn't hold a borrow of self.persisted
+        // while we need &mut self.ephemeral below to draw markers/register.
+        let objectives: Vec<(ObjectiveId, String, CompactString, Vector2, f64)> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .map(|(oid, o)| {
+                (
+                    *oid,
+                    o.name.clone(),
+                    CompactString::from(o.kind.name()),
+                    o.zone.pos(),
+                    o.zone.radius().max(200.),
+                )
+            })
+            .collect();
+        for (oid, name, kind_name, center, radius) in objectives {
+            let alt = land.get_height(LuaVec2(center))?;
+            let point = LuaVec3(Vector3::new(center.x, alt, center.y));
+            let vol = SearchVolume::Sphere { point, radius };
+            let seen: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+            let found: Rc<RefCell<SmallVec<[(CompactString, LuaVec3, DcsOid<ClassObject>); 8]>>> =
+                Rc::new(RefCell::new(SmallVec::new()));
+            let seen_cb = Rc::clone(&seen);
+            let found_cb = Rc::clone(&found);
+            world.search_objects(ObjectCategory::Scenery, vol, Value::Nil, move |_, o, _| {
+                *seen_cb.borrow_mut() += 1;
+                let typ = o.get_type_name().unwrap_or_else(|_| "?".into());
+                let typ_upper = typ.to_uppercase();
+                if !RELEVANT_KEYWORDS.iter().any(|kw| typ_upper.contains(kw)) {
+                    return Ok(true);
+                }
+                let id = match o.object_id() {
+                    Ok(id) => id,
+                    Err(_) => return Ok(true),
+                };
+                let oname = o.get_name().unwrap_or_else(|_| "?".into());
+                let label = CompactString::from(format!("{oname} ({typ})"));
+                let pos = o
+                    .get_point()
+                    .unwrap_or(LuaVec3(Vector3::new(0., 0., 0.)));
+                found_cb.borrow_mut().push((label, pos, id));
+                Ok(true)
+            })?;
+            let seen = *seen.borrow();
+            let found = found.borrow();
+            if found.is_empty() {
+                info!(
+                    "[SCENERY_SCAN] {name} ({kind_name}): no relevant buildings within {radius:.0}m ({seen} scenery objects scanned)"
+                );
+            } else {
+                info!(
+                    "[SCENERY_SCAN] {name} ({kind_name}): {} relevant building(s) within {radius:.0}m ({seen} scenery objects scanned): {}",
+                    found.len(),
+                    found
+                        .iter()
+                        .map(|(l, _, _)| l.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                self.ephemeral
+                    .scenery_total_by_objective
+                    .insert(oid, found.len() as u32);
+                for (label, _pos, id) in found.iter() {
+                    self.ephemeral.tracked_scenery.insert(
+                        id.clone(),
+                        super::ephemeral::TrackedScenery {
+                            objective: oid,
+                            label: label.clone().into(),
+                        },
+                    );
+                    self.ephemeral.scenery_check_queue.push_back(id.clone());
+                }
+                for (label, pos, _) in found.iter().take(MAX_BOXES_PER_OBJECTIVE) {
+                    let start = LuaVec3(Vector3::new(
+                        pos.x - BOX_HALF_SIZE,
+                        pos.y,
+                        pos.z - BOX_HALF_SIZE,
+                    ));
+                    let end = LuaVec3(Vector3::new(
+                        pos.x + BOX_HALF_SIZE,
+                        pos.y,
+                        pos.z + BOX_HALF_SIZE,
+                    ));
+                    self.ephemeral.msgs().rect_to_all(
+                        SideFilter::All,
+                        MarkId::new(),
+                        RectSpec {
+                            start,
+                            end,
+                            color: Color::new(1., 0.55, 0., 0.9),
+                            fill_color: Color::new(1., 0.55, 0., 0.15),
+                            line_type: LineType::Solid,
+                            read_only: true,
+                        },
+                        Some(format_compact!("🏢 {name}: {label}").into()),
+                    );
+                }
+            }
+        }
+        info!(
+            "[SCENERY_SCAN] registered {} logistics-relevant scenery buildings across {} objectives",
+            self.ephemeral.tracked_scenery.len(),
+            self.ephemeral.scenery_total_by_objective.len()
+        );
+        Ok(())
+    }
+
+    /// Poll a small round-robin batch of `tracked_scenery` for destruction
+    /// (Scenery objects don't reliably fire death events, unlike units/statics,
+    /// so this is a periodic `is_exist()` check rather than event-driven).
+    /// Confirmed-destroyed buildings are removed from tracking and counted in
+    /// `scenery_destroyed_by_objective`, then that objective's status is
+    /// recomputed so the `logi` penalty in `compute_objective_status` applies.
+    pub fn check_scenery_buildings(&mut self, lua: MizLua, ts: DateTime<Utc>) -> Result<()> {
+        use dcso3::object::{DcsObject, Object};
+        const BATCH_SIZE: usize = 25;
+
+        if self.ephemeral.scenery_check_queue.is_empty() {
+            // Start a fresh round once everything still standing has been checked.
+            self.ephemeral
+                .scenery_check_queue
+                .extend(self.ephemeral.tracked_scenery.keys().cloned());
+            if self.ephemeral.scenery_check_queue.is_empty() {
+                return Ok(());
+            }
+        }
+
+        let mut affected: SmallVec<[ObjectiveId; 8]> = SmallVec::new();
+        for _ in 0..BATCH_SIZE {
+            let Some(id) = self.ephemeral.scenery_check_queue.pop_front() else {
+                break;
+            };
+            let Some(tracked) = self.ephemeral.tracked_scenery.get(&id) else {
+                continue; // already removed by a previous check this round
+            };
+            let alive = match Object::get_instance(lua, &id) {
+                Ok(obj) => obj.is_exist().unwrap_or(true),
+                Err(_) => false,
+            };
+            if alive {
+                self.ephemeral.scenery_check_queue.push_back(id);
+            } else {
+                let oid = tracked.objective;
+                let label = tracked.label.clone();
+                self.ephemeral.tracked_scenery.remove(&id);
+                *self
+                    .ephemeral
+                    .scenery_destroyed_by_objective
+                    .entry(oid)
+                    .or_insert(0) += 1;
+                info!("[SCENERY_SCAN] destroyed: {label} (objective {:?})", oid);
+                affected.push(oid);
+            }
+        }
+        for oid in affected {
+            if let Err(e) = self.update_objective_status(&oid, ts) {
+                error!("failed to update objective status after scenery loss {oid:?} {e:?}");
+            }
+        }
         Ok(())
     }
 
@@ -940,6 +1164,8 @@ impl Db {
             .context("init_special_sam_sites failed")?;
         t.init_protected_statics(miz, lua)
             .context("init_protected_statics failed")?;
+        t.scan_objective_scenery(lua)
+            .context("scan_objective_scenery failed")?;
 
         // Now initialize slots - carrier objectives are available for slot association
         for side in Side::ALL {
@@ -1052,6 +1278,10 @@ impl Db {
             .context("re-initializing carrier groups")?;
         self.init_special_sam_sites(spctx, idx, lua)
             .context("re-init special sam sites")?;
+        self.init_protected_statics(miz, lua)
+            .context("re-init protected statics")?;
+        self.scan_objective_scenery(lua)
+            .context("scan_objective_scenery failed")?;
         info!("[CARRIER_LOAD] Spawning carrier groups before other entities");
         while self.ephemeral.spawnq_len() > 0 {
             self.ephemeral.process_spawn_queue(perf, &self.persisted, Utc::now(), idx, spctx)?
