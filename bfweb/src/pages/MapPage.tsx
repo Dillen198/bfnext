@@ -89,9 +89,6 @@ interface PlanMarker { id: string; lat: number; lon: number; type: MarkerType }
 // ── BRAA lines ─────────────────────────────────────────────────────────
 interface BraaLine { id: string; from: { lat: number; lon: number }; to: { lat: number; lon: number } }
 
-// ── Hack timer ─────────────────────────────────────────────────────────
-interface HackTimer { id: string; label: string; startedAt: number }  // startedAt = Date.now() ms
-
 // ── Trail storage ──────────────────────────────────────────────────────
 interface TrailPt { lat: number; lon: number; ts: number; alt?: number; hdg?: number }
 type Trails = Map<string, TrailPt[]>
@@ -128,11 +125,6 @@ function fmtDcsTime(secs: number) {
   const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = Math.floor(secs % 60)
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
-function fmtElapsed(ms: number) {
-  const s = Math.floor(ms / 1000), m = Math.floor(s / 60), sec = s % 60
-  return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
-}
-
 // ── localStorage helpers ───────────────────────────────────────────────
 const PFX = 'bfmap_'
 function loadS<T>(k: string, fb: T): T { try { const r = localStorage.getItem(PFX + k); return r ? JSON.parse(r) as T : fb } catch { return fb } }
@@ -406,45 +398,18 @@ function HudBtn({ active, onClick, children, title, color = GREEN }: {
 }
 
 // ── Mission timer display ──────────────────────────────────────────────
-function MissionTimer({ liveTime, hacks, onAddHack, onRemoveHack }: {
-  liveTime: number
-  hacks: HackTimer[]
-  onAddHack: () => void
-  onRemoveHack: (id: string) => void
-}) {
-  const [, setTick] = useState(0)
-  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(id) }, [])
-  const now = Date.now()
+function MissionTimer({ liveTime }: { liveTime: number }) {
   const base: React.CSSProperties = {
     background: 'rgba(64,64,64,0.2)', border: '1px solid rgba(255,128,128,0.25)',
     backdropFilter: 'blur(6px)', borderRadius: '2px', padding: '6px 10px',
     fontFamily: FONT_MONO, color: '#ff8080', fontSize: '0.65rem',
   }
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      {/* Hack timers above mission timer */}
-      {hacks.map(h => (
-        <div key={h.id} style={{ ...base, display: 'flex', justifyContent: 'space-between', gap: '10px', cursor: 'pointer' }}
-          onClick={() => onRemoveHack(h.id)}>
-          <span style={{ color: '#ffd600', letterSpacing: '0.08em' }}>{h.label}</span>
-          <span style={{ color: '#ffd600' }}>{fmtElapsed(now - h.startedAt)}</span>
-        </div>
-      ))}
-      {/* Mission timer */}
-      <div style={{ ...base, display: 'flex', gap: '12px', alignItems: 'center' }}>
-        <span style={{ color: 'rgba(255,128,128,0.5)', fontSize: '0.58rem', letterSpacing: '0.12em' }}>T+</span>
-        <span style={{ fontSize: '0.82rem', color: '#ff3333', letterSpacing: '0.08em' }}>
-          {liveTime > 0 ? fmtDcsTime(liveTime) : '--:--:--'}
-        </span>
-        <button onClick={onAddHack} title="Start hack timer"
-          style={{
-            marginLeft: '4px', background: 'none', border: '1px solid rgba(255,214,0,0.35)',
-            borderRadius: '2px', color: '#ffd600', cursor: 'pointer',
-            fontSize: '0.6rem', padding: '1px 6px', fontFamily: FONT_MONO
-          }}>
-          HACK
-        </button>
-      </div>
+    <div style={{ ...base, display: 'flex', gap: '12px', alignItems: 'center' }}>
+      <span style={{ color: 'rgba(255,128,128,0.5)', fontSize: '0.58rem', letterSpacing: '0.12em' }}>T+</span>
+      <span style={{ fontSize: '0.82rem', color: '#ff3333', letterSpacing: '0.08em' }}>
+        {liveTime > 0 ? fmtDcsTime(liveTime) : '--:--:--'}
+      </span>
     </div>
   )
 }
@@ -513,10 +478,6 @@ export default function MapPage() {
 
   // Scratchpad
   const [showScratch, setShowScratch] = useState(false)
-
-  // Hack timers
-  const [hacks, setHacks] = useState<HackTimer[]>([])
-  let hackCounter = useRef(1)
 
   // Live units + bullseye
   const [liveUnits, setLiveUnits] = useState<LiveUnit[]>([])
@@ -703,9 +664,6 @@ export default function MapPage() {
   function toggleMode(m: PlanMode) { setPlanMode(p => p === m ? 'none' : m) }
   function toggleWatch(id: string) {
     setWatches(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
-  }
-  function addHack() {
-    setHacks(p => [...p, { id: uuid(), label: `HACK ${hackCounter.current++}`, startedAt: Date.now() }])
   }
   function clearAll() { setWaypoints([]); setPlanMarkers([]); setMeasurePts([]); setPlanMode('none') }
 
@@ -1443,10 +1401,7 @@ export default function MapPage() {
           display: 'flex', flexDirection: 'column', gap: '5px',
           alignItems: 'flex-start',
         }}>
-          <MissionTimer
-            liveTime={liveTime} hacks={hacks}
-            onAddHack={addHack}
-            onRemoveHack={id => setHacks(p => p.filter(h => h.id !== id))} />
+          <MissionTimer liveTime={liveTime} />
           <div style={{ ...hudPanel, fontSize: '0.63rem', letterSpacing: '0.07em' }}>
             <div style={{ color: HUD_DIM, marginBottom: '2px', fontSize: '0.57rem', letterSpacing: '0.14em' }}>CURSOR</div>
             <div>{cursorCoord || '—'}</div>
