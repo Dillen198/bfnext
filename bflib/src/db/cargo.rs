@@ -218,6 +218,11 @@ pub struct C130Cargo {
     pub vehicle_def: Option<C130Vehicle>,
     /// If false the crate must be manually unpacked (helicopter dynamic cargo)
     pub auto_unpack: bool,
+    /// Whether the "need more crates" panel message has already been sent for
+    /// this crate while landed but incomplete -- auto-unpack retries every
+    /// tick (so a late-arriving sibling still triggers unpack promptly), but
+    /// the message itself should only ever be shown once, not every tick.
+    pub notified_missing: bool,
 }
 
 impl C130Cargo {
@@ -247,6 +252,7 @@ impl C130Cargo {
             crate_def,
             vehicle_def: None,
             auto_unpack,
+            notified_missing: false,
         }
     }
 
@@ -276,6 +282,7 @@ impl C130Cargo {
             crate_def,
             vehicle_def: Some(vehicle_def),
             auto_unpack: true,
+            notified_missing: false,
         }
     }
 }
@@ -3484,7 +3491,22 @@ impl Db {
                 match result {
                     Ok(msg) => {
                         info!("[C130_CARGO] Auto-unpacked physical crate '{}': {}", crate_name, msg);
-                        self.ephemeral.msgs().panel_to_side(10, false, crate_data.side, msg);
+                        // If the crate is still tracked, unpack didn't consume it -- it's
+                        // still waiting on missing sibling crates. Auto-unpack keeps
+                        // retrying every tick (a sibling may land late from parachute
+                        // drift), but the "need more crates" message would otherwise be
+                        // re-sent every tick forever if a sibling never lands (e.g. it
+                        // was destroyed when the delivering aircraft was shot down).
+                        // Send it at most once per crate.
+                        let still_waiting = self.ephemeral.c130_crates.contains_key(&crate_name);
+                        if !still_waiting {
+                            self.ephemeral.msgs().panel_to_side(10, false, crate_data.side, msg);
+                        } else if !crate_data.notified_missing {
+                            if let Some(c) = self.ephemeral.c130_crates.get_mut(&crate_name) {
+                                c.notified_missing = true;
+                            }
+                            self.ephemeral.msgs().panel_to_side(10, false, crate_data.side, msg);
+                        }
                     }
                     Err(e) => {
                         error!("[C130_CARGO] Failed to auto-unpack physical crate '{}': {}", crate_name, e);
