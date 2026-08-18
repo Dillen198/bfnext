@@ -381,6 +381,37 @@ impl Ephemeral {
             .and_then(|sl| self.slot_info.get(sl).map(|s| (*sl, s)))
     }
 
+    /// Capture progress (0-100) for an objective currently being captured,
+    /// or None if it isn't. capture_time_secs == 0 means instant capture --
+    /// no meaningful bar to show there.
+    fn capture_pct_for(&self, oid: &ObjectiveId) -> Option<u8> {
+        let (_, start, _) = self.capture_progress.get(oid)?;
+        let total = self.cfg.campaign_events.as_ref()?.capture_time_secs;
+        if total == 0 {
+            return None;
+        }
+        let elapsed = (Utc::now() - *start).num_seconds().max(0);
+        Some(((elapsed as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as u8)
+    }
+
+    /// Repair progress (0-100) for a carrier currently mid-repair, or None
+    /// otherwise. Only carriers have a single timed repair operation with a
+    /// clear start+duration to compute a percentage from -- regular
+    /// objectives repair incrementally with no equivalent discrete
+    /// operation, so their health figure (already shown) is the only
+    /// meaningful progress indicator for them.
+    fn repair_pct_for(&self, obj: &Objective) -> Option<u8> {
+        let ObjectiveKind::CarrierGroup { repair_start_time: Some(start), .. } = &obj.kind else {
+            return None;
+        };
+        let total = self.cfg.carrier.as_ref().map(|c| c.repair_time).unwrap_or(600);
+        if total == 0 {
+            return None;
+        }
+        let elapsed = (Utc::now() - *start).num_seconds().max(0);
+        Some(((elapsed as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as u8)
+    }
+
     pub fn create_objective_markup(&mut self, persisted: &Persisted, obj: &Objective) {
         if obj.kind.is_special_sam_site() {
             if let Some(mk) = self.objective_markup.remove(&obj.id) {
@@ -391,9 +422,11 @@ impl Ephemeral {
         if let Some(mk) = self.objective_markup.remove(&obj.id) {
             mk.remove(&mut self.msgs);
         }
+        let capture_pct = self.capture_pct_for(&obj.id);
+        let repair_pct = self.repair_pct_for(obj);
         self.objective_markup.insert(
             obj.id,
-            ObjectiveMarkup::new(&self.cfg, &mut self.msgs, obj, persisted),
+            ObjectiveMarkup::new(&self.cfg, &mut self.msgs, obj, persisted, capture_pct, repair_pct),
         );
     }
 
@@ -403,14 +436,20 @@ impl Ephemeral {
         obj: &Objective,
         moved: &[ObjectiveId],
     ) {
+        let capture_pct = self.capture_pct_for(&obj.id);
+        let repair_pct = self.repair_pct_for(obj);
         match self.objective_markup.entry(obj.id) {
-            Entry::Occupied(mut e) => e.get_mut().update(persisted, &mut self.msgs, obj, moved),
+            Entry::Occupied(mut e) => {
+                e.get_mut().update(persisted, &mut self.msgs, obj, moved, capture_pct, repair_pct)
+            }
             Entry::Vacant(e) => {
                 e.insert(ObjectiveMarkup::new(
                     &self.cfg,
                     &mut self.msgs,
                     obj,
                     persisted,
+                    capture_pct,
+                    repair_pct,
                 ));
             }
         }

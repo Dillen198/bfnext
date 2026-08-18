@@ -254,6 +254,8 @@ pub(super) struct ObjectiveMarkup {
     supply: u8,
     fuel: u8,
     points: i32,
+    capture_pct: Option<u8>,
+    repair_pct: Option<u8>,
     name: String,
     owner_ring: MarkId,
     capturable_ring: MarkId,
@@ -272,8 +274,14 @@ fn text_color(side: Side, a: f32) -> Color {
     }
 }
 
-fn objective_label(name: &str, obj: &Objective) -> CompactString {
-    match obj.kind {
+fn objective_label(
+    name: &str,
+    obj: &Objective,
+    capture_pct: Option<u8>,
+    repair_pct: Option<u8>,
+) -> CompactString {
+    use std::fmt::Write;
+    let mut s = match obj.kind {
         ObjectiveKind::SpecialSamSite => format_compact!(
             "{}\nHealth: {}\nSupply: {}\nFuel: {}\nPoints: {}",
             name,
@@ -291,7 +299,17 @@ fn objective_label(name: &str, obj: &Objective) -> CompactString {
             obj.fuel,
             obj.points
         ),
+    };
+    // Both are mutually exclusive in practice (a carrier that's mid-repair
+    // isn't simultaneously being boarded), but neither is asserted against
+    // the other -- just append whichever is currently active.
+    if let Some(pct) = capture_pct {
+        let _ = write!(s, "\nCapturing: {pct}%");
     }
+    if let Some(pct) = repair_pct {
+        let _ = write!(s, "\nRepairing: {pct}%");
+    }
+    s
 }
 
 fn arrow_coords(obj: &Objective, dst: &Objective) -> (Vector2, Vector2) {
@@ -314,6 +332,8 @@ impl ObjectiveMarkup {
             supply: _,
             fuel: _,
             points: _,
+            capture_pct: _,
+            repair_pct: _,
             name: _,
             pos: _,
             owner_ring,
@@ -339,6 +359,8 @@ impl ObjectiveMarkup {
         msgq: &mut MsgQ,
         obj: &Objective,
         moved: &[ObjectiveId],
+        capture_pct: Option<u8>,
+        repair_pct: Option<u8>,
     ) {
         if obj.owner != self.side {
             let text_color = |a| text_color(obj.owner, a);
@@ -365,6 +387,8 @@ impl ObjectiveMarkup {
             || self.supply != obj.supply
             || self.fuel != obj.fuel
             || self.points != obj.points
+            || self.capture_pct != capture_pct
+            || self.repair_pct != repair_pct
         {
             if self.logi != obj.logi || (obj.kind.is_special_sam_site() && self.health != obj.health) {
                 let text_color = |a| text_color(obj.owner, a);
@@ -380,7 +404,9 @@ impl ObjectiveMarkup {
             self.supply = obj.supply;
             self.fuel = obj.fuel;
             self.points = obj.points;
-            msgq.set_markup_text(self.label, objective_label(&self.name, obj).into());
+            self.capture_pct = capture_pct;
+            self.repair_pct = repair_pct;
+            msgq.set_markup_text(self.label, objective_label(&self.name, obj, capture_pct, repair_pct).into());
         }
         if let Zone::Circle { pos, .. } = obj.zone
             && self.pos != pos
@@ -407,7 +433,14 @@ impl ObjectiveMarkup {
         }
     }
 
-    pub(super) fn new(cfg: &Cfg, msgq: &mut MsgQ, obj: &Objective, persisted: &Persisted) -> Self {
+    pub(super) fn new(
+        cfg: &Cfg,
+        msgq: &mut MsgQ,
+        obj: &Objective,
+        persisted: &Persisted,
+        capture_pct: Option<u8>,
+        repair_pct: Option<u8>,
+    ) -> Self {
         let text_color = |a| text_color(obj.owner, a);
         let all_spec = match obj.kind {
             ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. } | ObjectiveKind::CommandCenter => {
@@ -422,6 +455,8 @@ impl ObjectiveMarkup {
         t.logi = obj.logi;
         t.supply = obj.supply;
         t.fuel = obj.fuel;
+        t.capture_pct = capture_pct;
+        t.repair_pct = repair_pct;
         t.name = match obj.kind {
             ObjectiveKind::SpecialSamSite => format_compact!("{}", obj.name).into(),
             _ => format_compact!("{} {}", obj.name, obj.kind.name()).into(),
@@ -551,7 +586,7 @@ impl ObjectiveMarkup {
                 fill_color: Color::black(0.),
                 font_size: 10,
                 read_only: true,
-                text: objective_label(&t.name, obj).into(),
+                text: objective_label(&t.name, obj, capture_pct, repair_pct).into(),
             },
         );
         // Draw kind-specific icon symbol inside the objective zone
