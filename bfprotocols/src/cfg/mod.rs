@@ -168,6 +168,10 @@ pub enum UnitTag {
     NavalSpawnPoint,
     CAP,
     HotStart,
+    /// Carries jamming/ECM equipment (dedicated EW aircraft or
+    /// self-protection pods) -- degrades nearby radar detection
+    /// probability for the IADN jamming mechanic.
+    Jammer,
 }
 
 #[derive(
@@ -520,6 +524,46 @@ pub struct IadnConfig {
     /// to lose lock/fly past, short enough not to blind the site for long.
     #[serde(default = "default_harm_defense_cooldown_secs")]
     pub harm_defense_cooldown_secs: u32,
+    /// Once cued hot, a SAM site stays hot for at least this long (s) even
+    /// if the cue drops, instead of flickering dark the instant a target
+    /// loses fused-track quality for a moment. Default 15.
+    #[serde(default = "default_min_hot_dwell_secs")]
+    pub min_hot_dwell_secs: u32,
+    /// On first detecting a qualifying cue, a site waits a random 0..=N
+    /// second delay (rolled per site, per activation) before actually going
+    /// hot, so a cluster of networked sites doesn't snap to Auto in
+    /// lockstep -- that's an obvious tell that it's scripted. Default 4.
+    #[serde(default = "default_reaction_delay_max_secs")]
+    pub reaction_delay_max_secs: u32,
+    /// Fraction (0–1) of a SAM's search-radar range within which its
+    /// separate tracking/engagement radar (units tagged UnitTag::TrackRadar)
+    /// is allowed to power up. Search radar (UnitTag::SearchRadar) follows
+    /// the site's normal hot/dark state; tracking radar only lights up once
+    /// a target is this close, mirroring how real layered SAM systems
+    /// (SA-10, Patriot) keep the higher-exposure engagement radar dark until
+    /// close to actually firing. Default 0.5. Sites with no unit tagged
+    /// TrackRadar/SearchRadar in their group are unaffected -- this only
+    /// adds a second control layer on top of the group AlarmState, it
+    /// doesn't replace it.
+    #[serde(default = "default_track_radar_range_fraction")]
+    pub track_radar_range_fraction: f32,
+    /// Enable the jamming/ECM detection-degradation mechanic.
+    #[serde(default = "default_jamming_enabled")]
+    pub jamming_enabled: bool,
+    /// Distance (m) from a UnitTag::Jammer-tagged unit within which nearby
+    /// radar donors have their detection probability degraded. Default
+    /// 40000 -- stand-off/self-protection jamming has a wide effective
+    /// radius compared to a SAM's own detection range.
+    #[serde(default = "default_jamming_range_m")]
+    pub jamming_range_m: f64,
+    /// Detection-probability multiplier applied at full jamming exposure
+    /// (donor right on top of a jammer), scaled by the donor's own
+    /// ecm_susceptibility and linearly by distance out to jamming_range_m.
+    /// Default 0.5 (halves detection probability at worst case for a fully
+    /// susceptible donor -- this degrades detection, it doesn't grant
+    /// stealth).
+    #[serde(default = "default_jamming_detection_penalty")]
+    pub jamming_detection_penalty: f32,
 }
 
 impl Default for IadnConfig {
@@ -534,6 +578,12 @@ impl Default for IadnConfig {
             anti_radiation_weapons: FxHashSet::default(),
             harm_defense_radius_m: default_harm_defense_radius_m(),
             harm_defense_cooldown_secs: default_harm_defense_cooldown_secs(),
+            min_hot_dwell_secs: default_min_hot_dwell_secs(),
+            reaction_delay_max_secs: default_reaction_delay_max_secs(),
+            track_radar_range_fraction: default_track_radar_range_fraction(),
+            jamming_enabled: default_jamming_enabled(),
+            jamming_range_m: default_jamming_range_m(),
+            jamming_detection_penalty: default_jamming_detection_penalty(),
         }
     }
 }
@@ -546,6 +596,12 @@ fn default_sam_cue_enabled() -> bool { true }
 fn default_sam_cue_confidence_threshold() -> f32 { 0.4 }
 fn default_harm_defense_radius_m() -> f64 { 20_000.0 }
 fn default_harm_defense_cooldown_secs() -> u32 { 20 }
+fn default_min_hot_dwell_secs() -> u32 { 15 }
+fn default_reaction_delay_max_secs() -> u32 { 4 }
+fn default_track_radar_range_fraction() -> f32 { 0.5 }
+fn default_jamming_enabled() -> bool { true }
+fn default_jamming_range_m() -> f64 { 40_000.0 }
+fn default_jamming_detection_penalty() -> f32 { 0.5 }
 
 /// ELINT/SIGINT intelligence system configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

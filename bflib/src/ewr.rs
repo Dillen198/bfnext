@@ -422,6 +422,25 @@ pub struct Ewr {
     /// which overrides the normal cue-based decision while an entry here is
     /// still in the future.
     harm_dark_until: FxHashMap<GroupId, DateTime<Utc>>,
+    /// IADN engagement doctrine/hysteresis: per-SAM-site hot/dark state,
+    /// so a site doesn't flicker between AlarmState values every tick and
+    /// doesn't snap hot the instant a cue appears -- see decide_hot_state.
+    sam_emcon: FxHashMap<GroupId, SamEmconState>,
+}
+
+/// Per-SAM-site engagement doctrine state (see Ewr::decide_hot_state).
+#[derive(Debug, Clone, Copy, Default)]
+struct SamEmconState {
+    /// Whether this site is currently commanded hot (AlarmState::Auto),
+    /// tracked independently of DCS's own state so hysteresis doesn't need
+    /// a round-trip Lua call to know its own last decision.
+    hot: bool,
+    /// When this site last transitioned dark -> hot, for the minimum
+    /// engagement dwell check.
+    went_hot_at: Option<DateTime<Utc>>,
+    /// Scheduled time this site is allowed to go hot after first detecting
+    /// a qualifying cue, for the randomized per-site reaction delay.
+    pending_hot_at: Option<DateTime<Utc>>,
 }
 
 impl Ewr {
@@ -508,6 +527,26 @@ impl Ewr {
         // Snapshot donors for spike_warnings use later in the same tick
         self.donor_snapshot = db.radar_donors().collect();
 
+        // IADN jamming: snapshot every UnitTag::Jammer-tagged aircraft's
+        // position per side, once per tick, reused by every donor below
+        // (jamming_factor_for_donor only cares about the nearest enemy
+        // jammer to a given donor, not per-contact).
+        let jammer_positions: FxHashMap<Side, SmallVec<[Vector3; 8]>> = if iadn_cfg
+            .as_ref()
+            .map(|c| c.jamming_enabled)
+            .unwrap_or(false)
+        {
+            let mut m: FxHashMap<Side, SmallVec<[Vector3; 8]>> = FxHashMap::default();
+            for (id, side, pos, _vel) in &aircraft {
+                if Self::is_jammer(id, db) {
+                    m.entry(*side).or_default().push(pos.p.0);
+                }
+            }
+            m
+        } else {
+            FxHashMap::default()
+        };
+
         // Accumulate per-sensor contributions for IADN fusion this tick.
         // Maps (donor_side, EnId) -> Vec<(snr, pos, velocity, sensor_type, detected_by)>
         let mut fusion_contributions: FxHashMap<(Side, EnId), SmallVec<[(f32, Position3, Vector3, SensorType, DetectedBy); 4]>> =
@@ -518,6 +557,11 @@ impl Ewr {
             let tracks = self.tracks.entry(donor.side).or_default();
             let mut donor_pos = donor.pos.p.0;
             donor_pos.y += 10.; // factor in antenna height
+            let jamming_factor = iadn_cfg
+                .as_ref()
+                .filter(|c| c.jamming_enabled)
+                .map(|c| Self::jamming_factor_for_donor(donor, donor_pos, &jammer_positions, c))
+                .unwrap_or(1.0);
             let sensor = if donor.airborne { DetectedBy::AIRBORNE } else { DetectedBy::GROUND };
             for (id, obj_side, pos, velocity) in &aircraft {
                 let track = tracks.entry(*id).or_default();
@@ -565,7 +609,7 @@ impl Ewr {
                                     donor.look_down_capable,
                                     donor.frequency_band,
                                     rp,
-                                );
+                                ) * jamming_factor;
                                 // Collect SNR for IADN fusion
                                 if iadn_cfg.is_some() && donor.side != *obj_side {
                                     fusion_contributions
@@ -679,7 +723,11 @@ impl Ewr {
                 // before the cue loop below so a fresh threat overrides this
                 // tick's targeting decision, not next tick's.
                 self.update_harm_threats(lua, iadn, now);
-                for donor in &self.donor_snapshot {
+                // Clone the snapshot (RadarDonor is Copy) so the loop body
+                // is free to call &mut self methods (decide_hot_state,
+                // apply_layered_radar_emission) without borrow conflicts.
+                let donors = self.donor_snapshot.clone();
+                for donor in &donors {
                     if !matches!(donor.sensor_type, SensorType::SamSearchRadar) {
                         continue;
                     }
@@ -707,28 +755,51 @@ impl Ewr {
                         .and_then(|cc_oid| db.persisted.objectives.get(cc_oid))
                         .map(|cc| cc.owner == donor.side && cc.health() > 0)
                         .unwrap_or(false);
+                    let mut nearest_cue_dist: Option<f64> = None;
                     let desired = if under_harm_threat {
                         // Survival overrides everything else, networked or
                         // not: go dark even if a good cue exists, rather
-                        // than trading the site for one more shot.
+                        // than trading the site for one more shot. Also
+                        // reset engagement-doctrine state so coming off a
+                        // HARM threat re-enters the reaction-delay process
+                        // fresh rather than snapping straight back hot.
+                        self.sam_emcon.remove(&gid);
                         dcso3::controller::AlarmState::Green
                     } else if !networked {
+                        self.sam_emcon.remove(&gid);
                         dcso3::controller::AlarmState::Auto
                     } else {
                         let cues = self.sam_cue_targets(donor.side, sam_pos, donor.range as f64, iadn);
-                        if cues.is_empty() {
-                            dcso3::controller::AlarmState::Green
-                        } else {
-                            dcso3::controller::AlarmState::Auto
-                        }
+                        nearest_cue_dist = cues
+                            .iter()
+                            .map(|(_, pos, _)| na::distance(&sam_pos.into(), &(*pos).into()))
+                            .fold(None, |acc: Option<f64>, d| Some(acc.map_or(d, |a| a.min(d))));
+                        self.decide_hot_state(gid, !cues.is_empty(), now, iadn)
                     };
-                    if let Ok(live) = dcso3::group::Group::get_by_name(lua, &group.name) {
+                    let group_name = group.name.clone();
+                    if let Ok(live) = dcso3::group::Group::get_by_name(lua, &group_name) {
                         if let Ok(con) = live.get_controller() {
                             let _ = con.set_option(dcso3::controller::AiOption::Ground(
                                 dcso3::controller::GroundOption::AlarmState(desired),
                             ));
                         }
                     }
+                    // Layered search/track radar: an optional second control
+                    // layer on top of the group AlarmState above, only for
+                    // sites with units tagged SearchRadar/TrackRadar. Search
+                    // radar mirrors the site's hot/dark state; the separate
+                    // tracking/engagement radar only powers up once a cue is
+                    // within track_radar_range_fraction of the search
+                    // radar's own range, mirroring real layered SAM systems
+                    // (SA-10, Patriot) that keep the higher-exposure
+                    // engagement radar dark until close to actually firing.
+                    let hot = matches!(desired, dcso3::controller::AlarmState::Auto | dcso3::controller::AlarmState::Red);
+                    self.apply_layered_radar_emission(
+                        lua, db, gid, hot, nearest_cue_dist, donor.range as f64, iadn,
+                    );
+                    // IADN jamming: degrade this donor's effective detection
+                    // range against airborne contacts near a UnitTag::Jammer
+                    // unit -- see jamming_factor_for_donor.
                 }
             }
         }
@@ -738,6 +809,56 @@ impl Ewr {
     // ─── IADN: fuse sensor contributions into FusedTrack table ──────────────
 
     /// Derive a ContactClass from unit tags for a given tracked entity.
+    /// IADN jamming: does this contact's vehicle type carry
+    /// UnitTag::Jammer? Same type-lookup shape as classify_contact just
+    /// below, kept separate since the callers care about different things
+    /// (contact classification vs. "is this a jamming platform").
+    fn is_jammer(id: &EnId, db: &Db) -> bool {
+        let typ = match id {
+            EnId::Player(ucid) => db
+                .persisted
+                .players
+                .get(ucid)
+                .and_then(|p| p.current_slot.as_ref())
+                .and_then(|(_, inst)| inst.as_ref())
+                .map(|inst| inst.typ.clone()),
+            EnId::Unit(uid) => db.persisted.units.get(uid).map(|u| u.typ.clone()),
+        };
+        typ.as_ref()
+            .and_then(|t| db.ephemeral.cfg.unit_classification.get(t))
+            .map(|tags| tags.contains(UnitTag::Jammer))
+            .unwrap_or(false)
+    }
+
+    /// IADN jamming: detection-probability multiplier for a donor given the
+    /// nearest enemy jammer, if any is within cfg.jamming_range_m. Linear
+    /// falloff from full effect at 0m to none at jamming_range_m, scaled by
+    /// jamming_detection_penalty and the donor's own ecm_susceptibility.
+    /// 1.0 (no degradation) if no enemy jammer is in range.
+    fn jamming_factor_for_donor(
+        donor: &crate::db::RadarDonor,
+        donor_pos: Vector3,
+        jammer_positions: &FxHashMap<Side, SmallVec<[Vector3; 8]>>,
+        cfg: &IadnConfig,
+    ) -> f32 {
+        let Some(enemy_jammers) = jammer_positions.get(&donor.side.opposite()) else {
+            return 1.0;
+        };
+        let range_sq = cfg.jamming_range_m.powi(2);
+        let mut worst_proximity = 0.0f64; // 0 = no effect, 1 = jammer right on top
+        for jpos in enemy_jammers {
+            let dist_sq = na::distance_squared(&donor_pos.into(), &(*jpos).into());
+            if dist_sq <= range_sq {
+                let proximity = 1.0 - (dist_sq.sqrt() / cfg.jamming_range_m);
+                if proximity > worst_proximity {
+                    worst_proximity = proximity;
+                }
+            }
+        }
+        let effect = worst_proximity * cfg.jamming_detection_penalty as f64 * donor.ecm_susceptibility as f64;
+        (1.0 - effect).clamp(0.0, 1.0) as f32
+    }
+
     fn classify_contact(id: &EnId, db: &Db) -> ContactClass {
         let typ = match id {
             EnId::Player(ucid) => db
@@ -920,6 +1041,117 @@ impl Ewr {
             }
             true // still in flight, keep tracking
         });
+    }
+
+    /// IADN engagement doctrine: decide whether a SAM site should be hot
+    /// (AlarmState::Auto) or dark (AlarmState::Green) given whether it
+    /// currently has a qualifying cue, applying two pieces of hysteresis so
+    /// the decision doesn't look mechanically instant:
+    ///
+    /// - On first detecting a cue, the site waits a random
+    ///   0..=reaction_delay_max_secs before actually going hot (rolled once
+    ///   per activation), so a cluster of networked sites doesn't snap to
+    ///   Auto in the same tick.
+    /// - Once hot, the site stays hot for at least min_hot_dwell_secs even
+    ///   if the cue drops in the meantime, so it actually gets a chance to
+    ///   engage instead of flickering dark the instant track quality dips.
+    ///
+    /// Per-site state lives in `sam_emcon`, keyed by GroupId -- Rust-side
+    /// bookkeeping only, never a live DCS handle, so it has no interaction
+    /// with SAM culling; a culled/despawned site's state just sits idle
+    /// until it's relevant again.
+    fn decide_hot_state(
+        &mut self,
+        gid: GroupId,
+        has_cue: bool,
+        now: DateTime<Utc>,
+        cfg: &IadnConfig,
+    ) -> dcso3::controller::AlarmState {
+        use dcso3::controller::AlarmState;
+        let state = self.sam_emcon.entry(gid).or_default();
+        if has_cue {
+            if state.hot {
+                return AlarmState::Auto;
+            }
+            match state.pending_hot_at {
+                None => {
+                    let mut rng = rand::thread_rng();
+                    let delay_secs =
+                        rand::Rng::gen_range(&mut rng, 0..=cfg.reaction_delay_max_secs.max(1));
+                    state.pending_hot_at = Some(now + chrono::Duration::seconds(delay_secs as i64));
+                    AlarmState::Green
+                }
+                Some(t) if now >= t => {
+                    state.hot = true;
+                    state.went_hot_at = Some(now);
+                    state.pending_hot_at = None;
+                    AlarmState::Auto
+                }
+                Some(_) => AlarmState::Green, // still waiting out the reaction delay
+            }
+        } else {
+            state.pending_hot_at = None; // cue gone -- cancel any pending activation
+            if state.hot {
+                let dwell_ok = state
+                    .went_hot_at
+                    .map(|t| (now - t).num_seconds() >= cfg.min_hot_dwell_secs as i64)
+                    .unwrap_or(true);
+                if dwell_ok {
+                    state.hot = false;
+                    AlarmState::Green
+                } else {
+                    AlarmState::Auto // still within the minimum engagement dwell
+                }
+            } else {
+                AlarmState::Green
+            }
+        }
+    }
+
+    /// IADN layered search/track radar: an optional second control layer on
+    /// top of the group-level AlarmState. Units tagged UnitTag::SearchRadar
+    /// mirror the site's overall hot/dark state; units tagged
+    /// UnitTag::TrackRadar only emit once a cue is within
+    /// `cfg.track_radar_range_fraction` of the search radar's own range --
+    /// real layered SAM systems (SA-10, Patriot) keep the higher-exposure
+    /// engagement/tracking radar dark until close to actually firing, not
+    /// lit the whole time the site is merely alert. Sites with no unit
+    /// tagged either role are untouched -- this adds a layer, it doesn't
+    /// replace the group AlarmState control.
+    ///
+    /// Each unit is resolved fresh via Unit::get_by_name every call, same
+    /// culling-safe pattern as the group-level lookup: a dead/despawned
+    /// unit just fails that lookup and is silently skipped.
+    fn apply_layered_radar_emission(
+        &self,
+        lua: MizLua,
+        db: &Db,
+        gid: GroupId,
+        hot: bool,
+        nearest_cue_dist_m: Option<f64>,
+        search_range_m: f64,
+        cfg: &IadnConfig,
+    ) {
+        let Some(group) = db.persisted.groups.get(&gid) else { return };
+        let track_range_m = search_range_m * cfg.track_radar_range_fraction as f64;
+        let track_should_be_on =
+            hot && nearest_cue_dist_m.map(|d| d <= track_range_m).unwrap_or(false);
+        for uid in &group.units {
+            let Some(unit) = db.persisted.units.get(uid) else { continue };
+            if unit.dead {
+                continue;
+            }
+            let want_on = if unit.tags.contains(UnitTag::SearchRadar) {
+                hot
+            } else if unit.tags.contains(UnitTag::TrackRadar) {
+                track_should_be_on
+            } else {
+                continue; // not a radar-role unit -- leave it alone entirely
+            };
+            if let Ok(live) = dcso3::unit::Unit::get_by_name(lua, &unit.name) {
+                let _ = live.enable_emission(want_on);
+            }
+        }
     }
 
     /// Returns SAM cue targets for a given SAM position and range.

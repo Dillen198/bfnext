@@ -382,6 +382,49 @@ proximity heuristic ("an ARM launched near an active radar might be
 targeting it"), not true seeker/guidance simulation, and it applies
 whether or not the site is currently networked to a Command Center.
 
+### Engagement doctrine (hysteresis)
+Raw threshold-based cueing would make sites flicker between hot/dark every
+tick and snap to Auto in perfect lockstep across a network — both obvious
+"it's a script" tells. Two smoothing rules fix that:
+- **Reaction delay**: the first time a site sees a qualifying cue, it waits
+  a random `0..=iadn.reaction_delay_max_secs` seconds (rolled per site, per
+  activation) before actually going hot, so a cluster of networked sites
+  reacts staggered, not simultaneously.
+- **Minimum engagement dwell**: once hot, a site stays hot for at least
+  `iadn.min_hot_dwell_secs` even if the cue drops in the meantime, so it
+  gets a real chance to engage instead of flickering dark the instant track
+  quality dips for a moment.
+
+Going dark under a HARM threat, or falling back to Auto when the Command
+Center link is lost, both bypass this doctrine entirely (survival and
+"not networked" are unconditional) and reset it, so the site re-enters the
+reaction-delay process fresh the next time it reacquires a normal cue.
+
+### Layered search / tracking radar
+Real systems like the SA-10 and Patriot keep a continuously-sweeping
+search radar running while the higher-exposure tracking/engagement radar
+only powers up close to actually firing. To get this behavior on a SAM
+site, tag its **search radar unit type** with `UnitTag::SearchRadar` and
+its **tracking radar unit type** with `UnitTag::TrackRadar` in
+`unit_classification` (see existing Hawk/SA-3 examples in the sample
+config — this tagging already existed for kill-scoring, IADN just gives it
+a second use). Search radar mirrors the site's hot/dark state; tracking
+radar only emits once a cue is within `iadn.track_radar_range_fraction` of
+the search radar's own detection range. A site with no unit tagged either
+role is unaffected — this is an optional extra control layer on top of
+the group-level `AlarmState`, not a replacement for it.
+
+### Jamming / ECM
+Tag a unit type (dedicated EW aircraft, or a self-protection-jamming
+airframe) with `UnitTag::Jammer` in `unit_classification`. While one is
+airborne, every enemy radar donor within `iadn.jamming_range_m` gets its
+detection probability degraded — full effect (scaled by
+`iadn.jamming_detection_penalty` and that donor's own
+`ecm_susceptibility`, configured per radar type same as other radar
+physics) at 0m from the jammer, falling off linearly to none at
+`jamming_range_m`. This degrades detection, it does not grant stealth —
+close enough, a donor still sees through it.
+
 ### Config reference (`iadn` block)
 | Field | Default | Meaning |
 |-------|---------|---------|
@@ -394,6 +437,12 @@ whether or not the site is currently networked to a Command Center.
 | `anti_radiation_weapons` | *(empty — must configure)* | DCS weapon type names treated as ARMs, e.g. `AGM_88C`, `Kh25MPU`, `Kh58Ushke`, `ALARM` |
 | `harm_defense_radius_m` | 20000 | Distance from a tracked ARM within which a SAM site is considered threatened |
 | `harm_defense_cooldown_secs` | 20 | How long a threatened site stays forced dark |
+| `min_hot_dwell_secs` | 15 | Minimum time a site stays hot once activated |
+| `reaction_delay_max_secs` | 4 | Max random delay before a site acts on a fresh cue |
+| `track_radar_range_fraction` | 0.5 | Fraction of search-radar range within which tracking radar (if tagged) activates |
+| `jamming_enabled` | true | Master switch for the jamming/ECM mechanic |
+| `jamming_range_m` | 40000 | Distance from a Jammer-tagged unit within which detection is degraded |
+| `jamming_detection_penalty` | 0.5 | Detection-probability multiplier at full jamming exposure |
 
 `anti_radiation_weapons` ships empty — HARM defense silently does nothing
 until you populate it with the actual weapon type names your theater's
@@ -840,6 +889,19 @@ All new features can be configured in the campaign config JSON:
   configurable cooldown, instead of having no defense against them at
   all. Requires populating the new `iadn.anti_radiation_weapons` list
   with your theater's actual ARM type names — ships empty by default.
+- **Engagement doctrine (hysteresis)**: randomized per-site reaction
+  delay on first detecting a cue, plus a minimum engagement dwell time
+  once hot, so sites don't flicker or react in perfect network-wide
+  lockstep — see `iadn.reaction_delay_max_secs` / `iadn.min_hot_dwell_secs`.
+- **Layered search / tracking radar**: sites with units tagged
+  `UnitTag::SearchRadar` / `UnitTag::TrackRadar` now get independent
+  per-unit emission control — search radar mirrors the site's hot/dark
+  state, tracking radar only powers up once a target is within
+  `iadn.track_radar_range_fraction` of the search radar's range.
+- **Jamming / ECM**: units tagged `UnitTag::Jammer` now degrade nearby
+  enemy radar detection probability within `iadn.jamming_range_m`,
+  scaled by `iadn.jamming_detection_penalty` and each radar's own
+  `ecm_susceptibility`.
 - See [IADN](#iadn-integrated-air-defence-network-new) for the full
   mechanic and config reference, and `miz/SAMPLE_CFG.json`'s `iadn`
   block for a populated example.

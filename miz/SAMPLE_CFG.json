@@ -410,7 +410,19 @@
 
     "harm_defense_radius_m": 20000.0,
 
-    "harm_defense_cooldown_secs": 20
+    "harm_defense_cooldown_secs": 20,
+
+    "min_hot_dwell_secs": 15,
+
+    "reaction_delay_max_secs": 4,
+
+    "track_radar_range_fraction": 0.5,
+
+    "jamming_enabled": true,
+
+    "jamming_range_m": 40000.0,
+
+    "jamming_detection_penalty": 0.5
   },
 
   "elint": {
