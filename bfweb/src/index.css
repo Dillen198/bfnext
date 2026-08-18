@@ -430,6 +430,8 @@ body {
 
 .topbar-secondary { display: flex; align-items: center; }
 
+.podium-grid { grid-template-columns: repeat(3, 1fr); }
+
 /* ═══════════════════════════════════════════════════════════════
    MOBILE LAYOUT (<= 860px)
    ═══════════════════════════════════════════════════════════════ */
@@ -446,7 +448,15 @@ body {
     top: 54px;
     left: 0;
     bottom: 0;
-    z-index: 60;
+    /* Leaflet gives its internal map-pane a CSS transform for panning,
+       which makes it its own stacking context -- but the pane itself
+       still carries Leaflet's z-index:400, and none of a map page's own
+       wrapper divs happen to establish a stacking context that scopes
+       it. Left unscoped, that 400 outranks a "normal" nav z-index and
+       the sidebar/backdrop render underneath the live map instead of
+       over it. App chrome must always win, so this sits above anything
+       any page's own content could plausibly stack to. */
+    z-index: 2000;
     transform: translateX(-100%);
     transition: transform 0.22s ease;
     box-shadow: 6px 0 28px rgba(0,0,0,0.55);
@@ -458,9 +468,13 @@ body {
     position: fixed;
     inset: 54px 0 0 0;
     background: rgba(0,0,0,0.55);
-    z-index: 55;
+    z-index: 1999;
   }
 
+  /* Rankings podium: 3 equal columns has no room to breathe once each
+     card is under ~120px wide -- stack the top-3 cards instead. */
+  .podium-grid { grid-template-columns: 1fr; }
+  .podium-stats { gap: 10px; }
 }
 
 .nav-item {

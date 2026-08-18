@@ -44,6 +44,10 @@ export default function AboutPage() {
               sessions with full stat tracking, kill feeds, and leaderboards.
             </p>
 
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.7 }}>
+              Originally created by <strong style={{ color: 'var(--text)' }}>Eric Stokes</strong>.
+            </p>
+
             <div className="flex flex-wrap gap-2 pt-1">
               {[
                 'Territory Control', 'Logistics', 'Cargo Transport', 'Troop Deployments',
@@ -213,9 +217,9 @@ export default function AboutPage() {
                 <img
                   src="https://www.digitalcombatsimulator.com/images/logos/Eagle_Dynamics.png"
                   alt="Eagle Dynamics"
-                  style={{ width: 200, height: 'auto', flexShrink: 0, objectFit: 'contain' }}
+                  style={{ width: 'clamp(90px, 30vw, 200px)', height: 'auto', flexShrink: 0, objectFit: 'contain' }}
                 />
-                <div>
+                <div className="min-w-0" style={{ flex: 1 }}>
                   <div className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)', marginBottom: '0.4rem' }}>
                     Eagle Dynamics
                   </div>
@@ -243,7 +247,7 @@ export default function AboutPage() {
                   alt="Hacker"
                   style={{ width: 48, height: 48, borderRadius: '8px', flexShrink: 0, objectFit: 'cover' }}
                 />
-                <div>
+                <div className="min-w-0" style={{ flex: 1 }}>
                   <div className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)', marginBottom: '0.4rem' }}>
                     61st ATP
                   </div>
@@ -266,7 +270,7 @@ export default function AboutPage() {
                   alt="Special K"
                   style={{ width: 48, height: 48, borderRadius: '8px', flexShrink: 0, objectFit: 'contain' }}
                 />
-                <div>
+                <div className="min-w-0" style={{ flex: 1 }}>
                   <div className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)', marginBottom: '0.4rem' }}>
                     DCSServerBot
                   </div>

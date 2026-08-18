@@ -98,7 +98,7 @@ export default function Leaderboard() {
 
         {/* ── Podium ── */}
         {top3.length >= 3 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          <div className="podium-grid" style={{ display: 'grid', gap: 12 }}>
             {top3.map((p, i) => {
               const score = Math.round(computeScore(p))
               const mc = MEDAL_COLOR[i]
@@ -126,7 +126,7 @@ export default function Leaderboard() {
                       </div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 16 }}>
+                  <div className="podium-stats" style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                     {[
                       { label: 'A2A',   value: p.air_kills,              color: '#60a5fa' },
                       { label: 'A2G',   value: p.ground_kills,           color: '#fb923c' },
