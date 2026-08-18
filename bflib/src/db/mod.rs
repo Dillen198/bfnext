@@ -197,6 +197,13 @@ pub struct RadarDonor {
     pub sensor_type: bfprotocols::cfg::SensorType,
     pub pulse_doppler: bool,
     pub look_down_capable: bool,
+    /// Owning group, when this donor is a real DCS ground/naval unit (as
+    /// opposed to a deployed EWR or an airborne player). Lets IADN EMCON
+    /// control resolve a live Controller for this donor when it needs to --
+    /// always by name via Group::get_by_name at the point of use, never
+    /// cached, so a donor whose objective gets culled and later respawned
+    /// is handled correctly with no stale reference.
+    pub gid: Option<GroupId>,
     /// Stored for future chaff mechanic — not yet consumed by physics.
     #[allow(dead_code)]
     pub chaff_susceptibility: f32,
@@ -367,6 +374,7 @@ impl Db {
                 sensor_type: bfprotocols::cfg::SensorType::GroundEwr,
                 pulse_doppler: false,
                 look_down_capable: false,
+                gid: Some(*gid),
                 chaff_susceptibility: 0.3,
                 ecm_susceptibility: 0.5,
                 scan_interval_secs: 8,
@@ -398,6 +406,7 @@ impl Db {
                             sensor_type,
                             pulse_doppler: ewr_cfg.pulse_doppler,
                             look_down_capable: ewr_cfg.look_down_capable,
+                            gid: Some(u.group),
                             chaff_susceptibility: ewr_cfg.chaff_susceptibility,
                             ecm_susceptibility: ewr_cfg.ecm_susceptibility,
                             scan_interval_secs: ewr_cfg.scan_interval_secs,
@@ -428,6 +437,7 @@ impl Db {
                             sensor_type,
                             pulse_doppler: ewr_cfg.pulse_doppler,
                             look_down_capable: ewr_cfg.look_down_capable,
+                            gid: None,
                             chaff_susceptibility: ewr_cfg.chaff_susceptibility,
                             ecm_susceptibility: ewr_cfg.ecm_susceptibility,
                             scan_interval_secs: ewr_cfg.scan_interval_secs,

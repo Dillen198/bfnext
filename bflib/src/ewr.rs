@@ -645,21 +645,42 @@ impl Ewr {
                 }
             }
         }
-        // IADN SAM cueing: emit detection stats for SAM-eligible fused tracks.
-        // This allows the stats system and any SAM group listeners to act on IADN cues.
-        if let (Some(iadn), Some(rp)) = (&iadn_cfg, &radar_physics) {
-            // For each SAM donor, find nearby hostile fused tracks and emit cues.
-            for donor in &self.donor_snapshot {
-                if !matches!(donor.sensor_type, SensorType::SamSearchRadar) {
-                    continue;
-                }
-                let sam_pos = Vector2::new(donor.pos.p.x, donor.pos.p.z);
-                let cues = self.sam_cue_targets(donor.side, sam_pos, donor.range as f64, iadn);
-                for (_, cue_pos, _) in cues {
-                    // Emit an EWR detection stat for the cued position so the
-                    // stats subscriber can push it to SAM fire control.
-                    let _ = rp; // radar_physics present means we're in physics mode
-                    let _ = cue_pos;
+        // IADN SAM cueing + EMCON: use the fused, multi-sensor track picture
+        // (not each SAM's own organic radar alone) to decide whether a SAM
+        // site's radar should be hot. No qualifying fused hostile in range ->
+        // AlarmState::Green (radar dark, doesn't light up for nothing).
+        // Otherwise -> AlarmState::Auto (radar on, DCS's native SAM AI takes
+        // it from there using its own seeker/engagement logic). This is the
+        // "smart" half of IADN; the fusion feeding it already ran above.
+        //
+        // Every donor is resolved fresh by DCS group name each tick via
+        // Group::get_by_name -- never a cached handle -- so a SAM site whose
+        // objective is currently culled/despawned just fails that lookup and
+        // is silently skipped this tick, with zero interaction with the
+        // culling system: nothing here holds a reference across a
+        // despawn/respawn cycle, so there's nothing to go stale.
+        if let (Some(iadn), Some(_rp)) = (&iadn_cfg, &radar_physics) {
+            if iadn.sam_cue_enabled {
+                for donor in &self.donor_snapshot {
+                    if !matches!(donor.sensor_type, SensorType::SamSearchRadar) {
+                        continue;
+                    }
+                    let Some(gid) = donor.gid else { continue };
+                    let Some(group) = db.persisted.groups.get(&gid) else { continue };
+                    let sam_pos = Vector2::new(donor.pos.p.x, donor.pos.p.z);
+                    let cues = self.sam_cue_targets(donor.side, sam_pos, donor.range as f64, iadn);
+                    let desired = if cues.is_empty() {
+                        dcso3::controller::AlarmState::Green
+                    } else {
+                        dcso3::controller::AlarmState::Auto
+                    };
+                    if let Ok(live) = dcso3::group::Group::get_by_name(lua, &group.name) {
+                        if let Ok(con) = live.get_controller() {
+                            let _ = con.set_option(dcso3::controller::AiOption::Ground(
+                                dcso3::controller::GroundOption::AlarmState(desired),
+                            ));
+                        }
+                    }
                 }
             }
         }
