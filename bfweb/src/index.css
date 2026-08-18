@@ -112,6 +112,14 @@ body {
 .leaflet-control-attribution a { color: var(--text-dim) !important; }
 
 .obj-label { background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
+.logi-tip {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+.logi-tip::before { display: none !important; }
 .obj-label::before { display: none !important; }
 
 /* ═══════════════════════════════════════════════════════════════

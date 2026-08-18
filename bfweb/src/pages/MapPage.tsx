@@ -22,7 +22,7 @@ import {
   api, connectLiveUnits,
   type Objective, type MapUnit, type LiveUnit, type WsUnitsMsg, type Bullseye,
 } from '../api'
-import { createMapIcon, type IconStyle, type Side } from '../lib/mapIcons'
+import { createMapIcon, spriteIconUrl, type IconStyle, type Side } from '../lib/mapIcons'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 
@@ -169,10 +169,11 @@ interface UnitIconOpts {
   vspd?: number    // m/s vertical speed (optional)
   watched: boolean
   symSize?: number
+  spriteUrl?: string | null   // real NATO sprite image, takes priority over milsymbol
 }
 
 function sneakerUnitIcon(opts: UnitIconOpts): L.DivIcon {
-  const { coa, cat, name, alt, spd, vspd, watched, symSize = 26 } = opts
+  const { coa, cat, name, alt, spd, vspd, watched, symSize = 26, spriteUrl } = opts
   const sidc = getSIDC(coa, cat)
   const namCol = watched ? COL_WATCH : (coa === 1 ? COL_ENEMY : COL_ALLY)
   const fillCol = namCol
@@ -194,21 +195,29 @@ function sneakerUnitIcon(opts: UnitIconOpts): L.DivIcon {
 
   let symSvg = ''
   let symW = symSize, symH = symSize
-  try {
-    const sym = new ms.Symbol(sidc, {
-      size: symSize,
-      fillColor: fillCol,
-      strokeWidth: 0.4,
-      iconColor: '#ffffff',
-    })
-    symSvg = sym.asSVG() as string
-    const sz = sym.getSize() as { width: number; height: number }
-    symW = sz.width; symH = sz.height
-  } catch {
-    symSvg = `<svg width="${symSize}" height="${symSize}" viewBox="0 0 20 20">
-      <polygon points="10,2 17,17 10,12 3,17" fill="${fillCol}" stroke="#000" stroke-width="0.5"/>
-    </svg>`
-    symW = symSize; symH = symSize
+  if (spriteUrl) {
+    // Sprite sheet images are 250×150 (5:3) — scale to symSize height.
+    symH = symSize
+    symW = Math.round(symSize * 250 / 150)
+    symSvg = `<img src="${spriteUrl}" width="${symW}" height="${symH}"
+      style="display:block;filter:drop-shadow(0 0 2px #000a)" draggable="false"/>`
+  } else {
+    try {
+      const sym = new ms.Symbol(sidc, {
+        size: symSize,
+        fillColor: fillCol,
+        strokeWidth: 0.4,
+        iconColor: '#ffffff',
+      })
+      symSvg = sym.asSVG() as string
+      const sz = sym.getSize() as { width: number; height: number }
+      symW = sz.width; symH = sz.height
+    } catch {
+      symSvg = `<svg width="${symSize}" height="${symSize}" viewBox="0 0 20 20">
+        <polygon points="10,2 17,17 10,12 3,17" fill="${fillCol}" stroke="#000" stroke-width="0.5"/>
+      </svg>`
+      symW = symSize; symH = symSize
+    }
   }
 
   const labelHtml = cat <= 2
@@ -233,13 +242,14 @@ function sneakerUnitIcon(opts: UnitIconOpts): L.DivIcon {
   })
 }
 
-function restMilSymIcon(owner: string, tags: string[], typ: string, alt: number, spd: number, _heading: number, watched = false): L.DivIcon {
+function restMilSymIcon(owner: string, tags: string[], typ: string, alt: number, spd: number, _heading: number, watched = false, iconStyle: IconStyle = 'nato'): L.DivIcon {
   const coa = owner === 'Red' ? 1 : 2
   const cat = tags.includes('Aircraft') || tags.includes('AWACS') ? 1
     : tags.includes('Helicopter') ? 2
       : tags.includes('Boat') ? 4
         : 3
-  return sneakerUnitIcon({ coa, cat, name: typ, alt, spd, watched, symSize: 24 })
+  const spriteUrl = iconStyle === 'nato' ? spriteIconUrl(owner as Side, tags) : null
+  return sneakerUnitIcon({ coa, cat, name: typ, alt, spd, watched, symSize: 24, spriteUrl })
 }
 
 // ── Threat / objective icons ───────────────────────────────────────────
@@ -692,6 +702,108 @@ export default function MapPage() {
   }
   function clearAll() { setWaypoints([]); setPlanMarkers([]); setMeasurePts([]); setPlanMode('none') }
 
+  // ── Kneeboard PNG export ─────────────────────────────────────────────
+  function downloadKneeboard() {
+    const W = 640, H = 900
+    const canvas = document.createElement('canvas')
+    canvas.width = W; canvas.height = H
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    ctx.fillStyle = '#070a06'
+    ctx.fillRect(0, 0, W, H)
+    ctx.strokeStyle = 'rgba(106,171,31,0.4)'
+    ctx.lineWidth = 2
+    ctx.strokeRect(6, 6, W - 12, H - 12)
+
+    let y = 36
+    ctx.fillStyle = '#8ec83f'
+    ctx.font = '700 22px "Bebas Neue", sans-serif'
+    ctx.fillText('MISSION KNEEBOARD', 24, y)
+    ctx.font = '11px "Share Tech Mono", monospace'
+    ctx.fillStyle = 'rgba(142,200,63,0.6)'
+    ctx.textAlign = 'right'
+    ctx.fillText(new Date().toISOString().replace('T', ' ').slice(0, 19) + 'Z', W - 24, y)
+    ctx.textAlign = 'left'
+    y += 14
+    ctx.strokeStyle = 'rgba(106,171,31,0.25)'
+    ctx.beginPath(); ctx.moveTo(24, y); ctx.lineTo(W - 24, y); ctx.stroke()
+    y += 26
+
+    const sectionHeader = (title: string) => {
+      ctx.fillStyle = '#facc15'
+      ctx.font = '700 14px "Bebas Neue", sans-serif'
+      ctx.fillText(title, 24, y)
+      y += 6
+      ctx.strokeStyle = 'rgba(250,204,21,0.25)'
+      ctx.beginPath(); ctx.moveTo(24, y + 6); ctx.lineTo(W - 24, y + 6); ctx.stroke()
+      y += 22
+    }
+    const row = (text: string, color = '#c8e6a0') => {
+      ctx.fillStyle = color
+      ctx.font = '12px "Share Tech Mono", monospace'
+      ctx.fillText(text, 30, y)
+      y += 16
+    }
+
+    sectionHeader('ROUTE')
+    if (waypoints.length === 0) {
+      row('No waypoints planned', 'rgba(200,230,160,0.4)')
+    } else {
+      waypoints.forEach((wp, i) => {
+        const leg = legs[i]
+        const legStr = leg ? `   ${fmtBrg(leg.brg)}  ${leg.dist.toFixed(1)}NM  ETE ${fmtTime(leg.ete)}` : ''
+        row(`WP${i + 1}  ${fmtCoord(wp.lat, wp.lon)}${legStr}`)
+      })
+      row(`TOTAL  ${totalNm.toFixed(1)} NM  @ ${speed}kts  ETE ${fmtTime(speed > 0 ? totalNm / speed * 60 : 0)}`, '#8ec83f')
+    }
+    y += 12
+
+    sectionHeader('BRAA LINES')
+    if (drawnBraas.length === 0) {
+      row('None drawn', 'rgba(200,230,160,0.4)')
+    } else {
+      drawnBraas.forEach((b, i) => {
+        const dist = haversineNm(b.from, b.to), brg = bearingDeg(b.from, b.to)
+        row(`BRAA${i + 1}  ${fmtBrg(brg)}  ${dist.toFixed(1)} NM`)
+      })
+    }
+    y += 12
+
+    sectionHeader('MARKERS')
+    if (planMarkers.length === 0) {
+      row('None placed', 'rgba(200,230,160,0.4)')
+    } else {
+      planMarkers.forEach(m => row(`${m.type}  ${fmtCoord(m.lat, m.lon)}`))
+    }
+    y += 12
+
+    sectionHeader('BULLSEYE')
+    if (bullseyes.length === 0) {
+      row('No bullseye data', 'rgba(200,230,160,0.4)')
+    } else {
+      bullseyes.forEach(b => row(`${b.side === 1 ? 'RED' : 'BLU'} BULL  ${fmtCoord(b.lat, b.lon)}`))
+    }
+    y += 12
+
+    if (scratchText.trim() && y < H - 40) {
+      sectionHeader('NOTES')
+      for (const line of scratchText.split('\n')) {
+        for (let i = 0; i < line.length; i += 62) {
+          if (y > H - 24) break
+          row(line.slice(i, i + 62))
+        }
+        if (y > H - 24) break
+      }
+    }
+
+    const url = canvas.toDataURL('image/png')
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `kneeboard-${Date.now()}.png`
+    a.click()
+  }
+
   // ── Shared panel style ───────────────────────────────────────────────
   const hudPanel: React.CSSProperties = {
     background: HUD_BG, border: `1px solid ${HUD_BORDER}`,
@@ -1101,7 +1213,12 @@ export default function MapPage() {
           {/* ── Live unit markers (milsymbol + Sneaker labels) ─────── */}
           {activeUnits.map(u => (
             <Marker key={`live-${u.id}`} position={[u.lat, u.lon]}
-              icon={sneakerUnitIcon({ coa: u.coa, cat: u.cat, name: u.nm || u.typ, alt: u.alt, spd: u.spd, watched: watches.has(u.id) })}
+              icon={sneakerUnitIcon({
+                coa: u.coa, cat: u.cat, name: u.nm || u.typ, alt: u.alt, spd: u.spd, watched: watches.has(u.id),
+                spriteUrl: iconStyle === 'nato'
+                  ? spriteIconUrl(u.coa === 1 ? 'Red' : 'Blue', u.cat === 1 ? ['Aircraft'] : u.cat === 2 ? ['Helicopter'] : [])
+                  : null,
+              })}
               eventHandlers={{ click: () => toggleWatch(u.id) }}>
               <Popup minWidth={170}>
                 <div style={{ background: '#060a06', color: HUD_TEXT, fontFamily: FONT_MONO, fontSize: '0.7rem', padding: '2px 0' }}>
@@ -1130,7 +1247,7 @@ export default function MapPage() {
           {/* ── REST unit markers (milsymbol + Sneaker labels) ─────── */}
           {activeRestUnits.map(u => (
             <Marker key={`rest-${u.id}`} position={[u.lat, u.lon]}
-              icon={restMilSymIcon(u.owner, u.tags, u.typ, u.alt, u.speed, u.heading, watches.has(u.id))}
+              icon={restMilSymIcon(u.owner, u.tags, u.typ, u.alt, u.speed, u.heading, watches.has(u.id), iconStyle)}
               eventHandlers={{ click: () => toggleWatch(u.id) }}>
               <Popup minWidth={160}>
                 <div style={{ background: '#060a06', color: HUD_TEXT, fontFamily: FONT_MONO, fontSize: '0.7rem', padding: '2px 0' }}>
@@ -1231,6 +1348,7 @@ export default function MapPage() {
             <HudBtn active={showHeat} onClick={() => setShowHeat(v => !v)}>HEAT</HudBtn>
             <div style={{ width: '1px', background: HUD_BORDER, margin: '0 2px' }} />
             <HudBtn active={kneeboardMode} onClick={() => setKneeboardMode(v => !v)} color="#facc15">KNEEBOARD</HudBtn>
+            <HudBtn active={false} onClick={downloadKneeboard} color="#facc15" title="Export a printable kneeboard PNG of the current plan">EXPORT KB</HudBtn>
           </div>
 
           {/* Scrubber UI (appears below toggles if showReplay is true) */}
