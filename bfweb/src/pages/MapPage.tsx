@@ -22,7 +22,7 @@ import {
   api, connectLiveUnits,
   type Objective, type MapUnit, type LiveUnit, type WsUnitsMsg, type Bullseye,
 } from '../api'
-import { createMapIcon, spriteIconUrl, type IconStyle, type Side } from '../lib/mapIcons'
+import { createMapIcon, spriteIconUrl, radarGlyphSvg, type IconStyle, type Side } from '../lib/mapIcons'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 
@@ -170,10 +170,11 @@ interface UnitIconOpts {
   watched: boolean
   symSize?: number
   spriteUrl?: string | null   // real NATO sprite image, takes priority over milsymbol
+  radarGlyph?: boolean        // SAM/AAA/EWR contact — draw a dish-on-mast icon instead
 }
 
 function sneakerUnitIcon(opts: UnitIconOpts): L.DivIcon {
-  const { coa, cat, name, alt, spd, vspd, watched, symSize = 26, spriteUrl } = opts
+  const { coa, cat, name, alt, spd, vspd, watched, symSize = 26, spriteUrl, radarGlyph } = opts
   const sidc = getSIDC(coa, cat)
   const namCol = watched ? COL_WATCH : (coa === 1 ? COL_ENEMY : COL_ALLY)
   const fillCol = namCol
@@ -195,7 +196,10 @@ function sneakerUnitIcon(opts: UnitIconOpts): L.DivIcon {
 
   let symSvg = ''
   let symW = symSize, symH = symSize
-  if (spriteUrl) {
+  if (radarGlyph) {
+    const g = radarGlyphSvg(coa === 1 ? 'Red' : 'Blue', symSize)
+    symSvg = g.svg; symW = g.width; symH = g.height
+  } else if (spriteUrl) {
     // Sprite sheet images are 250×150 (5:3) — scale to symSize height.
     symH = symSize
     symW = Math.round(symSize * 250 / 150)
@@ -248,8 +252,9 @@ function restMilSymIcon(owner: string, tags: string[], typ: string, alt: number,
     : tags.includes('Helicopter') ? 2
       : tags.includes('Boat') ? 4
         : 3
-  const spriteUrl = iconStyle === 'nato' ? spriteIconUrl(owner as Side, tags) : null
-  return sneakerUnitIcon({ coa, cat, name: typ, alt, spd, watched, symSize: 24, spriteUrl })
+  const isRadar = cat === 3 && (tags.includes('SAM') || tags.includes('AAA') || tags.includes('EWR'))
+  const spriteUrl = !isRadar && iconStyle === 'nato' ? spriteIconUrl(owner as Side, tags) : null
+  return sneakerUnitIcon({ coa, cat, name: typ, alt, spd, watched, symSize: 24, spriteUrl, radarGlyph: isRadar })
 }
 
 // ── Threat / objective icons ───────────────────────────────────────────
@@ -464,6 +469,8 @@ export default function MapPage() {
   const [speed, setSpeed] = usePersisted('speed', 400)
   const [scratchText, setScratchText] = usePersisted('scratch', '')
   const [kneeboardMode, setKneeboardMode] = usePersisted('kneeboardMode', false)
+  const [kbFreqText, setKbFreqText] = usePersisted('kbFreq', '')
+  const [showKbPreview, setShowKbPreview] = useState(false)
 
   // ── Persisted planning data ─────────────────────────────────────────
   const [waypoints, setWaypoints] = usePersisted<Waypoint[]>('waypoints', [])
@@ -785,6 +792,18 @@ export default function MapPage() {
       bullseyes.forEach(b => row(`${b.side === 1 ? 'RED' : 'BLU'} BULL  ${fmtCoord(b.lat, b.lon)}`))
     }
     y += 12
+
+    if (kbFreqText.trim() && y < H - 40) {
+      sectionHeader('STATIONS / FREQUENCIES')
+      for (const line of kbFreqText.split('\n')) {
+        for (let i = 0; i < line.length; i += 62) {
+          if (y > H - 24) break
+          row(line.slice(i, i + 62), '#facc15')
+        }
+        if (y > H - 24) break
+      }
+      y += 12
+    }
 
     if (scratchText.trim() && y < H - 40) {
       sectionHeader('NOTES')
@@ -1348,7 +1367,7 @@ export default function MapPage() {
             <HudBtn active={showHeat} onClick={() => setShowHeat(v => !v)}>HEAT</HudBtn>
             <div style={{ width: '1px', background: HUD_BORDER, margin: '0 2px' }} />
             <HudBtn active={kneeboardMode} onClick={() => setKneeboardMode(v => !v)} color="#facc15">KNEEBOARD</HudBtn>
-            <HudBtn active={false} onClick={downloadKneeboard} color="#facc15" title="Export a printable kneeboard PNG of the current plan">EXPORT KB</HudBtn>
+            <HudBtn active={showKbPreview} onClick={() => setShowKbPreview(true)} color="#facc15" title="Preview, edit, and export a printable kneeboard">EXPORT KB</HudBtn>
           </div>
 
           {/* Scrubber UI (appears below toggles if showReplay is true) */}
@@ -1491,6 +1510,138 @@ export default function MapPage() {
                   <div style={{ color: '#a78bfa', fontWeight: 700 }}>{fmtTime(measDist / speed * 60)}</div>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Kneeboard preview / edit modal ─────────────────────────── */}
+        {showKbPreview && (
+          <div onClick={() => setShowKbPreview(false)} style={{
+            position: 'fixed', inset: 0, zIndex: 2000,
+            background: 'rgba(0,0,0,0.6)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', padding: '20px',
+          }}>
+            <div onClick={e => e.stopPropagation()} style={{
+              width: 'min(560px, 92vw)', maxHeight: '86vh', overflowY: 'auto',
+              background: PANEL_BG, border: `1px solid ${HUD_BORDER}`, borderRadius: '4px',
+              fontFamily: FONT_MONO, color: HUD_TEXT, boxShadow: '0 12px 48px rgba(0,0,0,0.7)',
+            }}>
+              <div style={{
+                padding: '10px 14px', borderBottom: `1px solid ${HUD_BORDER}`,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0,
+                background: PANEL_BG, zIndex: 1,
+              }}>
+                <span style={{ fontFamily: FONT_HEAD, fontSize: '0.9rem', letterSpacing: '0.16em', color: '#facc15' }}>KNEEBOARD PREVIEW</span>
+                <button onClick={() => setShowKbPreview(false)}
+                  style={{ background: 'none', border: 'none', color: HUD_DIM, cursor: 'pointer', fontSize: '0.9rem' }}>✕</button>
+              </div>
+
+              <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {/* ROUTE */}
+                <div>
+                  <div style={{ color: '#facc15', fontSize: '0.68rem', letterSpacing: '0.14em', marginBottom: '5px' }}>ROUTE</div>
+                  {waypoints.length === 0 ? (
+                    <div style={{ fontSize: '0.65rem', color: HUD_DIM }}>No waypoints planned</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.65rem' }}>
+                      {waypoints.map((wp, i) => {
+                        const leg = legs[i]
+                        return (
+                          <div key={wp.id}>
+                            WP{i + 1}  {fmtCoord(wp.lat, wp.lon)}
+                            {leg ? `   ${fmtBrg(leg.brg)}  ${leg.dist.toFixed(1)}NM  ETE ${fmtTime(leg.ete)}` : ''}
+                          </div>
+                        )
+                      })}
+                      <div style={{ color: GREEN, marginTop: '3px' }}>
+                        TOTAL  {totalNm.toFixed(1)} NM  @ {speed}kts  ETE {fmtTime(speed > 0 ? totalNm / speed * 60 : 0)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* BRAA */}
+                <div>
+                  <div style={{ color: '#facc15', fontSize: '0.68rem', letterSpacing: '0.14em', marginBottom: '5px' }}>BRAA LINES</div>
+                  {drawnBraas.length === 0 ? (
+                    <div style={{ fontSize: '0.65rem', color: HUD_DIM }}>None drawn</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.65rem' }}>
+                      {drawnBraas.map((b, i) => {
+                        const dist = haversineNm(b.from, b.to), brg = bearingDeg(b.from, b.to)
+                        return <div key={b.id}>BRAA{i + 1}  {fmtBrg(brg)}  {dist.toFixed(1)} NM</div>
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* MARKERS */}
+                <div>
+                  <div style={{ color: '#facc15', fontSize: '0.68rem', letterSpacing: '0.14em', marginBottom: '5px' }}>MARKERS</div>
+                  {planMarkers.length === 0 ? (
+                    <div style={{ fontSize: '0.65rem', color: HUD_DIM }}>None placed</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.65rem' }}>
+                      {planMarkers.map(m => <div key={m.id}>{m.type}  {fmtCoord(m.lat, m.lon)}</div>)}
+                    </div>
+                  )}
+                </div>
+
+                {/* BULLSEYE */}
+                <div>
+                  <div style={{ color: '#facc15', fontSize: '0.68rem', letterSpacing: '0.14em', marginBottom: '5px' }}>BULLSEYE</div>
+                  {bullseyes.length === 0 ? (
+                    <div style={{ fontSize: '0.65rem', color: HUD_DIM }}>No bullseye data</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.65rem' }}>
+                      {bullseyes.map(b => <div key={b.side}>{b.side === 1 ? 'RED' : 'BLU'} BULL  {fmtCoord(b.lat, b.lon)}</div>)}
+                    </div>
+                  )}
+                </div>
+
+                {/* STATIONS / FREQUENCIES (editable) */}
+                <div>
+                  <div style={{ color: '#facc15', fontSize: '0.68rem', letterSpacing: '0.14em', marginBottom: '5px' }}>STATIONS / FREQUENCIES</div>
+                  <textarea
+                    value={kbFreqText}
+                    onChange={e => setKbFreqText(e.target.value)}
+                    placeholder={'e.g.\nAWACS "Overlord"  251.0\nTOWER  305.0\nTANKER "Texaco"  270.0'}
+                    rows={4}
+                    style={{
+                      width: '100%', boxSizing: 'border-box', resize: 'vertical',
+                      background: 'rgba(0,20,0,0.5)', border: `1px solid ${HUD_BORDER}`,
+                      borderRadius: '2px', color: '#facc15', fontFamily: FONT_MONO,
+                      fontSize: '0.65rem', padding: '6px 8px', outline: 'none',
+                    }}
+                  />
+                </div>
+
+                {/* NOTES (editable) */}
+                <div>
+                  <div style={{ color: '#facc15', fontSize: '0.68rem', letterSpacing: '0.14em', marginBottom: '5px' }}>NOTES</div>
+                  <textarea
+                    value={scratchText}
+                    onChange={e => setScratchText(e.target.value)}
+                    placeholder="notes…"
+                    rows={3}
+                    style={{
+                      width: '100%', boxSizing: 'border-box', resize: 'vertical',
+                      background: 'rgba(0,20,0,0.5)', border: `1px solid ${HUD_BORDER}`,
+                      borderRadius: '2px', color: GREEN, fontFamily: FONT_MONO,
+                      fontSize: '0.65rem', padding: '6px 8px', outline: 'none',
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{
+                padding: '10px 14px', borderTop: `1px solid ${HUD_BORDER}`,
+                display: 'flex', gap: '8px', justifyContent: 'flex-end',
+                position: 'sticky', bottom: 0, background: PANEL_BG,
+              }}>
+                <HudBtn active={false} onClick={() => setShowKbPreview(false)}>CLOSE</HudBtn>
+                <HudBtn active onClick={downloadKneeboard} color="#facc15">⬇ DOWNLOAD PNG</HudBtn>
+              </div>
             </div>
           </div>
         )}

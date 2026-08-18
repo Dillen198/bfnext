@@ -205,7 +205,7 @@ export function createMapIcon(kind: ObjKind, side: Side, style: IconStyle, selec
   if (style === 'nato') {
     const sidc = buildSIDC(kind, side)
     const sym = new ms.Symbol(sidc, {
-      size: selected ? 30 : 24,
+      size: selected ? 24 : 18,
       frame: true,
       fill: true,
       colorMode: 'Light',
@@ -221,7 +221,7 @@ export function createMapIcon(kind: ObjKind, side: Side, style: IconStyle, selec
   }
 
   if (style === 'russian') {
-    const size = selected ? 40 : 32
+    const size = selected ? 32 : 26
     const svg = russianSVG(kind, side, size)
     const glow = selected ? `box-shadow: 0 0 8px 2px ${SIDE_COLOR[side]}80;` : ''
     return divIcon({
@@ -233,4 +233,25 @@ export function createMapIcon(kind: ObjKind, side: Side, style: IconStyle, selec
   }
 
   return null
+}
+
+// ── Radar / air-defense contact glyph ──────────────────────────────────
+// SAM, AAA and EWR contacts have no matching sprite in public/Nato, so they
+// used to fall back to the same generic ground blob as every other ground
+// unit. Draw a small dish-on-mast icon instead so they read distinctly.
+const RADAR_COLOR: Record<Side, string> = {
+  Red: '#ef4444', Blue: '#3b82f6', Neutral: '#9ca3af',
+}
+
+export function radarGlyphSvg(side: Side, size = 22): { svg: string; width: number; height: number } {
+  const c = RADAR_COLOR[side]
+  const cx = size / 2, cy = size * 0.58, r = size * 0.42
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${size}" stroke="${c}" stroke-width="1.6"/>
+    <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" fill="none" stroke="${c}" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M ${cx - r * 0.6} ${cy - r * 0.15} L ${cx} ${cy - r * 0.65} L ${cx + r * 0.6} ${cy - r * 0.15} Z" fill="${c}"/>
+    <path d="M ${cx} ${cy - r * 0.45} L ${cx} 2" stroke="${c}" stroke-width="1.2"/>
+    <circle cx="${cx}" cy="2" r="1.4" fill="${c}"/>
+  </svg>`
+  return { svg, width: size, height: size }
 }

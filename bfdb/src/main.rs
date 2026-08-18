@@ -670,7 +670,8 @@ async fn api_units(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> 
             .filter(|(_, unit, _)| !unit.tags.contains(UnitTag::Boat))
             .map(|(eid, unit, flags)| {
                 let vel = &unit.pos.velocity;
-                let heading = (vel.x.atan2(vel.z).to_degrees() + 360.0) % 360.0;
+                // DCS world axes: x=north, z=east. Bearing is atan2(east, north).
+                let heading = (vel.z.atan2(vel.x).to_degrees() + 360.0) % 360.0;
                 let speed_mps = (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z).sqrt();
                 let speed_kts = speed_mps * 1.94384;
                 let tags: Vec<String> = unit.tags.iter().map(|t| format!("{:?}", t)).collect();
