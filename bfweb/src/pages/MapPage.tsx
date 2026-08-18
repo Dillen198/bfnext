@@ -451,6 +451,19 @@ export default function MapPage() {
   const [markerType, setMarkerType] = useState<MarkerType>('IP')
   const [wsStatus, setWsStatus] = useState<'open' | 'closed' | 'error'>('closed')
 
+  // Below this width the console/plan side panels become overlay drawers
+  // instead of flex siblings, so they don't squeeze the map into a sliver.
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 860)
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 860)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  // On mobile the top-right toggle/filter stack is collapsed behind a
+  // single button by default -- it's five rows of buttons that otherwise
+  // bury the map on a phone screen.
+  const [showHudControls, setShowHudControls] = useState(() => window.innerWidth > 860)
+
   const [replayPct, setReplayPct] = useState(100)
 
   // BRAA
@@ -462,7 +475,7 @@ export default function MapPage() {
   const [watches, setWatches] = useState<Set<string>>(new Set())
 
   // Console panel
-  const [showConsole, setShowConsole] = useState(true)
+  const [showConsole, setShowConsole] = useState(() => window.innerWidth > 860)
   const [consoleTab, setConsoleTab] = useState<'search' | 'watches' | 'draw'>('search')
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -675,12 +688,25 @@ export default function MapPage() {
   return (
     <div style={{ position: 'relative', flex: 1, overflow: 'hidden', display: 'flex' }}>
 
+      {/* Backdrop for the console/plan drawers on mobile */}
+      {isMobile && !kneeboardMode && (showConsole || showPlan) && (
+        <div onClick={() => { setShowConsole(false); setShowPlan(false) }} style={{
+          position: 'fixed', top: 54, left: 0, right: 0, bottom: 0, zIndex: 900,
+          background: 'rgba(0,0,0,0.55)',
+        }} />
+      )}
+
       {/* ── LEFT CONSOLE PANEL (Sneaker-style) ────────────────────────── */}
       {showConsole && !kneeboardMode && (
         <div style={{
-          width: '240px', flexShrink: 0, display: 'flex', flexDirection: 'column',
+          width: isMobile ? '85vw' : '240px', maxWidth: isMobile ? '300px' : undefined,
+          flexShrink: 0, display: 'flex', flexDirection: 'column',
           background: PANEL_BG, borderRight: `1px solid ${HUD_BORDER}`,
-          fontFamily: FONT_MONO, color: HUD_TEXT, zIndex: 10,
+          fontFamily: FONT_MONO, color: HUD_TEXT, zIndex: 950,
+          ...(isMobile ? {
+            position: 'fixed', top: 54, bottom: 0, left: 0,
+            boxShadow: '4px 0 24px rgba(0,0,0,0.6)',
+          } : {}),
         }}>
           {/* Tabs */}
           <div style={{ display: 'flex', borderBottom: `1px solid ${HUD_BORDER}` }}>
@@ -1158,6 +1184,12 @@ export default function MapPage() {
           position: 'absolute', top: 10, right: 10, zIndex: 1000,
           display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'flex-end',
         }}>
+          {isMobile && (
+            <HudBtn active={showHudControls} onClick={() => setShowHudControls(v => !v)} color={GREEN}>
+              {showHudControls ? '✕ CLOSE' : '☰ FILTERS'}
+            </HudBtn>
+          )}
+          {(!isMobile || showHudControls) && <>
           {/* Tile + view toggles */}
           <div style={{ ...hudPanel, display: 'flex', gap: '3px', flexWrap: 'wrap', justifyContent: 'flex-end', padding: '5px 9px' }}>
             {(Object.keys(TILE_LAYERS) as TileKey[]).map(k => (
@@ -1244,6 +1276,7 @@ export default function MapPage() {
               </button>
             ))}
           </div>
+          </>}
         </div>
 
         {/* ── BOTTOM-LEFT: mission timer + cursor ─────────────────── */}
@@ -1382,12 +1415,17 @@ export default function MapPage() {
         )}
       </div>
 
-      {/* ── Plan panel – flex sibling so it pushes the map ─────────── */}
+      {/* ── Plan panel – flex sibling on desktop, overlay drawer on mobile ── */}
       {showPlan && (
         <div style={{
-          width: '250px', flexShrink: 0, display: 'flex', flexDirection: 'column',
+          width: isMobile ? '85vw' : '250px', maxWidth: isMobile ? '300px' : undefined,
+          flexShrink: 0, display: 'flex', flexDirection: 'column',
           background: PANEL_BG, borderLeft: `1px solid ${HUD_BORDER}`,
-          fontFamily: FONT_MONO, color: HUD_TEXT, overflowY: 'auto', zIndex: 10,
+          fontFamily: FONT_MONO, color: HUD_TEXT, overflowY: 'auto', zIndex: 950,
+          ...(isMobile ? {
+            position: 'fixed', top: 54, bottom: 0, right: 0,
+            boxShadow: '-4px 0 24px rgba(0,0,0,0.6)',
+          } : {}),
         }}>
           <div style={{ padding: '11px 13px 8px', borderBottom: `1px solid ${HUD_BORDER}` }}>
             <div style={{ fontFamily: FONT_HEAD, fontSize: '0.85rem', letterSpacing: '0.2em', color: GREEN }}>MISSION PLAN</div>
