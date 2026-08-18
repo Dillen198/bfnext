@@ -134,6 +134,7 @@ export interface LiveUnit {
   hdg:  number   // degrees true
   spd:  number   // knots
   vspd?: number  // vertical speed m/s (positive = climbing)
+  pilot?: string // occupying player's name, absent for AI-flown units
 }
 
 export interface Bullseye {

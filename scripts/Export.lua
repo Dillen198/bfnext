@@ -108,6 +108,29 @@ function LuaExportActivityNextEvent(t)
   return t + BF_INTERVAL
 end
 
+-- ── Player/pilot lookup ─────────────────────────────────────────────────
+-- Export.get_player_list()/get_player_info() are dedicated-server-only
+-- export APIs (distinct from the mission-scripting net.* table) that let
+-- us map a unit id to the pilot occupying it.
+local function buildPilotMap()
+  local pilots = {}
+  if not (Export and Export.get_player_list and Export.get_player_info) then
+    return pilots
+  end
+  local ok, ids = pcall(Export.get_player_list)
+  if not ok or not ids then return pilots end
+  for _, pid in ipairs(ids) do
+    local okSlot, slot = pcall(Export.get_player_info, pid, 'slot')
+    if okSlot and slot and slot ~= '' and slot ~= '0' then
+      local okName, name = pcall(Export.get_player_info, pid, 'name')
+      if okName and name and name ~= '' then
+        pilots[tostring(slot)] = name
+      end
+    end
+  end
+  return pilots
+end
+
 -- ── Core export logic ──────────────────────────────────────────────────
 function doExport()
   if not bf_socket then bf_connect() end
@@ -115,6 +138,7 @@ function doExport()
 
   local objects = LoGetWorldObjects and LoGetWorldObjects() or {}
   local mtime = LoGetModelTime and LoGetModelTime() or 0
+  local pilotMap = buildPilotMap()
 
   -- Collect relevant units
   local units = {}
@@ -132,8 +156,9 @@ function doExport()
           if hdg < 0 then hdg = hdg + 360 end
         end
         local spd_mps = math.sqrt(vel.x*vel.x + vel.y*vel.y + vel.z*vel.z)
+        local idStr = tostring(id)
         units[#units+1] = {
-          id   = tostring(id),
+          id   = idStr,
           nm   = obj.UnitName or "",
           typ  = obj.Type.level3 or "",
           cat  = cat,
@@ -144,6 +169,7 @@ function doExport()
           hdg  = hdg,
           spd  = spd_mps * 1.94384,  -- m/s → knots
           vspd = vel.y,               -- vertical speed m/s (positive = climbing)
+          pilot = pilotMap[idStr],    -- nil for AI-flown units
         }
       end
     end

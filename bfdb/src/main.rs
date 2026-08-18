@@ -1511,6 +1511,9 @@ struct LiveUnit {
     /// Vertical speed m/s (positive = climbing), optional
     #[serde(default, skip_serializing_if = "Option::is_none")]
     vspd: Option<f64>,
+    /// Occupying player's name, if this unit is player-flown (absent for AI)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pilot: Option<String>,
 }
 
 /// Bullseye reference point for one coalition.

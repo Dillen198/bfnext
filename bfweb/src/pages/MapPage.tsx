@@ -163,10 +163,11 @@ interface UnitIconOpts {
   symSize?: number
   spriteUrl?: string | null   // real NATO sprite image, takes priority over milsymbol
   radarGlyph?: boolean        // SAM/AAA/EWR contact — draw a dish-on-mast icon instead
+  pilot?: string              // occupying player's name, absent for AI-flown units
 }
 
 function sneakerUnitIcon(opts: UnitIconOpts): L.DivIcon {
-  const { coa, cat, name, alt, spd, vspd, watched, symSize = 26, spriteUrl, radarGlyph } = opts
+  const { coa, cat, name, alt, spd, vspd, watched, symSize = 26, spriteUrl, radarGlyph, pilot } = opts
   const sidc = getSIDC(coa, cat)
   const namCol = watched ? COL_WATCH : (coa === 1 ? COL_ENEMY : COL_ALLY)
   const fillCol = namCol
@@ -220,9 +221,15 @@ function sneakerUnitIcon(opts: UnitIconOpts): L.DivIcon {
     }
   }
 
+  const pilotCol = '#7dd3fc'                       // cyan – pilot name
+  const pilotStr = pilot
+    ? `<div style="color:${pilotCol};font-size:9px;${shadow}">👤 ${pilot}</div>`
+    : ''
+
   const labelHtml = cat <= 2
     ? `<div style="position:absolute;left:${symW + 4}px;top:0;white-space:nowrap;font-family:'Share Tech Mono','Courier New',monospace;line-height:1.35;pointer-events:none;">
         <div style="color:${namCol};font-size:10px;font-weight:700;${shadow}">${name || 'UNKNOWN'}</div>
+        ${pilotStr}
         <div style="color:${altCol};font-size:9px;${shadow}">${altStr}</div>
         <div style="color:${spdCol};font-size:9px;${shadow}">${Math.round(spd)}kts</div>
         ${vspdStr}
@@ -1196,6 +1203,7 @@ export default function MapPage() {
             <Marker key={`live-${u.id}`} position={[u.lat, u.lon]}
               icon={sneakerUnitIcon({
                 coa: u.coa, cat: u.cat, name: u.nm || u.typ, alt: u.alt, spd: u.spd, watched: watches.has(u.id),
+                pilot: u.pilot,
                 spriteUrl: iconStyle === 'nato'
                   ? spriteIconUrl(u.coa === 1 ? 'Red' : 'Blue', u.cat === 1 ? ['Aircraft'] : u.cat === 2 ? ['Helicopter'] : [])
                   : null,
@@ -1209,6 +1217,9 @@ export default function MapPage() {
                   <div style={{ color: unitColor(u.coa, false), fontSize: '0.65rem', marginBottom: '6px' }}>
                     {u.coa === 1 ? 'RED' : 'BLUE'} · {u.cat === 1 ? 'AIRPLANE' : u.cat === 2 ? 'HELICOPTER' : u.cat === 4 ? 'NAVAL' : 'GROUND'}
                   </div>
+                  {u.pilot && (
+                    <div style={{ color: '#7dd3fc', fontSize: '0.65rem', marginBottom: '6px' }}>👤 {u.pilot}</div>
+                  )}
                   <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 8px', fontSize: '0.65rem' }}>
                     <span style={{ color: HUD_DIM }}>ALT</span><span>{fmtAlt(u.alt)} ft</span>
                     <span style={{ color: HUD_DIM }}>SPD</span><span>{fmtSpd(u.spd)} kts</span>
