@@ -1690,52 +1690,6 @@ impl Db {
                 self.setup_supply_lines().context("setup supply lines")?;
                 self.deliver_supplies_from_logistics_hubs(lua, now)
                     .context("delivering supplies")?;
-                // If a naval base falls, any carrier group anchored to it
-                // that's already been knocked out (logi == 0, the same
-                // "dead in the water" gate direct carrier-boarding capture
-                // uses) flips ownership automatically -- troops can't
-                // practically board a carrier at sea, so the naval base is
-                // the real capture point for a disabled carrier.
-                if matches!(objective!(self, oid)?.kind, ObjectiveKind::NavalBase) {
-                    let linked_carriers: SmallVec<[ObjectiveId; 4]> = self
-                        .persisted
-                        .objectives
-                        .into_iter()
-                        .filter_map(|(cg_id, cg_obj)| match &cg_obj.kind {
-                            ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. }
-                                if *nb_id == oid
-                                    && cg_obj.owner == previous_owner
-                                    && cg_obj.logi == 0 =>
-                            {
-                                Some(*cg_id)
-                            }
-                            _ => None,
-                        })
-                        .collect();
-                    for cg_id in linked_carriers {
-                        match self.flip_carrier_group_owner(lua, now, cg_id, new_owner) {
-                            Ok(old) => {
-                                self.ephemeral.stat(Stat::Capture {
-                                    id: cg_id,
-                                    side: new_owner,
-                                    by: smallvec![],
-                                });
-                                let cg = objective!(self, cg_id)?;
-                                let cg_name = cg.name.clone();
-                                self.ephemeral.create_objective_markup(&self.persisted, cg);
-                                info!(
-                                    "[CARRIER_CAPTURE] {} auto-captured by {:?} from {:?} \
-                                     (linked naval base {} fell)",
-                                    cg_name, new_owner, old, name
-                                );
-                            }
-                            Err(e) => error!(
-                                "failed to flip carrier {:?} after naval base {} capture: {:?}",
-                                cg_id, name, e
-                            ),
-                        }
-                    }
-                }
                 let mut ucids: SmallVec<[Ucid; 1]> = smallvec![];
                 for (_, ucid, troop_origin, gid) in gids {
                     self.delete_group(&gid)
@@ -2281,6 +2235,58 @@ impl Db {
                 in_zone_oids.contains(oid)
                     || (now - entry.2).num_seconds() < 10
             });
+
+        // --- Pass 3: keep a disabled carrier's ownership in sync with its
+        // linked naval base, whichever order the two fall in ---
+        // Direct boarding (above) handles "carrier already disabled, then
+        // boarded." This handles both remaining orderings: the naval base
+        // falls first while the carrier is still active (nothing to do
+        // until logi hits 0, then this catches it the same tick), and the
+        // naval base falls after the carrier's already disabled (this
+        // catches it next tick since it re-checks current state every
+        // tick, not just at the moment the naval base capture happens).
+        let mut naval_synced: SmallVec<[(ObjectiveId, Side, Side); 4]> = smallvec![];
+        for (cg_id, cg_obj) in &self.persisted.objectives {
+            let ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. } = &cg_obj.kind
+            else {
+                continue;
+            };
+            if cg_obj.logi > 0 {
+                continue; // still operational -- naval base capture alone doesn't take it
+            }
+            let Ok(nb_obj) = objective!(self, nb_id) else {
+                continue;
+            };
+            if nb_obj.owner == Side::Neutral || nb_obj.owner == cg_obj.owner {
+                continue;
+            }
+            naval_synced.push((*cg_id, cg_obj.owner, nb_obj.owner));
+        }
+        for (cg_id, old_owner, new_owner) in naval_synced {
+            match self.flip_carrier_group_owner(lua, now, cg_id, new_owner) {
+                Ok(_) => {
+                    let cg = objective!(self, cg_id)?;
+                    let cg_name = cg.name.clone();
+                    self.ephemeral.create_objective_markup(&self.persisted, cg);
+                    self.ephemeral.stat(Stat::Capture {
+                        id: cg_id,
+                        side: new_owner,
+                        by: smallvec![],
+                    });
+                    self.ephemeral.dirty();
+                    info!(
+                        "[CARRIER_CAPTURE] {} auto-captured by {:?} from {:?} \
+                         (disabled and its naval base is enemy-owned)",
+                        cg_name, new_owner, old_owner
+                    );
+                    actually_captured.push((cg_id, old_owner, new_owner));
+                }
+                Err(e) => error!(
+                    "failed to sync carrier {:?} to its naval base's owner: {:?}",
+                    cg_id, e
+                ),
+            }
+        }
 
         Ok(actually_captured)
     }
