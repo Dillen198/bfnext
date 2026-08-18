@@ -583,7 +583,7 @@ export default function ManualSection() {
                   { label: 'FOB', value: 'Forward Operating Base. Spawns ground units and holds territory between larger objectives.' },
                   { label: 'Logistics Hub', value: 'Supplies resources to nearby objectives via automated convoys. Critical chokepoint.' },
                   { label: 'Factory', value: 'Produces ground units over time. Destroy enemy factories to starve their offensive.' },
-                  { label: 'Naval Base', value: 'Spawns and resupplies naval assets. Controls coastal and maritime operations.' },
+                  { label: 'Naval Base', value: 'Spawns and resupplies naval assets. Controls coastal and maritime operations. Every carrier group auto-links to its nearest friendly naval base — see VICTORY & CAPTURE for how that link affects capturing one.' },
                   { label: 'SAM Site', value: 'High-value integrated air defence site. Position is classified — not shown on the F10 map or the dashboard. Must be located and destroyed by players. Can be recaptured by either side.' },
                 ].map((item) => (
                   <InfoRow key={item.label} label={item.label} value={item.value} />
@@ -1220,6 +1220,10 @@ export default function ManualSection() {
                 heading: 'LAST STAND',
                 body: 'When a coalition is reduced to its last primary objective (an airbase, naval base, or FARP), a countdown timer arms. If they can\'t retake ground before it expires, that coalition loses the round outright.',
               },
+              {
+                heading: 'CAPTURE A CARRIER GROUP',
+                body: 'A carrier can\'t be boarded while it\'s combat-effective. Knock its logistics rating to 0 — sink its escort and support ships — to disable it, then either move capture-capable troops aboard directly, or simply take the naval base it\'s linked to (every carrier auto-links to the nearest friendly naval base at mission start). A disabled carrier flips to whoever holds its naval base, in whichever order the two fall — destroy the carrier then take the base, or take the base first and finish the carrier off later, both work.',
+              },
             ].map((card) => (
               <div
                 key={card.heading}
@@ -1252,6 +1256,15 @@ export default function ManualSection() {
             logistics and services automatically. Warehouse stock and supply routes transfer to
             the new owner immediately.
           </Callout>
+
+          <div style={{ marginTop: '0.75rem' }}>
+            <Callout type="warn">
+              A captured carrier keeps flying whatever aircraft it had aboard, even types your
+              coalition doesn't otherwise have access to — but those "foreign" airframes are
+              grounded until the carrier's repairs finish. Your own coalition's normal aircraft
+              are never affected by this.
+            </Callout>
+          </div>
         </Subsection>
         </Reveal>
 
