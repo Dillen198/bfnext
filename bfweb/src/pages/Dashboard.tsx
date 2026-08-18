@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { MapContainer, TileLayer, CircleMarker, useMap } from 'react-leaflet'
 import type { LatLngBoundsExpression } from 'leaflet'
@@ -682,6 +682,16 @@ export default function Dashboard() {
   const blueDelta = useDelta(blueObj)
   const redDelta  = useDelta(redObj)
 
+  // Below this width the 3-column body (40/35/25%) stacks vertically --
+  // at phone widths the fixed percentages squeezed the map down to a
+  // near-unusable sliver with its overlay badges crammed on top of it.
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 860)
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 860)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
 
@@ -707,10 +717,14 @@ export default function Dashboard() {
       </div>
 
       {/* ── Main body ── */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flex: 1, overflow: isMobile ? 'auto' : 'hidden' }}>
 
         {/* ══ LEFT COLUMN — TacMap (40%) ══ */}
-        <div style={{ width: '40%', flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border)' }}>
+        <div style={{
+          width: isMobile ? '100%' : '40%', flexShrink: 0, display: 'flex', flexDirection: 'column',
+          borderRight: isMobile ? 'none' : '1px solid var(--border)',
+          borderBottom: isMobile ? '1px solid var(--border)' : 'none',
+        }}>
           {/* Map header */}
           <div style={{ padding: '5px 12px', background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
             <MapPin size={9} style={{ color: 'var(--accent)' }} />
@@ -720,12 +734,14 @@ export default function Dashboard() {
             <LiveBadge />
           </div>
           {/* Map */}
-          <div style={{ flex: '0 0 55%', overflow: 'hidden', minHeight: 0 }}>
+          <div style={isMobile ? { flex: '0 0 260px', overflow: 'hidden' } : { flex: '0 0 55%', overflow: 'hidden', minHeight: 0 }}>
             <TacMap objectives={objectives} onOpenTacmap={() => navigate('/map')} />
           </div>
 
           {/* SRS radio panel */}
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }}>
+          <div style={isMobile
+            ? { flex: '0 0 auto', maxHeight: 220, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }
+            : { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }}>
             <div style={{ padding: '5px 12px', background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
               <Radio size={9} style={{ color: 'var(--accent)' }} />
               <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', flex: 1 }}>
@@ -747,7 +763,12 @@ export default function Dashboard() {
         </div>
 
         {/* ══ CENTER COLUMN (35%) ══ */}
-        <div style={{ width: '35%', flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border)', overflow: 'hidden' }}>
+        <div style={{
+          width: isMobile ? '100%' : '35%', flexShrink: 0, display: 'flex', flexDirection: 'column',
+          borderRight: isMobile ? 'none' : '1px solid var(--border)',
+          borderBottom: isMobile ? '1px solid var(--border)' : 'none',
+          overflow: isMobile ? 'visible' : 'hidden',
+        }}>
 
           {/* Weather */}
           <Panel title="WEATHER BRIEF" icon={Wind} iconColor="var(--cyan)" style={{ flexShrink: 0 }}>
@@ -768,7 +789,7 @@ export default function Dashboard() {
 
           {/* Full objective roster — scrollable */}
           <Panel title="OBJECTIVE ROSTER" icon={MapPin} iconColor="var(--accent)" count={total}
-            style={{ flex: 1 }}>
+            style={isMobile ? { flex: '0 0 auto', maxHeight: 320 } : { flex: 1 }}>
             <div style={{ overflowY: 'auto', flex: 1 }}>
               <ObjectiveRoster objectives={objectives} />
             </div>
@@ -776,13 +797,16 @@ export default function Dashboard() {
         </div>
 
         {/* ══ RIGHT COLUMN (25%) ══ */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        <div style={{
+          flex: isMobile ? undefined : 1, width: isMobile ? '100%' : undefined,
+          display: 'flex', flexDirection: 'column', overflow: isMobile ? 'visible' : 'hidden', minWidth: 0,
+        }}>
 
           {/* Air picture */}
           <Panel title="AIR PICTURE" icon={Plane} iconColor="var(--accent)"
             badge={<LiveBadge />}
             count={inAir}
-            style={{ flex: '0 0 auto', maxHeight: '30%' }}>
+            style={isMobile ? { flex: '0 0 auto', maxHeight: 220 } : { flex: '0 0 auto', maxHeight: '30%' }}>
             <div style={{ overflowY: 'auto', flex: 1 }}>
               <AirPicture online={online} />
               <GroundRoster online={online} />
@@ -798,7 +822,7 @@ export default function Dashboard() {
           <Panel title="ENGAGEMENT LOG" icon={Crosshair} iconColor="var(--red)"
             badge={<LiveBadge />}
             count={kills.length}
-            style={{ flex: 1 }}>
+            style={isMobile ? { flex: '0 0 auto', maxHeight: 320 } : { flex: 1 }}>
             <div style={{ overflowY: 'auto', flex: 1 }}>
               <EngagementLog kills={kills} nameMap={nameMap} />
             </div>
