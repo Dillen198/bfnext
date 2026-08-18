@@ -667,7 +667,6 @@ struct TimedMark {
 }
 
 impl TimedMark {
-    #[allow(dead_code)]
     fn one(id: MarkId, ttl_secs: i64, now: DateTime<Utc>) -> Self {
         Self { ids: [Some(id), None, None], expires: now + Duration::seconds(ttl_secs) }
     }
@@ -1001,9 +1000,10 @@ impl MapLayer {
         self.timed_marks.push(TimedMark::two(arrow, label, 120, now));
     }
 
-    /// Bold enemy axis-of-advance arrow at an objective that is actively under
-    /// attack — heavier weight and shorter range than the "threatened" arrow to
-    /// show immediate close combat.
+    /// "UNDER ATTACK" label at an objective that is actively under attack.
+    /// Previously also drew two converging NW/NE arrows (a hasty-attack
+    /// symbol), but that duplicated the single "threatened" arrow and
+    /// cluttered the map, so it's label-only now.
     pub fn on_objective_under_attack(
         &mut self,
         obj_pos: Vector2,
@@ -1018,37 +1018,6 @@ impl MapLayer {
             Side::Blue => Color::red(1.),
             _ => Color::blue(1.),
         };
-        // Two converging attack arrows from NW and NE — standard hasty-attack
-        // symbol showing multi-axis pressure on the position.
-        let offset = 2_500_f64;
-        let arrow_nw = MarkId::new();
-        msgs.arrow_to(
-            sf,
-            arrow_nw,
-            ArrowSpec {
-                start: v3(obj_pos.x - offset, obj_pos.y + offset),
-                end:   v3(obj_pos.x, obj_pos.y),
-                color: enemy_col,
-                fill_color: enemy_col,
-                line_type: LineType::Solid,
-                read_only: true,
-            },
-            None,
-        );
-        let arrow_ne = MarkId::new();
-        msgs.arrow_to(
-            sf,
-            arrow_ne,
-            ArrowSpec {
-                start: v3(obj_pos.x + offset, obj_pos.y + offset),
-                end:   v3(obj_pos.x, obj_pos.y),
-                color: enemy_col,
-                fill_color: enemy_col,
-                line_type: LineType::Solid,
-                read_only: true,
-            },
-            None,
-        );
         let label = MarkId::new();
         msgs.text_to_all(
             sf,
@@ -1062,7 +1031,7 @@ impl MapLayer {
                 text: format_compact!("UNDER ATTACK\n{}", obj_name).into(),
             },
         );
-        self.timed_marks.push(TimedMark::three(arrow_nw, arrow_ne, label, ttl_secs, now));
+        self.timed_marks.push(TimedMark::one(label, ttl_secs, now));
     }
 
 
