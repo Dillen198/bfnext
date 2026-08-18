@@ -365,6 +365,19 @@ dark (`AlarmState::Green`, doesn't light up for nothing). A qualifying
 threat → radar comes up (`AlarmState::Auto`) and DCS's own native SAM
 engagement logic takes it from there.
 
+**⚠ Required per SAM radar entry**: `ground_radar_ewrs` normally guesses
+whether a unit is a SAM search radar or a naval radar from
+`aspect_half_angle` (`Some` → SAM, `None` → naval) — but most real SAM
+search radars are correctly configured omnidirectional (`aspect_half_angle:
+null`, since they physically rotate/scan 360°), which means that guess
+gets them wrong and silently excludes them from cueing, EMCON, HARM
+defense, and layered radar entirely. Set
+`"sensor_type_override": "SamSearchRadar"` explicitly on every SAM search
+radar unit type's entry to fix this — see `miz/SAMPLE_CFG.json`'s
+`ground_radar_ewrs` block, where every genuine SAM entry (Hawk, S-300,
+Patriot, Tor, Osa, Roland, Buk, etc.) already has it set; standalone EWRs
+and ship radars don't need it.
+
 ### Command Center dependency
 This smart behavior is **only** available to a SAM site whose nearest
 friendly [Command Center](#command-center-cc-new) is alive and still

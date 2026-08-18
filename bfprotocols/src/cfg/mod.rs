@@ -362,6 +362,19 @@ pub struct AirborneEwr {
     /// A fighter with a nose radar would be ~60, an AWACS would be None
     #[serde(default)]
     pub aspect_half_angle: Option<u16>,
+    /// Explicit sensor classification, overriding the aspect_half_angle-based
+    /// guess radar_donors() otherwise makes for ground/naval units (Some =
+    /// SamSearchRadar, None = NavalRadar). That guess is wrong for any real
+    /// ground SAM search radar configured omnidirectional (aspect_half_angle:
+    /// null) -- which is the physically correct setting for most SAM search
+    /// radars (Hawk, S-300, Patriot, etc. all rotate/scan 360°), but without
+    /// this override it gets misclassified NavalRadar and silently excluded
+    /// from every IADN SAM-specific mechanic (cueing, EMCON, HARM defense,
+    /// layered radar). Set explicitly to SamSearchRadar for any ground SAM
+    /// search radar unit type; leave unset (defaults to the aspect_half_angle
+    /// guess) for genuinely non-SAM entries (ship radars, standalone EWRs).
+    #[serde(default)]
+    pub sensor_type_override: Option<SensorType>,
     /// True if this radar uses a pulse-Doppler waveform.
     /// Enables Doppler notch exploitation — beam-aspect targets at low closure
     /// rates get a significant detection probability penalty.
@@ -378,8 +391,9 @@ pub struct AirborneEwr {
     #[serde(default = "default_chaff_susceptibility")]
     pub chaff_susceptibility: f32,
     /// Susceptibility to stand-off jamming/ECM (0.0 = immune, 1.0 = fully defeated).
-    /// Modern AESA/LPI ≈ 0.1, older analog radars ≈ 0.7–0.9.
-    /// Used when a jamming mechanic is active (stored for future use).
+    /// Modern AESA/LPI ≈ 0.1, older analog radars ≈ 0.7–0.9. Scales the
+    /// IADN jamming mechanic's detection-probability penalty when a
+    /// UnitTag::Jammer unit is within iadn.jamming_range_m.
     #[serde(default = "default_ecm_susceptibility")]
     pub ecm_susceptibility: f32,
     /// Scan interval in seconds — how often the radar refreshes a track.

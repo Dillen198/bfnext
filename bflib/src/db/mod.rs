@@ -394,10 +394,17 @@ impl Db {
                     .ground_radar_ewrs
                     .get(&u.typ)
                     .map(|ewr_cfg| {
-                        let sensor_type = match ewr_cfg.aspect_half_angle {
+                        // Explicit override wins -- the aspect_half_angle
+                        // guess below is wrong for any ground SAM search
+                        // radar correctly configured omnidirectional (which
+                        // is physically accurate for most real SAM search
+                        // radars), so relying on it alone silently drops
+                        // those units out of every SAM-specific IADN
+                        // mechanic. See AirborneEwr::sensor_type_override.
+                        let sensor_type = ewr_cfg.sensor_type_override.unwrap_or(match ewr_cfg.aspect_half_angle {
                             Some(_) => bfprotocols::cfg::SensorType::SamSearchRadar,
                             None => bfprotocols::cfg::SensorType::NavalRadar,
-                        };
+                        });
                         RadarDonor {
                             pos: u.position,
                             side: u.side,

@@ -2043,6 +2043,7 @@ impl Default for Cfg {
                 AirborneEwr {
                     range: 370000,
                     aspect_half_angle: None,
+                    sensor_type_override: None,
                     pulse_doppler: true,
                     look_down_capable: true,
                     chaff_susceptibility: 0.1,
