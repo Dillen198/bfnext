@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Map, Target, BarChart3, Users, Crosshair,
   Zap, LogOut, Shield, Settings, Settings2, Info, Server, Radio,
-  ChevronRight, Plane, Menu, X,
+  ChevronRight, Plane, Menu, X, ChevronsLeft, ChevronsRight,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Weather } from '../api'
@@ -177,6 +177,12 @@ export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
+    try { return localStorage.getItem('vs_sidebar_collapsed') === '1' } catch { return false }
+  })
+  React.useEffect(() => {
+    try { localStorage.setItem('vs_sidebar_collapsed', sidebarCollapsed ? '1' : '0') } catch { /* quota */ }
+  }, [sidebarCollapsed])
 
   const { data: stats }       = useQuery({ queryKey: ['stats'],      queryFn: api.stats,      refetchInterval: 30_000 })
   const { data: objectives = [] } = useQuery({ queryKey: ['objectives'], queryFn: () => api.objectives(), refetchInterval: 30_000 })
@@ -386,7 +392,7 @@ export default function Layout() {
         />
 
         {/* SIDEBAR */}
-        <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
+        <aside className={`sidebar${sidebarOpen ? ' open' : ''}${sidebarCollapsed ? ' collapsed' : ''}`}>
 
           {/* Nav section */}
           <div className="nav-group-label">Navigation</div>
@@ -398,10 +404,11 @@ export default function Layout() {
                 end={to === '/' || to === '/admin'}
                 onClick={() => setSidebarOpen(false)}
                 className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+                title={sidebarCollapsed ? label : undefined}
               >
                 <Icon size={16} style={{ flexShrink: 0 }} />
                 <span>{label}</span>
-                {to === '/kills' && (
+                {to === '/kills' && !sidebarCollapsed && (
                   <span style={{ marginLeft: 'auto', opacity: 0.4 }}><ChevronRight size={12} /></span>
                 )}
               </NavLink>
@@ -416,6 +423,7 @@ export default function Layout() {
                 target="_blank"
                 rel="noreferrer"
                 className="nav-item"
+                title={sidebarCollapsed ? 'Support' : undefined}
                 style={{ color: '#fb923c', borderRadius: 5, height: 36 }}
               >
                 <Zap size={14} style={{ flexShrink: 0 }} />
@@ -427,9 +435,18 @@ export default function Layout() {
           {/* Footer */}
           <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Radio size={10} style={{ color: 'var(--accent)', opacity: 0.5 }} />
-            <span style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>FOWL ENGINE</span>
+            <span className="sidebar-footer-text" style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>FOWL ENGINE</span>
             <Plane size={9} style={{ color: 'var(--text-dim)', opacity: 0.4, marginLeft: 'auto' }} />
           </div>
+
+          {/* Collapse toggle (desktop only) */}
+          <button
+            className="sidebar-collapse-btn"
+            onClick={() => setSidebarCollapsed(v => !v)}
+            title={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+          >
+            {sidebarCollapsed ? <ChevronsRight size={14} /> : <><ChevronsLeft size={14} /><span style={{ fontSize: '0.6rem', letterSpacing: '0.1em' }}>COLLAPSE</span></>}
+          </button>
         </aside>
 
         {/* MAIN */}

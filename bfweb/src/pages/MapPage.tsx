@@ -195,8 +195,12 @@ function sneakerUnitIcon(opts: UnitIconOpts): L.DivIcon {
     // Sprite sheet images are 250×150 (5:3) — scale to symSize height.
     symH = symSize
     symW = Math.round(symSize * 250 / 150)
+    // Set size via inline style, not just width/height attributes — Tailwind's
+    // preflight (`img { max-width:100%; height:auto }`) has higher CSS
+    // specificity than HTML presentational attributes and was blowing these
+    // up to the sprite sheet's native 250×150 size.
     symSvg = `<img src="${spriteUrl}" width="${symW}" height="${symH}"
-      style="display:block;filter:drop-shadow(0 0 2px #000a)" draggable="false"/>`
+      style="display:block;width:${symW}px;height:${symH}px;max-width:none;filter:drop-shadow(0 0 2px #000a)" draggable="false"/>`
   } else {
     try {
       const sym = new ms.Symbol(sidc, {
@@ -459,7 +463,7 @@ export default function MapPage() {
   // On mobile the top-right toggle/filter stack is collapsed behind a
   // single button by default -- it's five rows of buttons that otherwise
   // bury the map on a phone screen.
-  const [showHudControls, setShowHudControls] = useState(() => window.innerWidth > 860)
+  const [showHudControls, setShowHudControls] = usePersisted('showHudControls', true)
 
   const [replayPct, setReplayPct] = useState(100)
 
@@ -1296,12 +1300,10 @@ export default function MapPage() {
           position: 'absolute', top: 10, right: 10, zIndex: 1000,
           display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'flex-end',
         }}>
-          {isMobile && (
-            <HudBtn active={showHudControls} onClick={() => setShowHudControls(v => !v)} color={GREEN}>
-              {showHudControls ? '✕ CLOSE' : '☰ FILTERS'}
-            </HudBtn>
-          )}
-          {(!isMobile || showHudControls) && <>
+          <HudBtn active={showHudControls} onClick={() => setShowHudControls(v => !v)} color={GREEN}>
+            {showHudControls ? (isMobile ? '✕ CLOSE' : '▴ HIDE FILTERS') : (isMobile ? '☰ FILTERS' : '▾ SHOW FILTERS')}
+          </HudBtn>
+          {showHudControls && <>
           {/* Tile + view toggles */}
           <div style={{ ...hudPanel, display: 'flex', gap: '3px', flexWrap: 'wrap', justifyContent: 'flex-end', padding: '5px 9px' }}>
             {(Object.keys(TILE_LAYERS) as TileKey[]).map(k => (
