@@ -453,6 +453,13 @@ fn process_slot_rejection(ctx: &mut Context, id: PlayerId, ucid: Ucid, rej: Slot
             let msg = format_compact!("Objective is capturable");
             ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
         }
+        SlotAuth::CarrierNotRepaired(vehicle) => {
+            let msg = format_compact!(
+                "{} was captured with the carrier -- it will be flyable once carrier repairs finish",
+                vehicle.0
+            );
+            ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
+        }
         SlotAuth::ObjectiveNotOwned(side) => {
             let msg = String::from(format_compact!(
                 "{:?} does not own the objective associated with this slot",

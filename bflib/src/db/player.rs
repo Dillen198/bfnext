@@ -19,7 +19,7 @@ use crate::{maybe, maybe_mut, objective_mut};
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{LifeType, PointsCfg, UnitTag, Vehicle},
-    db::{group::GroupId, objective::ObjectiveId},
+    db::{group::GroupId, objective::{ObjectiveId, ObjectiveKind}},
     shots::{Dead, Who},
     stats::{self, EnId, Stat},
 };
@@ -62,6 +62,11 @@ pub enum SlotAuth {
     VehicleNotAvailable(Vehicle),
     Denied,
     EraRestricted { vehicle: Vehicle, era: compact_str::CompactString },
+    /// A carrier is flying an aircraft type its own side doesn't normally
+    /// produce (kept from the previous owner on capture -- see
+    /// capture_warehouse's carrier branch), and the carrier hasn't finished
+    /// repairs yet.
+    CarrierNotRepaired(Vehicle),
 }
 
 pub enum RegErr {
@@ -679,6 +684,23 @@ impl Db {
                             Some(_) | None => {
                                 break SlotAuth::VehicleNotAvailable(sifo.typ.clone());
                             }
+                        }
+                    }
+                    // A carrier can end up carrying an aircraft type its own
+                    // side doesn't normally produce -- kept from the previous
+                    // owner on capture so the new owner can operate it (see
+                    // capture_warehouse's carrier branch). That foreign
+                    // aircraft only becomes flyable once the carrier finishes
+                    // repairs, not immediately at capture.
+                    if matches!(objective.kind, ObjectiveKind::CarrierGroup { .. }) {
+                        let is_own_roster = self
+                            .ephemeral
+                            .production_by_side
+                            .get(&objective.owner)
+                            .map(|p| p.equipment.contains_key(typ))
+                            .unwrap_or(true);
+                        if !is_own_roster && objective.health < 100 {
+                            break SlotAuth::CarrierNotRepaired(sifo.typ.clone());
                         }
                     }
                 }

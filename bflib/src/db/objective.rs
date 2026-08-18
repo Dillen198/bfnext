@@ -1690,6 +1690,52 @@ impl Db {
                 self.setup_supply_lines().context("setup supply lines")?;
                 self.deliver_supplies_from_logistics_hubs(lua, now)
                     .context("delivering supplies")?;
+                // If a naval base falls, any carrier group anchored to it
+                // that's already been knocked out (logi == 0, the same
+                // "dead in the water" gate direct carrier-boarding capture
+                // uses) flips ownership automatically -- troops can't
+                // practically board a carrier at sea, so the naval base is
+                // the real capture point for a disabled carrier.
+                if matches!(objective!(self, oid)?.kind, ObjectiveKind::NavalBase) {
+                    let linked_carriers: SmallVec<[ObjectiveId; 4]> = self
+                        .persisted
+                        .objectives
+                        .into_iter()
+                        .filter_map(|(cg_id, cg_obj)| match &cg_obj.kind {
+                            ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. }
+                                if *nb_id == oid
+                                    && cg_obj.owner == previous_owner
+                                    && cg_obj.logi == 0 =>
+                            {
+                                Some(*cg_id)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    for cg_id in linked_carriers {
+                        match self.flip_carrier_group_owner(lua, now, cg_id, new_owner) {
+                            Ok(old) => {
+                                self.ephemeral.stat(Stat::Capture {
+                                    id: cg_id,
+                                    side: new_owner,
+                                    by: smallvec![],
+                                });
+                                let cg = objective!(self, cg_id)?;
+                                let cg_name = cg.name.clone();
+                                self.ephemeral.create_objective_markup(&self.persisted, cg);
+                                info!(
+                                    "[CARRIER_CAPTURE] {} auto-captured by {:?} from {:?} \
+                                     (linked naval base {} fell)",
+                                    cg_name, new_owner, old, name
+                                );
+                            }
+                            Err(e) => error!(
+                                "failed to flip carrier {:?} after naval base {} capture: {:?}",
+                                cg_id, name, e
+                            ),
+                        }
+                    }
+                }
                 let mut ucids: SmallVec<[Ucid; 1]> = smallvec![];
                 for (_, ucid, troop_origin, gid) in gids {
                     self.delete_group(&gid)
@@ -1962,6 +2008,90 @@ impl Db {
         Ok(messages)
     }
 
+    /// Shared side effects of a carrier group's ownership changing: swaps
+    /// ship groups (despawns the old owner's, respawns/resurrects the new
+    /// owner's), rebuilds the warehouse for the new owner (keeping any
+    /// aircraft the new owner doesn't normally produce, per
+    /// capture_warehouse's carrier branch), and reconnects supply lines.
+    /// Returns the previous owner. Used both when a carrier is boarded and
+    /// captured directly, and when its linked naval base is captured while
+    /// the carrier is already disabled (see check_capture's NavalBase arm).
+    /// Callers are responsible for troop cleanup, points, stats, and markup
+    /// -- those differ (a naval-base-triggered flip has no boarding troops
+    /// to award points to).
+    fn flip_carrier_group_owner(
+        &mut self,
+        lua: MizLua,
+        now: DateTime<Utc>,
+        oid: ObjectiveId,
+        new_owner: Side,
+    ) -> Result<Side> {
+        let obj = objective_mut!(self, oid)?;
+        let old_owner = obj.owner;
+        let obj_name = obj.name.clone();
+
+        obj.owner = new_owner;
+        obj.health = 50; // Carrier starts at 50% after changing hands
+        obj.logi = 100;
+        obj.last_change_ts = now;
+        obj.warehouse.damaged = false;
+
+        // --- Despawn old owner's ship groups ---
+        // The mission defines separate BCARRIER/RCARRIER group sets for each side.
+        // On capture: remove old side's groups from DCS world, then spawn new side's groups.
+        if let Some(old_groups) = obj.groups.get(&old_owner).cloned() {
+            for gid in &old_groups {
+                // Push despawn to remove from DCS world
+                if let Some(live_oid) = self.ephemeral.object_id_by_gid.get(gid) {
+                    self.ephemeral.push_despawn(*gid, Despawn::Group(live_oid.clone()));
+                }
+                // Mark all units dead in our DB
+                if let Some(group) = self.persisted.groups.get(gid) {
+                    for uid in &group.units {
+                        if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
+                            unit.dead = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Spawn new owner's ship groups (BCARRIER → Blue, RCARRIER → Red) ---
+        // These must already exist in obj.groups for new_owner (mission-defined).
+        let obj = objective!(self, oid)?;
+        if let Some(new_groups) = obj.groups.get(&new_owner).cloned() {
+            for gid in &new_groups {
+                // Resurrect all units
+                if let Some(group) = self.persisted.groups.get(gid) {
+                    for uid in &group.units {
+                        if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
+                            unit.dead = false;
+                        }
+                    }
+                }
+                self.ephemeral.push_spawn(*gid);
+            }
+        } else {
+            warn!(
+                "[CARRIER_CAPTURE] No {:?} ship groups found for carrier {}; \
+                 mission must define both BCARRIER and RCARRIER group sets",
+                new_owner, obj_name
+            );
+        }
+
+        // Re-map warehouse capacity to new owner's production (keeps captured aircraft)
+        self.capture_warehouse(lua, oid)
+            .context("capturing carrier warehouse")?;
+
+        // Recalculate supply lines
+        self.setup_supply_lines()
+            .context("setup supply lines after carrier ownership change")?;
+        self.deliver_supplies_from_logistics_hubs(lua, now)
+            .context("delivering supplies after carrier ownership change")?;
+
+        Ok(old_owner)
+    }
+
     pub fn check_carrier_group_capture(
         &mut self,
         lua: MizLua,
@@ -2100,67 +2230,10 @@ impl Db {
             // --- Execute capture ---
             self.ephemeral.capture_progress.remove(&oid);
 
-            let obj = objective_mut!(self, oid)?;
-            let old_owner = obj.owner;
-            let obj_name = obj.name.clone();
-
-            obj.owner = captor_side;
-            obj.health = 50; // Carrier starts at 50% after boarding
-            obj.logi = 100;
-            obj.last_change_ts = now;
-            obj.warehouse.damaged = false;
-
-            // --- Despawn old owner's ship groups ---
-            // The mission defines separate BCARRIER/RCARRIER group sets for each side.
-            // On capture: remove old side's groups from DCS world, then spawn new side's groups.
-            if let Some(old_groups) = obj.groups.get(&old_owner).cloned() {
-                for gid in &old_groups {
-                    // Push despawn to remove from DCS world
-                    if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
-                        self.ephemeral.push_despawn(*gid, Despawn::Group(oid.clone()));
-                    }
-                    // Mark all units dead in our DB
-                    if let Some(group) = self.persisted.groups.get(gid) {
-                        for uid in &group.units {
-                            if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
-                                unit.dead = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // --- Spawn new owner's ship groups (BCARRIER → Blue, RCARRIER → Red) ---
-            // These must already exist in obj.groups for captor_side (mission-defined).
-            if let Some(new_groups) = obj.groups.get(&captor_side).cloned() {
-                for gid in &new_groups {
-                    // Resurrect all units
-                    if let Some(group) = self.persisted.groups.get(gid) {
-                        for uid in &group.units {
-                            if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
-                                unit.dead = false;
-                            }
-                        }
-                    }
-                    self.ephemeral.push_spawn(*gid);
-                }
-            } else {
-                warn!(
-                    "[CARRIER_CAPTURE] No {:?} ship groups found for carrier {}; \
-                     mission must define both BCARRIER and RCARRIER group sets",
-                    captor_side, obj_name
-                );
-            }
-
-
-            // Re-map warehouse capacity to new owner's production (keeps captured aircraft)
-            self.capture_warehouse(lua, oid)
-                .context("capturing carrier warehouse")?;
-
-            // Recalculate supply lines
-            self.setup_supply_lines().context("setup supply lines after carrier capture")?;
-            self.deliver_supplies_from_logistics_hubs(lua, now)
-                .context("delivering supplies after carrier capture")?;
+            let old_owner = self
+                .flip_carrier_group_owner(lua, now, oid, captor_side)
+                .context("flipping carrier ownership on boarding capture")?;
+            let obj_name = objective!(self, oid)?.name.clone();
 
             // Delete capturing troop groups and collect ucids for points
             let mut ucids: SmallVec<[dcso3::net::Ucid; 1]> = smallvec![];
