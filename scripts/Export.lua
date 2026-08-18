@@ -25,7 +25,7 @@
 
 local BF_HOST = "127.0.0.1"
 local BF_PORT = 42001
-local BF_INTERVAL = 1.0  -- seconds between exports
+local BF_INTERVAL = 0.25  -- seconds between exports
 
 local bf_socket = nil
 
@@ -127,7 +127,8 @@ function doExport()
         -- Heading from velocity vector
         local hdg = 0
         if vel.x ~= 0 or vel.z ~= 0 then
-          hdg = math.deg(math.atan2(vel.x, vel.z))
+          -- DCS world axes: x=north, z=east. Bearing is atan2(east, north).
+          hdg = math.deg(math.atan2(vel.z, vel.x))
           if hdg < 0 then hdg = hdg + 360 end
         end
         local spd_mps = math.sqrt(vel.x*vel.x + vel.y*vel.y + vel.z*vel.z)

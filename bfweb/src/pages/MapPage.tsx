@@ -22,7 +22,7 @@ import {
   api, connectLiveUnits,
   type Objective, type MapUnit, type LiveUnit, type WsUnitsMsg, type Bullseye,
 } from '../api'
-import { type IconStyle } from '../lib/mapIcons'
+import { createMapIcon, type IconStyle, type Side } from '../lib/mapIcons'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 
@@ -440,7 +440,7 @@ function MissionTimer({ liveTime, hacks, onAddHack, onRemoveHack }: {
 export default function MapPage() {
   // ── Persisted settings ──────────────────────────────────────────────
   const [tileKey, setTileKey] = usePersisted<TileKey>('tileKey', 'tactical')
-  const [_iconStyle, _setIconStyle] = usePersisted<IconStyle>('iconStyle', 'dot')
+  const [iconStyle, setIconStyle] = usePersisted<IconStyle>('iconStyle', 'nato')
   const [sideFilter, setSideFilter] = usePersisted<'All' | 'Red' | 'Blue' | 'Neutral'>('sideFilter', 'All')
   const [showThreats, setShowThreats] = usePersisted('showThreats', false)
   const [showRadar, setShowRadar] = usePersisted('showRadar', true)
@@ -984,9 +984,11 @@ export default function MapPage() {
             const c = obj.owner === 'Red' ? COL_RED : obj.owner === 'Blue' ? COL_BLUE : COL_NEUTRAL
             const r = OBJ_RADIUS[obj.kind] ?? OBJ_RADIUS.default
             const size = r * 2 + 8
+            const side = (obj.owner === 'Red' || obj.owner === 'Blue' ? obj.owner : 'Neutral') as Side
+            const milIcon = createMapIcon(obj.kind, side, iconStyle, obj.health <= 0)
             return (
               <Marker key={obj.id} position={[obj.lat, obj.lon]}
-                icon={objectiveIcon(obj.kind, obj.owner, obj.health, size)}>
+                icon={milIcon ?? objectiveIcon(obj.kind, obj.owner, obj.health, size)}>
                 {showLogistics && obj.owner !== 'Neutral' && (
                   <Tooltip permanent direction="top" offset={[0, -size / 2]} opacity={0.9} className="logi-tip">
                     <div style={{ background: '#0f172a', border: '1px solid #a855f7', padding: '4px 6px', borderRadius: '4px', fontSize: '0.65rem', color: '#f8fafc', fontFamily: 'var(--font-mono)', minWidth: '70px' }}>
@@ -1211,6 +1213,9 @@ export default function MapPage() {
             {(Object.keys(TILE_LAYERS) as TileKey[]).map(k => (
               <HudBtn key={k} active={tileKey === k} onClick={() => setTileKey(k)}>{TILE_LAYERS[k].label}</HudBtn>
             ))}
+            <div style={{ width: '1px', background: HUD_BORDER, margin: '0 2px' }} />
+            <HudBtn active={iconStyle === 'nato'} onClick={() => setIconStyle('nato')} title="NATO (APP-6) symbology">NATO</HudBtn>
+            <HudBtn active={iconStyle === 'russian'} onClick={() => setIconStyle('russian')} title="Russian-style symbology">RU</HudBtn>
             <div style={{ width: '1px', background: HUD_BORDER, margin: '0 2px' }} />
             <HudBtn active={useLive} onClick={() => setShowLive(v => !v)}
               color={wsStatus === 'open' ? GREEN : COL_NEUTRAL}
