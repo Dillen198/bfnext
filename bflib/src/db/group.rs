@@ -1142,33 +1142,41 @@ impl Db {
             let crate_data = self.ephemeral.c130_crates.get_mut(crate_key.as_str()).unwrap();
             let gid = crate_data.group_id;
 
-            // Check if we already have a mapping for this group
-            let needs_update = !self.ephemeral.object_id_by_gid.contains_key(&gid);
-
-            if needs_update {
-                info!("[C130_CARGO] static_born: Creating object_id mapping for crate '{}' (tracked as '{}') group {:?}",
-                    name, crate_key, gid);
-
-                // For static objects, use the static's own object_id directly
-                // (not a group's object_id, since statics don't have groups in DCS API)
-                if let Ok(obj) = st.as_object() {
-                    if let Ok(static_oid) = obj.object_id() {
-                        info!("[C130_CARGO] static_born: Inserting mapping {:?} -> {:?}", gid, static_oid);
+            // For static objects, use the static's own object_id directly
+            // (not a group's object_id, since statics don't have groups in DCS API)
+            if let Ok(obj) = st.as_object() {
+                if let Ok(static_oid) = obj.object_id() {
+                    // DCS destroys the original static when a player loads it
+                    // as cargo (via F8 Ground Crew) and creates a brand new
+                    // one, with a new object_id but the same tracked name,
+                    // when it's dropped. Gating this on "do we have any
+                    // mapping at all" left the tracked mapping pointing at
+                    // the now-destroyed original object forever after the
+                    // first load/drop cycle, so the dropped crate was never
+                    // re-tracked even though it's physically still there.
+                    // Compare the actual object_id instead so a drop always
+                    // repoints the mapping to the live object.
+                    let already_current = self.ephemeral.object_id_by_gid.get(&gid) == Some(&static_oid);
+                    if !already_current {
+                        if let Some(old_oid) = self.ephemeral.object_id_by_gid.get(&gid) {
+                            self.ephemeral.gid_by_object_id.remove(old_oid);
+                        }
+                        info!("[C130_CARGO] static_born: Updating object_id mapping for crate '{}' (tracked as '{}') group {:?} -> {:?}",
+                            name, crate_key, gid, static_oid);
                         self.ephemeral.object_id_by_gid.insert(gid, static_oid.clone());
-                        self.ephemeral.gid_by_object_id.insert(static_oid.clone(), gid);
-                        info!("[C130_CARGO] static_born: Mapping inserted, map now has {} entries", self.ephemeral.object_id_by_gid.len());
+                        self.ephemeral.gid_by_object_id.insert(static_oid, gid);
 
                         // Note: We don't transition to Airborne here
                         // The update_c130_crates function will detect when the crate is actually airborne
                         // based on in_air and speed checks
                     } else {
-                        info!("[C130_CARGO] static_born: Failed to get static object_id");
+                        info!("[C130_CARGO] static_born: Mapping already up to date for {:?}, skipping", gid);
                     }
                 } else {
-                    info!("[C130_CARGO] static_born: Failed to convert static to object");
+                    info!("[C130_CARGO] static_born: Failed to get static object_id");
                 }
             } else {
-                info!("[C130_CARGO] static_born: Mapping already exists for {:?}, skipping", gid);
+                info!("[C130_CARGO] static_born: Failed to convert static to object");
             }
         }
 

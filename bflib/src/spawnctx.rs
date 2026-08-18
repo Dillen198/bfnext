@@ -26,11 +26,10 @@ use dcso3::{
     land::Land,
     object::{ClassObject, DcsObject, DcsOid, ObjectCategory},
     perf::record_perf,
-    unit::Unit,
     world::{SearchVolume, World},
 };
 use fxhash::FxHashMap;
-use log::{info, warn};
+use log::info;
 use mlua::Value;
 use serde_derive::{Deserialize, Serialize};
 
@@ -224,33 +223,22 @@ impl<'lua> SpawnCtx<'lua> {
                     .first()
                     .context("getting first unit in static group")?
                     .clone();
-                // If linking to a ship, compute the offset from the carrier's position
-                // to the crate's intended position, then set the linkUnit field.
-                // This is non-fatal: if linking fails, we still spawn the crate at its
-                // world position so it's visible to the player.
-                if let Some(ref name) = link_unit_name {
-                    let link_result = (|| -> Result<()> {
-                        let crate_pos = unit.pos().context("getting crate template position")?;
-                        let carrier_unit = Unit::get_by_name(self.lua, name)
-                            .with_context(|| format_compact!("getting carrier unit '{}'", name))?;
-                        let carrier_pos_3d = carrier_unit.get_point()
-                            .context("getting carrier unit position")?;
-                        // DCS 3D (x,y,z) -> miz 2D (x,y): miz.x = 3d.x, miz.y = 3d.z
-                        let offset_x = crate_pos.x - carrier_pos_3d.0.x;
-                        let offset_y = crate_pos.y - carrier_pos_3d.0.z;
-                        info!("[CARRIER_LINK] Linking static to ship '{}' (crate pos: {:.0},{:.0}, carrier pos: {:.0},{:.0}, offset: {:.1},{:.1})",
-                              name, crate_pos.x, crate_pos.y, carrier_pos_3d.0.x, carrier_pos_3d.0.z, offset_x, offset_y);
-                        unit.set_link_unit(name, offset_x, offset_y)
-                            .context("setting linkUnit")?;
-                        Ok(())
-                    })();
-                    match link_result {
-                        Ok(()) => {},
-                        Err(e) => {
-                            warn!("[CARRIER_LINK] Failed to link static to carrier '{}': {:#}. Spawning without link.", name, e);
-                        }
-                    }
-                }
+                // NOTE: linkUnit/linkOffset is NOT applied here. DCS's
+                // linkOffset=true (x/y treated as an offset from the linked
+                // unit) only appears to be honored for units placed in the
+                // mission file at build time -- for objects spawned at
+                // runtime via coalition.addStaticObject, DCS places the
+                // object at the literal x/y we set, ignoring linkOffset.
+                // Since the offset we'd compute here (crate_pos - carrier_pos)
+                // is a small relative number, the object ended up spawning
+                // near the map origin instead of on the ship (confirmed via
+                // logs: the tracked live position matched the computed
+                // offset exactly, not the intended world position). So we
+                // just spawn at the already-correct absolute position
+                // (already anchored near the carrier by the caller) and
+                // accept that the crate won't track further ship movement,
+                // rather than silently misplacing it.
+                let _ = link_unit_name;
                 self.coalition
                     .add_static_object(template.country, unit)
                     .with_context(|| {
