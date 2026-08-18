@@ -584,7 +584,7 @@ export default function ManualSection() {
                   { label: 'Logistics Hub', value: 'Supplies resources to nearby objectives via automated convoys. Critical chokepoint.' },
                   { label: 'Factory', value: 'Produces ground units over time. Destroy enemy factories to starve their offensive.' },
                   { label: 'Naval Base', value: 'Spawns and resupplies naval assets. Controls coastal and maritime operations. Every carrier group auto-links to its nearest friendly naval base — see VICTORY & CAPTURE for how that link affects capturing one.' },
-                  { label: 'SAM Site', value: 'High-value integrated air defence site. Position is classified — not shown on the F10 map or the dashboard. Must be located and destroyed by players. Can be recaptured by either side.' },
+                  { label: 'SAM Site', value: 'High-value integrated air defence site. Position is classified — not shown on the F10 map or the dashboard. Must be located and captured by players. Ownership can flip either way, including from neutral — a captured site re-arms under its new owner\'s coalition and defends their airspace, not the enemy\'s.' },
                 ].map((item) => (
                   <InfoRow key={item.label} label={item.label} value={item.value} />
                 ))}
@@ -1210,7 +1210,7 @@ export default function ManualSection() {
               },
               {
                 heading: 'CAPTURE A SAM SITE',
-                body: 'SAM sites capture the instant your troops hold the zone — there is no timer. But the site\'s launchers, radars, and infantry are still live threats: clear them first or your troop transport won\'t survive the approach. Position is classified — not shown on the F10 map or dashboard, so you have to find it yourself (EWR tracks help).',
+                body: 'SAM sites capture the instant your troops hold the zone — there is no timer. But the site\'s launchers, radars, and infantry are still live threats: clear them first or your troop transport won\'t survive the approach. Position is classified — not shown on the F10 map or dashboard, so you have to find it yourself (EWR tracks help). Ownership fully flips on capture — a site that was defending the enemy (or sitting neutral) becomes yours outright, and once it reactivates it re-arms with your coalition\'s own loadout and starts covering your airspace instead of theirs.',
               },
               {
                 heading: 'HURT ENEMY SUPPLY',
