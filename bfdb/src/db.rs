@@ -1496,6 +1496,26 @@ impl StatsDb {
         Ok(kills)
     }
 
+    /// Same classification record_kill uses for air_kills vs ground_kills:
+    /// a player death always counts as air (players are always in aircraft),
+    /// an AI death counts as air only if the unit is tagged Aircraft or
+    /// Helicopter. Exposed separately so API consumers (e.g. the Discord
+    /// kill-streak/achievement poller) can filter on the same definition
+    /// instead of guessing from the raw DCS unit-type string.
+    pub(crate) fn victim_is_air(&self, round: RoundId, victim: &Who) -> Result<bool> {
+        Ok(match victim {
+            Who::Player { .. } => true,
+            Who::AI { uid, .. } => {
+                let tags = self
+                    .units
+                    .get(&(round, EnId::Unit(*uid)))?
+                    .map(|u| u.tags)
+                    .unwrap_or_default();
+                tags.contains(UnitTag::Aircraft) || tags.contains(UnitTag::Helicopter)
+            }
+        })
+    }
+
     fn add_stat(&self, ctx: &mut StatCtx, time: DateTime<Utc>, stat: Stat) -> Result<()> {
         if let Some(ctx) = &ctx.0 {
             if time <= ctx.seq {

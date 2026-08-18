@@ -388,6 +388,12 @@ async fn api_kills(
             .map(|dead| {
                 let victim_name = dead.victim.ucid().map(|u| u.to_string());
                 let victim_side = format!("{:?}", dead.victim.side());
+                // Same classification as air_kills/ground_kills in the stats
+                // aggregator (record_kill) -- lets API consumers (e.g. the
+                // Discord kill-streak/achievement poller) filter on air kills
+                // specifically instead of guessing from target_type's raw DCS
+                // unit-type string.
+                let is_air = db.victim_is_air(rid, &dead.victim).unwrap_or(false);
                 let killer = dead
                     .shots
                     .iter()
@@ -408,6 +414,7 @@ async fn api_kills(
                     },
                     "killer": killer,
                     "target_type": dead.shots.first().map(|s| s.target_typ.to_string()),
+                    "is_air": is_air,
                 })
             })
             .collect();

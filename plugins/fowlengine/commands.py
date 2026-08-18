@@ -505,12 +505,19 @@ class FowlEngine(Plugin):
             victim_ucid = (k.get('victim') or {}).get('ucid')
             killer = k.get('killer') or {}
             killer_ucid = killer.get('ucid')
+            is_air = k.get('is_air', False)
 
             if victim_ucid:
                 streaks[victim_ucid] = 0
                 announced[victim_ucid] = 0
 
             if not killer_ucid or killer_ucid == victim_ucid:
+                continue
+            # Ace/Unstoppable/God of War are air-to-air killstreak achievements --
+            # a ground kill (tank, truck, infantry, ...) shouldn't count toward or
+            # reset it, so it's simply skipped rather than counted or breaking the
+            # streak.
+            if not is_air:
                 continue
             streaks[killer_ucid] = streaks.get(killer_ucid, 0) + 1
             count = streaks[killer_ucid]
@@ -521,7 +528,7 @@ class FowlEngine(Plugin):
                         names = await self._fetch_pilot_names(session, api_url)
                     pname = names.get(killer_ucid, killer_ucid[:8])
                     fmt = messages.get('achievement', "🎖️ **[ACHIEVEMENT]** {message}")
-                    await channel.send(fmt.format(message=f"{pname} achieved {label} ({count} kills without dying)!"))
+                    await channel.send(fmt.format(message=f"{pname} achieved {label} ({count} air kills without dying)!"))
                     break  # only announce the highest newly-crossed threshold per kill
 
     async def _engine_log_relay(self, server: Server):
