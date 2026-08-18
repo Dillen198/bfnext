@@ -3165,6 +3165,7 @@ impl Db {
     /// Queue multiple crates for staggered spawning (used by "Spawn All" command)
     pub fn queue_c130_crate_spawns(
         &mut self,
+        lua: MizLua,
         slot: &SlotId,
         crate_list: Vec<(String, Crate)>,
         side: Side,
@@ -3183,6 +3184,42 @@ impl Db {
             (delay, max)
         };
 
+        // Resolve the grid anchor and carrier link ONCE for the whole batch,
+        // not per crate per tick. A stationary player still gets identical
+        // behavior to before; a player parked on a moving carrier deck no
+        // longer has the reference point drag out from under already-spawned
+        // crates as the ship moves during the staggered spawn, which used to
+        // make every crate after the first collapse back onto the same grid
+        // cell instead of spreading out.
+        let unit = self.ephemeral.slot_instance_unit(lua, slot)?;
+        let pos = unit.get_position()?;
+        let point = Vector2::new(pos.p.x, pos.p.z);
+        let dir = Vector2::new(pos.x.x, pos.x.z);
+        let unit_typ = unit.get_type_name()?;
+        let cargo_cfg = self.ephemeral.cfg.cargo.get(&Vehicle(unit_typ));
+        let spawn_distance = cargo_cfg
+            .and_then(|cc| cc.spawn_distance)
+            .unwrap_or_else(|| {
+                if auto_unpack {
+                    self.ephemeral.cfg.c130_cargo.as_ref()
+                        .and_then(|c| c.spawn_distance)
+                        .unwrap_or(-45.0)
+                } else {
+                    self.ephemeral.cfg.helo_cargo.as_ref()
+                        .and_then(|c| c.spawn_distance)
+                        .unwrap_or(4.0)
+                }
+            });
+        let carrier_marker = self.find_carrier_cargo_spawn_point(lua, point, side)?;
+        let (anchor_point, anchor_offset) = match &carrier_marker {
+            Some((marker_pos, _)) => (*marker_pos, 0.0),
+            None => (point, spawn_distance),
+        };
+        let carrier_link_id = match carrier_marker {
+            Some((_, link_name)) => Some(link_name),
+            None => self.find_carrier_unit_at_position(lua, point, side)?,
+        };
+
         let num_to_spawn = crate_list.len().min(max_spawn);
         let mut spawn_time = Utc::now();
 
@@ -3193,7 +3230,19 @@ impl Db {
                 .c130_spawn_queue
                 .entry(spawn_time)
                 .or_insert_with(Vec::new)
-                .push((side, crate_name, origin, ucid.clone(), crate_def, idx, auto_unpack));
+                .push((
+                    side,
+                    crate_name,
+                    origin,
+                    ucid.clone(),
+                    crate_def,
+                    idx,
+                    auto_unpack,
+                    anchor_point,
+                    dir,
+                    anchor_offset,
+                    carrier_link_id.clone(),
+                ));
         }
 
         Ok(String::from(format!(
@@ -3202,8 +3251,11 @@ impl Db {
         )))
     }
 
-    /// Process the spawn queue (called from slow_timed_events)
-    pub fn process_c130_spawn_queue(&mut self, lua: MizLua, idx: &MizIndex, slot: &SlotId) -> Result<()> {
+    /// Process the spawn queue (called from slow_timed_events). Operates on
+    /// the single shared c130_spawn_queue for all players -- no per-player
+    /// parameter needed, since each queued crate already carries its own
+    /// frozen spawn anchor from when it was queued.
+    pub fn process_c130_spawn_queue(&mut self, lua: MizLua, idx: &MizIndex) -> Result<()> {
         let now = Utc::now();
         let to_spawn: Vec<_> = self.ephemeral
             .c130_spawn_queue
@@ -3213,50 +3265,16 @@ impl Db {
 
         for spawn_time in to_spawn {
             if let Some(crates) = self.ephemeral.c130_spawn_queue.remove(&spawn_time) {
-                for (side, crate_name, origin, ucid, crate_def, _crate_idx, auto_unpack) in crates {
-                    // Get player's current position and direction (might have moved)
-                    let unit_result = self.ephemeral.slot_instance_unit(lua, slot);
-                    let (point, dir, unit_typ) = match unit_result {
-                        Ok(unit) => {
-                            let pos = unit.get_position()?;
-                            let pt = Vector2::new(pos.p.x, pos.p.z);
-                            let direction = Vector2::new(pos.x.x, pos.x.z);
-                            let typ = unit.get_type_name()?;
-                            (pt, direction, typ)
-                        }
-                        Err(_) => continue, // Player might have disconnected
-                    };
-
-                    // Same spawn_distance resolution as the single-crate path,
-                    // so batch spawns land behind the aircraft (not on top of
-                    // the player) and grid out instead of stacking.
-                    let cargo_cfg = self.ephemeral.cfg.cargo.get(&Vehicle(unit_typ));
-                    let spawn_distance = cargo_cfg
-                        .and_then(|cc| cc.spawn_distance)
-                        .unwrap_or_else(|| {
-                            if auto_unpack {
-                                self.ephemeral.cfg.c130_cargo.as_ref()
-                                    .and_then(|c| c.spawn_distance)
-                                    .unwrap_or(-45.0)
-                            } else {
-                                self.ephemeral.cfg.helo_cargo.as_ref()
-                                    .and_then(|c| c.spawn_distance)
-                                    .unwrap_or(4.0)
-                            }
-                        });
-                    // If the player is on a carrier with a configured cargo
-                    // spawn point marker, anchor the grid scan on the
-                    // marker's live position instead of a player-relative
-                    // offset, which can easily land off a small, moving deck.
-                    let carrier_marker = match self.find_carrier_cargo_spawn_point(lua, point, side) {
-                        Ok(m) => m,
-                        Err(_) => None,
-                    };
-                    let (spawn_base, spawn_base_offset) = match &carrier_marker {
-                        Some((marker_pos, _)) => (*marker_pos, 0.0),
-                        None => (point, spawn_distance),
-                    };
-                    let point = match self.find_crate_spawn_point(spawn_base, dir, spawn_base_offset) {
+                for (side, crate_name, origin, ucid, crate_def, _crate_idx, auto_unpack, anchor_point, dir, anchor_offset, carrier_link_id) in crates {
+                    // anchor_point/dir/anchor_offset were resolved once for
+                    // the whole batch when it was queued (see
+                    // queue_c130_crate_spawns) -- deliberately NOT re-reading
+                    // the player's live position here, so a moving carrier
+                    // deck can't drag the reference point out from under
+                    // crates already spawned earlier in this same batch.
+                    // The grid scan itself still runs fresh per crate, since
+                    // it needs to see whatever this batch has already placed.
+                    let point = match self.find_crate_spawn_point(anchor_point, dir, anchor_offset) {
                         Ok(Some(p)) => p,
                         Ok(None) | Err(_) => continue, // no clear space, skip this crate
                     };
@@ -3293,14 +3311,6 @@ impl Db {
                         origin,
                         player: ucid,
                         spec: crate_def.clone(),
-                    };
-
-                    // Check if the player is on a carrier -- if so, link the
-                    // crate to the carrier unit so it moves with the ship
-                    // instead of being left behind at a static world point.
-                    let carrier_link_id = match carrier_marker {
-                        Some((_, link_name)) => Some(link_name),
-                        None => self.find_carrier_unit_at_position(lua, point, side)?,
                     };
 
                     match self.add_and_queue_group(

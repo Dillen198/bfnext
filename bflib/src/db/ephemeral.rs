@@ -116,6 +116,19 @@ pub(super) struct ProtectedStatic {
     pub(super) side: Side,
 }
 
+/// A real map-terrain building (DCS "Scenery" category) registered by
+/// `scan_objective_scenery` as logistics-relevant for an objective. Tracked so
+/// its destruction can be periodically detected (Scenery objects don't reliably
+/// fire death events the way units/statics do) and folded into that
+/// objective's `logi` rating. This state is intentionally NOT persisted --
+/// it's rebuilt by a fresh scan on every mission load, matching the fact that
+/// DCS's own terrain destruction doesn't survive a server restart either.
+#[derive(Debug, Clone)]
+pub(super) struct TrackedScenery {
+    pub(super) objective: ObjectiveId,
+    pub(super) label: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Equipment {
     pub(super) production: u32,
@@ -136,8 +149,17 @@ pub struct Ephemeral {
     pub(super) cargo: FxHashMap<SlotId, Cargo>,
     /// C-130 physical cargo tracking: crate_name -> C130Cargo (tracked by name because DCS changes object ID when loading/dropping)
     pub(super) c130_crates: FxHashMap<String, C130Cargo>,
-    /// Queue for staggered crate spawning: (spawn_time, crate_data with index for positioning)
-    pub(super) c130_spawn_queue: BTreeMap<DateTime<Utc>, Vec<(Side, String, ObjectiveId, Ucid, Crate, usize, bool)>>,
+    /// Queue for staggered crate spawning: (spawn_time, crate_data with index
+    /// for positioning). anchor_point/anchor_dir/anchor_offset/carrier_link
+    /// are resolved once when the whole batch is queued (not re-resolved per
+    /// crate per tick) so that a moving carrier deck doesn't drag the grid
+    /// reference out from under already-spawned crates in the same batch,
+    /// which otherwise makes every later crate collapse back onto the first
+    /// grid cell instead of spreading out.
+    pub(super) c130_spawn_queue: BTreeMap<
+        DateTime<Utc>,
+        Vec<(Side, String, ObjectiveId, Ucid, Crate, usize, bool, Vector2, Vector2, f64, Option<String>)>,
+    >,
     /// Supply convoy tracking: convoy_id -> SupplyConvoy
     pub(super) active_convoys: FxHashMap<super::logistics::ConvoyId, super::logistics::SupplyConvoy>,
     /// Track last convoy spawn time per side to throttle spawning
@@ -170,6 +192,18 @@ pub struct Ephemeral {
     /// Neutral decoration statics inside objective zones that get respawned in place
     /// whenever they're destroyed, so they behave as if immortal.
     pub(super) protected_statics: FxHashMap<DcsOid<ClassStatic>, ProtectedStatic>,
+    /// Real map-terrain buildings registered as logistics-relevant, still standing.
+    pub(super) tracked_scenery: FxHashMap<DcsOid<ClassObject>, TrackedScenery>,
+    /// Round-robin queue for batched `is_exist()` polling of `tracked_scenery`
+    /// (checking all of them every tick would be far too expensive).
+    pub(super) scenery_check_queue: VecDeque<DcsOid<ClassObject>>,
+    /// How many of an objective's originally-registered scenery buildings have
+    /// been confirmed destroyed. Combined with `scenery_total_by_objective` to
+    /// scale that objective's `logi` rating down as its infrastructure is lost.
+    pub(super) scenery_destroyed_by_objective: FxHashMap<ObjectiveId, u32>,
+    /// How many logistics-relevant scenery buildings were registered for an
+    /// objective at scan time (the denominator for the ratio above).
+    pub(super) scenery_total_by_objective: FxHashMap<ObjectiveId, u32>,
     pub(super) slot_by_miz_gid: FxHashMap<miz::GroupId, SlotId>,
     pub(super) airbase_by_oid: FxHashMap<ObjectiveId, DcsOid<ClassAirbase>>,
     pub(super) slot_info: FxHashMap<SlotId, SlotInfo>,
@@ -273,6 +307,10 @@ impl Default for Ephemeral {
             gid_by_object_id: FxHashMap::default(),
             uid_by_static: FxHashMap::default(),
             protected_statics: FxHashMap::default(),
+            tracked_scenery: FxHashMap::default(),
+            scenery_check_queue: VecDeque::default(),
+            scenery_destroyed_by_objective: FxHashMap::default(),
+            scenery_total_by_objective: FxHashMap::default(),
             airbase_by_oid: FxHashMap::default(),
             slot_info: FxHashMap::default(),
             used_pad_templates: FxHashSet::default(),

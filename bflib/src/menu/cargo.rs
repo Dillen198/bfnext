@@ -343,7 +343,7 @@ fn spawn_all_c130_crates_for_deployable(lua: MizLua, arg: ArgTuple<GroupId, Stri
         return Ok(());
     }
 
-    match ctx.db.queue_c130_crate_spawns(&slot, crate_list, side, origin, true) {
+    match ctx.db.queue_c130_crate_spawns(lua, &slot, crate_list, side, origin, true) {
         Ok(msg) => {
             ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
         }
@@ -980,7 +980,7 @@ fn spawn_all_helo_crates_for_deployable(lua: MizLua, arg: ArgTuple<GroupId, Stri
         return Ok(());
     }
 
-    match ctx.db.queue_c130_crate_spawns(&slot, crate_list, side, origin, auto_unpack) {
+    match ctx.db.queue_c130_crate_spawns(lua, &slot, crate_list, side, origin, auto_unpack) {
         Ok(msg) => {
             ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
         }

@@ -2405,14 +2405,11 @@ fn run_slow_timed_events(
         }
         record_perf(&mut perf.do_repairs, start_ts);
 
-        // Process C-130 physical cargo spawn queue
-        let slots: Vec<_> = ctx.db.instanced_players()
-            .filter_map(|(_, player, _)| player.current_slot.as_ref().map(|(s, _)| *s))
-            .collect();
-        for slot in slots {
-            if let Err(e) = ctx.db.process_c130_spawn_queue(lua, &ctx.idx, &slot) {
-                error!("error processing C-130 spawn queue for slot {:?}: {:?}", slot, e)
-            }
+        // Process C-130 physical cargo spawn queue (one shared queue for all
+        // players, not per-slot -- each queued crate carries its own frozen
+        // spawn anchor from when it was queued)
+        if let Err(e) = ctx.db.process_c130_spawn_queue(lua, &ctx.idx) {
+            error!("error processing C-130 spawn queue: {:?}", e)
         }
 
         // Update C-130 physical crates (track airdrops and auto-unpack)
