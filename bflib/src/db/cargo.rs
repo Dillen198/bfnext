@@ -44,7 +44,7 @@ use dcso3::{
     net::{SlotId, Ucid},
     object::DcsObject,
     radians_to_degrees,
-    trigger::{FlareColor, Trigger},
+    trigger::{FlareColor, MarkId, Trigger},
     unit::Unit,
 };
 use enumflags2::BitFlags;
@@ -223,6 +223,11 @@ pub struct C130Cargo {
     /// tick (so a late-arriving sibling still triggers unpack promptly), but
     /// the message itself should only ever be shown once, not every tick.
     pub notified_missing: bool,
+    /// F10 map marker shown at this crate while landed but incomplete, so the
+    /// missing-crates status stays visible on the map (not just a one-time
+    /// panel toast that's easy to miss). Cleared when the deployable finally
+    /// spawns and the crate is deleted.
+    pub missing_marker: Option<MarkId>,
 }
 
 impl C130Cargo {
@@ -253,6 +258,7 @@ impl C130Cargo {
             vehicle_def: None,
             auto_unpack,
             notified_missing: false,
+            missing_marker: None,
         }
     }
 
@@ -283,6 +289,7 @@ impl C130Cargo {
             vehicle_def: Some(vehicle_def),
             auto_unpack: true,
             notified_missing: false,
+            missing_marker: None,
         }
     }
 }
@@ -3494,10 +3501,12 @@ impl Db {
                         // If the crate is still tracked, unpack didn't consume it -- it's
                         // still waiting on missing sibling crates. Auto-unpack keeps
                         // retrying every tick (a sibling may land late from parachute
-                        // drift), but the "need more crates" message would otherwise be
-                        // re-sent every tick forever if a sibling never lands (e.g. it
-                        // was destroyed when the delivering aircraft was shot down).
-                        // Send it at most once per crate.
+                        // drift), but the panel toast would otherwise be re-sent every
+                        // tick forever if a sibling never lands (e.g. it was destroyed
+                        // when the delivering aircraft was shot down) -- send it at most
+                        // once per crate. unpack_c130_crate also drops a persistent F10
+                        // map marker at the crate for as long as it stays incomplete, so
+                        // the missing-crates status stays visible even after the toast.
                         let still_waiting = self.ephemeral.c130_crates.contains_key(&crate_name);
                         if !still_waiting {
                             self.ephemeral.msgs().panel_to_side(10, false, crate_data.side, msg);
@@ -3589,6 +3598,16 @@ impl Db {
 
                 if !have_all_required {
                     info!("[C130_CARGO] Not enough crates for {}: missing {}", deployable_name, missing_crates.join(", "));
+                    let marker_text = format!("{}\nMissing: {}", deployable_name, missing_crates.join(", "));
+                    match crate_data.missing_marker {
+                        Some(id) => self.ephemeral.msgs().set_markup_text(id, marker_text.into()),
+                        None => {
+                            let id = self.ephemeral.msgs().mark_to_side(crate_data.side, crate_pos, true, marker_text);
+                            if let Some(c) = self.ephemeral.c130_crates.get_mut(crate_name) {
+                                c.missing_marker = Some(id);
+                            }
+                        }
+                    }
                     return Ok(String::from(format!("Crate landed, need more crates for {}", deployable_name)));
                 }
 
@@ -3650,6 +3669,9 @@ impl Db {
                                     if let Some(crate_to_delete) = self.ephemeral.c130_crates.remove(cn) {
                                         info!("[C130_CARGO] Removing crate '{}' (group_id={:?}) from tracking and despawning",
                                               cn, crate_to_delete.group_id);
+                                        if let Some(id) = crate_to_delete.missing_marker {
+                                            self.ephemeral.msgs().delete_mark(id);
+                                        }
                                         if let Err(e) = self.delete_group(&crate_to_delete.group_id) {
                                             error!("[C130_CARGO] Failed to delete crate group '{}' (group_id={:?}): {:?}",
                                                    cn, crate_to_delete.group_id, e);
