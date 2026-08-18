@@ -686,7 +686,7 @@ export default function Dashboard() {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
 
       {/* ── KPI strip ── */}
-      <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(7, 1fr)' }}>
+      <div className="kpi-strip">
         <KpiCell label="ONLINE" value={online.length} icon={Users}
           sub={`${blue.length} blu · ${red.length} red`} />
         <KpiCell label="AIRBORNE" value={inAir} icon={Plane} color="var(--accent)"

@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Map, Target, BarChart3, Users, Crosshair,
   Zap, LogOut, Shield, Settings, Settings2, Info, Server, Radio,
-  ChevronRight, Plane,
+  ChevronRight, Plane, Menu, X,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Weather } from '../api'
@@ -176,6 +176,7 @@ function DiscordIcon({ size = 11 }: { size?: number }) {
 export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const [sidebarOpen, setSidebarOpen] = React.useState(false)
 
   const { data: stats }       = useQuery({ queryKey: ['stats'],      queryFn: api.stats,      refetchInterval: 30_000 })
   const { data: objectives = [] } = useQuery({ queryKey: ['objectives'], queryFn: () => api.objectives(), refetchInterval: 30_000 })
@@ -216,6 +217,16 @@ export default function Layout() {
           ══════════════════════════════════════════════════════════ */}
       <header className="topbar" style={{ padding: '0 16px', gap: 0 }}>
 
+        {/* Mobile nav toggle */}
+        <button
+          className="mobile-menu-btn"
+          onClick={() => setSidebarOpen(v => !v)}
+          aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+          style={{ marginRight: 12 }}
+        >
+          {sidebarOpen ? <X size={16} /> : <Menu size={16} />}
+        </button>
+
         {/* Brand */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingRight: 16 }}>
           {campaign.logoUrl ? (
@@ -248,21 +259,25 @@ export default function Layout() {
           </div>
         </div>
 
-        <Sep />
-        <div style={{ padding: '0 4px' }}><Clock /></div>
+        {/* Secondary readouts -- collapse on mobile, there's no room and
+            none of these are essential to have visible at all times */}
+        <div className="topbar-secondary">
+          <Sep />
+          <div style={{ padding: '0 4px' }}><Clock /></div>
 
-        {stats?.active_round && (
-          <><Sep /><div style={{ padding: '0 4px' }}><SessionTimer start={stats.active_round.start} /></div></>
-        )}
-        {stats?.restart_at && (
-          <><Sep /><div style={{ padding: '0 4px' }}><RestartCountdown restartAt={stats.restart_at} /></div></>
-        )}
-        {stats?.weather && (
-          <><Sep /><WeatherPill w={stats.weather} /></>
-        )}
-        {total > 0 && (
-          <><Sep /><TerritoryBar bluePct={bluePct} redPct={redPct} /></>
-        )}
+          {stats?.active_round && (
+            <><Sep /><div style={{ padding: '0 4px' }}><SessionTimer start={stats.active_round.start} /></div></>
+          )}
+          {stats?.restart_at && (
+            <><Sep /><div style={{ padding: '0 4px' }}><RestartCountdown restartAt={stats.restart_at} /></div></>
+          )}
+          {stats?.weather && (
+            <><Sep /><WeatherPill w={stats.weather} /></>
+          )}
+          {total > 0 && (
+            <><Sep /><TerritoryBar bluePct={bluePct} redPct={redPct} /></>
+          )}
+        </div>
 
         {/* Spacer */}
         <div style={{ flex: 1 }} />
@@ -300,7 +315,7 @@ export default function Layout() {
 
         {/* Server IP */}
         {campaign.serverIp && (
-          <>
+          <div className="topbar-secondary">
             <Sep />
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
               <Server size={11} style={{ color: 'var(--text-dim)' }} />
@@ -308,7 +323,7 @@ export default function Layout() {
                 {campaign.serverIp}
               </span>
             </div>
-          </>
+          </div>
         )}
 
         <Sep />
@@ -364,8 +379,14 @@ export default function Layout() {
           ══════════════════════════════════════════════════════════ */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
+        {/* Backdrop -- closes the drawer on mobile when tapped outside it */}
+        <div
+          className={`sidebar-backdrop${sidebarOpen ? ' open' : ''}`}
+          onClick={() => setSidebarOpen(false)}
+        />
+
         {/* SIDEBAR */}
-        <aside className="sidebar">
+        <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
 
           {/* Nav section */}
           <div className="nav-group-label">Navigation</div>
@@ -375,6 +396,7 @@ export default function Layout() {
                 key={to}
                 to={to}
                 end={to === '/' || to === '/admin'}
+                onClick={() => setSidebarOpen(false)}
                 className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
               >
                 <Icon size={16} style={{ flexShrink: 0 }} />

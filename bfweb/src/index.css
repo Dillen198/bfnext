@@ -410,6 +410,59 @@ body {
   overflow: hidden;
 }
 
+/* ── Mobile menu toggle (hidden on desktop) ── */
+.mobile-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border-light);
+  border-radius: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.mobile-menu-btn:hover { color: var(--text); border-color: var(--accent-dim); }
+
+.sidebar-backdrop { display: none; }
+
+.topbar-secondary { display: flex; align-items: center; }
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE LAYOUT (<= 860px)
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 860px) {
+  .mobile-menu-btn { display: flex; }
+
+  /* Secondary topbar readouts (clock, weather, territory, etc.) move
+     off the topbar on mobile -- there just isn't room, and none of
+     them are essential to have visible at all times. */
+  .topbar-secondary { display: none; }
+
+  .sidebar {
+    position: fixed;
+    top: 54px;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 6px 0 28px rgba(0,0,0,0.55);
+  }
+  .sidebar.open { transform: translateX(0); }
+
+  .sidebar-backdrop.open {
+    display: block;
+    position: fixed;
+    inset: 54px 0 0 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 55;
+  }
+
+}
+
 .nav-item {
   position: relative;
   display: flex;
@@ -467,6 +520,7 @@ body {
    ═══════════════════════════════════════════════════════════════ */
 .kpi-strip {
   display: grid;
+  grid-template-columns: repeat(7, 1fr);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   background: #060908;
@@ -480,6 +534,20 @@ body {
   border-right: 1px solid var(--border);
 }
 .kpi-cell:last-child { border-right: none; }
+
+/* 7 equal columns has no room to breathe under ~860px -- wrap into a
+   flexible grid instead of a fixed column count. */
+@media (max-width: 860px) {
+  .kpi-strip {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  }
+  .kpi-cell {
+    padding: 8px 12px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
 .kpi-label {
   font-size: 0.65rem;
   font-weight: 700;
