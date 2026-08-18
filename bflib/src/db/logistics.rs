@@ -803,7 +803,13 @@ impl Db {
 
         let obj = objective!(self, oid)?;
         let side = obj.owner;
-        let hub = self.persisted.logistics_hubs.contains(&oid);
+        // Match init_warehouses: carriers get hub-tier capacity even
+        // though they're never in persisted.logistics_hubs, otherwise an
+        // admin-triggered reinit demotes a carrier's warehouse to
+        // airbase-tier capacity and its numbers stop matching what it had
+        // at mission start.
+        let is_carrier = self.persisted.carrier_groups.contains(&oid);
+        let hub = self.persisted.logistics_hubs.contains(&oid) || is_carrier;
 
         let production = match self.ephemeral.production_by_side.get(&side) {
             None => {
@@ -936,7 +942,12 @@ impl Db {
                 let mut del_eq: SmallVec<[String; 8]> = smallvec![];
                 let mut del_l: SmallVec<[LiquidType; 4]> = smallvec![];
                 if let Some(prod) = self.ephemeral.production_by_side.get(&obj.owner) {
-                    let hub = self.persisted.logistics_hubs.contains(oid);
+                    // See capture_warehouse/reinit_objective_warehouse: carriers
+                    // need the same hub-tier OR here, otherwise every mission
+                    // load/resync re-shrinks a carrier's warehouse capacity down
+                    // to airbase-tier.
+                    let is_carrier = self.persisted.carrier_groups.contains(oid);
+                    let hub = self.persisted.logistics_hubs.contains(oid) || is_carrier;
                     for (name, _) in &obj.warehouse.equipment {
                         if !prod.equipment.contains_key(name) {
                             del_eq.push(name.clone());
@@ -1575,8 +1586,15 @@ impl Db {
             None => return Ok(()),
         };
         let map = warehouse::Warehouse::get_resource_map(lua).context("getting resource map")?;
-        let hub = obj.kind.is_hub();
         let is_carrier = matches!(obj.kind, ObjectiveKind::CarrierGroup { .. });
+        // Carriers aren't ObjectiveKind::Logistics so is_hub() alone says
+        // false, but init_warehouses gives them hub-tier capacity at
+        // mission start (self.persisted.logistics_hubs.contains(&oid) ||
+        // is_carrier) -- without the same OR here, every capture silently
+        // downgraded a carrier's warehouse to airbase-tier capacity,
+        // diverging from its own mission-start numbers and from land-base
+        // hub numbers.
+        let hub = obj.kind.is_hub() || is_carrier;
         map.for_each(|name, _| {
             match production.equipment.get(&name) {
                 Some(equip) => {
