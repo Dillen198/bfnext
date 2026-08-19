@@ -2,21 +2,37 @@
 # FOWL ENGINE SERVICE STARTER
 # ==========================================================
 
+# DCS instance's Saved Games folder -- the one DCS/bflib actually run under
+# (bflib writes its Logs/state here at runtime). Everything below is a
+# subfolder of this, not the old, unused "server_2" folder.
+$dcsWriteDir = "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1"
+
 # Path to bfdb.exe (copy it here from target\release\bfdb.exe)
-$bfdbExe = "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\bfdb.exe" 
+$bfdbExe = Join-Path $dcsWriteDir "bfdb.exe"
 
 # Path where the Sled database will be stored (dedicated folder)
-$dbPath = "C:\Users\Administrator\Saved Games\server_2\bfdb"
+$dbPath = Join-Path $dcsWriteDir "bfdb"
 
 # Path to your campaign branding config JSON
-$configPath = "C:\Users\Administrator\Saved Games\server_2\campaign.json"
+$configPath = Join-Path $dcsWriteDir "campaign.json"
+
+# Path to the campaign ENGINE config JSON that bflib actually loads at
+# mission start (distinct from $configPath above, which is just dashboard
+# branding). Enables the admin CFG editor at /api/admin/cfg -- without this
+# set, GET/POST to that endpoint fails with "engine config not configured".
+$engineConfigPath = Join-Path $dcsWriteDir "ODFv2_CFG"
 
 # Path to the stats JSONL file written by bflib
 # bflib writes this file as missions run — e.g. DCS\Logs\stats.jsonl
-$statsJsonl = "C:\Users\Administrator\Saved Games\server_2\Logs\stats.jsonl"
+$statsJsonl = Join-Path $dcsWriteDir "Logs\stats.jsonl"
+
+# Path to the netidx-archive stats directory bflib writes alongside
+# stats.jsonl (Logs\stats). Enables /api/admin/perf-history (Engine
+# Performance History) -- without this set, that endpoint has no data.
+$statsDir = Join-Path $dcsWriteDir "Logs\stats"
 
 # Path where bfdb.exe will natively write its plain-text logs
-$logFile = "C:\Users\Administrator\Saved Games\server_2\Logs\bfdb.log"
+$logFile = Join-Path $dcsWriteDir "Logs\bfdb.log"
 
 # Dashboard address (stats + API + map)
 $listenAddress = "0.0.0.0:8880"
@@ -58,14 +74,19 @@ $corsOrigins = @(
     "https://dashboard.vectorstrike.org"
 )
 
-# Netidx base path bflib publishes under (matches cfg.netidx_base + the
-# mission's sortie name in the campaign engine config). Leave blank to run
-# bfdb without netidx -- REST endpoints backed by --stats-jsonl still work,
-# but live engine-side features (the Discord bot's engine log relay, and the
-# priority/commander-spawn RPCs) won't, since those need a live subscription
-# to bflib. Find the real value from bflib's own startup log (it logs the
-# base path it publishes to), or from whatever config sets cfg.netidx_base.
-$netidxBase = ""
+# Netidx base path bflib publishes under. bflib takes the "netidx_base"
+# field from the engine config above and appends the mission's "Sortie" name
+# to it (base.append(sortie)) -- so the real value bfdb needs to subscribe
+# to is "<netidx_base>/<sortie>", not just netidx_base alone.
+# "/local/fowl/campaign" below is netidx_base from the repo's tracked
+# miz/ODFv2_CFG -- VERIFY this matches your live $engineConfigPath above,
+# and confirm the full path (including the sortie suffix) against bflib's
+# own startup log, which logs the exact base path it publishes to.
+# Leave blank to run bfdb without netidx -- REST endpoints backed by
+# --stats-jsonl still work, but live engine-side features (Engine Log,
+# the Discord bot's engine log relay, and priority/commander-spawn RPCs)
+# won't, since those need a live subscription to bflib.
+$netidxBase = "/local/fowl/campaign"
 
 # ==========================================================
 # Secrets: bfsystem.ps1 is tracked in git (public repo). $adminPassword lives
@@ -119,6 +140,12 @@ function Start-VECTOR {
         }
         if ($using:netidxBase -ne "") {
             $argList += "--base", $using:netidxBase
+        }
+        if ($using:engineConfigPath -ne "") {
+            $argList += "--engine-config", $using:engineConfigPath
+        }
+        if ($using:statsDir -ne "") {
+            $argList += "--stats-dir", $using:statsDir
         }
         foreach ($origin in $using:corsOrigins) {
             $argList += "--cors-origin", $origin
