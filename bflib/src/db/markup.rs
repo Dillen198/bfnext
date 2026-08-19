@@ -27,7 +27,7 @@ use compact_str::{CompactString, format_compact};
 use dcso3::{
     Color, LuaVec3, Vector2, Vector3,
     coalition::Side,
-    trigger::{ArrowSpec, CircleSpec, LineType, MarkId, PolylineSpec, QuadSpec, SideFilter, TextSpec},
+    trigger::{ArrowSpec, CircleSpec, LineSpec, LineType, MarkId, QuadSpec, SideFilter, TextSpec},
 };
 use fxhash::FxHashMap;
 
@@ -47,16 +47,26 @@ fn make_pts(center: Vector2, r: f64, offsets: &[(f64, f64)]) -> Vec<LuaVec3> {
     offsets.iter().map(|&(n, e)| pt(center, n * r, e * r)).collect()
 }
 
-fn draw_polyline(center: Vector2, r: f64, offsets: &[(f64, f64)], sf: SideFilter, color: Color, msgq: &mut MsgQ) -> MarkId {
-    let id = MarkId::new();
-    msgq.out_line_to_all(sf, id, PolylineSpec {
-        points: make_pts(center, r, offsets),
-        color,
-        fill_color: Color::white(0.),
-        line_type: LineType::Solid,
-        read_only: true,
-    }, None);
-    id
+/// Draws a connected multi-point shape as a chain of 2-point segments.
+///
+/// DCS's `trigger.action` has no native "draw a connected polyline" call — only
+/// `lineToAll` (exactly 2 points). So a symbol with N points becomes N-1 individual
+/// line segments, each with its own MarkId.
+fn draw_polyline(center: Vector2, r: f64, offsets: &[(f64, f64)], sf: SideFilter, color: Color, msgq: &mut MsgQ) -> Vec<MarkId> {
+    let pts = make_pts(center, r, offsets);
+    pts.windows(2)
+        .map(|seg| {
+            let id = MarkId::new();
+            msgq.line_to_all(sf, id, LineSpec {
+                start: seg[0],
+                end: seg[1],
+                color,
+                line_type: LineType::Solid,
+                read_only: true,
+            }, None);
+            id
+        })
+        .collect()
 }
 
 /// Anchor icon for naval bases — derived from big-anchor-svgrepo-com.svg.
@@ -234,13 +244,15 @@ fn carrier_path() -> &'static [(f64, f64)] {
 enum KindSymbol {
     #[default]
     None,
-    Single(MarkId),
+    Single(Vec<MarkId>),
 }
 
 impl KindSymbol {
     fn remove(self, msgq: &mut MsgQ) {
-        if let Self::Single(id) = self {
-            msgq.delete_mark(id);
+        if let Self::Single(ids) = self {
+            for id in ids {
+                msgq.delete_mark(id);
+            }
         }
     }
 }

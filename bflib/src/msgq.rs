@@ -19,7 +19,7 @@ use dcso3::{
     coalition::Side,
     env::miz::{GroupId, UnitId},
     net::{Net, PlayerId},
-    trigger::{Action, ArrowSpec, CircleSpec, LineSpec, MarkId, PolylineSpec, QuadSpec, RectSpec, SideFilter, TextSpec},
+    trigger::{Action, ArrowSpec, CircleSpec, LineSpec, MarkId, QuadSpec, RectSpec, SideFilter, TextSpec},
 };
 use log::error;
 use std::collections::VecDeque;
@@ -96,12 +96,6 @@ pub enum Msg {
         spec: LineSpec,
         message: Option<String>,
     },
-    Polyline {
-        id: MarkId,
-        to: SideFilter,
-        spec: PolylineSpec,
-        message: Option<String>,
-    },
     SetMarkupColor {
         id: MarkId,
         color: Color,
@@ -167,8 +161,7 @@ impl MsgQ {
                     | Msg::Quad { id, .. }
                     | Msg::Text { id, .. }
                     | Msg::Arrow { id, .. }
-                    | Msg::Line { id, .. }
-                    | Msg::Polyline { id, .. } => {
+                    | Msg::Line { id, .. } => {
                         if *id == did {
                             push = false;
                             false
@@ -379,16 +372,6 @@ impl MsgQ {
         self.0[2].push_back(Cmd::Send(Msg::Line { id, to, spec, message }))
     }
 
-    pub fn out_line_to_all(
-        &mut self,
-        to: SideFilter,
-        id: MarkId,
-        spec: PolylineSpec,
-        message: Option<String>,
-    ) {
-        self.0[2].push_back(Cmd::Send(Msg::Polyline { id, to, spec, message }))
-    }
-
     pub fn arrow_to(
         &mut self,
         to: SideFilter,
@@ -439,6 +422,32 @@ impl MsgQ {
                         None => return,
                     },
                 },
+            };
+            let kind = match &cmd {
+                Cmd::DeleteMark(_) => "DeleteMark",
+                Cmd::Send(Msg::Message {
+                    typ: MsgTyp::Mark { .. },
+                    ..
+                }) => "Mark",
+                Cmd::Send(Msg::Message {
+                    typ: MsgTyp::Chat(_),
+                    ..
+                }) => "Chat",
+                Cmd::Send(Msg::Message {
+                    typ: MsgTyp::Panel { .. },
+                    ..
+                }) => "Panel",
+                Cmd::Send(Msg::Circle { .. }) => "Circle",
+                Cmd::Send(Msg::Rect { .. }) => "Rect",
+                Cmd::Send(Msg::Quad { .. }) => "Quad",
+                Cmd::Send(Msg::Text { .. }) => "Text",
+                Cmd::Send(Msg::Arrow { .. }) => "Arrow",
+                Cmd::Send(Msg::Line { .. }) => "Line",
+                Cmd::Send(Msg::SetMarkupColor { .. }) => "SetMarkupColor",
+                Cmd::Send(Msg::SetMarkupFillColor { .. }) => "SetMarkupFillColor",
+                Cmd::Send(Msg::SetMarkupText { .. }) => "SetMarkupText",
+                Cmd::Send(Msg::SetMarkupStart { .. }) => "SetMarkupStart",
+                Cmd::Send(Msg::SetMarkupEnd { .. }) => "SetMarkupEnd",
             };
             let res = match cmd {
                 Cmd::DeleteMark(id) => act.remove_mark(id),
@@ -509,12 +518,6 @@ impl MsgQ {
                     spec,
                     message,
                 }) => act.line_to_all(to, id, spec, message),
-                Cmd::Send(Msg::Polyline {
-                    id,
-                    to,
-                    spec,
-                    message,
-                }) => act.out_line_to_all(to, id, spec, message),
                 Cmd::Send(Msg::SetMarkupColor { id, color }) => act.set_markup_color(id, color),
                 Cmd::Send(Msg::SetMarkupFillColor { id, color }) => {
                     act.set_markup_fill_color(id, color)
@@ -526,7 +529,7 @@ impl MsgQ {
                 Cmd::Send(Msg::SetMarkupText { id, text }) => act.set_markup_text(id, text),
             };
             if let Err(e) = res {
-                error!("could not send message {:?}", e)
+                error!("could not send message ({kind}) {:?}", e)
             }
         }
     }
