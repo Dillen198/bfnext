@@ -37,6 +37,7 @@ impl Statspub {
         write_dir: PathBuf,
         base: Path,
         sortie: LuaString,
+        fresh: bool,
     ) -> Result<Self> {
         let shard = ArcStr::from("0");
         let config = ConfigBuilder::default()
@@ -99,9 +100,16 @@ impl Statspub {
             last_rotate: now,
             sortie,
         };
-        // Write NewRound at the start of the first file so bfdb has context
-        // from the very beginning, not just after the first rotation.
-        t.append(now, &Stat::NewRound { sortie: t.sortie.clone() })?;
+        // Only announce a genuinely new round here -- bflib already decided
+        // this in lib.rs (no saved state to resume) and callers pass that
+        // through as `fresh`. Writing this unconditionally made bfdb close
+        // and reopen the round on every technical restart (crash recovery,
+        // bot-triggered restart) that resumes existing saved state, not
+        // just real campaign resets. When resuming, bfdb keeps whatever
+        // round context it already has for this sortie.
+        if fresh {
+            t.append(now, &Stat::NewRound { sortie: t.sortie.clone() })?;
+        }
         Ok(t)
     }
 
@@ -112,17 +120,14 @@ impl Statspub {
             let buf = Chars::from_bytes(encode(&stat)?.freeze())?;
             batch.push(BatchItem(self.id, Event::Update(Value::String(buf))));
             self.log.add_batch(false, ts, &batch)?;
-            // Rotate every 60 seconds so bfdb can read completed historical files
+            // Rotate every 60 seconds so bfdb can read completed historical files.
+            // bfdb already has round context from the genuine NewRound seen at
+            // round start and doesn't need it re-announced on every rotation --
+            // doing so would end and reopen the round every 60 seconds.
             if (ts - self.last_rotate).num_seconds() >= 60 {
                 self.last_rotate = ts;
                 self.log.flush_current()?;
                 self.log.rotate(ts)?;
-                // Write NewRound at the start of the new file so bfdb has context
-                let new_round = Stat::NewRound { sortie: self.sortie.clone() };
-                let buf = Chars::from_bytes(encode(&new_round)?.freeze())?;
-                let mut batch = BATCH_POOL.take();
-                batch.push(BatchItem(self.id, Event::Update(Value::String(buf))));
-                self.log.add_batch(false, ts, &batch)?;
             }
             Ok(())
         })

@@ -2781,20 +2781,24 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
     };
     debug!("sortie is {:?}", ctx.sortie);
     let cfg = Arc::new(Cfg::load(&path)?);
+    // Computed once, up front, so both the netidx stats publisher (via
+    // Task::CfgLoaded) and the NewRound stat below agree on whether this is
+    // a genuinely new round or a resume of saved state -- sending a
+    // NewRound signal unconditionally on every restart (crash recovery,
+    // bot-triggered restart) made bfdb close and reopen the round even when
+    // resuming, not just on real campaign resets.
+    let fresh = !path.exists();
     ctx.do_bg_task(Task::CfgLoaded {
         sortie: ctx.sortie.clone(),
         cfg: Arc::clone(&cfg),
         admin_channel: Arc::clone(&ctx.external_admin_commands),
+        fresh,
     });
     debug!("path to saved state is {:?}", path);
     info!("initializing db");
     let to_bg = ctx.to_background.as_ref().unwrap().clone();
-    if !path.exists() {
+    if fresh {
         debug!("saved state doesn't exist, starting from default");
-        // Only announce a genuinely new round when there's no saved state to
-        // resume. Sending this unconditionally made bfdb close and reopen the
-        // round on every technical restart (crash recovery, scheduled
-        // restart), not just real campaign resets.
         ctx.do_bg_task(Task::Stat(Stat::NewRound { sortie: ctx.sortie.clone() }));
         ctx.db = Db::init(lua, cfg, &ctx.idx, &miz, to_bg)
             .context("initalizing the mission")?;

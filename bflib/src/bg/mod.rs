@@ -245,6 +245,12 @@ pub(super) enum Task {
         sortie: dcso3::String,
         cfg: Arc<Cfg>,
         admin_channel: Arc<SegQueue<(AdminCommand, oneshot::Sender<Value>)>>,
+        /// True only when this mission load started a genuinely new round
+        /// (no saved state to resume). Threaded through to the netidx stats
+        /// publisher so it doesn't announce a spurious NewRound on every
+        /// technical restart (crash recovery, bot-triggered restart) that
+        /// resumes existing saved state.
+        fresh: bool,
     },
     SaveConfig(PathBuf, Arc<Cfg>),
     WriteLog(Bytes),
@@ -376,6 +382,7 @@ impl Logs {
         cfg: &Config,
         base: NetIdxPath,
         sortie: dcso3::String,
+        fresh: bool,
     ) -> Result<()> {
         match self {
             Self::Netidx { .. } => Ok(()),
@@ -402,6 +409,7 @@ impl Logs {
                         stats_path.clone(),
                         base.append("stats"),
                         sortie.clone(),
+                        fresh,
                     )
                     .await
                     .context("starting stats pub")?;
@@ -467,6 +475,7 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
                 sortie,
                 cfg,
                 admin_channel,
+                fresh,
             } => {
                 if let Some(base) = cfg.netidx_base.as_ref() {
                     let base = base.append(&sortie);
@@ -492,7 +501,7 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
                         }
                     };
                     if let Err(e) = logs
-                        .switch_to_netidx(publisher.clone(), &cfg, base.clone(), sortie.clone())
+                        .switch_to_netidx(publisher.clone(), &cfg, base.clone(), sortie.clone(), fresh)
                         .await
                     {
                         eprintln!("failed to initialize netidx logs {e:?}")
