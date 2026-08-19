@@ -705,7 +705,13 @@ class FowlEngine(Plugin):
             except asyncio.CancelledError:
                 raise
             except Exception as ex:
-                self.log.error(f"FowlEngine: campaign event poll error for {server.name}: {ex}")
+                # str(asyncio.TimeoutError()) (and several aiohttp timeout
+                # subclasses) is "" by default -- include the exception type
+                # so a bare-colon log line doesn't hide what actually failed.
+                self.log.error(
+                    f"FowlEngine: campaign event poll error for {server.name}: "
+                    f"{type(ex).__name__}: {ex or '(no message)'}"
+                )
                 await asyncio.sleep(CAMPAIGN_RECONNECT_SECS)
 
     async def _poll_objective_changes(self, session, api_url, channel_id, messages, obj_state):
