@@ -146,6 +146,15 @@ function Start-VECTOR {
                 netidx resolver-server -f -c $using:netidxResolverConfig
             } | Out-Null
             Start-Sleep -Seconds 2
+            $resolverJob = Get-Job -Name "NetidxResolver"
+            if ($resolverJob.State -eq "Failed" -or $resolverJob.State -eq "Completed") {
+                Write-Host "Resolver job exited immediately (state: $($resolverJob.State)) -- it's not actually running. Output below:" -ForegroundColor Red
+                Receive-Job -Name "NetidxResolver" -Keep
+            } elseif (-not (Test-NetConnection -ComputerName 127.0.0.1 -Port 4564 -InformationLevel Quiet -WarningAction SilentlyContinue)) {
+                Write-Host "Resolver job is running but nothing is listening on 127.0.0.1:4564 yet -- check netidx-resolver.json's addr and the resolver output in the status loop below." -ForegroundColor Yellow
+            } else {
+                Write-Host "Resolver is listening on 127.0.0.1:4564." -ForegroundColor Green
+            }
         }
     }
 
@@ -202,6 +211,13 @@ function Start-VECTOR {
         }
 
         Clear-Host
+        if (Get-Job -Name "NetidxResolver" -ErrorAction SilentlyContinue) {
+            Write-Host "=========== NETIDX RESOLVER ===========" -ForegroundColor DarkCyan
+            $resolverJob = Get-Job -Name "NetidxResolver"
+            Write-Host "Job state: $($resolverJob.State)" -ForegroundColor Gray
+            Receive-Job -Name "NetidxResolver" -Keep | Select-Object -Last 10
+            Write-Host ""
+        }
         Write-Host "=========== FOWL ENGINE DB ===========" -ForegroundColor Magenta
         Receive-Job -Name "DBEngine" -Keep | Select-Object -Last 20
 
