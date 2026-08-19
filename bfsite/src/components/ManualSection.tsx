@@ -584,7 +584,7 @@ export default function ManualSection() {
                   { label: 'Logistics Hub', value: 'Supplies resources to nearby objectives via automated convoys. Critical chokepoint.' },
                   { label: 'Factory', value: 'Produces ground units over time. Destroy enemy factories to starve their offensive.' },
                   { label: 'Naval Base', value: 'Spawns and resupplies naval assets. Controls coastal and maritime operations. Every carrier group auto-links to its nearest friendly naval base — see VICTORY & CAPTURE for how that link affects capturing one.' },
-                  { label: 'SAM Site', value: 'High-value integrated air defence site. Position is classified — not shown on the F10 map or the dashboard. Must be located and captured by players. Ownership can flip either way, including from neutral — a captured site re-arms under its new owner\'s coalition and defends their airspace, not the enemy\'s.' },
+                  { label: 'SAM Site', value: 'High-value integrated air defence site, networked with other sensors — search radars stay dark until a real threat is confirmed, then power up. Position is classified — not shown on the F10 map or the dashboard. Must be located and captured by players. Ownership can flip either way, including from neutral — a captured site re-arms under its new owner\'s coalition and defends their airspace, not the enemy\'s.' },
                 ].map((item) => (
                   <InfoRow key={item.label} label={item.label} value={item.value} />
                 ))}
@@ -597,6 +597,16 @@ export default function ManualSection() {
                 takeover. SAM Sites work differently — see{' '}
                 <strong style={{ color: 'var(--text)' }}>VICTORY &amp; CAPTURE</strong> below for
                 the full breakdown.
+              </Callout>
+
+              <Callout type="warn">
+                SAM sites don't just sit there with radars blaring — they share detections across
+                the coalition's whole sensor network and only light up their radar for a
+                confirmed threat, so a "quiet" site isn't necessarily an undefended one. Fire a
+                HARM or other anti-radiation missile at one and it'll go dark to deny you a lock —
+                and some sites keep a short-range point-defense system (Pantsir, Shilka) alert the
+                entire time specifically to shoot your missile down before it arrives. Don't treat
+                radar silence as an all-clear.
               </Callout>
 
               <div style={{ marginTop: '1.5rem' }}>

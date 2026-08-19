@@ -72,6 +72,11 @@ export const campaign = {
       description: 'EWR networks detect and report enemy air contacts, feeding threat data directly into the coalition picture.',
     },
     {
+      icon: 'Antenna',
+      title: 'Networked SAM Defense',
+      description: 'SAM sites share a live sensor picture, go dark until there\'s a real threat, and defend each other from anti-radiation missiles.',
+    },
+    {
       icon: 'Shield',
       title: 'Pilot Lives & Slots',
       description: 'Slot authorisation and a persistent lives system tie pilot actions to real consequences — losses actually matter.',

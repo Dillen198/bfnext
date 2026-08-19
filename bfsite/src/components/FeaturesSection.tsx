@@ -1,10 +1,10 @@
 import { campaign } from '../config/campaign'
-import { Map, Package, Radio, Crosshair, Layers, BarChart3, Truck, Users, Radar, Eye, Shield, Menu } from 'lucide-react'
+import { Map, Package, Radio, Crosshair, Layers, BarChart3, Truck, Users, Radar, Eye, Shield, Menu, Antenna } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import Reveal from './Reveal'
 
 const ICONS: Record<string, LucideIcon> = {
-  Map, Package, Radio, Crosshair, Layers, BarChart3, Truck, Users, Radar, Eye, Shield, Menu,
+  Map, Package, Radio, Crosshair, Layers, BarChart3, Truck, Users, Radar, Eye, Shield, Menu, Antenna,
 }
 
 export default function FeaturesSection() {
