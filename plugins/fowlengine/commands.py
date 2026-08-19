@@ -3,6 +3,7 @@ from core import Plugin, utils, Server, Status, command
 from discord import app_commands
 from discord.ext import tasks
 from services.bot import DCSServerBot
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -67,6 +68,23 @@ async def bfdb_admin_post(api_url: str, username: str, password: str, path: str,
         session_cookie = await bfdb_login(http, api_url, username, password)
         async with http.post(
             f"{api_url}{path}", json=json_body, headers={"Cookie": f"session={session_cookie}"}, timeout=10
+        ) as resp:
+            status = resp.status
+            try:
+                data = await resp.json()
+            except Exception:
+                data = None
+            return status, data
+
+
+async def bfdb_admin_get(api_url: str, username: str, password: str, path: str):
+    """GET an admin-gated bfdb endpoint via the local-login session cookie flow.
+    Returns (status, parsed_json_or_None)."""
+    import aiohttp
+    async with aiohttp.ClientSession() as http:
+        session_cookie = await bfdb_login(http, api_url, username, password)
+        async with http.get(
+            f"{api_url}{path}", headers={"Cookie": f"session={session_cookie}"}, timeout=10
         ) as resp:
             status = resp.status
             try:
@@ -152,6 +170,7 @@ class FowlEngine(Plugin):
     def __init__(self, bot: DCSServerBot):
         super().__init__(bot)
         self.status_msg_id = None
+        self.perf_msg_id = None
         self.tail_msg_ids = {}  # server name -> engine log tail message id
         self.state_file = os.path.join(bot.node.config_dir, 'fowlengine_state.json')
         if os.path.exists(self.state_file):
@@ -159,6 +178,7 @@ class FowlEngine(Plugin):
                 with open(self.state_file, 'r') as f:
                     state = json.load(f)
                     self.status_msg_id = state.get('status_msg_id')
+                    self.perf_msg_id = state.get('perf_msg_id')
                     self.tail_msg_ids = state.get('tail_msg_ids', {})
             except Exception as ex:
                 self.log.error(f"Failed to load Fowl Engine state: {ex}")
@@ -181,12 +201,14 @@ class FowlEngine(Plugin):
         utils.safe_start(self.sync_ranks)
         utils.safe_start(self.supervise_engine_logs)
         utils.safe_start(self.supervise_campaign_events)
+        utils.safe_start(self.update_perf_status)
 
     async def cog_unload(self):
         await utils.safe_cancel(self.update_status)
         await utils.safe_cancel(self.sync_ranks)
         await utils.safe_cancel(self.supervise_engine_logs)
         await utils.safe_cancel(self.supervise_campaign_events)
+        await utils.safe_cancel(self.update_perf_status)
         for task in self._log_relay_tasks.values():
             task.cancel()
         for task in self._campaign_poll_tasks.values():
@@ -196,7 +218,11 @@ class FowlEngine(Plugin):
     def save_state(self):
         try:
             with open(self.state_file, 'w') as f:
-                json.dump({'status_msg_id': self.status_msg_id, 'tail_msg_ids': self.tail_msg_ids}, f)
+                json.dump({
+                    'status_msg_id': self.status_msg_id,
+                    'perf_msg_id': self.perf_msg_id,
+                    'tail_msg_ids': self.tail_msg_ids,
+                }, f)
         except Exception as ex:
             self.log.error(f"Failed to save Fowl Engine state: {ex}")
 
@@ -227,31 +253,117 @@ class FowlEngine(Plugin):
                             objs = await resp.json()
                         else:
                             objs = []
-                        
+
+                    async with session.get(f"{api_url}/api/leaderboard") as resp:
+                        leaderboard = await resp.json() if resp.status == 200 else []
+
+                    async with session.get(f"{api_url}/api/captures") as resp:
+                        captures = await resp.json() if resp.status == 200 else []
+
                 blue_objs = len([o for o in objs if o.get('owner') == 'Blue'])
                 red_objs = len([o for o in objs if o.get('owner') == 'Red'])
-                
+                neutral_objs = len([o for o in objs if o.get('owner') == 'Neutral'])
+                total_objs = len(objs)
+
+                # Dynamic accent color reflects who's currently winning the territorial fight
+                if blue_objs > red_objs:
+                    embed_color = discord.Color.blue()
+                elif red_objs > blue_objs:
+                    embed_color = discord.Color.red()
+                else:
+                    embed_color = discord.Color.gold()
+
                 brand_name = config.get('brand_name', 'Fowl Engine')
-                embed = discord.Embed(title=f"{brand_name} Campaign Status", color=discord.Color.blue())
-                
-                if 'active_round' in stats and stats['active_round']:
-                    embed.description = f"**Active Scenario:** {stats['active_round'].get('scenario', 'Unknown')}"
+                embed = discord.Embed(title=f"⚔️ {brand_name} Campaign Status", color=embed_color)
+
+                active_round = stats.get('active_round')
+                if active_round:
+                    desc = f"**Active Scenario:** {active_round.get('scenario', 'Unknown')}"
+                    start_raw = active_round.get('start')
+                    if start_raw:
+                        try:
+                            started = datetime.fromisoformat(start_raw.replace('Z', '+00:00'))
+                            elapsed = datetime.now(timezone.utc) - started
+                            days, rem = divmod(int(elapsed.total_seconds()), 86400)
+                            hours, rem = divmod(rem, 3600)
+                            minutes, _ = divmod(rem, 60)
+                            elapsed_str = f"{days}d {hours}h {minutes}m" if days else f"{hours}h {minutes}m"
+                            desc += f"\n**Round Duration:** {elapsed_str}"
+                        except ValueError:
+                            pass
+                    embed.description = desc
                 else:
                     embed.description = "**Server Offline or No Active Round**"
-                    
-                embed.add_field(name="🟦 Blue Faction", value=f"Pilots: {stats.get('blue_online', 0)}\nObjectives: {blue_objs}", inline=True)
-                embed.add_field(name="🟥 Red Faction", value=f"Pilots: {stats.get('red_online', 0)}\nObjectives: {red_objs}", inline=True)
-                
-                weather = stats.get('weather')
-                if weather:
-                    temp = weather.get('temp_c', 0)
-                    wind = weather.get('wind_speed_kts', 0)
-                    clouds = weather.get('cloud_density', 0)
-                    embed.add_field(name="⛅ Live Weather", value=f"🌡️ {temp:.1f}°C | 💨 {wind:.1f}kts | ☁️ Density {clouds}/10", inline=False)
-                    
+
+                blue_online = stats.get('blue_online', 0)
+                red_online = stats.get('red_online', 0)
+                embed.add_field(
+                    name="🟦 Blue Faction",
+                    value=f"Pilots Online: **{blue_online}**\nObjectives: **{blue_objs}**",
+                    inline=True,
+                )
+                embed.add_field(
+                    name="🟥 Red Faction",
+                    value=f"Pilots Online: **{red_online}**\nObjectives: **{red_objs}**",
+                    inline=True,
+                )
+                embed.add_field(
+                    name="⬜ Neutral",
+                    value=f"Objectives: **{neutral_objs}**",
+                    inline=True,
+                )
+
+                # Text-based territory control bar, mirroring the web dashboard
+                if total_objs > 0:
+                    bar_len = 20
+                    blue_blocks = round((blue_objs / total_objs) * bar_len)
+                    red_blocks = round((red_objs / total_objs) * bar_len)
+                    neutral_blocks = max(0, bar_len - blue_blocks - red_blocks)
+                    bar = "🟦" * blue_blocks + "⬜" * neutral_blocks + "🟥" * red_blocks
+                    blue_pct = round((blue_objs / total_objs) * 100)
+                    red_pct = round((red_objs / total_objs) * 100)
+                    embed.add_field(
+                        name="📊 Territory Control",
+                        value=f"{bar}\n{blue_pct}% Blue · {100 - blue_pct - red_pct}% Neutral · {red_pct}% Red",
+                        inline=False,
+                    )
+
+                embed.add_field(
+                    name="📈 Campaign Stats",
+                    value=(
+                        f"Total Kills: **{stats.get('total_kills', 0)}**\n"
+                        f"Pilots Registered: **{stats.get('total_pilots', 0)}** "
+                        f"({stats.get('blue_registered', 0)} blue · {stats.get('red_registered', 0)} red)\n"
+                        f"Total Objectives: **{total_objs}**"
+                    ),
+                    inline=True,
+                )
+
+                if leaderboard:
+                    top = max(leaderboard, key=lambda p: p.get('air_kills', 0) + p.get('ground_kills', 0))
+                    kills = top.get('air_kills', 0) + top.get('ground_kills', 0)
+                    deaths = top.get('deaths', 0)
+                    kd = f"{kills / deaths:.2f}" if deaths > 0 else ("∞" if kills > 0 else "0.00")
+                    embed.add_field(
+                        name="🏆 Top Ace",
+                        value=f"**{top.get('name', 'Unknown')}**\n{kills} kills · {kd} K/D",
+                        inline=True,
+                    )
+
+                if captures:
+                    top_obj = max(captures, key=lambda c: c.get('count', 0))
+                    embed.add_field(
+                        name="🎯 Most Contested",
+                        value=f"**{top_obj.get('name', 'Unknown')}**\nCaptured {top_obj.get('count', 0)}x this round",
+                        inline=True,
+                    )
+
+                footer_parts = []
                 restart_at = stats.get('restart_at')
                 if restart_at:
-                    embed.set_footer(text=f"Rotation scheduled for {restart_at}")    
+                    footer_parts.append(f"Rotation scheduled for {restart_at}")
+                footer_parts.append(f"Updated {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}")
+                embed.set_footer(text=" | ".join(footer_parts))
                 channel_id = int(config['status_channel'])
                 channel = self.bot.get_channel(channel_id)
                 if not channel:
@@ -279,6 +391,167 @@ class FowlEngine(Plugin):
 
     @update_status.before_loop
     async def before_update_status(self):
+        await self.bot.wait_until_ready()
+
+    @staticmethod
+    def _fmt_bytes(n: int) -> str:
+        gb = n / (1024 ** 3)
+        return f"{gb:.1f} GB"
+
+    @staticmethod
+    def _bar(pct: float, width: int = 10) -> str:
+        pct = max(0.0, min(100.0, pct))
+        filled = round((pct / 100.0) * width)
+        return "█" * filled + "░" * (width - filled)
+
+    def _build_perf_embed(self, brand_name: str, data: dict) -> discord.Embed:
+        hw = data.get('hardware') or {}
+
+        cpu_pct = hw.get('cpu_usage_pct', 0.0)
+        mem_total = hw.get('mem_total_bytes', 0)
+        mem_used = hw.get('mem_used_bytes', 0)
+        mem_pct = (mem_used / mem_total * 100) if mem_total else 0.0
+        gpu = hw.get('gpu') or {}
+
+        worst_pct = max(cpu_pct, mem_pct, gpu.get('usage_pct', 0) if gpu.get('available') else 0)
+        for d in hw.get('disks', []):
+            if d.get('total_bytes'):
+                worst_pct = max(worst_pct, d['used_bytes'] / d['total_bytes'] * 100)
+        color = discord.Color.red() if worst_pct >= 90 else (
+            discord.Color.orange() if worst_pct >= 75 else discord.Color.green()
+        )
+
+        embed = discord.Embed(title=f"🖥️ {brand_name} Server Performance", color=color)
+
+        embed.add_field(
+            name="⚙️ CPU",
+            value=f"{self._bar(cpu_pct)} {cpu_pct:.0f}%\n{hw.get('cpu_count', '?')} logical cores",
+            inline=True,
+        )
+        embed.add_field(
+            name="🧠 RAM",
+            value=f"{self._bar(mem_pct)} {mem_pct:.0f}%\n{self._fmt_bytes(mem_used)} / {self._fmt_bytes(mem_total)}",
+            inline=True,
+        )
+        if gpu.get('available'):
+            gpu_pct = gpu.get('usage_pct', 0)
+            gpu_mem_total = gpu.get('mem_total_bytes', 0)
+            gpu_mem_used = gpu.get('mem_used_bytes', 0)
+            gpu_temp = gpu.get('celsius')
+            temp_str = f" · 🌡️ {gpu_temp}°C" if gpu_temp is not None else ""
+            embed.add_field(
+                name=f"🎮 GPU ({gpu.get('name', 'Unknown')})",
+                value=(
+                    f"{self._bar(gpu_pct)} {gpu_pct:.0f}%{temp_str}\n"
+                    f"VRAM: {self._fmt_bytes(gpu_mem_used)} / {self._fmt_bytes(gpu_mem_total)}"
+                ),
+                inline=True,
+            )
+
+        disks = hw.get('disks', [])
+        if disks:
+            lines = []
+            for d in disks[:5]:
+                total = d.get('total_bytes', 0)
+                used = d.get('used_bytes', 0)
+                pct = (used / total * 100) if total else 0.0
+                lines.append(f"`{d.get('mount', '?')}` {self._fmt_bytes(used)} / {self._fmt_bytes(total)} ({pct:.0f}%)")
+            embed.add_field(name="💾 Disk", value="\n".join(lines), inline=False)
+
+        temps = hw.get('temps', [])
+        cpu_temps = [t for t in temps if 'cpu' in t.get('label', '').lower() or 'package' in t.get('label', '').lower()]
+        if cpu_temps:
+            embed.add_field(
+                name="🌡️ CPU Temp",
+                value="\n".join(f"{t['label']}: {t['celsius']:.0f}°C" for t in cpu_temps[:3]),
+                inline=True,
+            )
+
+        if data.get('available'):
+            engine_by_name = {row['name']: row for row in data.get('engine', [])}
+            frame = engine_by_name.get('frame')
+            if frame:
+                mean_us = frame.get('mean', 0)
+                flag = "🔴 " if mean_us >= 25000 else ("🟡 " if mean_us >= 20000 else "")
+                embed.add_field(
+                    name=f"{flag}📊 Mission Frame Time",
+                    value=(
+                        f"mean **{mean_us:.0f}{frame.get('unit', 'us')}** · "
+                        f"p50 {frame.get('p50', 0):.0f} · p90 {frame.get('p90', 0):.0f} · "
+                        f"p99 {frame.get('p99', 0):.0f}"
+                    ),
+                    inline=False,
+                )
+            watch = ['unit_culling', 'logistics', 'spawn', 'process_messages', 'dcs_events']
+            watch_lines = []
+            for name in watch:
+                row = engine_by_name.get(name)
+                if row:
+                    watch_lines.append(f"`{name}`: {row.get('mean', 0):.0f}{row.get('unit', 'us')}")
+            if watch_lines:
+                embed.add_field(name="🔍 Script Breakdown (mean)", value="\n".join(watch_lines), inline=False)
+        else:
+            embed.add_field(name="📊 Mission Status", value="No active DCS session reporting yet.", inline=False)
+
+        embed.set_footer(text=f"Updated {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')} — thresholds are approximate, use as a starting point")
+        return embed
+
+    @tasks.loop(minutes=5.0)
+    async def update_perf_status(self):
+        for server in self.bot.servers.values():
+            if server.status not in [Status.RUNNING, Status.PAUSED]:
+                continue
+
+            config = self.get_config(server) or {}
+            if not config.get('perf_channel'):
+                continue
+
+            api_url = config.get("api_url", "http://localhost:8765")
+            username = config.get("admin_username")
+            password = config.get("admin_password")
+            if not username or not password:
+                self.log.error(
+                    "FowlEngine: perf_channel is set but admin_username/admin_password "
+                    "are missing (must match bfdb's --admin-username/--admin-password)"
+                )
+                continue
+
+            try:
+                status, data = await bfdb_admin_get(api_url, username, password, "/api/admin/perf")
+                if status != 200 or data is None:
+                    self.log.error(f"FowlEngine: /api/admin/perf returned {status}")
+                    continue
+
+                brand_name = config.get('brand_name', 'Fowl Engine')
+                embed = self._build_perf_embed(brand_name, data)
+
+                channel_id = int(config['perf_channel'])
+                channel = self.bot.get_channel(channel_id)
+                if not channel:
+                    self.log.error(f"FowlEngine: perf_channel {channel_id} not found or bot lacks access.")
+                    continue
+
+                if self.perf_msg_id:
+                    try:
+                        msg = await channel.fetch_message(self.perf_msg_id)
+                        await msg.edit(embed=embed)
+                        continue
+                    except discord.NotFound:
+                        self.perf_msg_id = None
+                    except discord.Forbidden:
+                        self.log.error(f"FowlEngine: Bot lacks permissions to read/edit in channel {channel_id}")
+                        self.perf_msg_id = None
+
+                msg = await channel.send(embed=embed)
+                self.perf_msg_id = msg.id
+                self.save_state()
+
+            except Exception as ex:
+                import traceback
+                self.log.error(f"Error updating Fowl Engine perf status: {ex}\n{traceback.format_exc()}")
+
+    @update_perf_status.before_loop
+    async def before_update_perf_status(self):
         await self.bot.wait_until_ready()
 
     @tasks.loop(minutes=5.0)
@@ -327,7 +600,7 @@ class FowlEngine(Plugin):
                     if not target_role_name:
                         continue
 
-                    member = self.bot.get_member_by_ucid(ucid)
+                    member = await self.bot.get_member_by_ucid(ucid)
                     if not member:
                         continue
 
@@ -438,10 +711,12 @@ class FowlEngine(Plugin):
     async def _poll_objective_changes(self, session, api_url, channel_id, messages, obj_state):
         async with session.get(f"{api_url}/api/objectives", timeout=10) as resp:
             if resp.status != 200:
+                self.log.error(f"FowlEngine: /api/objectives returned {resp.status} while polling for alerts")
                 return
             objs = await resp.json()
         channel = self.bot.get_channel(channel_id)
         if not channel:
+            self.log.error(f"FowlEngine: alerts_channel {channel_id} not found or bot lacks access")
             return
 
         # Don't alert on the very first snapshot -- there's no prior state to
@@ -522,6 +797,7 @@ class FowlEngine(Plugin):
     async def _poll_kill_streaks(self, session, api_url, server_name, channel_id, messages):
         async with session.get(f"{api_url}/api/kills", params={"limit": 100}, timeout=10) as resp:
             if resp.status != 200:
+                self.log.error(f"FowlEngine: /api/kills returned {resp.status} while polling for achievements")
                 return
             kills = await resp.json()
         if not kills:
@@ -541,6 +817,7 @@ class FowlEngine(Plugin):
 
         channel = self.bot.get_channel(channel_id)
         if not channel:
+            self.log.error(f"FowlEngine: achievements_channel {channel_id} not found or bot lacks access")
             return
         streaks = self._kill_streaks.setdefault(server_name, {})
         announced = self._kill_announced.setdefault(server_name, {})
