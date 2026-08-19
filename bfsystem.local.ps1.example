@@ -8,3 +8,9 @@
 # $adminUsername in bfsystem.ps1). Generate one with:
 #   openssl rand -hex 24
 $adminPassword = "REPLACE_WITH_A_REAL_RANDOM_PASSWORD"
+
+# Discord OAuth2 app credentials (from https://discord.com/developers/applications
+# -> your app -> OAuth2 -> General). Leave both blank to disable Discord login
+# (only local admin login will be available).
+$discordClientId     = ""
+$discordClientSecret = ""

@@ -28,6 +28,23 @@ $siteAddress = "0.0.0.0:8766"
 # Leave blank to disable local login (Discord-only)
 $adminUsername = "admin"
 
+# Discord OAuth2 login. Client ID/secret live in bfsystem.local.ps1 (secrets,
+# gitignored) as $discordClientId / $discordClientSecret -- leave those blank
+# there to disable Discord login entirely.
+#
+# Redirect URI must match EXACTLY (byte-for-byte) the redirect URL registered
+# under OAuth2 -> Redirects in the Discord Developer Portal for this app.
+# Since bfdb is reverse-proxied behind Caddy for TLS (see deploy/README.md),
+# this points at the public HTTPS hostname, not the local listen address.
+$discordRedirectUri  = "https://api.vectorstrike.org/api/auth/callback"
+
+# Right-click your Discord server icon -> Copy Server ID (needs Developer
+# Mode enabled in Discord: User Settings -> Advanced).
+$discordGuildId      = ""
+
+# Right-click the role that should grant dashboard admin access -> Copy Role ID.
+$discordAdminRoleId  = ""
+
 # SRS radio panel — URL of the SRS server (e.g. "http://localhost:5002")
 # Leave blank to disable the SRS panel on the dashboard (or set srsUrl in campaign.json instead)
 $srsUrl = ""
@@ -55,6 +72,12 @@ $netidxBase = ""
 # in bfsystem.local.ps1 instead, which is gitignored and never committed.
 # Copy bfsystem.local.ps1.example to bfsystem.local.ps1 and fill in a real
 # password to get started.
+# Defaults here so an older bfsystem.local.ps1 that predates Discord login
+# (and so doesn't set these) doesn't leave them $null -- $null -ne "" is
+# true in PowerShell, which would otherwise pass a literal null through to
+# bfdb's argument list.
+$discordClientId     = ""
+$discordClientSecret = ""
 $localSecrets = Join-Path $PSScriptRoot "bfsystem.local.ps1"
 if (-not (Test-Path $localSecrets)) {
     Write-Host "Missing $localSecrets -- copy bfsystem.local.ps1.example and set a real `$adminPassword." -ForegroundColor Red
@@ -99,6 +122,13 @@ function Start-VECTOR {
         }
         foreach ($origin in $using:corsOrigins) {
             $argList += "--cors-origin", $origin
+        }
+        if ($using:discordClientId -ne "" -and $using:discordClientSecret -ne "") {
+            $argList += "--discord-client-id",     $using:discordClientId
+            $argList += "--discord-client-secret", $using:discordClientSecret
+            $argList += "--discord-redirect-uri",  $using:discordRedirectUri
+            $argList += "--discord-guild-id",      $using:discordGuildId
+            $argList += "--discord-admin-role-id", $using:discordAdminRoleId
         }
         # if ($using:logFile -ne "") {
         #     $argList += "--log-file", $using:logFile
