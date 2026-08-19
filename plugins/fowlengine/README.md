@@ -8,6 +8,7 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 - **Live Engine Log Relay:** Tails bfdb's `/ws/engine-logs` websocket (the raw `bflib` engine log) into a Discord channel — one message is continuously edited with a rolling tail, and `[ERROR]`/`[WARN]` lines are additionally posted as standalone alerts so they don't get missed.
 - **Capture/Neutral/Ready-to-Capture Alerts:** Polls bfdb's public `/api/objectives` every ~20s and diffs owner/health against the previous poll to detect captures, objectives going neutral, and objectives dropping to capturable health.
 - **Killstreak Achievements:** Polls bfdb's public `/api/kills` every ~20s to track each pilot's consecutive kills (reset on death) and announces streaks of 5 (Ace), 10 (Unstoppable), and 15 (God of War).
+- **Server Performance Embed:** Posts and edits a live CPU/RAM/GPU/disk/temp + DCS frame-time embed every 5 minutes, pulled from bfdb's admin-only `/api/admin/perf`.
 - **Dual-Login Dashboard:** Supports both standard Discord OAuth web-login and securely generated HMAC bot-tokens to seamlessly bridge the `bfweb` dashboard.
 - **Interactive Commander Terminal:** A slick UI terminal allowing commanders to drop crates and infantry squads at airbases directly from Discord.
 
@@ -44,8 +45,13 @@ DEFAULT:
   # (Optional) Discord channel for the live engine log relay. Omit to disable.
   engine_log_channel: 123456789012345678
 
-  # Required if engine_log_channel is set -- must match bfdb's own
-  # --admin-username/--admin-password startup flags.
+  # (Optional) Discord channel for the server performance/hardware embed
+  # (CPU/RAM/GPU/disk/temps + DCS frame-time), updated every 5 minutes.
+  # Omit to disable. bfdb must be running on the machine it's reporting on.
+  perf_channel: 123456789012345678
+
+  # Required if engine_log_channel or perf_channel is set -- must match
+  # bfdb's own --admin-username/--admin-password startup flags.
   admin_username: "admin"
   admin_password: "YOUR_BFDB_ADMIN_PASSWORD"
 ```

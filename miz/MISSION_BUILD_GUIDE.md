@@ -628,12 +628,22 @@ root [README.md](../README.md) for setup.
 ### F10 Visual System
 - **Status Boxes**: Positioned at radius × 1.3 to the right of each objective
 - **Real-time Updates**: Health/Supply/Fuel percentages update automatically
+- **Capture/Repair Progress** **[NEW]**: while an objective is actively being
+  captured, or a carrier is mid-repair, the same label box also shows a
+  live `Capturing: N%` or `Repairing: N%` line (mutually exclusive in
+  practice, but neither is enforced against the other)
 - **Color Coding**:
   - Green (80-100%): Healthy
   - Yellow (40-79%): Damaged/Low supplies
   - Red (1-39%): Critical
   - Gray (0%): Destroyed
 - **Arrow Updates**: Supply route arrows automatically reposition when carriers move
+- **Threat Markers** **[UPDATED]**: the first time an objective is
+  threatened, a single axis-of-advance arrow + "ENEMY CONTACT" label is
+  drawn (expires after 2 minutes). If it comes under active attack, an
+  "UNDER ATTACK" text label is also posted on its own cooldown — this used
+  to also draw two extra converging NW/NE arrows, which duplicated the
+  threatened arrow and cluttered the map, so it's text-only now.
 
 ### Territory Zone Visualization **[NEW]**
 Voronoi-based territory zones show areas of control on the F10 map:
@@ -791,6 +801,17 @@ Players can use C-130s or helicopters to:
 - Emergency resupply during heavy combat
 - Deliver repair crates to Naval Bases for carrier repairs
 
+**Missing-crate feedback** **[NEW]**: a multi-piece deployable (e.g. a SAM
+battery) auto-unpacks as soon as all its required crates have landed
+nearby — auto-unpack keeps retrying every tick so a late-arriving crate
+(parachute drift) still triggers it promptly. If a crate never arrives
+(e.g. the delivering aircraft was shot down before dropping the rest),
+each landed-but-incomplete crate shows what's still missing two ways: a
+one-time panel message (sent once, not spammed every tick), and a
+persistent F10 map marker at the crate's own position that stays up and
+updates as long as it remains incomplete, removed automatically once the
+deployable finally spawns.
+
 #### **Tactical Considerations**
 - **Forward Base Placement**: Bases with `LOGISTICS_DETACHED = true` are higher risk/reward
 - **Route Security**: Plan convoy routes through safe territory
@@ -885,6 +906,28 @@ All new features can be configured in the campaign config JSON:
 ---
 
 ## Changelog
+
+### Version 2.6 (2026-08-19)
+**Added: capture/repair progress on labels, C-130 missing-crate feedback, map cleanup**
+- **Capture/repair percentage**: objective F10 labels now show a live
+  `Capturing: N%` line while being captured, or `Repairing: N%` while a
+  carrier is mid-repair, in the same box as health/supply/fuel/points.
+- **C-130 missing-crate spam fix**: a landed crate waiting on missing
+  siblings used to re-send "Crate landed, need more crates for X" to the
+  panel every single tick, forever, if a sibling was permanently lost
+  (e.g. destroyed along with the delivering aircraft). It's now sent at
+  most once per crate. Auto-unpack retry timing is unchanged.
+- **C-130 missing-crate map marker** (NEW): a landed-but-incomplete crate
+  now also drops a persistent F10 marker at its own position showing
+  what's still needed, updated each retry and removed once the deployable
+  spawns — see [C-130 Physical Cargo System](#c-130-physical-cargo-system-updated).
+- **Removed converging "under attack" arrows**: the two extra NW/NE
+  attack arrows drawn alongside the "UNDER ATTACK" text label duplicated
+  the single "threatened" arrow and cluttered the map — that marker is
+  text-only now.
+- **Internal**: F10 multi-point map symbols (naval base anchor, carrier
+  silhouette) now draw as a chain of 2-point line segments instead of
+  relying on DCS's nonexistent native polyline call — no visual change.
 
 ### Version 2.5 (2026-08-18)
 **Added: IADN (Integrated Air Defence Network) and Command Center objective**
@@ -1005,5 +1048,5 @@ All new features can be configured in the campaign config JSON:
 
 ---
 
-*Document Version: 2.4*
-*Last Updated: 2026-08-13*
+*Document Version: 2.6*
+*Last Updated: 2026-08-19*

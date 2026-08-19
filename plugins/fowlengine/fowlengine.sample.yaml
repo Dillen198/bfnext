@@ -30,6 +30,13 @@ DEFAULT:
   # disable the relay entirely. Requires admin_username/admin_password below.
   engine_log_channel: 123456789012345678
 
+  # (Optional) The ID of the Discord channel where a live server performance/hardware
+  # embed will be posted and edited every 5 minutes: CPU/RAM/GPU/disk usage, temps,
+  # and the DCS mission script's own frame-time breakdown (from bfdb's
+  # /api/admin/perf). Leave unset to disable. Requires admin_username/admin_password
+  # below, and bfdb must be running on the same machine it's reporting on.
+  perf_channel: 123456789012345678
+
   # ---------------------------------------------
   # Web Dashboard Configurations
   # ---------------------------------------------
