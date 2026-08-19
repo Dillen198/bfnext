@@ -1079,7 +1079,7 @@ impl StatsDb {
                 tags.contains(UnitTag::Aircraft) || tags.contains(UnitTag::Helicopter)
             }
         };
-        let no_hit = dead.shots.iter().any(|s| s.hit);
+        let any_hit = dead.shots.iter().any(|s| s.hit);
         let up = |a: &mut Aggregates| {
             if air {
                 a.air_kills += 1
@@ -1087,8 +1087,13 @@ impl StatsDb {
                 a.ground_kills += 1
             }
         };
+        // A single kill can carry many qualifying shots (e.g. every round in a
+        // cannon burst, or several missiles that all register as hits) — credit
+        // each shooter's air/ground kill count at most once per kill, not once
+        // per shot, or one kill inflates the stat by the shot count.
+        let mut credited: SmallVec<[EnId; 2]> = SmallVec::new();
         for shot in dead.shots.iter() {
-            if no_hit && !shot.hit {
+            if any_hit && !shot.hit {
                 continue;
             }
             let enid = match &shot.shooter {
@@ -1099,15 +1104,20 @@ impl StatsDb {
                 | Who::AI {
                     ucid: Some(ucid), ..
                 } => {
-                    self.pilots.with_pilot_and_aggregates(
-                        *ucid,
-                        ctx.round,
-                        |p| up(&mut p.total),
-                        |a| up(a),
-                    )?;
+                    if !credited.contains(&EnId::Player(*ucid)) {
+                        self.pilots.with_pilot_and_aggregates(
+                            *ucid,
+                            ctx.round,
+                            |p| up(&mut p.total),
+                            |a| up(a),
+                        )?;
+                    }
                     EnId::Player(*ucid)
                 }
             };
+            if !credited.contains(&enid) {
+                credited.push(enid);
+            }
             self.kills.insert(&(enid, ctx.round, kid), &dead)?;
             self.with_shared_kills(kid, |sk| {
                 if !sk.contains(&enid) {
