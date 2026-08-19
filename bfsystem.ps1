@@ -7,6 +7,13 @@
 # subfolder of this, not the old, unused "server_2" folder.
 $dcsWriteDir = "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1"
 
+# Path to the netidx resolver config (tracked in the repo root). Only used
+# when $netidxBase below is non-empty -- see user-guide/src/server-setup for
+# the one-time setup this depends on (installing netidx-tools, and creating
+# %APPDATA%\netidx\client.json for both this account and whichever account
+# runs DCS.exe/bflib.dll).
+$netidxResolverConfig = Join-Path $PSScriptRoot "netidx-resolver.json"
+
 # Path to bfdb.exe (copy it here from target\release\bfdb.exe)
 $bfdbExe = Join-Path $dcsWriteDir "bfdb.exe"
 
@@ -115,12 +122,31 @@ if ([string]::IsNullOrWhiteSpace($adminPassword)) {
 function Start-VECTOR {
     Write-Host "Cleaning up existing processes..." -ForegroundColor Gray
     Stop-Process -Name "bfdb" -Force -ErrorAction SilentlyContinue
+    Stop-Process -Name "netidx" -Force -ErrorAction SilentlyContinue
     Get-Job -Name "DBEngine" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
+    Get-Job -Name "NetidxResolver" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
 
     # Ensure DB directory exists
     if (-not (Test-Path $dbPath)) {
         New-Item -ItemType Directory -Path $dbPath | Out-Null
         Write-Host "Created DB directory: $dbPath" -ForegroundColor Gray
+    }
+
+    # bfdb's --base needs a running netidx resolver to subscribe to, and
+    # bflib (inside DCS) needs one to publish to -- start it first so it's
+    # up before bfdb tries to connect. Requires netidx-tools installed
+    # (cargo install netidx-tools) and %APPDATA%\netidx\client.json set up
+    # for this account -- see user-guide/src/server-setup.
+    if ($netidxBase -ne "") {
+        if (-not (Get-Command netidx -ErrorAction SilentlyContinue)) {
+            Write-Host "netidx CLI not found on PATH -- run 'cargo install netidx-tools' first, or clear `$netidxBase to skip the resolver." -ForegroundColor Red
+        } else {
+            Write-Host "Starting netidx resolver..." -ForegroundColor Cyan
+            Start-Job -Name "NetidxResolver" -ScriptBlock {
+                netidx resolver-server -f -c $using:netidxResolverConfig
+            } | Out-Null
+            Start-Sleep -Seconds 2
+        }
     }
 
     Write-Host "Starting bfdb..." -ForegroundColor Cyan
@@ -191,6 +217,7 @@ function Stop-VECTOR {
     Get-Job | Stop-Job  -ErrorAction SilentlyContinue
     Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
     Stop-Process -Name "bfdb" -Force -ErrorAction SilentlyContinue
+    Stop-Process -Name "netidx" -Force -ErrorAction SilentlyContinue
     Write-Host "Stopped." -ForegroundColor Green
     Start-Sleep -Seconds 1
     exit
