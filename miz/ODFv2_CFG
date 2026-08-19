@@ -3398,7 +3398,8 @@
       "AAA",
       "MR",
       "RadarGuided",
-      "Driveable"
+      "Driveable",
+      "EngagesWeapons"
     ],
     "Stinger comm": [
       "SAM",
@@ -3845,7 +3846,8 @@
       "SR",
       "OpticallyGuided",
       "Launcher",
-      "Driveable"
+      "Driveable",
+      "EngagesWeapons"
     ],
     "CHAP_IRISTSLM_LN": [
       "SAM",

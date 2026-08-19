@@ -1115,9 +1115,24 @@ impl Ewr {
     /// `cfg.track_radar_range_fraction` of the search radar's own range --
     /// real layered SAM systems (SA-10, Patriot) keep the higher-exposure
     /// engagement/tracking radar dark until close to actually firing, not
-    /// lit the whole time the site is merely alert. Sites with no unit
-    /// tagged either role are untouched -- this adds a layer, it doesn't
-    /// replace the group AlarmState control.
+    /// lit the whole time the site is merely alert.
+    ///
+    /// Also point defense: units tagged UnitTag::EngagesWeapons (a Pantsir,
+    /// Shilka, Tor, or similar short-range gun/missile system co-located in
+    /// the same DCS group as the main search radar) always stay emission-on,
+    /// regardless of the site's own hot/dark EMCON state -- including while
+    /// the group as a whole is forced dark by HARM defense. AlarmState is
+    /// necessarily group-wide (DCS has no per-unit AlarmState), so this is
+    /// what lets the SAM go dark to deny an inbound ARM a target while its
+    /// point defense stays alert and able to shoot it down; DCS's own native
+    /// AI handles the actual intercept, this only ensures the unit's sensor
+    /// is live. A point-defense system doesn't try to hide -- its job is
+    /// reactive short-range defense, not staying dark for a search radar's
+    /// sake -- so this is unconditional, not layered on top of `hot` the
+    /// way search/track radar are.
+    ///
+    /// Sites with no unit tagged any of these roles are untouched -- this
+    /// adds layers, it doesn't replace the group AlarmState control.
     ///
     /// Each unit is resolved fresh via Unit::get_by_name every call, same
     /// culling-safe pattern as the group-level lookup: a dead/despawned
@@ -1145,6 +1160,8 @@ impl Ewr {
                 hot
             } else if unit.tags.contains(UnitTag::TrackRadar) {
                 track_should_be_on
+            } else if unit.tags.contains(UnitTag::EngagesWeapons) {
+                true
             } else {
                 continue; // not a radar-role unit -- leave it alone entirely
             };

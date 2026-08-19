@@ -427,6 +427,22 @@ the search radar's own detection range. A site with no unit tagged either
 role is unaffected — this is an optional extra control layer on top of
 the group-level `AlarmState`, not a replacement for it.
 
+### Point defense
+A short-range gun/missile system (Pantsir, Shilka, Tor, etc.) co-located
+in the **same DCS group** as the site's main search radar can protect it
+from anti-radiation missiles. Tag its unit type with `UnitTag::EngagesWeapons`
+in `unit_classification` (already applied to `ZSU-23-4 Shilka` and
+`CHAP_PantsirS1` in the live config as an example) and it stays
+emission-on unconditionally — including while the rest of the group is
+forced dark by [HARM defense](#harm--anti-radiation-missile-defense) — so
+it can keep sensing and DCS's own native point-defense AI can engage an
+inbound ARM. `AlarmState` is necessarily group-wide (DCS has no per-unit
+version of it), so this is what lets the main radar go dark to deny the
+missile a target while the point-defense unit stays alert; this code only
+keeps its sensor live, the actual intercept is native DCS AI behavior, the
+same as C-RAM/Pantsir shooting down incoming ordnance in any other DCS
+mission. A group with no unit tagged `EngagesWeapons` is unaffected.
+
 ### Jamming / ECM
 Tag a unit type (dedicated EW aircraft, or a self-protection-jamming
 airframe) with `UnitTag::Jammer` in `unit_classification`. While one is
@@ -907,6 +923,17 @@ All new features can be configured in the campaign config JSON:
 
 ## Changelog
 
+### Version 2.7 (2026-08-19)
+**Added: IADN point defense**
+- **Point defense**: a short-range system (Pantsir, Shilka, Tor, etc.)
+  co-located in the same DCS group as a SAM site's main search radar can
+  now be tagged `UnitTag::EngagesWeapons` to stay emission-on unconditionally,
+  including while the group is forced dark by HARM defense — protecting
+  the main radar from anti-radiation missiles using DCS's own native
+  point-defense AI. Already applied to `ZSU-23-4 Shilka` and
+  `CHAP_PantsirS1` in the live config as an example. See
+  [Point defense](#point-defense).
+
 ### Version 2.6 (2026-08-19)
 **Added: capture/repair progress on labels, C-130 missing-crate feedback, map cleanup**
 - **Capture/repair percentage**: objective F10 labels now show a live
@@ -1048,5 +1075,5 @@ All new features can be configured in the campaign config JSON:
 
 ---
 
-*Document Version: 2.6*
+*Document Version: 2.7*
 *Last Updated: 2026-08-19*
