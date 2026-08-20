@@ -4,7 +4,7 @@ use arcstr::ArcStr;
 use bfprotocols::db::group::GroupId;
 use chrono::prelude::*;
 use crossbeam::queue::SegQueue;
-use dcso3::{coalition::Side, Vector2};
+use dcso3::{coalition::Side, net::{PlayerId, Ucid}, Vector2};
 use futures::{channel::mpsc, stream::StreamExt};
 use netidx::{
     chars::Chars,
@@ -63,6 +63,14 @@ pub struct Rpcs {
     _move_group: Proc,
     _add_points: Proc,
     _set_objective_priority: Proc,
+    // Cockpit UI API (player-scoped, not admin-wide)
+    _resolve_player_id: Proc,
+    _ewr_toggle: Proc,
+    _ewr_report: Proc,
+    _ewr_set_units: Proc,
+    _ewr_ground_intel: Proc,
+    _carp_solve: Proc,
+    _carp_solve_latlon: Proc,
 }
 
 async fn wait_task(mut ch: mpsc::Receiver<(RpcCall, oneshot::Receiver<Value>)>) {
@@ -727,6 +735,146 @@ impl Rpcs {
             objective: Chars = Value::Null; "The objective name or partial match",
             priority: bool = false; "Whether the objective should be marked high priority"
         )?;
+        // ==================== Cockpit UI API ====================
+        let _q = Arc::clone(&q);
+        let resolve_player_id = define_rpc!(
+            publisher,
+            base.append("resolve-player-id"),
+            "Resolve a connected player's local DCS player id (net.get_my_player_id()) to their ucid",
+            |c: RpcCall, id: i64| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::ResolvePlayerId { id: PlayerId::from(id) }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            id: i64 = Value::Null; "The player's local DCS player id"
+        )?;
+        let _q = Arc::clone(&q);
+        let ewr_toggle = define_rpc!(
+            publisher,
+            base.append("ewr-toggle"),
+            "Toggle EWR reports on/off for the calling player",
+            |mut c: RpcCall, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::EwrToggle { ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid"
+        )?;
+        let _q = Arc::clone(&q);
+        let ewr_report = define_rpc!(
+            publisher,
+            base.append("ewr-report"),
+            "Get a BRAA contact report (bandits or friendlies) for the calling player",
+            |mut c: RpcCall, ucid: Chars, friendly: bool| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::EwrReport { ucid, friendly }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            friendly: bool = false; "Report friendlies instead of bandits"
+        )?;
+        let _q = Arc::clone(&q);
+        let ewr_set_units = define_rpc!(
+            publisher,
+            base.append("ewr-set-units"),
+            "Set the calling player's EWR report units",
+            |mut c: RpcCall, ucid: Chars, imperial: bool| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::EwrSetUnits { ucid, imperial }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            imperial: bool = false; "Imperial units if true, otherwise metric"
+        )?;
+        let _q = Arc::clone(&q);
+        let ewr_ground_intel = define_rpc!(
+            publisher,
+            base.append("ewr-ground-intel"),
+            "Get the ground intel picture for the calling player",
+            |mut c: RpcCall, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::EwrGroundIntel { ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid"
+        )?;
+        let _q = Arc::clone(&q);
+        let carp_solve = define_rpc!(
+            publisher,
+            base.append("carp-solve"),
+            "Solve CARP INIT 1/5, 3/5 and 4/5 auto-fillable fields (PI position, elevations, wind, temp) for the PI marked with the given F10 map mark text",
+            |mut c: RpcCall, ucid: Chars, mark_key: Chars, drop_altitude_agl_ft: f64| {
+                let (tx, rx) = oneshot::channel();
+                // ucid is validated (bfdb only calls this for a resolved, trusted
+                // player) but the solve itself doesn't need per-player state.
+                if let Err(e) = Ucid::from_str(&ucid) {
+                    c.reply.send(Value::Error(format!("{e:?}").into()));
+                    return None
+                }
+                _q.push((AdminCommand::CarpSolve {
+                    mark_key: mark_key.as_ref().into(),
+                    drop_altitude_agl_ft,
+                }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            mark_key: Chars = Value::Null; "The text of the F10 map mark placed on the PI",
+            drop_altitude_agl_ft: f64 = Value::Null; "Planned drop altitude, feet AGL"
+        )?;
+        let _q = Arc::clone(&q);
+        let carp_solve_latlon = define_rpc!(
+            publisher,
+            base.append("carp-solve-latlon"),
+            "Solve CARP INIT 1/5, 3/5 and 4/5 auto-fillable fields for a PI given directly as lat/long (e.g. a click on the dashboard's map), no F10 mark required",
+            |mut c: RpcCall, ucid: Chars, lat: f64, lon: f64, drop_altitude_agl_ft: f64| {
+                let (tx, rx) = oneshot::channel();
+                if let Err(e) = Ucid::from_str(&ucid) {
+                    c.reply.send(Value::Error(format!("{e:?}").into()));
+                    return None
+                }
+                _q.push((AdminCommand::CarpSolveLatLon { lat, lon, drop_altitude_agl_ft }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            lat: f64 = Value::Null; "PI latitude",
+            lon: f64 = Value::Null; "PI longitude",
+            drop_altitude_agl_ft: f64 = Value::Null; "Planned drop altitude, feet AGL"
+        )?;
         Ok(Self {
             _reduce_inventory: reduce_inventory,
             _transfer_supply: transfer_supply,
@@ -770,6 +918,13 @@ impl Rpcs {
             _move_group: move_group,
             _add_points: add_points,
             _set_objective_priority: set_objective_priority,
+            _resolve_player_id: resolve_player_id,
+            _ewr_toggle: ewr_toggle,
+            _ewr_report: ewr_report,
+            _ewr_set_units: ewr_set_units,
+            _ewr_ground_intel: ewr_ground_intel,
+            _carp_solve: carp_solve,
+            _carp_solve_latlon: carp_solve_latlon,
         })
     }
 }

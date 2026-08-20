@@ -225,6 +225,41 @@ pub enum AdminCommand {
         objective: String,
         priority: bool,
     },
+    // Cockpit UI API commands -- scoped to the calling player's own ucid
+    // (resolved and trusted by bfdb from their linked session, not
+    // client-supplied), not admin-wide like the commands above.
+    //
+    // The in-DCS cockpit overlay (bflib/lua/cockpit.lua) identifies itself
+    // with net.get_my_player_id(), a per-connection id local to each
+    // player's own DCS client -- this resolves that id to a ucid using the
+    // live connected-player table, so the overlay works the instant a
+    // player joins with no manual pairing step.
+    ResolvePlayerId {
+        id: PlayerId,
+    },
+    EwrToggle {
+        ucid: Ucid,
+    },
+    EwrReport {
+        ucid: Ucid,
+        friendly: bool,
+    },
+    EwrSetUnits {
+        ucid: Ucid,
+        imperial: bool,
+    },
+    EwrGroundIntel {
+        ucid: Ucid,
+    },
+    CarpSolve {
+        mark_key: String,
+        drop_altitude_agl_ft: f64,
+    },
+    CarpSolveLatLon {
+        lat: f64,
+        lon: f64,
+        drop_altitude_agl_ft: f64,
+    },
 }
 
 impl AdminCommand {
@@ -1792,6 +1827,45 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                         Ok(()) => reply_ok!("warehouse reinitialized for {airbase}"),
                         Err(e) => reply_err!("failed to reinit warehouse: {e:?}"),
                     }
+                }
+            }
+            // Cockpit UI API commands
+            AdminCommand::ResolvePlayerId { id } => match ctx.connected.get(&id) {
+                Some(ifo) => reply_ok!("{}", ifo.ucid),
+                None => reply_err!("player {id} is not currently connected"),
+            },
+            AdminCommand::EwrToggle { ucid } => {
+                let enabled = crate::menu::ewr::ewr_toggle_for(ctx, &ucid);
+                reply_ok!("{}", if enabled { "enabled" } else { "disabled" })
+            }
+            AdminCommand::EwrReport { ucid, friendly } => {
+                let report = crate::menu::ewr::build_braa_report(ctx, &ucid, friendly);
+                reply_ok!("{report}")
+            }
+            AdminCommand::EwrSetUnits { ucid, imperial } => {
+                crate::menu::ewr::ewr_set_units_for(ctx, &ucid, imperial);
+                reply_ok!("{}", if imperial { "Imperial" } else { "Metric" })
+            }
+            AdminCommand::EwrGroundIntel { ucid } => {
+                let report = crate::menu::ewr::build_ground_intel_report(ctx, &ucid);
+                reply_ok!("{report}")
+            }
+            AdminCommand::CarpSolve { mark_key, drop_altitude_agl_ft } => {
+                match crate::carp::build_carp_solution_from_mark(lua, &mark_key, drop_altitude_agl_ft) {
+                    Ok(solution) => match serde_json::to_string(&solution) {
+                        Ok(json) => reply_ok!("{json}"),
+                        Err(e) => reply_err!("failed to serialize carp solution: {e:?}"),
+                    },
+                    Err(e) => reply_err!("carp solve failed: {:?}", e),
+                }
+            }
+            AdminCommand::CarpSolveLatLon { lat, lon, drop_altitude_agl_ft } => {
+                match crate::carp::build_carp_solution_from_latlon(lua, lat, lon, drop_altitude_agl_ft) {
+                    Ok(solution) => match serde_json::to_string(&solution) {
+                        Ok(json) => reply_ok!("{json}"),
+                        Err(e) => reply_err!("failed to serialize carp solution: {e:?}"),
+                    },
+                    Err(e) => reply_err!("carp solve failed: {:?}", e),
                 }
             }
         }

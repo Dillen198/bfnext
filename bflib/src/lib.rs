@@ -18,6 +18,7 @@ mod admin;
 mod api;
 mod atis;
 mod bg;
+mod carp;
 mod chatcmd;
 mod commander;
 mod db;

@@ -192,9 +192,9 @@ function Start-VECTOR {
             $argList += "--discord-guild-id",      $using:discordGuildId
             $argList += "--discord-admin-role-id", $using:discordAdminRoleId
         }
-        # if ($using:logFile -ne "") {
-        #     $argList += "--log-file", $using:logFile
-        # }
+        if ($using:logFile -ne "") {
+            $argList += "--log-file", $using:logFile
+        }
         & $using:bfdbExe @argList
     } | Out-Null
 
@@ -219,7 +219,15 @@ function Start-VECTOR {
             Write-Host ""
         }
         Write-Host "=========== FOWL ENGINE DB ===========" -ForegroundColor Magenta
-        Receive-Job -Name "DBEngine" -Keep | Select-Object -Last 20
+        $dbJob = Get-Job -Name "DBEngine" -ErrorAction SilentlyContinue
+        if ($dbJob -and $dbJob.State -eq "Running") {
+            Write-Host "Status: Running" -ForegroundColor Green
+            Write-Host "Logs   : $logFile" -ForegroundColor Gray
+        } else {
+            $state = if ($dbJob) { $dbJob.State } else { "Not started" }
+            Write-Host "Status: $state" -ForegroundColor Red
+            Receive-Job -Name "DBEngine" -Keep | Select-Object -Last 20
+        }
 
         Write-Host "`n======================================"
         Write-Host "Dashboard: http://localhost:$dashPort/  |  Website: http://localhost:$sitePort/  |  Press 'Q' to shutdown" -ForegroundColor Gray

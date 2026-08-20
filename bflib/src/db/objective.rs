@@ -1539,7 +1539,7 @@ impl Db {
                             moved_by: _,
                             cost_fraction: _,
                             ..
-                        } if spec.can_capture => {
+                        } if spec.can_capture && group.side != obj.owner => {
                             let in_range = group
                                 .units
                                 .into_iter()
@@ -1565,7 +1565,7 @@ impl Db {
                 for gid in &self.persisted.dismounts {
                     let group = group!(self, gid)?;
                     if let DeployKind::Dismount { can_capture, .. } = &group.origin {
-                        if *can_capture {
+                        if *can_capture && group.side != obj.owner {
                             let in_range = group
                                 .units
                                 .into_iter()

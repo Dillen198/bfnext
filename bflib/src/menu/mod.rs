@@ -16,7 +16,7 @@ for more details.
 
 pub mod action;
 pub mod cargo;
-mod ewr;
+pub(crate) mod ewr;
 mod info;
 pub mod jtac;
 mod objectives;

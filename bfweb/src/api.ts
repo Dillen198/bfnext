@@ -205,6 +205,24 @@ export function connectLiveUnits(
   return () => ws.close()
 }
 
+export interface CarpSolution {
+  pi_lat: number
+  pi_lon: number
+  pi_mgrs: string
+  pi_elevation_ft: number
+  dz_elevation_ft: number
+  obstr_elevation_ft: number
+  drop_altitude_ft: number
+  alt_wind_dir_deg: number
+  alt_wind_speed_kt: number
+  sfc_wind_dir_deg: number
+  sfc_wind_speed_kt: number
+  bal_wind_dir_deg: number
+  bal_wind_speed_kt: number
+  alt_temp_c: number
+  sfc_temp_c: number
+}
+
 export interface AuthUser {
   discord_id: string
   username:   string
@@ -460,7 +478,31 @@ export const api = {
     cfgSave:     (cfg: Record<string, unknown>) => post<{ ok: boolean }>('/admin/cfg', { cfg }),
   },
   commander: {
-    spawnLogistics: (airbase: string, itemType: string) => 
+    spawnLogistics: (airbase: string, itemType: string) =>
       post<{ ok: boolean }>('/commander/spawn', { airbase, type: itemType }),
+  },
+  cockpit: {
+    // playerId comes from bflib/lua/cockpit.lua's net.get_my_player_id(),
+    // passed as ?playerid= on the page URL when loaded inside DCS. When
+    // absent (e.g. testing standalone in a browser), these fall back to
+    // the Discord-linked session cookie server-side.
+    ewrReport: (friendly: boolean, playerId?: string) =>
+      get<{ report: string }>(`/cockpit/ewr/report?friendly=${friendly}${playerId ? `&playerid=${playerId}` : ''}`),
+    ewrToggle: (playerId?: string) =>
+      post<{ state: string }>(`/cockpit/ewr/toggle${playerId ? `?playerid=${playerId}` : ''}`, {}),
+    ewrUnits:  (imperial: boolean, playerId?: string) =>
+      post<{ units: string }>(`/cockpit/ewr/units${playerId ? `?playerid=${playerId}` : ''}`, { imperial }),
+    ewrIntel:  (playerId?: string) =>
+      get<{ report: string }>(`/cockpit/ewr/intel${playerId ? `?playerid=${playerId}` : ''}`),
+    carpSolve: (markKey: string, dropAltAglFt: number, playerId?: string) => {
+      const params = new URLSearchParams({ key: markKey, altft: String(dropAltAglFt) })
+      if (playerId) params.set('playerid', playerId)
+      return get<CarpSolution>(`/cockpit/carp/solve?${params.toString()}`)
+    },
+    carpSolveLatLon: (lat: number, lon: number, dropAltAglFt: number, playerId?: string) => {
+      const params = new URLSearchParams({ lat: String(lat), lon: String(lon), altft: String(dropAltAglFt) })
+      if (playerId) params.set('playerid', playerId)
+      return get<CarpSolution>(`/cockpit/carp/solve-latlon?${params.toString()}`)
+    },
   },
 }

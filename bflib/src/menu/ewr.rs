@@ -21,19 +21,68 @@ use crate::{
 };
 use anyhow::{Context as ErrContext, Result};
 use chrono::prelude::*;
-use compact_str::format_compact;
-use dcso3::{Vector2, env::miz::GroupId, mission_commands::MissionCommands, MizLua};
+use compact_str::{format_compact, CompactString};
+use dcso3::{net::Ucid, Vector2, env::miz::GroupId, mission_commands::MissionCommands, MizLua};
 use std::fmt::Write;
+
+// ─── Shared report-building logic ──────────────────────────────────────────
+// Used by both the F10 menu closures below and the cockpit-UI RPC handlers
+// in bflib/src/admin.rs (AdminCommand::Ewr*), so the two UIs can never drift
+// out of sync with each other.
+
+pub(crate) fn ewr_toggle_for(ctx: &mut Context, ucid: &Ucid) -> bool {
+    ctx.ewr.toggle(ucid)
+}
+
+pub(crate) fn ewr_set_units_for(ctx: &mut Context, ucid: &Ucid, imperial: bool) {
+    ctx.ewr.set_units(
+        ucid,
+        if imperial { EwrUnits::Imperial } else { EwrUnits::Metric },
+    );
+}
+
+pub(crate) fn build_braa_report(ctx: &mut Context, ucid: &Ucid, friendly: bool) -> CompactString {
+    let mut report = format_compact!("{} BRAA\n", if friendly { "Friendlies" } else { "Bandits" });
+    let mode = ctx.db.ephemeral.cfg.ewr_mode;
+    let delay = ctx.db.ephemeral.cfg.ewr_delay;
+    if let Some(player) = ctx.db.player(ucid) {
+        if let Some((_, Some(inst))) = &player.current_slot {
+            let contacts = ctx
+                .ewr
+                .where_chicken(Utc::now(), friendly, true, ucid, player, inst, mode, delay);
+            let _ = write!(report, "{}\n", ewr::HEADER);
+            for braa in contacts {
+                let _ = write!(report, "{braa}\n");
+            }
+        }
+    }
+    report
+}
+
+pub(crate) fn build_ground_intel_report(ctx: &mut Context, ucid: &Ucid) -> CompactString {
+    let mut report = format_compact!("Ground Intel\n");
+    if let Some(player) = ctx.db.player(ucid) {
+        let side = player.side;
+        if let Some((_, Some(inst))) = &player.current_slot {
+            let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
+            let lines = ctx.ewr.intel_picture(side, pos, &ctx.db.ephemeral.intel_db);
+            for line in lines {
+                let _ = write!(report, "{line}\n");
+            }
+        } else {
+            let _ = write!(report, "Not in a slot");
+        }
+    }
+    report
+}
+
+// ─── F10 menu glue ──────────────────────────────────────────────────────────
 
 fn toggle_ewr(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        let st = if ctx.ewr.toggle(ucid) {
-            "enabled"
-        } else {
-            "disabled"
-        };
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let st = if ewr_toggle_for(ctx, &ucid) { "enabled" } else { "disabled" };
         ctx.db.ephemeral.msgs().panel_to_group(
             5,
             false,
@@ -47,56 +96,28 @@ fn toggle_ewr(lua: MizLua, gid: GroupId) -> Result<()> {
 fn ewr_report(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    let mut report = format_compact!("Bandits BRAA\n");
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        if let Some(player) = ctx.db.player(ucid) {
-            if let Some((_, Some(inst))) = &player.current_slot {
-                let chickens = ctx
-                    .ewr
-                    .where_chicken(Utc::now(), false, true, ucid, player, inst, ctx.db.ephemeral.cfg.ewr_mode, ctx.db.ephemeral.cfg.ewr_delay);
-                write!(report, "{}\n", ewr::HEADER)?;
-                for braa in chickens {
-                    write!(report, "{braa}\n")?;
-                }
-            }
-        }
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let report = build_braa_report(ctx, &ucid, false);
+        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, report);
     }
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_group(10, false, gid, report);
     Ok(())
 }
 
 fn friendly_ewr_report(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    let mut report = format_compact!("Friendlies BRAA\n");
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        if let Some(player) = ctx.db.player(ucid) {
-            if let Some((_, Some(inst))) = &player.current_slot {
-                let friendlies = ctx
-                    .ewr
-                    .where_chicken(Utc::now(), true, true, ucid, player, inst, ctx.db.ephemeral.cfg.ewr_mode, ctx.db.ephemeral.cfg.ewr_delay);
-                write!(report, "{}\n", ewr::HEADER)?;
-                for braa in friendlies {
-                    write!(report, "{braa}\n")?;
-                }
-            }
-        }
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let report = build_braa_report(ctx, &ucid, true);
+        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, report);
     }
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_group(10, false, gid, report);
     Ok(())
 }
 
 fn ewr_units_imperial(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        ctx.ewr.set_units(ucid, EwrUnits::Imperial);
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        ewr_set_units_for(ctx, &ucid, true);
         ctx.db
             .ephemeral
             .msgs()
@@ -108,8 +129,8 @@ fn ewr_units_imperial(lua: MizLua, gid: GroupId) -> Result<()> {
 fn ewr_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        ctx.ewr.set_units(ucid, EwrUnits::Metric);
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        ewr_set_units_for(ctx, &ucid, false);
         ctx.db
             .ephemeral
             .msgs()
@@ -120,22 +141,11 @@ fn ewr_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
 
 fn ground_intel_report(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
-    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    let mut report = format_compact!("Ground Intel\n");
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        if let Some(player) = ctx.db.player(ucid) {
-            if let Some((_, Some(inst))) = &player.current_slot {
-                let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
-                let lines = ctx.ewr.intel_picture(side, pos, &ctx.db.ephemeral.intel_db);
-                for line in lines {
-                    write!(report, "{line}\n")?;
-                }
-            } else {
-                write!(report, "Not in a slot")?;
-            }
-        }
+    let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let report = build_ground_intel_report(ctx, &ucid);
+        ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, report);
     }
-    ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, report);
     Ok(())
 }
 

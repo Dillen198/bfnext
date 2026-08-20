@@ -21,7 +21,7 @@ use dcso3::{
     String,
 };
 use enumflags2::BitFlags;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use netidx::{path::Path as NetidxPath, subscriber::Subscriber};
 use netidx_archive::{
     config::file::Config as ArchiveFileCfg,
@@ -431,6 +431,12 @@ pub(crate) struct StatsDbInner {
     // (distinct from bfdb's own process log)
     engine_log_tx: broadcast::Sender<std::string::String>,
     engine_log_history: Arc<StdMutex<VecDeque<std::string::String>>>,
+    // Timestamp of the last stats-archive batch fully processed by
+    // background_loop, persisted so a restart resumes from there instead of
+    // replaying the entire historical archive from the beginning every time
+    // (see background_loop -- a corrupted/duplicate-spammed archive segment
+    // otherwise gets re-read in full on every single bfdb startup).
+    replay_cursor: Tree<u8, DateTime<Utc>>,
 }
 
 const ENGINE_LOG_HISTORY_CAP: usize = 500;
@@ -605,6 +611,7 @@ impl StatsDb {
             admin_bans: Tree::open(&db, "admin_bans")?,
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
+            replay_cursor: Tree::open(&db, "replay_cursor")?,
         }));
         let _t = t.clone();
         task::spawn(async move {
@@ -656,6 +663,7 @@ impl StatsDb {
             admin_bans: Tree::open(&db, "admin_bans")?,
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
+            replay_cursor: Tree::open(&db, "replay_cursor")?,
         }));
         let _t = t.clone();
         task::spawn(async move {
@@ -762,85 +770,105 @@ impl StatsDb {
         archive_cfg.archive_cmds = None;
         let archive_cfg = Arc::new(netidx_archive::config::Config::try_from(archive_cfg)?);
 
-        let index = task::block_in_place(|| ArchiveIndex::new(&archive_cfg, &shard))?;
         let head_path = archive_cfg.archive_directory().join(shard.as_str()).join("current");
         let head_copy_path = archive_cfg.archive_directory().join(shard.as_str()).join("current_copy");
-        // Try to copy the current file so we can open it without lock conflicts
-        let head = task::block_in_place(|| {
-            match copy_locked_file(&head_path, &head_copy_path) {
-                Ok(()) => match netidx_archive::logfile::ArchiveReader::open(&head_copy_path) {
-                    Ok(r) => {
-                        info!("opened head file copy at {head_copy_path:?}");
-                        Some(r)
-                    }
-                    Err(e) => {
-                        error!("could not open head file copy: {e:?}");
-                        None
-                    }
-                },
-                Err(e) => {
-                    error!("could not copy head file {head_path:?}: {e:?}");
-                    // Fall back to direct open (works when DCS is not running)
-                    match netidx_archive::logfile::ArchiveReader::open(&head_path) {
-                        Ok(r) => {
-                            info!("opened head file directly at {head_path:?}");
-                            Some(r)
-                        }
-                        Err(e2) => {
-                            error!("could not open head file directly: {e2:?}");
-                            None
-                        }
-                    }
-                }
-            }
-        });
-        if head.is_none() {
-            info!("reading historical files only");
+        // Resume from wherever we last left off instead of always replaying
+        // the entire historical archive from the beginning -- see
+        // replay_cursor's doc comment on StatsDbInner.
+        let resume_from = self.0.replay_cursor.get(&0u8)?;
+        if let Some(ts) = resume_from {
+            info!("resuming stats archive replay after {ts}");
         }
-        let mut reader = ArchiveCollectionReader::new(
-            index,
-            archive_cfg.clone(),
-            shard.clone(),
-            head,
-            Bound::Unbounded,
-            Bound::Unbounded,
-        );
 
         let mut ctx = StatCtx::default();
         let mut timer = time::interval(Duration::from_secs(5));
         let mut total_batches = 0u64;
         let mut total_items = 0u64;
+        let mut last_seen_ts: Option<DateTime<Utc>> = resume_from;
 
         loop {
             timer.tick().await;
-            // Refresh index to pick up newly rotated files
-            if let Ok(new_index) = task::block_in_place(|| ArchiveIndex::new(&archive_cfg, &shard)) {
-                reader.log_rotated(Utc::now(), new_index);
-            }
-            // Try to re-read the head file for new data
+            // ArchiveCollectionReader caches its head-file DataSource the
+            // first time it's derived and never refreshes it from later
+            // set_head() calls (see ArchiveCollectionReader::source /
+            // apply_read in netidx-archive) -- so reusing one reader across
+            // ticks means it silently stops seeing new data the moment it
+            // first catches up to the head file's end, forever, even though
+            // bflib keeps appending. Building a fresh reader every tick,
+            // seeded from our own persisted/tracked position, sidesteps that
+            // by forcing a correct re-derivation from the current head
+            // snapshot each time.
+            let new_index = task::block_in_place(|| ArchiveIndex::new(&archive_cfg, &shard)).ok();
             let new_head = task::block_in_place(|| {
                 match copy_locked_file(&head_path, &head_copy_path) {
                     Ok(()) => netidx_archive::logfile::ArchiveReader::open(&head_copy_path).ok(),
                     Err(_) => netidx_archive::logfile::ArchiveReader::open(&head_path).ok(),
                 }
             });
-            if let Some(h) = new_head {
-                reader.set_head(h);
-            }
+            let Some(new_index) = new_index else { continue };
+            let start_bound = match last_seen_ts {
+                Some(ts) => Bound::Excluded(ts),
+                None => Bound::Unbounded,
+            };
+            let mut reader = ArchiveCollectionReader::new(
+                new_index,
+                archive_cfg.clone(),
+                shard.clone(),
+                new_head,
+                start_bound,
+                Bound::Unbounded,
+            );
+            // Cap batches drained per tick and yield back to the runtime in
+            // between -- a large backlog (e.g. replaying a big historical
+            // archive on startup) would otherwise monopolize this worker
+            // thread inside back-to-back block_in_place calls and starve the
+            // warp HTTP handlers (e.g. /api/objectives), which is what made
+            // external pollers like the Discord bot's FowlEngine plugin see
+            // request timeouts while bfdb was catching up.
+            const MAX_BATCHES_PER_TICK: u32 = 2_000;
+            let mut batches_this_tick = 0u32;
             loop {
+                if batches_this_tick >= MAX_BATCHES_PER_TICK {
+                    break;
+                }
+                batches_this_tick += 1;
                 let batch = task::block_in_place(|| reader.read_next(None));
                 match batch {
                     Err(e) => {
-                        error!("archive read error: {e:?}");
+                        // "no data source available" just means the head
+                        // file copy transiently failed to open this tick
+                        // (e.g. raced a write) with no unread historical
+                        // files to fall back to -- expected and self-heals
+                        // next tick, not worth error-level noise.
+                        if e.to_string().contains("no data source available") {
+                            debug!("archive read: nothing available this tick ({e})");
+                        } else {
+                            error!("archive read error: {e:?}");
+                        }
                         break;
                     }
                     Ok(None) => break, // caught up to end of available historical files
                     Ok(Some((ts, items))) => {
                         total_batches += 1;
                         total_items += items.len() as u64;
-                        if total_batches <= 5 || total_batches % 100 == 0 {
+                        // Coarser cadence past the first 100k batches so a
+                        // large backlog (e.g. a corrupted archive segment
+                        // full of duplicate records) doesn't blow the log
+                        // file up while it's replayed.
+                        let log_every = if total_batches <= 100_000 { 100 } else { 50_000 };
+                        if total_batches <= 5 || total_batches % log_every == 0 {
                             info!("batch #{total_batches} ts={ts} items={} (total_items={total_items})", items.len());
                         }
+                        last_seen_ts = Some(ts);
+                        // ArchiveCollectionReader::read_next does NOT advance
+                        // its own cursor -- per its docs it reads "without
+                        // changing the cursor position." Without this, every
+                        // call re-reads the same batch forever and this loop
+                        // never terminates (this was the actual cause of the
+                        // runaway duplicate-record replay we hit -- there was
+                        // never any corrupted/duplicated archive data, just
+                        // one record being read over and over).
+                        reader.position_mut().set_current(ts);
                         for BatchItem(path_id, ev) in items.iter() {
                             if let Event::Update(v) = ev {
                                 let s = match v {
@@ -873,6 +901,13 @@ impl StatsDb {
                             }
                         }
                     }
+                }
+            }
+            // Persist how far we've gotten so a restart resumes here instead
+            // of replaying the whole archive from scratch.
+            if let Some(ts) = last_seen_ts {
+                if let Err(e) = self.0.replay_cursor.insert(&0u8, &ts) {
+                    error!("failed to save replay cursor: {e:?}");
                 }
             }
         }
@@ -2081,6 +2116,7 @@ impl StatsDb {
     pub(crate) fn get_discord_for_ucid(&self, ucid: &Ucid) -> Result<Option<std::string::String>> {
         Ok(self.ucid_to_discord.get(ucid)?)
     }
+
 
     pub(crate) fn list_links(&self) -> Result<Vec<(std::string::String, Ucid)>> {
         let mut out = Vec::new();

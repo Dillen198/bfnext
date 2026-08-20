@@ -14,6 +14,7 @@ import AdminPage from './pages/AdminPage'
 import ConfigEditorPage from './pages/ConfigEditorPage'
 import AboutPage from './pages/AboutPage'
 import { PilotPage } from './pages/PilotPage'
+import CockpitPage from './pages/CockpitPage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, retry: 1 } },
@@ -27,6 +28,7 @@ export default function App() {
           <BrowserRouter>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/cockpit" element={<CockpitPage />} />
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
                 <Route path="map" element={<MapPage />} />

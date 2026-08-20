@@ -110,6 +110,12 @@ struct Args {
     /// (--cert/--key), since browsers refuse SameSite=None without Secure.
     #[arg(long = "cors-origin")]
     cors_origins: Vec<String>,
+    /// Write logs to this file instead of the console (in addition to the
+    /// in-process log history/WebSocket stream used by the dashboard's Engine
+    /// Log viewer). Lets the launcher's status console stay quiet and just
+    /// show whether bfdb is running.
+    #[arg(long = "log-file")]
+    log_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -968,6 +974,156 @@ async fn require_admin(session_id: Option<Uuid>, db: StatsDb) -> std::result::Re
         return Err(anyhow::anyhow!("forbidden").into());
     }
     Ok(session)
+}
+
+// ── Cockpit UI handlers ──────────────────────────────────────────────
+// Identifies the calling player and forwards to a player-scoped bflib RPC
+// (see bflib/src/bg/rpcs.rs "Cockpit UI API"). Two ways in:
+//  - `?playerid=<id>` from bflib/lua/cockpit.lua, the in-DCS Hooks-script
+//    overlay -- <id> is net.get_my_player_id(), meaningful only for the
+//    current connection, resolved to a ucid via the live connected-player
+//    table (bflib's "resolve-player-id" RPC). No manual step: it's only
+//    valid while that player is actually connected.
+//  - a browser session cookie linked to a Discord account, for testing the
+//    standalone /cockpit page outside DCS.
+
+async fn resolve_by_player_id(id: i64, db: &StatsDb) -> std::result::Result<dcso3::net::Ucid, Error> {
+    use netidx::publisher::Value;
+    let s = call_engine_rpc_str(db, "resolve-player-id", vec![("id", Value::from(id))]).await?;
+    s.parse::<dcso3::net::Ucid>().map_err(|e| anyhow::anyhow!("bad ucid from engine: {e:?}").into())
+}
+
+async fn require_linked_player(
+    query: &std::collections::HashMap<std::string::String, std::string::String>,
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<dcso3::net::Ucid, Error> {
+    if let Some(id) = query.get("playerid").and_then(|s| s.parse::<i64>().ok()) {
+        return resolve_by_player_id(id, &db).await;
+    }
+    let Some(id) = session_id else {
+        return Err(anyhow::anyhow!("not logged in").into());
+    };
+    let session = task::block_in_place(|| db.get_session(id))?
+        .ok_or_else(|| anyhow::anyhow!("session expired"))?;
+    let ucid = task::block_in_place(|| db.get_ucid_for_discord(&session.discord_id))?
+        .ok_or_else(|| anyhow::anyhow!("account not linked -- type -bind <token> in DCS chat, then link it on the dashboard"))?;
+    Ok(ucid)
+}
+
+async fn api_cockpit_ewr_report(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    let friendly = query.get("friendly").map(|s| s == "true").unwrap_or(false);
+    use netidx::publisher::Value;
+    let report = call_engine_rpc_str(&db, "ewr-report", vec![
+        ("ucid", Value::from(ucid.to_string())),
+        ("friendly", Value::from(friendly)),
+    ]).await?;
+    Ok(warp::reply::json(&serde_json::json!({ "report": report })))
+}
+
+async fn api_cockpit_ewr_toggle(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    use netidx::publisher::Value;
+    let state = call_engine_rpc_str(&db, "ewr-toggle", vec![
+        ("ucid", Value::from(ucid.to_string())),
+    ]).await?;
+    Ok(warp::reply::json(&serde_json::json!({ "state": state })))
+}
+
+#[derive(serde::Deserialize)]
+struct EwrUnitsBody {
+    imperial: bool,
+}
+
+async fn api_cockpit_ewr_units(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: EwrUnitsBody,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    use netidx::publisher::Value;
+    let units = call_engine_rpc_str(&db, "ewr-set-units", vec![
+        ("ucid", Value::from(ucid.to_string())),
+        ("imperial", Value::from(body.imperial)),
+    ]).await?;
+    Ok(warp::reply::json(&serde_json::json!({ "units": units })))
+}
+
+async fn api_cockpit_ewr_intel(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    use netidx::publisher::Value;
+    let report = call_engine_rpc_str(&db, "ewr-ground-intel", vec![
+        ("ucid", Value::from(ucid.to_string())),
+    ]).await?;
+    Ok(warp::reply::json(&serde_json::json!({ "report": report })))
+}
+
+/// GET /api/cockpit/carp/solve?key=<mark text>&altft=<drop altitude AGL, ft>
+/// Solves CARP INIT 1/5, 3/5 and 4/5 auto-fillable fields for the PI marked
+/// on the F10 map with the given text -- see bflib/src/carp.rs.
+async fn api_cockpit_carp_solve(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    let key = query.get("key").cloned().ok_or_else(|| anyhow::anyhow!("missing key"))?;
+    let alt_ft: f64 = query.get("altft")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("missing or invalid altft"))?;
+    use netidx::publisher::Value;
+    let json = call_engine_rpc_str(&db, "carp-solve", vec![
+        ("ucid", Value::from(ucid.to_string())),
+        ("mark_key", Value::from(key)),
+        ("drop_altitude_agl_ft", Value::from(alt_ft)),
+    ]).await?;
+    let solution: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|e| anyhow::anyhow!("bad carp solution from engine: {e:?}"))?;
+    Ok(warp::reply::json(&solution))
+}
+
+/// GET /api/cockpit/carp/solve-latlon?lat=<>&lon=<>&altft=<drop altitude AGL, ft>
+/// Same as api_cockpit_carp_solve, but for a PI given directly as lat/long
+/// (e.g. a click on the dashboard's map) instead of an F10 mark's text.
+async fn api_cockpit_carp_solve_latlon(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    let lat: f64 = query.get("lat")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("missing or invalid lat"))?;
+    let lon: f64 = query.get("lon")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("missing or invalid lon"))?;
+    let alt_ft: f64 = query.get("altft")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("missing or invalid altft"))?;
+    use netidx::publisher::Value;
+    let json = call_engine_rpc_str(&db, "carp-solve-latlon", vec![
+        ("ucid", Value::from(ucid.to_string())),
+        ("lat", Value::from(lat)),
+        ("lon", Value::from(lon)),
+        ("drop_altitude_agl_ft", Value::from(alt_ft)),
+    ]).await?;
+    let solution: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|e| anyhow::anyhow!("bad carp solution from engine: {e:?}"))?;
+    Ok(warp::reply::json(&solution))
 }
 
 /// GET /api/admin/links  — list all discord↔ucid mappings
@@ -1895,6 +2051,8 @@ fn with_db(db: StatsDb) -> impl Filter<Extract = (StatsDb,), Error = std::conver
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+
     // ── Broadcast logger: forwards to env_logger + WebSocket stream ───────
     let (log_tx, _) = broadcast::channel::<String>(512);
     let log_history: LogHistory = Arc::new(Mutex::new(VecDeque::new()));
@@ -1903,6 +2061,17 @@ async fn main() -> Result<()> {
         // Default to Info when RUST_LOG is not set so the log viewer has useful output
         if std::env::var("RUST_LOG").is_err() {
             builder.filter_level(log::LevelFilter::Info);
+        }
+        if let Some(path) = &args.log_file {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(|e| anyhow::anyhow!("opening --log-file {path:?}: {e}"))?;
+            builder.target(env_logger::Target::Pipe(Box::new(file)));
         }
         let env_log = builder.build();
         let max_level = env_log.filter();
@@ -1914,7 +2083,6 @@ async fn main() -> Result<()> {
         log::set_boxed_logger(Box::new(logger)).expect("logger already set");
         log::set_max_level(max_level);
     }
-    let args = Args::parse();
     let db = match args.base {
         Some(base) => {
             let subscriber = SubscriberBuilder::new()
@@ -2232,6 +2400,45 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_admin_priority);
 
+    let cockpit_ewr_report_route = warp::path!("api" / "cockpit" / "ewr" / "report")
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .then(api_cockpit_ewr_report);
+
+    let cockpit_ewr_intel_route = warp::path!("api" / "cockpit" / "ewr" / "intel")
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .then(api_cockpit_ewr_intel);
+
+    let cockpit_ewr_toggle_route = warp::path!("api" / "cockpit" / "ewr" / "toggle")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .then(api_cockpit_ewr_toggle);
+
+    let cockpit_ewr_units_route = warp::path!("api" / "cockpit" / "ewr" / "units")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::json::<EwrUnitsBody>())
+        .and(with_db(db.clone()))
+        .then(api_cockpit_ewr_units);
+
+    let cockpit_carp_solve_route = warp::path!("api" / "cockpit" / "carp" / "solve")
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .then(api_cockpit_carp_solve);
+
+    let cockpit_carp_solve_latlon_route = warp::path!("api" / "cockpit" / "carp" / "solve-latlon")
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .then(api_cockpit_carp_solve_latlon);
+
     let trails = warp::path!("api" / "trails")
         .and(with_db(db.clone()))
         .then(api_trails);
@@ -2297,6 +2504,10 @@ async fn main() -> Result<()> {
         .or(all_pilots)
         .or(config_route)
         .or(srs_route)
+        .or(cockpit_ewr_report_route)
+        .or(cockpit_ewr_intel_route)
+        .or(cockpit_carp_solve_route)
+        .or(cockpit_carp_solve_latlon_route)
         .boxed();
 
     let auth_routes = auth_login
@@ -2332,6 +2543,7 @@ async fn main() -> Result<()> {
         .or(admin_cfg_post_route)
         .or(commander_spawn_route)
         .or(admin_priority_route)
+        .or(cockpit_ewr_toggle_route.or(cockpit_ewr_units_route).boxed())
         .with(cors);
 
     log::info!("API server listening on http://{}", args.listen_address);
