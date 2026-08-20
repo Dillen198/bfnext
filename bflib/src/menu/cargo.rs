@@ -14,7 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{ArgTuple, player_name, slot_for_group};
+use super::{ArgTriple, ArgTuple, player_name, slot_for_group};
 use crate::{
     Context,
     db::cargo::{Cargo, Oldest, SlotStats},
@@ -355,6 +355,53 @@ fn spawn_all_c130_crates_for_deployable(lua: MizLua, arg: ArgTuple<GroupId, Stri
     Ok(())
 }
 
+/// Shared by `spawn_n_c130_crates`/`spawn_n_helo_crates`: queue `qty` copies of a single
+/// named crate, staggered the same way "Spawn All Crates" already does.
+fn spawn_n_crates(
+    lua: MizLua,
+    arg: &ArgTriple<GroupId, String, u32>,
+    auto_unpack: bool,
+) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let origin = ctx.db.player_current_objective_id(&slot)?;
+
+    let crate_def = ctx
+        .db
+        .ephemeral
+        .cfg
+        .deployables
+        .get(&side)
+        .and_then(|deps| deps.iter().flat_map(|d| &d.crates).find(|cr| cr.name == arg.snd))
+        .cloned()
+        .ok_or_else(|| anyhow!("crate {} not found", arg.snd))?;
+
+    let crate_list: Vec<_> = std::iter::repeat((arg.snd.clone(), crate_def))
+        .take(arg.trd as usize)
+        .collect();
+
+    match ctx.db.queue_c130_crate_spawns(lua, &slot, crate_list, side, origin, auto_unpack) {
+        Ok(msg) => {
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
+        }
+        Err(e) => {
+            let msg = format_compact!("Failed to queue crates: {}", e);
+            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
+        }
+    }
+    Ok(())
+}
+
+fn spawn_n_c130_crates(lua: MizLua, arg: ArgTriple<GroupId, String, u32>) -> Result<()> {
+    spawn_n_crates(lua, &arg, true)
+}
+
+fn spawn_n_helo_crates(lua: MizLua, arg: ArgTriple<GroupId, String, u32>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let auto_unpack = ctx.db.ephemeral.cfg.helo_cargo.as_ref().map(|c| c.auto_unpack).unwrap_or(false);
+    spawn_n_crates(lua, &arg, auto_unpack)
+}
+
 fn list_downed_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
@@ -621,7 +668,10 @@ pub(super) fn add_cargo_menu_for_group(
     )?;
     let root = mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
     let rep = &cfg.repair_crate[side];
-    let logi = mc.add_submenu_for_group(group, "Logistics".into(), Some(root.clone()))?;
+    // "Base Supply", not "Logistics" -- a deployable's own category path can be
+    // named "Logistics" too (e.g. Ammo Truck), and two addSubMenuForGroup calls
+    // with the same name+parent collide in DCS, breaking both menus.
+    let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(root.clone()))?;
     mc.add_command_for_group(
         group,
         rep.name.clone(),
@@ -771,51 +821,70 @@ pub(super) fn add_c130_cargo_menu_for_group(
 
     let crates_menu = mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
 
-    // Add logistics submenu (supply transfer and carrier repair)
-    if let Some(whcfg) = &cfg.warehouse {
-        let logi = mc.add_submenu_for_group(group, "Logistics".into(), Some(crates_menu.clone()))?;
+    // Add logistics submenu (base repair, supply transfer, and carrier repair).
+    // "Base Supply", not "Logistics" -- a deployable's own category path can be
+    // named "Logistics" too (e.g. Ammo Truck), and two addSubMenuForGroup calls
+    // with the same name+parent collide in DCS, breaking both menus.
+    if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() {
+        let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(crates_menu.clone()))?;
 
-        // Fuel transfer crate
-        if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(side) {
+        // Base logistics repair crate
+        if let Some(rep) = cfg.repair_crate.get(side) {
             mc.add_command_for_group(
                 group,
-                fuel_cr.name.clone(),
+                rep.name.clone(),
                 Some(logi.clone()),
                 spawn_c130_crate,
                 ArgTuple {
                     fst: group,
-                    snd: fuel_cr.name.clone(),
+                    snd: rep.name.clone(),
                 },
             )?;
         }
 
-        // Weapons transfer crate
-        if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(side) {
-            mc.add_command_for_group(
-                group,
-                weapons_cr.name.clone(),
-                Some(logi.clone()),
-                spawn_c130_crate,
-                ArgTuple {
-                    fst: group,
-                    snd: weapons_cr.name.clone(),
-                },
-            )?;
-        }
+        if let Some(whcfg) = &cfg.warehouse {
+            // Fuel transfer crate
+            if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(side) {
+                mc.add_command_for_group(
+                    group,
+                    fuel_cr.name.clone(),
+                    Some(logi.clone()),
+                    spawn_c130_crate,
+                    ArgTuple {
+                        fst: group,
+                        snd: fuel_cr.name.clone(),
+                    },
+                )?;
+            }
 
-        // Carrier repair crate
-        if !whcfg.carrier_repair_crate.is_empty() {
-            let cr = &whcfg.carrier_repair_crate[&side];
-            mc.add_command_for_group(
-                group,
-                cr.name.clone(),
-                Some(logi.clone()),
-                spawn_c130_crate,
-                ArgTuple {
-                    fst: group,
-                    snd: cr.name.clone(),
-                },
-            )?;
+            // Weapons transfer crate
+            if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(side) {
+                mc.add_command_for_group(
+                    group,
+                    weapons_cr.name.clone(),
+                    Some(logi.clone()),
+                    spawn_c130_crate,
+                    ArgTuple {
+                        fst: group,
+                        snd: weapons_cr.name.clone(),
+                    },
+                )?;
+            }
+
+            // Carrier repair crate
+            if !whcfg.carrier_repair_crate.is_empty() {
+                let cr = &whcfg.carrier_repair_crate[&side];
+                mc.add_command_for_group(
+                    group,
+                    cr.name.clone(),
+                    Some(logi.clone()),
+                    spawn_c130_crate,
+                    ArgTuple {
+                        fst: group,
+                        snd: cr.name.clone(),
+                    },
+                )?;
+            }
         }
     }
 
@@ -846,8 +915,10 @@ pub(super) fn add_c130_cargo_menu_for_group(
                 }
             })?;
 
-        // Add "Spawn All Crates" option for this deployable if it has multiple crates
-        if dep.crates.len() > 1 {
+        // Add "Spawn All Crates" option whenever more than one crate is needed
+        // in total -- either multiple distinct crate types, or a single type
+        // with required > 1 (e.g. "SA15 Tor" needs 4 of just one crate).
+        if dep.crates.iter().map(|cr| cr.required).sum::<u32>() > 1 {
             mc.add_command_for_group(
                 group,
                 "Spawn All Crates (Staggered)".into(),
@@ -877,6 +948,17 @@ pub(super) fn add_c130_cargo_menu_for_group(
                     snd: cr.name.clone(),
                 },
             )?;
+            // Quantity shortcuts for crates that need more than one, so the
+            // player doesn't have to click the single-crate command repeatedly.
+            for n in 2..=cr.required {
+                mc.add_command_for_group(
+                    group,
+                    String::from(format_compact!("{} x{}", cr.name, n)),
+                    Some(root.clone()),
+                    spawn_n_c130_crates,
+                    ArgTriple { fst: group, snd: cr.name.clone(), trd: n },
+                )?;
+            }
         }
     }
 
@@ -1041,8 +1123,11 @@ pub(super) fn add_helo_cargo_menu_for_group(
 
     let crates_menu = mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
 
+    // "Base Supply", not "Logistics" -- a deployable's own category path can be
+    // named "Logistics" too (e.g. Ammo Truck), and two addSubMenuForGroup calls
+    // with the same name+parent collide in DCS, breaking both menus.
     if let Some(whcfg) = &cfg.warehouse {
-        let logi = mc.add_submenu_for_group(group, "Logistics".into(), Some(crates_menu.clone()))?;
+        let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(crates_menu.clone()))?;
 
         if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(side) {
             mc.add_command_for_group(
@@ -1102,7 +1187,10 @@ pub(super) fn add_helo_cargo_menu_for_group(
                 }
             })?;
 
-        if dep.crates.len() > 1 {
+        // Add "Spawn All Crates" option whenever more than one crate is needed
+        // in total -- either multiple distinct crate types, or a single type
+        // with required > 1 (e.g. "SA15 Tor" needs 4 of just one crate).
+        if dep.crates.iter().map(|cr| cr.required).sum::<u32>() > 1 {
             mc.add_command_for_group(
                 group,
                 "Spawn All Crates (Staggered)".into(),
@@ -1125,6 +1213,17 @@ pub(super) fn add_helo_cargo_menu_for_group(
                 spawn_helo_crate,
                 ArgTuple { fst: group, snd: cr.name.clone() },
             )?;
+            // Quantity shortcuts for crates that need more than one, so the
+            // player doesn't have to click the single-crate command repeatedly.
+            for n in 2..=cr.required {
+                mc.add_command_for_group(
+                    group,
+                    String::from(format_compact!("{} x{}", cr.name, n)),
+                    Some(dep_root.clone()),
+                    spawn_n_helo_crates,
+                    ArgTriple { fst: group, snd: cr.name.clone(), trd: n },
+                )?;
+            }
         }
     }
 

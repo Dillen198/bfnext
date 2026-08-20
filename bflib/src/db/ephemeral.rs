@@ -1668,6 +1668,31 @@ impl Ephemeral {
                     }
                 }
             }
+            // Crates spawn from one shared template per side (crate_template /
+            // c130_cargo_template / helo_cargo_template); per-crate dcs_type/weight
+            // overrides are applied to the cloned template's single unit here, right
+            // before spawn. Scoped to C-130 airdrop crates only, matched by
+            // template_name against c130_cargo_template -- helicopter sling-load
+            // crates keep the untouched template unit, since DCS's cargo-hook sling
+            // logic isn't guaranteed to accept arbitrary static types/mass the way
+            // the C-130's internal-bay loading does.
+            if let DeployKind::Crate { spec, .. } = &group.origin {
+                let is_c130_crate = self
+                    .cfg
+                    .c130_cargo_template
+                    .get(&group.side)
+                    .is_some_and(|t| t == &group.template_name);
+                if is_c130_crate {
+                    if let Ok(units) = template.group.units() {
+                        if let Ok(unit) = units.get(1) {
+                            if let Some(dcs_type) = spec.dcs_type.clone() {
+                                unit.set_typ(dcs_type)?;
+                            }
+                            unit.set_mass(spec.weight)?;
+                        }
+                    }
+                }
+            }
             let carrier_link_id = self.carrier_linked_groups.remove(&group.id);
             let spawned = spctx
                 .spawn_with_link(template, carrier_link_id)

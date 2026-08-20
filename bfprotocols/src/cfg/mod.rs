@@ -314,6 +314,12 @@ pub struct Crate {
     /// the maximum speed in m/s that the user can be going when they drop this
     /// cargo
     pub max_drop_speed: u32,
+    /// Override the DCS static object type spawned for this crate (e.g.
+    /// "iso_container"). If unset, the side's crate_template/c130_cargo_template/
+    /// helo_cargo_template is used unmodified. Lets each crate have a distinct
+    /// in-game model/weight without needing a separate .miz template per crate.
+    #[serde(default)]
+    pub dcs_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

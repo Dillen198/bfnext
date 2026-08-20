@@ -195,6 +195,17 @@ impl<'lua> Unit<'lua> {
         Ok(self.raw_get("type")?)
     }
 
+    pub fn set_typ(&self, typ: String) -> Result<()> {
+        Ok(self.raw_set("type", typ)?)
+    }
+
+    /// Set the DCS static-object mass in kg. Only meaningful for Cargo-category
+    /// statics (e.g. crates) -- this is the weight DCS uses for sling-load and
+    /// cargo-bay transport, not a general unit property.
+    pub fn set_mass(&self, mass: u32) -> Result<()> {
+        Ok(self.raw_set("mass", mass)?)
+    }
+
     pub fn skill(&self) -> Result<Skill> {
         Ok(self.raw_get("skill")?)
     }

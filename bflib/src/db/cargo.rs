@@ -184,6 +184,8 @@ pub enum C130CargoType {
     SupplyTransferWeapons,
     /// Carrier repair crate
     CarrierRepair,
+    /// Base logistics repair crate (revives dead logistics units at an objective)
+    LogisticsRepair,
     /// Vehicle that can be loaded and airdropped
     Vehicle { name: String, template: String },
 }
@@ -2767,102 +2769,38 @@ impl Db {
         let ucid = maybe!(self.ephemeral.players_by_slot, *slot, "no such player")?.clone();
         let dep_idx = self.deployable_idx(side)?;
 
-        // Get crate definition (check supply transfer and carrier repair FIRST to avoid name conflicts)
-        let (crate_def, crate_type) = if let Some(whcfg) = &self.ephemeral.cfg.warehouse {
-            // Check fuel transfer crate
-            if let Some(fuel_crate) = whcfg.supply_transfer_fuel_crate.get(&side) {
-                if fuel_crate.name == crate_name {
-                    debug!("[C130_CARGO] Found fuel transfer crate: {}, weight={}kg", crate_name, fuel_crate.weight);
-                    (fuel_crate.clone(), C130CargoType::SupplyTransferFuel)
-                } else if let Some(weapons_crate) = whcfg.supply_transfer_weapons_crate.get(&side) {
-                    if weapons_crate.name == crate_name {
-                        debug!("[C130_CARGO] Found weapons transfer crate: {}, weight={}kg", crate_name, weapons_crate.weight);
-                        (weapons_crate.clone(), C130CargoType::SupplyTransferWeapons)
-                    } else if let Some(carrier_repair_crate) = whcfg.carrier_repair_crate.get(&side) {
-                        if carrier_repair_crate.name == crate_name {
-                            debug!("[C130_CARGO] Found carrier repair crate: {}, weight={}kg", crate_name, carrier_repair_crate.weight);
-                            (carrier_repair_crate.clone(), C130CargoType::CarrierRepair)
-                        } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-                            debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-                            (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
-                        } else {
-                            error!("[C130_CARGO] Crate not found: {}", crate_name);
-                            bail!("crate {} not found", crate_name)
-                        }
-                    } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-                        debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-                        (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
-                    } else {
-                        error!("[C130_CARGO] Crate not found: {}", crate_name);
-                        bail!("crate {} not found", crate_name)
-                    }
-                } else if let Some(carrier_repair_crate) = whcfg.carrier_repair_crate.get(&side) {
-                    if carrier_repair_crate.name == crate_name {
-                        debug!("[C130_CARGO] Found carrier repair crate: {}, weight={}kg", crate_name, carrier_repair_crate.weight);
-                        (carrier_repair_crate.clone(), C130CargoType::CarrierRepair)
-                    } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-                        debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-                        (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
-                    } else {
-                        error!("[C130_CARGO] Crate not found: {}", crate_name);
-                        bail!("crate {} not found", crate_name)
-                    }
-                } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-                    debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-                    (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
-                } else {
-                    error!("[C130_CARGO] Crate not found: {}", crate_name);
-                    bail!("crate {} not found", crate_name)
-                }
-            } else if let Some(weapons_crate) = whcfg.supply_transfer_weapons_crate.get(&side) {
-                if weapons_crate.name == crate_name {
-                    debug!("[C130_CARGO] Found weapons transfer crate: {}, weight={}kg", crate_name, weapons_crate.weight);
-                    (weapons_crate.clone(), C130CargoType::SupplyTransferWeapons)
-                } else if let Some(carrier_repair_crate) = whcfg.carrier_repair_crate.get(&side) {
-                    if carrier_repair_crate.name == crate_name {
-                        debug!("[C130_CARGO] Found carrier repair crate: {}, weight={}kg", crate_name, carrier_repair_crate.weight);
-                        (carrier_repair_crate.clone(), C130CargoType::CarrierRepair)
-                    } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-                        debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-                        (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
-                    } else {
-                        error!("[C130_CARGO] Crate not found: {}", crate_name);
-                        bail!("crate {} not found", crate_name)
-                    }
-                } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-                    debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-                    (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
-                } else {
-                    error!("[C130_CARGO] Crate not found: {}", crate_name);
-                    bail!("crate {} not found", crate_name)
-                }
-            } else if let Some(carrier_repair_crate) = whcfg.carrier_repair_crate.get(&side) {
-                if carrier_repair_crate.name == crate_name {
-                    debug!("[C130_CARGO] Found carrier repair crate: {}, weight={}kg", crate_name, carrier_repair_crate.weight);
-                    (carrier_repair_crate.clone(), C130CargoType::CarrierRepair)
-                } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-                    debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-                    (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
-                } else {
-                    error!("[C130_CARGO] Crate not found: {}", crate_name);
-                    bail!("crate {} not found", crate_name)
-                }
-            } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-                debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-                (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
-            } else {
-                error!("[C130_CARGO] Crate not found: {}", crate_name);
-                bail!("crate {} not found", crate_name)
-            }
+        // Get crate definition. Named logistics crates (fuel/weapons transfer,
+        // carrier repair, base repair) are checked first to avoid name
+        // conflicts with deployable crates, then fall back to the deployable
+        // crate index.
+        let whcfg = self.ephemeral.cfg.warehouse.as_ref();
+        let (crate_def, crate_type) = if let Some(cr) =
+            whcfg.and_then(|w| w.supply_transfer_fuel_crate.get(&side))
+            && cr.name == crate_name
+        {
+            debug!("[C130_CARGO] Found fuel transfer crate: {}, weight={}kg", crate_name, cr.weight);
+            (cr.clone(), C130CargoType::SupplyTransferFuel)
+        } else if let Some(cr) = whcfg.and_then(|w| w.supply_transfer_weapons_crate.get(&side))
+            && cr.name == crate_name
+        {
+            debug!("[C130_CARGO] Found weapons transfer crate: {}, weight={}kg", crate_name, cr.weight);
+            (cr.clone(), C130CargoType::SupplyTransferWeapons)
+        } else if let Some(cr) = whcfg.and_then(|w| w.carrier_repair_crate.get(&side))
+            && cr.name == crate_name
+        {
+            debug!("[C130_CARGO] Found carrier repair crate: {}, weight={}kg", crate_name, cr.weight);
+            (cr.clone(), C130CargoType::CarrierRepair)
+        } else if let Some(cr) = self.ephemeral.cfg.repair_crate.get(&side)
+            && cr.name == crate_name
+        {
+            debug!("[C130_CARGO] Found logistics repair crate: {}, weight={}kg", crate_name, cr.weight);
+            (cr.clone(), C130CargoType::LogisticsRepair)
+        } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
+            debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
+            (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
         } else {
-            // No warehouse config, just try deployable
-            if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
-                debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
-                (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
-            } else {
-                error!("[C130_CARGO] Crate not found: {}", crate_name);
-                bail!("crate {} not found", crate_name)
-            }
+            error!("[C130_CARGO] Crate not found: {}", crate_name);
+            bail!("crate {} not found", crate_name)
         };
 
         // Get player position and direction (using same method as regular cargo system)
@@ -3091,6 +3029,7 @@ impl Db {
             pos_unit: None,
             max_drop_height_agl: 1000,
             max_drop_speed: 150,
+            dcs_type: None,
         };
 
         let dk = DeployKind::Crate {
@@ -3759,6 +3698,7 @@ impl Db {
 
                     use crate::db::logistics::sync_obj_to_warehouse;
                     sync_obj_to_warehouse(&obj_mut, &wh)?;
+                    self.ephemeral.stat(Stat::SupplyTransfer { from: crate_data.origin, to: oid, by: crate_data.player });
                     self.ephemeral.dirty();
                     self.ephemeral.c130_crates.remove(crate_name);
                     self.delete_group(&crate_data.group_id)?;
@@ -3853,6 +3793,7 @@ impl Db {
 
                     use crate::db::logistics::sync_obj_to_warehouse;
                     sync_obj_to_warehouse(&obj_mut, &wh)?;
+                    self.ephemeral.stat(Stat::SupplyTransfer { from: crate_data.origin, to: oid, by: crate_data.player });
                     self.ephemeral.dirty();
                     self.ephemeral.c130_crates.remove(crate_name);
                     self.delete_group(&crate_data.group_id)?;
@@ -3926,6 +3867,8 @@ impl Db {
                         bail!("Carrier objective not found")
                     }
 
+                    self.ephemeral.stat(Stat::Repair { id: carrier_id, by: crate_data.player });
+
                     // Mark database as changed
                     self.ephemeral.dirty();
 
@@ -3944,6 +3887,57 @@ impl Db {
                     Ok(msg)
                 } else {
                     bail!("No friendly carrier groups found for repair")
+                }
+            }
+            C130CargoType::LogisticsRepair => {
+                // No origin exclusion here (unlike nothing -- matches CarrierRepair/
+                // SupplyTransfer*): the crate is almost always spawned AT the very
+                // objective that needs repairing, so excluding crate_data.origin
+                // would route the repair to some other, possibly far-away, friendly
+                // objective instead of the one the player actually delivered it to.
+                let objectives: Vec<(ObjectiveId, Vector2)> = self.persisted
+                    .objectives
+                    .into_iter()
+                    .filter_map(|(oid, obj)| {
+                        if obj.owner == crate_data.side {
+                            Some((*oid, obj.zone.pos()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                let nearest_oid = objectives
+                    .iter()
+                    .min_by_key(|(_, pos)| {
+                        let dist = na::distance(&(*pos).into(), &crate_data.last_pos.into());
+                        (dist * 1000.0) as i64
+                    })
+                    .map(|(oid, _)| *oid);
+
+                if let Some(oid) = nearest_oid {
+                    let (obj_name, logi) = self.persisted.objectives.get(&oid)
+                        .map(|o| (o.name.clone(), o.logi))
+                        .ok_or_else(|| anyhow!("Objective not found"))?;
+
+                    if logi == 100 {
+                        self.ephemeral.c130_crates.remove(crate_name);
+                        self.delete_group(&crate_data.group_id)?;
+                        return Ok(String::from(format!("{} logistics are already fully repaired", obj_name)));
+                    }
+
+                    use chrono::Utc;
+                    self.repair_one_logi_step(crate_data.side, Utc::now(), oid)?;
+                    self.ephemeral.stat(Stat::Repair { id: oid, by: crate_data.player });
+                    self.ephemeral.dirty();
+                    self.ephemeral.c130_crates.remove(crate_name);
+                    self.delete_group(&crate_data.group_id)?;
+
+                    let msg = String::from(format!("Logistics repair crate delivered to {}", obj_name));
+                    info!("[LOGISTICS_REPAIR] {}", msg);
+                    Ok(msg)
+                } else {
+                    bail!("No friendly objectives found for logistics repair")
                 }
             }
             C130CargoType::Vehicle { name, template } => {
