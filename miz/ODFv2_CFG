@@ -592,20 +592,22 @@
   "repair_time": 1800,
   "repair_crate": {
     "Red": {
-      "name": "Logistics Repair",
+      "name": "Base Repair Kit",
       "weight": 2000,
       "required": 1,
       "pos_unit": null,
       "max_drop_height_agl": 10,
-      "max_drop_speed": 13
+      "max_drop_speed": 13,
+      "dcs_type": "container_cargo"
     },
     "Blue": {
-      "name": "Logistics Repair",
+      "name": "Base Repair Kit",
       "weight": 1500,
       "required": 1,
       "pos_unit": null,
       "max_drop_height_agl": 10,
-      "max_drop_speed": 13
+      "max_drop_speed": 13,
+      "dcs_type": "container_cargo"
     }
   },
   "warehouse": {
@@ -621,7 +623,8 @@
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
-        "max_drop_speed": 13
+        "max_drop_speed": 13,
+        "dcs_type": "cds_barrels"
       },
       "Blue": {
         "name": "Fuel Transfer",
@@ -629,7 +632,8 @@
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
-        "max_drop_speed": 13
+        "max_drop_speed": 13,
+        "dcs_type": "cds_barrels"
       }
     },
     "supply_transfer_weapons_crate": {
@@ -639,7 +643,8 @@
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
-        "max_drop_speed": 13
+        "max_drop_speed": 13,
+        "dcs_type": "cds_crate"
       },
       "Blue": {
         "name": "Weapons Transfer",
@@ -647,7 +652,8 @@
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
-        "max_drop_speed": 13
+        "max_drop_speed": 13,
+        "dcs_type": "cds_crate"
       }
     },
     "convoy": {
@@ -697,7 +703,8 @@
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
-        "max_drop_speed": 13
+        "max_drop_speed": 13,
+        "dcs_type": "container_cargo"
       },
       "Blue": {
         "name": "Carrier Repair",
@@ -705,7 +712,8 @@
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
-        "max_drop_speed": 13
+        "max_drop_speed": 13,
+        "dcs_type": "container_cargo"
       }
     },
     "supply_source": {
@@ -722,6 +730,7 @@
   "cull_after": 1800,
   "slow_timed_events_freq": 10,
   "threatened_distance": {
+    "F-100D": 14400,
     "Mirage-F1EE": 14400,
     "Mirage-F1CT": 14400,
     "Mirage-F1CJ": 14400,
@@ -967,6 +976,7 @@
   "side_switches": 1,
   "max_crates": 4,
   "life_types": {
+    "F-100D": "Intercept",
     "Mirage-F1EE": "Intercept",
     "Mirage-F1CT": "Intercept",
     "Mirage-F1CJ": "Intercept",
@@ -1548,7 +1558,7 @@
     "Red": [
       {
         "path": [
-          "Radar SAMs",
+          "SAM - Medium Range",
           "SA 6 Kub"
         ],
         "kind": {
@@ -1566,7 +1576,8 @@
             "required": 2,
             "pos_unit": "Kub 2P25 ln",
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           },
           {
             "name": "Kub Radar",
@@ -1574,7 +1585,8 @@
             "required": 1,
             "pos_unit": "Kub 1S91 str",
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": {
@@ -1583,7 +1595,8 @@
           "required": 1,
           "pos_unit": null,
           "max_drop_height_agl": 10,
-          "max_drop_speed": 13
+          "max_drop_speed": 13,
+          "dcs_type": "container_cargo"
         },
         "repair_cost": 0,
         "cost": 25,
@@ -1596,7 +1609,7 @@
       },
       {
         "path": [
-          "Radar SAMs",
+          "SAM - Long Range",
           "SA 11 Buk"
         ],
         "kind": {
@@ -1614,7 +1627,8 @@
             "required": 2,
             "pos_unit": "SA-11 Buk LN 9A310M1",
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           },
           {
             "name": "SA11 Search Radar",
@@ -1622,7 +1636,8 @@
             "required": 1,
             "pos_unit": "SA-11 Buk SR 9S18M1",
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           },
           {
             "name": "SA11 CC",
@@ -1630,7 +1645,8 @@
             "required": 1,
             "pos_unit": "SA-11 Buk CC 9S470M1",
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": {
@@ -1639,7 +1655,8 @@
           "required": 1,
           "pos_unit": null,
           "max_drop_height_agl": 10,
-          "max_drop_speed": 13
+          "max_drop_speed": 13,
+          "dcs_type": "container_cargo"
         },
         "repair_cost": 0,
         "cost": 50,
@@ -1652,7 +1669,7 @@
       },
       {
         "path": [
-          "Radar SAMs",
+          "SAM - Short Range",
           "SA15 Tor"
         ],
         "kind": {
@@ -1670,7 +1687,8 @@
             "required": 4,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -1685,7 +1703,7 @@
       },
       {
         "path": [
-          "Radar SAMs",
+          "SAM - Short Range",
           "SA8 Osa"
         ],
         "kind": {
@@ -1703,7 +1721,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -1734,7 +1753,8 @@
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -1765,7 +1785,8 @@
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -1796,7 +1817,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -1827,7 +1849,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -1858,7 +1881,8 @@
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -1871,7 +1895,7 @@
       },
       {
         "path": [
-          "IR SAMs",
+          "SAM - Short Range",
           "SA13 Strela"
         ],
         "kind": {
@@ -1889,7 +1913,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -1902,7 +1927,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "Artillery",
           "SPH 2S19 Msta 152MM"
         ],
         "kind": {
@@ -1920,7 +1945,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -1933,7 +1959,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "Artillery",
           "MLRS TOS 1A"
         ],
         "kind": {
@@ -1951,7 +1977,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -1964,7 +1991,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "Artillery",
           "MLRS HL B8M1"
         ],
         "kind": {
@@ -1982,7 +2009,8 @@
             "required": 5,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -1995,7 +2023,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "MBT",
           "T72"
         ],
         "kind": {
@@ -2013,7 +2041,8 @@
             "required": 4,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -2029,7 +2058,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "IFV",
           "BMP3"
         ],
         "kind": {
@@ -2047,7 +2076,8 @@
             "required": 4,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -2063,7 +2093,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "Logistics",
           "Ammo Truck"
         ],
         "kind": {
@@ -2081,7 +2111,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -2112,7 +2143,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -2129,7 +2161,7 @@
     "Blue": [
       {
         "path": [
-          "Radar SAMs",
+          "SAM - Short Range",
           "Roland ADS"
         ],
         "kind": {
@@ -2147,7 +2179,8 @@
             "required": 4,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2162,7 +2195,7 @@
       },
       {
         "path": [
-          "Radar SAMs",
+          "SAM - Long Range",
           "Hawk System"
         ],
         "kind": {
@@ -2180,7 +2213,8 @@
             "required": 1,
             "pos_unit": "Hawk ln",
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           },
           {
             "name": "Hawk Search Radar",
@@ -2188,7 +2222,8 @@
             "required": 1,
             "pos_unit": "Hawk sr",
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           },
           {
             "name": "Hawk Track Radar",
@@ -2196,7 +2231,8 @@
             "required": 1,
             "pos_unit": "Hawk tr",
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           },
           {
             "name": "Hawk CC",
@@ -2204,7 +2240,8 @@
             "required": 1,
             "pos_unit": "Hawk pcp",
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": {
@@ -2213,7 +2250,8 @@
           "required": 1,
           "pos_unit": null,
           "max_drop_height_agl": 10,
-          "max_drop_speed": 13
+          "max_drop_speed": 13,
+          "dcs_type": "container_cargo"
         },
         "repair_cost": 0,
         "cost": 35,
@@ -2226,7 +2264,7 @@
       },
       {
         "path": [
-          "IR SAMs",
+          "SAM - Short Range",
           "Avenger"
         ],
         "kind": {
@@ -2244,7 +2282,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2257,7 +2296,7 @@
       },
       {
         "path": [
-          "IR SAMs",
+          "SAM - Short Range",
           "Linebacker"
         ],
         "kind": {
@@ -2275,7 +2314,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2288,7 +2328,7 @@
       },
       {
         "path": [
-          "IR SAMs",
+          "AAA",
           "AAA C-RAM"
         ],
         "kind": {
@@ -2306,7 +2346,8 @@
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2319,7 +2360,7 @@
       },
       {
         "path": [
-          "IR SAMs",
+          "SAM - Medium Range",
           "IRIS-T SLM"
         ],
         "kind": {
@@ -2337,7 +2378,8 @@
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2368,7 +2410,8 @@
             "required": 4,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2399,7 +2442,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2412,7 +2456,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "Artillery",
           "Firtina 155MM"
         ],
         "kind": {
@@ -2430,7 +2474,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2443,7 +2488,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "Artillery",
           "MLRS M142 Himars"
         ],
         "kind": {
@@ -2461,7 +2506,8 @@
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2474,7 +2520,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "Artillery",
           "MLRS HLBM1 Hilux"
         ],
         "kind": {
@@ -2492,7 +2538,8 @@
             "required": 5,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2505,7 +2552,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "IFV",
           "M2A2 Bradley"
         ],
         "kind": {
@@ -2523,7 +2570,8 @@
             "required": 4,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2539,7 +2587,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "MBT",
           "2A6M Leopard"
         ],
         "kind": {
@@ -2557,7 +2605,8 @@
             "required": 4,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2573,7 +2622,7 @@
       },
       {
         "path": [
-          "Ground Units",
+          "Logistics",
           "Ammo Truck"
         ],
         "kind": {
@@ -2591,7 +2640,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container"
           }
         ],
         "repair_crate": null,
@@ -2622,7 +2672,8 @@
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
-            "max_drop_speed": 13
+            "max_drop_speed": 13,
+            "dcs_type": "iso_container_small"
           }
         ],
         "repair_crate": null,
@@ -2795,6 +2846,9 @@
     "Cargo02": [
       "Unarmed"
     ],
+        "Comms tower M": [
+      "Unarmed"
+    ],
     "Tent01": [
       "Unarmed"
     ],
@@ -2906,6 +2960,9 @@
     "Ural-375 PBU": [
       "Logistics",
       "Unarmed"
+    ],
+    "F-100D": [
+      "Aircraft"
     ],
     "J-11A": [
       "Aircraft"
@@ -3398,8 +3455,7 @@
       "AAA",
       "MR",
       "RadarGuided",
-      "Driveable",
-      "EngagesWeapons"
+      "Driveable"
     ],
     "Stinger comm": [
       "SAM",
