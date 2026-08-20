@@ -96,16 +96,26 @@ local function open()
         webview = WebViewWidget.new()
         webview:setBounds(0, 0, 420, 340)
         window:insertWidget(webview)
-        webview:cefCallback(function()
+        -- NOTE: the real dxgui/bind/WebViewWidget.lua only exposes
+        -- browserCreated(self, callback) + cefLoadUrl(self, url) as two
+        -- separate methods -- CEFTest.lua's own example calls a
+        -- webview:cefCallback(...) that doesn't actually exist in that
+        -- binding, which silently no-ops the load (window shows, stays
+        -- black). browserCreated is the real hook: it fires once the
+        -- underlying CEF browser instance exists, which is the right time
+        -- to call cefLoadUrl.
+        webview:browserCreated(function()
             local url = string.format("%s?playerid=%d", BFCOCKPIT_URL, playerId)
             logmsg("loading " .. url)
             webview:cefLoadUrl(url)
-            return 0
         end)
     end)
 
     if not ok then
         logmsg("FATAL: failed to create window/webview: " .. tostring(err))
+        if window then
+            pcall(function() window:close() end)
+        end
         window = nil
         webview = nil
         return
