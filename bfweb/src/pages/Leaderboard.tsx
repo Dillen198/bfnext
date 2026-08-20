@@ -5,11 +5,12 @@ import { api, type Pilot } from '../api'
 import PageHeader from '../components/PageHeader'
 import { Trophy, Plane, ChevronUp, ChevronDown } from 'lucide-react'
 
-type SortKey = keyof Omit<Pilot, 'ucid' | 'name'> | 'kd' | 'score'
+type SortKey = keyof Omit<Pilot, 'ucid' | 'name'> | 'kd' | 'score' | 'logistics'
 
 const COLS: { key: SortKey; label: string; color?: string; title?: string; width?: number }[] = [
-  { key: 'air_kills',        label: 'Air',     color: '#60a5fa',  title: 'Air kills',          width: 52 },
-  { key: 'ground_kills',     label: 'Ground',  color: '#fb923c',  title: 'Ground kills',       width: 60 },
+  { key: 'air_kills',        label: 'A/A',     color: '#60a5fa',  title: 'Air-to-air kills',    width: 52 },
+  { key: 'ground_kills',     label: 'A/G',     color: '#fb923c',  title: 'Air-to-ground kills', width: 60 },
+  { key: 'logistics',        label: 'Logi',    color: '#34d399',  title: 'Logistics (repairs + supply transfers + troops + FARPs + deployments)', width: 56 },
   { key: 'kd',               label: 'K/D',     color: '#4ade80',  title: 'Kill / Death ratio', width: 52 },
   { key: 'deaths',           label: 'Deaths',  color: '#f87171',  title: 'Deaths',             width: 56 },
   { key: 'captures',         label: 'Cap',     color: '#fbbf24',  title: 'Objective captures', width: 44 },
@@ -25,6 +26,9 @@ function computeKd(p: Pilot): number {
   const k = p.air_kills + p.ground_kills
   return p.deaths > 0 ? k / p.deaths : k > 0 ? 999 : 0
 }
+function computeLogistics(p: Pilot): number {
+  return p.repairs + p.supply_transfers + p.troops + p.farps + p.deploys
+}
 function computeScore(p: Pilot): number {
   return (p.air_kills * 3) + (p.ground_kills * 2) + (p.captures * 5) +
     p.repairs + p.supply_transfers + (p.troops * 0.5) + (p.farps * 4) +
@@ -35,9 +39,10 @@ function fmtKd(p: Pilot): string {
   return p.deaths > 0 ? (k / p.deaths).toFixed(2) : k > 0 ? '∞' : '0.00'
 }
 function fmtVal(col: SortKey, p: Pilot): string {
-  if (col === 'kd')    return fmtKd(p)
-  if (col === 'score') return Math.round(computeScore(p)).toLocaleString()
-  if (col === 'hours') return `${p.hours.toFixed(1)}h`
+  if (col === 'kd')         return fmtKd(p)
+  if (col === 'score')      return Math.round(computeScore(p)).toLocaleString()
+  if (col === 'logistics')  return computeLogistics(p).toLocaleString()
+  if (col === 'hours')      return `${p.hours.toFixed(1)}h`
   const v = p[col as keyof Pilot]
   return typeof v === 'number' ? v.toLocaleString() : String(v ?? 0)
 }
@@ -46,6 +51,15 @@ const MEDAL_ICON  = ['🥇', '🥈', '🥉']
 const MEDAL_COLOR = ['#fbbf24', '#94a3b8', '#d97706']
 const MEDAL_CLASS = ['rank-gold', 'rank-silver', 'rank-bronze']
 
+// Four leaderboard views: Overall (score), Air-to-Air, Air-to-Ground, Logistics.
+// Selecting a tab drives both the podium ranking and the table's default sort.
+const TABS: { key: SortKey; label: string; color: string }[] = [
+  { key: 'score',       label: 'Overall',     color: '#22d3ee' },
+  { key: 'air_kills',   label: 'A/A',         color: '#60a5fa' },
+  { key: 'ground_kills',label: 'A/G',         color: '#fb923c' },
+  { key: 'logistics',   label: 'Logistics',   color: '#34d399' },
+]
+
 export default function Leaderboard() {
   const navigate = useNavigate()
   const { data: pilots = [], isLoading } = useQuery({
@@ -53,13 +67,15 @@ export default function Leaderboard() {
     queryFn: api.leaderboard,
     refetchInterval: 30_000,
   })
+  const [tab,    setTab]    = useState<SortKey>('score')
   const [sort, setSort] = useState<SortKey>('score')
   const [asc,  setAsc]  = useState(false)
   const [search, setSearch] = useState('')
 
   function getSortVal(p: Pilot, key: SortKey): number {
-    if (key === 'kd')    return computeKd(p)
-    if (key === 'score') return computeScore(p)
+    if (key === 'kd')         return computeKd(p)
+    if (key === 'score')      return computeScore(p)
+    if (key === 'logistics')  return computeLogistics(p)
     const v = p[key as keyof Pilot]
     return typeof v === 'number' ? v : 0
   }
@@ -77,9 +93,15 @@ export default function Leaderboard() {
     else { setSort(key); setAsc(false) }
   }
 
+  function selectTab(key: SortKey) {
+    setTab(key)
+    setSort(key)
+    setAsc(false)
+  }
+
   const top3 = useMemo(() =>
-    [...pilots].sort((a, b) => computeScore(b) - computeScore(a)).slice(0, 3),
-    [pilots]
+    [...pilots].sort((a, b) => getSortVal(b, tab) - getSortVal(a, tab)).slice(0, 3),
+    [pilots, tab]
   )
 
   return (
@@ -95,6 +117,27 @@ export default function Leaderboard() {
       />
 
       <div className="flex-1 overflow-auto vs-page">
+
+        {/* ── Leaderboard tabs ── */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {TABS.map(t => {
+            const active = tab === t.key
+            return (
+              <button key={t.key} onClick={() => selectTab(t.key)}
+                style={{
+                  padding: '6px 16px', borderRadius: 6, cursor: 'pointer',
+                  fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em',
+                  textTransform: 'uppercase', transition: 'all 0.12s',
+                  background: active ? `${t.color}18` : 'var(--bg-card)',
+                  border: `1px solid ${active ? t.color : 'var(--border)'}`,
+                  color: active ? t.color : 'var(--text-dim)',
+                }}
+              >
+                {t.label}
+              </button>
+            )
+          })}
+        </div>
 
         {/* ── Podium ── */}
         {top3.length >= 3 && (
@@ -130,6 +173,7 @@ export default function Leaderboard() {
                     {[
                       { label: 'A2A',   value: p.air_kills,              color: '#60a5fa' },
                       { label: 'A2G',   value: p.ground_kills,           color: '#fb923c' },
+                      { label: 'Logi',  value: computeLogistics(p),      color: '#34d399' },
                       { label: 'K/D',   value: fmtKd(p),                 color: '#4ade80' },
                       { label: 'Hours', value: `${p.hours.toFixed(1)}h`, color: '#a78bfa' },
                       { label: 'Score', value: score,                    color: '#22d3ee' },
