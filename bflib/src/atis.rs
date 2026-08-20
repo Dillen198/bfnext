@@ -26,16 +26,32 @@ struct WeatherData {
     cloud_base_m: f64,
     cloud_density: u8,
     visibility_m: f64,
+    winds_aloft: Vec<AltitudeWind>,
 }
 
-fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
-    let globals = lua.inner().globals();
+pub struct AltitudeWind {
+    pub alt_ft: u32,
+    pub wind_from_deg: f64,
+    pub wind_speed_kts: f64,
+    pub temp_c: f64,
+}
 
+// Standard levels reported in a winds-aloft brief.
+const WINDS_ALOFT_LEVELS_FT: [u32; 6] = [3000, 6000, 9000, 12000, 18000, 24000];
+const M_TO_FT: f64 = 3.28084;
+// DCS doesn't expose a real altitude-temperature profile via the Lua API,
+// so aloft temps are the surface temp plus the standard ISA lapse rate
+// (~1.98C/1000ft). Winds aloft come from atmosphere.getWind at each
+// level's world Y, which DCS does model accurately.
+const ISA_LAPSE_C_PER_FT: f64 = 0.00198;
+
+fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
+    let globals = lua.inner().globals();
     let atmosphere: LuaTable = globals.raw_get("atmosphere")?;
     let pt = lua.inner().create_table()?;
-    pt.set("x", pos_x)?;
-    pt.set("y", 0.0_f64)?;
-    pt.set("z", pos_z)?;
+    pt.set("x", x)?;
+    pt.set("y", y)?;
+    pt.set("z", z)?;
     let wind: LuaTable = atmosphere.call_function("getWind", pt)?;
     let wind_x: f64 = wind.get("x")?;
     let wind_z: f64 = wind.get("z")?;
@@ -45,6 +61,13 @@ fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
         let deg = (-wind_x).atan2(-wind_z).to_degrees();
         if deg < 0.0 { deg + 360.0 } else { deg }
     };
+    Ok((wind_from_deg, wind_speed_kts))
+}
+
+fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
+    let globals = lua.inner().globals();
+
+    let (wind_from_deg, wind_speed_kts) = wind_at(lua, pos_x, 0.0, pos_z)?;
 
     let env_tbl: LuaTable = globals.raw_get("env")?;
     let mission: LuaTable = env_tbl.raw_get("mission")?;
@@ -79,7 +102,24 @@ fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
         10000.0
     };
 
-    Ok(WeatherData { wind_from_deg, wind_speed_kts, qnh_inhg, qnh_hpa, temp_c, cloud_base_m, cloud_density, visibility_m })
+    let ground_elev_m = dcso3::land::Land::singleton(lua)
+        .and_then(|land| land.get_height(dcso3::LuaVec2(dcso3::Vector2::new(pos_x, pos_z))))
+        .unwrap_or(0.0);
+    let winds_aloft = WINDS_ALOFT_LEVELS_FT
+        .iter()
+        .filter_map(|&alt_ft| {
+            let y = ground_elev_m + alt_ft as f64 / M_TO_FT;
+            let (dir, spd) = wind_at(lua, pos_x, y, pos_z).ok()?;
+            Some(AltitudeWind {
+                alt_ft,
+                wind_from_deg: dir,
+                wind_speed_kts: spd,
+                temp_c: temp_c - alt_ft as f64 * ISA_LAPSE_C_PER_FT,
+            })
+        })
+        .collect();
+
+    Ok(WeatherData { wind_from_deg, wind_speed_kts, qnh_inhg, qnh_hpa, temp_c, cloud_base_m, cloud_density, visibility_m, winds_aloft })
 }
 
 fn active_runway(lua: MizLua, airbase_id: &DcsOid<ClassAirbase>, wind_from_deg: f64) -> Option<compact_str::CompactString> {
@@ -123,6 +163,23 @@ fn temp_sign(t: f64) -> &'static str {
     if t >= 0.0 { "+" } else { "" }
 }
 
+fn format_winds_aloft(winds: &[AltitudeWind]) -> compact_str::CompactString {
+    use std::fmt::Write;
+    let mut s = compact_str::CompactString::from("\nWinds Aloft:");
+    for w in winds {
+        let _ = write!(
+            s,
+            "\n  {alt:>5}ft: {wdir:03}°/{wspd:.0}kt {sign}{temp:.0}°C",
+            alt = w.alt_ft,
+            wdir = w.wind_from_deg as u32,
+            wspd = w.wind_speed_kts,
+            sign = temp_sign(w.temp_c),
+            temp = w.temp_c,
+        );
+    }
+    s
+}
+
 fn is_aircraft_slot(db: &Db, slot: &SlotId) -> bool {
     let sifo = match db.ephemeral.get_slot_info(slot) {
         Some(s) => s,
@@ -160,7 +217,7 @@ fn carrier_brc(db: &Db, kind: &ObjectiveKind) -> u32 {
     0
 }
 
-fn send_atis(lua: MizLua, slot: SlotId) -> Result<()> {
+fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
 
     let (oid, miz_gid) = match ctx.db.ephemeral.get_slot_info(&slot) {
@@ -175,8 +232,9 @@ fn send_atis(lua: MizLua, slot: SlotId) -> Result<()> {
 
     let pos = obj.pos();
     let wx = fetch_weather(lua, pos.x as f64, pos.y as f64)?;
+    let aloft_str = if full { format_winds_aloft(&wx.winds_aloft) } else { compact_str::CompactString::default() };
 
-    let msg: compact_str::CompactString = if obj.kind().is_carrier_group() {
+    let mut msg: compact_str::CompactString = if obj.kind().is_carrier_group() {
         let brc_deg = carrier_brc(&ctx.db, obj.kind());
         let case = case_advisory(wx.cloud_base_m);
         format_compact!(
@@ -214,9 +272,16 @@ fn send_atis(lua: MizLua, slot: SlotId) -> Result<()> {
     } else {
         return Ok(());
     };
+    msg.push_str(&aloft_str);
 
     ctx.db.ephemeral.msgs().panel_to_group(30, false, miz_gid, msg);
     Ok(())
+}
+
+/// On-demand full weather report (surface + winds/temp aloft) for the
+/// player's current slot, triggered via the `-weather` chat command.
+pub fn send_full_weather(lua: MizLua, slot: SlotId) -> Result<()> {
+    send_atis(lua, slot, true)
 }
 
 pub fn publish_weather(lua: MizLua, ctx: &mut Context) -> Result<()> {
@@ -242,7 +307,7 @@ pub fn schedule_atis(lua: MizLua, slot: SlotId) -> Result<()> {
     let timer = Timer::singleton(lua)?;
     let when = timer.get_time()? + 15.0;
     timer.schedule_function(when, slot, move |lua, slot, _| {
-        if let Err(e) = send_atis(lua, slot) {
+        if let Err(e) = send_atis(lua, slot, false) {
             error!("atis send failed: {:?}", e);
         }
         Ok(None)

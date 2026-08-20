@@ -19,7 +19,7 @@ use bfprotocols::{
 use chrono::{Duration, prelude::*};
 use compact_str::{CompactString, format_compact};
 use dcso3::{
-    HooksLua, MizLua, String,
+    HooksLua, LuaEnv, MizLua, String,
     coalition::Side,
     net::{Net, PlayerId},
 };
@@ -182,6 +182,21 @@ fn time_command(ctx: &mut Context, id: PlayerId, now: DateTime<Utc>) {
                 format_compact!("The server will shutdown in {remains}"),
             )
         }
+    }
+}
+
+fn weather_command(ctx: &mut Context, lua: HooksLua, id: PlayerId) {
+    let Some(ifo) = ctx.connected.get(&id) else { return };
+    let Some(player) = ctx.db.player(&ifo.ucid) else { return };
+    let Some(slot) = player.current_slot.as_ref().map(|(slot, _)| *slot) else {
+        ctx.db.ephemeral.msgs().send(
+            MsgTyp::Chat(Some(id)),
+            "You must be in a slot to request a weather report",
+        );
+        return;
+    };
+    if let Err(e) = crate::atis::send_full_weather(MizLua(lua.inner()), slot) {
+        error!("full weather report failed for {:?}: {:?}", id, e);
     }
 }
 
@@ -794,6 +809,7 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
         " -switch <color>: side switch to <color>",
         " -lives: display your current lives",
         " -time: how long until server restart",
+        " -weather: full weather report for your slot, including winds/temp aloft",
         " -balance: show your points balance",
         " -status: show campaign status (objectives, convoys, streak)",
         " -transfer <amount> [<player> | objective:<objective>]: transfer points to another player or objective",
@@ -831,6 +847,9 @@ pub(super) fn process(
         Ok("".into())
     } else if msg.eq_ignore_ascii_case("-time") {
         time_command(ctx, id, now);
+        Ok("".into())
+    } else if msg.eq_ignore_ascii_case("-weather") {
+        weather_command(ctx, lua, id);
         Ok("".into())
     } else if let Some(msg) = msg.strip_prefix("-admin ") {
         admin_command(ctx, id, msg);
