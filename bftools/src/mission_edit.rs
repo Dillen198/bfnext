@@ -1515,13 +1515,24 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
         fs::write(&report_path, &report).context("writing warehouse report")?;
         info!("wrote warehouse report to {:?}", report_path);
     }
-    //replace options file
-    let options_template = UnpackedMiz::new(&cfg.options).context("loading options template")?;
-    let source_options_path = options_template.files.get("options").unwrap();
+    //replace options file and forced difficulty options
+    let options_template =
+        LoadedMiz::new(lua, &cfg.options).context("loading options template")?;
+    let forced_options: Table = options_template
+        .mission
+        .raw_get("forcedOptions")
+        .context("getting forcedOptions from options template")?;
+    base.mission
+        .raw_set("forcedOptions", forced_options)
+        .context("setting forcedOptions on base mission")?;
+    let s = serialize_to_lua("mission", Value::Table((&*base.mission).clone()))?;
+    fs::write(&base.miz.files["mission"], &s)
+        .context("writing mission file with forced options")?;
+    let source_options_path = options_template.miz.files.get("options").unwrap();
     let destination_options_path = base.miz.files.get("options").unwrap();
     fs::rename(source_options_path, destination_options_path)
         .context("replacing the options file")?;
-    info!("replaced options file from {:?}", &cfg.options);
+    info!("replaced options file and forced options from {:?}", &cfg.options);
     info!("saving finalized mission to {:?}", cfg.output);
     base.miz.pack(&cfg.output).context("repacking mission")?;
     Ok(())
