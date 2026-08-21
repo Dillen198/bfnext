@@ -1311,13 +1311,16 @@ impl Db {
     ) -> Result<()> {
         let obj = objective_mut!(self, oid)?;
         let mut total_logi = 0;
+        let mut logi_groups = 0;
         for gid in maybe!(&obj.groups, &side, "side group")? {
             let group = group!(self, gid)?;
             if group.class.is_logi() {
+                logi_groups += 1;
                 total_logi = max(total_logi, group.units.len());
             }
         }
         let mut to_repair = 1 + (total_logi >> 1);
+        let requested = to_repair;
         for gid in maybe!(&obj.groups, &side, "side group")? {
             let group = group_mut!(self, gid)?;
             if group.class.is_logi() {
@@ -1333,6 +1336,10 @@ impl Db {
                 }
             }
         }
+        info!(
+            "repair_one_logi_step {oid} side {side:?}: {logi_groups} logi group(s), total_logi={total_logi}, revived {}/{requested}",
+            requested - to_repair
+        );
         self.update_objective_status(&oid, now)
     }
 

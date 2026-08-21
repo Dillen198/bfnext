@@ -3928,12 +3928,25 @@ impl Db {
 
                     use chrono::Utc;
                     self.repair_one_logi_step(crate_data.side, Utc::now(), oid)?;
+                    let new_logi = self.persisted.objectives.get(&oid).map(|o| o.logi).unwrap_or(logi);
                     self.ephemeral.stat(Stat::Repair { id: oid, by: crate_data.player });
                     self.ephemeral.dirty();
                     self.ephemeral.c130_crates.remove(crate_name);
                     self.delete_group(&crate_data.group_id)?;
 
-                    let msg = String::from(format!("Logistics repair crate delivered to {}", obj_name));
+                    // repair_one_logi_step revives dead units in the objective's own logi
+                    // group -- if that group has no members left to revive (e.g. it was
+                    // fully wiped and something removed it from tracking), logi won't
+                    // budge even though the crate was "delivered". Say so honestly rather
+                    // than reporting success when nothing actually happened.
+                    let msg = if new_logi > logi {
+                        String::from(format!("Logistics repair crate delivered to {} (logi {} -> {}%)", obj_name, logi, new_logi))
+                    } else {
+                        String::from(format!(
+                            "Logistics repair crate delivered to {} but had no effect (logi still {}%) -- no revivable logistics units found there",
+                            obj_name, logi
+                        ))
+                    };
                     info!("[LOGISTICS_REPAIR] {}", msg);
                     Ok(msg)
                 } else {
