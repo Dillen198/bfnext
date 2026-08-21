@@ -592,7 +592,7 @@
   "repair_time": 1800,
   "repair_crate": {
     "Red": {
-      "name": "Base Repair Kit",
+      "name": "Logistics Crate",
       "weight": 2000,
       "required": 1,
       "pos_unit": null,
@@ -601,7 +601,7 @@
       "dcs_type": "container_cargo"
     },
     "Blue": {
-      "name": "Base Repair Kit",
+      "name": "Logistics Crate",
       "weight": 1500,
       "required": 1,
       "pos_unit": null,
