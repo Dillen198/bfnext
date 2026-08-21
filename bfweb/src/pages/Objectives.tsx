@@ -25,6 +25,17 @@ const KIND_COLORS: Record<string, string> = {
   'Logistics Hub': '#06b6d4', 'Naval Base': '#0ea5e9', 'Carrier Group': '#0ea5e9', 'Command Center': '#eab308',
 }
 
+// Health and Logistics are defense-strength stats (% of a unit group still
+// alive); Supply and Fuel are warehouse stock levels (% of inventory still
+// stocked). They're easy to conflate -- Logistics tracks whether the base's
+// logistics defenders are alive, not whether it has fuel/supplies on hand.
+const COLUMN_HELP: Partial<Record<string, string>> = {
+  Health: 'Overall % of this objective\'s defending units still alive (all unit types combined).',
+  Logistics: '% of the logistics-defense unit group still alive, reduced further if warehouse buildings are destroyed. Governs repair speed and capturability -- not a fuel/resource level.',
+  Supply: '% fill of the warehouse\'s equipment stock (weapons, vehicles, aircraft) -- a resource level, not defender health.',
+  Fuel: '% fill of the warehouse\'s fuel stock -- a resource level, not defender health.',
+}
+
 function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return <div className={`vs-card ${className}`}>{children}</div>
 }
@@ -147,6 +158,20 @@ export default function Objectives() {
             </div>
           </div>
         )}
+
+        {/* ── Stat legend ── */}
+        <div style={{
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 6, padding: '10px 16px',
+          display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600, flexShrink: 0 }}>Stats:</span>
+          <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            <b style={{ color: 'var(--text)' }}>Health</b> &amp; <b style={{ color: 'var(--text)' }}>Logistics</b> are defender strength (% of units still alive) —
+            {' '}<b style={{ color: 'var(--text)' }}>Supply</b> &amp; <b style={{ color: 'var(--text)' }}>Fuel</b> are warehouse stock levels (% of inventory remaining).
+            Logistics is not the same as Fuel: it tracks whether the base's logistics defenders are alive, not how much fuel is stored there.
+          </span>
+        </div>
 
         {/* ── Critical alerts ── */}
         {criticalObjs.length > 0 && (
@@ -303,8 +328,8 @@ export default function Objectives() {
             <table className="w-full">
               <thead style={{ background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)' }}>
                 <tr>
-                  {['Name', 'Type', 'Owner', 'Health', 'Logistics', 'Supply', 'Fuel', 'Last Change'].map(h => (
-                    <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', fontWeight: 700, whiteSpace: 'nowrap' }}>{h}</th>
+                  {(['Name', 'Type', 'Owner', 'Health', 'Logistics', 'Supply', 'Fuel', 'Last Change'] as const).map(h => (
+                    <th key={h} title={COLUMN_HELP[h]} style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', fontWeight: 700, whiteSpace: 'nowrap', cursor: COLUMN_HELP[h] ? 'help' : undefined }}>{h}</th>
                   ))}
                 </tr>
               </thead>
