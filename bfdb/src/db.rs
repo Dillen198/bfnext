@@ -1725,7 +1725,7 @@ impl StatsDb {
             Stat::ObjectiveSupply { id, supply, fuel } => {
                 self.with_objective((ctx.round, id), |o| {
                     o.supply = supply;
-                    o.logi = fuel
+                    o.fuel = fuel
                 })?;
             }
             Stat::Capture { id, by, side } => {
