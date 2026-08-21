@@ -1,5 +1,5 @@
-use super::ArgTriple;
-use crate::{Context, db::{group::DeployKind, Db}};
+use super::{ArgTriple, ArgTuple};
+use crate::{atis, Context, db::{group::DeployKind, Db}};
 use anyhow::{Context as ErrContext, Result};
 use bfprotocols::cfg::{ActionKind, AwacsCfg};
 use compact_str::format_compact;
@@ -10,6 +10,7 @@ use dcso3::{
     net::SlotId,
     MizLua,
 };
+use log::error;
 use std::fmt::Write;
 
 fn build_sitrep(db: &Db, side: Side) -> compact_str::CompactString {
@@ -125,6 +126,13 @@ fn frequencies(_lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
     Ok(())
 }
 
+fn weather(lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
+    if let Err(e) = atis::send_full_weather(lua, arg.snd) {
+        error!("full weather report failed for slot {:?}: {:?}", arg.snd, e);
+    }
+    Ok(())
+}
+
 pub(super) fn init_info_menu_for_slot(
     ctx: &mut Context,
     lua: MizLua,
@@ -156,6 +164,14 @@ pub(super) fn init_info_menu_for_slot(
         Some(root.clone()),
         frequencies,
         ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
+    )?;
+
+    mc.add_command_for_group(
+        miz_gid,
+        "Weather".into(),
+        Some(root.clone()),
+        weather,
+        ArgTuple { fst: miz_gid, snd: *slot },
     )?;
 
     Ok(())
