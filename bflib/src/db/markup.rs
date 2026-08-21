@@ -240,6 +240,99 @@ fn carrier_path() -> &'static [(f64, f64)] {
     ]
 }
 
+/// Airbase icon — simple top-down aircraft silhouette, nose pointing north.
+fn airbase_path() -> &'static [(f64, f64)] {
+    &[
+        ( 0.90,  0.00), // nose
+        ( 0.15,  0.08), // fuselage, starboard wing root
+        ( 0.05,  0.75), // starboard wingtip, forward edge
+        (-0.05,  0.70), // starboard wingtip, trailing edge
+        (-0.15,  0.10), // fuselage, aft of wing
+        (-0.75,  0.25), // starboard tailplane tip
+        (-0.85,  0.08), // starboard tailplane root
+        (-0.95,  0.00), // tail
+        (-0.85, -0.08), // port tailplane root
+        (-0.75, -0.25), // port tailplane tip
+        (-0.15, -0.10), // fuselage, aft of wing
+        (-0.05, -0.70), // port wingtip, trailing edge
+        ( 0.05, -0.75), // port wingtip, forward edge
+        ( 0.15, -0.08), // fuselage, port wing root
+        ( 0.90,  0.00), // close at nose
+    ]
+}
+
+/// FOB icon — simple tent/outpost pentagon, apex to the north.
+fn fob_path() -> &'static [(f64, f64)] {
+    &[
+        ( 0.90,  0.00), // apex
+        ( 0.30,  0.60), // starboard eave
+        (-0.70,  0.60), // starboard base corner
+        (-0.70, -0.60), // port base corner
+        ( 0.30, -0.60), // port eave
+        ( 0.90,  0.00), // close at apex
+    ]
+}
+
+/// Factory icon — building with a sawtooth roofline (classic industrial pictogram).
+fn factory_path() -> &'static [(f64, f64)] {
+    &[
+        (-0.80, -0.80), // base, port-aft
+        ( 0.30, -0.80), // wall top, port-aft
+        ( 0.70, -0.53), // roof peak 1
+        ( 0.30, -0.27), // roof valley 1
+        ( 0.70,  0.00), // roof peak 2
+        ( 0.30,  0.27), // roof valley 2
+        ( 0.70,  0.53), // roof peak 3
+        ( 0.30,  0.80), // wall top, starboard-aft
+        (-0.80,  0.80), // base, starboard-aft
+        (-0.80, -0.80), // close at base
+    ]
+}
+
+/// FARP icon — "H" helipad marking, the standard real-world symbol for a
+/// helicopter landing point. Traced as one continuous stroke (retraces part
+/// of the port bar to reach the crossbar without lifting the pen).
+fn farp_path() -> &'static [(f64, f64)] {
+    &[
+        (-0.90, -0.50), // port bar, bottom
+        ( 0.90, -0.50), // port bar, top
+        ( 0.00, -0.50), // back down to mid, port side
+        ( 0.00,  0.50), // crossbar to mid, starboard side
+        ( 0.90,  0.50), // starboard bar, top
+        (-0.90,  0.50), // starboard bar, bottom
+    ]
+}
+
+/// Logistics hub icon — hexagon (package/crate outline).
+fn logistics_path() -> &'static [(f64, f64)] {
+    &[
+        ( 1.00,  0.00),
+        ( 0.50,  0.866),
+        (-0.50,  0.866),
+        (-1.00,  0.00),
+        (-0.50, -0.866),
+        ( 0.50, -0.866),
+        ( 1.00,  0.00), // close
+    ]
+}
+
+/// Command Center icon — five-pointed star, the standard HQ/command symbol.
+fn command_center_path() -> &'static [(f64, f64)] {
+    &[
+        ( 1.000,  0.000), // outer, N
+        ( 0.324,  0.235), // inner
+        ( 0.309,  0.951), // outer
+        (-0.124,  0.380), // inner
+        (-0.809,  0.588), // outer
+        (-0.400,  0.000), // inner
+        (-0.809, -0.588), // outer
+        (-0.124, -0.380), // inner
+        ( 0.309, -0.951), // outer
+        ( 0.324, -0.235), // inner
+        ( 1.000,  0.000), // close
+    ]
+}
+
 #[derive(Debug, Clone, Default)]
 enum KindSymbol {
     #[default]
@@ -267,7 +360,8 @@ pub(super) struct ObjectiveMarkup {
     fuel: u8,
     points: i32,
     capture_pct: Option<u8>,
-    repair_pct: Option<u8>,
+    /// (percent complete, seconds remaining)
+    repair_pct: Option<(u8, i64)>,
     name: String,
     owner_ring: MarkId,
     capturable_ring: MarkId,
@@ -286,11 +380,26 @@ fn text_color(side: Side, a: f32) -> Color {
     }
 }
 
+/// Format a seconds count as a short duration string, e.g. "3m20s", "1h05m", "42s".
+fn fmt_eta(secs: i64) -> CompactString {
+    let secs = secs.max(0);
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format_compact!("{h}h{m:02}m")
+    } else if m > 0 {
+        format_compact!("{m}m{s:02}s")
+    } else {
+        format_compact!("{s}s")
+    }
+}
+
 fn objective_label(
     name: &str,
     obj: &Objective,
     capture_pct: Option<u8>,
-    repair_pct: Option<u8>,
+    repair_pct: Option<(u8, i64)>,
 ) -> CompactString {
     use std::fmt::Write;
     let mut s = match obj.kind {
@@ -318,8 +427,8 @@ fn objective_label(
     if let Some(pct) = capture_pct {
         let _ = write!(s, "\nCapturing: {pct}%");
     }
-    if let Some(pct) = repair_pct {
-        let _ = write!(s, "\nRepairing: {pct}%");
+    if let Some((pct, remaining)) = repair_pct {
+        let _ = write!(s, "\nRepairing: {pct}% (ETA {})", fmt_eta(remaining));
     }
     s
 }
@@ -372,7 +481,7 @@ impl ObjectiveMarkup {
         obj: &Objective,
         moved: &[ObjectiveId],
         capture_pct: Option<u8>,
-        repair_pct: Option<u8>,
+        repair_pct: Option<(u8, i64)>,
     ) {
         if obj.owner != self.side {
             let text_color = |a| text_color(obj.owner, a);
@@ -451,7 +560,7 @@ impl ObjectiveMarkup {
         obj: &Objective,
         persisted: &Persisted,
         capture_pct: Option<u8>,
-        repair_pct: Option<u8>,
+        repair_pct: Option<(u8, i64)>,
     ) -> Self {
         let text_color = |a| text_color(obj.owner, a);
         let all_spec = match obj.kind {
@@ -615,7 +724,24 @@ impl ObjectiveMarkup {
             ObjectiveKind::CarrierGroup { .. } => KindSymbol::Single(
                 draw_polyline(t.pos, sym_r, carrier_path(), all_spec, sym_color, msgq)
             ),
-            _ => KindSymbol::None,
+            ObjectiveKind::Airbase => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, airbase_path(), all_spec, sym_color, msgq)
+            ),
+            ObjectiveKind::Fob => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, fob_path(), all_spec, sym_color, msgq)
+            ),
+            ObjectiveKind::Farp { .. } => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, farp_path(), all_spec, sym_color, msgq)
+            ),
+            ObjectiveKind::Logistics => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, logistics_path(), all_spec, sym_color, msgq)
+            ),
+            ObjectiveKind::Factory { .. } => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, factory_path(), all_spec, sym_color, msgq)
+            ),
+            ObjectiveKind::CommandCenter => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, command_center_path(), all_spec, sym_color, msgq)
+            ),
         };
 
         match obj.kind {

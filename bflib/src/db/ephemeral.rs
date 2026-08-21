@@ -394,22 +394,38 @@ impl Ephemeral {
         Some(((elapsed as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as u8)
     }
 
-    /// Repair progress (0-100) for a carrier currently mid-repair, or None
-    /// otherwise. Only carriers have a single timed repair operation with a
-    /// clear start+duration to compute a percentage from -- regular
-    /// objectives repair incrementally with no equivalent discrete
-    /// operation, so their health figure (already shown) is the only
-    /// meaningful progress indicator for them.
-    fn repair_pct_for(&self, obj: &Objective) -> Option<u8> {
-        let ObjectiveKind::CarrierGroup { repair_start_time: Some(start), .. } = &obj.kind else {
-            return None;
-        };
-        let total = self.cfg.carrier.as_ref().map(|c| c.repair_time).unwrap_or(600);
-        if total == 0 {
-            return None;
+    /// Repair progress (0-100) and estimated seconds remaining for an
+    /// objective currently mid-repair, or None if it isn't actively
+    /// progressing toward a repair completion.
+    ///
+    /// Carriers have a single timed repair operation (repair_start_time +
+    /// carrier.repair_time). Regular objectives auto-repair to 100% once
+    /// `now - last_change_ts` reaches `repair_time / logi_fraction` (see
+    /// `maybe_do_repairs`/`repair_objective`) -- last_change_ts only moves
+    /// when something actually changes (combat, crate delivery, scenery
+    /// loss), so during a quiet stretch this is just as much a clean
+    /// countdown as the carrier's is.
+    fn repair_pct_for(&self, obj: &Objective) -> Option<(u8, i64)> {
+        if let ObjectiveKind::CarrierGroup { repair_start_time: Some(start), .. } = &obj.kind {
+            let total = self.cfg.carrier.as_ref().map(|c| c.repair_time).unwrap_or(600) as f64;
+            if total <= 0.0 {
+                return None;
+            }
+            let elapsed = (Utc::now() - *start).num_seconds().max(0) as f64;
+            let pct = ((elapsed / total) * 100.0).clamp(0.0, 100.0) as u8;
+            return Some((pct, (total - elapsed).max(0.0) as i64));
         }
-        let elapsed = (Utc::now() - *start).num_seconds().max(0);
-        Some(((elapsed as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as u8)
+        if obj.health < 100 && obj.logi > 0 {
+            let logi_frac = obj.logi as f64 / 100.;
+            let total = self.cfg.repair_time as f64 / logi_frac;
+            if !total.is_finite() || total <= 0.0 {
+                return None;
+            }
+            let elapsed = (Utc::now() - obj.last_change_ts).num_seconds().max(0) as f64;
+            let pct = ((elapsed / total) * 100.0).clamp(0.0, 100.0) as u8;
+            return Some((pct, (total - elapsed).max(0.0) as i64));
+        }
+        None
     }
 
     pub fn create_objective_markup(&mut self, persisted: &Persisted, obj: &Objective) {
