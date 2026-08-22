@@ -538,7 +538,6 @@ export default function ManualSection() {
 
           <CommandTable
             rows={[
-              { cmd: 'blue / red', desc: 'Register and join the blue or red team. Required before you can take a combat slot.' },
               { cmd: '-switch <color>', desc: 'Switch sides to blue or red. You must be in spectators. Limited uses per round.' },
               { cmd: '-lives', desc: 'Shows how many lives you have remaining in the current campaign round.' },
               { cmd: '-time', desc: 'Shows how long until the next scheduled server restart.' },
