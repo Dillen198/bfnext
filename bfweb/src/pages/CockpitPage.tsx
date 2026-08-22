@@ -37,17 +37,20 @@ export default function CockpitPage() {
 }
 
 function Tabs({ playerId }: { playerId?: string }) {
-  const [tab, setTab] = useState<'ewr' | 'carp'>('ewr')
+  const [tab, setTab] = useState<'ewr' | 'carp' | 'cargo'>('ewr')
   return (
     <Shell
       tabs={
         <div style={{ display: 'flex', gap: '0.35rem' }}>
           <FnKey active={tab === 'ewr'} onClick={() => setTab('ewr')}>EWR</FnKey>
           <FnKey active={tab === 'carp'} onClick={() => setTab('carp')}>CARP</FnKey>
+          <FnKey active={tab === 'cargo'} onClick={() => setTab('cargo')}>CARGO</FnKey>
         </div>
       }
     >
-      {tab === 'ewr' ? <EwrBody playerId={playerId} /> : <CarpBody playerId={playerId} />}
+      {tab === 'ewr' && <EwrBody playerId={playerId} />}
+      {tab === 'carp' && <CarpBody playerId={playerId} />}
+      {tab === 'cargo' && <CargoBody playerId={playerId} />}
     </Shell>
   )
 }
@@ -278,6 +281,73 @@ function EwrBody({ playerId }: { playerId?: string }) {
         }}>
           {report}
         </pre>
+      </Glass>
+    </>
+  )
+}
+
+// ─── Cargo ────────────────────────────────────────────────────────────────
+// Same backend logic the F10 "Cargo" menu's "Spawn N Crates" items call
+// (bflib/src/menu/cargo.rs's spawn_crates_for_ucid) -- the only real
+// difference from F10 is a free quantity field here instead of a fixed
+// menu list of preset amounts (F10 radio menus can't take free-form
+// numeric input at all).
+const CARGO_KIND_OPTIONS = ['C-130', 'HELO'] as const
+type CargoKind = (typeof CARGO_KIND_OPTIONS)[number]
+
+function CargoBody({ playerId }: { playerId?: string }) {
+  const [crateName, setCrateName] = useState('')
+  const [qty, setQty] = useState('1')
+  const [kind, setKind] = useState<CargoKind>('C-130')
+  const [message, setMessage] = useState<string>('ENTER A CRATE NAME AND QUANTITY, THEN SPAWN')
+
+  const spawnMut = useMutation({
+    mutationFn: () => api.cockpit.cargoSpawn(crateName.trim(), Number(qty) || 1, kind === 'C-130', playerId),
+    onSuccess: r => setMessage(r.message),
+  })
+
+  const qtyNum = Number(qty)
+  const validQty = Number.isFinite(qtyNum) && qtyNum >= 1
+  const canSpawn = crateName.trim().length > 0 && validQty && !spawnMut.isPending
+
+  return (
+    <>
+      <PageEyebrow>CARGO — CRATE SPAWN</PageEyebrow>
+      <Glass corner="CARGO REQUEST">
+        <LskPage>
+          <LskCol>
+            <Lsk tag="L1" label="CRATE NAME">
+              <LskInput value={crateName} onChange={setCrateName} placeholder="as configured in cfg.deployables" />
+            </Lsk>
+            <Lsk tag="L2" label="QUANTITY">
+              <LskInput value={qty} onChange={setQty} numeric />
+            </Lsk>
+            <Lsk tag="L3" label="AIRCRAFT">
+              <LskSelect value={kind} onChange={setKind} options={CARGO_KIND_OPTIONS} />
+            </Lsk>
+          </LskCol>
+          <LskCol>
+            <Lsk tag="R3" label="SPAWN">
+              <Button disabled={!canSpawn} onClick={() => spawnMut.mutate()}>
+                {spawnMut.isPending ? 'QUEUING…' : `SPAWN ${validQty ? qtyNum : ''}`}
+              </Button>
+            </Lsk>
+          </LskCol>
+        </LskPage>
+        {spawnMut.error && (
+          <p style={{ fontSize: '0.68rem', color: 'var(--red)', margin: '0.5rem 0 0' }}>
+            {spawnMut.error instanceof Error ? spawnMut.error.message : 'Request failed'}
+          </p>
+        )}
+      </Glass>
+      <div style={{ height: '0.6rem' }} />
+      <Glass corner="STATUS">
+        <p style={{
+          fontSize: '0.7rem', lineHeight: 1.6, margin: 0, fontFamily: 'var(--font-mono)',
+          color: 'var(--accent-bright)', textShadow: '0 0 6px var(--accent-glow)',
+        }}>
+          {message}
+        </p>
       </Glass>
     </>
   )

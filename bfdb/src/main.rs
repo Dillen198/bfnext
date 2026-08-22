@@ -1126,6 +1126,37 @@ async fn api_cockpit_carp_solve_latlon(
     Ok(warp::reply::json(&solution))
 }
 
+#[derive(serde::Deserialize)]
+struct CargoSpawnBody {
+    crate_name: std::string::String,
+    qty: u32,
+    c130: bool,
+}
+
+/// POST /api/cockpit/cargo/spawn?playerid=<> -- queue qty copies of a named
+/// crate for the calling player's current slot. See bflib's
+/// AdminCommand::CockpitSpawnCrate / menu/cargo.rs's spawn_crates_for_ucid,
+/// the same logic the F10 "Spawn N Crates" items call.
+async fn api_cockpit_cargo_spawn(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: CargoSpawnBody,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    if body.qty < 1 {
+        return Err(anyhow::anyhow!("qty must be at least 1").into());
+    }
+    use netidx::publisher::Value;
+    let msg = call_engine_rpc_str(&db, "cargo-spawn-crate", vec![
+        ("ucid", Value::from(ucid.to_string())),
+        ("crate_name", Value::from(body.crate_name)),
+        ("qty", Value::from(body.qty as i64)),
+        ("c130", Value::from(body.c130)),
+    ]).await?;
+    Ok(warp::reply::json(&serde_json::json!({ "message": msg })))
+}
+
 /// GET /api/admin/links  — list all discord↔ucid mappings
 async fn api_admin_links(
     session_id: Option<Uuid>,
@@ -2439,6 +2470,14 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_cockpit_carp_solve_latlon);
 
+    let cockpit_cargo_spawn_route = warp::path!("api" / "cockpit" / "cargo" / "spawn")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::json::<CargoSpawnBody>())
+        .and(with_db(db.clone()))
+        .then(api_cockpit_cargo_spawn);
+
     let trails = warp::path!("api" / "trails")
         .and(with_db(db.clone()))
         .then(api_trails);
@@ -2543,7 +2582,7 @@ async fn main() -> Result<()> {
         .or(admin_cfg_post_route)
         .or(commander_spawn_route)
         .or(admin_priority_route)
-        .or(cockpit_ewr_toggle_route.or(cockpit_ewr_units_route).boxed())
+        .or(cockpit_ewr_toggle_route.or(cockpit_ewr_units_route).or(cockpit_cargo_spawn_route).boxed())
         .with(cors);
 
     log::info!("API server listening on http://{}", args.listen_address);

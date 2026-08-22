@@ -71,6 +71,7 @@ pub struct Rpcs {
     _ewr_ground_intel: Proc,
     _carp_solve: Proc,
     _carp_solve_latlon: Proc,
+    _cargo_spawn_crate: Proc,
 }
 
 async fn wait_task(mut ch: mpsc::Receiver<(RpcCall, oneshot::Receiver<Value>)>) {
@@ -875,6 +876,39 @@ impl Rpcs {
             lon: f64 = Value::Null; "PI longitude",
             drop_altitude_agl_ft: f64 = Value::Null; "Planned drop altitude, feet AGL"
         )?;
+        let _q = Arc::clone(&q);
+        let cargo_spawn_crate = define_rpc!(
+            publisher,
+            base.append("cargo-spawn-crate"),
+            "Queue qty copies of a named crate for the calling player's current slot",
+            |mut c: RpcCall, ucid: Chars, crate_name: Chars, qty: i64, c130: bool| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                if qty < 1 {
+                    c.reply.send(Value::Error("qty must be at least 1".into()));
+                    return None
+                }
+                let cmd = AdminCommand::CockpitSpawnCrate {
+                    ucid,
+                    crate_name: crate_name.as_ref().into(),
+                    qty: qty as u32,
+                    c130,
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            crate_name: Chars = Value::Null; "The crate's name, as configured in cfg.deployables",
+            qty: i64 = 1; "How many copies to queue",
+            c130: bool = true; "Use C-130 cargo rules (true) or helo cargo rules (false)"
+        )?;
         Ok(Self {
             _reduce_inventory: reduce_inventory,
             _transfer_supply: transfer_supply,
@@ -925,6 +959,7 @@ impl Rpcs {
             _ewr_ground_intel: ewr_ground_intel,
             _carp_solve: carp_solve,
             _carp_solve_latlon: carp_solve_latlon,
+            _cargo_spawn_crate: cargo_spawn_crate,
         })
     }
 }

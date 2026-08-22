@@ -260,6 +260,12 @@ pub enum AdminCommand {
         lon: f64,
         drop_altitude_agl_ft: f64,
     },
+    CockpitSpawnCrate {
+        ucid: Ucid,
+        crate_name: String,
+        qty: u32,
+        c130: bool,
+    },
 }
 
 impl AdminCommand {
@@ -1866,6 +1872,17 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                         Err(e) => reply_err!("failed to serialize carp solution: {e:?}"),
                     },
                     Err(e) => reply_err!("carp solve failed: {:?}", e),
+                }
+            }
+            AdminCommand::CockpitSpawnCrate { ucid, crate_name, qty, c130 } => {
+                let auto_unpack = if c130 {
+                    true
+                } else {
+                    ctx.db.ephemeral.cfg.helo_cargo.as_ref().map(|c| c.auto_unpack).unwrap_or(false)
+                };
+                match crate::menu::cargo::spawn_crates_for_ucid(ctx, lua, &ucid, &crate_name, qty, auto_unpack) {
+                    Ok(msg) => reply_ok!("{msg}"),
+                    Err(e) => reply_err!("{e:?}"),
                 }
             }
         }

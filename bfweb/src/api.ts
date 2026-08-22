@@ -504,5 +504,12 @@ export const api = {
       if (playerId) params.set('playerid', playerId)
       return get<CarpSolution>(`/cockpit/carp/solve-latlon?${params.toString()}`)
     },
+    // Queues qty copies of a crate for the player's current slot -- same
+    // logic the F10 "Spawn N Crates" menu items call, just with a free
+    // quantity field instead of a fixed menu list of preset amounts.
+    cargoSpawn: (crateName: string, qty: number, c130: boolean, playerId?: string) => {
+      const q = playerId ? `?playerid=${playerId}` : ''
+      return post<{ message: string }>(`/cockpit/cargo/spawn${q}`, { crate_name: crateName, qty, c130 })
+    },
   },
 }

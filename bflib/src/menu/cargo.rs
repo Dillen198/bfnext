@@ -28,7 +28,7 @@ use dcso3::{
     coalition::Side,
     env::miz::GroupId,
     mission_commands::{GroupSubMenu, MissionCommands},
-    net::SlotId,
+    net::{SlotId, Ucid},
 };
 use fxhash::FxHashMap;
 use std::collections::hash_map::Entry;
@@ -355,15 +355,26 @@ fn spawn_all_c130_crates_for_deployable(lua: MizLua, arg: ArgTuple<GroupId, Stri
     Ok(())
 }
 
-/// Shared by `spawn_n_c130_crates`/`spawn_n_helo_crates`: queue `qty` copies of a single
-/// named crate, staggered the same way "Spawn All Crates" already does.
-fn spawn_n_crates(
+/// Shared by the F10 menu closures below *and* the cockpit-UI RPC handler
+/// (`AdminCommand::CockpitSpawnCrate` in admin.rs): queue `qty` copies of a
+/// named crate for whichever slot `ucid` currently occupies, staggered the
+/// same way "Spawn All Crates" already does. Returns the status message
+/// either UI surfaces to the player.
+pub(crate) fn spawn_crates_for_ucid(
+    ctx: &mut Context,
     lua: MizLua,
-    arg: &ArgTriple<GroupId, String, u32>,
+    ucid: &Ucid,
+    crate_name: &str,
+    qty: u32,
     auto_unpack: bool,
-) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
-    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+) -> Result<String> {
+    let player = ctx.db.player(ucid).ok_or_else(|| anyhow!("unknown player"))?;
+    let side = player.side;
+    let slot = player
+        .current_slot
+        .as_ref()
+        .map(|(slot, _)| slot.clone())
+        .ok_or_else(|| anyhow!("you must be in a slot to spawn crates"))?;
     let origin = ctx.db.player_current_objective_id(&slot)?;
 
     let crate_def = ctx
@@ -372,15 +383,32 @@ fn spawn_n_crates(
         .cfg
         .deployables
         .get(&side)
-        .and_then(|deps| deps.iter().flat_map(|d| &d.crates).find(|cr| cr.name == arg.snd))
+        .and_then(|deps| deps.iter().flat_map(|d| &d.crates).find(|cr| cr.name.as_str() == crate_name))
         .cloned()
-        .ok_or_else(|| anyhow!("crate {} not found", arg.snd))?;
+        .ok_or_else(|| anyhow!("crate {} not found", crate_name))?;
 
-    let crate_list: Vec<_> = std::iter::repeat((arg.snd.clone(), crate_def))
-        .take(arg.trd as usize)
-        .collect();
+    let name = String::from(crate_name);
+    let crate_list: Vec<_> = std::iter::repeat((name, crate_def)).take(qty as usize).collect();
+    ctx.db.queue_c130_crate_spawns(lua, &slot, crate_list, side, origin, auto_unpack)
+}
 
-    match ctx.db.queue_c130_crate_spawns(lua, &slot, crate_list, side, origin, auto_unpack) {
+/// Shared by `spawn_n_c130_crates`/`spawn_n_helo_crates`: resolves the
+/// player behind `arg.fst` (a group id) to a ucid and delegates to
+/// `spawn_crates_for_ucid`.
+fn spawn_n_crates(
+    lua: MizLua,
+    arg: &ArgTriple<GroupId, String, u32>,
+    auto_unpack: bool,
+) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let ucid = *ctx
+        .db
+        .ephemeral
+        .player_in_slot(&slot)
+        .ok_or_else(|| anyhow!("no player in slot"))?;
+
+    match spawn_crates_for_ucid(ctx, lua, &ucid, arg.snd.as_str(), arg.trd, auto_unpack) {
         Ok(msg) => {
             ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
         }

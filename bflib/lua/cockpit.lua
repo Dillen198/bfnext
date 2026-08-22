@@ -25,7 +25,10 @@
 -- If you see nothing at all with "BFCOCKPIT" in it, this file either isn't
 -- in the right folder or DCS hasn't been restarted since it was added.
 
-local BFCOCKPIT_URL = "https://api.vectorstrike.org/cockpit"
+-- TEMPORARY DIAGNOSTIC: pointed at a guaranteed-reachable page to isolate
+-- whether the CEF/webview mechanism itself works, independent of bfdb.
+-- Revert to your real bfdb URL once this is confirmed working.
+local BFCOCKPIT_URL = "https://www.google.com"
 
 -- net is always available in the Hooks environment, so this alone should
 -- never fail -- if it does, nothing below can even log, so there's no
@@ -53,6 +56,12 @@ end
 local ok_webview, WebViewWidget = pcall(require, 'WebViewWidget')
 if not ok_webview then
     logmsg("FATAL: require('WebViewWidget') failed: " .. tostring(WebViewWidget))
+    return
+end
+
+local ok_static, Static = pcall(require, 'Static')
+if not ok_static then
+    logmsg("FATAL: require('Static') failed: " .. tostring(Static))
     return
 end
 
@@ -109,6 +118,16 @@ local function open()
             logmsg("loading " .. url)
             webview:cefLoadUrl(url)
         end)
+
+        -- DIAGNOSTIC: a plain non-CEF widget drawn as an overlay on top of
+        -- the webview, to isolate whether dxgui widget rendering itself
+        -- works in a Hooks-created window (separate question from whether
+        -- CEF's texture specifically composites into it). If you see this
+        -- text, dxgui rendering is fine and the problem is CEF-specific.
+        -- If you don't see it either, the problem is broader than CEF.
+        local label = Static.new("BFCOCKPIT TEST -- if you can read this, dxgui rendering works")
+        label:setBounds(4, 4, 410, 40)
+        window:insertOverlayWidget(label)
     end)
 
     if not ok then
