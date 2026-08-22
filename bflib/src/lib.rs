@@ -2807,6 +2807,17 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
         debug!("saved state exists, loading it");
         ctx.db = Db::load(&miz, &ctx.idx, to_bg, cfg, &path)
             .context("loading the saved state")?;
+        // Db::init runs this on a fresh campaign start, but a loaded save
+        // never goes through init at all -- run it here too so an objective
+        // that's missing its logistics-defense group (e.g. saved before a
+        // mission version added a base, or before this check existed) gets
+        // fixed on the next restart without requiring a full campaign reset.
+        // Idempotent: it only adds a group where none exists at all, so it
+        // can't touch objectives with real (even fully dead) combat damage.
+        let spctx = SpawnCtx::new(lua).context("building spawn ctx for logi coverage check")?;
+        ctx.db
+            .ensure_default_logi_coverage(&spctx, &ctx.idx)
+            .context("ensure_default_logi_coverage (load path) failed")?;
     }
     ctx.shutdown = ctx
         .db

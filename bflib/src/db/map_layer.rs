@@ -952,8 +952,11 @@ impl MapLayer {
         self.timed_marks.push(TimedMark::two(diamond, label, 60, now));
     }
 
-    /// Enemy axis-of-advance arrow pointing at the objective â€” the standard
-    /// military symbol for a ground threat approaching a position.
+    /// "ENEMY CONTACT" label at an objective that just became threatened.
+    /// Previously also drew a fixed-bearing "axis of advance" arrow into the
+    /// objective, but the bearing was never the real threat direction (just
+    /// a universal NE-converging placeholder), so it read as a stray colored
+    /// arrow with no useful information -- dropped, keeping the label.
     pub fn on_objective_threatened(
         &mut self,
         obj_pos: Vector2,
@@ -967,23 +970,6 @@ impl MapLayer {
             Side::Blue => Color::red(0.95),
             _ => Color::blue(0.95),
         };
-        // Arrow tip at the objective; tail 5 km out (direction of enemy approach
-        // is unknown so we use a universal "converging" bearing from the NE).
-        let tail = obj_pos + Vector2::new(3_500., 3_500.);
-        let arrow = MarkId::new();
-        msgs.arrow_to(
-            sf,
-            arrow,
-            ArrowSpec {
-                start: v3(tail.x, tail.y),
-                end:   v3(obj_pos.x, obj_pos.y),
-                color: enemy_col,
-                fill_color: enemy_col,
-                line_type: LineType::Solid,
-                read_only: true,
-            },
-            None,
-        );
         let label = MarkId::new();
         msgs.text_to_all(
             sf,
@@ -997,7 +983,7 @@ impl MapLayer {
                 text: format_compact!("ENEMY CONTACT\n{}", obj_name).into(),
             },
         );
-        self.timed_marks.push(TimedMark::two(arrow, label, 120, now));
+        self.timed_marks.push(TimedMark::one(label, 120, now));
     }
 
     /// "UNDER ATTACK" label at an objective that is actively under attack.

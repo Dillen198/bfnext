@@ -286,6 +286,87 @@ impl Db {
         Ok(())
     }
 
+    /// Safety net for the "G" trigger-zone coverage pass above: if an
+    /// objective that needs a logistics-defense group (Airbase/Fob/Farp/
+    /// Logistics) has no G<template> coverage zone placed for it -- meaning
+    /// the proximity pass above never associated one with it -- spawn one
+    /// directly from the standard RLOGI/BLOGI template at the objective's
+    /// own zone center instead of leaving it permanently defenseless.
+    ///
+    /// A missing coverage zone is an easy mission-authoring mistake (add a
+    /// new base, forget its logistics marker) and otherwise leaves that
+    /// objective's Logi stat stuck at 0% forever -- there's no group there
+    /// for a repair crate or auto-repair to ever revive. This makes correct
+    /// logistics coverage a property of the engine, not something every
+    /// mission version has to get exactly right by hand.
+    pub fn ensure_default_logi_coverage(&mut self, spctx: &SpawnCtx, idx: &MizIndex) -> Result<()> {
+        let targets: SmallVec<[(ObjectiveId, Side, Vector2); 64]> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(_, obj)| {
+                matches!(
+                    obj.kind,
+                    ObjectiveKind::Airbase
+                        | ObjectiveKind::Fob
+                        | ObjectiveKind::Farp { .. }
+                        | ObjectiveKind::Logistics
+                )
+            })
+            .map(|(oid, obj)| (*oid, obj.owner, obj.zone.pos()))
+            .collect();
+
+        for (oid, owner, pos) in targets {
+            for side in [Side::Red, Side::Blue] {
+                let obj = objective!(self, oid)?;
+                let has_logi = obj.groups.get(&side).is_some_and(|gids| {
+                    gids.into_iter()
+                        .any(|gid| group!(self, *gid).map(|g| g.class.is_logi()).unwrap_or(false))
+                });
+                if has_logi {
+                    continue;
+                }
+                let template_name = match side {
+                    Side::Red => "RLOGI",
+                    Side::Blue => "BLOGI",
+                    Side::Neutral => continue,
+                };
+                if spctx
+                    .get_template_ref(idx, GroupKind::Any, side, template_name)
+                    .is_err()
+                {
+                    continue;
+                }
+                let gid = self.add_group(
+                    spctx,
+                    idx,
+                    side,
+                    SpawnLoc::AtPos {
+                        pos,
+                        offset_direction: Vector2::default(),
+                        group_heading: 0.,
+                    },
+                    template_name,
+                    DeployKind::Objective { origin: oid },
+                    BitFlags::empty(),
+                )?;
+                let o = objective_mut!(self, oid)?;
+                o.groups.get_or_default_cow(side).insert_cow(gid);
+                self.persisted.objectives_by_group.insert_cow(gid, oid);
+                if side != owner {
+                    for uid in group!(self, gid)?.units.clone().into_iter() {
+                        unit_mut!(self, uid)?.dead = true;
+                    }
+                }
+                info!(
+                    "[LOGI_FALLBACK] objective {:?} had no coverage zone for side {:?}, spawned default {} group",
+                    oid, side, template_name
+                );
+            }
+        }
+        Ok(())
+    }
+
     fn init_carrier_template_groups(
         &mut self,
         spctx: &SpawnCtx,
@@ -1194,6 +1275,9 @@ impl Db {
                 }
             }
         }
+
+        t.ensure_default_logi_coverage(&spctx, idx)
+            .context("ensure_default_logi_coverage failed")?;
 
         // Index carrier template groups BEFORE slot initialization
         // This ensures carrier objectives exist so slots on carriers can be associated with them

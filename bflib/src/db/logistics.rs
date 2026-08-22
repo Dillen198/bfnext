@@ -1655,6 +1655,14 @@ impl Db {
         Ok(())
     }
 
+    /// Nearest same-owner logistics hub for `obj`, regardless of whether
+    /// `obj` is LOGISTICS_DETACHED -- detached objectives still need a
+    /// supplier hub assigned (and added to that hub's destination list) so
+    /// they're considered for delivery at all. deliver_supplies_from_logistics_hubs
+    /// is what decides convoy vs. instant vs. air transport based on the
+    /// detached flag; excluding detached objectives here instead would mean
+    /// they never get any supplier and so never receive any delivery, not
+    /// even a convoy.
     pub(super) fn compute_supplier(&self, obj: &Objective) -> Result<Option<ObjectiveId>> {
         Ok(self
             .persisted
@@ -1662,7 +1670,7 @@ impl Db {
             .into_iter()
             .fold(Ok::<_, anyhow::Error>(None), |acc, id| {
                 let logi = objective!(self, id)?;
-                if obj.logistics_detached || logi.owner != obj.owner {
+                if logi.owner != obj.owner {
                     acc
                 } else {
                     let dist =
