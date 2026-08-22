@@ -28,6 +28,16 @@ struct SpecialSamCmd {
 }
 
 #[derive(Args, Clone, Debug, Serialize)]
+struct FixLogiCoverageCmd {
+    /// source mission file to read (left untouched)
+    #[clap(long)]
+    input: PathBuf,
+    /// fixed mission file to write
+    #[clap(long)]
+    output: PathBuf,
+}
+
+#[derive(Args, Clone, Debug, Serialize)]
 struct MizCmd {
     /// the final miz file to output
     #[clap(long)]
@@ -47,13 +57,30 @@ struct MizCmd {
     #[clap(long, default_value = "BINVENTORY")]
     blue_production_template: String,
     #[clap(long, default_value = "RINVENTORY")]
-    red_production_template: String
+    red_production_template: String,
+    /// override the mission's date and start time with the current real-world
+    /// local date/time (of the machine running bftools)
+    #[clap(long)]
+    live_time: bool,
+    /// override the mission's ground-level temperature, QNH, and wind with
+    /// live real-world weather (fetched from open-meteo.com, no API key
+    /// required). Upper winds and clouds are left as authored in the options
+    /// template. Requires --live-weather-lat and --live-weather-lon
+    #[clap(long)]
+    live_weather: bool,
+    /// latitude to fetch live weather for, required by --live-weather
+    #[clap(long)]
+    live_weather_lat: Option<f64>,
+    /// longitude to fetch live weather for, required by --live-weather
+    #[clap(long)]
+    live_weather_lon: Option<f64>,
 }
 
 #[derive(Subcommand, Clone, Debug, Serialize)]
 enum Tools {
     Miz(MizCmd),
     SpecialSam(SpecialSamCmd),
+    FixLogiCoverage(FixLogiCoverageCmd),
 }
 
 #[derive(Parser)]
@@ -69,6 +96,7 @@ fn main() -> Result<()> {
     match bftools_args.tool {
         Tools::Miz(cfg) => mission_edit::run(&cfg)?,
         Tools::SpecialSam(cfg) => mission_edit::run_special_sam(&cfg)?,
+        Tools::FixLogiCoverage(cfg) => mission_edit::run_fix_logi_coverage(&cfg)?,
     };
     Ok(())
 }

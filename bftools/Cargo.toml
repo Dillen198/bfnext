@@ -26,3 +26,5 @@ walkdir = "2.4.0"
 dcso3 = { version = "0.1", path = "../dcso3" }
 compact_str = { version = "0.8", features = ["serde"] }
 nalgebra = { version = "0.33", features = ["serde-serialize"] }
+chrono = "0.4"
+ureq = "2"

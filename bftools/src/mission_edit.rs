@@ -14,6 +14,7 @@
 //repack miz
 use crate::{MizCmd, SpecialSamCmd};
 use anyhow::{anyhow, bail, Context, Result};
+use chrono::{Datelike, Timelike};
 use compact_str::format_compact;
 use dcso3::{
     azumith2d, change_heading,
@@ -1467,6 +1468,91 @@ fn compile_objectives(base: &LoadedMiz) -> Result<Vec<TriggerZone>> {
     Ok(objectives)
 }
 
+/// set the mission's date and start_time to the current real-world local
+/// date/time of the machine running bftools
+fn apply_live_time(mission: &miz::Miz<'static>) -> Result<()> {
+    let now = chrono::Local::now();
+    let date: Table = mission.raw_get("date").context("getting date table")?;
+    date.raw_set("Day", now.day() as i64)
+        .context("setting date.Day")?;
+    date.raw_set("Month", now.month() as i64)
+        .context("setting date.Month")?;
+    date.raw_set("Year", now.year() as i64)
+        .context("setting date.Year")?;
+    let start_time = now.hour() as i64 * 3600 + now.minute() as i64 * 60 + now.second() as i64;
+    mission
+        .raw_set("start_time", start_time)
+        .context("setting start_time")?;
+    info!("applied live local time to mission: {}", now.format("%Y-%m-%d %H:%M:%S"));
+    Ok(())
+}
+
+/// fetch current real-world weather at (lat, lon) from open-meteo.com (no API
+/// key required) and apply ground-level temperature, QNH, and wind to the
+/// mission's weather table. Upper winds and clouds are left as authored,
+/// since accurate free data for them isn't readily available.
+fn apply_live_weather(mission: &miz::Miz<'static>, lat: f64, lon: f64) -> Result<()> {
+    let url = format!(
+        "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,pressure_msl,wind_speed_10m,wind_direction_10m&wind_speed_unit=ms"
+    );
+    let body = ureq::get(&url)
+        .call()
+        .context("requesting live weather from open-meteo")?
+        .into_string()
+        .context("reading live weather response body")?;
+    let resp: serde_json::Value =
+        serde_json::from_str(&body).context("parsing live weather response")?;
+    let current = resp
+        .get("current")
+        .context("live weather response missing 'current'")?;
+    let temp_c = current
+        .get("temperature_2m")
+        .and_then(|v| v.as_f64())
+        .context("live weather response missing temperature_2m")?;
+    let pressure_hpa = current
+        .get("pressure_msl")
+        .and_then(|v| v.as_f64())
+        .context("live weather response missing pressure_msl")?;
+    let wind_speed_ms = current
+        .get("wind_speed_10m")
+        .and_then(|v| v.as_f64())
+        .context("live weather response missing wind_speed_10m")?;
+    let wind_from_dir = current
+        .get("wind_direction_10m")
+        .and_then(|v| v.as_f64())
+        .context("live weather response missing wind_direction_10m")?;
+    // DCS's wind direction is the direction the wind blows TOWARD, the
+    // opposite of the real-world meteorological "from" convention
+    let wind_to_dir = (wind_from_dir + 180.0) % 360.0;
+    let qnh_mmhg = (pressure_hpa * 0.750062).round() as i64;
+
+    let weather: Table = mission.raw_get("weather").context("getting weather table")?;
+    let season: Table = weather
+        .raw_get("season")
+        .context("getting weather.season table")?;
+    season
+        .raw_set("temperature", temp_c.round() as i64)
+        .context("setting weather.season.temperature")?;
+    weather.raw_set("qnh", qnh_mmhg).context("setting weather.qnh")?;
+    let wind: Table = weather.raw_get("wind").context("getting weather.wind table")?;
+    let at_ground: Table = wind
+        .raw_get("atGround")
+        .context("getting weather.wind.atGround table")?;
+    at_ground
+        .raw_set("speed", wind_speed_ms)
+        .context("setting weather.wind.atGround.speed")?;
+    at_ground
+        .raw_set("dir", wind_to_dir.round() as i64)
+        .context("setting weather.wind.atGround.dir")?;
+    info!(
+        "applied live weather at ({lat}, {lon}) to mission: {}C, {qnh_mmhg}mmHg, ground wind {}m/s @ {}deg (upper winds and clouds left as authored)",
+        temp_c.round() as i64,
+        wind_speed_ms,
+        wind_to_dir.round() as i64,
+    );
+    Ok(())
+}
+
 pub fn run(cfg: &MizCmd) -> Result<()> {
     let lua = Box::leak(Box::new(Lua::new()));
     lua.gc_stop();
@@ -1525,6 +1611,40 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
     base.mission
         .raw_set("forcedOptions", forced_options)
         .context("setting forcedOptions on base mission")?;
+    // copy weather/time settings configured in the options template mission
+    let weather: Table = options_template
+        .mission
+        .raw_get("weather")
+        .context("getting weather from options template")?;
+    base.mission
+        .raw_set("weather", weather)
+        .context("setting weather on base mission")?;
+    let date: Value = options_template
+        .mission
+        .raw_get("date")
+        .context("getting date from options template")?;
+    base.mission
+        .raw_set("date", date)
+        .context("setting date on base mission")?;
+    let start_time: Value = options_template
+        .mission
+        .raw_get("start_time")
+        .context("getting start_time from options template")?;
+    base.mission
+        .raw_set("start_time", start_time)
+        .context("setting start_time on base mission")?;
+    if cfg.live_time {
+        apply_live_time(&base.mission).context("applying live time")?;
+    }
+    if cfg.live_weather {
+        let lat = cfg
+            .live_weather_lat
+            .ok_or_else(|| anyhow!("--live-weather requires --live-weather-lat"))?;
+        let lon = cfg
+            .live_weather_lon
+            .ok_or_else(|| anyhow!("--live-weather requires --live-weather-lon"))?;
+        apply_live_weather(&base.mission, lat, lon).context("applying live weather")?;
+    }
     let s = serialize_to_lua("mission", Value::Table((&*base.mission).clone()))?;
     fs::write(&base.miz.files["mission"], &s)
         .context("writing mission file with forced options")?;
@@ -1731,6 +1851,156 @@ pub fn run_special_sam(cfg: &SpecialSamCmd) -> Result<()> {
             cfg_path
         );
     }
+    Ok(())
+}
+
+/// For every Airbase/FOB/Logistics-hub objective zone (name prefix "O" +
+/// AB/FO/LO) that has no "G...LOGI..." coverage zone inside its radius, add
+/// a new unprefixed "GLOGIA-N" coverage zone at that objective's own center.
+///
+/// bflib's mission-init (see bflib::db::mizinit::init_objective_group) spawns
+/// each side's logistics-defense group by cloning the RLOGI/BLOGI template
+/// at the position of a "G<template>-N" trigger zone, then associating the
+/// clone with whichever objective zone contains that position. An objective
+/// with no such zone inside it never gets a logistics group at all -- not
+/// "damaged", genuinely absent -- which is why its Logi stat sits at 0% and
+/// repair crates have nothing to revive there.
+///
+/// An unprefixed template name ("LOGIA", not "RLOGIA"/"BLOGIA") resolves to
+/// whichever side currently owns the objective automatically at mission
+/// init (see ObjGroup::template), so one zone per objective is enough
+/// regardless of which side holds it or if it changes hands later.
+pub fn run_fix_logi_coverage(cfg: &crate::FixLogiCoverageCmd) -> Result<()> {
+    let lua = Box::leak(Box::new(Lua::new()));
+    lua.gc_stop();
+    let lua = unsafe {
+        LUA = lua;
+        &*LUA
+    };
+    let loaded = LoadedMiz::new(lua, &cfg.input).context("loading mission")?;
+
+    struct ObjZone {
+        name: std::string::String,
+        pos: na::base::Vector2<f64>,
+        radius: f64,
+    }
+    let mut obj_zones: Vec<ObjZone> = vec![];
+    let mut glogi_positions: Vec<na::base::Vector2<f64>> = vec![];
+    let mut max_zone_id: i64 = 0;
+    let mut max_glogia_n: i64 = 0;
+    let mut template_zone: Option<Table<'static>> = None;
+
+    for tz in loaded.mission.triggers()? {
+        let tz = tz?;
+        let name = tz.name()?;
+        let name = name.as_str();
+
+        if let Ok(id) = tz.raw_get::<_, i64>("zoneId") {
+            max_zone_id = max_zone_id.max(id);
+        }
+
+        if let Some(rest) = name.strip_prefix('G') {
+            let base = rest.rsplit_once('-').map(|(l, _)| l).unwrap_or(rest);
+            if base.contains("LOGI") {
+                if let Ok(pos) = tz.pos() {
+                    glogi_positions.push(pos);
+                }
+                if base == "LOGIA" {
+                    if template_zone.is_none() {
+                        template_zone = Some((*tz).clone());
+                    }
+                    if let Some((_, n)) = name.rsplit_once('-') {
+                        if let Ok(n) = n.parse::<i64>() {
+                            max_glogia_n = max_glogia_n.max(n);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if let Some(rest) = name.strip_prefix('O') {
+            if rest.len() < 3 {
+                continue;
+            }
+            let kind_ok = rest.starts_with("AB") || rest.starts_with("FO") || rest.starts_with("LO");
+            if !kind_ok {
+                continue;
+            }
+            if let (Ok(pos), Ok(TriggerZoneTyp::Circle { radius })) = (tz.pos(), tz.typ()) {
+                obj_zones.push(ObjZone {
+                    name: std::string::String::from(name),
+                    pos,
+                    radius,
+                });
+            }
+        }
+    }
+
+    let template_zone = template_zone
+        .ok_or_else(|| anyhow!("no existing GLOGIA-N zone found in {:?} to use as a template", cfg.input))?;
+    let template_radius: f64 = template_zone.raw_get("radius")?;
+    let template_color: Table = template_zone.raw_get("color")?;
+    let template_hidden: bool = template_zone.raw_get("hidden")?;
+    let template_heading: f64 = template_zone.raw_get("heading")?;
+    let template_type: i64 = template_zone.raw_get("type")?;
+
+    let zones: Table = loaded
+        .mission
+        .raw_get::<_, Table>("triggers")?
+        .raw_get("zones")?;
+    let mut next_index = zones.raw_len() as i64;
+    let mut added = 0usize;
+
+    for oz in &obj_zones {
+        let covered = glogi_positions.iter().any(|p| {
+            let dx = p.x - oz.pos.x;
+            let dy = p.y - oz.pos.y;
+            (dx * dx + dy * dy).sqrt() <= oz.radius
+        });
+        if covered {
+            continue;
+        }
+        max_glogia_n += 1;
+        max_zone_id += 1;
+        next_index += 1;
+
+        let color = lua.create_table()?;
+        for i in 1..=4i64 {
+            let v: f64 = template_color.raw_get(i)?;
+            color.raw_set(i, v)?;
+        }
+
+        let zone_name = format_compact!("GLOGIA-{max_glogia_n}");
+        let zone = lua.create_table()?;
+        zone.raw_set("radius", template_radius)?;
+        zone.raw_set("zoneId", max_zone_id)?;
+        zone.raw_set("color", color)?;
+        zone.raw_set("properties", lua.create_table()?)?;
+        zone.raw_set("hidden", template_hidden)?;
+        zone.raw_set("y", oz.pos.y)?;
+        zone.raw_set("x", oz.pos.x)?;
+        zone.raw_set("name", zone_name.as_str())?;
+        zone.raw_set("heading", template_heading)?;
+        zone.raw_set("type", template_type)?;
+
+        zones.raw_set(next_index, zone)?;
+        added += 1;
+        info!(
+            "added {zone_name} at ({:.0}, {:.0}) for {}",
+            oz.pos.x, oz.pos.y, oz.name
+        );
+    }
+
+    info!(
+        "added {added} coverage zone(s) out of {} objective zone(s) checked",
+        obj_zones.len()
+    );
+
+    let s = serialize_to_lua("mission", Value::Table((&*loaded.mission).clone()))?;
+    fs::write(&loaded.miz.files["mission"], &s).context("writing fixed mission file")?;
+    loaded.miz.pack(&cfg.output).context("repacking mission")?;
+    info!("wrote fixed mission to {:?}", cfg.output);
     Ok(())
 }
 
