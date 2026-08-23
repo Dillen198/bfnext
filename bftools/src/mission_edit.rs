@@ -21,7 +21,10 @@ use dcso3::{
     coalition::Side,
     controller::{MissionPoint, PointType},
     country::Country,
-    env::miz::{self, Group, Miz, Property, Skill, TriggerZoneTyp},
+    env::{
+        miz::{self, Group, Miz, Property, Skill, TriggerZoneTyp},
+        miz_pack::serialize_to_lua,
+    },
     normal2, path, pointing_towards2, value_to_json, DcsTableExt, LuaVec2, Quad2, Sequence, String,
     Vector2,
 };
@@ -32,10 +35,8 @@ use serde_derive::Serialize;
 use std::{
     collections::HashMap,
     f64::consts::PI,
-    fmt::Display,
     fs::{self, File},
     io::{self, BufWriter},
-    panic::AssertUnwindSafe,
     path::{Path, PathBuf},
     ptr,
     str::FromStr,
@@ -152,129 +153,46 @@ impl UnpackedMiz {
 
     fn pack(&self, destination_file: &Path) -> Result<()> {
         info!("repacking current miz to: {destination_file:?}");
-        let file = File::create(&destination_file)
-            .with_context(|| format_compact!("creating {:?}", destination_file))?;
-        let zip_file = BufWriter::new(file);
-        let mut zip_writer = ZipWriter::new(zip_file);
-        for (_, file_path) in &self.files {
-            if file_path.is_dir() {
-                continue;
+        // Write to a temp file next to the destination and only rename it
+        // into place once the archive is fully and successfully written, so
+        // a failure partway through (disk full, killed process, panic)
+        // never leaves a truncated/corrupt file at destination_file -- this
+        // matters when destination_file is a live mission a server is about
+        // to reload.
+        let tmp_path = destination_file.with_extension("miz.tmp");
+        {
+            let file = File::create(&tmp_path)
+                .with_context(|| format_compact!("creating {:?}", tmp_path))?;
+            let zip_file = BufWriter::new(file);
+            let mut zip_writer = ZipWriter::new(zip_file);
+            for (_, file_path) in &self.files {
+                if file_path.is_dir() {
+                    continue;
+                }
+                let mut file = File::open(file_path)
+                    .with_context(|| format_compact!("opening file {:?}", file_path))?;
+                let relative_path = file_path.strip_prefix(&self.root).with_context(|| {
+                    format_compact!("stripping {:?} from file {file_path:?}", self.root)
+                })?;
+                // the zip format always uses forward slashes regardless of
+                // host OS -- PathBuf::to_string_lossy() on Windows renders
+                // backslashes, which produces non-standard entry names that
+                // DCS may fail to resolve (e.g. l10n\DEFAULT\foo.jpg instead
+                // of l10n/DEFAULT/foo.jpg)
+                let entry_name = relative_path.to_string_lossy().replace('\\', "/");
+                zip_writer
+                    .start_file(entry_name, FileOptions::default())
+                    .context("starting zip file")?;
+                io::copy(&mut file, &mut zip_writer).context("writing to zip file")?;
+                info!("added {file_path:?} to archive");
             }
-            let mut file = File::open(file_path)
-                .with_context(|| format_compact!("opening file {:?}", file_path))?;
-            let relative_path = file_path.strip_prefix(&self.root).with_context(|| {
-                format_compact!("stripping {:?} from file {file_path:?}", self.root)
-            })?;
-            zip_writer
-                .start_file(relative_path.to_string_lossy(), FileOptions::default())
-                .context("starting zip file")?;
-            io::copy(&mut file, &mut zip_writer).context("writing to zip file")?;
-            info!("added {file_path:?} to archive");
+            zip_writer.finish().context("finishing zip")?;
         }
+        fs::rename(&tmp_path, destination_file).with_context(|| {
+            format_compact!("replacing {:?} with {:?}", destination_file, tmp_path)
+        })?;
         info!("{destination_file:?} good to go!");
         Ok(())
-    }
-}
-
-struct LuaSerVal {
-    value: Value<'static>,
-    level: usize,
-}
-
-impl LuaSerVal {
-    fn indented(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for _ in 0..self.level {
-            write!(f, " ")?;
-        }
-        Ok(())
-    }
-}
-
-impl Display for LuaSerVal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.value {
-            Value::Boolean(b) => write!(f, "{b}"),
-            Value::Integer(i) => write!(f, "{i}"),
-            Value::Nil => write!(f, "nil"),
-            Value::Number(n) => write!(f, "{n}"),
-            Value::String(s) => write!(f, "\"{}\"", s.to_string_lossy()),
-            Value::Table(tbl) => {
-                macro_rules! write_elt {
-                    ($k:expr, $v:expr) => {
-                        let k = LuaSerVal {
-                            value: $k,
-                            level: self.level + 4,
-                        };
-                        let v = LuaSerVal {
-                            value: $v,
-                            level: self.level + 4,
-                        };
-                        k.indented(f).unwrap();
-                        if v.value.is_table() {
-                            write!(f, "[{k}] = {v}, -- end of [{k}]\n").unwrap();
-                        } else {
-                            write!(f, "[{k}] = {v},\n").unwrap();
-                        }
-                    };
-                }
-                let mut seq_max: Option<i64> = None;
-                write!(f, "\n")?;
-                self.indented(f)?;
-                write!(f, "{{\n")?;
-                if tbl.contains_key(1).unwrap() {
-                    for (i, v) in tbl.clone().sequence_values().enumerate() {
-                        let i = (i + 1) as i64;
-                        let v = v.unwrap();
-                        seq_max = Some(i);
-                        write_elt!(Value::Integer(i), v);
-                    }
-                }
-                tbl.for_each(|k: Value, v: Value| {
-                    if let Some(max) = seq_max {
-                        if k.is_integer() && k.as_integer().unwrap() <= max {
-                            return Ok(());
-                        }
-                    }
-                    write_elt!(k, v);
-                    Ok(())
-                })
-                .unwrap();
-                self.indented(f)?;
-                write!(f, "}}")
-            }
-            Value::Error(_)
-            | Value::Function(_)
-            | Value::LightUserData(_)
-            | Value::Thread(_)
-            | Value::UserData(_) => panic!("value type {:?} can't be serialized", self.value),
-        }
-    }
-}
-
-fn serialize_to_lua(key: &str, value: Value<'static>) -> Result<std::string::String> {
-    let res = std::panic::catch_unwind(AssertUnwindSafe(move || {
-        use std::fmt::Write;
-        let mut s = std::string::String::with_capacity(128 * 1024 * 1024);
-        write!(s, "{key} = {}", LuaSerVal { value, level: 0 })?;
-        Ok::<_, anyhow::Error>(s)
-    }));
-    match res {
-        Ok(s) => Ok(s?),
-        Err(e) => {
-            if let Some(e) = e.downcast_ref::<anyhow::Error>() {
-                bail!("{e}");
-            }
-            if let Some(e) = e.downcast_ref::<&str>() {
-                bail!("{e}")
-            }
-            if let Some(e) = e.downcast_ref::<std::string::String>() {
-                bail!("{e}")
-            }
-            if let Some(e) = e.downcast_ref::<mlua::Error>() {
-                bail!("{e}")
-            }
-            bail!("serialization failed")
-        }
     }
 }
 
@@ -1488,14 +1406,21 @@ fn apply_live_time(mission: &miz::Miz<'static>) -> Result<()> {
 }
 
 /// fetch current real-world weather at (lat, lon) from open-meteo.com (no API
-/// key required) and apply ground-level temperature, QNH, and wind to the
-/// mission's weather table. Upper winds and clouds are left as authored,
-/// since accurate free data for them isn't readily available.
+/// key required) and apply temperature, QNH, wind (ground plus two upper
+/// bands), clouds, and fog/dust obscurant state to the mission's weather
+/// table.
 fn apply_live_weather(mission: &miz::Miz<'static>, lat: f64, lon: f64) -> Result<()> {
     let url = format!(
-        "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,pressure_msl,wind_speed_10m,wind_direction_10m&wind_speed_unit=ms"
+        "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=\
+         temperature_2m,dew_point_2m,pressure_msl,\
+         wind_speed_10m,wind_direction_10m,\
+         wind_speed_700hPa,wind_direction_700hPa,\
+         wind_speed_300hPa,wind_direction_300hPa,\
+         cloud_cover,precipitation,visibility\
+         &wind_speed_unit=ms"
     );
     let body = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(10))
         .call()
         .context("requesting live weather from open-meteo")?
         .into_string()
@@ -1505,25 +1430,28 @@ fn apply_live_weather(mission: &miz::Miz<'static>, lat: f64, lon: f64) -> Result
     let current = resp
         .get("current")
         .context("live weather response missing 'current'")?;
-    let temp_c = current
-        .get("temperature_2m")
-        .and_then(|v| v.as_f64())
-        .context("live weather response missing temperature_2m")?;
-    let pressure_hpa = current
-        .get("pressure_msl")
-        .and_then(|v| v.as_f64())
-        .context("live weather response missing pressure_msl")?;
-    let wind_speed_ms = current
-        .get("wind_speed_10m")
-        .and_then(|v| v.as_f64())
-        .context("live weather response missing wind_speed_10m")?;
-    let wind_from_dir = current
-        .get("wind_direction_10m")
-        .and_then(|v| v.as_f64())
-        .context("live weather response missing wind_direction_10m")?;
+    let get = |key: &'static str| -> Result<f64> {
+        current
+            .get(key)
+            .and_then(|v| v.as_f64())
+            .with_context(|| format!("live weather response missing {key}"))
+    };
+    let temp_c = get("temperature_2m")?;
+    let dew_point_c = get("dew_point_2m")?;
+    let pressure_hpa = get("pressure_msl")?;
+    let wind_speed_ground = get("wind_speed_10m")?;
+    let wind_from_dir_ground = get("wind_direction_10m")?;
+    let wind_speed_2000 = get("wind_speed_700hPa")?;
+    let wind_from_dir_2000 = get("wind_direction_700hPa")?;
+    let wind_speed_8000 = get("wind_speed_300hPa")?;
+    let wind_from_dir_8000 = get("wind_direction_300hPa")?;
+    let cloud_cover_pct = get("cloud_cover")?;
+    let precipitation_mm = get("precipitation")?;
+    let visibility_m = get("visibility")?;
+
     // DCS's wind direction is the direction the wind blows TOWARD, the
     // opposite of the real-world meteorological "from" convention
-    let wind_to_dir = (wind_from_dir + 180.0) % 360.0;
+    let to_dir = |from_dir: f64| (from_dir + 180.0) % 360.0;
     let qnh_mmhg = (pressure_hpa * 0.750062).round() as i64;
 
     let weather: Table = mission.raw_get("weather").context("getting weather table")?;
@@ -1534,23 +1462,449 @@ fn apply_live_weather(mission: &miz::Miz<'static>, lat: f64, lon: f64) -> Result
         .raw_set("temperature", temp_c.round() as i64)
         .context("setting weather.season.temperature")?;
     weather.raw_set("qnh", qnh_mmhg).context("setting weather.qnh")?;
+
     let wind: Table = weather.raw_get("wind").context("getting weather.wind table")?;
-    let at_ground: Table = wind
-        .raw_get("atGround")
-        .context("getting weather.wind.atGround table")?;
-    at_ground
-        .raw_set("speed", wind_speed_ms)
-        .context("setting weather.wind.atGround.speed")?;
-    at_ground
-        .raw_set("dir", wind_to_dir.round() as i64)
-        .context("setting weather.wind.atGround.dir")?;
+    let set_wind_band = |band: &'static str, speed: f64, dir: f64| -> Result<()> {
+        let t: Table = wind
+            .raw_get(band)
+            .with_context(|| format!("getting weather.wind.{band} table"))?;
+        t.raw_set("speed", speed)
+            .with_context(|| format!("setting weather.wind.{band}.speed"))?;
+        t.raw_set("dir", dir.round() as i64)
+            .with_context(|| format!("setting weather.wind.{band}.dir"))?;
+        Ok(())
+    };
+    set_wind_band("atGround", wind_speed_ground, to_dir(wind_from_dir_ground))?;
+    // at2000/at8000 are approximated from the nearest standard pressure
+    // levels (700hPa ~ 3000m, 300hPa ~ 9000m in a standard atmosphere) --
+    // open-meteo doesn't offer wind at DCS's exact meter-based altitude
+    // bands, but real directional shear is still far better than repeating
+    // the ground reading, and this mirrors what dcs-real-weather itself
+    // does when its OpenMeteo winds-aloft provider is enabled.
+    set_wind_band("at2000", wind_speed_2000, to_dir(wind_from_dir_2000))?;
+    set_wind_band("at8000", wind_speed_8000, to_dir(wind_from_dir_8000))?;
+
+    // Cloud base estimated from the temperature/dew point spread via the
+    // standard Espy lifted-condensation-level approximation (~125m per
+    // degree C of spread) -- open-meteo doesn't expose cloud base directly.
+    let cloud_base_m = (125.0 * (temp_c - dew_point_c).max(0.0)).clamp(300.0, 6000.0);
+    let cloud_density = ((cloud_cover_pct / 100.0) * 10.0).round().clamp(0.0, 10.0) as i64;
+    let cloud_thickness_m = if cloud_density > 0 {
+        (200.0 + (cloud_density as f64 / 10.0) * 1800.0).round() as i64
+    } else {
+        0
+    };
+    let clouds: Table = weather.raw_get("clouds").context("getting weather.clouds table")?;
+    // empty preset so DCS uses the density/thickness/base fields below
+    // directly instead of a named preset's built-in visuals
+    clouds.raw_set("preset", "").context("clearing clouds.preset")?;
+    clouds.raw_set("density", cloud_density).context("setting clouds.density")?;
+    clouds.raw_set("thickness", cloud_thickness_m).context("setting clouds.thickness")?;
+    clouds
+        .raw_set("base", cloud_base_m.round() as i64)
+        .context("setting clouds.base")?;
+    // rain only -- DCS's snow precipitation constant isn't confidently
+    // known here, so snowfall is intentionally left unhandled rather than
+    // risk setting the wrong effect
+    let iprecptns = if cloud_density >= 5 && precipitation_mm > 0.2 { 1 } else { 0 };
+    clouds.raw_set("iprecptns", iprecptns).context("setting clouds.iprecptns")?;
+
     info!(
-        "applied live weather at ({lat}, {lon}) to mission: {}C, {qnh_mmhg}mmHg, ground wind {}m/s @ {}deg (upper winds and clouds left as authored)",
+        "applied live weather at ({lat}, {lon}) to mission: {}C, {qnh_mmhg}mmHg, ground wind {wind_speed_ground}m/s @ {}deg, \
+         cloud cover {cloud_cover_pct}% (density {cloud_density}, base {}m), precipitation {precipitation_mm}mm",
         temp_c.round() as i64,
-        wind_speed_ms,
-        wind_to_dir.round() as i64,
+        to_dir(wind_from_dir_ground).round() as i64,
+        cloud_base_m.round() as i64,
     );
+
+    apply_live_obscurants(&weather, lat, lon, visibility_m).context("applying live fog/dust state")?;
     Ok(())
+}
+
+/// Fog and dust storm are mutually exclusive in DCS -- the Mission Editor
+/// disables one when the other is enabled -- so this fetches real dust
+/// concentration (open-meteo's air quality API, a separate host from the
+/// main weather API above) and picks at most one obscurant: dust if the air
+/// quality reading calls for it, otherwise fog if ground visibility is
+/// poor, otherwise neither.
+///
+/// dust_density and fog.visibility are both actually visibility distances
+/// in meters despite the field name "density" -- lower means a worse storm.
+/// Confirmed against the mission editor: a saved dust storm showing
+/// "visibility: 5000 feet" in the UI serialized to `dust_density = 1524`,
+/// which is exactly 5000ft in meters.
+const DUST_ON_THRESHOLD_UGM3: f64 = 50.0;
+const DUST_MAX_UGM3: f64 = 800.0;
+const DUST_VISIBILITY_MIN_M: f64 = 300.0;
+const DUST_VISIBILITY_MAX_M: f64 = 3000.0;
+const FOG_ON_THRESHOLD_M: f64 = 3000.0;
+
+fn apply_live_obscurants(weather: &Table, lat: f64, lon: f64, visibility_m: f64) -> Result<()> {
+    let url = format!(
+        "https://air-quality-api.open-meteo.com/v1/air-quality?latitude={lat}&longitude={lon}&current=dust"
+    );
+    let body = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .context("requesting live dust data from open-meteo")?
+        .into_string()
+        .context("reading live dust response body")?;
+    let resp: serde_json::Value =
+        serde_json::from_str(&body).context("parsing live dust response")?;
+    let dust_ugm3 = resp.get("current").and_then(|c| c.get("dust")).and_then(|v| v.as_f64());
+
+    let fog: Table = weather.raw_get("fog").context("getting weather.fog table")?;
+    let dust_active = match dust_ugm3 {
+        Some(d) if d >= DUST_ON_THRESHOLD_UGM3 => Some(d),
+        _ => None,
+    };
+
+    if let Some(dust_ugm3) = dust_active {
+        let frac = ((dust_ugm3 - DUST_ON_THRESHOLD_UGM3) / (DUST_MAX_UGM3 - DUST_ON_THRESHOLD_UGM3))
+            .clamp(0.0, 1.0);
+        // worse dust (higher ug/m3) -> lower visibility
+        let visibility =
+            (DUST_VISIBILITY_MAX_M - frac * (DUST_VISIBILITY_MAX_M - DUST_VISIBILITY_MIN_M)).round() as i64;
+        weather.raw_set("enable_dust", true).context("enabling dust storm")?;
+        weather.raw_set("dust_density", visibility).context("setting dust_density")?;
+        weather.raw_set("enable_fog", false).context("disabling fog for dust")?;
+        info!(
+            "live dust reading {dust_ugm3}ug/m3 at ({lat}, {lon}) -> dust storm enabled, visibility {visibility}m"
+        );
+    } else if visibility_m < FOG_ON_THRESHOLD_M {
+        weather.raw_set("enable_fog", true).context("enabling fog")?;
+        weather.raw_set("enable_dust", false).context("disabling dust for fog")?;
+        fog.raw_set("visibility", visibility_m.round() as i64)
+            .context("setting fog.visibility")?;
+        fog.raw_set("thickness", 200).context("setting fog.thickness")?;
+        info!("live visibility {visibility_m}m at ({lat}, {lon}) -> fog enabled");
+    } else {
+        weather.raw_set("enable_dust", false).context("disabling dust storm")?;
+        weather.raw_set("enable_fog", false).context("disabling fog")?;
+        match dust_ugm3 {
+            Some(d) => info!(
+                "live dust reading {d}ug/m3, visibility {visibility_m}m at ({lat}, {lon}) -- clear, dust and fog disabled"
+            ),
+            None => warn!(
+                "no live dust reading available at ({lat}, {lon}); visibility {visibility_m}m -- clear, dust and fog disabled"
+            ),
+        }
+    }
+    Ok(())
+}
+
+/// Copies mission briefing text and picture files configured in the options
+/// template mission into the base mission, mirroring the weather/time copy
+/// above. Briefing text fields on `mission` (descriptionText,
+/// descriptionBlueTask, descriptionRedTask, descriptionNeutralsTask) are DCS
+/// "DictKey_..." lookups into the l10n/DEFAULT/dictionary file, so the
+/// referenced dictionary entries are merged in alongside the field values.
+/// Picture fields (pictureFileNameN/R/B/Server) are NOT plain filenames --
+/// each entry is a "ResKey_..." lookup into l10n/DEFAULT/mapResource, which
+/// maps that key to the actual image filename (and multiple ResKeys can
+/// point at the same file). So both the mapResource entries and the actual
+/// image files they point to need to be copied over.
+fn copy_briefing(lua: &'static Lua, options_template: &LoadedMiz, base: &mut LoadedMiz) -> Result<()> {
+    const DESCRIPTION_FIELDS: [&str; 4] = [
+        "descriptionText",
+        "descriptionBlueTask",
+        "descriptionRedTask",
+        "descriptionNeutralsTask",
+    ];
+    const PICTURE_FIELDS: [&str; 4] = [
+        "pictureFileNameN",
+        "pictureFileNameR",
+        "pictureFileNameB",
+        "pictureFileNameServer",
+    ];
+
+    let mut dict_keys: Vec<std::string::String> = vec![];
+    for field in DESCRIPTION_FIELDS {
+        let v: Value = options_template
+            .mission
+            .raw_get(field)
+            .with_context(|| format_compact!("getting {field} from options template"))?;
+        if let Value::String(ref s) = v {
+            dict_keys.push(s.to_str()?.to_string());
+        }
+        base.mission
+            .raw_set(field, v)
+            .with_context(|| format_compact!("setting {field} on base mission"))?;
+    }
+
+    let mut picture_reskeys: Vec<std::string::String> = vec![];
+    for field in PICTURE_FIELDS {
+        // absent on older missions (e.g. pictureFileNameServer) simply
+        // reads back as Nil, which the Table check below skips over
+        let v: Value = options_template
+            .mission
+            .raw_get(field)
+            .with_context(|| format_compact!("getting {field} from options template"))?;
+        if let Value::Table(ref arr) = v {
+            for name in arr.clone().sequence_values::<mlua::String>() {
+                picture_reskeys.push(name?.to_str()?.to_string());
+            }
+        }
+        base.mission
+            .raw_set(field, v)
+            .with_context(|| format_compact!("setting {field} on base mission"))?;
+    }
+
+    if !dict_keys.is_empty() {
+        merge_dictionary_entries(lua, options_template, base, &dict_keys)
+            .context("merging briefing dictionary entries")?;
+    }
+    if !picture_reskeys.is_empty() {
+        merge_map_resource_entries(lua, options_template, base, &picture_reskeys)
+            .context("merging briefing picture resources")?;
+    }
+    Ok(())
+}
+
+fn merge_map_resource_entries(
+    lua: &'static Lua,
+    options_template: &LoadedMiz,
+    base: &mut LoadedMiz,
+    reskeys: &[std::string::String],
+) -> Result<()> {
+    let opts_map_path = match options_template.miz.files.get("l10n/DEFAULT/mapResource") {
+        Some(p) => p.clone(),
+        None => return Ok(()), // options template has no mapResource, nothing to merge
+    };
+    let opts_content = fs::read_to_string(&opts_map_path)
+        .with_context(|| format_compact!("reading {opts_map_path:?}"))?;
+    lua.load(&opts_content)
+        .exec()
+        .context("loading options mapResource into lua")?;
+    let opts_map: Table = lua
+        .globals()
+        .raw_get("mapResource")
+        .context("extracting options mapResource")?;
+
+    let base_map_path = base.miz.files.get("l10n/DEFAULT/mapResource").cloned();
+    let base_map: Table = match &base_map_path {
+        Some(p) => {
+            let content =
+                fs::read_to_string(p).with_context(|| format_compact!("reading {p:?}"))?;
+            lua.load(&content)
+                .exec()
+                .context("loading base mapResource into lua")?;
+            lua.globals()
+                .raw_get("mapResource")
+                .context("extracting base mapResource")?
+        }
+        None => lua.create_table().context("creating new mapResource table")?,
+    };
+
+    let mut filenames: Vec<std::string::String> = vec![];
+    let mut copied = 0;
+    for reskey in reskeys {
+        let v: Value = opts_map.raw_get(reskey.as_str())?;
+        if let Value::String(ref s) = v {
+            let filename = s.to_str()?.to_string();
+            if !filenames.contains(&filename) {
+                filenames.push(filename);
+            }
+            base_map.raw_set(reskey.as_str(), v.clone())?;
+            copied += 1;
+        } else {
+            warn!(
+                "options template references picture {reskey:?} but it has no entry in l10n/DEFAULT/mapResource"
+            );
+        }
+    }
+    if copied == 0 {
+        return Ok(());
+    }
+
+    let s = serialize_to_lua("mapResource", Value::Table(base_map))?;
+    let dest_path = match base_map_path {
+        Some(p) => p,
+        None => {
+            let p = base.miz.root.join("l10n").join("DEFAULT").join("mapResource");
+            fs::create_dir_all(p.parent().unwrap())
+                .with_context(|| format_compact!("creating {:?}", p.parent()))?;
+            base.miz
+                .files
+                .insert(String::from("l10n/DEFAULT/mapResource"), p.clone());
+            p
+        }
+    };
+    fs::write(&dest_path, &s).with_context(|| format_compact!("writing {dest_path:?}"))?;
+    info!("merged {copied} briefing picture resource keys from options template");
+
+    for filename in filenames {
+        copy_l10n_file(options_template, base, &filename)
+            .with_context(|| format_compact!("copying briefing picture {filename}"))?;
+    }
+    Ok(())
+}
+
+fn merge_dictionary_entries(
+    lua: &'static Lua,
+    options_template: &LoadedMiz,
+    base: &mut LoadedMiz,
+    keys: &[std::string::String],
+) -> Result<()> {
+    let opts_dict_path = match options_template.miz.files.get("l10n/DEFAULT/dictionary") {
+        Some(p) => p.clone(),
+        None => return Ok(()), // options template has no dictionary, nothing to merge
+    };
+    let opts_content = fs::read_to_string(&opts_dict_path)
+        .with_context(|| format_compact!("reading {opts_dict_path:?}"))?;
+    lua.load(&opts_content)
+        .exec()
+        .context("loading options dictionary into lua")?;
+    let opts_dict: Table = lua
+        .globals()
+        .raw_get("dictionary")
+        .context("extracting options dictionary")?;
+
+    let base_dict_path = base.miz.files.get("l10n/DEFAULT/dictionary").cloned();
+    let base_dict: Table = match &base_dict_path {
+        Some(p) => {
+            let content =
+                fs::read_to_string(p).with_context(|| format_compact!("reading {p:?}"))?;
+            lua.load(&content)
+                .exec()
+                .context("loading base dictionary into lua")?;
+            lua.globals()
+                .raw_get("dictionary")
+                .context("extracting base dictionary")?
+        }
+        None => lua.create_table().context("creating new dictionary table")?,
+    };
+
+    let mut copied = 0;
+    for key in keys {
+        let v: Value = opts_dict.raw_get(key.as_str())?;
+        if !matches!(v, Value::Nil) {
+            base_dict.raw_set(key.as_str(), v)?;
+            copied += 1;
+        }
+    }
+    if copied == 0 {
+        return Ok(());
+    }
+
+    let s = serialize_to_lua("dictionary", Value::Table(base_dict))?;
+    let dest_path = match base_dict_path {
+        Some(p) => p,
+        None => {
+            let p = base.miz.root.join("l10n").join("DEFAULT").join("dictionary");
+            fs::create_dir_all(p.parent().unwrap())
+                .with_context(|| format_compact!("creating {:?}", p.parent()))?;
+            base.miz
+                .files
+                .insert(String::from("l10n/DEFAULT/dictionary"), p.clone());
+            p
+        }
+    };
+    fs::write(&dest_path, &s).with_context(|| format_compact!("writing {dest_path:?}"))?;
+    info!("merged {copied} briefing dictionary entries from options template");
+    Ok(())
+}
+
+fn copy_l10n_file(options_template: &LoadedMiz, base: &mut LoadedMiz, filename: &str) -> Result<()> {
+    let entry_name = format!("l10n/DEFAULT/{filename}");
+    let src_path = match options_template.miz.files.get(entry_name.as_str()) {
+        Some(p) => p.clone(),
+        None => {
+            warn!(
+                "options template references picture {filename:?} but it is missing from the options.miz l10n/DEFAULT folder"
+            );
+            return Ok(());
+        }
+    };
+    let dest_path = base.miz.root.join("l10n").join("DEFAULT").join(filename);
+    fs::create_dir_all(dest_path.parent().unwrap())
+        .with_context(|| format_compact!("creating {:?}", dest_path.parent()))?;
+    fs::copy(&src_path, &dest_path)
+        .with_context(|| format_compact!("copying {src_path:?} to {dest_path:?}"))?;
+    base.miz
+        .files
+        .insert(String::from(entry_name.as_str()), dest_path);
+    info!("copied briefing picture {filename} from options template");
+    Ok(())
+}
+
+/// Merges a JSON file of DCS client option overrides into the generated
+/// mission's options file (e.g. {"miscellaneous": {"f10_awacs": true}}).
+/// Objects are merged key by key, recursively, so unrelated keys already in
+/// a section (miscellaneous, difficulty, etc.) are left untouched; scalars
+/// and arrays are set directly, replacing whatever was there before.
+fn apply_options_overrides(lua: &'static Lua, options_path: &Path, overrides_path: &Path) -> Result<()> {
+    let overrides_json = fs::read_to_string(overrides_path)
+        .with_context(|| format_compact!("reading {overrides_path:?}"))?;
+    let overrides: serde_json::Value = serde_json::from_str(&overrides_json)
+        .with_context(|| format_compact!("parsing {overrides_path:?} as json"))?;
+    let content = fs::read_to_string(options_path)
+        .with_context(|| format_compact!("reading {options_path:?}"))?;
+    lua.load(&content)
+        .exec()
+        .context("loading options file into lua")?;
+    let options: Table = lua
+        .globals()
+        .raw_get("options")
+        .context("extracting options")?;
+    merge_json_into_lua_table(lua, &options, &overrides).context("merging options overrides")?;
+    let s = serialize_to_lua("options", Value::Table(options))?;
+    fs::write(options_path, &s).with_context(|| format_compact!("writing {options_path:?}"))?;
+    info!("applied options overrides from {overrides_path:?}");
+    Ok(())
+}
+
+fn merge_json_into_lua_table<'lua>(
+    lua: &'lua Lua,
+    target: &Table<'lua>,
+    json: &serde_json::Value,
+) -> Result<()> {
+    let map = match json {
+        serde_json::Value::Object(map) => map,
+        _ => bail!("options overrides must be a JSON object at every level"),
+    };
+    for (k, v) in map {
+        if let serde_json::Value::Object(_) = v {
+            let sub: Table = match target.raw_get(k.as_str())? {
+                Value::Table(t) => t,
+                _ => {
+                    let t = lua.create_table()?;
+                    target.raw_set(k.as_str(), t.clone())?;
+                    t
+                }
+            };
+            merge_json_into_lua_table(lua, &sub, v)?;
+        } else {
+            let lv = json_value_to_lua(lua, v)?;
+            target.raw_set(k.as_str(), lv)?;
+        }
+    }
+    Ok(())
+}
+
+fn json_value_to_lua<'lua>(lua: &'lua Lua, v: &serde_json::Value) -> Result<Value<'lua>> {
+    Ok(match v {
+        serde_json::Value::Null => Value::Nil,
+        serde_json::Value::Bool(b) => Value::Boolean(*b),
+        serde_json::Value::Number(n) => match n.as_i64() {
+            Some(i) => Value::Integer(i),
+            None => Value::Number(n.as_f64().context("invalid number in options overrides")?),
+        },
+        serde_json::Value::String(s) => Value::String(lua.create_string(s)?),
+        serde_json::Value::Array(items) => {
+            let t = lua.create_table()?;
+            for (i, item) in items.iter().enumerate() {
+                let lv = json_value_to_lua(lua, item)?;
+                t.raw_set((i + 1) as i64, lv)?;
+            }
+            Value::Table(t)
+        }
+        serde_json::Value::Object(_) => {
+            let t = lua.create_table()?;
+            merge_json_into_lua_table(lua, &t, v)?;
+            Value::Table(t)
+        }
+    })
 }
 
 pub fn run(cfg: &MizCmd) -> Result<()> {
@@ -1633,6 +1987,7 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
     base.mission
         .raw_set("start_time", start_time)
         .context("setting start_time on base mission")?;
+    copy_briefing(lua, &options_template, &mut base).context("copying briefing from options template")?;
     if cfg.live_time {
         apply_live_time(&base.mission).context("applying live time")?;
     }
@@ -1649,10 +2004,14 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
     fs::write(&base.miz.files["mission"], &s)
         .context("writing mission file with forced options")?;
     let source_options_path = options_template.miz.files.get("options").unwrap();
-    let destination_options_path = base.miz.files.get("options").unwrap();
-    fs::rename(source_options_path, destination_options_path)
+    let destination_options_path = base.miz.files.get("options").unwrap().clone();
+    fs::rename(source_options_path, &destination_options_path)
         .context("replacing the options file")?;
     info!("replaced options file and forced options from {:?}", &cfg.options);
+    if let Some(overrides_path) = &cfg.options_overrides {
+        apply_options_overrides(lua, &destination_options_path, overrides_path)
+            .context("applying options overrides")?;
+    }
     info!("saving finalized mission to {:?}", cfg.output);
     base.miz.pack(&cfg.output).context("repacking mission")?;
     Ok(())

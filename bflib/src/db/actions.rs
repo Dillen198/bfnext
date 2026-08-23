@@ -30,8 +30,9 @@ use dcso3::{
     centroid2d, change_heading,
     coalition::Side,
     controller::{
-        ActionTyp, AiOption, AlarmState, AltType, AttackParams, Command, GroundOption,
-        MissionPoint, OrbitPattern, PointType, Task, TurnMethod, VehicleFormation, WeaponExpend,
+        ActionTyp, AiOption, AlarmState, AltType, AttackParams, BeaconSystem, BeaconType, Command,
+        GroundOption, MissionPoint, OrbitPattern, PointType, Task, TacanBand, TurnMethod,
+        VehicleFormation, WeaponExpend,
     },
     env::miz::MizIndex,
     group::Group,
@@ -49,6 +50,52 @@ use log::{error, info, warn};
 use rand::{Rng, thread_rng};
 use smallvec::{SmallVec, smallvec};
 use std::{cmp::max, f64, vec};
+
+/// Build the task that activates a TACAN beacon for an AI aircraft, if the
+/// action's config asked for one. Falls back to the first 3 alphanumeric
+/// characters of the action's name (uppercased) as the morse callsign when
+/// `tacan_callsign` isn't set. `frequency` is a placeholder within the
+/// TACAN L-band -- DCS derives the actual beacon frequency from `channel`
+/// and `mode_channel` when both are present.
+fn tacan_beacon_task<'lua>(
+    pl: &AiPlaneCfg,
+    name: &str,
+    system: BeaconSystem,
+) -> Option<Task<'lua>> {
+    let channel = pl.tacan_channel?;
+    let band = pl.tacan_band.clone().unwrap_or(TacanBand::Y);
+    let callsign = pl.tacan_callsign.clone().unwrap_or_else(|| {
+        name.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .take(3)
+            .collect::<std::string::String>()
+            .to_uppercase()
+            .into()
+    });
+    Some(Task::WrappedCommand(Command::ActivateBeacon {
+        typ: BeaconType::TACAN,
+        system,
+        name: None,
+        callsign,
+        frequency: 1_088_000_000,
+        channel: Some(channel as i64),
+        mode_channel: Some(band),
+        aa: Some(true),
+        bearing: Some(true),
+    }))
+}
+
+/// Build the task that sets an AI aircraft's DCS callsign, if the action's
+/// config asked for one. `callsign_id` is DCS's own numeric callsign-family
+/// id (the same one in the Mission Editor's group "Callsign" dropdown for
+/// that aircraft category) -- we don't map friendly names to ids ourselves
+/// since the valid set differs by aircraft category and has changed across
+/// DCS versions.
+fn callsign_command_task<'lua>(pl: &AiPlaneCfg) -> Option<Task<'lua>> {
+    let callname = pl.callsign_id?;
+    let number = pl.callsign_number.unwrap_or(1);
+    Some(Task::WrappedCommand(Command::SetCallsign { callname, number }))
+}
 
 #[derive(Debug, Clone)]
 pub struct WithPos<T> {
@@ -987,6 +1034,17 @@ impl Db {
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
     ) -> Result<Vec<MissionPoint<'lua>>> {
+        let (freq, tacan, callsign) = match &group!(self, args.group)?.origin {
+            DeployKind::Action { spec, name, .. } => match &spec.kind {
+                ActionKind::Fighters(pl) => (
+                    pl.freq,
+                    tacan_beacon_task(pl, name.as_ref(), BeaconSystem::TACAN),
+                    callsign_command_task(pl),
+                ),
+                _ => (None, None, None),
+            },
+            _ => (None, None, None),
+        };
         let main_task = Task::EngageTargets {
             target_types: vec![
                 Attribute::Fighters,
@@ -999,10 +1057,24 @@ impl Db {
             max_dist: Some(30_000.),
             priority: None,
         };
-        let init_task = Task::ComboTask(vec![
-            Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
-            main_task.clone(),
-        ]);
+        let init_task = Task::ComboTask({
+            let mut tasks = vec![Task::WrappedCommand(Command::SetUnlimitedFuel(true))];
+            if let Some(f) = freq {
+                tasks.push(Task::WrappedCommand(Command::SetFrequency {
+                    frequency: f,
+                    modulation: Modulation::AM,
+                    power: 25,
+                }));
+            }
+            if let Some(t) = tacan {
+                tasks.push(t);
+            }
+            if let Some(t) = callsign {
+                tasks.push(t);
+            }
+            tasks.push(main_task.clone());
+            tasks
+        });
         self.ai_loiter_point_mission(
             side,
             ucid,
@@ -1081,6 +1153,17 @@ impl Db {
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
     ) -> Result<Vec<MissionPoint<'lua>>> {
+        let (freq, tacan, callsign) = match &group!(self, args.group)?.origin {
+            DeployKind::Action { spec, name, .. } => match &spec.kind {
+                ActionKind::Attackers(pl) => (
+                    pl.freq,
+                    tacan_beacon_task(pl, name.as_ref(), BeaconSystem::TACAN),
+                    callsign_command_task(pl),
+                ),
+                _ => (None, None, None),
+            },
+            _ => (None, None, None),
+        };
         let main_task = Task::EngageTargets {
             target_types: vec![
                 Attribute::Fighters,
@@ -1096,10 +1179,24 @@ impl Db {
             max_dist: Some(15_000.),
             priority: None,
         };
-        let init_task = Task::ComboTask(vec![
-            Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
-            main_task.clone(),
-        ]);
+        let init_task = Task::ComboTask({
+            let mut tasks = vec![Task::WrappedCommand(Command::SetUnlimitedFuel(true))];
+            if let Some(f) = freq {
+                tasks.push(Task::WrappedCommand(Command::SetFrequency {
+                    frequency: f,
+                    modulation: Modulation::AM,
+                    power: 25,
+                }));
+            }
+            if let Some(t) = tacan {
+                tasks.push(t);
+            }
+            if let Some(t) = callsign {
+                tasks.push(t);
+            }
+            tasks.push(main_task.clone());
+            tasks
+        });
         self.ai_loiter_point_mission(
             side,
             ucid,
@@ -1122,6 +1219,17 @@ impl Db {
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
     ) -> Result<Vec<MissionPoint<'lua>>> {
+        let (freq, tacan, callsign) = match &group!(self, args.group)?.origin {
+            DeployKind::Action { spec, name, .. } => match &spec.kind {
+                ActionKind::Sead(pl) => (
+                    pl.freq,
+                    tacan_beacon_task(pl, name.as_ref(), BeaconSystem::TACAN),
+                    callsign_command_task(pl),
+                ),
+                _ => (None, None, None),
+            },
+            _ => (None, None, None),
+        };
         let main_task = Task::EngageTargets {
             target_types: vec![
                 // Radar-guided SAM systems
@@ -1147,10 +1255,24 @@ impl Db {
             max_dist: Some(15_000.), // Same range as Attackers
             priority: None,
         };
-        let init_task = Task::ComboTask(vec![
-            Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
-            main_task.clone(),
-        ]);
+        let init_task = Task::ComboTask({
+            let mut tasks = vec![Task::WrappedCommand(Command::SetUnlimitedFuel(true))];
+            if let Some(f) = freq {
+                tasks.push(Task::WrappedCommand(Command::SetFrequency {
+                    frequency: f,
+                    modulation: Modulation::AM,
+                    power: 25,
+                }));
+            }
+            if let Some(t) = tacan {
+                tasks.push(t);
+            }
+            if let Some(t) = callsign {
+                tasks.push(t);
+            }
+            tasks.push(main_task.clone());
+            tasks
+        });
         self.ai_loiter_point_mission(
             side,
             ucid,
@@ -1709,12 +1831,16 @@ impl Db {
         spawn_pos: Vector2,
         args: WithPosAndGroup<()>,
     ) -> Result<Vec<MissionPoint<'lua>>> {
-        let freq = match &group!(self, args.group)?.origin {
-            DeployKind::Action { spec, .. } => match &spec.kind {
-                ActionKind::Tanker(pl) => pl.freq,
-                _ => None,
+        let (freq, tacan, callsign) = match &group!(self, args.group)?.origin {
+            DeployKind::Action { spec, name, .. } => match &spec.kind {
+                ActionKind::Tanker(pl) => (
+                    pl.freq,
+                    tacan_beacon_task(pl, name.as_ref(), BeaconSystem::TACANTanker),
+                    callsign_command_task(pl),
+                ),
+                _ => (None, None, None),
             },
-            _ => None,
+            _ => (None, None, None),
         };
         self.ai_loiter_point_mission(
             side,
@@ -1727,7 +1853,7 @@ impl Db {
                 _ => false,
             },
             move || {
-                Task::ComboTask(vec![
+                let mut tasks = vec![
                     Task::Tanker,
                     Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
                     Task::WrappedCommand(Command::SetFrequency {
@@ -1735,7 +1861,14 @@ impl Db {
                         modulation: Modulation::AM,
                         power: 25,
                     }),
-                ])
+                ];
+                if let Some(t) = tacan.clone() {
+                    tasks.push(t);
+                }
+                if let Some(t) = callsign.clone() {
+                    tasks.push(t);
+                }
+                Task::ComboTask(tasks)
             },
             || vec![Task::Tanker],
         )
@@ -2312,15 +2445,19 @@ impl Db {
         args: WithPosAndGroup<()>,
     ) -> Result<Vec<MissionPoint<'lua>>> {
         let group = group!(self, args.group)?;
-        let freq = match &group.origin {
-            DeployKind::Action { spec, .. } => match &spec.kind {
-                ActionKind::Awacs(aw) => aw.plane.freq,
-                _ => None,
+        let (freq, tacan, callsign) = match &group.origin {
+            DeployKind::Action { spec, name, .. } => match &spec.kind {
+                ActionKind::Awacs(aw) => (
+                    aw.plane.freq,
+                    tacan_beacon_task(&aw.plane, name.as_ref(), BeaconSystem::TACAN),
+                    callsign_command_task(&aw.plane),
+                ),
+                _ => (None, None, None),
             },
-            _ => None,
+            _ => (None, None, None),
         };
         let init_task = if group.tags.contains(UnitTag::Link16) {
-            Task::ComboTask(vec![
+            let mut tasks = vec![
                 Task::AWACS,
                 Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
                 Task::WrappedCommand(Command::SetFrequency {
@@ -2332,9 +2469,16 @@ impl Db {
                     enable: true,
                     group: Some(dcso3::env::miz::GroupId::from(1)),
                 }),
-            ])
+            ];
+            if let Some(t) = tacan.clone() {
+                tasks.push(t);
+            }
+            if let Some(t) = callsign.clone() {
+                tasks.push(t);
+            }
+            Task::ComboTask(tasks)
         } else {
-            Task::ComboTask(vec![
+            let mut tasks = vec![
                 Task::AWACS,
                 Task::WrappedCommand(Command::SetFrequency {
                     frequency: freq.unwrap_or(125000000),
@@ -2342,7 +2486,14 @@ impl Db {
                     power: 25,
                 }),
                 Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
-            ])
+            ];
+            if let Some(t) = tacan {
+                tasks.push(t);
+            }
+            if let Some(t) = callsign {
+                tasks.push(t);
+            }
+            Task::ComboTask(tasks)
         };
         let main_task = vec![Task::AWACS];
         self.ai_loiter_point_mission(
@@ -2644,12 +2795,38 @@ impl Db {
         args: WithPosAndGroup<()>,
     ) -> Result<Vec<MissionPoint<'lua>>> {
         let group = group!(self, args.group)?;
-        let init_task = Task::ComboTask(vec![]);
-        let main_task = if group.tags.contains(UnitTag::Link16) {
-            vec![Task::WrappedCommand(Command::SetUnlimitedFuel(true))]
-        } else {
-            vec![Task::WrappedCommand(Command::SetUnlimitedFuel(true))]
+        let (freq, tacan, callsign) = match &group.origin {
+            DeployKind::Action { spec, name, .. } => match &spec.kind {
+                ActionKind::CruiseMissileSpawn(pl) => (
+                    pl.freq,
+                    tacan_beacon_task(pl, name.as_ref(), BeaconSystem::TACAN),
+                    callsign_command_task(pl),
+                ),
+                _ => (None, None, None),
+            },
+            _ => (None, None, None),
         };
+        let mut init_tasks = vec![Task::WrappedCommand(Command::SetUnlimitedFuel(true))];
+        if let Some(f) = freq {
+            init_tasks.push(Task::WrappedCommand(Command::SetFrequency {
+                frequency: f,
+                modulation: Modulation::AM,
+                power: 25,
+            }));
+        }
+        if group.tags.contains(UnitTag::Link16) {
+            init_tasks.push(Task::WrappedCommand(Command::EPLRS {
+                enable: true,
+                group: Some(dcso3::env::miz::GroupId::from(1)),
+            }));
+        }
+        if let Some(t) = tacan {
+            init_tasks.push(t);
+        }
+        if let Some(t) = callsign {
+            init_tasks.push(t);
+        }
+        let init_task = Task::ComboTask(init_tasks);
         self.ai_loiter_point_mission(
             side,
             ucid,
@@ -2661,7 +2838,7 @@ impl Db {
                 _ => false,
             },
             move || init_task.clone(),
-            move || main_task.clone(),
+            || vec![],
         )
     }
 

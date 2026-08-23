@@ -4,15 +4,30 @@ from discord import app_commands, ui
 from discord.ext import commands
 from core import Plugin, utils
 import asyncio
-import yt_dlp
 import os
 import random
 import json
 import re
 import aiohttp
 
-# Suppress yt-dlp warnings
-yt_dlp.utils.bug_reports_message = lambda *args, **kwargs: ''
+# yt-dlp (and the PyNaCl voice codec it depends on via discord.py) are not
+# part of DCSServerBot's own requirements, so they can easily be missing from
+# the bot's venv. An unguarded `import yt_dlp` at module scope makes that a
+# hard ImportError during plugin discovery, which DCSServerBot reports as the
+# generic 'Plugin "Radio" not found!' -- no traceback, no hint it's a missing
+# dependency. Guard it like smartmod guards google.generativeai so the plugin
+# still loads and commands fail with a clear message instead.
+try:
+    import yt_dlp
+    # Suppress yt-dlp warnings
+    yt_dlp.utils.bug_reports_message = lambda *args, **kwargs: ''
+    HAS_YTDLP = True
+except ImportError as e:
+    HAS_YTDLP = False
+    print(f"\n==========================================================")
+    print(f"🚨 RADIO WARNING: Missing yt-dlp! ({e})")
+    print(f"Run `pip install yt-dlp PyNaCl` in the bot's venv, then restart.")
+    print(f"==========================================================\n")
 
 ytdl_format_options = {
     'format': 'bestaudio/best',
@@ -27,7 +42,7 @@ ytdl_format_options = {
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
 }
-ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+ytdl = yt_dlp.YoutubeDL(ytdl_format_options) if HAS_YTDLP else None
 
 def format_duration(seconds):
     if not seconds or seconds == 0: return "Live Broadcast / ∞"
@@ -78,6 +93,8 @@ class YTDLSource(discord.PCMVolumeTransformer):
 
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False, audio_filter=None, override_title=None):
+        if not HAS_YTDLP:
+            raise Exception("yt-dlp is not installed in the bot's venv -- run `pip install yt-dlp PyNaCl` and restart.")
         loop = loop or asyncio.get_event_loop()
         try:
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))

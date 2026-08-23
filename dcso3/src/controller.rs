@@ -75,6 +75,12 @@ string_enum!(AltType, u8, [
     RADIO => "RADIO"
 ]);
 
+// TACAN channel band, as selected on the aircraft's TACAN control panel.
+string_enum!(TacanBand, u8, [
+    X => "X",
+    Y => "Y"
+]);
+
 simple_enum!(FACCallsign, u8, [
     Axeman	=> 1,
     Darknight => 2,
@@ -1184,6 +1190,16 @@ pub enum Command {
         name: Option<String>,
         callsign: String,
         frequency: i64,
+        /// TACAN channel number (1-126). Only meaningful when `system` is a TACAN variant;
+        /// when set, DCS derives the beacon's actual RF frequency from this + `mode_channel`
+        /// instead of using `frequency` directly.
+        channel: Option<i64>,
+        /// TACAN channel band (X or Y). Only meaningful alongside `channel`.
+        mode_channel: Option<TacanBand>,
+        /// Air-to-air TACAN (set for beacons mounted on aircraft, e.g. tankers/AWACS).
+        aa: Option<bool>,
+        /// Whether the beacon provides bearing information.
+        bearing: Option<bool>,
     },
     DeactivateBeacon,
     ActivateICLS {
@@ -1292,6 +1308,10 @@ impl<'lua> IntoLua<'lua> for Command {
                 name,
                 callsign,
                 frequency,
+                channel,
+                mode_channel,
+                aa,
+                bearing,
             } => {
                 root.raw_set("id", "ActivateBeacon")?;
                 params.raw_set("type", typ)?;
@@ -1300,6 +1320,18 @@ impl<'lua> IntoLua<'lua> for Command {
                 params.raw_set("frequency", frequency)?;
                 if let Some(name) = name {
                     params.raw_set("name", name)?;
+                }
+                if let Some(channel) = channel {
+                    params.raw_set("channel", channel)?;
+                }
+                if let Some(mode_channel) = mode_channel {
+                    params.raw_set("modeChannel", mode_channel)?;
+                }
+                if let Some(aa) = aa {
+                    params.raw_set("AA", aa)?;
+                }
+                if let Some(bearing) = bearing {
+                    params.raw_set("bearing", bearing)?;
                 }
             }
             Self::DeactivateBeacon => root.raw_set("id", "DeactivateBeacon")?,
@@ -1416,6 +1448,10 @@ impl<'lua> FromLua<'lua> for Command {
                 name: params.raw_get("name")?,
                 callsign: params.raw_get("callsign")?,
                 frequency: params.raw_get("frequency")?,
+                channel: params.raw_get("channel")?,
+                mode_channel: params.raw_get("modeChannel")?,
+                aa: params.raw_get("AA")?,
+                bearing: params.raw_get("bearing")?,
             }),
             "DeactivateBeacon" => Ok(Self::DeactivateBeacon),
             "DeactivateICLS" => Ok(Self::DeactivateACLS),

@@ -859,6 +859,12 @@ pub(super) fn admin_shutdown(
         ));
         ctx.do_bg_task(Task::Stat(se));
     }
+    if let Some(cfg) = ctx.db.ephemeral.cfg.live_weather.clone() {
+        match ctx.mission_file_path.clone() {
+            Some(miz_path) => ctx.do_bg_task(Task::RewriteMissionWeather { miz_path, cfg }),
+            None => warn!("live_weather is configured but no mission file path is known, skipping"),
+        }
+    }
     ctx.do_bg_task(Task::Shutdown(Arc::clone(&wait)));
     let start = Instant::now();
     let wait_for = Duration::from_secs(60);

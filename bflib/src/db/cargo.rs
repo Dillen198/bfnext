@@ -1695,6 +1695,15 @@ impl Db {
             let unit_2d = unit.pos;
             let dist_sq = na::distance_squared(&player_2d.into(), &unit_2d.into());
             if dist_sq <= cfg.board_radius_m.powi(2) {
+                if !cfg.can_board_while_moving {
+                    let speed = Unit::get_by_name(lua, &unit.name)
+                        .and_then(|u| u.get_velocity())
+                        .map(|v| v.0.magnitude())
+                        .unwrap_or(0.);
+                    if speed > cfg.board_speed_threshold_ms {
+                        continue;
+                    }
+                }
                 return Ok(Some((*uid, unit.name.clone(), cfg)));
             }
         }
@@ -1797,10 +1806,21 @@ impl Db {
         let side = pax.side;
 
         // Find vehicle position from persisted units.
-        let unit_pos = self.persisted.units.get(&vehicle_uid)
-            .map(|u| u.position)
+        let vehicle_unit = self.persisted.units.get(&vehicle_uid)
             .ok_or_else(|| anyhow!("vehicle unit not found"))?;
-        let point = Vector2::new(unit_pos.p.x, unit_pos.p.z);
+        let unit_pos = vehicle_unit.position;
+        let dismount_radius_m = self.ephemeral.cfg.ground_vehicle_cargo
+            .get(&vehicle_unit.typ)
+            .map(|c| c.dismount_radius_m)
+            .unwrap_or(0.);
+        let mut rng = rand::thread_rng();
+        let point = if dismount_radius_m > 0. {
+            let angle = rand::Rng::r#gen::<f64>(&mut rng) * std::f64::consts::TAU;
+            let dist = rand::Rng::r#gen::<f64>(&mut rng).sqrt() * dismount_radius_m;
+            Vector2::new(unit_pos.p.x + dist * angle.cos(), unit_pos.p.z + dist * angle.sin())
+        } else {
+            Vector2::new(unit_pos.p.x, unit_pos.p.z)
+        };
         let spawnpos = SpawnLoc::AtPos {
             pos: point,
             offset_direction: Vector2::new(unit_pos.x.x, unit_pos.x.z),
@@ -1858,12 +1878,23 @@ impl Db {
             _ => return Ok(()),
         };
         let side = pax.side;
+        let dismount_radius_m = self.persisted.units.get(&vehicle_uid)
+            .and_then(|u| self.ephemeral.cfg.ground_vehicle_cargo.get(&u.typ))
+            .map(|c| c.dismount_radius_m)
+            .unwrap_or(0.);
         let mut rng = rand::thread_rng();
         for it in pax.troops {
             // 50 % survival chance per squad.
             if rand::Rng::r#gen::<f32>(&mut rng) < 0.5 {
+                let pos = if dismount_radius_m > 0. {
+                    let angle = rand::Rng::r#gen::<f64>(&mut rng) * std::f64::consts::TAU;
+                    let dist = rand::Rng::r#gen::<f64>(&mut rng).sqrt() * dismount_radius_m;
+                    Vector2::new(wreck_pos.x + dist * angle.cos(), wreck_pos.y + dist * angle.sin())
+                } else {
+                    wreck_pos
+                };
                 let spawnpos = SpawnLoc::AtPos {
-                    pos: wreck_pos,
+                    pos,
                     offset_direction: Vector2::new(1.0, 0.0),
                     group_heading: 0.0,
                 };

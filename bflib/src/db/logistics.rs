@@ -1041,7 +1041,10 @@ impl Db {
                         .persisted
                         .objectives
                         .into_iter()
-                        .filter(|(_, obj)| !obj.kind.is_special_sam_site())
+                        .filter(|(id, obj)| {
+                            !obj.kind.is_special_sam_site()
+                                && self.ephemeral.airbase_by_oid.contains_key(id)
+                        })
                         .map(|(id, _)| *id)
                         .collect();
                     self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives }
@@ -1051,7 +1054,10 @@ impl Db {
                         .persisted
                         .objectives
                         .into_iter()
-                        .filter(|(_, obj)| !obj.kind.is_special_sam_site())
+                        .filter(|(id, obj)| {
+                            !obj.kind.is_special_sam_site()
+                                && self.ephemeral.airbase_by_oid.contains_key(id)
+                        })
                         .map(|(id, _)| *id)
                         .collect();
                     self.ephemeral.logistics_stage = LogiStage::SyncFromWarehouses { objectives };
@@ -1547,7 +1553,10 @@ impl Db {
                             .persisted
                             .objectives
                             .into_iter()
-                            .filter(|(_, obj)| !obj.kind.is_special_sam_site())
+                            .filter(|(id, obj)| {
+                                !obj.kind.is_special_sam_site()
+                                    && self.ephemeral.airbase_by_oid.contains_key(id)
+                            })
                             .map(|(id, _)| *id)
                             .collect();
                         self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };

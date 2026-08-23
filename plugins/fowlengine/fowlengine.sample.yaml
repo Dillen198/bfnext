@@ -24,6 +24,15 @@ DEFAULT:
   # ~20s and diffing owner/health against the previous poll; no admin auth needed.
   alerts_channel: 123456789012345678
 
+  # (Optional) When true (the default), the bot auto-creates "Blue Ops" and
+  # "Red Ops" threads under alerts_channel and routes alerts by relevance:
+  # the defending faction gets a "defend it!" warning, the opposing faction
+  # gets an "opportunity!" alert, for the same ready-to-capture event.
+  # Captures post to both. Set to false to post everything to alerts_channel
+  # directly instead. Requires the bot to have "Create Public Threads" and
+  # "Send Messages in Threads" permission on alerts_channel.
+  use_faction_threads: true
+
   # (Optional) The ID of the Discord channel where the live bflib engine log will be
   # relayed in real time. A single message is continuously edited with a rolling tail,
   # and ERROR/WARN lines are additionally posted as standalone alerts. Leave unset to
@@ -36,6 +45,25 @@ DEFAULT:
   # /api/admin/perf). Leave unset to disable. Requires admin_username/admin_password
   # below, and bfdb must be running on the same machine it's reporting on.
   perf_channel: 123456789012345678
+
+  # (Optional) The ID of the Discord channel where a mission-briefing welcome
+  # message is posted whenever someone joins the Discord server. Pulls the
+  # active scenario, round duration, and current front (objective counts per
+  # faction) from bfdb, same as the live status embed. Leave unset to disable.
+  welcome_channel: 123456789012345678
+
+  # (Optional) The line posted above the briefing embed. {mention} and
+  # {brand_name} are substituted.
+  welcome_message: "Welcome aboard, {mention}! 🪖"
+
+  # (Optional) Freeform briefing text shown inside the welcome embed
+  # (rules pointer, how to pick a faction, useful commands, etc).
+  welcome_briefing: >-
+    Read the rules, pick your faction, and check the dashboard for your pilot
+    profile and the live map.
+
+    Use /vs dashboard for your secure web login, /vs objectives for the full
+    objective list, and /vs stats to track your kills and captures.
 
   # ---------------------------------------------
   # Web Dashboard Configurations
@@ -74,6 +102,7 @@ DEFAULT:
     capture: "🏆 **[CAPTURED]** {message}"
     neutral: "🏳️ **[NEUTRAL]** {message}"
     ready_to_capture: "⏳ **[READY TO CAPTURE]** {message}"
+    capture_opportunity: "🎯 **[OPPORTUNITY]** {message}"
     achievement: "🎖️ **[ACHIEVEMENT]** {message}"
     alert: "🚨 **[ALERT]** {message}"
     

@@ -14,6 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
+mod live_weather;
 mod logpub;
 mod perf;
 mod rpcs;
@@ -253,6 +254,13 @@ pub(super) enum Task {
         fresh: bool,
     },
     SaveConfig(PathBuf, Arc<Cfg>),
+    /// rewrite the on-disk mission file's weather (and optionally date/time)
+    /// with live real-world conditions. Only takes effect the next time the
+    /// mission loads, so this must be enqueued before Task::Shutdown.
+    RewriteMissionWeather {
+        miz_path: PathBuf,
+        cfg: bfprotocols::cfg::LiveWeatherConfig,
+    },
     WriteLog(Bytes),
     LogPerf {
         players: usize,
@@ -536,6 +544,14 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
                 Ok(()) => (),
                 Err(e) => error!("failed to save config {e:?}"),
             },
+            Task::RewriteMissionWeather { miz_path, cfg } => {
+                let req = live_weather::LiveWeatherRequest { miz_path, cfg };
+                match task::spawn_blocking(move || live_weather::apply(&req)).await {
+                    Ok(Ok(())) => log::info!("applied live weather/time to mission file"),
+                    Ok(Err(e)) => error!("failed to apply live weather to mission file {e:?}"),
+                    Err(e) => error!("live weather task panicked {e:?}"),
+                }
+            }
             Task::WriteLog(buf) => match Chars::from_bytes(buf) {
                 Err(e) => eprintln!("invalid unicode log {e:?}"),
                 Ok(buf) => {

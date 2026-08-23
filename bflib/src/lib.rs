@@ -54,6 +54,7 @@ use db::{
 use dcso3::{
     coalition::Side,
     coord::Coord,
+    dcs::Dcs,
     env::{
         self,
         miz::{Miz, UnitId},
@@ -241,6 +242,11 @@ struct Context {
     sortie: String,
     event_handler_id: Option<HandlerId>,
     miz_state_path: PathBuf,
+    /// on-disk path of the currently loaded .miz, captured from
+    /// DCS.getMissionFilename() in on_mission_load_end. Used to rewrite the
+    /// mission's weather/time in place before a live-weather-enabled
+    /// restart, since DCS only picks up mission file edits on next load.
+    mission_file_path: Option<PathBuf>,
     shutdown: Option<AutoShutdown>,
     last_perf_log: DateTime<Utc>,
     load_state: LoadState,
@@ -2869,10 +2875,13 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
     Ok(())
 }
 
-fn on_mission_load_end(_lua: HooksLua) -> Result<()> {
-    unsafe {
-        Context::get_mut().load_state = LoadState::MissionLoaded { time: Utc::now() }
-    };
+fn on_mission_load_end(lua: HooksLua) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    ctx.load_state = LoadState::MissionLoaded { time: Utc::now() };
+    match Dcs::singleton(lua).and_then(|dcs| dcs.get_mission_filename()) {
+        Ok(path) => ctx.mission_file_path = Some(PathBuf::from(path.as_str())),
+        Err(e) => warn!("could not get mission filename {e:?}"),
+    }
     info!("mission loaded");
     Ok(())
 }

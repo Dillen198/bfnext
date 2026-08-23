@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fowl Engine — Deployable Config Editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --panel-2: #1c2029;
+    --border: #2a2f3a;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --accent: #4fd1c5;
+    --accent-dim: #2f6b66;
+    --warn: #f2b134;
+    --bad: #ef4444;
+    --bad-dim: #4a2323;
+    --good: #34d399;
+    font-size: 15px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header.toolbar {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    padding: .6rem .9rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-wrap: wrap;
+  }
+  header.toolbar h1 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 .6rem 0 0;
+    white-space: nowrap;
+  }
+  header.toolbar h1 .sub { color: var(--muted); font-weight: 400; }
+  header.toolbar a.crosslink { color: var(--muted); font-size: .78rem; text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: .35rem .6rem; }
+  header.toolbar a.crosslink:hover { color: var(--text); border-color: var(--accent); }
+  .spacer { flex: 1; }
+  #status-text { color: var(--muted); font-size: .85rem; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  button, .btn {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .45rem .75rem;
+    font-size: .85rem;
+    cursor: pointer;
+  }
+  button:hover, .btn:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent-dim); border-color: var(--accent); color: #ecfffe; font-weight: 600; }
+  button.small { padding: .25rem .55rem; font-size: .78rem; }
+  button.icon-btn { padding: .2rem .4rem; line-height: 1; font-size: .85rem; background: transparent; border: 1px solid transparent; color: var(--muted); }
+  button.icon-btn:hover { color: var(--text); border-color: var(--border); }
+  button.icon-btn.danger:hover { color: var(--bad); border-color: var(--bad); }
+  input[type=file] { display: none; }
+
+  main.app {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  aside.sidebar {
+    width: 340px;
+    min-width: 260px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+  }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: .55rem .3rem;
+    color: var(--muted);
+    font-size: .82rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .35rem;
+  }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab .count { color: var(--muted); font-size: .75rem; }
+  .tab .badge.bad {
+    background: var(--bad); color: #fff; font-size: .68rem; border-radius: 999px;
+    padding: 0 .35rem; min-width: 1.1rem; text-align: center;
+  }
+  .sidebar-controls { display: flex; gap: .4rem; padding: .5rem; border-bottom: 1px solid var(--border); }
+  .sidebar-controls input[type=text] {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: .4rem .55rem; font-size: .82rem;
+  }
+  .list { flex: 1; overflow-y: auto; }
+  .item {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: .4rem;
+    padding: .55rem .7rem; border-bottom: 1px solid var(--border); cursor: pointer;
+  }
+  .item:hover { background: var(--panel-2); }
+  .item.selected { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
+  .item.invalid .item-title::before { content: "⚠ "; color: var(--warn); }
+  .item-title { font-size: .87rem; font-weight: 500; word-break: break-word; }
+  .item-sub { font-size: .74rem; color: var(--muted); margin-top: .15rem; }
+  .item-sub .err-count { color: var(--warn); }
+  .item-actions { display: flex; gap: .1rem; flex-shrink: 0; }
+  .empty-hint { padding: 1.2rem .8rem; color: var(--muted); font-size: .85rem; line-height: 1.5; }
+
+  section.detail-pane { flex: 1; min-width: 0; overflow-y: auto; }
+  .detail-scroll { padding: 1rem 1.3rem 3rem; max-width: 780px; }
+  .empty-state { padding: 3rem 1.5rem; color: var(--muted); text-align: center; font-size: .95rem; line-height: 1.6; max-width: 480px; margin: 0 auto; }
+  .empty-state h2 { color: var(--text); font-size: 1.1rem; }
+
+  section.card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: .9rem 1rem; margin-bottom: .9rem;
+  }
+  section.card h3 { margin: 0 0 .6rem; font-size: .92rem; letter-spacing: .01em; }
+  section.card h3 label { display: flex; align-items: center; gap: .4rem; cursor: pointer; font-weight: 600; }
+  .hint { color: var(--muted); font-weight: 400; font-size: .78rem; }
+  p.hint { margin: -.3rem 0 .6rem; }
+
+  .field { display: flex; flex-direction: column; gap: .25rem; margin-bottom: .55rem; }
+  .field label { font-size: .78rem; color: var(--muted); }
+  .field input[type=text], .field input[type=number], .field select, select[name] {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: .45rem .55rem; font-size: .87rem; width: 100%;
+  }
+  .field input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 .8rem; }
+  .field-grid > .field { grid-column: span 1; }
+  .checkbox-field { align-self: end; flex-direction: row; align-items: center; gap: .4rem; }
+  .checkbox-field label { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--text); cursor: pointer; }
+
+  .row-inline { display: flex; gap: .4rem; margin-bottom: .4rem; align-items: center; }
+  .row-inline input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: .4rem .55rem; font-size: .85rem; }
+
+  .radio-row { display: flex; gap: 1.2rem; margin-bottom: .7rem; }
+  .radio-row label { display: flex; align-items: center; gap: .4rem; font-size: .87rem; cursor: pointer; }
+
+  .crate-box { border: 1px solid var(--border); border-radius: 8px; padding: .7rem .8rem; margin-bottom: .7rem; background: var(--panel-2); }
+  .crate-box-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; font-size: .85rem; }
+
+  #errors-panel { margin-top: 1rem; }
+  .errors-box { border: 1px solid var(--bad); background: var(--bad-dim); border-radius: 8px; padding: .7rem .9rem; font-size: .84rem; }
+  .errors-box strong { color: #fecaca; }
+  .errors-box ul { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .ok-box { border: 1px solid var(--good); color: var(--good); border-radius: 8px; padding: .6rem .9rem; font-size: .84rem; }
+
+  details.raw-panel { border-top: 1px solid var(--border); background: var(--panel); }
+  details.raw-panel > summary {
+    cursor: pointer; padding: .5rem .9rem; font-size: .82rem; color: var(--muted);
+    display: flex; align-items: center; gap: .5rem; user-select: none;
+  }
+  details.raw-panel > summary:hover { color: var(--text); }
+  .raw-body { display: flex; flex-direction: column; max-height: 40vh; }
+  .raw-toolbar { display: flex; justify-content: flex-end; gap: .4rem; padding: 0 .9rem .4rem; }
+  #raw-json {
+    margin: 0; padding: .8rem .9rem; overflow: auto; font-size: .78rem; line-height: 1.45;
+    background: #0b0d11; color: #c9e8e5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  @media (max-width: 760px) {
+    main.app { flex-direction: column; }
+    aside.sidebar { width: 100%; max-height: 40vh; border-right: none; border-bottom: 1px solid var(--border); }
+    .field-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="toolbar">
+  <h1>Deployable Config Editor <span class="sub">— Fowl Engine <code>cfg.deployables</code></span></h1>
+  <label class="btn" for="file-input">Open File…</label>
+  <input type="file" id="file-input" accept="application/json,.json">
+  <button id="btn-example">Load Example</button>
+  <button id="btn-blank">Start Blank</button>
+  <span class="spacer"></span>
+  <a class="crosslink" href="./action-cfg-editor.html">Action Editor →</a>
+  <span id="status-text">No file loaded — editing in-memory only.</span>
+  <button id="btn-download" class="primary">Download JSON</button>
+</header>
+
+<main class="app">
+  <aside class="sidebar">
+    <div class="tabs" id="tabs"></div>
+    <div class="sidebar-controls">
+      <input type="text" id="search-box" placeholder="Filter by path…">
+      <button id="btn-new" class="small" title="Add a new deployable to the current side">+ New</button>
+    </div>
+    <div class="list" id="list"></div>
+  </aside>
+
+  <section class="detail-pane" id="detail"></section>
+</main>
+
+<details class="raw-panel" id="raw-details">
+  <summary>▸ Raw JSON preview (what gets downloaded)</summary>
+  <div class="raw-body">
+    <div class="raw-toolbar">
+      <button id="btn-copy-raw" class="small">Copy to clipboard</button>
+    </div>
+    <pre id="raw-json"></pre>
+  </div>
+</details>
+
+<script>
+(function () {
+  "use strict";
+
+  const SIDES = ["Red", "Blue", "Neutral"];
+
+  const state = {
+    isFullCfg: false,
+    fullCfgObj: null,
+    fileName: null,
+    sides: { Red: [], Blue: [], Neutral: [] },
+    currentSide: "Red",
+    currentIndex: -1,
+    filterText: "",
+  };
+
+  const els = {
+    tabs: document.getElementById("tabs"),
+    list: document.getElementById("list"),
+    detail: document.getElementById("detail"),
+    search: document.getElementById("search-box"),
+    status: document.getElementById("status-text"),
+    fileInput: document.getElementById("file-input"),
+    rawDetails: document.getElementById("raw-details"),
+    rawJson: document.getElementById("raw-json"),
+  };
+
+  // ---------- helpers ----------
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  function safeNum(v, fallback) {
+    return Number.isFinite(v) ? v : fallback;
+  }
+
+  function getDeep(obj, path) {
+    return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+  }
+
+  function setDeep(obj, path, value) {
+    const keys = path.split(".");
+    let o = obj;
+    for (let i = 0; i < keys.length - 1; i++) o = o[keys[i]];
+    o[keys[keys.length - 1]] = value;
+  }
+
+  function currentDep() {
+    const arr = state.sides[state.currentSide];
+    if (state.currentIndex < 0 || state.currentIndex >= arr.length) return null;
+    return arr[state.currentIndex];
+  }
+
+  function defaultCrate() {
+    return { name: "", weight: 1500, required: 1, pos_unit: null, max_drop_height_agl: 20, max_drop_speed: 350, dcs_type: null };
+  }
+
+  function newDeployable() {
+    return {
+      path: ["New Category", "New Unit"],
+      kind: { Group: { template: "" } },
+      persist: "UntilRestart",
+      limit: 10,
+      limit_enforce: "DeleteOldest",
+      crates: [defaultCrate()],
+      repair_crate: null,
+      repair_cost: 0,
+      cost: 0,
+      ewr: null,
+      jtac: null,
+    };
+  }
+
+  function totalCrateWeight(crates) {
+    return (crates || []).reduce((s, c) => s + (Number(c.required) || 0) * (Number(c.weight) || 0), 0);
+  }
+
+  // ---------- loading / migration ----------
+
+  function coerceCrate(raw) {
+    return Object.assign({ name: "", weight: 0, required: 1, pos_unit: null, max_drop_height_agl: 0, max_drop_speed: 0, dcs_type: null }, raw || {});
+  }
+
+  function coerceDeployable(raw) {
+    const dep = Object.assign({}, raw);
+    if (dep.kind === undefined || dep.kind === null) {
+      if (dep.logistics) {
+        const parts = Object.assign({}, dep.logistics);
+        parts.defenses_template = dep.template || parts.defenses_template || null;
+        dep.kind = { Objective: parts };
+      } else if (dep.template) {
+        dep.kind = { Group: { template: dep.template } };
+      } else {
+        dep.kind = { Group: { template: "" } };
+      }
+    }
+    delete dep.template;
+    delete dep.logistics;
+
+    if (dep.kind.Objective) {
+      const o = Object.assign({ pad_templates: [], defenses_template: null, ammo_template: null, fuel_template: null, barracks_template: null }, dep.kind.Objective);
+      if (!Array.isArray(o.pad_templates)) o.pad_templates = [];
+      dep.kind = { Objective: o };
+    } else if (dep.kind.Group) {
+      dep.kind = { Group: Object.assign({ template: "" }, dep.kind.Group) };
+    } else {
+      dep.kind = { Group: { template: "" } };
+    }
+
+    if (dep.persist === undefined || dep.persist === null) dep.persist = "UntilRestart";
+    if (!Array.isArray(dep.path)) dep.path = [];
+    if (!Array.isArray(dep.crates)) dep.crates = [];
+    dep.crates = dep.crates.map(coerceCrate);
+    if (!Number.isFinite(dep.limit)) dep.limit = 1;
+    if (!dep.limit_enforce) dep.limit_enforce = "DeleteOldest";
+    dep.repair_crate = dep.repair_crate ? coerceCrate(dep.repair_crate) : null;
+    if (!Number.isFinite(dep.repair_cost)) dep.repair_cost = 0;
+    if (!Number.isFinite(dep.cost)) dep.cost = 0;
+    dep.ewr = dep.ewr ? Object.assign({ range: 0 }, dep.ewr) : null;
+    dep.jtac = dep.jtac ? Object.assign({ range: 0, nolos: false, default_laser_code: 1688, name: null }, dep.jtac) : null;
+    return dep;
+  }
+
+  function normalizeSideKey(k) {
+    const s = String(k).toLowerCase();
+    if (s === "red") return "Red";
+    if (s === "blue") return "Blue";
+    if (s === "neutral" || s === "neutrals") return "Neutral";
+    return null;
+  }
+
+  function parseLoadedJson(obj) {
+    let isFullCfg = false, fullCfgObj = null, sidesRaw = null;
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+      if (obj.deployables && typeof obj.deployables === "object") {
+        isFullCfg = true; fullCfgObj = obj; sidesRaw = obj.deployables;
+      } else {
+        const vals = Object.values(obj);
+        if (vals.length && vals.every((v) => Array.isArray(v))) sidesRaw = obj;
+      }
+    }
+    if (!sidesRaw) throw new Error("Couldn't find a \"deployables\" section (a map of side -> list of deployables) in this file.");
+    const sides = { Red: [], Blue: [], Neutral: [] };
+    for (const key of Object.keys(sidesRaw)) {
+      const norm = normalizeSideKey(key);
+      if (!norm) continue;
+      sides[norm] = (sidesRaw[key] || []).map(coerceDeployable);
+    }
+    return { isFullCfg, fullCfgObj, sides };
+  }
+
+  // ---------- validation ----------
+
+  function validateDep(dep) {
+    const errs = [];
+    if (!Array.isArray(dep.path) || dep.path.length === 0 || dep.path.some((p) => !p || !p.trim()))
+      errs.push("Menu path must have at least one non-empty segment.");
+
+    const kindTag = dep.kind ? Object.keys(dep.kind)[0] : null;
+    if (kindTag === "Group") {
+      if (!dep.kind.Group.template || !dep.kind.Group.template.trim())
+        errs.push("Group template name is required.");
+    } else if (kindTag === "Objective") {
+      const o = dep.kind.Objective;
+      if (!Array.isArray(o.pad_templates) || o.pad_templates.filter((t) => t && t.trim()).length === 0)
+        errs.push("Objective needs at least one pad template.");
+    } else {
+      errs.push("Deployable kind is not set.");
+    }
+
+    if (dep.persist && typeof dep.persist === "object") {
+      const tag = Object.keys(dep.persist)[0];
+      const v = dep.persist[tag];
+      if (!Number.isFinite(v) || v <= 0) errs.push(tag + " value must be a positive number.");
+    } else if (typeof dep.persist !== "string") {
+      errs.push("Persistence type is not set.");
+    }
+
+    if (!Number.isFinite(dep.limit) || dep.limit < 0) errs.push("Max simultaneous must be zero or a positive integer.");
+
+    if (!Array.isArray(dep.crates)) {
+      errs.push("Crates list is invalid.");
+    } else {
+      dep.crates.forEach((c, i) => {
+        if (!c.name || !c.name.trim()) errs.push("Crate #" + (i + 1) + ": name is required.");
+        if (!Number.isFinite(c.weight) || c.weight < 0) errs.push("Crate #" + (i + 1) + ": weight must be zero or positive.");
+        if (!Number.isFinite(c.required) || c.required < 1) errs.push("Crate #" + (i + 1) + ": quantity required must be at least 1.");
+        if (!Number.isFinite(c.max_drop_height_agl) || c.max_drop_height_agl < 0) errs.push("Crate #" + (i + 1) + ": max drop height must be zero or positive.");
+        if (!Number.isFinite(c.max_drop_speed) || c.max_drop_speed < 0) errs.push("Crate #" + (i + 1) + ": max drop speed must be zero or positive.");
+      });
+    }
+
+    if (dep.repair_crate) {
+      const c = dep.repair_crate;
+      if (!c.name || !c.name.trim()) errs.push("Repair crate: name is required.");
+      if (!Number.isFinite(c.weight) || c.weight < 0) errs.push("Repair crate: weight must be zero or positive.");
+      if (!Number.isFinite(c.required) || c.required < 1) errs.push("Repair crate: quantity required must be at least 1.");
+    }
+
+    if (!Number.isFinite(dep.repair_cost) || dep.repair_cost < 0) errs.push("Repair cost must be zero or positive.");
+    if (!Number.isFinite(dep.cost) || dep.cost < 0) errs.push("Deploy cost must be zero or positive.");
+
+    if (dep.ewr) {
+      if (!Number.isFinite(dep.ewr.range) || dep.ewr.range <= 0) errs.push("EWR range must be a positive number.");
+    }
+    if (dep.jtac) {
+      if (!Number.isFinite(dep.jtac.range) || dep.jtac.range <= 0) errs.push("JTAC range must be a positive number.");
+      if (!Number.isFinite(dep.jtac.default_laser_code)) errs.push("JTAC laser code is required.");
+      else if (dep.jtac.default_laser_code < 1111 || dep.jtac.default_laser_code > 1788) errs.push("JTAC laser code should be between 1111 and 1788.");
+    }
+    return errs;
+  }
+
+  function countInvalid() {
+    let n = 0;
+    for (const side of SIDES) for (const d of state.sides[side]) if (validateDep(d).length) n++;
+    return n;
+  }
+
+  // ---------- export ----------
+
+  function emptyToNull(v) { return (typeof v === "string" && v.trim() === "") ? null : v; }
+
+  function cleanCrate(c) {
+    c.weight = safeNum(c.weight, 0);
+    c.required = Math.max(1, safeNum(c.required, 1));
+    c.max_drop_height_agl = safeNum(c.max_drop_height_agl, 0);
+    c.max_drop_speed = safeNum(c.max_drop_speed, 0);
+    c.pos_unit = emptyToNull(c.pos_unit);
+    c.dcs_type = emptyToNull(c.dcs_type);
+    return c;
+  }
+
+  function cleanDeployableForExport(dep) {
+    const out = JSON.parse(JSON.stringify(dep));
+    if (out.kind && out.kind.Objective) {
+      const o = out.kind.Objective;
+      o.defenses_template = emptyToNull(o.defenses_template);
+      o.ammo_template = emptyToNull(o.ammo_template);
+      o.fuel_template = emptyToNull(o.fuel_template);
+      o.barracks_template = emptyToNull(o.barracks_template);
+      o.pad_templates = (o.pad_templates || []).filter((t) => t && t.trim() !== "");
+    }
+    if (out.persist && typeof out.persist === "object") {
+      const tag = Object.keys(out.persist)[0];
+      out.persist[tag] = safeNum(out.persist[tag], tag === "Restarts" ? 1 : 60);
+    }
+    out.path = (out.path || []).filter((p) => p && p.trim() !== "");
+    out.limit = safeNum(out.limit, 0);
+    out.cost = safeNum(out.cost, 0);
+    out.repair_cost = safeNum(out.repair_cost, 0);
+    out.crates = (out.crates || []).map(cleanCrate);
+    if (out.repair_crate) out.repair_crate = cleanCrate(out.repair_crate);
+    if (out.ewr) out.ewr.range = safeNum(out.ewr.range, 0);
+    if (out.jtac) {
+      out.jtac.range = safeNum(out.jtac.range, 0);
+      out.jtac.default_laser_code = safeNum(out.jtac.default_laser_code, 1688);
+      out.jtac.nolos = !!out.jtac.nolos;
+      out.jtac.name = emptyToNull(out.jtac.name);
+    }
+    return out;
+  }
+
+  function buildExportObject() {
+    const sidesOut = {};
+    for (const side of SIDES) sidesOut[side] = state.sides[side].map(cleanDeployableForExport);
+    if (state.isFullCfg) {
+      const merged = JSON.parse(JSON.stringify(state.fullCfgObj));
+      merged.deployables = sidesOut;
+      return merged;
+    }
+    return sidesOut;
+  }
+
+  function downloadJSON() {
+    const text = JSON.stringify(buildExportObject(), null, 2);
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = state.isFullCfg ? (state.fileName || "cfg.json") : "deployables.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleDownload() {
+    const invalid = countInvalid();
+    if (invalid > 0) {
+      const ok = confirm(invalid + " deployable" + (invalid === 1 ? "" : "s") + " still " +
+        (invalid === 1 ? "has" : "have") + " validation issues shown in the sidebar. " +
+        "The exported file may not load correctly in the campaign. Download anyway?");
+      if (!ok) return;
+    }
+    downloadJSON();
+  }
+
+  function updateRawPreview() {
+    if (!els.rawDetails.open) return;
+    els.rawJson.textContent = JSON.stringify(buildExportObject(), null, 2);
+  }
+
+  // ---------- rendering: sidebar ----------
+
+  function depSummary(dep) {
+    return (dep.path && dep.path.length) ? dep.path.join(" › ") : "(no path)";
+  }
+
+  function renderTabs() {
+    els.tabs.innerHTML = SIDES.map((side) => {
+      const count = state.sides[side].length;
+      const invalid = state.sides[side].filter((d) => validateDep(d).length > 0).length;
+      const active = side === state.currentSide ? "active" : "";
+      const badge = invalid > 0 ? '<span class="badge bad">' + invalid + "</span>" : "";
+      return '<button class="tab ' + active + '" data-side="' + side + '">' + side +
+        ' <span class="count">' + count + "</span>" + badge + "</button>";
+    }).join("");
+  }
+
+  function itemSubHtml(dep) {
+    const errs = validateDep(dep);
+    return (dep.cost || 0) + " pts · " + dep.crates.length + " crate" + (dep.crates.length === 1 ? "" : "s") +
+      (errs.length ? ' · <span class="err-count">' + errs.length + " issue" + (errs.length === 1 ? "" : "s") + "</span>" : "");
+  }
+
+  function renderSidebar() {
+    renderTabs();
+    const list = state.sides[state.currentSide];
+    const filter = state.filterText.trim().toLowerCase();
+    let html = "";
+    list.forEach((dep, i) => {
+      if (filter && !depSummary(dep).toLowerCase().includes(filter)) return;
+      const errs = validateDep(dep);
+      const cls = ["item"];
+      if (i === state.currentIndex) cls.push("selected");
+      if (errs.length) cls.push("invalid");
+      html += '<div class="' + cls.join(" ") + '" data-index="' + i + '">' +
+        '<div class="item-main">' +
+        '<div class="item-title">' + escapeHtml(depSummary(dep)) + "</div>" +
+        '<div class="item-sub">' + itemSubHtml(dep) + "</div>" +
+        "</div>" +
+        '<div class="item-actions">' +
+        '<button class="icon-btn" data-action="dup" data-index="' + i + '" title="Duplicate">⧉</button>' +
+        '<button class="icon-btn danger" data-action="del" data-index="' + i + '" title="Delete">✕</button>' +
+        "</div></div>";
+    });
+    els.list.innerHTML = html || '<div class="empty-hint">No deployables' + (filter ? " match your search." :
+      ' yet for this side.<br><br>Click <strong>+ New</strong> above, or use <strong>Open File…</strong> / <strong>Load Example</strong> in the toolbar.') + "</div>";
+    updateRawPreview();
+  }
+
+  function updateCurrentSidebarItem() {
+    const dep = currentDep();
+    renderTabs();
+    if (!dep) return;
+    const node = els.list.querySelector('.item[data-index="' + state.currentIndex + '"]');
+    if (node) {
+      const errs = validateDep(dep);
+      node.classList.toggle("invalid", errs.length > 0);
+      node.querySelector(".item-title").textContent = depSummary(dep);
+      node.querySelector(".item-sub").innerHTML = itemSubHtml(dep);
+    }
+    updateRawPreview();
+  }
+
+  // ---------- rendering: detail ----------
+
+  function crateFieldset(basePath, c, index, removable) {
+    const removeBtn = removable
+      ? '<button class="icon-btn danger" data-action="remove-item" data-list="crates" data-index="' + index + '" title="Remove crate">✕</button>'
+      : "";
+    const label = removable ? "Crate #" + (index + 1) : "Repair Crate";
+    return '<div class="crate-box">' +
+      '<div class="crate-box-header"><strong>' + label + "</strong>" + removeBtn + "</div>" +
+      '<div class="field-grid">' +
+      '<div class="field"><label>Name</label><input type="text" value="' + escapeHtml(c.name) + '" data-bind="' + basePath + '.name" placeholder="e.g. SA-15 Tor"></div>' +
+      '<div class="field"><label>Weight (kg)</label><input type="number" step="1" min="0" value="' + c.weight + '" data-bind="' + basePath + '.weight"></div>' +
+      '<div class="field"><label>Qty Required</label><input type="number" step="1" min="1" value="' + c.required + '" data-bind="' + basePath + '.required"></div>' +
+      '<div class="field"><label>Position Unit <span class="hint">multi-unit groups only</span></label><input type="text" value="' + escapeHtml(c.pos_unit || "") + '" data-bind="' + basePath + '.pos_unit" placeholder="optional"></div>' +
+      '<div class="field"><label>Max Drop Height (m AGL)</label><input type="number" step="1" min="0" value="' + c.max_drop_height_agl + '" data-bind="' + basePath + '.max_drop_height_agl"></div>' +
+      '<div class="field"><label>Max Drop Speed (m/s)</label><input type="number" step="1" min="0" value="' + c.max_drop_speed + '" data-bind="' + basePath + '.max_drop_speed"></div>' +
+      '<div class="field"><label>DCS Type Override</label><input type="text" value="' + escapeHtml(c.dcs_type || "") + '" data-bind="' + basePath + '.dcs_type" placeholder="optional"></div>' +
+      "</div></div>";
+  }
+
+  function renderDetail() {
+    const dep = currentDep();
+    if (!dep) {
+      els.detail.innerHTML = '<div class="empty-state">' +
+        "<h2>Nothing selected</h2>" +
+        "<p>Pick a deployable from the list on the left, click <strong>+ New</strong> to create one, " +
+        "or use <strong>Open File…</strong> / <strong>Load Example</strong> in the toolbar above.</p></div>";
+      return;
+    }
+    const kindTag = Object.keys(dep.kind)[0];
+    const persistTag = typeof dep.persist === "string" ? dep.persist : Object.keys(dep.persist)[0];
+    const persistNum = typeof dep.persist === "string" ? "" : dep.persist[persistTag];
+
+    const pathRows = dep.path.map((seg, i) =>
+      '<div class="row-inline"><input type="text" value="' + escapeHtml(seg) + '" data-bind="path.' + i +
+      '" placeholder="e.g. Vehicles"><button class="icon-btn danger" data-action="remove-item" data-list="path" data-index="' + i + '" title="Remove segment">✕</button></div>'
+    ).join("");
+
+    const objectiveFields = kindTag === "Objective" ? (
+      '<div class="field"><label>Pad Templates <span class="hint">DCS group templates for spawn pads — at least one</span></label>' +
+      dep.kind.Objective.pad_templates.map((t, i) =>
+        '<div class="row-inline"><input type="text" value="' + escapeHtml(t) + '" data-bind="kind.Objective.pad_templates.' + i +
+        '" placeholder="Pad template name"><button class="icon-btn danger" data-action="remove-item" data-list="kind.Objective.pad_templates" data-index="' + i + '">✕</button></div>'
+      ).join("") +
+      '<button class="btn small" data-action="add-item" data-list="kind.Objective.pad_templates">+ Add Pad Template</button></div>' +
+      '<div class="field-grid">' +
+      '<div class="field"><label>Defenses Template</label><input type="text" value="' + escapeHtml(dep.kind.Objective.defenses_template || "") + '" data-bind="kind.Objective.defenses_template" placeholder="optional"></div>' +
+      '<div class="field"><label>Ammo Template</label><input type="text" value="' + escapeHtml(dep.kind.Objective.ammo_template || "") + '" data-bind="kind.Objective.ammo_template" placeholder="optional"></div>' +
+      '<div class="field"><label>Fuel Template</label><input type="text" value="' + escapeHtml(dep.kind.Objective.fuel_template || "") + '" data-bind="kind.Objective.fuel_template" placeholder="optional"></div>' +
+      '<div class="field"><label>Barracks Template</label><input type="text" value="' + escapeHtml(dep.kind.Objective.barracks_template || "") + '" data-bind="kind.Objective.barracks_template" placeholder="optional"></div>' +
+      "</div>"
+    ) : (
+      '<div class="field"><label>Group Template <span class="hint">Name of the DCS group template to spawn</span></label>' +
+      '<input type="text" value="' + escapeHtml(dep.kind.Group.template || "") + '" data-bind="kind.Group.template" placeholder="e.g. RED SA-15 Tor"></div>'
+    );
+
+    const persistExtra = persistTag === "WallTime"
+      ? '<div class="field"><label>Duration (seconds)</label><input type="number" step="1" min="0" value="' + persistNum + '" data-bind="persist.WallTime"></div>'
+      : persistTag === "Restarts"
+      ? '<div class="field"><label>Restart cycles</label><input type="number" step="1" min="0" value="' + persistNum + '" data-bind="persist.Restarts"></div>'
+      : "";
+
+    const cratesRows = dep.crates.map((c, i) => crateFieldset("crates." + i, c, i, true)).join("");
+    const repairSection = dep.repair_crate ? crateFieldset("repair_crate", dep.repair_crate, null, false) : "";
+    const ewrSection = dep.ewr
+      ? '<div class="field"><label>EWR Detection Range (m)</label><input type="number" step="100" min="0" value="' + dep.ewr.range + '" data-bind="ewr.range"></div>'
+      : "";
+    const jtacSection = dep.jtac
+      ? '<div class="field-grid">' +
+        '<div class="field"><label>JTAC Range (m)</label><input type="number" step="100" min="0" value="' + dep.jtac.range + '" data-bind="jtac.range"></div>' +
+        '<div class="field checkbox-field"><label><input type="checkbox" ' + (dep.jtac.nolos ? "checked" : "") + ' data-bind="jtac.nolos"> Ignore line of sight (nolos)</label></div>' +
+        '<div class="field"><label>Default Laser Code</label><input type="number" step="1" min="1111" max="1788" value="' + dep.jtac.default_laser_code + '" data-bind="jtac.default_laser_code"></div>' +
+        '<div class="field"><label>Callsign</label><input type="text" value="' + escapeHtml(dep.jtac.name || "") + '" data-bind="jtac.name" placeholder="optional, e.g. Axeman 11"></div>' +
+        "</div>"
+      : "";
+
+    els.detail.innerHTML =
+      '<div class="detail-scroll">' +
+      '<section class="card"><h3>Menu Path</h3><p class="hint">Where this shows up in the F10 deploy menu, top-level to leaf.</p>' +
+      pathRows + '<button class="btn small" data-action="add-item" data-list="path">+ Add Segment</button></section>' +
+
+      '<section class="card"><h3>Kind</h3><div class="radio-row">' +
+      '<label><input type="radio" name="kind-tag" value="Group" ' + (kindTag === "Group" ? "checked" : "") + '> Spawned Group</label>' +
+      '<label><input type="radio" name="kind-tag" value="Objective" ' + (kindTag === "Objective" ? "checked" : "") + '> Objective / FARP</label>' +
+      "</div>" + objectiveFields + "</section>" +
+
+      '<section class="card"><h3>Persistence &amp; Limits</h3><div class="field-grid">' +
+      '<div class="field"><label>Persistence</label><select name="persist-tag">' +
+      '<option value="Forever" ' + (persistTag === "Forever" ? "selected" : "") + '>Forever (until destroyed)</option>' +
+      '<option value="UntilRestart" ' + (persistTag === "UntilRestart" ? "selected" : "") + '>Until server restart</option>' +
+      '<option value="WallTime" ' + (persistTag === "WallTime" ? "selected" : "") + '>For a duration</option>' +
+      '<option value="Restarts" ' + (persistTag === "Restarts" ? "selected" : "") + '>For N restarts</option>' +
+      "</select></div>" + persistExtra +
+      '<div class="field"><label>Max Simultaneous</label><input type="number" step="1" min="0" value="' + dep.limit + '" data-bind="limit"></div>' +
+      '<div class="field"><label>When Limit Reached</label><select data-bind="limit_enforce">' +
+      '<option value="DeleteOldest" ' + (dep.limit_enforce === "DeleteOldest" ? "selected" : "") + '>Delete oldest instance</option>' +
+      '<option value="DenyCrate" ' + (dep.limit_enforce === "DenyCrate" ? "selected" : "") + '>Deny new construction crates</option>' +
+      "</select></div></div></section>" +
+
+      '<section class="card"><h3>Cost</h3><div class="field-grid">' +
+      '<div class="field"><label>Deploy Cost (pts)</label><input type="number" step="1" min="0" value="' + dep.cost + '" data-bind="cost"></div>' +
+      '<div class="field"><label>Repair Cost (pts)</label><input type="number" step="1" min="0" value="' + dep.repair_cost + '" data-bind="repair_cost"></div>' +
+      "</div></section>" +
+
+      '<section class="card"><h3>Crates Required <span class="hint">(' + totalCrateWeight(dep.crates) + " kg total)</span></h3>" +
+      (cratesRows || '<p class="hint">No crates — this deployable spawns directly with no cargo drop.</p>') +
+      '<button class="btn small" data-action="add-item" data-list="crates" data-newvalue="crate">+ Add Crate</button></section>' +
+
+      '<section class="card"><h3><label><input type="checkbox" ' + (dep.repair_crate ? "checked" : "") + ' data-toggle="repair"> Repairable</label></h3>' + repairSection + "</section>" +
+
+      '<section class="card"><h3><label><input type="checkbox" ' + (dep.ewr ? "checked" : "") + ' data-toggle="ewr"> Early Warning Radar</label></h3>' + ewrSection + "</section>" +
+
+      '<section class="card"><h3><label><input type="checkbox" ' + (dep.jtac ? "checked" : "") + ' data-toggle="jtac"> JTAC (laser designator)</label></h3>' + jtacSection + "</section>" +
+
+      '<div id="errors-panel"></div>' +
+      "</div>";
+
+    updateErrorsPanel();
+  }
+
+  function updateErrorsPanel() {
+    const dep = currentDep();
+    const panel = document.getElementById("errors-panel");
+    if (!panel || !dep) return;
+    const errs = validateDep(dep);
+    panel.innerHTML = errs.length
+      ? '<div class="errors-box"><strong>' + errs.length + " issue" + (errs.length === 1 ? "" : "s") + ' found:</strong><ul>' +
+        errs.map((e) => "<li>" + escapeHtml(e) + "</li>").join("") + "</ul></div>"
+      : '<div class="ok-box">✓ Looks good — no validation issues.</div>';
+  }
+
+  // ---------- app control ----------
+
+  function setStatus(text) { els.status.textContent = text; }
+
+  function selectIndex(i) {
+    state.currentIndex = i;
+    renderSidebar();
+    renderDetail();
+  }
+
+  function switchSide(side) {
+    state.currentSide = side;
+    state.currentIndex = state.sides[side].length ? 0 : -1;
+    renderSidebar();
+    renderDetail();
+  }
+
+  function loadState(sides, isFullCfg, fullCfgObj, fileName) {
+    state.sides = sides;
+    state.isFullCfg = isFullCfg;
+    state.fullCfgObj = fullCfgObj;
+    state.fileName = fileName;
+    state.currentSide = state.sides.Red.length ? "Red" : (state.sides.Blue.length ? "Blue" : "Neutral");
+    state.currentIndex = state.sides[state.currentSide].length ? 0 : -1;
+    renderSidebar();
+    renderDetail();
+  }
+
+  const EXAMPLE_DATA = {
+    Red: [
+      {
+        path: ["Vehicles", "SAM", "SA-15 Tor"],
+        kind: { Group: { template: "RED SA-15 Tor" } },
+        persist: "UntilRestart", limit: 6, limit_enforce: "DeleteOldest",
+        crates: [{ name: "SA15 Tor", weight: 1500, required: 2, pos_unit: null, max_drop_height_agl: 10, max_drop_speed: 26, dcs_type: null }],
+        repair_crate: null, repair_cost: 0, cost: 50, ewr: null, jtac: null,
+      },
+      {
+        path: ["Support", "EWR", "1L13"],
+        kind: { Group: { template: "RED 1L13 EWR" } },
+        persist: "Forever", limit: 10, limit_enforce: "DeleteOldest",
+        crates: [{ name: "1L13 Crate", weight: 1500, required: 1, pos_unit: null, max_drop_height_agl: 20, max_drop_speed: 180, dcs_type: null }],
+        repair_crate: null, repair_cost: 0, cost: 20, ewr: { range: 500000 }, jtac: null,
+      },
+      {
+        path: ["FARP", "Field FARP"],
+        kind: { Objective: { pad_templates: ["RED FARP Pad 1", "RED FARP Pad 2", "RED FARP Pad 3", "RED FARP Pad 4"], defenses_template: "RED FARP Defenses", ammo_template: "RED FARP Ammo", fuel_template: "RED FARP Fuel", barracks_template: null } },
+        persist: "Forever", limit: 4, limit_enforce: "DeleteOldest",
+        crates: [{ name: "FARP Crate", weight: 1500, required: 4, pos_unit: null, max_drop_height_agl: 10, max_drop_speed: 26, dcs_type: null }],
+        repair_crate: null, repair_cost: 0, cost: 100, ewr: null, jtac: null,
+      },
+    ],
+    Blue: [
+      {
+        path: ["Vehicles", "IFV", "M2A2 Bradley"],
+        kind: { Group: { template: "BLUE M2A2 Bradley" } },
+        persist: "UntilRestart", limit: 10, limit_enforce: "DeleteOldest",
+        crates: [{ name: "Bradley Crate", weight: 1500, required: 2, pos_unit: null, max_drop_height_agl: 20, max_drop_speed: 180, dcs_type: null }],
+        repair_crate: null, repair_cost: 0, cost: 45, ewr: null,
+        jtac: { range: 5000, nolos: false, default_laser_code: 1688, name: null },
+      },
+      {
+        path: ["Vehicles", "SAM", "Hawk System"],
+        kind: { Group: { template: "BLUE Hawk System" } },
+        persist: "UntilRestart", limit: 4, limit_enforce: "DenyCrate",
+        crates: [
+          { name: "Hawk Launchers", weight: 1500, required: 1, pos_unit: null, max_drop_height_agl: 10, max_drop_speed: 26, dcs_type: null },
+          { name: "Hawk Search Radar", weight: 1500, required: 1, pos_unit: null, max_drop_height_agl: 10, max_drop_speed: 26, dcs_type: null },
+          { name: "Hawk Track Radar", weight: 1500, required: 1, pos_unit: null, max_drop_height_agl: 10, max_drop_speed: 26, dcs_type: null },
+          { name: "Hawk CC", weight: 1500, required: 1, pos_unit: null, max_drop_height_agl: 10, max_drop_speed: 26, dcs_type: null },
+        ],
+        repair_crate: { name: "Hawk Repair/Rearm", weight: 1500, required: 1, pos_unit: null, max_drop_height_agl: 10, max_drop_speed: 26, dcs_type: null },
+        repair_cost: 0, cost: 90, ewr: null, jtac: null,
+      },
+    ],
+    Neutral: [],
+  };
+
+  function loadExample() {
+    loadState(
+      { Red: EXAMPLE_DATA.Red.map(coerceDeployable), Blue: EXAMPLE_DATA.Blue.map(coerceDeployable), Neutral: [] },
+      false, null, null
+    );
+    setStatus("Example data loaded — not tied to any file.");
+  }
+
+  function startBlank() {
+    loadState({ Red: [], Blue: [], Neutral: [] }, false, null, null);
+    setStatus("Blank workspace — not tied to any file.");
+  }
+
+  function loadFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const obj = JSON.parse(reader.result);
+        const parsed = parseLoadedJson(obj);
+        loadState(parsed.sides, parsed.isFullCfg, parsed.fullCfgObj, file.name);
+        setStatus("Loaded " + file.name + (parsed.isFullCfg ? " (full campaign cfg)" : " (deployables only)") + ".");
+      } catch (err) {
+        alert("Could not read this file as a deployables config:\n\n" + err.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  // ---------- event wiring ----------
+
+  els.fileInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) loadFile(file);
+    e.target.value = "";
+  });
+  document.getElementById("btn-example").addEventListener("click", loadExample);
+  document.getElementById("btn-blank").addEventListener("click", () => {
+    if (countInvalid() === 0 && state.sides.Red.length === 0 && state.sides.Blue.length === 0 && state.sides.Neutral.length === 0) { startBlank(); return; }
+    if (confirm("Discard current data and start blank?")) startBlank();
+  });
+  document.getElementById("btn-download").addEventListener("click", handleDownload);
+  document.getElementById("btn-new").addEventListener("click", () => {
+    const arr = state.sides[state.currentSide];
+    arr.push(newDeployable());
+    selectIndex(arr.length - 1);
+  });
+
+  els.search.addEventListener("input", (e) => {
+    state.filterText = e.target.value;
+    renderSidebar();
+  });
+
+  els.tabs.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab");
+    if (btn) switchSide(btn.dataset.side);
+  });
+
+  els.list.addEventListener("click", (e) => {
+    const actionBtn = e.target.closest("button[data-action]");
+    if (actionBtn) {
+      const i = Number(actionBtn.dataset.index);
+      const arr = state.sides[state.currentSide];
+      if (actionBtn.dataset.action === "dup") {
+        const clone = JSON.parse(JSON.stringify(arr[i]));
+        arr.splice(i + 1, 0, clone);
+        selectIndex(i + 1);
+      } else if (actionBtn.dataset.action === "del") {
+        if (confirm('Delete "' + depSummary(arr[i]) + '"?')) {
+          arr.splice(i, 1);
+          if (state.currentIndex >= arr.length) state.currentIndex = arr.length - 1;
+          renderSidebar();
+          renderDetail();
+        }
+      }
+      return;
+    }
+    const item = e.target.closest(".item[data-index]");
+    if (item) selectIndex(Number(item.dataset.index));
+  });
+
+  els.detail.addEventListener("input", (e) => {
+    const el = e.target;
+    if (!el.dataset.bind) return;
+    const dep = currentDep();
+    if (!dep) return;
+    const val = el.type === "number" ? el.valueAsNumber : el.value;
+    setDeep(dep, el.dataset.bind, val);
+    updateCurrentSidebarItem();
+    updateErrorsPanel();
+  });
+
+  els.detail.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const dep = currentDep();
+    if (!dep) return;
+    if (btn.dataset.action === "add-item") {
+      const arr = getDeep(dep, btn.dataset.list);
+      arr.push(btn.dataset.newvalue === "crate" ? defaultCrate() : "");
+      renderDetail();
+      renderSidebar();
+    } else if (btn.dataset.action === "remove-item") {
+      const arr = getDeep(dep, btn.dataset.list);
+      arr.splice(Number(btn.dataset.index), 1);
+      renderDetail();
+      renderSidebar();
+    }
+  });
+
+  els.detail.addEventListener("change", (e) => {
+    const el = e.target;
+    const dep = currentDep();
+    if (!dep) return;
+
+    if (el.name === "kind-tag") {
+      dep.kind = el.value === "Group"
+        ? { Group: { template: "" } }
+        : { Objective: { pad_templates: [""], defenses_template: null, ammo_template: null, fuel_template: null, barracks_template: null } };
+      renderDetail(); renderSidebar();
+      return;
+    }
+    if (el.name === "persist-tag") {
+      if (el.value === "Forever") dep.persist = "Forever";
+      else if (el.value === "UntilRestart") dep.persist = "UntilRestart";
+      else if (el.value === "WallTime") dep.persist = { WallTime: 3600 };
+      else if (el.value === "Restarts") dep.persist = { Restarts: 1 };
+      renderDetail(); renderSidebar();
+      return;
+    }
+    if (el.dataset.toggle === "repair") {
+      dep.repair_crate = el.checked ? defaultCrate() : null;
+      renderDetail(); renderSidebar();
+      return;
+    }
+    if (el.dataset.toggle === "ewr") {
+      dep.ewr = el.checked ? { range: 30000 } : null;
+      renderDetail(); renderSidebar();
+      return;
+    }
+    if (el.dataset.toggle === "jtac") {
+      dep.jtac = el.checked ? { range: 5000, nolos: false, default_laser_code: 1688, name: null } : null;
+      renderDetail(); renderSidebar();
+      return;
+    }
+    if (el.dataset.bind) {
+      const val = el.type === "checkbox" ? el.checked : (el.type === "number" ? el.valueAsNumber : el.value);
+      setDeep(dep, el.dataset.bind, val);
+      updateCurrentSidebarItem();
+      updateErrorsPanel();
+    }
+  });
+
+  els.rawDetails.addEventListener("toggle", updateRawPreview);
+
+  document.getElementById("btn-copy-raw").addEventListener("click", () => {
+    const text = JSON.stringify(buildExportObject(), null, 2);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => { const b = document.getElementById("btn-copy-raw"); const old = b.textContent; b.textContent = "Copied!"; setTimeout(() => (b.textContent = old), 1200); },
+        () => alert("Copy failed — select the text manually.")
+      );
+    } else {
+      alert("Clipboard API not available — select the text manually.");
+    }
+  });
+
+  // drag & drop a file onto the page
+  ["dragover", "drop"].forEach((evt) => document.body.addEventListener(evt, (e) => e.preventDefault()));
+  document.body.addEventListener("drop", (e) => {
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) loadFile(file);
+  });
+
+  // ---------- init ----------
+  renderSidebar();
+  renderDetail();
+})();
+</script>
+</body>
+</html>

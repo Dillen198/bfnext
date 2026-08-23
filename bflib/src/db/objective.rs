@@ -848,9 +848,10 @@ impl Db {
         oid: &ObjectiveId,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        let (kind, health, logi, _prev_logi) = {
+        let (kind, health, logi, _prev_logi, name, owner, newly_capturable) = {
             let obj = objective!(self, oid)?;
             let prev_logi = obj.logi;
+            let prev_eligible = obj.captureable() || obj.kind.is_special_sam_site();
             let (health, logi, infantry) = self.compute_objective_status(obj)?;
             let obj = objective_mut!(self, oid)?;
             obj.health = health;
@@ -866,8 +867,19 @@ impl Db {
                 }
             }
 
-            (obj.kind.clone(), health, logi, prev_logi)
+            let new_eligible = obj.captureable() || obj.kind.is_special_sam_site();
+            let newly_capturable = !prev_eligible && new_eligible;
+            (obj.kind.clone(), health, logi, prev_logi, obj.name.clone(), obj.owner, newly_capturable)
         };
+        if newly_capturable {
+            self.ephemeral.msgs().panel_to_all(
+                15,
+                false,
+                format_compact!(
+                    "🎯 {name} ({owner:?}) is now capturable! Get troops into the zone."
+                ),
+            );
+        }
         self.ephemeral.stat(Stat::ObjectiveHealth {
             id: *oid,
             last_change: now,
@@ -1225,6 +1237,11 @@ impl Db {
                 }
                 obj.enabled = spawn;
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
+                    let group = group!(self, gid)?;
+                    if group.kind.is_none() {
+                        // Static groups have no AI controller to toggle
+                        continue;
+                    }
                     if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
                         // Convert Object oid to Group by getting the Object, converting to Unit, then getting Group
                         let group = match dcso3::object::Object::get_instance(lua, oid) {
@@ -1660,6 +1677,11 @@ impl Db {
                 obj.owner = new_owner;
                 self.ephemeral.capture_progress.remove(&oid);
                 actually_captured.push((*side, oid));
+                self.ephemeral.msgs().panel_to_all(
+                    15,
+                    true,
+                    format_compact!("🏴 BASE CAPTURE: {name} has been captured by {new_owner:?}!"),
+                );
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     to_mark.push(*gid);
                 }

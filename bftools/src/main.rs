@@ -74,6 +74,17 @@ struct MizCmd {
     /// longitude to fetch live weather for, required by --live-weather
     #[clap(long)]
     live_weather_lon: Option<f64>,
+    /// optional JSON file of DCS client option overrides (e.g.
+    /// {"miscellaneous": {"f10_awacs": true, "chat_window_at_start": true}})
+    /// merged into the generated mission's options file. The options file's
+    /// settings (miscellaneous, difficulty, graphics, etc.) are a snapshot
+    /// of whoever's DCS client saved --options through the Mission Editor,
+    /// not something editable in the ME itself -- this lets you override
+    /// specific keys without requiring someone to change their local DCS
+    /// settings and re-save the mission just to flip one flag. Keys not
+    /// mentioned are left as copied from --options
+    #[clap(long)]
+    options_overrides: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Clone, Debug, Serialize)]

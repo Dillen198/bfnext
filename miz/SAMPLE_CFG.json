@@ -605,6 +605,27 @@
         "geo_limit": "Unlimited",
         "kind": { "Tanker": { "kind": "FixedWing", "duration": 7200, "template": "US_KC135", "altitude": 7620, "altitude_typ": "BARO", "speed": 250, "freq": 251000000 } }
       },
+      "Tanker 2": {
+        "cost": 200,
+        "penalty": null,
+        "limit": 2,
+        "geo_limit": "Unlimited",
+        "kind": { "Tanker": { "kind": "FixedWing", "duration": 7200, "template": "US_KC135", "altitude": 7920, "altitude_typ": "BARO", "speed": 250, "freq": 251500000 } }
+      },
+      "Tanker 3": {
+        "cost": 200,
+        "penalty": null,
+        "limit": 2,
+        "geo_limit": "Unlimited",
+        "kind": { "Tanker": { "kind": "FixedWing", "duration": 7200, "template": "US_KC135", "altitude": 8220, "altitude_typ": "BARO", "speed": 250, "freq": 252000000 } }
+      },
+      "Tanker 4": {
+        "cost": 200,
+        "penalty": null,
+        "limit": 2,
+        "geo_limit": "Unlimited",
+        "kind": { "Tanker": { "kind": "FixedWing", "duration": 7200, "template": "US_KC135", "altitude": 8520, "altitude_typ": "BARO", "speed": 250, "freq": 252500000 } }
+      },
       "AWACS": {
         "cost": 300,
         "penalty": null,
@@ -612,6 +633,26 @@
         "geo_limit": "Unlimited",
         "kind": { "Awacs": {
           "plane": { "kind": "FixedWing", "duration": 7200, "template": "US_E3A", "altitude": 9144, "altitude_typ": "BARO", "speed": 220, "freq": 253000000 },
+          "ewr": { "range": 370000 }
+        }}
+      },
+      "AWACS 2": {
+        "cost": 300,
+        "penalty": null,
+        "limit": 1,
+        "geo_limit": "Unlimited",
+        "kind": { "Awacs": {
+          "plane": { "kind": "FixedWing", "duration": 7200, "template": "US_E3A", "altitude": 9444, "altitude_typ": "BARO", "speed": 220, "freq": 253500000 },
+          "ewr": { "range": 370000 }
+        }}
+      },
+      "AWACS 3": {
+        "cost": 300,
+        "penalty": null,
+        "limit": 1,
+        "geo_limit": "Unlimited",
+        "kind": { "Awacs": {
+          "plane": { "kind": "FixedWing", "duration": 7200, "template": "US_E3A", "altitude": 9744, "altitude_typ": "BARO", "speed": 220, "freq": 254000000 },
           "ewr": { "range": 370000 }
         }}
       },
@@ -694,6 +735,27 @@
         "geo_limit": "Unlimited",
         "kind": { "Tanker": { "kind": "FixedWing", "duration": 7200, "template": "RU_IL78", "altitude": 7620, "altitude_typ": "BARO", "speed": 250, "freq": 251000000 } }
       },
+      "Tanker 2": {
+        "cost": 200,
+        "penalty": null,
+        "limit": 2,
+        "geo_limit": "Unlimited",
+        "kind": { "Tanker": { "kind": "FixedWing", "duration": 7200, "template": "RU_IL78", "altitude": 7920, "altitude_typ": "BARO", "speed": 250, "freq": 251500000 } }
+      },
+      "Tanker 3": {
+        "cost": 200,
+        "penalty": null,
+        "limit": 2,
+        "geo_limit": "Unlimited",
+        "kind": { "Tanker": { "kind": "FixedWing", "duration": 7200, "template": "RU_IL78", "altitude": 8220, "altitude_typ": "BARO", "speed": 250, "freq": 252000000 } }
+      },
+      "Tanker 4": {
+        "cost": 200,
+        "penalty": null,
+        "limit": 2,
+        "geo_limit": "Unlimited",
+        "kind": { "Tanker": { "kind": "FixedWing", "duration": 7200, "template": "RU_IL78", "altitude": 8520, "altitude_typ": "BARO", "speed": 250, "freq": 252500000 } }
+      },
       "AWACS": {
         "cost": 300,
         "penalty": null,
@@ -701,6 +763,26 @@
         "geo_limit": "Unlimited",
         "kind": { "Awacs": {
           "plane": { "kind": "FixedWing", "duration": 7200, "template": "RU_A50", "altitude": 9144, "altitude_typ": "BARO", "speed": 220, "freq": 253000000 },
+          "ewr": { "range": 350000 }
+        }}
+      },
+      "AWACS 2": {
+        "cost": 300,
+        "penalty": null,
+        "limit": 1,
+        "geo_limit": "Unlimited",
+        "kind": { "Awacs": {
+          "plane": { "kind": "FixedWing", "duration": 7200, "template": "RU_A50", "altitude": 9444, "altitude_typ": "BARO", "speed": 220, "freq": 253500000 },
+          "ewr": { "range": 350000 }
+        }}
+      },
+      "AWACS 3": {
+        "cost": 300,
+        "penalty": null,
+        "limit": 1,
+        "geo_limit": "Unlimited",
+        "kind": { "Awacs": {
+          "plane": { "kind": "FixedWing", "duration": 7200, "template": "RU_A50", "altitude": 9744, "altitude_typ": "BARO", "speed": 220, "freq": 254000000 },
           "ewr": { "range": 350000 }
         }}
       },

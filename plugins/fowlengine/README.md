@@ -4,10 +4,12 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 
 ## Features
 
-- **Live Campaign Status Embed:** A single, continuously updating Discord embed showing live points, objective counts, and player counts per faction.
+- **Live Campaign Status Embed:** A single, continuously updating Discord embed showing live points, objective counts, and player counts per faction, plus which objectives are ready to capture, commander-priority targets, and the next rotation time as a localized Discord timestamp.
 - **Live Engine Log Relay:** Tails bfdb's `/ws/engine-logs` websocket (the raw `bflib` engine log) into a Discord channel — one message is continuously edited with a rolling tail, and `[ERROR]`/`[WARN]` lines are additionally posted as standalone alerts so they don't get missed.
 - **Capture/Neutral/Ready-to-Capture Alerts:** Polls bfdb's public `/api/objectives` every ~20s and diffs owner/health against the previous poll to detect captures, objectives going neutral, and objectives dropping to capturable health.
+- **Per-Faction Alert Threads:** `alerts_channel` only needs to be set once — the plugin auto-creates a "Blue Ops" and "Red Ops" thread under it and routes alerts by relevance: a defending faction gets "ready to capture, defend it!" while the opposing faction gets "opportunity!" for the same event; captures post to both. Set `use_faction_threads: false` to go back to one shared channel.
 - **Killstreak Achievements:** Polls bfdb's public `/api/kills` every ~20s to track each pilot's consecutive kills (reset on death) and announces streaks of 5 (Ace), 10 (Unstoppable), and 15 (God of War).
+- **Mission-Briefing Welcome Message:** Posts an embed to `welcome_channel` when someone joins the Discord server, pulling the active scenario, round duration, and current front (objective counts per faction) from bfdb — same data as the live status embed — plus a customizable briefing blurb and dashboard link.
 - **Server Performance Embed:** Posts and edits a live CPU/RAM/GPU/disk/temp + DCS frame-time embed every 5 minutes, pulled from bfdb's admin-only `/api/admin/perf`.
 - **Dual-Login Dashboard:** Supports both standard Discord OAuth web-login and securely generated HMAC bot-tokens to seamlessly bridge the `bfweb` dashboard.
 - **Interactive Commander Terminal:** A slick UI terminal allowing commanders to drop crates and infantry squads at airbases directly from Discord.
@@ -45,6 +47,15 @@ DEFAULT:
   # (Optional) Discord channel for the live engine log relay. Omit to disable.
   engine_log_channel: 123456789012345678
 
+  # (Optional) Whether alerts_channel gets auto-created "Blue Ops"/"Red Ops"
+  # threads for faction-relevant routing. Defaults to true. Set to false to
+  # post every alert straight to alerts_channel instead.
+  use_faction_threads: true
+
+  # (Optional) Discord channel for the mission-briefing welcome message,
+  # posted whenever someone joins the Discord server. Omit to disable.
+  welcome_channel: 123456789012345678
+
   # (Optional) Discord channel for the server performance/hardware embed
   # (CPU/RAM/GPU/disk/temps + DCS frame-time), updated every 5 minutes.
   # Omit to disable. bfdb must be running on the machine it's reporting on.
@@ -62,11 +73,16 @@ DEFAULT:
 - `/vs dashboard` - Retrieves your secure Vector Strike web dashboard login link.
 - `/vs join [Red|Blue|Neutral]` - Pre-selects your faction before slotting into a DCS aircraft.
 - `/vs stats [@user]` - Shows pilot kills, highest streak, and points available.
+- `/vs online` - Shows who's currently in a slot, grouped by faction.
+- `/vs leaderboard [top]` - Shows the top pilots by kills, with captures and K/D.
+- `/vs objective [name]` - Shows detailed status (owner, health, priority) for one objective; matches by substring.
 
 ### Commander & Admin Commands
 - `/vs terminal` - Deploys the interactive Commander Terminal (UI buttons and dropdowns) allowing you to deploy logistics from Discord.
 - `/vs spawn_deployable [type] [airbase]` - Direct command to spawn cargo/infantry at a specific airbase.
 - `/vs priority [objective]` - Marks an objective as a high priority target for your team.
+- `/vs ban [ucid] [name] [reason] [until]` - Bans a pilot from the campaign (requires admin_username/admin_password).
+- `/vs unban [ucid]` - Removes a ban.
 
 ## Architecture & Integration
 This plugin talks to bfdb, not directly to the DCS process. Two integration paths:

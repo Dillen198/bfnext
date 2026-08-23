@@ -1,7 +1,7 @@
 import discord
 from core import Plugin, utils, Server, Status, command
 from discord import app_commands
-from discord.ext import tasks
+from discord.ext import tasks, commands
 from services.bot import DCSServerBot
 from datetime import datetime, timezone
 import json
@@ -172,6 +172,7 @@ class FowlEngine(Plugin):
         self.status_msg_id = None
         self.perf_msg_id = None
         self.tail_msg_ids = {}  # server name -> engine log tail message id
+        self.faction_thread_ids = {}  # server name -> {"Blue": thread_id, "Red": thread_id}
         self.state_file = os.path.join(bot.node.config_dir, 'fowlengine_state.json')
         if os.path.exists(self.state_file):
             try:
@@ -180,6 +181,7 @@ class FowlEngine(Plugin):
                     self.status_msg_id = state.get('status_msg_id')
                     self.perf_msg_id = state.get('perf_msg_id')
                     self.tail_msg_ids = state.get('tail_msg_ids', {})
+                    self.faction_thread_ids = state.get('faction_thread_ids', {})
             except Exception as ex:
                 self.log.error(f"Failed to load Fowl Engine state: {ex}")
         # Per-server live state for the engine log relay (not persisted -- rebuilt on connect).
@@ -222,6 +224,7 @@ class FowlEngine(Plugin):
                     'status_msg_id': self.status_msg_id,
                     'perf_msg_id': self.perf_msg_id,
                     'tail_msg_ids': self.tail_msg_ids,
+                    'faction_thread_ids': self.faction_thread_ids,
                 }, f)
         except Exception as ex:
             self.log.error(f"Failed to save Fowl Engine state: {ex}")
@@ -282,7 +285,7 @@ class FowlEngine(Plugin):
                     start_raw = active_round.get('start')
                     if start_raw:
                         try:
-                            started = datetime.fromisoformat(start_raw.replace('Z', '+00:00'))
+                            started = self._parse_iso(start_raw)
                             elapsed = datetime.now(timezone.utc) - started
                             days, rem = divmod(int(elapsed.total_seconds()), 86400)
                             hours, rem = divmod(rem, 3600)
@@ -358,11 +361,27 @@ class FowlEngine(Plugin):
                         inline=True,
                     )
 
+                ready_objs = [o for o in objs if o.get('health', 100) <= 20 and o.get('owner') in ('Blue', 'Red')]
+                if ready_objs:
+                    names = ", ".join(f"{o['name']} ({o['owner']})" for o in ready_objs[:5])
+                    if len(ready_objs) > 5:
+                        names += f" +{len(ready_objs) - 5} more"
+                    embed.add_field(name="⏳ Ready to Capture", value=names, inline=False)
+
+                priority_objs = [o.get('name') for o in objs if o.get('priority')]
+                if priority_objs:
+                    embed.add_field(name="⭐ Commander Priority", value=", ".join(priority_objs[:5]), inline=False)
+
                 footer_parts = []
                 restart_at = stats.get('restart_at')
                 if restart_at:
-                    footer_parts.append(f"Rotation scheduled for {restart_at}")
-                footer_parts.append(f"Updated {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}")
+                    try:
+                        restart_ts = int(self._parse_iso(restart_at).timestamp())
+                        embed.add_field(name="🔄 Next Rotation", value=f"<t:{restart_ts}:R> (<t:{restart_ts}:f>)", inline=False)
+                    except ValueError:
+                        footer_parts.append(f"Rotation scheduled for {restart_at}")
+                embed.timestamp = discord.utils.utcnow()
+                footer_parts.append("Updated")
                 embed.set_footer(text=" | ".join(footer_parts))
                 channel_id = int(config['status_channel'])
                 channel = self.bot.get_channel(channel_id)
@@ -392,6 +411,17 @@ class FowlEngine(Plugin):
     @update_status.before_loop
     async def before_update_status(self):
         await self.bot.wait_until_ready()
+
+    @staticmethod
+    def _parse_iso(raw: str):
+        """Parses bfdb's ISO-8601 timestamps, which may carry nanosecond
+        fractional seconds (9 digits) -- datetime.fromisoformat only accepts
+        up to 6 (microseconds), so truncate before parsing."""
+        raw = raw.replace('Z', '+00:00')
+        m = re.match(r'^(.*?\.\d{6})\d*(\+.*)?$', raw)
+        if m:
+            raw = m.group(1) + (m.group(2) or '')
+        return datetime.fromisoformat(raw)
 
     @staticmethod
     def _fmt_bytes(n: int) -> str:
@@ -625,6 +655,97 @@ class FowlEngine(Plugin):
     async def before_sync_ranks(self):
         await self.bot.wait_until_ready()
 
+    # ── Welcome / mission briefing ───────────────────────────────────────────
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        """Posts a mission-briefing embed to welcome_channel when a new member
+        joins the guild. Config is guild-wide (not per-DCS-server), same as
+        fe_dashboard, since a Discord join isn't tied to a specific server."""
+        config = self.get_config() or {}
+        channel_id = config.get('welcome_channel')
+        if not channel_id:
+            return
+        channel = self.bot.get_channel(int(channel_id))
+        if not channel:
+            self.log.error(f"FowlEngine: welcome_channel {channel_id} not found or bot lacks access")
+            return
+        if getattr(channel, 'guild', None) and channel.guild.id != member.guild.id:
+            return
+
+        api_url = config.get("api_url", "http://localhost:8765")
+        brand_name = config.get('brand_name', 'Fowl Engine')
+        stats, objs = {}, []
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{api_url}/api/stats", timeout=10) as resp:
+                    if resp.status == 200:
+                        stats = await resp.json()
+                async with session.get(f"{api_url}/api/objectives", timeout=10) as resp:
+                    if resp.status == 200:
+                        objs = await resp.json()
+        except Exception as ex:
+            self.log.error(f"FowlEngine: failed to fetch briefing data for welcome message: {type(ex).__name__}: {ex or '(no message)'}")
+
+        embed = discord.Embed(
+            title=f"⚔️ Welcome to {brand_name}",
+            color=discord.Color.gold(),
+        )
+
+        active_round = stats.get('active_round')
+        if active_round:
+            desc = f"**Active Scenario:** {active_round.get('scenario', 'Unknown')}"
+            start_raw = active_round.get('start')
+            if start_raw:
+                try:
+                    started = datetime.fromisoformat(start_raw.replace('Z', '+00:00'))
+                    elapsed = datetime.now(timezone.utc) - started
+                    days, rem = divmod(int(elapsed.total_seconds()), 86400)
+                    hours, rem = divmod(rem, 3600)
+                    minutes, _ = divmod(rem, 60)
+                    elapsed_str = f"{days}d {hours}h {minutes}m" if days else f"{hours}h {minutes}m"
+                    desc += f"\n**Round Duration:** {elapsed_str}"
+                except ValueError:
+                    pass
+            embed.description = desc
+        else:
+            embed.description = "**No active round right now — check back soon.**"
+
+        blue_objs = len([o for o in objs if o.get('owner') == 'Blue'])
+        red_objs = len([o for o in objs if o.get('owner') == 'Red'])
+        neutral_objs = len([o for o in objs if o.get('owner') not in ('Blue', 'Red')])
+        if objs:
+            embed.add_field(
+                name="📊 Current Front",
+                value=f"🟦 Blue: **{blue_objs}** · 🟥 Red: **{red_objs}** · ⬜ Neutral: **{neutral_objs}**",
+                inline=False,
+            )
+            top_priority = next((o.get('name') for o in objs if o.get('priority')), None)
+            if top_priority:
+                embed.add_field(name="⭐ Commander Priority", value=top_priority, inline=False)
+
+        briefing = config.get(
+            'welcome_briefing',
+            "Read the rules, pick your faction, and check the dashboard for your pilot profile and the live map.\n\n"
+            "Use `/vs dashboard` for your secure web login, `/vs objectives` for the full objective list, "
+            "and `/vs stats` to track your kills and captures.",
+        )
+        embed.add_field(name="📋 Briefing", value=briefing, inline=False)
+
+        dashboard_url = config.get("dashboard_url")
+        if dashboard_url:
+            embed.add_field(name="🔗 Dashboard", value=f"[Open Dashboard]({dashboard_url})", inline=False)
+
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"Pilot #{member.guild.member_count}")
+
+        welcome_message = config.get('welcome_message', "Welcome aboard, {mention}!")
+        try:
+            await channel.send(content=welcome_message.format(mention=member.mention, brand_name=brand_name), embed=embed)
+        except discord.HTTPException as ex:
+            self.log.error(f"FowlEngine: failed to send welcome message: {ex}")
+
     # ── Engine log relay ─────────────────────────────────────────────────────
 
     @tasks.loop(seconds=15.0)
@@ -678,6 +799,47 @@ class FowlEngine(Plugin):
     async def before_supervise_campaign_events(self):
         await self.bot.wait_until_ready()
 
+    async def _get_faction_channels(self, main_channel, server_name: str, config: dict):
+        """Resolves (creating if needed) a per-faction thread pair under
+        main_channel so Blue and Red can each get alerts relevant to them
+        without cluttering a shared channel or requiring separate channel IDs
+        in config. Set use_faction_threads: false to disable and route
+        everything to main_channel instead."""
+        if not config.get('use_faction_threads', True) or not isinstance(main_channel, discord.TextChannel):
+            return {"Blue": main_channel, "Red": main_channel, "Neutral": main_channel}
+
+        brand_name = config.get('brand_name', 'Fowl Engine')
+        ids = self.faction_thread_ids.setdefault(server_name, {})
+        result = {}
+        changed = False
+        for side in ("Blue", "Red"):
+            thread = None
+            tid = ids.get(side)
+            if tid:
+                thread = main_channel.guild.get_thread(tid)
+                if thread is None:
+                    try:
+                        thread = await self.bot.fetch_channel(tid)
+                    except (discord.NotFound, discord.Forbidden):
+                        thread = None
+            if thread is None:
+                try:
+                    thread = await main_channel.create_thread(
+                        name=f"{brand_name} — {side} Ops",
+                        type=discord.ChannelType.public_thread,
+                        auto_archive_duration=10080,
+                    )
+                    ids[side] = thread.id
+                    changed = True
+                except Exception as ex:
+                    self.log.error(f"FowlEngine: failed to create {side} alerts thread for {server_name}: {ex}")
+                    thread = main_channel
+            result[side] = thread
+        result["Neutral"] = main_channel
+        if changed:
+            self.save_state()
+        return result
+
     async def _campaign_event_poll(self, server: Server):
         config = self.get_config(server) or {}
         api_url = config.get("api_url", "http://localhost:8765")
@@ -687,21 +849,30 @@ class FowlEngine(Plugin):
         obj_state = self._obj_state.setdefault(server.name, {})
 
         import aiohttp
+        consecutive_failures = 0
         while True:
+            any_failed = False
             try:
                 async with aiohttp.ClientSession() as session:
                     if alerts_channel_id:
-                        await self._poll_objective_changes(
-                            session, api_url, int(alerts_channel_id), messages, obj_state
-                        )
-                        await self._poll_capture_events(
-                            session, api_url, server.name, int(alerts_channel_id), messages
-                        )
+                        main_channel = self.bot.get_channel(int(alerts_channel_id))
+                        if not main_channel:
+                            self.log.error(f"FowlEngine: alerts_channel {alerts_channel_id} not found or bot lacks access")
+                        else:
+                            faction_channels = await self._get_faction_channels(main_channel, server.name, config)
+                            any_failed |= await self._poll_step(
+                                server.name, api_url, "/api/objectives",
+                                self._poll_objective_changes(session, api_url, faction_channels, messages, obj_state),
+                            )
+                            any_failed |= await self._poll_step(
+                                server.name, api_url, "/api/capture-events",
+                                self._poll_capture_events(session, api_url, server.name, faction_channels, messages),
+                            )
                     if achievements_channel_id:
-                        await self._poll_kill_streaks(
-                            session, api_url, server.name, int(achievements_channel_id), messages
+                        any_failed |= await self._poll_step(
+                            server.name, api_url, "/api/kills",
+                            self._poll_kill_streaks(session, api_url, server.name, int(achievements_channel_id), messages),
                         )
-                await asyncio.sleep(CAMPAIGN_POLL_SECS)
             except asyncio.CancelledError:
                 raise
             except Exception as ex:
@@ -709,21 +880,42 @@ class FowlEngine(Plugin):
                 # subclasses) is "" by default -- include the exception type
                 # so a bare-colon log line doesn't hide what actually failed.
                 self.log.error(
-                    f"FowlEngine: campaign event poll error for {server.name}: "
+                    f"FowlEngine: campaign event poll error for {server.name} ({api_url}): "
                     f"{type(ex).__name__}: {ex or '(no message)'}"
                 )
-                await asyncio.sleep(CAMPAIGN_RECONNECT_SECS)
+                any_failed = True
 
-    async def _poll_objective_changes(self, session, api_url, channel_id, messages, obj_state):
+            if any_failed:
+                consecutive_failures += 1
+                if consecutive_failures in (1, 5) or consecutive_failures % 30 == 0:
+                    self.log.error(
+                        f"FowlEngine: campaign polling for {server.name} has failed "
+                        f"{consecutive_failures} time(s) in a row -- is bfdb reachable at {api_url}?"
+                    )
+                await asyncio.sleep(CAMPAIGN_RECONNECT_SECS)
+            else:
+                consecutive_failures = 0
+                await asyncio.sleep(CAMPAIGN_POLL_SECS)
+
+    async def _poll_step(self, server_name: str, api_url: str, endpoint: str, coro) -> bool:
+        """Runs one poll sub-step in isolation so a hung/broken endpoint
+        doesn't also block the others in the same cycle. Returns True if it failed."""
+        try:
+            await coro
+            return False
+        except Exception as ex:
+            self.log.error(
+                f"FowlEngine: {endpoint} poll failed for {server_name} ({api_url}): "
+                f"{type(ex).__name__}: {ex or '(no message)'}"
+            )
+            return True
+
+    async def _poll_objective_changes(self, session, api_url, faction_channels, messages, obj_state):
         async with session.get(f"{api_url}/api/objectives", timeout=10) as resp:
             if resp.status != 200:
                 self.log.error(f"FowlEngine: /api/objectives returned {resp.status} while polling for alerts")
                 return
             objs = await resp.json()
-        channel = self.bot.get_channel(channel_id)
-        if not channel:
-            self.log.error(f"FowlEngine: alerts_channel {channel_id} not found or bot lacks access")
-            return
 
         # Don't alert on the very first snapshot -- there's no prior state to
         # diff against, and every objective would look like a fresh capture.
@@ -741,15 +933,25 @@ class FowlEngine(Plugin):
             if owner != prev.get("owner"):
                 if owner == "Neutral":
                     fmt = messages.get('neutral', "🏳️ **[NEUTRAL]** {message}")
-                    await channel.send(fmt.format(message=f"{name} has gone neutral."))
+                    await faction_channels["Neutral"].send(fmt.format(message=f"{name} has gone neutral."))
                 # Non-neutral ownership changes are announced by
                 # _poll_capture_events instead, which has pilot attribution
                 # this owner-diff can't provide.
             elif prev.get("health", 0) > 20 and health <= 20:
-                fmt = messages.get('ready_to_capture', "⏳ **[READY TO CAPTURE]** {message}")
-                await channel.send(fmt.format(message=f"{name} ({owner}) is ready to be captured."))
+                # The owner needs to know to defend; the opposing faction
+                # needs to know there's an opportunity -- different framing,
+                # each posted only to the thread it's relevant to.
+                if owner in ("Blue", "Red"):
+                    defend_fmt = messages.get('ready_to_capture', "⏳ **[READY TO CAPTURE]** {message}")
+                    await faction_channels[owner].send(defend_fmt.format(message=f"{name} is ready to be captured -- defend it!"))
+                    attacker = "Red" if owner == "Blue" else "Blue"
+                    attack_fmt = messages.get('capture_opportunity', "🎯 **[OPPORTUNITY]** {message}")
+                    await faction_channels[attacker].send(attack_fmt.format(message=f"{name} ({owner}) is weak and ready to be captured!"))
+                else:
+                    fmt = messages.get('ready_to_capture', "⏳ **[READY TO CAPTURE]** {message}")
+                    await faction_channels["Neutral"].send(fmt.format(message=f"{name} ({owner}) is ready to be captured."))
 
-    async def _poll_capture_events(self, session, api_url, server_name, channel_id, messages):
+    async def _poll_capture_events(self, session, api_url, server_name, faction_channels, messages):
         async with session.get(f"{api_url}/api/capture-events", params={"limit": 50}, timeout=10) as resp:
             if resp.status != 200:
                 self.log.error(f"FowlEngine: /api/capture-events returned {resp.status} while polling for alerts")
@@ -770,11 +972,6 @@ class FowlEngine(Plugin):
         if first_poll:
             return
 
-        channel = self.bot.get_channel(channel_id)
-        if not channel:
-            self.log.error(f"FowlEngine: alerts_channel {channel_id} not found or bot lacks access")
-            return
-
         names = None  # lazily fetched only if we actually need to announce something
         for e in new_events:
             obj_name = e.get('objective', 'Unknown')
@@ -788,7 +985,11 @@ class FowlEngine(Plugin):
             else:
                 message = f"{obj_name} was captured by {owner}."
             fmt = messages.get('capture', "🏆 **[CAPTURED]** {message}")
-            await channel.send(fmt.format(message=message))
+            # Both factions care about a capture -- the winner as a win, the
+            # loser as something to retake -- so it goes to both threads
+            # rather than only the capturing side's.
+            for channel in {faction_channels["Blue"], faction_channels["Red"]}:
+                await channel.send(fmt.format(message=message))
 
     async def _fetch_pilot_names(self, session, api_url):
         try:
@@ -897,7 +1098,12 @@ class FowlEngine(Plugin):
             except asyncio.CancelledError:
                 raise
             except Exception as ex:
-                self.log.error(f"FowlEngine: engine log relay error for {server.name}: {ex}")
+                # Same blank-message pitfall as _campaign_event_poll: bare
+                # timeouts stringify to "", so include the exception type.
+                self.log.error(
+                    f"FowlEngine: engine log relay error for {server.name}: "
+                    f"{type(ex).__name__}: {ex or '(no message)'}"
+                )
             await asyncio.sleep(ENGINE_LOG_RECONNECT_SECS)
 
     async def _pump_engine_log(self, ws, channel: discord.abc.Messageable, server_name: str):
@@ -1025,6 +1231,56 @@ class FowlEngine(Plugin):
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
 
+    @command(description='Show detailed status for one objective.')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS')
+    async def fe_objective(self, interaction: discord.Interaction,
+                           server: app_commands.Transform[Server, utils.ServerTransformer(status=[Status.RUNNING, Status.PAUSED])],
+                           name: str):
+        await interaction.response.defer()
+        config = self.get_config(server) or {}
+        api_url = config.get("api_url", "http://localhost:8765")
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{api_url}/api/objectives", timeout=10) as resp:
+                    if resp.status != 200:
+                        await interaction.followup.send("Failed to retrieve objectives from dashboard API.")
+                        return
+                    objs = await resp.json()
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {ex}")
+            return
+
+        needle = name.strip().lower()
+        matches = [o for o in objs if needle in o.get('name', '').lower()]
+        if not matches:
+            await interaction.followup.send(f"No objective matching `{name}` found.")
+            return
+        if len(matches) > 1:
+            exact = [o for o in matches if o.get('name', '').lower() == needle]
+            if len(exact) == 1:
+                matches = exact
+            else:
+                names = ", ".join(o.get('name', '?') for o in matches[:10])
+                await interaction.followup.send(f"Multiple objectives match `{name}`: {names}. Be more specific.")
+                return
+
+        o = matches[0]
+        owner = o.get('owner', 'Unknown')
+        health = o.get('health', 0)
+        color = {"Blue": discord.Color.blue(), "Red": discord.Color.red()}.get(owner, discord.Color.light_grey())
+        embed = discord.Embed(title=f"🎯 {o.get('name', 'Unknown')}", color=color)
+        embed.add_field(name="Owner", value=owner, inline=True)
+        embed.add_field(name="Health", value=f"{health}%", inline=True)
+        if o.get('kind'):
+            embed.add_field(name="Type", value=o['kind'], inline=True)
+        if o.get('priority'):
+            embed.add_field(name="Priority", value="⭐ Yes", inline=True)
+        if health <= 20:
+            embed.add_field(name="Status", value="⏳ Ready to capture!", inline=False)
+        await interaction.followup.send(embed=embed)
+
     @command(description='Get the link to the Fowl Engine web dashboard.')
     @app_commands.guild_only()
     async def fe_dashboard(self, interaction: discord.Interaction):
@@ -1109,6 +1365,146 @@ class FowlEngine(Plugin):
         except Exception as ex:
             self.log.error(f"Error in fe_stats: {ex}")
             await interaction.followup.send("An error occurred while fetching stats.")
+
+    @command(description='Show who is currently online, by faction.')
+    @app_commands.guild_only()
+    async def fe_online(self, interaction: discord.Interaction,
+                        server: app_commands.Transform[Server, utils.ServerTransformer(status=[Status.RUNNING, Status.PAUSED])]):
+        await interaction.response.defer()
+        config = self.get_config(server) or {}
+        api_url = config.get("api_url", "http://localhost:8765")
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{api_url}/api/online", timeout=10) as resp:
+                    if resp.status != 200:
+                        await interaction.followup.send("Failed to retrieve online pilots from dashboard API.")
+                        return
+                    pilots = await resp.json()
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {ex}")
+            return
+
+        if not pilots:
+            await interaction.followup.send("No pilots are currently online.")
+            return
+
+        brand_name = config.get('brand_name', 'Fowl Engine')
+        embed = discord.Embed(title=f"🟢 {brand_name} — Online Pilots", color=discord.Color.green())
+
+        def fmt(p):
+            aircraft = p.get('aircraft')
+            return f"{p.get('name', 'Unknown')} ({aircraft})" if aircraft else p.get('name', 'Unknown')
+
+        for side in ("Blue", "Red", "Neutral"):
+            side_pilots = [fmt(p) for p in pilots if p.get('side') == side]
+            if side_pilots:
+                embed.add_field(name=f"{side} ({len(side_pilots)})", value="\n".join(side_pilots), inline=True)
+
+        await interaction.followup.send(embed=embed)
+
+    @command(description='Show the campaign leaderboard.')
+    @app_commands.guild_only()
+    async def fe_leaderboard(self, interaction: discord.Interaction,
+                             server: app_commands.Transform[Server, utils.ServerTransformer(status=[Status.RUNNING, Status.PAUSED])],
+                             top: app_commands.Range[int, 1, 25] = 10):
+        await interaction.response.defer()
+        config = self.get_config(server) or {}
+        api_url = config.get("api_url", "http://localhost:8765")
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{api_url}/api/leaderboard", timeout=10) as resp:
+                    if resp.status != 200:
+                        await interaction.followup.send("Failed to retrieve the leaderboard from dashboard API.")
+                        return
+                    pilots = await resp.json()
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {ex}")
+            return
+
+        if not pilots:
+            await interaction.followup.send("No pilot stats recorded yet.")
+            return
+
+        def total_kills(p):
+            return p.get('air_kills', 0) + p.get('ground_kills', 0)
+
+        ranked = sorted(pilots, key=total_kills, reverse=True)[:top]
+        brand_name = config.get('brand_name', 'Fowl Engine')
+        embed = discord.Embed(title=f"🏆 {brand_name} Leaderboard", color=discord.Color.gold())
+        medals = {0: "🥇", 1: "🥈", 2: "🥉"}
+        lines = []
+        for i, p in enumerate(ranked):
+            deaths = p.get('deaths', 0)
+            kills = total_kills(p)
+            kd = f"{kills / deaths:.2f}" if deaths > 0 else ("∞" if kills > 0 else "0.00")
+            rank = medals.get(i, f"{i + 1}.")
+            lines.append(
+                f"{rank} **{p.get('name', 'Unknown')}** — {kills} kills "
+                f"({p.get('air_kills', 0)} air / {p.get('ground_kills', 0)} gnd) · "
+                f"{p.get('captures', 0)} captures · {kd} K/D"
+            )
+        embed.description = "\n".join(lines)
+        await interaction.followup.send(embed=embed)
+
+    @command(description='Ban a pilot from the campaign (by UCID).')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def fe_ban(self, interaction: discord.Interaction,
+                     server: app_commands.Transform[Server, utils.ServerTransformer(status=[Status.RUNNING, Status.PAUSED])],
+                     ucid: str, name: str, reason: str = "", until: str = None):
+        await interaction.response.defer(ephemeral=True)
+        config = self.get_config(server) or {}
+        api_url = config.get("api_url", "http://localhost:8765")
+        username = config.get("admin_username")
+        password = config.get("admin_password")
+        if not username or not password:
+            await interaction.followup.send(
+                "❌ admin_username/admin_password must be set in fowlengine.yaml (must match bfdb's "
+                "--admin-username/--admin-password) to use admin actions."
+            )
+            return
+        try:
+            status, data = await bfdb_admin_post(
+                api_url, username, password,
+                "/api/admin/ban", {"ucid": ucid, "name": name, "reason": reason, "until": until},
+            )
+            if status == 200:
+                await interaction.followup.send(f"🔨 Banned **{name}** (`{ucid}`)" + (f" until {until}" if until else " indefinitely") + (f": {reason}" if reason else "."))
+            else:
+                await interaction.followup.send(f"❌ Failed to ban: HTTP {status}")
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {ex}")
+
+    @command(description='Unban a pilot from the campaign (by UCID).')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def fe_unban(self, interaction: discord.Interaction,
+                       server: app_commands.Transform[Server, utils.ServerTransformer(status=[Status.RUNNING, Status.PAUSED])],
+                       ucid: str):
+        await interaction.response.defer(ephemeral=True)
+        config = self.get_config(server) or {}
+        api_url = config.get("api_url", "http://localhost:8765")
+        username = config.get("admin_username")
+        password = config.get("admin_password")
+        if not username or not password:
+            await interaction.followup.send(
+                "❌ admin_username/admin_password must be set in fowlengine.yaml (must match bfdb's "
+                "--admin-username/--admin-password) to use admin actions."
+            )
+            return
+        try:
+            status, data = await bfdb_admin_post(
+                api_url, username, password, "/api/admin/unban", {"ucid": ucid},
+            )
+            if status == 200:
+                was_banned = bool(data and data.get("was_banned"))
+                await interaction.followup.send(f"✅ Unbanned `{ucid}`." if was_banned else f"ℹ️ `{ucid}` was not banned.")
+            else:
+                await interaction.followup.send(f"❌ Failed to unban: HTTP {status}")
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {ex}")
 
     @command(description='Spawn a deployable at an airbase.')
     @app_commands.guild_only()

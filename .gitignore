@@ -11,6 +11,10 @@ bfsystem.local.ps1
 plugins/fowlengine/fowlengine.yaml
 plugins/smartmod/smartmod.yaml
 plugins/plugines.zip
+# Live DCSServerBot config pulled from the production host for reference --
+# contains real credentials (.secret/*.pkl tokens, admin_password,
+# dashboard_secret in fowlengine.yaml). Never commit this.
+Server Bot/
 **/*.rs.bk
 Cargo.lock
 **/Cargo.lock

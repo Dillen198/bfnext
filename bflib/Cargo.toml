@@ -42,4 +42,6 @@ serde = { workspace = true }
 simplelog = { workspace = true }
 smallvec = { workspace = true }
 tokio = { workspace = true }
+ureq = { workspace = true }
+zip = { workspace = true }
 zstd = { workspace = true }

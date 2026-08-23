@@ -351,19 +351,32 @@ async fn api_objectives(
 
     // The priority flag is live engine state, not something bfdb persists on
     // its own -- refresh it from bflib for the currently active round only.
+    // bflib's netidx RPC has no timeout of its own, so if the mission is
+    // restarting/unreachable this call would otherwise hang the whole
+    // request indefinitely -- bound it so /api/objectives always answers
+    // within a few seconds, falling back to the persisted (possibly stale)
+    // priority flags on timeout rather than blocking every caller (including
+    // the Discord bot's poller, which has its own 10s client timeout).
     if is_active {
-        if let Ok(json) = call_engine_rpc_str(&db, "query-objectives", vec![]).await {
-            if let Ok(live) = serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(&json) {
-                let priorities: std::collections::HashMap<&str, bool> =
-                    live.iter().map(|o| (o.name.as_str(), o.priority)).collect();
-                for entry in entries.iter_mut() {
-                    if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
-                        if let Some(&p) = priorities.get(name) {
-                            entry["priority"] = serde_json::Value::Bool(p);
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            call_engine_rpc_str(&db, "query-objectives", vec![]),
+        ).await {
+            Ok(Ok(json)) => {
+                if let Ok(live) = serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(&json) {
+                    let priorities: std::collections::HashMap<&str, bool> =
+                        live.iter().map(|o| (o.name.as_str(), o.priority)).collect();
+                    for entry in entries.iter_mut() {
+                        if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
+                            if let Some(&p) = priorities.get(name) {
+                                entry["priority"] = serde_json::Value::Bool(p);
+                            }
                         }
                     }
                 }
             }
+            Ok(Err(e)) => log::warn!("api_objectives: query-objectives RPC failed: {}", e.0),
+            Err(_) => log::warn!("api_objectives: query-objectives RPC timed out after 3s, engine may be unreachable"),
         }
     }
 

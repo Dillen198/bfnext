@@ -307,8 +307,9 @@ impl FusedTrack {
         (now - self.last_detection).num_seconds() >= stale_secs as i64
     }
 
-    fn is_expired(&self, cfg: &IadnConfig) -> bool {
-        self.confidence < cfg.sam_cue_confidence_threshold * 0.1
+    fn is_expired(&self, now: DateTime<Utc>, cfg: &IadnConfig) -> bool {
+        (now - self.last_detection).num_seconds() >= cfg.track_drop_secs as i64
+            || self.confidence <= 0.02
     }
 }
 
@@ -375,11 +376,22 @@ fn compute_detection_probability(
     // nearly blind below the terrain masking threshold regardless of tuning.
     let alt_factor = match sensor_type {
         SensorType::Awacs | SensorType::AirborneFighter => {
-            if look_down_capable {
+            let base = if look_down_capable {
                 1.0
             } else {
                 // Non-look-down fighter/early AWACS: severe penalty below 500 m AGL.
                 (contact_alt_agl_m as f32 / 500.0).clamp(0.0, 1.0)
+            };
+            // AWACS's look-down radar has a real tactical edge over ground EWR
+            // specifically against low fliers -- boost it there so it isn't just
+            // "as good as" a ground set at low altitude but noticeably better.
+            if sensor_type == SensorType::Awacs
+                && look_down_capable
+                && (contact_alt_agl_m as f32) < cfg.ground_radar_low_alt_threshold_m
+            {
+                base * cfg.awacs_look_down_bonus
+            } else {
+                base
             }
         }
         SensorType::NavalRadar => {
@@ -974,7 +986,7 @@ impl Ewr {
                 // Exponential decay: half-life ~60 s
                 t.confidence *= (-age_secs * std::f32::consts::LN_2 / 60.0).exp();
                 t.stale = t.is_stale(now, cfg.track_stale_secs);
-                !t.is_expired(cfg)
+                !t.is_expired(now, cfg)
             });
         }
     }

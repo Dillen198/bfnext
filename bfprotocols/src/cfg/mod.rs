@@ -17,7 +17,7 @@ for more details.
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::prelude::*;
 use compact_str::format_compact;
-use dcso3::{coalition::Side, controller::AltType, country::Country, net::Ucid, String};
+use dcso3::{coalition::Side, controller::{AltType, TacanBand}, country::Country, net::Ucid, String};
 use enumflags2::{bitflags, BitFlags};
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use indexmap::IndexMap;
@@ -1005,6 +1005,24 @@ pub struct HeloCargoConfig {
     pub auto_unpack: bool,
 }
 
+/// Syncs the mission file's ground-level weather (and optionally date/time)
+/// with real-world conditions before each scheduled restart. DCS has no API
+/// to change an already-running mission's weather or clock, so this rewrites
+/// the .miz on disk before bflib triggers the process restart; the new
+/// conditions take effect the next time the mission loads, same approach as
+/// the dcs-real-weather project.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LiveWeatherConfig {
+    /// latitude to fetch live weather for
+    pub lat: f64,
+    /// longitude to fetch live weather for
+    pub lon: f64,
+    /// also set the mission's date/start_time to the real-world local date
+    /// and time of the machine running the server
+    #[serde(default)]
+    pub sync_time: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 // #[serde(deny_unknown_fields)]
 pub struct WarehouseConfig {
@@ -1335,6 +1353,30 @@ pub struct AiPlaneCfg {
     pub speed: f64,
     #[serde(default)]
     pub freq: Option<i64>,
+    /// TACAN channel (1-126) to broadcast so players can home in on this
+    /// aircraft without needing its radio frequency. Unset = no TACAN beacon.
+    #[serde(default)]
+    pub tacan_channel: Option<u8>,
+    /// TACAN channel band (X or Y). Required if `tacan_channel` is set.
+    #[serde(default)]
+    pub tacan_band: Option<TacanBand>,
+    /// TACAN station identifier morse callsign (e.g. "TEX" for a Texaco tanker).
+    /// Defaults to a truncated/uppercased version of the action's name if unset.
+    #[serde(default)]
+    pub tacan_callsign: Option<String>,
+    /// DCS's numeric callsign family id for this aircraft (the same id shown in
+    /// the Mission Editor's group "Callsign" dropdown for this aircraft category
+    /// -- e.g. Tanker family: Texaco/Arco/Shell, AWACS family: Overlord/Magic/
+    /// Wizard/Focus/Darkstar). Unset = DCS's own auto-generated name is used.
+    /// We deliberately don't hardcode a name->id table here since it differs by
+    /// aircraft category and has changed across DCS versions -- check the ME's
+    /// own dropdown for the number that matches the name you want.
+    #[serde(default)]
+    pub callsign_id: Option<i64>,
+    /// Flight number within the callsign family (e.g. 1 for "Texaco 1-1").
+    /// Only meaningful alongside `callsign_id`. Defaults to 1 if unset.
+    #[serde(default)]
+    pub callsign_number: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -2310,6 +2352,11 @@ pub struct Cfg {
     /// Helicopter dynamic cargo configuration
     #[serde(default)]
     pub helo_cargo: Option<HeloCargoConfig>,
+    /// If set, sync the mission file's weather (and optionally date/time)
+    /// with real-world conditions before each scheduled restart. Unset
+    /// (the default) disables the feature entirely.
+    #[serde(default)]
+    pub live_weather: Option<LiveWeatherConfig>,
     /// deployables configuration for each side
     #[serde(default)]
     pub deployables: FxHashMap<Side, Vec<Deployable>>,

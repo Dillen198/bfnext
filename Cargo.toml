@@ -55,8 +55,10 @@ simplelog = "0.12"
 sled = { version = "0.34" }
 smallvec = { version = "1", features = ["const_generics", "union", "serde"] }
 tokio = { version = "1", features = ["full"] }
+ureq = { version = "2" }
 uuid = { version = "1", features = ["v4", "serde"] }
 warp = { version = "0.3", features = ["tls"] }
+zip = { version = "0.6.6" }
 zstd = { version = "0.13" }
 
 [workspace]

@@ -19,20 +19,20 @@
 --
 -- Troubleshooting: everything below logs to
 --   %USERPROFILE%\Saved Games\DCS\Logs\dcs.log
--- search that file for "BFCOCKPIT" after joining a mission. If you see
--- "loaded OK" but no window appears, the problem is in the window/CEF
--- setup below, not in loading this script -- report that line back.
--- If you see nothing at all with "BFCOCKPIT" in it, this file either isn't
--- in the right folder or DCS hasn't been restarted since it was added.
+-- search that file for "BFCOCKPIT" after joining a mission.
+--
+-- STATUS as of the last live test: dxgui/Window/WebViewWidget access from
+-- a Hooks script works, and plain (non-CEF) dxgui widgets render fine.
+-- CEF itself receives cefLoadUrl calls (confirmed on its own browser
+-- thread in dcs.log) but never paints anything -- gray-blue blank surface
+-- even for https://www.google.com. Current hypothesis: DCS's embedded CEF
+-- may have no external network access at all (plausible for a build only
+-- ever intended for local/internal content). This version tests that
+-- directly by writing a tiny local HTML file and loading it via file://
+-- instead of https:// -- if THIS renders, the fix is serving/mirroring
+-- the cockpit page locally instead of loading it over the network; if
+-- this ALSO stays blank, the problem is deeper than network access.
 
--- TEMPORARY DIAGNOSTIC: pointed at a guaranteed-reachable page to isolate
--- whether the CEF/webview mechanism itself works, independent of bfdb.
--- Revert to your real bfdb URL once this is confirmed working.
-local BFCOCKPIT_URL = "https://www.google.com"
-
--- net is always available in the Hooks environment, so this alone should
--- never fail -- if it does, nothing below can even log, so there's no
--- point wrapping it defensively.
 local net = require('net')
 
 local function logmsg(msg)
@@ -67,6 +67,30 @@ end
 
 logmsg("dxgui/Window/WebViewWidget all loaded OK")
 
+-- Write a trivial local test page and return a file:// URL for it, or nil
+-- (logging why) if that isn't possible.
+local function write_local_test_page()
+    local ok, result = pcall(function()
+        local dir = lfs.writedir() .. "Temp\\"
+        pcall(lfs.mkdir, dir)
+        local path = dir .. "bfcockpit_test.html"
+        local f, err = io.open(path, "w")
+        if not f then
+            error("could not open " .. path .. " for write: " .. tostring(err))
+        end
+        f:write([[<html><body style="background:#123;color:#7f7;font-family:sans-serif;font-size:22px;padding:2rem;">
+LOCAL FILE TEST OK<br/>if you can read this, CEF works and the issue is network access
+</body></html>]])
+        f:close()
+        return "file:///" .. path:gsub("\\", "/")
+    end)
+    if not ok then
+        logmsg("could not write local test page: " .. tostring(result))
+        return nil
+    end
+    return result
+end
+
 local window, webview
 
 local function close()
@@ -81,9 +105,9 @@ local function close()
 end
 
 local function open()
-    if window then
-        return
-    end
+    -- Force-close any leftover window from a previous script load before
+    -- creating a new one, instead of leaking a duplicate.
+    close()
 
     local ok_id, playerId = pcall(net.get_my_player_id)
     if not ok_id then
@@ -91,6 +115,11 @@ local function open()
         return
     end
     logmsg("opening for local player id " .. tostring(playerId))
+
+    local test_url = write_local_test_page()
+    if test_url then
+        logmsg("local test page written: " .. test_url)
+    end
 
     local ok, err = pcall(function()
         window = Window.new(20, 20, 420, 340, 'BFNext Cockpit')
@@ -102,32 +131,28 @@ local function open()
             close()
         end)
 
+        -- Title bar label, drawn first, above where the webview starts, so
+        -- it can't overlap the window chrome the way the last test's
+        -- diagnostic label (positioned at y=4) did.
+        local label = Static.new("BFCOCKPIT")
+        label:setBounds(4, 26, 410, 18)
+        window:insertOverlayWidget(label)
+
         webview = WebViewWidget.new()
-        webview:setBounds(0, 0, 420, 340)
+        webview:setBounds(0, 48, 420, 292)
         window:insertWidget(webview)
         -- NOTE: the real dxgui/bind/WebViewWidget.lua only exposes
         -- browserCreated(self, callback) + cefLoadUrl(self, url) as two
         -- separate methods -- CEFTest.lua's own example calls a
         -- webview:cefCallback(...) that doesn't actually exist in that
-        -- binding, which silently no-ops the load (window shows, stays
-        -- black). browserCreated is the real hook: it fires once the
-        -- underlying CEF browser instance exists, which is the right time
-        -- to call cefLoadUrl.
+        -- binding, which silently no-ops the load. browserCreated is the
+        -- real hook: it fires once the underlying CEF browser instance
+        -- exists, which is the right time to call cefLoadUrl.
         webview:browserCreated(function()
-            local url = string.format("%s?playerid=%d", BFCOCKPIT_URL, playerId)
+            local url = test_url or "https://www.google.com"
             logmsg("loading " .. url)
             webview:cefLoadUrl(url)
         end)
-
-        -- DIAGNOSTIC: a plain non-CEF widget drawn as an overlay on top of
-        -- the webview, to isolate whether dxgui widget rendering itself
-        -- works in a Hooks-created window (separate question from whether
-        -- CEF's texture specifically composites into it). If you see this
-        -- text, dxgui rendering is fine and the problem is CEF-specific.
-        -- If you don't see it either, the problem is broader than CEF.
-        local label = Static.new("BFCOCKPIT TEST -- if you can read this, dxgui rendering works")
-        label:setBounds(4, 4, 410, 40)
-        window:insertOverlayWidget(label)
     end)
 
     if not ok then
