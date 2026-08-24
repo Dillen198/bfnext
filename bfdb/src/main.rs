@@ -2319,7 +2319,16 @@ async fn api_srs(srs_url: Arc<Option<String>>) -> Response {
         Some(u) => u.to_string(),
         None => return empty.into_response(),
     };
-    match reqwest::get(&url).await {
+    // reqwest::get() uses a default client with no timeout -- if the local
+    // SRS server is down or hanging (not just refusing the connection
+    // outright), this would otherwise block the request indefinitely,
+    // right through to Cloudflare's own ~100s edge timeout (a 524) instead
+    // of falling back quickly like every other failure mode here already does.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build();
+    let Ok(client) = client else { return empty.into_response() };
+    match client.get(&url).send().await {
         Ok(resp) => match resp.json::<serde_json::Value>().await {
             Ok(json) => warp::reply::json(&json).into_response(),
             Err(_)   => empty.into_response(),
