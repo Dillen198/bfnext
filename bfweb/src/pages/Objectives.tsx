@@ -323,7 +323,7 @@ export default function Objectives() {
         </div>
 
         {/* ── Table ── */}
-        <div className="vs-card overflow-hidden">
+        <div className="vs-card overflow-hidden flex-shrink-0">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead style={{ background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)' }}>
