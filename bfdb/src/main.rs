@@ -198,9 +198,25 @@ async fn resolve_ucid_via_bot(
     }
 }
 
-#[derive(Deserialize)]
+// Units per DCSServerBot's own RestAPI plugin WeatherInfo model:
+// temperature=Celsius, wind_speed=knots, wind_direction=degrees,
+// pressure=mmHg, clouds_base=feet. Only clouds_base/pressure need
+// converting to match bfdb's existing meters/hPa convention.
+#[derive(Deserialize, Clone)]
+struct BotWeather {
+    temperature:    Option<f64>,
+    wind_speed:     Option<f64>,
+    wind_direction: Option<f64>,
+    pressure:       Option<f64>,
+    clouds_base:    Option<f64>,
+    clouds_density: Option<u8>,
+    visibility:     Option<f64>,
+}
+
+#[derive(Deserialize, Clone)]
 struct BotServerInfo {
     restart_time: Option<std::string::String>,
+    weather:      Option<BotWeather>,
 }
 
 /// DCSServerBot's RestAPI plugin serializes datetimes inconsistently across
@@ -216,12 +232,14 @@ fn parse_bot_datetime(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc))
 }
 
-/// Same never-fails contract as resolve_ucid_via_bot -- the dashboard's
-/// restart countdown falling back to bflib's own (if any) is far better
-/// than the whole /api/stats call breaking because the bot is down.
-async fn fetch_bot_restart_time(bot_cfg: &Option<BotLinkConfig>) -> Option<chrono::DateTime<chrono::Utc>> {
+/// Fetches DCSServerBot's GET {prefix}/servers -- never fails outright,
+/// same never-fails contract as resolve_ucid_via_bot (a dashboard falling
+/// back to bflib-derived data, or nothing, beats /api/stats breaking
+/// because the bot is down). Backs both the restart countdown and live
+/// weather, which live in the same response.
+async fn fetch_bot_server_info(bot_cfg: &Option<BotLinkConfig>) -> Option<BotServerInfo> {
     let cfg = bot_cfg.as_ref()?;
-    let result: anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> = async {
+    let result: anyhow::Result<Option<BotServerInfo>> = async {
         let http = reqwest::Client::new();
         let servers: Vec<BotServerInfo> = http
             .get(format!("{}/servers", cfg.base_url))
@@ -232,12 +250,12 @@ async fn fetch_bot_restart_time(bot_cfg: &Option<BotLinkConfig>) -> Option<chron
             .json()
             .await
             .map_err(|e| anyhow::anyhow!("DCSServerBot servers response parse failed: {e}"))?;
-        Ok(servers.into_iter().find_map(|s| s.restart_time.as_deref().and_then(parse_bot_datetime)))
+        Ok(servers.into_iter().next())
     }.await;
     match result {
         Ok(v) => v,
         Err(e) => {
-            log::warn!("DCSServerBot restart-time lookup failed: {e:?}");
+            log::warn!("DCSServerBot /servers lookup failed: {e:?}");
             None
         }
     }
@@ -726,6 +744,8 @@ async fn api_stats(
         }))
     })?;
 
+    let bot_info = fetch_bot_server_info(&bot_cfg).await;
+
     // DCSServerBot's Scheduler plugin is what actually restarts this server
     // (bflib's own stop_time isn't in play here) -- prefer its restart_time
     // when reachable, keep the bflib-derived fallback above otherwise. The
@@ -735,11 +755,34 @@ async fn api_stats(
     // it if it's actually still ahead of us -- a countdown to the past
     // just clamps to zero and sits there, which reads as broken rather
     // than "no restart currently scheduled".
-    if let Some(bot_restart_at) = fetch_bot_restart_time(&bot_cfg).await {
+    if let Some(bot_restart_at) = bot_info.as_ref().and_then(|s| s.restart_time.as_deref()).and_then(parse_bot_datetime) {
         if bot_restart_at > chrono::Utc::now() {
             value["restart_at"] = serde_json::json!(bot_restart_at.to_rfc3339());
         } else {
             value["restart_at"] = serde_json::Value::Null;
+        }
+    }
+
+    // Fallback only -- this project has a purpose-built weather pipeline
+    // (bftools --live-weather syncs real weather into the mission file,
+    // bflib reads it via atmosphere.getWind and publishes Stat::Weather),
+    // which is the real source of truth once it's working. Only reach for
+    // the bot's generic /servers weather reading (same response as
+    // restart_time above, no extra request) when bflib hasn't published
+    // anything at all, e.g. before that pipeline's fix has been deployed.
+    // See BotWeather for the unit conversions this needs (feet->meters,
+    // mmHg->hPa).
+    if value["weather"].is_null() {
+        if let Some(w) = bot_info.as_ref().and_then(|s| s.weather.as_ref()) {
+            value["weather"] = serde_json::json!({
+                "temp_c": w.temperature,
+                "wind_speed_kts": w.wind_speed,
+                "wind_from_deg": w.wind_direction,
+                "cloud_base_m": w.clouds_base.map(|ft| ft * 0.3048),
+                "qnh_hpa": w.pressure.map(|mmhg| mmhg * 1.33322),
+                "cloud_density": w.clouds_density,
+                "visibility_m": w.visibility,
+            });
         }
     }
 
