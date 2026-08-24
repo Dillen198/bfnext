@@ -110,6 +110,16 @@ pub(crate) struct WeatherSnapshot {
 
 // ── Auth / session types ─────────────────────────────────────────────
 
+/// CSRF state for one in-flight Discord OAuth login, plus which frontend
+/// origin initiated it (so the callback can send the browser back to the
+/// right site -- bfweb/bfsite/bfwiki are all separate origins now, not
+/// embedded in bfdb, so a bare "/" redirect only ever lands on bfdb itself).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct OAuthState {
+    pub(crate) expires:   DateTime<Utc>,
+    pub(crate) return_to: Option<std::string::String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionData {
     pub(crate) discord_id: std::string::String,
@@ -441,7 +451,7 @@ pub(crate) struct StatsDbInner {
     stats_jsonl: Option<PathBuf>,
     // Auth
     auth_sessions:    Tree<Uuid, SessionData>,
-    auth_states:      Tree<Uuid, DateTime<Utc>>,
+    auth_states:      Tree<Uuid, OAuthState>,
     discord_to_ucid:  Tree<std::string::String, Ucid>,
     ucid_to_discord:  Tree<Ucid, std::string::String>,
     // Trail history
@@ -1453,7 +1463,26 @@ impl StatsDb {
             let (slug, page) = r?;
             out.push((slug, page));
         }
-        out.sort_by(|(_, a), (_, b)| a.section.cmp(&b.section).then(a.order.cmp(&b.order)));
+        // Sections read top-to-bottom in a deliberate order, not alphabetically
+        // ("Advanced Topics" would otherwise sort before "Introduction"). Any
+        // section an admin types that isn't in this built-in list just falls
+        // in after the known ones, alphabetically among themselves.
+        fn section_rank(section: &str) -> i32 {
+            match section {
+                "Introduction" => 0,
+                "Getting Started" => 1,
+                "Core Gameplay" => 2,
+                "F10 Menu Systems" => 3,
+                "Advanced Topics" => 4,
+                "Reference" => 5,
+                _ => 100,
+            }
+        }
+        out.sort_by(|(_, a), (_, b)| {
+            section_rank(&a.section).cmp(&section_rank(&b.section))
+                .then(a.section.cmp(&b.section))
+                .then(a.order.cmp(&b.order))
+        });
         Ok(out)
     }
 
@@ -1978,8 +2007,8 @@ impl StatsDb {
                 self.pilots.with_pilot_and_aggregates(
                     by,
                     ctx.round,
-                    |p| p.total.troops += 1,
-                    |a| a.troops += 1,
+                    |p| p.total.deploys += 1,
+                    |a| a.deploys += 1,
                 )?;
                 self.with_group((ctx.round, gid), |group| {
                     group.kind = GroupKind::Deployed {
@@ -2250,16 +2279,20 @@ impl StatsDb {
         Ok(())
     }
 
-    pub(crate) fn store_oauth_state(&self, state: Uuid) -> Result<()> {
+    pub(crate) fn store_oauth_state(&self, state: Uuid, return_to: Option<std::string::String>) -> Result<()> {
         let expires = Utc::now() + chrono::Duration::minutes(10);
-        self.auth_states.insert(&state, &expires)?;
+        self.auth_states.insert(&state, &OAuthState { expires, return_to })?;
         Ok(())
     }
 
-    pub(crate) fn validate_oauth_state(&self, state: Uuid) -> Result<bool> {
+    /// Consumes the one-time state, returning the stored `return_to` (which
+    /// may itself be `None`, if the login started without one) if it was
+    /// valid and unexpired -- outer `None` means reject the callback outright.
+    pub(crate) fn take_oauth_state(&self, state: Uuid) -> Result<Option<Option<std::string::String>>> {
         match self.auth_states.remove(&state)? {
-            None => Ok(false),
-            Some(expires) => Ok(expires > Utc::now()),
+            None => Ok(None),
+            Some(s) if s.expires > Utc::now() => Ok(Some(s.return_to)),
+            Some(_) => Ok(None),
         }
     }
 

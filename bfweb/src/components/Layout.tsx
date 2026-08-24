@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Map, Target, BarChart3, Users, Crosshair,
   Zap, LogOut, Shield, Settings, Settings2, Info, Server, Radio,
-  ChevronRight, Plane, Menu, X, ChevronsLeft, ChevronsRight,
+  ChevronRight, Plane, Menu, X, ChevronsLeft, ChevronsRight, BookOpen,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Weather } from '../api'
@@ -414,6 +414,23 @@ export default function Layout() {
               </NavLink>
             ))}
           </nav>
+
+          {/* Wiki link */}
+          {campaign.wikiUrl && (
+            <div style={{ padding: '8px 10px', borderTop: '1px solid var(--border)' }}>
+              <a
+                href={campaign.wikiUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="nav-item"
+                title={sidebarCollapsed ? 'Wiki' : undefined}
+                style={{ borderRadius: 5, height: 36 }}
+              >
+                <BookOpen size={14} style={{ flexShrink: 0 }} />
+                <span>WIKI</span>
+              </a>
+            </div>
+          )}
 
           {/* Donation link */}
           {campaign.donationUrl && (

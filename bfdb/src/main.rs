@@ -760,10 +760,28 @@ async fn api_units(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> 
 
 // ── Auth handlers ────────────────────────────────────────────────────
 
+#[derive(Deserialize)]
+struct LoginQuery {
+    /// Where to send the browser after a successful login -- the initiating
+    /// frontend's own origin (e.g. "https://dashboard.vectorstrike.org/" or
+    /// "https://wiki.vectorstrike.org/"). Only trusted if it exactly matches
+    /// one of the configured --cors-origin values; anything else is dropped
+    /// silently rather than erroring, since an open redirect here (this
+    /// endpoint has no auth gate) would be a phishing vector.
+    return_to: Option<std::string::String>,
+}
+
 /// GET /api/auth/login  — redirect to Discord OAuth
-async fn api_auth_login(cfg: AuthConfig, db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+async fn api_auth_login(
+    q: LoginQuery,
+    cfg: AuthConfig,
+    db: StatsDb,
+    allowed_origins: Arc<Vec<std::string::String>>,
+) -> std::result::Result<impl warp::Reply, Error> {
     let state = Uuid::new_v4();
-    task::block_in_place(|| db.store_oauth_state(state))?;
+    let return_to = q.return_to
+        .filter(|rt| allowed_origins.iter().any(|o| rt == &format!("{o}/")));
+    task::block_in_place(|| db.store_oauth_state(state, return_to))?;
     let url = format!(
         "https://discord.com/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify+guilds.members.read&state={}",
         cfg.client_id,
@@ -799,12 +817,14 @@ async fn api_auth_callback(
     db: StatsDb,
     cross_origin: bool,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    // Validate state
+    // Validate state, recovering which frontend origin to send the browser
+    // back to (falls back to bfdb's own "/" for embedded-mode deployments
+    // that never passed a return_to at /api/auth/login).
     let state_uuid = q.state.parse::<Uuid>().map_err(|e| anyhow::anyhow!("bad state: {e}"))?;
-    let valid = task::block_in_place(|| db.validate_oauth_state(state_uuid))?;
-    if !valid {
+    let Some(return_to) = task::block_in_place(|| db.take_oauth_state(state_uuid))? else {
         return Err(anyhow::anyhow!("invalid or expired OAuth state").into());
-    }
+    };
+    let redirect_location = return_to.unwrap_or_else(|| "/".to_string());
 
     let http = reqwest::Client::new();
 
@@ -865,7 +885,7 @@ async fn api_auth_callback(
     );
     Ok(warp::http::Response::builder()
         .status(302)
-        .header("location", "/")
+        .header("location", redirect_location)
         .header("set-cookie", cookie)
         .body("")
         .unwrap())
@@ -2344,6 +2364,7 @@ async fn main() -> Result<()> {
     }
 
     let cross_origin = !args.cors_origins.is_empty();
+    let allowed_login_origins: Arc<Vec<std::string::String>> = Arc::new(args.cors_origins.clone());
     let cors = warp::cors()
         .allow_methods(&[Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(vec!["content-type"])
@@ -2470,8 +2491,10 @@ async fn main() -> Result<()> {
 
     // ── Auth routes ──────────────────────────────────────────────────
     let auth_login = warp::path!("api" / "auth" / "login")
+        .and(warp::query::<LoginQuery>())
         .and(with_auth_cfg(auth_cfg.clone()))
         .and(with_db(db.clone()))
+        .and(warp::any().map(move || allowed_login_origins.clone()))
         .then(api_auth_login);
 
     let auth_callback = warp::path!("api" / "auth" / "callback")

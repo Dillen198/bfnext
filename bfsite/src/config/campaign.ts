@@ -17,6 +17,7 @@ export const campaign = {
   discord: 'https://discord.gg/XyGkb3WAXS',
   server: 'The Coop · Operation Vector Strike',
   dashboardUrl: 'https://dashboard.vectorstrike.org',
+  wikiUrl: 'https://wiki.vectorstrike.org',
   blueLabel: 'BLUFOR',
   redLabel: 'REDFOR',
 

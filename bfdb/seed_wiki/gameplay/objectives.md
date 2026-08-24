@@ -12,6 +12,7 @@ Objectives represent strategic locations on the battlefield:
 - **Factories**: Produce ground units over time
 - **Naval Bases**: Spawn and resupply naval assets
 - **SAM Sites**: High-value integrated air defense, hidden and networked
+- **Command Centers**: IADN network nodes that keep nearby SAM sites smart
 
 ![Overview of objective types across the campaign map](/api/wiki/images/934a41dc-d2ad-4b52-8dfd-60cbdc4deb78)
 
@@ -63,6 +64,16 @@ High-value integrated air defense sites, networked with other sensors:
 ![Hidden SAM site tucked into rocky terrain](/api/wiki/images/0ce0f6d9-ab3e-4f5b-87e3-799b0e2964cd)
 
 **Warning**: SAM sites don't just sit there with radars blaring — they share detections across the coalition's whole sensor network and only light up their radar for a confirmed threat, so a "quiet" site isn't necessarily undefended. Fire a HARM or other anti-radiation missile at one and it'll go dark to deny you a lock — and some sites keep a short-range point-defense system (Pantsir, Shilka) alert the entire time specifically to shoot your missile down before it arrives. Don't treat radar silence as an all-clear.
+
+### Command Centers
+
+The network node behind the IADN (Integrated Air Defence Network) described above. A Command Center is a pure trigger-zone objective — no airbase or pad association, no warehouse, no supply-chain consumption of its own — whose only job is keeping nearby SAM sites smart.
+
+- At mission start, every SAM site auto-links to its **nearest friendly Command Center**
+- As long as that Command Center is alive and still owned by the same coalition, its linked SAM sites get the full networked behavior: shared sensor picture, radars dark until a confirmed threat, HARM defense
+- **If the Command Center is destroyed or captured, every SAM site linked to it immediately loses that networking** — it falls back to plain DCS AI (`Auto` alarm state: always-on radar, no coordination, no HARM-defense reaction), whether or not the SAM site itself was ever touched
+
+**Tactical implication**: a Command Center is a legitimate high-value target in its own right. Taking one out (or capturing it) quietly de-fangs every SAM site it was covering — often a cheaper way to open a corridor through a defended sector than trying to individually locate and kill each classified SAM position first. The flip side applies when defending: protect your Command Centers as hard as the SAM sites themselves, since losing one degrades a whole cluster of air defense at once.
 
 ## Objective Ownership
 

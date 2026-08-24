@@ -67,7 +67,16 @@ fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
 fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
     let globals = lua.inner().globals();
 
-    let (wind_from_deg, wind_speed_kts) = wind_at(lua, pos_x, 0.0, pos_z)?;
+    // Ground elevation at this point -- DCS's y coordinate is height above
+    // the map's sea-level datum, not height-above-ground, so querying wind
+    // at a hardcoded y=0.0 asks for wind at sea level. Anywhere the terrain
+    // itself sits above sea level, that point is underground, and
+    // atmosphere.getWind() returns a zero vector there instead of the
+    // configured surface wind. Query at actual ground elevation instead.
+    let ground_elev_m = dcso3::land::Land::singleton(lua)
+        .and_then(|land| land.get_height(dcso3::LuaVec2(dcso3::Vector2::new(pos_x, pos_z))))
+        .unwrap_or(0.0);
+    let (wind_from_deg, wind_speed_kts) = wind_at(lua, pos_x, ground_elev_m, pos_z)?;
 
     let env_tbl: LuaTable = globals.raw_get("env")?;
     let mission: LuaTable = env_tbl.raw_get("mission")?;
@@ -102,9 +111,6 @@ fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
         10000.0
     };
 
-    let ground_elev_m = dcso3::land::Land::singleton(lua)
-        .and_then(|land| land.get_height(dcso3::LuaVec2(dcso3::Vector2::new(pos_x, pos_z))))
-        .unwrap_or(0.0);
     let winds_aloft = WINDS_ALOFT_LEVELS_FT
         .iter()
         .filter_map(|&alt_ft| {

@@ -1,7 +1,7 @@
 import React from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { LogOut, Shield, Plus, Search } from 'lucide-react'
+import { LogOut, Shield, Plus, Search, Menu, X } from 'lucide-react'
 import { api, type WikiPageMeta } from '../api'
 import { useAuth } from '../context/AuthContext'
 
@@ -19,6 +19,7 @@ export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [query, setQuery] = React.useState('')
+  const [sidebarOpen, setSidebarOpen] = React.useState(false)
 
   const { data: pages = [] } = useQuery({
     queryKey: ['wiki', 'pages'],
@@ -35,6 +36,14 @@ export default function Layout() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
       {/* TOPBAR */}
       <header className="wiki-topbar">
+        <button
+          className="wiki-mobile-menu-btn"
+          onClick={() => setSidebarOpen(v => !v)}
+          aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+        >
+          {sidebarOpen ? <X size={16} /> : <Menu size={16} />}
+        </button>
+
         <NavLink to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
           <div style={{
             width: 28, height: 28, borderRadius: 4, flexShrink: 0,
@@ -82,8 +91,14 @@ export default function Layout() {
       </header>
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Backdrop -- closes the drawer on mobile when tapped outside it */}
+        <div
+          className={`wiki-sidebar-backdrop${sidebarOpen ? ' open' : ''}`}
+          onClick={() => setSidebarOpen(false)}
+        />
+
         {/* SIDEBAR */}
-        <aside className="wiki-sidebar">
+        <aside className={`wiki-sidebar${sidebarOpen ? ' open' : ''}`}>
           <div style={{ position: 'relative', margin: '10px 14px 14px' }}>
             <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
             <input
@@ -102,6 +117,7 @@ export default function Layout() {
                 <NavLink
                   key={p.slug}
                   to={`/${p.slug}`}
+                  onClick={() => setSidebarOpen(false)}
                   className={({ isActive }) => `wiki-nav-item${isActive ? ' active' : ''}`}
                 >
                   {p.title}

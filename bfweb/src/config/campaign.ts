@@ -35,6 +35,7 @@ export interface CampaignConfig {
   server:      string
   serverIp:    string
   websiteUrl:  string
+  wikiUrl:     string   // leave empty to hide the wiki sidebar link
   donationUrl: string   // leave empty to hide the donation button
   // Faction labels
   blueLabel: string
@@ -80,6 +81,7 @@ export const campaignDefaults: CampaignConfig = {
   server:      'The Coop · Operation Vector Strike',
   serverIp:    '',
   websiteUrl:  '',
+  wikiUrl:     'https://wiki.vectorstrike.org',
   donationUrl: '',
 
   blueLabel: 'BLUFOR',

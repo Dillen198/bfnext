@@ -199,9 +199,32 @@ body {
 .wiki-main {
   flex: 1; overflow-y: auto; padding: 2.5rem 3rem;
 }
+
+.wiki-mobile-menu-btn { display: none; }
+.wiki-sidebar-backdrop { display: none; }
+
 @media (max-width: 860px) {
-  .wiki-sidebar { display: none; }
+  .wiki-mobile-menu-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; flex-shrink: 0;
+    background: none; border: 1px solid var(--border-light); border-radius: 5px;
+    color: var(--text-muted); cursor: pointer; margin-right: 10px;
+  }
   .wiki-main { padding: 1.5rem; }
+
+  .wiki-sidebar {
+    position: fixed; top: 54px; left: 0; bottom: 0;
+    z-index: 2000;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 6px 0 28px rgba(0,0,0,0.55);
+  }
+  .wiki-sidebar.open { transform: translateX(0); }
+
+  .wiki-sidebar-backdrop.open {
+    display: block; position: fixed; inset: 54px 0 0 0;
+    background: rgba(0,0,0,0.55); z-index: 1999;
+  }
 }
 
 /* Search box in sidebar */

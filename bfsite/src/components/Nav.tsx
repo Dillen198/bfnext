@@ -1,6 +1,6 @@
 import React from 'react'
 import { campaign } from '../config/campaign'
-import { Zap, Menu, X } from 'lucide-react'
+import { Zap, Menu, X, BookOpen } from 'lucide-react'
 
 const links = [
   { href: '#about',    label: 'ABOUT' },
@@ -84,6 +84,10 @@ export default function Nav() {
             <Zap size={12} />
             OPS DASHBOARD
           </a>
+          <a href={campaign.wikiUrl} className="vs-btn vs-btn-outline" style={{ padding: '0.45rem 1rem', fontSize: '0.78rem' }}>
+            <BookOpen size={12} />
+            WIKI
+          </a>
           <a
             href={campaign.discord}
             target="_blank"
@@ -130,6 +134,7 @@ export default function Nav() {
           <div className="flex gap-3 mt-4">
             <a href={campaign.discord} target="_blank" rel="noopener noreferrer" className="vs-btn" style={{ fontSize: '0.82rem' }}>JOIN DISCORD</a>
             <a href={campaign.dashboardUrl} className="vs-btn vs-btn-outline" style={{ fontSize: '0.82rem' }}>DASHBOARD</a>
+            <a href={campaign.wikiUrl} className="vs-btn vs-btn-outline" style={{ fontSize: '0.82rem' }}>WIKI</a>
           </div>
         </div>
       )}

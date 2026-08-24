@@ -446,7 +446,7 @@ export const api = {
     me:           () => get<{ user: AuthUser | null }>('/auth/me').then(r => r.user),
     logout:       () => fetch(`${BASE}/auth/logout`, { credentials: 'include' }),
     link:         (ucid: string) => post<{ ok: boolean }>('/auth/link', { ucid }),
-    loginUrl:     () => `${BASE}/auth/login`,
+    loginUrl:     () => `${BASE}/auth/login?return_to=${encodeURIComponent(window.location.origin + '/')}`,
     localEnabled: () => get<{ enabled: boolean }>('/auth/local-enabled').then(r => r.enabled),
     localLogin: async (username: string, password: string): Promise<void> => {
       const res = await fetch(`${BASE}/auth/local-login`, {
