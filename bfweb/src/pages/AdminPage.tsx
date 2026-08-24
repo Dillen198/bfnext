@@ -7,7 +7,7 @@ import { api, connectLiveLogs, connectEngineLogs, type LogLine, type PerfRow, ty
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
 import {
-  Shield, Link, Users, Trash2, AlertTriangle, RotateCcw,
+  Shield, Users, Trash2, AlertTriangle, RotateCcw,
   Activity, Ban, UserX, Terminal, Search, ChevronsDown,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -430,7 +430,6 @@ export default function AdminPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const [unlinkTarget,  setUnlinkTarget]  = useState<string | null>(null)
   const [resetConfirm,  setResetConfirm]  = useState(false)
   const [resetLoading,  setResetLoading]  = useState(false)
   const [resetDone,     setResetDone]     = useState(false)
@@ -441,7 +440,6 @@ export default function AdminPage() {
   const [kickInfo,      setKickInfo]      = useState<{ name: string } | null>(null)
   const [perfTab,       setPerfTab]       = useState<'charts' | 'table-engine' | 'table-api'>('charts')
 
-  const { data: links = [],    isLoading: linksLoading }    = useQuery({ queryKey: ['admin', 'links'],        queryFn: api.admin.links,       refetchInterval: 30_000 })
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery({ queryKey: ['admin', 'sessions'],     queryFn: api.admin.sessions,    refetchInterval: 15_000 })
   const { data: online = [],   isLoading: onlineLoading }   = useQuery({ queryKey: ['online'],                queryFn: api.online,            refetchInterval: 10_000 })
   const { data: banned = [] }                                = useQuery({ queryKey: ['admin', 'banned'],       queryFn: api.admin.banned,      refetchInterval: 30_000 })
@@ -474,12 +472,6 @@ export default function AdminPage() {
     await api.admin.unban(ucid)
     queryClient.invalidateQueries({ queryKey: ['admin', 'banned'] })
     setUnbanTarget(null)
-  }
-
-  async function handleUnlink(discord_id: string) {
-    await api.admin.unlink(discord_id)
-    queryClient.invalidateQueries({ queryKey: ['admin', 'links'] })
-    setUnlinkTarget(null)
   }
 
   return (
@@ -760,52 +752,6 @@ export default function AdminPage() {
         {/* ── Engine log analyzer (live bflib logs, requires bfdb --base) ── */}
         <EngineLogAnalyzer />
 
-        {/* ── Linked accounts ── */}
-        <div className="vs-card">
-          <CardHeader
-            icon={<Link size={13} style={{ color: 'var(--accent)' }} />}
-            label="Discord ↔ DCS Links"
-            badge={<span style={{ ...MONO, fontSize: '0.65rem', color: 'var(--text-muted)' }}>{links.length}</span>}
-          />
-          {linksLoading && <div style={{ padding: '1rem', ...DIM }}>Loading…</div>}
-          {!linksLoading && links.length === 0 && <div style={{ padding: '1rem', ...DIM }}>No linked accounts</div>}
-          {links.length > 0 && (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
-                  {['Discord ID', 'DCS UCID', ''].map(h => (
-                    <th key={h} style={{ ...CELL, color: 'var(--text-dim)', textAlign: 'left', fontWeight: 600 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {links.map(l => (
-                  <tr key={l.discord_id}>
-                    <td style={{ ...CELL, ...MONO, fontSize: '0.67rem' }}>{l.discord_id}</td>
-                    <td style={{ ...CELL, ...MONO, fontSize: '0.67rem' }}>{l.ucid}</td>
-                    <td style={{ ...CELL, textAlign: 'right' }}>
-                      {unlinkTarget === l.discord_id ? (
-                        <span className="flex items-center gap-2 justify-end">
-                          <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)' }}>Confirm?</span>
-                          <button onClick={() => handleUnlink(l.discord_id)}
-                            style={{ fontSize: '0.62rem', color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', padding: '1px 8px', borderRadius: 2, cursor: 'pointer' }}>Yes</button>
-                          <button onClick={() => setUnlinkTarget(null)}
-                            style={{ fontSize: '0.62rem', color: 'var(--text-dim)', background: 'none', border: '1px solid var(--border)', padding: '1px 8px', borderRadius: 2, cursor: 'pointer' }}>No</button>
-                        </span>
-                      ) : (
-                        <button onClick={() => setUnlinkTarget(l.discord_id)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 0 }} title="Unlink">
-                          <Trash2 size={12} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
         {/* ── Danger zone ── */}
         <div className="vs-card" style={{ border: '1px solid rgba(239,68,68,0.25)' }}>
           <CardHeader
@@ -817,7 +763,7 @@ export default function AdminPage() {
               <div style={{ fontSize: '0.75rem', color: 'var(--text)', fontWeight: 600, marginBottom: '0.3rem' }}>Reset All Campaign Data</div>
               <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 420 }}>
                 Permanently deletes all rounds, kills, objectives, pilot stats, sorties, trails and weather data.
-                Discord links and admin sessions are preserved.
+                Admin sessions are preserved.
               </div>
             </div>
             <div className="flex flex-col items-end gap-2 flex-shrink-0">

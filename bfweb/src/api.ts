@@ -231,11 +231,6 @@ export interface AuthUser {
   ucid:       string | null
 }
 
-export interface AdminLink {
-  discord_id: string
-  ucid:       string
-}
-
 export interface AdminSession {
   discord_id: string
   username:   string
@@ -445,7 +440,6 @@ export const api = {
   auth: {
     me:           () => get<{ user: AuthUser | null }>('/auth/me').then(r => r.user),
     logout:       () => fetch(`${BASE}/auth/logout`, { credentials: 'include' }),
-    link:         (ucid: string) => post<{ ok: boolean }>('/auth/link', { ucid }),
     loginUrl:     () => `${BASE}/auth/login?return_to=${encodeURIComponent(window.location.origin + '/')}`,
     localEnabled: () => get<{ enabled: boolean }>('/auth/local-enabled').then(r => r.enabled),
     localLogin: async (username: string, password: string): Promise<void> => {
@@ -463,9 +457,7 @@ export const api = {
     },
   },
   admin: {
-    links:       () => get<AdminLink[]>('/admin/links'),
     sessions:    () => get<AdminSession[]>('/admin/sessions'),
-    unlink:      (discord_id: string) => post<{ ok: boolean }>('/admin/unlink', { discord_id }),
     reset:       () => post<{ ok: boolean }>('/admin/reset', {}),
     perf:        () => get<PerfData>('/admin/perf'),
     perfHistory: () => get<PerfHistory>('/admin/perf-history'),

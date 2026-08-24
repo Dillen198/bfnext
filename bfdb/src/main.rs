@@ -116,6 +116,19 @@ struct Args {
     /// show whether bfdb is running.
     #[arg(long = "log-file")]
     log_file: Option<PathBuf>,
+    /// Base URL of DCSServerBot's RestAPI plugin, including its configured
+    /// `prefix` (e.g. http://127.0.0.1:9876/stats). Discord account linking
+    /// (dashboard "My Profile", the in-DCS cockpit UI, etc.) resolves a
+    /// player's ucid by querying this bot endpoint's /getuser -- bfdb keeps
+    /// no Discord-link database of its own; DCSServerBot's own /linkme +
+    /// -linkme <token> flow is the only way to link. Leave unset to disable
+    /// linking entirely (those features return "account not linked").
+    #[arg(long = "dcsserverbot-url")]
+    dcsserverbot_url: Option<String>,
+    /// X-API-Key for DCSServerBot's RestAPI plugin (the `api_key` in its
+    /// restapi.yaml). Required if --dcsserverbot-url is set.
+    #[arg(long = "dcsserverbot-api-key")]
+    dcsserverbot_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +144,44 @@ struct AuthConfig {
 struct LocalAdminConfig {
     username: String,
     password: String,
+}
+
+#[derive(Debug, Clone)]
+struct BotLinkConfig {
+    base_url: String,
+    api_key:  String,
+}
+
+#[derive(Deserialize)]
+struct BotUserEntry {
+    ucid: std::string::String,
+}
+
+/// Resolves a Discord user's ucid via DCSServerBot's own player-linking
+/// database (RestAPI plugin's POST {prefix}/getuser) -- bfdb has no linking
+/// store of its own, so this is the only way a Discord session ever becomes
+/// a "linked player". Returns `Ok(None)` both when the bot isn't configured
+/// and when the bot has no link for this user (both mean "not linked").
+async fn resolve_ucid_via_bot(
+    bot_cfg: &Option<BotLinkConfig>,
+    discord_id: &str,
+) -> std::result::Result<Option<dcso3::net::Ucid>, Error> {
+    let Some(cfg) = bot_cfg else { return Ok(None) };
+    let http = reqwest::Client::new();
+    let users: Vec<BotUserEntry> = http
+        .post(format!("{}/getuser", cfg.base_url))
+        .header("X-API-Key", &cfg.api_key)
+        .form(&[("discord_id", discord_id)])
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("DCSServerBot getuser request failed: {e}"))?
+        .json()
+        .await
+        .map_err(|e| anyhow::anyhow!("DCSServerBot getuser response parse failed: {e}"))?;
+    Ok(match users.into_iter().next() {
+        Some(u) => Some(u.ucid.parse().map_err(|e| anyhow::anyhow!("bad ucid from bot: {e:?}"))?),
+        None => None,
+    })
 }
 
 #[derive(Debug)]
@@ -895,6 +946,7 @@ async fn api_auth_callback(
 async fn api_auth_me(
     session_id: Option<Uuid>,
     db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
     // Return 200 with null user when not logged in — avoids browser console errors
     // since this endpoint is polled on every page load to check auth state
@@ -905,7 +957,7 @@ async fn api_auth_me(
     let Some(s) = session else {
         return Ok(json_response(r#"{"user":null}"#.to_string()));
     };
-    let ucid = task::block_in_place(|| db.get_ucid_for_discord(&s.discord_id))?
+    let ucid = resolve_ucid_via_bot(&bot_cfg, &s.discord_id).await?
         .map(|u| u.to_string());
     Ok(json_response(serde_json::to_string(&serde_json::json!({
         "user": {
@@ -971,30 +1023,6 @@ async fn api_auth_local_login(
         .unwrap())
 }
 
-#[derive(Deserialize)]
-struct LinkBody { ucid: String }
-
-/// POST /api/auth/link  — link Discord account to DCS UCID
-async fn api_auth_link(
-    session_id: Option<Uuid>,
-    body: LinkBody,
-    db: StatsDb,
-) -> std::result::Result<impl warp::Reply, Error> {
-    let Some(id) = session_id else {
-        return Err(anyhow::anyhow!("not logged in").into());
-    };
-    let session = task::block_in_place(|| db.get_session(id))?
-        .ok_or_else(|| anyhow::anyhow!("session expired"))?;
-    let ucid: dcso3::net::Ucid = body.ucid.parse().map_err(|e| anyhow::anyhow!("{e:?}"))?;
-    // Verify pilot exists
-    match task::block_in_place(|| db.pilot_detail(&ucid))? {
-        None => return Err(anyhow::anyhow!("pilot not found").into()),
-        Some(_) => {}
-    }
-    task::block_in_place(|| db.link_discord_ucid(&session.discord_id, &ucid))?;
-    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
-}
-
 // ── Admin handlers ───────────────────────────────────────────────────
 
 async fn require_admin(session_id: Option<Uuid>, db: StatsDb) -> std::result::Result<SessionData, Error> {
@@ -1030,6 +1058,7 @@ async fn require_linked_player(
     query: &std::collections::HashMap<std::string::String, std::string::String>,
     session_id: Option<Uuid>,
     db: StatsDb,
+    bot_cfg: &Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<dcso3::net::Ucid, Error> {
     if let Some(id) = query.get("playerid").and_then(|s| s.parse::<i64>().ok()) {
         return resolve_by_player_id(id, &db).await;
@@ -1039,8 +1068,8 @@ async fn require_linked_player(
     };
     let session = task::block_in_place(|| db.get_session(id))?
         .ok_or_else(|| anyhow::anyhow!("session expired"))?;
-    let ucid = task::block_in_place(|| db.get_ucid_for_discord(&session.discord_id))?
-        .ok_or_else(|| anyhow::anyhow!("account not linked -- type -bind <token> in DCS chat, then link it on the dashboard"))?;
+    let ucid = resolve_ucid_via_bot(bot_cfg, &session.discord_id).await?
+        .ok_or_else(|| anyhow::anyhow!("account not linked -- type -linkme <token> in DCS chat (get the token with /linkme in Discord)"))?;
     Ok(ucid)
 }
 
@@ -1048,8 +1077,9 @@ async fn api_cockpit_ewr_report(
     session_id: Option<Uuid>,
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
     let friendly = query.get("friendly").map(|s| s == "true").unwrap_or(false);
     use netidx::publisher::Value;
     let report = call_engine_rpc_str(&db, "ewr-report", vec![
@@ -1063,8 +1093,9 @@ async fn api_cockpit_ewr_toggle(
     session_id: Option<Uuid>,
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
     use netidx::publisher::Value;
     let state = call_engine_rpc_str(&db, "ewr-toggle", vec![
         ("ucid", Value::from(ucid.to_string())),
@@ -1082,8 +1113,9 @@ async fn api_cockpit_ewr_units(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     body: EwrUnitsBody,
     db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
     use netidx::publisher::Value;
     let units = call_engine_rpc_str(&db, "ewr-set-units", vec![
         ("ucid", Value::from(ucid.to_string())),
@@ -1096,8 +1128,9 @@ async fn api_cockpit_ewr_intel(
     session_id: Option<Uuid>,
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
     use netidx::publisher::Value;
     let report = call_engine_rpc_str(&db, "ewr-ground-intel", vec![
         ("ucid", Value::from(ucid.to_string())),
@@ -1112,8 +1145,9 @@ async fn api_cockpit_carp_solve(
     session_id: Option<Uuid>,
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
     let key = query.get("key").cloned().ok_or_else(|| anyhow::anyhow!("missing key"))?;
     let alt_ft: f64 = query.get("altft")
         .and_then(|s| s.parse().ok())
@@ -1136,8 +1170,9 @@ async fn api_cockpit_carp_solve_latlon(
     session_id: Option<Uuid>,
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
     let lat: f64 = query.get("lat")
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| anyhow::anyhow!("missing or invalid lat"))?;
@@ -1175,8 +1210,9 @@ async fn api_cockpit_cargo_spawn(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     body: CargoSpawnBody,
     db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone()).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
     if body.qty < 1 {
         return Err(anyhow::anyhow!("qty must be at least 1").into());
     }
@@ -1188,22 +1224,6 @@ async fn api_cockpit_cargo_spawn(
         ("c130", Value::from(body.c130)),
     ]).await?;
     Ok(warp::reply::json(&serde_json::json!({ "message": msg })))
-}
-
-/// GET /api/admin/links  — list all discord↔ucid mappings
-async fn api_admin_links(
-    session_id: Option<Uuid>,
-    db: StatsDb,
-) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
-    let data = task::block_in_place(|| -> Result<String> {
-        let links = db.list_links()?;
-        let entries: Vec<_> = links.iter().map(|(discord_id, ucid)| {
-            serde_json::json!({ "discord_id": discord_id, "ucid": ucid.to_string() })
-        }).collect();
-        Ok(serde_json::to_string(&entries)?)
-    })?;
-    Ok(json_response(data))
 }
 
 /// GET /api/admin/sessions  — list active sessions
@@ -1228,19 +1248,6 @@ async fn api_admin_sessions(
     Ok(json_response(data))
 }
 
-#[derive(Deserialize)]
-struct UnlinkBody { discord_id: String }
-
-/// POST /api/admin/unlink  — remove a discord↔ucid mapping
-async fn api_admin_unlink(
-    session_id: Option<Uuid>,
-    body: UnlinkBody,
-    db: StatsDb,
-) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
-    task::block_in_place(|| db.unlink_discord(&body.discord_id))?;
-    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
-}
 
 /// POST /api/admin/reset  — wipe all campaign data, keep auth & Discord links
 async fn api_admin_reset(
@@ -2248,6 +2255,12 @@ fn with_db(db: StatsDb) -> impl Filter<Extract = (StatsDb,), Error = std::conver
     warp::any().map(move || db.clone())
 }
 
+fn with_bot_link_cfg(
+    cfg: Arc<Option<BotLinkConfig>>,
+) -> impl Filter<Extract = (Arc<Option<BotLinkConfig>>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || cfg.clone())
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -2328,6 +2341,17 @@ async fn main() -> Result<()> {
             None
         }
     };
+
+    let bot_link_cfg: Arc<Option<BotLinkConfig>> = Arc::new(match (args.dcsserverbot_url, args.dcsserverbot_api_key) {
+        (Some(base_url), Some(api_key)) => {
+            log::info!("Discord account linking via DCSServerBot enabled ({base_url})");
+            Some(BotLinkConfig { base_url, api_key })
+        }
+        _ => {
+            log::info!("Discord account linking disabled (pass --dcsserverbot-url and --dcsserverbot-api-key to enable)");
+            None
+        }
+    });
 
     // ── Load campaign config JSON (served at /api/config) ────────────────
     let (campaign_json, srs_url_from_cfg): (Arc<String>, Option<String>) = match &args.config {
@@ -2507,6 +2531,7 @@ async fn main() -> Result<()> {
     let auth_me = warp::path!("api" / "auth" / "me")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .then(api_auth_me);
 
     let auth_logout = warp::path!("api" / "auth" / "logout")
@@ -2514,13 +2539,6 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .and(warp::any().map(move || cross_origin))
         .then(api_auth_logout);
-
-    let auth_link = warp::path!("api" / "auth" / "link")
-        .and(warp::post())
-        .and(extract_session_cookie())
-        .and(warp::body::json::<LinkBody>())
-        .and(with_db(db.clone()))
-        .then(api_auth_link);
 
     let auth_local_login = warp::path!("api" / "auth" / "local-login")
         .and(warp::post())
@@ -2536,22 +2554,10 @@ async fn main() -> Result<()> {
         .map(move || json_response(format!(r#"{{"enabled":{}}}"#, local_admin_enabled)))
         .boxed();
 
-    let admin_links = warp::path!("api" / "admin" / "links")
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .then(api_admin_links);
-
     let admin_sessions = warp::path!("api" / "admin" / "sessions")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .then(api_admin_sessions);
-
-    let admin_unlink = warp::path!("api" / "admin" / "unlink")
-        .and(warp::post())
-        .and(extract_session_cookie())
-        .and(warp::body::json::<UnlinkBody>())
-        .and(with_db(db.clone()))
-        .then(api_admin_unlink);
 
     let admin_reset = warp::path!("api" / "admin" / "reset")
         .and(warp::post())
@@ -2606,12 +2612,14 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .then(api_cockpit_ewr_report);
 
     let cockpit_ewr_intel_route = warp::path!("api" / "cockpit" / "ewr" / "intel")
         .and(extract_session_cookie())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .then(api_cockpit_ewr_intel);
 
     let cockpit_ewr_toggle_route = warp::path!("api" / "cockpit" / "ewr" / "toggle")
@@ -2619,6 +2627,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .then(api_cockpit_ewr_toggle);
 
     let cockpit_ewr_units_route = warp::path!("api" / "cockpit" / "ewr" / "units")
@@ -2627,18 +2636,21 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(warp::body::json::<EwrUnitsBody>())
         .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .then(api_cockpit_ewr_units);
 
     let cockpit_carp_solve_route = warp::path!("api" / "cockpit" / "carp" / "solve")
         .and(extract_session_cookie())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .then(api_cockpit_carp_solve);
 
     let cockpit_carp_solve_latlon_route = warp::path!("api" / "cockpit" / "carp" / "solve-latlon")
         .and(extract_session_cookie())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .then(api_cockpit_carp_solve_latlon);
 
     let cockpit_cargo_spawn_route = warp::path!("api" / "cockpit" / "cargo" / "spawn")
@@ -2647,6 +2659,7 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(warp::body::json::<CargoSpawnBody>())
         .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .then(api_cockpit_cargo_spawn);
 
     let trails = warp::path!("api" / "trails")
@@ -2773,7 +2786,6 @@ async fn main() -> Result<()> {
         .or(auth_me)
         .or(auth_logout)
         .or(auth_local_enabled)
-        .or(admin_links)
         .or(admin_sessions)
         .or(admin_perf)
         .or(admin_perf_history)
@@ -2792,9 +2804,7 @@ async fn main() -> Result<()> {
                 .or(site_files)
                 .or(static_files),
         )
-        .or(auth_link)
         .or(auth_local_login)
-        .or(admin_unlink)
         .or(admin_reset)
         .or(admin_ban_route)
         .or(admin_unban_route)

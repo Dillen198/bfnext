@@ -452,8 +452,6 @@ pub(crate) struct StatsDbInner {
     // Auth
     auth_sessions:    Tree<Uuid, SessionData>,
     auth_states:      Tree<Uuid, OAuthState>,
-    discord_to_ucid:  Tree<std::string::String, Ucid>,
-    ucid_to_discord:  Tree<Ucid, std::string::String>,
     // Trail history
     trail_points: Tree<(RoundId, std::string::String, i64), (f64, f64, f64, f64)>,
     latest_weather: Arc<RwLock<Option<WeatherSnapshot>>>,
@@ -643,8 +641,6 @@ impl StatsDb {
             stats_jsonl: None,
             auth_sessions: Tree::open(&db, "auth_sessions")?,
             auth_states: Tree::open(&db, "auth_states")?,
-            discord_to_ucid: Tree::open(&db, "discord_to_ucid")?,
-            ucid_to_discord: Tree::open(&db, "ucid_to_discord")?,
             trail_points: Tree::open(&db, "trail_points")?,
             latest_weather: Arc::new(RwLock::new(None)),
             objective_captures: Tree::open(&db, "objective_captures")?,
@@ -699,8 +695,6 @@ impl StatsDb {
             stats_jsonl,
             auth_sessions: Tree::open(&db, "auth_sessions")?,
             auth_states: Tree::open(&db, "auth_states")?,
-            discord_to_ucid: Tree::open(&db, "discord_to_ucid")?,
-            ucid_to_discord: Tree::open(&db, "ucid_to_discord")?,
             trail_points: Tree::open(&db, "trail_points")?,
             latest_weather: Arc::new(RwLock::new(None)),
             objective_captures: Tree::open(&db, "objective_captures")?,
@@ -2296,31 +2290,6 @@ impl StatsDb {
         }
     }
 
-    pub(crate) fn link_discord_ucid(&self, discord_id: &std::string::String, ucid: &Ucid) -> Result<()> {
-        self.discord_to_ucid.insert(discord_id, ucid)?;
-        self.ucid_to_discord.insert(ucid, discord_id)?;
-        Ok(())
-    }
-
-    pub(crate) fn get_ucid_for_discord(&self, discord_id: &std::string::String) -> Result<Option<Ucid>> {
-        Ok(self.discord_to_ucid.get(discord_id)?)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_discord_for_ucid(&self, ucid: &Ucid) -> Result<Option<std::string::String>> {
-        Ok(self.ucid_to_discord.get(ucid)?)
-    }
-
-
-    pub(crate) fn list_links(&self) -> Result<Vec<(std::string::String, Ucid)>> {
-        let mut out = Vec::new();
-        for item in self.discord_to_ucid.iter() {
-            let (discord_id, ucid) = item?;
-            out.push((discord_id, ucid));
-        }
-        Ok(out)
-    }
-
     pub(crate) fn list_sessions(&self) -> Result<Vec<(Uuid, SessionData)>> {
         let now = Utc::now();
         let mut out = Vec::new();
@@ -2331,13 +2300,6 @@ impl StatsDb {
             }
         }
         Ok(out)
-    }
-
-    pub(crate) fn unlink_discord(&self, discord_id: &std::string::String) -> Result<()> {
-        if let Some(ucid) = self.discord_to_ucid.remove(discord_id)? {
-            let _ = self.ucid_to_discord.remove(&ucid);
-        }
-        Ok(())
     }
 
     // ── Trail point methods ──────────────────────────────────────────
@@ -2404,7 +2366,7 @@ impl StatsDb {
         // Trails & weather
         self.trail_points.clear()?;
         if let Ok(mut w) = self.latest_weather.write() { *w = None; }
-        // auth_sessions, auth_states, discord_to_ucid, ucid_to_discord → preserved
+        // auth_sessions, auth_states → preserved
         Ok(())
     }
 }

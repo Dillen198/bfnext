@@ -405,9 +405,6 @@ export default function Pilots() {
   const [selected, setSelected] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [searchFocus, setSearchFocus] = useState(false)
-  const [linking, setLinking] = useState(false)
-  const [linkInput, setLinkInput] = useState('')
-  const [linkError, setLinkError] = useState<string | null>(null)
 
   // Auto-select from ?ucid= URL param, then logged-in user, on first load
   useEffect(() => {
@@ -424,18 +421,6 @@ export default function Pilots() {
       setSearch(pilots.find(p => p.ucid === user.ucid)?.name ?? '')
     }
   }, [user?.ucid, pilots.length])
-
-  async function handleLink() {
-    setLinkError(null)
-    try {
-      await api.auth.link(linkInput.trim())
-      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
-      setLinking(false)
-      setSelected(linkInput.trim())
-    } catch {
-      setLinkError('Pilot not found — check the UCID and try again')
-    }
-  }
 
   const pilot = pilots.find(p => p.ucid === selected) ?? null
   const pilotRank = pilot ? pilots.findIndex(p => p.ucid === pilot.ucid) + 1 : null
@@ -537,33 +522,18 @@ export default function Pilots() {
         </div>
 
         {/* ── Link account banner ── */}
-        {user && !user.ucid && !linking && (
+        {user && !user.ucid && (
           <div className="vs-card px-4 py-3 flex items-center gap-3" style={{ borderColor: '#5865F2', background: 'rgba(88,101,242,0.05)' }}>
             <Link size={14} style={{ color: '#5865F2', flexShrink: 0 }} />
             <div style={{ flex: 1, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-              Link your DCS account to see your profile highlighted
+              Not linked yet — run <code style={{ color: 'var(--text)' }}>/linkme</code> in Discord for a token, then <code style={{ color: 'var(--text)' }}>-linkme &lt;token&gt;</code> in DCS chat to see your profile highlighted.
             </div>
             <button
-              onClick={() => setLinking(true)}
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })}
               style={{ fontSize: '0.65rem', color: '#5865F2', background: 'none', border: '1px solid #5865F2', padding: '2px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em', fontFamily: "'Bebas Neue', sans-serif" }}
             >
-              LINK ACCOUNT
+              CHECK AGAIN
             </button>
-          </div>
-        )}
-        {linking && (
-          <div className="vs-card px-4 py-3" style={{ borderColor: '#5865F2' }}>
-            <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginBottom: '0.5rem', letterSpacing: '0.1em' }}>ENTER YOUR DCS UCID</div>
-            <div className="flex gap-2">
-              <input className="vs-input flex-1" placeholder="e.g. 76561198xxxxxxxxx" value={linkInput}
-                onChange={e => setLinkInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleLink()} />
-              <button onClick={handleLink} style={{ fontSize: '0.65rem', background: '#5865F2', color: '#fff', border: 'none', padding: '2px 12px', borderRadius: 2, cursor: 'pointer', fontFamily: "'Bebas Neue', sans-serif" }}>LINK</button>
-              <button onClick={() => { setLinking(false); setLinkError(null) }} style={{ fontSize: '0.65rem', background: 'none', color: 'var(--text-dim)', border: '1px solid var(--border)', padding: '2px 10px', borderRadius: 2, cursor: 'pointer' }}>Cancel</button>
-            </div>
-            {linkError && <div style={{ fontSize: '0.62rem', color: 'var(--accent)', marginTop: '0.4rem' }}>{linkError}</div>}
-            <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginTop: '0.4rem' }}>
-              Find your UCID via the <code style={{ color: 'var(--text-muted)' }}>/bind</code> chat command in-game
-            </div>
           </div>
         )}
 

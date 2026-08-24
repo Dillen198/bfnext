@@ -72,6 +72,17 @@ $discordAdminRoleId  = ""
 # Leave blank to disable the SRS panel on the dashboard (or set srsUrl in campaign.json instead)
 $srsUrl = ""
 
+# DCSServerBot's RestAPI plugin — bfdb has no Discord-link database of its
+# own; it resolves a Discord user's ucid by querying the bot's own player
+# database here (POST {url}/getuser). Include whatever `prefix` is set to
+# in the bot's restapi.yaml (e.g. "http://127.0.0.1:9876/stats" if
+# prefix: stats). Leave blank to disable linking entirely (dashboard "My
+# Profile" and the cockpit UI will report accounts as never linked).
+$dcsServerBotUrl = ""
+
+# X-API-Key from the bot's restapi.yaml (api_key). Secret -- lives in
+# bfsystem.local.ps1 as $dcsServerBotApiKey, not here.
+
 # Allow the dashboard/site to call this API cross-origin (they're on separate
 # domains now: vectorstrike.org and dashboard.vectorstrike.org via Vercel).
 # Also flips the session cookie to SameSite=None; Secure, required for that.
@@ -107,6 +118,7 @@ $netidxBase = "/local/fowl/campaign"
 # bfdb's argument list.
 $discordClientId     = ""
 $discordClientSecret = ""
+$dcsServerBotApiKey  = ""
 $localSecrets = Join-Path $PSScriptRoot "bfsystem.local.ps1"
 if (-not (Test-Path $localSecrets)) {
     Write-Host "Missing $localSecrets -- copy bfsystem.local.ps1.example and set a real `$adminPassword." -ForegroundColor Red
@@ -173,6 +185,10 @@ function Start-VECTOR {
         )
         if ($using:srsUrl -ne "") {
             $argList += "--srs-url", $using:srsUrl
+        }
+        if ($using:dcsServerBotUrl -ne "" -and $using:dcsServerBotApiKey -ne "") {
+            $argList += "--dcsserverbot-url", $using:dcsServerBotUrl
+            $argList += "--dcsserverbot-api-key", $using:dcsServerBotApiKey
         }
         if ($using:netidxBase -ne "") {
             $argList += "--base", $using:netidxBase

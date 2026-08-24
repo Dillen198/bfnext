@@ -14,3 +14,8 @@ $adminPassword = "REPLACE_WITH_A_REAL_RANDOM_PASSWORD"
 # (only local admin login will be available).
 $discordClientId     = ""
 $discordClientSecret = ""
+
+# X-API-Key from DCSServerBot's restapi.yaml (the `api_key` value). Pairs
+# with $dcsServerBotUrl in bfsystem.ps1 -- both must be set for Discord
+# account linking (dashboard "My Profile", cockpit UI) to work.
+$dcsServerBotApiKey = ""

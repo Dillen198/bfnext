@@ -137,42 +137,24 @@ function LoginPrompt() {
 
 function LinkPrompt() {
   const { refresh } = useAuth()
-  const [ucid, setUcid] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [linking, setLinking] = useState(false)
+  const [checking, setChecking] = useState(false)
 
-  async function handleLink() {
-    setError(null)
-    setLinking(true)
+  async function handleRecheck() {
+    setChecking(true)
     try {
-      await api.auth.link(ucid.trim())
       await refresh()
-    } catch {
-      setError('Could not link that UCID -- find it on the Pilots page, or type -bind in DCS chat first')
     } finally {
-      setLinking(false)
+      setChecking(false)
     }
   }
 
   return (
     <Shell>
       <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-        Link your DCS pilot to this account (find your UCID on the Pilots page).
+        Your Discord account isn't linked to a DCS pilot yet. In Discord, run <code style={{ fontFamily: 'var(--font-mono)' }}>/linkme</code> to
+        get a token, then type <code style={{ fontFamily: 'var(--font-mono)' }}>-linkme &lt;token&gt;</code> in DCS chat.
       </p>
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
-        <input
-          value={ucid}
-          onChange={e => setUcid(e.target.value)}
-          placeholder="your ucid"
-          style={{
-            flex: 1, padding: '0.5rem 0.6rem', background: 'var(--bg-input)',
-            border: '1px solid var(--border)', borderRadius: '2px', color: 'var(--text)',
-            fontSize: '0.78rem', outline: 'none', fontFamily: 'var(--font-mono)',
-          }}
-        />
-        <Button onClick={handleLink} disabled={linking || !ucid.trim()}>{linking ? '…' : 'LINK'}</Button>
-      </div>
-      {error && <p style={{ fontSize: '0.7rem', color: 'var(--red)', marginTop: '0.5rem' }}>{error}</p>}
+      <Button onClick={handleRecheck} disabled={checking}>{checking ? '…' : "I'VE LINKED — CHECK AGAIN"}</Button>
     </Shell>
   )
 }
