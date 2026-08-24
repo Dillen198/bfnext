@@ -2428,6 +2428,11 @@ async fn main() -> Result<()> {
 
     let bot_link_cfg: Arc<Option<BotLinkConfig>> = Arc::new(match (args.dcsserverbot_url, args.dcsserverbot_api_key) {
         (Some(base_url), Some(api_key)) => {
+            // Tolerate a trailing slash on --dcsserverbot-url -- otherwise
+            // e.g. "http://host:9876/stats/" + "/servers" produces a
+            // double-slash path that most web frameworks 404 on, silently
+            // breaking the integration rather than erroring loudly.
+            let base_url = base_url.trim_end_matches('/').to_string();
             log::info!("Discord account linking via DCSServerBot enabled ({base_url})");
             Some(BotLinkConfig { base_url, api_key })
         }

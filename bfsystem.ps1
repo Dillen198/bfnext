@@ -74,10 +74,14 @@ $srsUrl = ""
 
 # DCSServerBot's RestAPI plugin — bfdb has no Discord-link database of its
 # own; it resolves a Discord user's ucid by querying the bot's own player
-# database here (POST {url}/getuser). Include whatever `prefix` is set to
-# in the bot's restapi.yaml (e.g. "http://127.0.0.1:9876/stats" if
-# prefix: stats). Leave blank to disable linking entirely (dashboard "My
-# Profile" and the cockpit UI will report accounts as never linked).
+# database here (POST {url}/getuser), and sources the dashboard's restart
+# countdown from here too (GET {url}/servers). MUST include whatever
+# `prefix` is set to in the bot's restapi.yaml — e.g. if that file has
+# `prefix: stats`, this needs to be "http://127.0.0.1:9876/stats", NOT
+# just "http://127.0.0.1:9876" (the API doesn't live at the bare root).
+# No trailing slash. Leave blank to disable linking entirely (dashboard
+# "My Profile", the cockpit UI, and the restart countdown will all behave
+# as if nothing is configured, rather than erroring).
 $dcsServerBotUrl = ""
 
 # X-API-Key from the bot's restapi.yaml (api_key). Secret -- lives in
