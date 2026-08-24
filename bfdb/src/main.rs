@@ -162,26 +162,40 @@ struct BotUserEntry {
 /// store of its own, so this is the only way a Discord session ever becomes
 /// a "linked player". Returns `Ok(None)` both when the bot isn't configured
 /// and when the bot has no link for this user (both mean "not linked").
+/// Never fails outright -- Discord linking is supplementary information for
+/// an already-established session, not something that should be able to
+/// break login/session-check itself. Any problem talking to the bot (down,
+/// misconfigured, bad response) just logs a warning and resolves to "not
+/// linked", the same as if the bot genuinely has no link for this user.
 async fn resolve_ucid_via_bot(
     bot_cfg: &Option<BotLinkConfig>,
     discord_id: &str,
-) -> std::result::Result<Option<dcso3::net::Ucid>, Error> {
-    let Some(cfg) = bot_cfg else { return Ok(None) };
-    let http = reqwest::Client::new();
-    let users: Vec<BotUserEntry> = http
-        .post(format!("{}/getuser", cfg.base_url))
-        .header("X-API-Key", &cfg.api_key)
-        .form(&[("discord_id", discord_id)])
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("DCSServerBot getuser request failed: {e}"))?
-        .json()
-        .await
-        .map_err(|e| anyhow::anyhow!("DCSServerBot getuser response parse failed: {e}"))?;
-    Ok(match users.into_iter().next() {
-        Some(u) => Some(u.ucid.parse().map_err(|e| anyhow::anyhow!("bad ucid from bot: {e:?}"))?),
-        None => None,
-    })
+) -> Option<dcso3::net::Ucid> {
+    let cfg = bot_cfg.as_ref()?;
+    let result: anyhow::Result<Option<dcso3::net::Ucid>> = async {
+        let http = reqwest::Client::new();
+        let users: Vec<BotUserEntry> = http
+            .post(format!("{}/getuser", cfg.base_url))
+            .header("X-API-Key", &cfg.api_key)
+            .form(&[("discord_id", discord_id)])
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("DCSServerBot getuser request failed: {e}"))?
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("DCSServerBot getuser response parse failed: {e}"))?;
+        Ok(match users.into_iter().next() {
+            Some(u) => Some(u.ucid.parse().map_err(|e| anyhow::anyhow!("bad ucid from bot: {e:?}"))?),
+            None => None,
+        })
+    }.await;
+    match result {
+        Ok(ucid) => ucid,
+        Err(e) => {
+            log::warn!("DCSServerBot link lookup failed for discord_id={discord_id}: {e:?}");
+            None
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -957,7 +971,7 @@ async fn api_auth_me(
     let Some(s) = session else {
         return Ok(json_response(r#"{"user":null}"#.to_string()));
     };
-    let ucid = resolve_ucid_via_bot(&bot_cfg, &s.discord_id).await?
+    let ucid = resolve_ucid_via_bot(&bot_cfg, &s.discord_id).await
         .map(|u| u.to_string());
     Ok(json_response(serde_json::to_string(&serde_json::json!({
         "user": {
@@ -1068,7 +1082,7 @@ async fn require_linked_player(
     };
     let session = task::block_in_place(|| db.get_session(id))?
         .ok_or_else(|| anyhow::anyhow!("session expired"))?;
-    let ucid = resolve_ucid_via_bot(bot_cfg, &session.discord_id).await?
+    let ucid = resolve_ucid_via_bot(bot_cfg, &session.discord_id).await
         .ok_or_else(|| anyhow::anyhow!("account not linked -- type -linkme <token> in DCS chat (get the token with /linkme in Discord)"))?;
     Ok(ucid)
 }
