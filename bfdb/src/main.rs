@@ -2497,16 +2497,25 @@ async fn main() -> Result<()> {
     // ── Load campaign config JSON (served at /api/config) ────────────────
     let (campaign_json, srs_url_from_cfg): (Arc<String>, Option<String>) = match &args.config {
         Some(path) => {
-            let raw = std::fs::read_to_string(path)
-                .unwrap_or_else(|e| { log::warn!("Could not read --config {path:?}: {e}"); "{}".to_string() });
-            match serde_json::from_str::<serde_json::Value>(&raw) {
-                Ok(v) => {
-                    log::info!("Campaign config loaded from {:?}", path);
-                    let srs = v.get("srsUrl").and_then(|u| u.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
-                    (Arc::new(raw), srs)
-                }
-                Err(_) => {
-                    log::warn!("--config file is not valid JSON, using empty config");
+            match std::fs::read_to_string(path) {
+                Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                    Ok(v) => {
+                        log::info!("Campaign config loaded from {:?}", path);
+                        let srs = v.get("srsUrl").and_then(|u| u.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                        (Arc::new(raw), srs)
+                    }
+                    Err(_) => {
+                        log::warn!("--config file is not valid JSON, using empty config");
+                        (Arc::new("{}".to_string()), None)
+                    }
+                },
+                Err(e) => {
+                    // Not an error worth failing startup over -- bfsystem.ps1
+                    // always passes --config unconditionally, so a missing
+                    // campaign.json (never created, or a fresh setup) just
+                    // means "use default dashboard branding", same as
+                    // --config being omitted entirely below.
+                    log::warn!("Could not read --config {path:?}: {e} -- using default campaign branding");
                     (Arc::new("{}".to_string()), None)
                 }
             }
