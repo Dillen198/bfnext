@@ -728,9 +728,19 @@ async fn api_stats(
 
     // DCSServerBot's Scheduler plugin is what actually restarts this server
     // (bflib's own stop_time isn't in play here) -- prefer its restart_time
-    // when reachable, keep the bflib-derived fallback above otherwise.
+    // when reachable, keep the bflib-derived fallback above otherwise. The
+    // bot appears to hold onto the last-computed restart_time rather than
+    // always keeping a future one queued (observed: it can sit on an
+    // already-elapsed moment for a while after a restart), so only trust
+    // it if it's actually still ahead of us -- a countdown to the past
+    // just clamps to zero and sits there, which reads as broken rather
+    // than "no restart currently scheduled".
     if let Some(bot_restart_at) = fetch_bot_restart_time(&bot_cfg).await {
-        value["restart_at"] = serde_json::json!(bot_restart_at.to_rfc3339());
+        if bot_restart_at > chrono::Utc::now() {
+            value["restart_at"] = serde_json::json!(bot_restart_at.to_rfc3339());
+        } else {
+            value["restart_at"] = serde_json::Value::Null;
+        }
     }
 
     Ok(json_response(serde_json::to_string(&value).map_err(anyhow::Error::from)?))
