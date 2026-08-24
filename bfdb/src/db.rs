@@ -1509,6 +1509,7 @@ impl StatsDb {
             ("reference/faq", "FAQ", "Reference", 3, include_str!("../seed_wiki/reference/faq.md")),
             ("reference/aircraft-roster", "Aircraft Roster", "Reference", 4, include_str!("../seed_wiki/reference/aircraft-roster.md")),
             ("reference/tips", "Tips & Best Practices", "Reference", 5, include_str!("../seed_wiki/reference/tips.md")),
+            ("reference/changelog", "Changelog — v2.0", "Reference", 6, include_str!("../seed_wiki/reference/changelog.md")),
             ("advanced/c130-airdrop", "C-130 Hercules & Airdrop", "Advanced Topics", 2, include_str!("../seed_wiki/advanced/c130-airdrop.md")),
         ];
         for (slug, title, section, order, content) in seed {
