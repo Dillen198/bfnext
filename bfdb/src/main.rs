@@ -198,6 +198,51 @@ async fn resolve_ucid_via_bot(
     }
 }
 
+#[derive(Deserialize)]
+struct BotServerInfo {
+    restart_time: Option<std::string::String>,
+}
+
+/// DCSServerBot's RestAPI plugin serializes datetimes inconsistently across
+/// versions -- sometimes RFC3339 with an offset, sometimes a naive
+/// "YYYY-MM-DDTHH:MM:SS" with no timezone. Try both; treat a naive one as
+/// already UTC (matches how the bot's own scheduler stores it).
+fn parse_bot_datetime(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+        .ok()
+        .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc))
+}
+
+/// Same never-fails contract as resolve_ucid_via_bot -- the dashboard's
+/// restart countdown falling back to bflib's own (if any) is far better
+/// than the whole /api/stats call breaking because the bot is down.
+async fn fetch_bot_restart_time(bot_cfg: &Option<BotLinkConfig>) -> Option<chrono::DateTime<chrono::Utc>> {
+    let cfg = bot_cfg.as_ref()?;
+    let result: anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> = async {
+        let http = reqwest::Client::new();
+        let servers: Vec<BotServerInfo> = http
+            .get(format!("{}/servers", cfg.base_url))
+            .header("X-API-Key", &cfg.api_key)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("DCSServerBot servers request failed: {e}"))?
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("DCSServerBot servers response parse failed: {e}"))?;
+        Ok(servers.into_iter().find_map(|s| s.restart_time.as_deref().and_then(parse_bot_datetime)))
+    }.await;
+    match result {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("DCSServerBot restart-time lookup failed: {e:?}");
+            None
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Error(anyhow::Error);
 
@@ -620,8 +665,11 @@ async fn api_pilot_kills(
     Ok(json_response(data))
 }
 
-async fn api_stats(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+async fn api_stats(
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let mut value = task::block_in_place(|| -> Result<serde_json::Value> {
         let rounds = db.latest_rounds()?;
         let active_round = rounds.iter().find(|(_, _, r)| r.end.is_none());
         let active_rid = active_round.map(|(_, rid, _)| *rid);
@@ -638,7 +686,11 @@ async fn api_stats(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> 
             0
         };
         let total_kills: u32 = pilots.iter().map(|(_, _, a)| a.air_kills + a.ground_kills).sum();
-        let restart_at = active_round
+        // Fallback only -- bflib's own session stop_time, used when
+        // DCSServerBot isn't configured/reachable (see below, api_stats
+        // prefers the bot's own scheduler restart time when available,
+        // since that's what actually restarts the server on this setup).
+        let local_restart_at = active_round
             .and_then(|(_, rid, _)| db.active_session_stop(*rid))
             .map(|t| t.to_rfc3339());
         let weather = db.latest_weather().map(|w| serde_json::json!({
@@ -655,7 +707,7 @@ async fn api_stats(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> 
         } else {
             (0, 0, 0, 0)
         };
-        Ok(serde_json::to_string(&serde_json::json!({
+        Ok(serde_json::json!({
             "total_pilots": pilots.len(),
             "total_rounds": rounds.len(),
             "active_round": active_round.map(|(s, rid, r)| serde_json::json!({
@@ -665,15 +717,23 @@ async fn api_stats(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> 
             })),
             "objective_count": obj_count,
             "total_kills": total_kills,
-            "restart_at": restart_at,
+            "restart_at": local_restart_at,
             "weather": weather,
             "blue_registered": blue_reg,
             "red_registered": red_reg,
             "blue_online": blue_online,
             "red_online": red_online,
-        }))?)
+        }))
     })?;
-    Ok(json_response(data))
+
+    // DCSServerBot's Scheduler plugin is what actually restarts this server
+    // (bflib's own stop_time isn't in play here) -- prefer its restart_time
+    // when reachable, keep the bflib-derived fallback above otherwise.
+    if let Some(bot_restart_at) = fetch_bot_restart_time(&bot_cfg).await {
+        value["restart_at"] = serde_json::json!(bot_restart_at.to_rfc3339());
+    }
+
+    Ok(json_response(serde_json::to_string(&value).map_err(anyhow::Error::from)?))
 }
 
 async fn api_points(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
@@ -2472,6 +2532,7 @@ async fn main() -> Result<()> {
 
     let stats = warp::path!("api" / "stats")
         .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .then(api_stats);
 
     let units = warp::path!("api" / "units")
