@@ -78,7 +78,8 @@ $srsUrl = ""
 $corsOrigins = @(
     "https://vectorstrike.org",
     "https://www.vectorstrike.org",
-    "https://dashboard.vectorstrike.org"
+    "https://dashboard.vectorstrike.org",
+    "https://wiki.vectorstrike.org"
 )
 
 # Netidx base path bflib publishes under. bflib takes the "netidx_base"

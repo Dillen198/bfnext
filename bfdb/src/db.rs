@@ -69,6 +69,34 @@ pub(crate) struct BanRecord {
     pub(crate) reason:    std::string::String,
 }
 
+// ── Wiki (bfwiki) types ───────────────────────────────────────────────
+
+/// A single wiki page, keyed by slug (e.g. "gameplay/objectives") in the
+/// `wiki_pages` tree. `section`/`order` drive the sidebar grouping in
+/// bfwiki -- there's no separate "page tree" structure, just these two
+/// fields sorted client-side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct WikiPage {
+    pub(crate) title:      std::string::String,
+    pub(crate) section:    std::string::String,
+    pub(crate) order:      i32,
+    pub(crate) content:    std::string::String,
+    pub(crate) updated_at: DateTime<Utc>,
+    pub(crate) updated_by: std::string::String,
+}
+
+/// An uploaded image (screenshot etc.), keyed by a generated Uuid in the
+/// `wiki_images` tree and referenced from page Markdown as
+/// `/api/wiki/images/<uuid>`. Content-addressed by nothing in particular --
+/// just an opaque id -- since these are inserted once and never edited.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct WikiImage {
+    pub(crate) content_type: std::string::String,
+    pub(crate) data:         Vec<u8>,
+    pub(crate) uploaded_at:  DateTime<Utc>,
+    pub(crate) uploaded_by:  std::string::String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WeatherSnapshot {
     pub(crate) temp_c: f64,
@@ -427,6 +455,10 @@ pub(crate) struct StatsDbInner {
     aircraft_sorties: Tree<(RoundId, std::string::String), (u32, f32)>,
     // Admin-managed ban list (bfdb-native, separate from bflib's cfg.banned)
     admin_bans: Tree<Ucid, BanRecord>,
+    // bfwiki content, keyed by page slug (e.g. "gameplay/objectives")
+    wiki_pages: Tree<std::string::String, WikiPage>,
+    // bfwiki uploaded images (screenshots etc.), keyed by generated Uuid
+    wiki_images: Tree<Uuid, WikiImage>,
     // Live bflib engine log, streamed over netidx from the running DCS mission
     // (distinct from bfdb's own process log)
     engine_log_tx: broadcast::Sender<std::string::String>,
@@ -609,10 +641,14 @@ impl StatsDb {
             captures: Tree::open(&db, "captures")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
+            wiki_pages: Tree::open(&db, "wiki_pages")?,
+            wiki_images: Tree::open(&db, "wiki_images")?,
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
             replay_cursor: Tree::open(&db, "replay_cursor")?,
         }));
+        t.seed_wiki_if_empty()?;
+        t.seed_wiki_images_if_empty()?;
         let _t = t.clone();
         task::spawn(async move {
             if let Err(e) = _t.background_loop().await {
@@ -661,10 +697,14 @@ impl StatsDb {
             captures: Tree::open(&db, "captures")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
+            wiki_pages: Tree::open(&db, "wiki_pages")?,
+            wiki_images: Tree::open(&db, "wiki_images")?,
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
             replay_cursor: Tree::open(&db, "replay_cursor")?,
         }));
+        t.seed_wiki_if_empty()?;
+        t.seed_wiki_images_if_empty()?;
         let _t = t.clone();
         task::spawn(async move {
             if let Err(e) = _t.background_loop().await {
@@ -1397,6 +1437,126 @@ impl StatsDb {
             }
         }
         Ok(out)
+    }
+
+    // ── bfwiki content management ────────────────────────────────────────────
+
+    pub(crate) fn wiki_get_page(&self, slug: &str) -> Result<Option<WikiPage>> {
+        self.wiki_pages.get(&slug.to_string())
+    }
+
+    /// All pages, sorted by (section, order) -- the order bfwiki's sidebar
+    /// renders them in.
+    pub(crate) fn wiki_list_pages(&self) -> Result<Vec<(std::string::String, WikiPage)>> {
+        let mut out = Vec::new();
+        for r in self.wiki_pages.iter() {
+            let (slug, page) = r?;
+            out.push((slug, page));
+        }
+        out.sort_by(|(_, a), (_, b)| a.section.cmp(&b.section).then(a.order.cmp(&b.order)));
+        Ok(out)
+    }
+
+    pub(crate) fn wiki_save_page(&self, slug: &str, page: WikiPage) -> Result<()> {
+        self.wiki_pages.insert(&slug.to_string(), &page)?;
+        Ok(())
+    }
+
+    pub(crate) fn wiki_delete_page(&self, slug: &str) -> Result<bool> {
+        Ok(self.wiki_pages.remove(&slug.to_string())?.is_some())
+    }
+
+    pub(crate) fn wiki_save_image(&self, id: Uuid, image: WikiImage) -> Result<()> {
+        self.wiki_images.insert(&id, &image)?;
+        Ok(())
+    }
+
+    pub(crate) fn wiki_get_image(&self, id: &Uuid) -> Result<Option<WikiImage>> {
+        self.wiki_images.get(id)
+    }
+
+    /// One-time seed of the built-in gameplay wiki content (compiled in from
+    /// `bfdb/seed_wiki/`) -- only runs if the tree is completely empty, so an
+    /// admin's edits (or deletions) through bfwiki are never overwritten on
+    /// restart.
+    fn seed_wiki_if_empty(&self) -> Result<()> {
+        if self.wiki_pages.iter().next().is_some() {
+            return Ok(());
+        }
+        info!("seeding bfwiki with default gameplay content");
+        let now = Utc::now();
+        let seed: &[(&str, &str, &str, i32, &str)] = &[
+            ("introduction", "What is Fowl Engine?", "Introduction", 0, include_str!("../seed_wiki/introduction.md")),
+            ("getting-started/welcome", "Welcome", "Getting Started", 0, include_str!("../seed_wiki/getting-started/welcome.md")),
+            ("getting-started/joining-team", "Joining a Team", "Getting Started", 1, include_str!("../seed_wiki/getting-started/joining-team.md")),
+            ("getting-started/hud-and-menus", "Understanding the Menus", "Getting Started", 2, include_str!("../seed_wiki/getting-started/hud-and-menus.md")),
+            ("gameplay/objectives", "Objectives", "Core Gameplay", 0, include_str!("../seed_wiki/gameplay/objectives.md")),
+            ("gameplay/capturing-objectives", "Capturing Objectives", "Core Gameplay", 1, include_str!("../seed_wiki/gameplay/capturing-objectives.md")),
+            ("gameplay/logistics", "Logistics & Supply", "Core Gameplay", 2, include_str!("../seed_wiki/gameplay/logistics.md")),
+            ("gameplay/points-and-lives", "Points and Lives", "Core Gameplay", 3, include_str!("../seed_wiki/gameplay/points-and-lives.md")),
+            ("gameplay/chat-commands", "Chat Commands", "Core Gameplay", 4, include_str!("../seed_wiki/gameplay/chat-commands.md")),
+            ("f10-menu/overview", "Overview", "F10 Menu Systems", 0, include_str!("../seed_wiki/f10-menu/overview.md")),
+            ("f10-menu/actions", "Actions Menu", "F10 Menu Systems", 1, include_str!("../seed_wiki/f10-menu/actions.md")),
+            ("f10-menu/jtac", "JTAC System", "F10 Menu Systems", 2, include_str!("../seed_wiki/f10-menu/jtac.md")),
+            ("f10-menu/cargo", "Cargo Operations", "F10 Menu Systems", 3, include_str!("../seed_wiki/f10-menu/cargo.md")),
+            ("f10-menu/troops", "Troop Transport", "F10 Menu Systems", 4, include_str!("../seed_wiki/f10-menu/troops.md")),
+            ("f10-menu/ewr", "Early Warning Radar", "F10 Menu Systems", 5, include_str!("../seed_wiki/f10-menu/ewr.md")),
+            ("advanced/artillery", "Artillery Missions", "Advanced Topics", 0, include_str!("../seed_wiki/advanced/artillery.md")),
+            ("advanced/alcm", "Air-Launched Cruise Missiles", "Advanced Topics", 1, include_str!("../seed_wiki/advanced/alcm.md")),
+            ("reference/chat-commands", "Chat Command List", "Reference", 0, include_str!("../seed_wiki/reference/chat-commands.md")),
+            ("reference/action-types", "Action Types", "Reference", 1, include_str!("../seed_wiki/reference/action-types.md")),
+            ("reference/deployables", "Deployable Units", "Reference", 2, include_str!("../seed_wiki/reference/deployables.md")),
+            ("reference/faq", "FAQ", "Reference", 3, include_str!("../seed_wiki/reference/faq.md")),
+            ("reference/aircraft-roster", "Aircraft Roster", "Reference", 4, include_str!("../seed_wiki/reference/aircraft-roster.md")),
+            ("reference/tips", "Tips & Best Practices", "Reference", 5, include_str!("../seed_wiki/reference/tips.md")),
+            ("advanced/c130-airdrop", "C-130 Hercules & Airdrop", "Advanced Topics", 2, include_str!("../seed_wiki/advanced/c130-airdrop.md")),
+        ];
+        for (slug, title, section, order, content) in seed {
+            self.wiki_pages.insert(&slug.to_string(), &WikiPage {
+                title: title.to_string(),
+                section: section.to_string(),
+                order: *order,
+                content: content.to_string(),
+                updated_at: now,
+                updated_by: "seed".to_string(),
+            })?;
+        }
+        Ok(())
+    }
+
+    /// One-time seed of the images referenced by the built-in gameplay wiki
+    /// content (pulled from bfsite's marketing screenshots). Fixed ids so
+    /// every fresh deployment gets the same URLs the seed Markdown embeds --
+    /// only runs if the images tree is completely empty.
+    fn seed_wiki_images_if_empty(&self) -> Result<()> {
+        if self.wiki_images.iter().next().is_some() {
+            return Ok(());
+        }
+        info!("seeding bfwiki with default screenshots");
+        let now = Utc::now();
+        let seed: &[(&str, &[u8])] = &[
+            ("cf08da53-e826-49b2-8b67-7ddded3cbb74", include_bytes!("../seed_wiki/images/server-browser.jpeg")),
+            ("934a41dc-d2ad-4b52-8dfd-60cbdc4deb78", include_bytes!("../seed_wiki/images/objective-types.jpeg")),
+            ("0ce0f6d9-ab3e-4f5b-87e3-799b0e2964cd", include_bytes!("../seed_wiki/images/patriot-site.jpeg")),
+            ("f2ad53a9-2e98-4925-bced-de97267fc7e6", include_bytes!("../seed_wiki/images/carrier-group.jpeg")),
+            ("f0af8d1d-8ae3-4a78-a361-27d14e55aa33", include_bytes!("../seed_wiki/images/csar-rescue.jpeg")),
+            ("7d6453ff-8e35-4304-8a34-d61e680b7f83", include_bytes!("../seed_wiki/images/convoy-interdiction.jpeg")),
+            ("1e34aa38-f253-4652-b725-c30cc1553a38", include_bytes!("../seed_wiki/images/nine-line-brief.jpeg")),
+            ("76185372-d487-422b-a6ea-89de0da561d8", include_bytes!("../seed_wiki/images/c130-hero.jpeg")),
+            ("61a90050-7359-4ada-b0c9-41f09dc26a34", include_bytes!("../seed_wiki/images/airdrop-parachute.jpeg")),
+            ("fab0866b-a54d-4e0a-9647-d246a700d5a6", include_bytes!("../seed_wiki/images/lapes-extraction.jpeg")),
+            ("3ce5c418-9d0b-429a-be7e-687032cb147f", include_bytes!("../seed_wiki/images/objective-capture.jpeg")),
+            ("b7c7cf5d-7559-4a43-b97e-b304cc4d8ccb", include_bytes!("../seed_wiki/images/himars-strike.jpeg")),
+        ];
+        for (id, data) in seed {
+            self.wiki_images.insert(&Uuid::parse_str(id)?, &WikiImage {
+                content_type: "image/jpeg".to_string(),
+                data: data.to_vec(),
+                uploaded_at: now,
+                uploaded_by: "seed".to_string(),
+            })?;
+        }
+        Ok(())
     }
 
     // ── Perf history ─────────────────────────────────────────────────────────

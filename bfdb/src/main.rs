@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bfprotocols::cfg::UnitTag;
 use clap::Parser;
-use db::{SessionData, StatsDb};
+use db::{SessionData, StatsDb, WikiImage, WikiPage};
 use futures::{SinkExt, StreamExt};
 use netidx::{config::Config, path::Path as NetidxPath, subscriber::SubscriberBuilder};
 use regex::Regex;
@@ -1307,6 +1307,141 @@ async fn api_admin_cfg_post(
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
+// ── bfwiki content API ─────────────────────────────────────────────────────
+
+/// GET /api/wiki/pages  — list all pages (slug/title/section/order only, no
+/// content) for building the sidebar. Public -- reading the wiki needs no
+/// login, only editing does.
+async fn api_wiki_list(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+    let pages = task::block_in_place(|| db.wiki_list_pages())?;
+    let entries: Vec<_> = pages.iter().map(|(slug, p)| {
+        serde_json::json!({
+            "slug": slug,
+            "title": p.title,
+            "section": p.section,
+            "order": p.order,
+        })
+    }).collect();
+    Ok(warp::reply::json(&entries))
+}
+
+/// GET /api/wiki/pages/<slug>  — full content of one page. Public. `<slug>`
+/// is itself multi-segment (e.g. "gameplay/objectives"), so this matches on
+/// the path tail rather than a single `String` segment.
+async fn api_wiki_get(
+    slug: warp::path::Tail,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let slug = slug.as_str();
+    let page = task::block_in_place(|| db.wiki_get_page(slug))?
+        .ok_or_else(|| anyhow::anyhow!("page not found"))?;
+    Ok(warp::reply::json(&serde_json::json!({
+        "slug": slug,
+        "title": page.title,
+        "section": page.section,
+        "order": page.order,
+        "content": page.content,
+        "updated_at": page.updated_at,
+        "updated_by": page.updated_by,
+    })))
+}
+
+#[derive(Deserialize)]
+struct SaveWikiPageBody {
+    title:   std::string::String,
+    section: std::string::String,
+    order:   i32,
+    content: std::string::String,
+}
+
+/// POST /api/wiki/pages/<slug>  — create or overwrite a page (admin only).
+async fn api_wiki_save(
+    slug: warp::path::Tail,
+    session_id: Option<Uuid>,
+    body: SaveWikiPageBody,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let session = require_admin(session_id, db.clone()).await?;
+    let slug = slug.as_str().to_string();
+    let page = WikiPage {
+        title:      body.title,
+        section:    body.section,
+        order:      body.order,
+        content:    body.content,
+        updated_at: chrono::Utc::now(),
+        updated_by: session.discord_id,
+    };
+    task::block_in_place(|| db.wiki_save_page(&slug, page))?;
+    log::info!("ADMIN: wiki page '{}' saved", slug);
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+struct DeleteWikiPageBody {
+    slug: std::string::String,
+}
+
+/// POST /api/wiki/delete  — remove a page (admin only). Takes the slug in
+/// the body rather than the path so a multi-segment slug can't collide with
+/// a literal trailing path segment.
+async fn api_wiki_delete(
+    session_id: Option<Uuid>,
+    body: DeleteWikiPageBody,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    task::block_in_place(|| db.wiki_delete_page(&body.slug))?;
+    log::info!("ADMIN: wiki page '{}' deleted", body.slug);
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
+const MAX_WIKI_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// POST /api/wiki/images  — upload an image (admin only). Body is the raw
+/// image bytes; the `content-type` request header determines how it's
+/// served back and is validated to actually be an image type. Capped at
+/// `MAX_WIKI_IMAGE_BYTES` via the route's `content_length_limit` filter.
+async fn api_wiki_upload_image(
+    session_id: Option<Uuid>,
+    content_type: std::string::String,
+    body: bytes::Bytes,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let session = require_admin(session_id, db.clone()).await?;
+    if !content_type.starts_with("image/") {
+        return Err(anyhow::anyhow!("only image uploads are allowed (got content-type '{content_type}')").into());
+    }
+    let id = Uuid::new_v4();
+    let image = WikiImage {
+        content_type,
+        data: body.to_vec(),
+        uploaded_at: chrono::Utc::now(),
+        uploaded_by: session.discord_id,
+    };
+    task::block_in_place(|| db.wiki_save_image(id, image))?;
+    log::info!("ADMIN: wiki image {id} uploaded");
+    Ok(warp::reply::json(&serde_json::json!({
+        "id": id.to_string(),
+        "url": format!("/api/wiki/images/{id}"),
+    })))
+}
+
+/// GET /api/wiki/images/<id>  — serve an uploaded image. Public -- images
+/// embedded in wiki pages need to load for anonymous readers too. Cached
+/// aggressively since an id's content never changes after upload.
+async fn api_wiki_get_image(
+    id: Uuid,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let image = task::block_in_place(|| db.wiki_get_image(&id))?
+        .ok_or_else(|| anyhow::anyhow!("image not found"))?;
+    Ok(warp::http::Response::builder()
+        .header("content-type", image.content_type)
+        .header("cache-control", "public, max-age=31536000, immutable")
+        .body(image.data)
+        .unwrap())
+}
+
 /// GET /api/admin/perf  — last session's DCS engine performance stats (admin only)
 /// Snapshot this host's CPU/RAM/disk/GPU usage and available temperature
 /// sensors. Two CPU refreshes with a short sleep in between are required
@@ -2526,6 +2661,51 @@ async fn main() -> Result<()> {
         .and(warp::any().map(move || engine_config_path.clone()))
         .then(api_admin_cfg_post);
 
+    let wiki_list_route = warp::path!("api" / "wiki" / "pages")
+        .and(with_db(db.clone()))
+        .then(api_wiki_list);
+
+    // Not the `path!` macro here (it implicitly requires end-of-path) --
+    // the slug itself is multi-segment (e.g. "gameplay/objectives"), so
+    // these need `path::tail()` to actually capture it, same pattern as
+    // `site_files`/`static_files` below.
+    let wiki_get_route = warp::path("api")
+        .and(warp::path("wiki"))
+        .and(warp::path("pages"))
+        .and(warp::path::tail())
+        .and(with_db(db.clone()))
+        .then(api_wiki_get);
+
+    let wiki_save_route = warp::path("api")
+        .and(warp::path("wiki"))
+        .and(warp::path("pages"))
+        .and(warp::path::tail())
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::json::<SaveWikiPageBody>())
+        .and(with_db(db.clone()))
+        .then(api_wiki_save);
+
+    let wiki_delete_route = warp::path!("api" / "wiki" / "delete")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::json::<DeleteWikiPageBody>())
+        .and(with_db(db.clone()))
+        .then(api_wiki_delete);
+
+    let wiki_upload_image_route = warp::path!("api" / "wiki" / "images")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::header::<std::string::String>("content-type"))
+        .and(warp::body::content_length_limit(MAX_WIKI_IMAGE_BYTES))
+        .and(warp::body::bytes())
+        .and(with_db(db.clone()))
+        .then(api_wiki_upload_image);
+
+    let wiki_get_image_route = warp::path!("api" / "wiki" / "images" / Uuid)
+        .and(with_db(db.clone()))
+        .then(api_wiki_get_image);
+
     // /site/* → embedded bfsite SPA
     let site_files = warp::path("site")
         .and(warp::path::tail())
@@ -2560,6 +2740,9 @@ async fn main() -> Result<()> {
         .or(cockpit_ewr_intel_route)
         .or(cockpit_carp_solve_route)
         .or(cockpit_carp_solve_latlon_route)
+        .or(wiki_list_route)
+        .or(wiki_get_route)
+        .or(wiki_get_image_route)
         .boxed();
 
     let auth_routes = auth_login
@@ -2596,6 +2779,8 @@ async fn main() -> Result<()> {
         .or(commander_spawn_route)
         .or(admin_priority_route)
         .or(cockpit_ewr_toggle_route.or(cockpit_ewr_units_route).or(cockpit_cargo_spawn_route).boxed())
+        .boxed()
+        .or(wiki_save_route.or(wiki_delete_route).or(wiki_upload_image_route).boxed())
         .with(cors);
 
     log::info!("API server listening on http://{}", args.listen_address);
