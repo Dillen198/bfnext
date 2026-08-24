@@ -323,10 +323,10 @@ export default function Objectives() {
         </div>
 
         {/* ── Table ── */}
-        <div className="vs-card overflow-hidden flex-shrink-0">
-          <div className="overflow-x-auto">
+        <div className="vs-card overflow-hidden" style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0', minHeight: 200 }}>
+          <div style={{ overflow: 'auto', flex: '1 1 auto', minHeight: 0 }}>
             <table className="w-full">
-              <thead style={{ background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)' }}>
+              <thead style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr>
                   {(['Name', 'Type', 'Owner', 'Health', 'Logistics', 'Supply', 'Fuel', 'Last Change'] as const).map(h => (
                     <th key={h} title={COLUMN_HELP[h]} style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', fontWeight: 700, whiteSpace: 'nowrap', cursor: COLUMN_HELP[h] ? 'help' : undefined }}>{h}</th>

@@ -191,7 +191,7 @@ export default function KillFeed() {
         </div>
 
         {/* ── Kill event table ── */}
-        <div className="vs-card overflow-hidden flex-shrink-0">
+        <div className="vs-card overflow-hidden">
           <div className="flex items-center gap-2 px-4 pt-3.5 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
             <Crosshair size={12} style={{ color: '#f87171' }} />
             <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>Event Log</span>
