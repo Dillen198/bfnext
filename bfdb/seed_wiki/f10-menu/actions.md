@@ -2,6 +2,8 @@
 
 The Actions menu lets you deploy units, call support missions, and execute strategic operations using your earned points.
 
+![Actions menu expanded showing available point-based deployments and support missions](/api/wiki/images/ccf9a836-dfdb-4bf6-a6cd-1fb77a55ac9a)
+
 ## Overview
 
 Actions are point-based deployments that let you:

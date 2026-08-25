@@ -2,6 +2,8 @@
 
 The F10 radio menu is your tactical command center in Fowl Engine. This page provides an overview of all available menus.
 
+![F10 radio menu open in the cockpit showing the Fowl Engine command tree](/api/wiki/images/441295e3-48c3-4737-b308-e5f91812884c)
+
 ## Accessing F10 Menus
 
 **In Aircraft**:

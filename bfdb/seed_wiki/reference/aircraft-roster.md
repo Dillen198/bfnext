@@ -1,5 +1,7 @@
 # Aircraft Roster
 
+![Row of aircraft parked on the ramp, each marked for a different life role](/api/wiki/images/d7eee98b-0f14-4ed3-a1e0-3bf815ffde9a)
+
 Every airframe belongs to a **life role**, and every role has its own life pool — how many times you can lose that class of aircraft before you're grounded, and how long until it refills. Lives are tracked **per role, not per airframe**: burn through your Standard pool and you can still fly Recon.
 
 ## Life Roles

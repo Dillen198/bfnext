@@ -2,6 +2,8 @@
 
 Transport supplies and equipment using the cargo system to support your team's war effort.
 
+![Transport helicopter carrying a slung supply crate over the front line](/api/wiki/images/fe035065-f175-4f73-babe-9681513a3b93)
+
 ## Overview
 
 The cargo system lets you:

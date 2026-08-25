@@ -2,6 +2,8 @@
 
 Deploy long-range cruise missiles for precision strikes on high-value targets.
 
+![Bomber launching a long-range cruise missile at a high-value target](/api/wiki/images/7fc9ec2b-79a6-46d1-b61f-27dd1a313ee9)
+
 ## Overview
 
 ALCMs provide:

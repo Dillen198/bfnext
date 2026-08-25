@@ -2,6 +2,8 @@
 
 Get real-time radar reports on enemy and friendly aircraft positions for enhanced situational awareness.
 
+![EWR radar operator screen tracking enemy and friendly aircraft contacts](/api/wiki/images/b68ad72b-f981-4957-986d-b301edcc4216)
+
 ## Overview
 
 The EWR system provides:

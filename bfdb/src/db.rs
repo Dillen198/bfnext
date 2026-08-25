@@ -1534,6 +1534,7 @@ impl StatsDb {
             ("reference/tips", "Tips & Best Practices", "Reference", 5, include_str!("../seed_wiki/reference/tips.md")),
             ("reference/changelog", "Changelog — v2.0", "Reference", 6, include_str!("../seed_wiki/reference/changelog.md")),
             ("advanced/c130-airdrop", "C-130 Hercules & Airdrop", "Advanced Topics", 2, include_str!("../seed_wiki/advanced/c130-airdrop.md")),
+            ("advanced/deployables-guide", "Deployables Guide", "Advanced Topics", 3, include_str!("../seed_wiki/advanced/deployables-guide.md")),
         ];
         for (slug, title, section, order, content) in seed {
             self.wiki_pages.insert(&slug.to_string(), &WikiPage {
@@ -1571,6 +1572,15 @@ impl StatsDb {
             ("fab0866b-a54d-4e0a-9647-d246a700d5a6", include_bytes!("../seed_wiki/images/lapes-extraction.jpeg")),
             ("3ce5c418-9d0b-429a-be7e-687032cb147f", include_bytes!("../seed_wiki/images/objective-capture.jpeg")),
             ("b7c7cf5d-7559-4a43-b97e-b304cc4d8ccb", include_bytes!("../seed_wiki/images/himars-strike.jpeg")),
+            ("441295e3-48c3-4737-b308-e5f91812884c", include_bytes!("../seed_wiki/images/f10-menu-overview.jpeg")),
+            ("ccf9a836-dfdb-4bf6-a6cd-1fb77a55ac9a", include_bytes!("../seed_wiki/images/actions-menu.jpeg")),
+            ("fe035065-f175-4f73-babe-9681513a3b93", include_bytes!("../seed_wiki/images/cargo-menu.jpeg")),
+            ("a645d067-42f4-4059-a31a-e2e5e378cfa0", include_bytes!("../seed_wiki/images/troop-transport.jpeg")),
+            ("b68ad72b-f981-4957-986d-b301edcc4216", include_bytes!("../seed_wiki/images/ewr-report.jpeg")),
+            ("7fc9ec2b-79a6-46d1-b61f-27dd1a313ee9", include_bytes!("../seed_wiki/images/alcm-strike.jpeg")),
+            ("ed912e81-5a74-493c-a691-2bfff1541054", include_bytes!("../seed_wiki/images/kneeboard-hud.jpeg")),
+            ("d7eee98b-0f14-4ed3-a1e0-3bf815ffde9a", include_bytes!("../seed_wiki/images/aircraft-roster.jpeg")),
+            ("f5701fbb-6bec-4db2-b96b-7bd33d41880f", include_bytes!("../seed_wiki/images/sa22-pantsir.jpeg")),
         ];
         for (id, data) in seed {
             self.wiki_images.insert(&Uuid::parse_str(id)?, &WikiImage {

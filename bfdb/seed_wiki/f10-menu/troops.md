@@ -2,6 +2,8 @@
 
 Move infantry units to capture objectives, reinforce positions, and support ground operations.
 
+![Infantry squad loaded into a transport helicopter for an objective capture run](/api/wiki/images/a645d067-42f4-4059-a31a-e2e5e378cfa0)
+
 ## Overview
 
 Transport infantry via helicopter or ground vehicle:

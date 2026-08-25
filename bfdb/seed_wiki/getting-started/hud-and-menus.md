@@ -2,6 +2,8 @@
 
 Fowl Engine provides several ways to interact with the campaign system. This page covers the essential interface elements you'll use constantly.
 
+![Cockpit kneeboard page showing campaign status and objective information](/api/wiki/images/ed912e81-5a74-493c-a691-2bfff1541054)
+
 ## Chat System
 
 ### In-Game Chat
