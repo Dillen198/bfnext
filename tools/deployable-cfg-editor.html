@@ -292,6 +292,7 @@
       cost: 0,
       ewr: null,
       jtac: null,
+      gci: null,
     };
   }
 
@@ -342,6 +343,7 @@
     if (!Number.isFinite(dep.cost)) dep.cost = 0;
     dep.ewr = dep.ewr ? Object.assign({ range: 0 }, dep.ewr) : null;
     dep.jtac = dep.jtac ? Object.assign({ range: 0, nolos: false, default_laser_code: 1688, name: null }, dep.jtac) : null;
+    dep.gci = dep.gci ? Object.assign({ channel: 1, radius: 0 }, dep.gci) : null;
     return dep;
   }
 
@@ -432,6 +434,10 @@
       if (!Number.isFinite(dep.jtac.default_laser_code)) errs.push("JTAC laser code is required.");
       else if (dep.jtac.default_laser_code < 1111 || dep.jtac.default_laser_code > 1788) errs.push("JTAC laser code should be between 1111 and 1788.");
     }
+    if (dep.gci) {
+      if (!Number.isFinite(dep.gci.channel) || dep.gci.channel < 1) errs.push("GCI channel must be a positive integer.");
+      if (!Number.isFinite(dep.gci.radius) || dep.gci.radius <= 0) errs.push("GCI radius must be a positive number.");
+    }
     return errs;
   }
 
@@ -481,6 +487,10 @@
       out.jtac.default_laser_code = safeNum(out.jtac.default_laser_code, 1688);
       out.jtac.nolos = !!out.jtac.nolos;
       out.jtac.name = emptyToNull(out.jtac.name);
+    }
+    if (out.gci) {
+      out.gci.channel = safeNum(out.gci.channel, 1);
+      out.gci.radius = safeNum(out.gci.radius, 0);
     }
     return out;
   }
@@ -663,6 +673,12 @@
         '<div class="field"><label>Callsign</label><input type="text" value="' + escapeHtml(dep.jtac.name || "") + '" data-bind="jtac.name" placeholder="optional, e.g. Axeman 11"></div>' +
         "</div>"
       : "";
+    const gciSection = dep.gci
+      ? '<div class="field-grid">' +
+        '<div class="field"><label>GCI Channel</label><input type="number" step="1" min="1" value="' + dep.gci.channel + '" data-bind="gci.channel"></div>' +
+        '<div class="field"><label>GCI Radius (m) <span class="hint">max 399600 = 216nm</span></label><input type="number" step="100" min="0" value="' + dep.gci.radius + '" data-bind="gci.radius"></div>' +
+        "</div>"
+      : "";
 
     els.detail.innerHTML =
       '<div class="detail-scroll">' +
@@ -701,6 +717,8 @@
       '<section class="card"><h3><label><input type="checkbox" ' + (dep.ewr ? "checked" : "") + ' data-toggle="ewr"> Early Warning Radar</label></h3>' + ewrSection + "</section>" +
 
       '<section class="card"><h3><label><input type="checkbox" ' + (dep.jtac ? "checked" : "") + ' data-toggle="jtac"> JTAC (laser designator)</label></h3>' + jtacSection + "</section>" +
+
+      '<section class="card"><h3><label><input type="checkbox" ' + (dep.gci ? "checked" : "") + ' data-toggle="gci"> GCI Station (MiG-29 ground controlled intercept)</label></h3>' + gciSection + "</section>" +
 
       '<div id="errors-panel"></div>' +
       "</div>";
@@ -938,6 +956,11 @@
     }
     if (el.dataset.toggle === "jtac") {
       dep.jtac = el.checked ? { range: 5000, nolos: false, default_laser_code: 1688, name: null } : null;
+      renderDetail(); renderSidebar();
+      return;
+    }
+    if (el.dataset.toggle === "gci") {
+      dep.gci = el.checked ? { channel: 1, radius: 399600 } : null;
       renderDetail(); renderSidebar();
       return;
     }

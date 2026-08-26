@@ -344,6 +344,15 @@ pub struct DeployableEwr {
     // CR estokes: Actual radar simulation ...
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
+pub struct DeployableGci {
+    /// GCI radio channel (TACAN-style channel number set on the station)
+    pub channel: i64,
+    /// Max control radius (Meters)
+    pub radius: u32,
+}
+
 /// Radar frequency band — determines aspect/RCS variation and stealth effectiveness.
 /// Lower bands (VHF/UHF) have compressed aspect variation, making shaping less effective.
 /// Higher bands (X/Ku) have sharp aspect dependence and are best countered by shaping.
@@ -794,6 +803,9 @@ pub struct Deployable {
     pub ewr: Option<DeployableEwr>,
     /// Is this unit a jtac
     pub jtac: Option<DeployableJtac>,
+    /// Is this unit a MiG-29 GCI station
+    #[serde(default)]
+    pub gci: Option<DeployableGci>,
     #[serde(default)]
     #[serde(rename = "template")]
     pub deprecated_template: Option<String>,
@@ -1850,6 +1862,10 @@ fn default_carrier_repair_time() -> u32 {
     600
 }
 
+fn default_repair_supply_cost() -> u8 {
+    5
+}
+
 fn default_sam_capture_radius() -> f64 {
     609.6 // 2000 ft
 }
@@ -2233,6 +2249,11 @@ pub struct Cfg {
     pub weapon_target_exclusions: FxHashSet<String>,
     /// how often a base will repair if it has full logistics (Seconds)
     pub repair_time: u32,
+    /// how much supply (0-100) is consumed each time an objective repairs a
+    /// unit/group. If the objective's supply is below this amount repair is
+    /// skipped until supply is replenished.
+    #[serde(default = "default_repair_supply_cost")]
+    pub repair_supply_cost: u8,
     /// The base repair crate
     pub repair_crate: FxHashMap<Side, Crate>,
     /// Global artillery fire-support system. When set, a "Request Fires" item

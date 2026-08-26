@@ -1208,6 +1208,17 @@ pub enum Command {
         name: Option<String>,
     },
     DeactivateICLS,
+    /// Activates the MiG-29 GCI (ground controlled intercept) station on the unit.
+    /// `x`/`y` are latitude/longitude in degrees (not map coordinates) — the unit's
+    /// own position, converted via `coord.lo_to_ll`.
+    ActivateGci {
+        unit: UnitId,
+        latitude: f64,
+        longitude: f64,
+        channel: i64,
+        /// Max control radius in meters.
+        radius: u32,
+    },
     EPLRS {
         enable: bool,
         group: Option<GroupId>,
@@ -1349,6 +1360,20 @@ impl<'lua> IntoLua<'lua> for Command {
                 }
             }
             Self::DeactivateICLS => root.raw_set("id", "DeactivateICLS")?,
+            Self::ActivateGci {
+                unit,
+                latitude,
+                longitude,
+                channel,
+                radius,
+            } => {
+                root.raw_set("id", "ActivateGCI")?;
+                params.raw_set("unitId", unit)?;
+                params.raw_set("x", longitude)?;
+                params.raw_set("y", latitude)?;
+                params.raw_set("channel", channel)?;
+                params.raw_set("radius", radius)?;
+            }
             Self::EPLRS { enable, group } => {
                 root.raw_set("id", "EPLRS")?;
                 params.raw_set("value", enable)?;
