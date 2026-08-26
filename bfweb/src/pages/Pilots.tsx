@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill } from '../api'
+import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill, type PilotDeploy } from '../api'
 import PageHeader from '../components/PageHeader'
 import {
   Search, Users, Crosshair, Clock, Award, ChevronLeft, ChevronRight,
-  Link, Plane, Shield, RotateCcw, ChevronDown, ChevronUp,
+  Link, Plane, Shield, RotateCcw, ChevronDown, ChevronUp, Package,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -352,6 +352,97 @@ function KillLog({ kills, allPilots, breakdown }: {
   )
 }
 
+// ── Deploy log ────────────────────────────────────────────────────────────────
+
+type DeployCol = 'time' | 'deployable' | 'aircraft' | 'method'
+
+function DeployLog({ deploys }: { deploys: PilotDeploy[] }) {
+  const [sort, setSort] = useState<{ col: DeployCol; dir: SortDir }>({ col: 'time', dir: 'desc' })
+  const [page, setPage] = useState(0)
+  const PER_PAGE = 15
+
+  const sorted = useMemo(() => {
+    const arr = [...deploys]
+    arr.sort((a, b) => {
+      let v = 0
+      if (sort.col === 'time')       v = a.time.localeCompare(b.time)
+      if (sort.col === 'deployable') v = a.deployable.localeCompare(b.deployable)
+      if (sort.col === 'aircraft')   v = (a.aircraft ?? '').localeCompare(b.aircraft ?? '')
+      if (sort.col === 'method')     v = (a.method ?? '').localeCompare(b.method ?? '')
+      return sort.dir === 'desc' ? -v : v
+    })
+    return arr
+  }, [deploys, sort])
+
+  const totalPages = Math.ceil(sorted.length / PER_PAGE)
+  const page_deploys = sorted.slice(page * PER_PAGE, (page + 1) * PER_PAGE)
+
+  const cell: React.CSSProperties = { padding: '5px 10px', fontSize: '0.67rem', color: 'var(--text-muted)', borderBottom: '1px solid rgba(42,42,42,0.5)' }
+
+  const methodBadge = (method: string | null) => {
+    if (method === 'AirDrop') return <span style={{ color: '#60a5fa', fontSize: '0.62rem', letterSpacing: '0.06em' }}>▼ Air Drop</span>
+    if (method === 'ManualUnpack') return <span style={{ color: '#f59e0b', fontSize: '0.62rem', letterSpacing: '0.06em' }}>✋ Manual Unpack</span>
+    return <span style={{ color: '#475569' }}>—</span>
+  }
+
+  return (
+    <div className="vs-card">
+      <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
+        <Package size={12} style={{ color: 'var(--accent)' }} />
+        <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+          Deploy Log
+        </span>
+        <span className="ml-auto font-mono" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>
+          {deploys.length} deploys
+        </span>
+        {totalPages > 1 && (
+          <div className="flex items-center gap-1 ml-2">
+            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+              style={{ background: 'none', border: 'none', color: page === 0 ? '#333' : 'var(--text-dim)', cursor: page === 0 ? 'default' : 'pointer', padding: 0 }}>
+              <ChevronLeft size={12} />
+            </button>
+            <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
+              {page + 1} / {totalPages}
+            </span>
+            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
+              style={{ background: 'none', border: 'none', color: page === totalPages - 1 ? '#333' : 'var(--text-dim)', cursor: page === totalPages - 1 ? 'default' : 'pointer', padding: 0 }}>
+              <ChevronRight size={12} />
+            </button>
+          </div>
+        )}
+      </div>
+      {deploys.length === 0 ? (
+        <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.7rem' }}>No deploys recorded</div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
+              <SortHeader col="time" label="When" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
+              <SortHeader col="deployable" label="What" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
+              <SortHeader col="aircraft" label="Aircraft" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
+              <SortHeader col="method" label="Method" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
+            </tr>
+          </thead>
+          <tbody>
+            {page_deploys.map((d, i) => (
+              <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.12)' }}>
+                <td style={{ ...cell, fontFamily: 'monospace', color: '#64748b', whiteSpace: 'nowrap' }}>
+                  {fmtDate(d.time)} {fmtTime(d.time)}
+                </td>
+                <td style={{ ...cell, color: 'var(--text)' }}>{d.deployable}</td>
+                <td style={{ ...cell, color: '#60a5fa', fontFamily: 'monospace' }}>
+                  {d.aircraft ?? <span style={{ color: '#374151' }}>—</span>}
+                </td>
+                <td style={cell}>{methodBadge(d.method)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
 // ── Theater breakdown ─────────────────────────────────────────────────────────
 
 function TheaterCard({ td }: { td: TheaterBreakdown }) {
@@ -443,6 +534,11 @@ export default function Pilots() {
   const { data: kills = [] } = useQuery({
     queryKey: ['pilot-kills', selected],
     queryFn: () => api.pilotKills(selected!),
+    enabled: !!selected,
+  })
+  const { data: deploys = [] } = useQuery({
+    queryKey: ['pilot-deploys', selected],
+    queryFn: () => api.pilotDeploys(selected!),
     enabled: !!selected,
   })
 
@@ -666,6 +762,9 @@ export default function Pilots() {
 
               {/* ── Kill log ── */}
               <KillLog kills={kills} allPilots={pilots} breakdown={breakdown} />
+
+              {/* ── Deploy log ── */}
+              <DeployLog deploys={deploys} />
             </div>
           </div>
         )}

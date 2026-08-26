@@ -307,6 +307,14 @@ export interface PilotKill {
   killer_airframe: string | null
 }
 
+export interface PilotDeploy {
+  round_id: number
+  time: string
+  deployable: string
+  aircraft: string | null
+  method: string | null  // "AirDrop" | "ManualUnpack" | null (unknown / non-physical-cargo deploy)
+}
+
 export interface PilotName {
   ucid: string
   name: string
@@ -429,6 +437,7 @@ export const api = {
   pilotSorties: (ucid: string) => get<PilotSortie[]>(`/pilot/${ucid}/sorties`),
   pilotBreakdown: (ucid: string) => get<TheaterBreakdown[]>(`/pilot/${ucid}/breakdown`),
   pilotKills: (ucid: string) => get<PilotKill[]>(`/pilot/${ucid}/kills`),
+  pilotDeploys: (ucid: string) => get<PilotDeploy[]>(`/pilot/${ucid}/deploys`),
   stats: () => get<Stats>('/stats'),
   online: () => get<OnlinePilot[]>('/online'),
   points: () => get<PilotPoints[]>('/points'),
@@ -462,6 +471,7 @@ export const api = {
     perf:        () => get<PerfData>('/admin/perf'),
     perfHistory: () => get<PerfHistory>('/admin/perf-history'),
     banned:      () => get<BanRecord[]>('/admin/banned'),
+    engineErrors: () => get<string[]>('/admin/engine-errors'),
     ban:         (ucid: string, name: string, reason = '', until?: string) =>
                    post<{ ok: boolean }>('/admin/ban', { ucid, name, reason, until: until ?? null }),
     unban:       (ucid: string) => post<{ ok: boolean }>('/admin/unban', { ucid }),

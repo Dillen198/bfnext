@@ -24,7 +24,7 @@ const NAV = [
 ]
 const ADMIN_NAV = { to: '/admin', icon: Settings, label: 'ADMIN' }
 const CONFIG_NAV = { to: '/admin/config', icon: Settings2, label: 'CONFIG' }
-const PROFILE_NAV = (ucid: string) => ({ to: `/pilot/${ucid}`, icon: Users, label: 'MY PROFILE' })
+const PROFILE_NAV = (ucid: string) => ({ to: `/pilots?ucid=${ucid}`, icon: Users, label: 'MY PROFILE' })
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

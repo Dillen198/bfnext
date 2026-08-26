@@ -300,6 +300,12 @@ function LogAnalyzer() {
 interface EngineLine { raw: string; level: string; text: string }
 
 const LEVEL_RE = /\[(TRACE|DEBUG|INFO|WARN|ERROR)\]\s*(?:([\w:.]+):\s*)?/
+// bflib's log lines start with a HH:MM:SS timestamp; anything that doesn't
+// match this is a continuation of a multi-line message (e.g. pretty-printed
+// debug output) that bfdb split into separate raw lines with no level tag of
+// its own -- fold it into the previous entry instead of rendering it as its
+// own spurious row.
+const NEW_ENTRY_RE = /^\d{2}:\d{2}:\d{2}\s/
 
 function parseEngineLine(raw: string): EngineLine {
   const m = raw.match(LEVEL_RE)
@@ -318,7 +324,13 @@ function EngineLogAnalyzer() {
 
   const addLine = useCallback((raw: string) => {
     setLines(prev => {
-      const next = [...prev, parseEngineLine(raw)]
+      let next: EngineLine[]
+      if (prev.length > 0 && !NEW_ENTRY_RE.test(raw)) {
+        const last = prev[prev.length - 1]
+        next = [...prev.slice(0, -1), { ...last, text: `${last.text}\n${raw}` }]
+      } else {
+        next = [...prev, parseEngineLine(raw)]
+      }
       return next.length > LOG_MAX ? next.slice(next.length - LOG_MAX) : next
     })
   }, [])
@@ -423,6 +435,39 @@ function EngineLogAnalyzer() {
   )
 }
 
+// ── engine error feed (persisted server-side, survives the tab being closed) ──
+
+function EngineErrorFeed({ lines }: { lines: string[] }) {
+  const parsed = lines.map(parseEngineLine).reverse() // newest first
+
+  return (
+    <div className="vs-card">
+      <CardHeader
+        icon={<AlertTriangle size={13} style={{ color: '#ef4444' }} />}
+        label="Engine Errors & Warnings"
+        badge={<span style={{ ...MONO, fontSize: '0.65rem', color: 'var(--text-muted)' }}>{lines.length}</span>}
+      />
+      {parsed.length === 0 && (
+        <div style={{ padding: '1rem', ...DIM }}>No errors or warnings recorded — this fills in as bflib logs them, even if nobody has this page open.</div>
+      )}
+      {parsed.length > 0 && (
+        <div style={{ maxHeight: 320, overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.63rem', lineHeight: 1.6 }}>
+          {parsed.map((l, i) => {
+            const lc = LEVEL_COLOR[l.level] ?? 'var(--text-dim)'
+            const bg = LEVEL_BG[l.level] ?? ''
+            return (
+              <div key={i} style={{ display: 'flex', gap: 8, padding: '3px 12px', background: bg, borderBottom: '1px solid rgba(255,255,255,0.018)', alignItems: 'baseline' }}>
+                <span style={{ color: lc, flexShrink: 0, width: 38, textAlign: 'right', fontWeight: 700 }}>{l.level}</span>
+                <span style={{ color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{l.text}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
@@ -443,6 +488,7 @@ export default function AdminPage() {
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery({ queryKey: ['admin', 'sessions'],     queryFn: api.admin.sessions,    refetchInterval: 15_000 })
   const { data: online = [],   isLoading: onlineLoading }   = useQuery({ queryKey: ['online'],                queryFn: api.online,            refetchInterval: 10_000 })
   const { data: banned = [] }                                = useQuery({ queryKey: ['admin', 'banned'],       queryFn: api.admin.banned,      refetchInterval: 30_000 })
+  const { data: engineErrors = [] }                          = useQuery({ queryKey: ['admin', 'engine-errors'], queryFn: api.admin.engineErrors, refetchInterval: 20_000 })
   const { data: perf }                                       = useQuery({ queryKey: ['admin', 'perf'],         queryFn: api.admin.perf,        refetchInterval: 30_000 })
   const { data: perfHistory }                                = useQuery({ queryKey: ['admin', 'perf-history'], queryFn: api.admin.perfHistory, refetchInterval: 60_000 })
 
@@ -677,33 +723,35 @@ export default function AdminPage() {
           {sessionsLoading && <div style={{ padding: '1rem', ...DIM }}>Loading…</div>}
           {!sessionsLoading && sessions.length === 0 && <div style={{ padding: '1rem', ...DIM }}>No active sessions</div>}
           {sessions.length > 0 && (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
-                  {['User', 'Discord ID', 'Admin', 'Expires'].map(h => (
-                    <th key={h} style={{ ...CELL, color: 'var(--text-dim)', textAlign: 'left', fontWeight: 600 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.map(s => (
-                  <tr key={s.discord_id} style={{ background: s.discord_id === user.discord_id ? 'rgba(56,189,248,0.04)' : 'transparent' }}>
-                    <td style={CELL}>
-                      <div className="flex items-center gap-2">
-                        {s.avatar
-                          ? <img src={`https://cdn.discordapp.com/avatars/${s.discord_id}/${s.avatar}.webp?size=24`} alt="" style={{ width: 20, height: 20, borderRadius: '50%' }} />
-                          : <div style={{ width: 20, height: 20, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />}
-                        <span style={{ color: 'var(--text)', fontSize: '0.7rem' }}>{s.username}</span>
-                        {s.discord_id === user.discord_id && <span style={{ fontSize: '0.5rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0 3px', borderRadius: 2 }}>YOU</span>}
-                      </div>
-                    </td>
-                    <td style={{ ...CELL, ...MONO, fontSize: '0.67rem' }}>{s.discord_id}</td>
-                    <td style={CELL}>{s.is_admin && <Shield size={11} style={{ color: '#f59e0b' }} />}</td>
-                    <td style={{ ...CELL, ...MONO, fontSize: '0.62rem' }}>{new Date(s.expires).toLocaleString()}</td>
+            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: 'rgba(0,0,0,0.2)', position: 'sticky', top: 0, zIndex: 1 }}>
+                    {['User', 'Discord ID', 'Admin', 'Expires'].map(h => (
+                      <th key={h} style={{ ...CELL, color: 'var(--text-dim)', textAlign: 'left', fontWeight: 600, background: 'var(--bg-card)' }}>{h}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {sessions.map(s => (
+                    <tr key={s.discord_id} style={{ background: s.discord_id === user.discord_id ? 'rgba(56,189,248,0.04)' : 'transparent' }}>
+                      <td style={CELL}>
+                        <div className="flex items-center gap-2">
+                          {s.avatar
+                            ? <img src={`https://cdn.discordapp.com/avatars/${s.discord_id}/${s.avatar}.webp?size=24`} alt="" style={{ width: 20, height: 20, borderRadius: '50%' }} />
+                            : <div style={{ width: 20, height: 20, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />}
+                          <span style={{ color: 'var(--text)', fontSize: '0.7rem' }}>{s.username}</span>
+                          {s.discord_id === user.discord_id && <span style={{ fontSize: '0.5rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0 3px', borderRadius: 2 }}>YOU</span>}
+                        </div>
+                      </td>
+                      <td style={{ ...CELL, ...MONO, fontSize: '0.67rem' }}>{s.discord_id}</td>
+                      <td style={CELL}>{s.is_admin && <Shield size={11} style={{ color: '#f59e0b' }} />}</td>
+                      <td style={{ ...CELL, ...MONO, fontSize: '0.62rem' }}>{new Date(s.expires).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
@@ -745,6 +793,9 @@ export default function AdminPage() {
             <PerfPanel title="" icon={null} rows={perf?.api} time={perf?.time} available={perf?.available} />
           )}
         </div>
+
+        {/* ── Engine error/warning feed (persisted server-side) ── */}
+        <EngineErrorFeed lines={engineErrors} />
 
         {/* ── Log analyzer ── */}
         <LogAnalyzer />
