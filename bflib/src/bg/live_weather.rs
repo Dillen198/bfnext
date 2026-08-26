@@ -69,13 +69,44 @@ fn apply_live_time(mission: &Table) -> Result<()> {
     Ok(())
 }
 
+/// DCS 2.9's dynamic weather system replaced the old density/thickness/base
+/// cloud sliders with a fixed set of named presets ("Preset1".."Preset27",
+/// "RainyPreset1".."RainyPreset3") that each bake in their own visual
+/// coverage -- setting density/thickness/base directly (or preset = "", the
+/// old "use the sliders" sentinel) renders no clouds at all any more. This
+/// picks the preset that best matches real cloud cover and precipitation
+/// intensity, plus that preset's own base altitude, both taken from the
+/// preset .miz templates DCS itself ships in the mission editor.
+fn select_cloud_preset(cover_pct: f64, precip_mm: f64) -> (Option<&'static str>, i64) {
+    if precip_mm > 0.2 {
+        return if precip_mm > 6.0 {
+            (Some("RainyPreset3"), 1700)
+        } else if precip_mm > 2.0 {
+            (Some("RainyPreset2"), 2500)
+        } else {
+            (Some("RainyPreset1"), 2900)
+        };
+    }
+    if cover_pct <= 6.0 {
+        (None, 4200)
+    } else if cover_pct <= 25.0 {
+        (Some("Preset2"), 2500)
+    } else if cover_pct <= 45.0 {
+        (Some("Preset6"), 2500)
+    } else if cover_pct <= 65.0 {
+        (Some("Preset14"), 2500)
+    } else {
+        (Some("Preset22"), 2500)
+    }
+}
+
 /// fetch current real-world weather at (lat, lon) from open-meteo.com (no
-/// API key required) and apply ground-level temperature, QNH, and wind to
-/// the mission's weather table. Upper winds and clouds are left as authored,
+/// API key required) and apply ground-level temperature, QNH, wind, and
+/// clouds to the mission's weather table. Upper winds are left as authored,
 /// since accurate free data for them isn't readily available.
 fn apply_live_weather(mission: &Table, lat: f64, lon: f64) -> Result<()> {
     let url = format!(
-        "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,pressure_msl,wind_speed_10m,wind_direction_10m&wind_speed_unit=ms"
+        "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,pressure_msl,wind_speed_10m,wind_direction_10m,cloud_cover,precipitation&wind_speed_unit=ms"
     );
     let body = ureq::get(&url)
         .timeout(std::time::Duration::from_secs(10))
@@ -104,6 +135,14 @@ fn apply_live_weather(mission: &Table, lat: f64, lon: f64) -> Result<()> {
         .get("wind_direction_10m")
         .and_then(|v| v.as_f64())
         .context("live weather response missing wind_direction_10m")?;
+    let cloud_cover_pct = current
+        .get("cloud_cover")
+        .and_then(|v| v.as_f64())
+        .context("live weather response missing cloud_cover")?;
+    let precipitation_mm = current
+        .get("precipitation")
+        .and_then(|v| v.as_f64())
+        .context("live weather response missing precipitation")?;
     // DCS's wind direction is the direction the wind blows TOWARD, the
     // opposite of the real-world meteorological "from" convention
     let wind_to_dir = (wind_from_dir + 180.0) % 360.0;
@@ -129,11 +168,27 @@ fn apply_live_weather(mission: &Table, lat: f64, lon: f64) -> Result<()> {
     at_ground
         .raw_set("dir", wind_to_dir.round() as i64)
         .context("setting weather.wind.atGround.dir")?;
+
+    let (preset, cloud_base_m) = select_cloud_preset(cloud_cover_pct, precipitation_mm);
+    let clouds: Table = weather.raw_get("clouds").context("getting weather.clouds table")?;
+    match preset {
+        Some(name) => clouds.raw_set("preset", name).context("setting clouds.preset")?,
+        // no preset key at all for clear skies, matching DCS's own
+        // "Preset00 - Nothing" template
+        None => clouds.raw_set("preset", Value::Nil).context("clearing clouds.preset")?,
+    }
+    clouds.raw_set("density", 0).context("setting clouds.density")?;
+    clouds.raw_set("thickness", 200).context("setting clouds.thickness")?;
+    clouds.raw_set("base", cloud_base_m).context("setting clouds.base")?;
+    let iprecptns = if preset.is_some_and(|p| p.starts_with("Rainy")) { 1 } else { 0 };
+    clouds.raw_set("iprecptns", iprecptns).context("setting clouds.iprecptns")?;
+
     log::info!(
-        "applied live weather at ({lat}, {lon}) to mission: {}C, {qnh_mmhg}mmHg, ground wind {}m/s @ {}deg (upper winds and clouds left as authored)",
+        "applied live weather at ({lat}, {lon}) to mission: {}C, {qnh_mmhg}mmHg, ground wind {}m/s @ {}deg, cloud cover {cloud_cover_pct}% (preset {}, base {cloud_base_m}m) (upper winds left as authored)",
         temp_c.round() as i64,
         wind_speed_ms,
         wind_to_dir.round() as i64,
+        preset.unwrap_or("none"),
     );
     Ok(())
 }

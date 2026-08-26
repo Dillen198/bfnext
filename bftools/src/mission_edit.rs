@@ -1405,6 +1405,37 @@ fn apply_live_time(mission: &miz::Miz<'static>) -> Result<()> {
     Ok(())
 }
 
+/// DCS 2.9's dynamic weather system replaced the old density/thickness/base
+/// cloud sliders with a fixed set of named presets ("Preset1".."Preset27",
+/// "RainyPreset1".."RainyPreset3") that each bake in their own visual
+/// coverage -- setting density/thickness/base directly (or preset = "", the
+/// old "use the sliders" sentinel) renders no clouds at all any more. This
+/// picks the preset that best matches real cloud cover and precipitation
+/// intensity, plus that preset's own base altitude, both taken from the
+/// preset .miz templates DCS itself ships in the mission editor.
+fn select_cloud_preset(cover_pct: f64, precip_mm: f64) -> (Option<&'static str>, i64) {
+    if precip_mm > 0.2 {
+        return if precip_mm > 6.0 {
+            (Some("RainyPreset3"), 1700)
+        } else if precip_mm > 2.0 {
+            (Some("RainyPreset2"), 2500)
+        } else {
+            (Some("RainyPreset1"), 2900)
+        };
+    }
+    if cover_pct <= 6.0 {
+        (None, 4200)
+    } else if cover_pct <= 25.0 {
+        (Some("Preset2"), 2500)
+    } else if cover_pct <= 45.0 {
+        (Some("Preset6"), 2500)
+    } else if cover_pct <= 65.0 {
+        (Some("Preset14"), 2500)
+    } else {
+        (Some("Preset22"), 2500)
+    }
+}
+
 /// fetch current real-world weather at (lat, lon) from open-meteo.com (no API
 /// key required) and apply temperature, QNH, wind (ground plus two upper
 /// bands), clouds, and fog/dust obscurant state to the mission's weather
@@ -1412,7 +1443,7 @@ fn apply_live_time(mission: &miz::Miz<'static>) -> Result<()> {
 fn apply_live_weather(mission: &miz::Miz<'static>, lat: f64, lon: f64) -> Result<()> {
     let url = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=\
-         temperature_2m,dew_point_2m,pressure_msl,\
+         temperature_2m,pressure_msl,\
          wind_speed_10m,wind_direction_10m,\
          wind_speed_700hPa,wind_direction_700hPa,\
          wind_speed_300hPa,wind_direction_300hPa,\
@@ -1437,7 +1468,6 @@ fn apply_live_weather(mission: &miz::Miz<'static>, lat: f64, lon: f64) -> Result
             .with_context(|| format!("live weather response missing {key}"))
     };
     let temp_c = get("temperature_2m")?;
-    let dew_point_c = get("dew_point_2m")?;
     let pressure_hpa = get("pressure_msl")?;
     let wind_speed_ground = get("wind_speed_10m")?;
     let wind_from_dir_ground = get("wind_direction_10m")?;
@@ -1484,37 +1514,32 @@ fn apply_live_weather(mission: &miz::Miz<'static>, lat: f64, lon: f64) -> Result
     set_wind_band("at2000", wind_speed_2000, to_dir(wind_from_dir_2000))?;
     set_wind_band("at8000", wind_speed_8000, to_dir(wind_from_dir_8000))?;
 
-    // Cloud base estimated from the temperature/dew point spread via the
-    // standard Espy lifted-condensation-level approximation (~125m per
-    // degree C of spread) -- open-meteo doesn't expose cloud base directly.
-    let cloud_base_m = (125.0 * (temp_c - dew_point_c).max(0.0)).clamp(300.0, 6000.0);
-    let cloud_density = ((cloud_cover_pct / 100.0) * 10.0).round().clamp(0.0, 10.0) as i64;
-    let cloud_thickness_m = if cloud_density > 0 {
-        (200.0 + (cloud_density as f64 / 10.0) * 1800.0).round() as i64
-    } else {
-        0
-    };
+    let (preset, cloud_base_m) = select_cloud_preset(cloud_cover_pct, precipitation_mm);
     let clouds: Table = weather.raw_get("clouds").context("getting weather.clouds table")?;
-    // empty preset so DCS uses the density/thickness/base fields below
-    // directly instead of a named preset's built-in visuals
-    clouds.raw_set("preset", "").context("clearing clouds.preset")?;
-    clouds.raw_set("density", cloud_density).context("setting clouds.density")?;
-    clouds.raw_set("thickness", cloud_thickness_m).context("setting clouds.thickness")?;
-    clouds
-        .raw_set("base", cloud_base_m.round() as i64)
-        .context("setting clouds.base")?;
+    match preset {
+        Some(name) => clouds.raw_set("preset", name).context("setting clouds.preset")?,
+        // no preset key at all for clear skies, matching DCS's own
+        // "Preset00 - Nothing" template
+        None => clouds.raw_set("preset", Value::Nil).context("clearing clouds.preset")?,
+    }
+    // density/thickness must stay at these fixed values -- in the new
+    // preset-driven system the preset itself bakes in the actual cloud
+    // appearance, and these fields are only left over from the old system
+    clouds.raw_set("density", 0).context("setting clouds.density")?;
+    clouds.raw_set("thickness", 200).context("setting clouds.thickness")?;
+    clouds.raw_set("base", cloud_base_m).context("setting clouds.base")?;
     // rain only -- DCS's snow precipitation constant isn't confidently
     // known here, so snowfall is intentionally left unhandled rather than
     // risk setting the wrong effect
-    let iprecptns = if cloud_density >= 5 && precipitation_mm > 0.2 { 1 } else { 0 };
+    let iprecptns = if preset.is_some_and(|p| p.starts_with("Rainy")) { 1 } else { 0 };
     clouds.raw_set("iprecptns", iprecptns).context("setting clouds.iprecptns")?;
 
     info!(
         "applied live weather at ({lat}, {lon}) to mission: {}C, {qnh_mmhg}mmHg, ground wind {wind_speed_ground}m/s @ {}deg, \
-         cloud cover {cloud_cover_pct}% (density {cloud_density}, base {}m), precipitation {precipitation_mm}mm",
+         cloud cover {cloud_cover_pct}% (preset {}, base {cloud_base_m}m), precipitation {precipitation_mm}mm",
         temp_c.round() as i64,
         to_dir(wind_from_dir_ground).round() as i64,
-        cloud_base_m.round() as i64,
+        preset.unwrap_or("none"),
     );
 
     apply_live_obscurants(&weather, lat, lon, visibility_m).context("applying live fog/dust state")?;
