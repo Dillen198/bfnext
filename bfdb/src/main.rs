@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bfprotocols::cfg::UnitTag;
 use clap::Parser;
-use db::{SessionData, StatsDb, WikiImage, WikiPage};
+use db::{SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
 use futures::{SinkExt, StreamExt};
 use netidx::{config::Config, path::Path as NetidxPath, subscriber::SubscriberBuilder};
 use regex::Regex;
@@ -129,6 +129,14 @@ struct Args {
     /// restapi.yaml). Required if --dcsserverbot-url is set.
     #[arg(long = "dcsserverbot-api-key")]
     dcsserverbot_api_key: Option<String>,
+    /// One-off maintenance: clear the `session` tree (per-round Cfg
+    /// snapshot + perf history) and exit immediately without starting the
+    /// server. Use this to recover from old Session records that predate a
+    /// bincode-incompatible Cfg/Deployable change, which surface as
+    /// "string is not valid utf8" errors from /api/admin/perf and
+    /// /api/admin/banned. Round/kill/objective/pilot data is untouched.
+    #[arg(long = "clear-sessions")]
+    clear_sessions: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -676,6 +684,28 @@ async fn api_pilot_kills(
                 "target_type": target_type,
                 "weapon": weapon,
                 "killer_airframe": airframe,
+            })
+        }).collect();
+        Ok(serde_json::to_string(&entries)?)
+    })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/pilot/:ucid/deploys — all deployable-crate deploys done by a pilot
+async fn api_pilot_deploys(
+    ucid: String,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let ucid: dcso3::net::Ucid = ucid.parse().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let deploys = db.pilot_deploys_for(&ucid)?;
+        let entries: Vec<_> = deploys.iter().map(|(round_id, rec)| {
+            serde_json::json!({
+                "round_id": round_id.0,
+                "time": rec.time.to_rfc3339(),
+                "deployable": rec.deployable,
+                "aircraft": rec.aircraft,
+                "method": rec.method,
             })
         }).collect();
         Ok(serde_json::to_string(&entries)?)
@@ -1697,9 +1727,37 @@ async fn api_admin_perf(
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
+
+    // Prefer a live snapshot from the running engine (query-perf, added
+    // alongside query-objectives) over the last *completed* session's
+    // stats, so this has data throughout an active round instead of only
+    // after it ends. Falls back to the persisted last-session data when
+    // bflib isn't reachable (no active round, mission still loading, etc.)
+    // -- same degraded behavior as before this existed.
+    let live: Option<SessionEnd> = match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        call_engine_rpc_str(&db, "query-perf", vec![]),
+    ).await {
+        Ok(Ok(json)) => match serde_json::from_str(&json) {
+            Ok(e) => Some(e),
+            Err(e) => {
+                log::warn!("api_admin_perf: query-perf returned unparseable JSON: {e}");
+                None
+            }
+        },
+        Ok(Err(e)) => {
+            log::warn!("api_admin_perf: query-perf RPC failed: {}", e.0);
+            None
+        }
+        Err(_) => None, // timed out -- engine unreachable, fall back silently
+    };
+
     let data = task::block_in_place(|| -> Result<String> {
         let hardware = collect_hardware();
-        let end = db.latest_session_end()?;
+        let end = match live {
+            Some(e) => Some(e),
+            None => db.latest_session_end()?,
+        };
         let json = match end {
             None => serde_json::json!({ "available": false, "hardware": hardware }),
             Some(e) => {
@@ -1800,6 +1858,20 @@ async fn api_admin_banned(
         Ok(serde_json::to_string(&entries)?)
     })?;
     Ok(json_response(data))
+}
+
+/// GET /api/admin/engine-errors  — recent ERROR/WARN lines from the live
+/// bflib engine log (admin only). Backs the dashboard's error feed -- the
+/// same underlying lines the Discord fowlengine plugin's engine log relay
+/// posts as alerts, but visible without Discord and independent of whether
+/// the bot is currently connected.
+async fn api_admin_engine_errors(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let lines = db.engine_error_snapshot();
+    Ok(json_response(serde_json::to_string(&lines).map_err(|e| Error(e.into()))?))
 }
 
 #[derive(serde::Deserialize)]
@@ -2401,6 +2473,13 @@ fn with_bot_link_cfg(
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    if args.clear_sessions {
+        let db = StatsDb::new_offline(args.db, None, None)?;
+        db.clear_stale_sessions()?;
+        println!("cleared the session tree -- perf history and cfg-derived ban entries are gone, round/kill/objective/pilot data is untouched");
+        return Ok(());
+    }
+
     // ── Broadcast logger: forwards to env_logger + WebSocket stream ───────
     let (log_tx, _) = broadcast::channel::<String>(512);
     let log_history: LogHistory = Arc::new(Mutex::new(VecDeque::new()));
@@ -2606,6 +2685,10 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_pilot_kills);
 
+    let pilot_deploys_route = warp::path!("api" / "pilot" / String / "deploys")
+        .and(with_db(db.clone()))
+        .then(api_pilot_deploys);
+
     let stats = warp::path!("api" / "stats")
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
@@ -2730,6 +2813,11 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .then(api_admin_banned);
+
+    let admin_engine_errors = warp::path!("api" / "admin" / "engine-errors")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(api_admin_engine_errors);
 
     let admin_ban_route = warp::path!("api" / "admin" / "ban")
         .and(warp::post())
@@ -2912,6 +3000,7 @@ async fn main() -> Result<()> {
         .or(pilot_sorties)
         .or(pilot_breakdown)
         .or(pilot_kills_route)
+        .or(pilot_deploys_route)
         .or(pilot)
         .or(stats)
         .or(units)
@@ -2941,6 +3030,7 @@ async fn main() -> Result<()> {
         .or(admin_perf)
         .or(admin_perf_history)
         .or(admin_banned)
+        .or(admin_engine_errors)
         .or(admin_cfg_get_route)
         .or(admin_cfg_schema_route)
         .boxed();

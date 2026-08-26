@@ -120,6 +120,14 @@ pub enum Stat {
         by: Ucid,
         gid: GroupId,
         deployable: String,
+        /// Delivering aircraft's DCS type name, when known (physical C-130/
+        /// helo cargo deploys only -- None for instant/admin-triggered ones).
+        #[serde(default)]
+        aircraft: Option<String>,
+        /// "AirDrop" (auto-unpacked on landing) or "ManualUnpack" (player
+        /// had to walk up and trigger it), when known.
+        #[serde(default)]
+        method: Option<String>,
     },
     DeployFarp {
         by: Ucid,

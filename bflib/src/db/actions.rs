@@ -3007,6 +3007,8 @@ impl Db {
                     gid,
                     deployable: dep,
                     by: ucid,
+                    aircraft: None,
+                    method: None,
                 });
                 Ok(())
             }

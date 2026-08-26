@@ -188,6 +188,7 @@ pub enum AdminCommand {
     },
     QueryLogistics,
     QueryCampaignState,
+    QueryPerf,
     // Action API commands
     SpawnDeployable {
         side: Side,
@@ -1290,6 +1291,26 @@ pub(crate) fn query_campaign_state(ctx: &Context) -> CampaignState {
     }
 }
 
+/// Snapshots the engine/API perf counters accumulated so far *this session*
+/// (the same globals admin_shutdown reads to build Stat::SessionEnd), so
+/// bfdb's perf endpoint can show live numbers throughout an active round
+/// instead of only after a session ends. Field names deliberately match
+/// bfdb's own `SessionEnd` struct (time/frame/api/engine) so bfdb can
+/// deserialize this JSON straight into it with no translation step.
+pub(crate) fn query_perf() -> serde_json::Value {
+    let perf = unsafe { Perf::get_mut() };
+    let api_perf = unsafe { ApiPerf::get_mut() };
+    let engine = (*perf.inner).clone();
+    let frame = (*perf.frame).clone();
+    let api = (*api_perf.0).clone();
+    serde_json::json!({
+        "time": Utc::now(),
+        "frame": frame,
+        "api": api,
+        "engine": engine,
+    })
+}
+
 // ==================== Action API Functions ====================
 
 pub(crate) fn api_spawn_deployable(
@@ -1748,6 +1769,12 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 match serde_json::to_string(&state) {
                     Ok(json) => replies.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize campaign state: {e:?}"),
+                }
+            }
+            AdminCommand::QueryPerf => {
+                match serde_json::to_string(&query_perf()) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize perf: {e:?}"),
                 }
             }
             // Action API commands

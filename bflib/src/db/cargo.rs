@@ -204,6 +204,9 @@ pub struct C130Cargo {
     pub origin: ObjectiveId,
     /// Player who spawned the crate
     pub player: Ucid,
+    /// DCS type name of the aircraft the player was in when the crate was
+    /// spawned (the delivering aircraft) -- used for deploy-log attribution.
+    pub aircraft: String,
     /// Side
     pub side: Side,
     /// Last known position
@@ -239,6 +242,7 @@ impl C130Cargo {
         crate_type: C130CargoType,
         origin: ObjectiveId,
         player: Ucid,
+        aircraft: String,
         side: Side,
         pos: Vector2,
         crate_def: Crate,
@@ -251,6 +255,7 @@ impl C130Cargo {
             state: C130CargoState::Spawned,
             origin,
             player,
+            aircraft,
             side,
             last_pos: pos,
             spawn_pos: pos,
@@ -270,6 +275,7 @@ impl C130Cargo {
         crate_type: C130CargoType,
         origin: ObjectiveId,
         player: Ucid,
+        aircraft: String,
         side: Side,
         pos: Vector2,
         crate_def: Crate,
@@ -282,6 +288,7 @@ impl C130Cargo {
             state: C130CargoState::Spawned,
             origin,
             player,
+            aircraft,
             side,
             last_pos: pos,
             spawn_pos: pos,
@@ -1203,6 +1210,8 @@ impl Db {
                                     gid,
                                     by: st.ucid,
                                     deployable: dep.clone(),
+                                    aircraft: None,
+                                    method: None,
                                 });
                                 let frac = self.charge_for_item(
                                     &st.ucid,
@@ -1394,6 +1403,8 @@ impl Db {
             .ok_or_else(|| anyhow!("no cargo state for slot"))?;
         cargo.crates.push((oid, crate_def.clone()));
         let weight = cargo.weight();
+        debug!("[LOAD_CRATE] loaded crate={}, crate.weight={}kg, total_onboard_weight={}kg, unit={}",
+            crate_def.name, crate_def.weight, weight, unit_name);
         self.delete_group(&gid)?;
         Trigger::singleton(lua)?
             .action()?
@@ -2952,6 +2963,7 @@ impl Db {
             crate_type,
             origin,
             ucid,
+            unit_typ,
             side,
             point,
             crate_def,
@@ -3014,6 +3026,7 @@ impl Db {
         let pos = unit.get_position()?;
         let point = Vector2::new(pos.p.x, pos.p.z);
         let dir = Vector2::new(pos.x.x, pos.x.z);
+        let unit_typ = unit.get_type_name()?;
         debug!("[C130_CARGO] Player position: x={:.2}, z={:.2}, dir=({:.2}, {:.2})",
                point.x, point.y, dir.x, dir.y);
 
@@ -3120,6 +3133,7 @@ impl Db {
             crate_type,
             origin,
             ucid.clone(),
+            unit_typ,
             side,
             point,
             dummy_crate,
@@ -3180,7 +3194,7 @@ impl Db {
         let point = Vector2::new(pos.p.x, pos.p.z);
         let dir = Vector2::new(pos.x.x, pos.x.z);
         let unit_typ = unit.get_type_name()?;
-        let cargo_cfg = self.ephemeral.cfg.cargo.get(&Vehicle(unit_typ));
+        let cargo_cfg = self.ephemeral.cfg.cargo.get(&Vehicle(unit_typ.clone()));
         let spawn_distance = cargo_cfg
             .and_then(|cc| cc.spawn_distance)
             .unwrap_or_else(|| {
@@ -3219,6 +3233,7 @@ impl Db {
                     crate_name,
                     origin,
                     ucid.clone(),
+                    unit_typ.clone(),
                     crate_def,
                     idx,
                     auto_unpack,
@@ -3249,7 +3264,7 @@ impl Db {
 
         for spawn_time in to_spawn {
             if let Some(crates) = self.ephemeral.c130_spawn_queue.remove(&spawn_time) {
-                for (side, crate_name, origin, ucid, crate_def, _crate_idx, auto_unpack, anchor_point, dir, anchor_offset, carrier_link_id) in crates {
+                for (side, crate_name, origin, ucid, aircraft, crate_def, _crate_idx, auto_unpack, anchor_point, dir, anchor_offset, carrier_link_id) in crates {
                     // anchor_point/dir/anchor_offset were resolved once for
                     // the whole batch when it was queued (see
                     // queue_c130_crate_spawns) -- deliberately NOT re-reading
@@ -3327,6 +3342,7 @@ impl Db {
                                 crate_type,
                                 origin,
                                 ucid,
+                                aircraft,
                                 side,
                                 point,
                                 crate_def,
@@ -3611,7 +3627,22 @@ impl Db {
                             BitFlags::empty(),
                             None,
                         ) {
-                            Ok(_) => {
+                            Ok(gid) => {
+                                // Record the deploy for stats/the pilot deploy log -- this was
+                                // previously untracked, so deploys done via the physical C-130/
+                                // helo cargo system (as opposed to the older instant-deploy
+                                // paths) never counted toward a pilot's Deploys stat.
+                                self.ephemeral.stat(Stat::DeployGroup {
+                                    by: crate_data.player,
+                                    gid,
+                                    deployable: deployable_name.clone(),
+                                    aircraft: Some(crate_data.aircraft.clone()),
+                                    method: Some(String::from(if crate_data.auto_unpack {
+                                        "AirDrop"
+                                    } else {
+                                        "ManualUnpack"
+                                    })),
+                                });
                                 // Delete all the crates used for this deployable
                                 let mut crates_to_delete: Vec<String> = Vec::new();
                                 for req in &deployable.crates {
@@ -4011,6 +4042,7 @@ impl Db {
                     cost: vehicle_cfg.cost,
                     jtac: None,
                     ewr: None,
+                    gci: None,
                     deprecated_template: None,
                     deprecated_logistics: None,
                 };
@@ -4036,6 +4068,14 @@ impl Db {
                 ) {
                     Ok(gid) => {
                         info!("[C130_CARGO] Vehicle {} spawned successfully as group {:?}", name, gid);
+
+                        self.ephemeral.stat(Stat::DeployGroup {
+                            by: crate_data.player,
+                            gid,
+                            deployable: name.clone(),
+                            aircraft: Some(crate_data.aircraft.clone()),
+                            method: Some(String::from("AirDrop")),
+                        });
 
                         // Remove the cargo tracking entry
                         self.ephemeral.c130_crates.remove(crate_name);

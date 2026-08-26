@@ -897,11 +897,15 @@ impl Db {
     }
 
     pub fn repair_objective(&mut self, oid: ObjectiveId, now: DateTime<Utc>) -> Result<()> {
+        let repair_supply_cost = self.ephemeral.cfg.repair_supply_cost;
         let obj = self
             .persisted
             .objectives
             .get(&oid)
             .ok_or_else(|| anyhow!("no such objective {:?}", oid))?;
+        if obj.supply < repair_supply_cost {
+            return Ok(());
+        }
         if let Some(groups) = obj.groups.get(&obj.owner) {
             let mut damaged_by_class: FxHashMap<ObjGroupClass, Vec<(GroupId, usize)>> =
                 groups.into_iter().fold(
@@ -939,8 +943,12 @@ impl Db {
                         for uid in &group.units {
                             unit_mut!(self, uid)?.dead = false;
                         }
-                        if obj.spawned || class == ObjGroupClass::Services {
+                        let spawned = obj.spawned;
+                        if spawned || class == ObjGroupClass::Services {
                             self.ephemeral.push_spawn(gid)
+                        }
+                        if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+                            obj.supply = obj.supply.saturating_sub(repair_supply_cost);
                         }
                         self.update_objective_status(&oid, now)?;
                         self.ephemeral.dirty();
@@ -1254,7 +1262,11 @@ impl Db {
                                     }
                                 },
                                 Err(e) => {
-                                    warn!("object is not a unit {gid} {e:?}");
+                                    // Expected for groups whose DCS object turns out to be a
+                                    // static (e.g. cargo crates) despite group.kind being set --
+                                    // already handled by skipping via `continue`, so this isn't
+                                    // something that needs WARN-level attention.
+                                    debug!("object is not a unit {gid} {e:?}");
                                     continue;
                                 }
                             },

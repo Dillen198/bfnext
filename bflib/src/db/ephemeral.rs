@@ -158,7 +158,7 @@ pub struct Ephemeral {
     /// grid cell instead of spreading out.
     pub(super) c130_spawn_queue: BTreeMap<
         DateTime<Utc>,
-        Vec<(Side, String, ObjectiveId, Ucid, Crate, usize, bool, Vector2, Vector2, f64, Option<String>)>,
+        Vec<(Side, String, ObjectiveId, Ucid, String, Crate, usize, bool, Vector2, Vector2, f64, Option<String>)>,
     >,
     /// Supply convoy tracking: convoy_id -> SupplyConvoy
     pub(super) active_convoys: FxHashMap<super::logistics::ConvoyId, super::logistics::SupplyConvoy>,
@@ -1686,26 +1686,17 @@ impl Ephemeral {
             }
             // Crates spawn from one shared template per side (crate_template /
             // c130_cargo_template / helo_cargo_template); per-crate dcs_type/weight
-            // overrides are applied to the cloned template's single unit here, right
-            // before spawn. Scoped to C-130 airdrop crates only, matched by
-            // template_name against c130_cargo_template -- helicopter sling-load
-            // crates keep the untouched template unit, since DCS's cargo-hook sling
-            // logic isn't guaranteed to accept arbitrary static types/mass the way
-            // the C-130's internal-bay loading does.
+            // overrides are applied to the cloned template's single unit here,
+            // right before spawn. Both the C-130 and helicopters load crates
+            // into an internal cargo bay (not a DCS sling-load hook), so the
+            // override applies uniformly to all crate templates.
             if let DeployKind::Crate { spec, .. } = &group.origin {
-                let is_c130_crate = self
-                    .cfg
-                    .c130_cargo_template
-                    .get(&group.side)
-                    .is_some_and(|t| t == &group.template_name);
-                if is_c130_crate {
-                    if let Ok(units) = template.group.units() {
-                        if let Ok(unit) = units.get(1) {
-                            if let Some(dcs_type) = spec.dcs_type.clone() {
-                                unit.set_typ(dcs_type)?;
-                            }
-                            unit.set_mass(spec.weight)?;
+                if let Ok(units) = template.group.units() {
+                    if let Ok(unit) = units.get(1) {
+                        if let Some(dcs_type) = spec.dcs_type.clone() {
+                            unit.set_typ(dcs_type)?;
                         }
+                        unit.set_mass(spec.weight)?;
                     }
                 }
             }
@@ -1719,6 +1710,27 @@ impl Ephemeral {
                     let oid = g.object_id()?.erased();
                     self.object_id_by_gid.insert(group.id, oid.clone());
                     self.gid_by_object_id.insert(oid, group.id);
+                    let gci = match &group.origin {
+                        DeployKind::Deployed { spec, .. } => spec.gci.as_ref(),
+                        _ => None,
+                    };
+                    if let Some(gci) = gci {
+                        if let Some(unit) = g.get_units()?.into_iter().filter_map(|u| u.ok()).next() {
+                            let ll = dcso3::coord::Coord::singleton(spctx.lua())?
+                                .lo_to_ll(unit.get_point()?)?;
+                            let controller = unit.get_controller()
+                                .context("getting GCI unit controller")?;
+                            controller
+                                .set_command(dcso3::controller::Command::ActivateGci {
+                                    unit: unit.id()?,
+                                    latitude: ll.latitude,
+                                    longitude: ll.longitude,
+                                    channel: gci.channel,
+                                    radius: gci.radius,
+                                })
+                                .context("activating GCI station")?;
+                        }
+                    }
                 }
             }
             record_perf(&mut perf.spawn, ts);

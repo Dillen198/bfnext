@@ -48,6 +48,7 @@ db_id!(KillId);
 db_id!(RoundId);
 db_id!(SortieId);
 db_id!(CaptureId);
+db_id!(DeployId);
 
 /// A recorded capture event -- who took an objective and for which side,
 /// as opposed to objective_captures which only tracks a running count with
@@ -59,6 +60,19 @@ pub(crate) struct CaptureRecord {
     pub(crate) objective_name: std::string::String,
     pub(crate) side: Side,
     pub(crate) by: SmallVec<[Ucid; 1]>,
+}
+
+/// A recorded deploy event -- who deployed what, from which aircraft (if
+/// known), and by which method (air drop vs. manual unpack). Distinct from
+/// the plain `deploys` counter on Aggregates, which has no attribution or
+/// timeline; backs the pilot profile's deploy log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct DeployRecord {
+    pub(crate) time: DateTime<Utc>,
+    pub(crate) by: Ucid,
+    pub(crate) deployable: std::string::String,
+    pub(crate) aircraft: Option<std::string::String>,
+    pub(crate) method: Option<std::string::String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -459,6 +473,9 @@ pub(crate) struct StatsDbInner {
     objective_captures: Tree<(RoundId, ObjectiveId), u32>,
     // Capture events (who, what, when) per round -- see CaptureRecord
     captures: Tree<(RoundId, CaptureId), CaptureRecord>,
+    // Deploy events, keyed pilot-first (unlike captures) for efficient
+    // per-pilot scans -- see DeployRecord and pilot_deploys_for.
+    deploys: Tree<(Ucid, RoundId, DeployId), DeployRecord>,
     // Aircraft sortie counts per round: (RoundId, vehicle_type) -> (sortie_count, total_hours_f32)
     aircraft_sorties: Tree<(RoundId, std::string::String), (u32, f32)>,
     // Admin-managed ban list (bfdb-native, separate from bflib's cfg.banned)
@@ -471,6 +488,17 @@ pub(crate) struct StatsDbInner {
     // (distinct from bfdb's own process log)
     engine_log_tx: broadcast::Sender<std::string::String>,
     engine_log_history: Arc<StdMutex<VecDeque<std::string::String>>>,
+    // Subset of engine_log_history matching an ERROR/WARN level tag -- kept
+    // separately so the admin dashboard can show a short, high-signal error
+    // feed without the client having to filter the full (much larger,
+    // frequently-scrolling) log history itself.
+    engine_error_history: Arc<StdMutex<VecDeque<std::string::String>>>,
+    // The sortie name of the currently/most-recently active round, learned
+    // from Stat::NewRound. bflib publishes its engine log and RPC procs
+    // under `<netidx_base>/<sortie>/...` (see bflib/src/bg/mod.rs), so this
+    // must be appended to `base` before subscribing -- a bare `base` path
+    // will never resolve.
+    current_sortie: Arc<StdMutex<Option<Scenario>>>,
     // Timestamp of the last stats-archive batch fully processed by
     // background_loop, persisted so a restart resumes from there instead of
     // replaying the entire historical archive from the beginning every time
@@ -480,6 +508,16 @@ pub(crate) struct StatsDbInner {
 }
 
 const ENGINE_LOG_HISTORY_CAP: usize = 500;
+const ENGINE_ERROR_HISTORY_CAP: usize = 200;
+
+/// Matches the `[ERROR]`/`[WARN]`/`[WARNING]` level tags bflib's engine log
+/// lines carry -- mirrors ENGINE_LOG_LEVEL_RE in the fowlengine Discord plugin
+/// so the dashboard's error feed and the Discord alert relay agree on what
+/// counts as noteworthy.
+fn is_engine_error_line(line: &str) -> bool {
+    let upper = line.to_ascii_uppercase();
+    upper.contains("[ERROR]") || upper.contains("[WARN]") || upper.contains("[WARNING]")
+}
 
 pub(crate) struct StatsDb(Arc<StatsDbInner>);
 
@@ -645,16 +683,29 @@ impl StatsDb {
             latest_weather: Arc::new(RwLock::new(None)),
             objective_captures: Tree::open(&db, "objective_captures")?,
             captures: Tree::open(&db, "captures")?,
+            deploys: Tree::open(&db, "deploys")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
+            engine_error_history: Arc::new(StdMutex::new(VecDeque::new())),
             replay_cursor: Tree::open(&db, "replay_cursor")?,
+            current_sortie: Arc::new(StdMutex::new(None)),
         }));
         t.seed_wiki_if_empty()?;
         t.seed_wiki_images_if_empty()?;
+        // Prime current_sortie from whatever round is already open in the DB.
+        // On restart, the archive replay resumes from replay_cursor and may
+        // never re-witness the NewRound/SessionStart stat that originally
+        // started the active round (they're before the cursor) -- without
+        // this, the engine log/RPC subscriptions would wait forever for a
+        // sortie that already exists.
+        if let Some((sortie, _, _)) = t.latest_rounds()?.into_iter().find(|(_, _, r)| r.end.is_none()) {
+            info!("resuming with active round sortie={sortie:?}");
+            *t.current_sortie.lock().unwrap() = Some(sortie);
+        }
         let _t = t.clone();
         task::spawn(async move {
             if let Err(e) = _t.background_loop().await {
@@ -699,13 +750,16 @@ impl StatsDb {
             latest_weather: Arc::new(RwLock::new(None)),
             objective_captures: Tree::open(&db, "objective_captures")?,
             captures: Tree::open(&db, "captures")?,
+            deploys: Tree::open(&db, "deploys")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
+            engine_error_history: Arc::new(StdMutex::new(VecDeque::new())),
             replay_cursor: Tree::open(&db, "replay_cursor")?,
+            current_sortie: Arc::new(StdMutex::new(None)),
         }));
         t.seed_wiki_if_empty()?;
         t.seed_wiki_images_if_empty()?;
@@ -720,11 +774,14 @@ impl StatsDb {
     }
 
     /// A live subscription to the running bflib engine's log stream,
-    /// published over netidx at `<base>/log` by `bflib::bg::logpub`.
+    /// published over netidx at `<base>/<sortie>/log` by `bflib::bg::logpub`
+    /// (bflib appends its mission sortie name to `netidx_base` before
+    /// publishing anything -- see `Task::CfgLoaded` in bflib/src/bg/mod.rs).
     /// No-op if bfdb wasn't started with --base. Each update from the
     /// publisher carries the *entire* accumulated log content (not just the
     /// new line), so we track how much we've already seen and only forward
-    /// the newly-appended lines.
+    /// the newly-appended lines. Waits for the sortie to become known via
+    /// Stat::NewRound, and resubscribes if it changes (new mission/round).
     async fn engine_log_loop(self) -> Result<()> {
         use futures::{channel::mpsc, StreamExt};
         use netidx::subscriber::{Event, UpdatesFlags};
@@ -734,31 +791,52 @@ impl StatsDb {
             (Some(s), Some(b)) => (s.clone(), b.clone()),
             _ => return Ok(()),
         };
-        let dval = subscriber.subscribe(base.append("log"));
-        let (tx, mut rx) = mpsc::channel(10);
-        dval.updates(UpdatesFlags::empty(), tx);
-        let mut seen_len = 0usize;
-        while let Some(batch) = rx.next().await {
-            for (_id, ev) in batch.iter() {
-                let Event::Update(Value::String(chars)) = ev else { continue };
-                let full: &str = chars.as_ref();
-                // publisher truncated/restarted (new mission) — resend everything as new
-                let start = if full.len() >= seen_len { seen_len } else { 0 };
-                let new_part = &full[start..];
-                seen_len = full.len();
-                for line in new_part.lines().filter(|l| !l.is_empty()) {
-                    let line = std::string::String::from(line);
-                    let mut hist = self.0.engine_log_history.lock().unwrap();
-                    if hist.len() >= ENGINE_LOG_HISTORY_CAP {
-                        hist.pop_front();
+        loop {
+            let sortie = loop {
+                if let Some(s) = self.0.current_sortie.lock().unwrap().clone() {
+                    break s;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            };
+            let dval = subscriber.subscribe(base.append(&sortie).append("log"));
+            let (tx, mut rx) = mpsc::channel(10);
+            dval.updates(UpdatesFlags::empty(), tx);
+            let mut seen_len = 0usize;
+            while let Some(batch) = rx.next().await {
+                if self.0.current_sortie.lock().unwrap().as_ref() != Some(&sortie) {
+                    break; // sortie changed -- resubscribe under the new one
+                }
+                for (_id, ev) in batch.iter() {
+                    let Event::Update(Value::String(chars)) = ev else { continue };
+                    let full: &str = chars.as_ref();
+                    // publisher truncated/restarted (new mission) — resend everything as new
+                    let start = if full.len() >= seen_len { seen_len } else { 0 };
+                    let new_part = &full[start..];
+                    seen_len = full.len();
+                    for line in new_part.lines().filter(|l| !l.is_empty()) {
+                        let line = std::string::String::from(line);
+                        let mut hist = self.0.engine_log_history.lock().unwrap();
+                        if hist.len() >= ENGINE_LOG_HISTORY_CAP {
+                            hist.pop_front();
+                        }
+                        hist.push_back(line.clone());
+                        drop(hist);
+                        if is_engine_error_line(&line) {
+                            let mut errs = self.0.engine_error_history.lock().unwrap();
+                            if errs.len() >= ENGINE_ERROR_HISTORY_CAP {
+                                errs.pop_front();
+                            }
+                            errs.push_back(line.clone());
+                        }
+                        let _ = self.0.engine_log_tx.send(line);
                     }
-                    hist.push_back(line.clone());
-                    drop(hist);
-                    let _ = self.0.engine_log_tx.send(line);
                 }
             }
+            if self.0.current_sortie.lock().unwrap().as_ref() == Some(&sortie) {
+                // subscription itself ended (not a sortie change) -- nothing left to do
+                return Ok(());
+            }
         }
-        Ok(())
     }
 
     /// Subscribe to the live engine log stream, plus a snapshot of recent
@@ -769,10 +847,18 @@ impl StatsDb {
         (rx, hist)
     }
 
-    /// Call one of bflib's netidx RPC procs (published under `<base>/api/<name>`,
-    /// see bflib/src/bg/rpcs.rs) and return its raw reply. Errors if bfdb wasn't
-    /// started with --base (netidx disabled) or if the mission isn't running /
-    /// hasn't published that proc yet.
+    /// Recent ERROR/WARN lines from the engine log, oldest first -- backs the
+    /// admin dashboard's error feed (see api_admin_engine_errors in main.rs).
+    pub(crate) fn engine_error_snapshot(&self) -> Vec<std::string::String> {
+        self.0.engine_error_history.lock().unwrap().iter().cloned().collect()
+    }
+
+    /// Call one of bflib's netidx RPC procs (published under
+    /// `<base>/<sortie>/api/<name>`, see bflib/src/bg/rpcs.rs -- bflib
+    /// appends its mission sortie name to `netidx_base` before publishing,
+    /// same as the engine log) and return its raw reply. Errors if bfdb
+    /// wasn't started with --base (netidx disabled) or if the mission isn't
+    /// running / hasn't published a sortie yet.
     ///
     /// A successful RPC call still returns `Ok` even when the *engine* reported
     /// a logical error (bflib replies with `Value::Error` in that case, per its
@@ -787,7 +873,9 @@ impl StatsDb {
             (Some(s), Some(b)) => (s, b),
             _ => bail!("netidx is disabled (bfdb started without --base)"),
         };
-        let path = base.append("api").append(proc_name);
+        let sortie = self.0.current_sortie.lock().unwrap().clone()
+            .ok_or_else(|| anyhow!("no active sortie yet (mission hasn't reported in)"))?;
+        let path = base.append(&sortie).append("api").append(proc_name);
         let proc = Proc::new(subscriber, path)?;
         proc.call(args).await
     }
@@ -1054,6 +1142,7 @@ impl StatsDb {
         self.seq.insert(&key, &seqnum)?;
         self.round.insert(&key, &r)?;
         info!("new_round: round inserted successfully");
+        *self.current_sortie.lock().unwrap() = Some(sortie.clone());
         ctx.0 = Some(StatCtxInner {
             sortie,
             round: id,
@@ -1395,10 +1484,20 @@ impl StatsDb {
     }
 
     pub(crate) fn latest_session_end(&self) -> Result<Option<SessionEnd>> {
-        // Walk all sessions, newest last, return the most recent one that has a SessionEnd
+        // Walk all sessions, newest last, return the most recent one that has a SessionEnd.
+        // Skip individual records that fail to deserialize (e.g. written by an
+        // older/incompatible build, or left partially-written by an unclean
+        // shutdown) instead of letting one bad entry permanently break
+        // /api/admin/perf for every session that comes after it.
         let mut latest: Option<SessionEnd> = None;
         for r in self.session.iter() {
-            let (_, session) = r?;
+            let session = match r {
+                Ok((_, session)) => session,
+                Err(e) => {
+                    log::warn!("latest_session_end: skipping unreadable session record: {e:?}");
+                    continue;
+                }
+            };
             if let Some(end) = session.end {
                 latest = Some(end);
             }
@@ -1752,6 +1851,17 @@ impl StatsDb {
         Ok(result)
     }
 
+    /// All deploys done by a specific pilot, all rounds, newest first.
+    pub(crate) fn pilot_deploys_for(&self, ucid: &Ucid) -> Result<Vec<(RoundId, DeployRecord)>> {
+        let mut result = Vec::new();
+        for r in self.deploys.scan_prefix(ucid)? {
+            let ((_, round_id, _), rec) = r?;
+            result.push((round_id, rec));
+        }
+        result.sort_by(|a, b| b.1.time.cmp(&a.1.time));
+        Ok(result)
+    }
+
     pub(crate) fn recent_kills(&self, round: RoundId, limit: usize) -> Result<Vec<Dead>> {
         let mut kills = Vec::new();
         for r in self.kills.iter().rev() {
@@ -1822,18 +1932,27 @@ impl StatsDb {
         }
         // If we see a SessionStart but have no round context, auto-create a round.
         // This happens when reading archives where the NewRound is in a locked/missing file.
+        // Only do this when a real sortie can be derived from netidx_base --
+        // new_round() unconditionally overwrites the *live* current_sortie
+        // (used for real-time engine log/RPC subscriptions) as a side effect,
+        // so fabricating a placeholder name here would silently redirect
+        // live subscriptions onto a sortie that doesn't exist. Without a real
+        // sortie, just skip: the caller below already handles "no round
+        // context yet" by dropping the stat gracefully.
         if let Stat::SessionStart { cfg, .. } = &stat {
             if ctx.0.is_none() {
-                let sortie = cfg.netidx_base
-                    .as_ref()
-                    .map(|p| {
-                        let s = format!("{p}");
-                        s.rsplit('/').next().unwrap_or("unknown").to_string()
-                    })
-                    .unwrap_or_else(|| "campaign".to_string());
-                let sortie = String::from(sortie);
-                info!("auto-creating round from SessionStart, sortie={sortie:?}");
-                self.new_round(ctx, time, sortie, time)?;
+                match cfg.netidx_base.as_ref().map(|p| {
+                    let s = format!("{p}");
+                    String::from(s.rsplit('/').next().unwrap_or("unknown").to_string())
+                }) {
+                    Some(sortie) => {
+                        info!("auto-creating round from SessionStart, sortie={sortie:?}");
+                        self.new_round(ctx, time, sortie, time)?;
+                    }
+                    None => {
+                        warn!("SessionStart with no round context and no netidx_base to derive a sortie from -- skipping instead of fabricating a placeholder round");
+                    }
+                }
             }
         }
         if let Stat::RoundEnd { winner } = &stat {
@@ -2007,6 +2126,8 @@ impl StatsDb {
                 by,
                 gid,
                 deployable,
+                aircraft,
+                method,
             } => {
                 self.pilots.with_pilot_and_aggregates(
                     by,
@@ -2020,6 +2141,17 @@ impl StatsDb {
                         name: deployable.clone(),
                     }
                 })?;
+                let did = DeployId::new(&self.db)?;
+                self.deploys.insert(
+                    &(by, ctx.round, did),
+                    &DeployRecord {
+                        time,
+                        by,
+                        deployable: deployable.to_string(),
+                        aircraft: aircraft.map(|a| a.to_string()),
+                        method: method.map(|m| m.to_string()),
+                    },
+                )?;
             }
             Stat::DeployFarp {
                 by,
@@ -2344,6 +2476,18 @@ impl StatsDb {
             }
         }
         Ok(points)
+    }
+
+    /// Clear only the `session` tree (per-round Cfg snapshot + perf history),
+    /// leaving rounds/kills/objectives/pilots untouched. Use this to recover
+    /// from old `Session` records that predate a bincode-incompatible change
+    /// to `Cfg`/`Deployable` (mid-struct field insertions break positional
+    /// decoding for anything serialized under the old layout, surfacing as
+    /// "string is not valid utf8" errors from /api/admin/perf and
+    /// /api/admin/banned, which both read the latest session's Cfg).
+    pub(crate) fn clear_stale_sessions(&self) -> Result<()> {
+        self.session.clear()?;
+        Ok(())
     }
 
     /// Wipe all campaign data — rounds, kills, objectives, pilot stats, trails,

@@ -57,6 +57,7 @@ pub struct Rpcs {
     _query_warehouse: Proc,
     _query_logistics: Proc,
     _query_campaign_state: Proc,
+    _query_perf: Proc,
     // Action API
     _spawn_deployable: Proc,
     _spawn_troop: Proc,
@@ -618,6 +619,19 @@ impl Rpcs {
             Some(wait.clone()),
             arg: Value = Value::Null; ""
         )?;
+        let _q = Arc::clone(&q);
+        let query_perf = define_rpc!(
+            publisher,
+            base.append("query-perf"),
+            "Query live engine/API performance stats for the current session (returns JSON)",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::QueryPerf, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
         // ==================== Action API ====================
         let _q = Arc::clone(&q);
         let spawn_deployable = define_rpc!(
@@ -946,6 +960,7 @@ impl Rpcs {
             _query_warehouse: query_warehouse,
             _query_logistics: query_logistics,
             _query_campaign_state: query_campaign_state,
+            _query_perf: query_perf,
             // Action API
             _spawn_deployable: spawn_deployable,
             _spawn_troop: spawn_troop,

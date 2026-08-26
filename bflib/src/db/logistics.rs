@@ -1065,11 +1065,19 @@ impl Db {
                 LogiStage::Complete { last_tick: _ } => (),
                 LogiStage::SyncFromWarehouses { objectives } => match objectives.pop() {
                     Some(oid) => {
-                        let start_ts = Utc::now();
-                        if let Err(e) = self.sync_warehouse_to_objective(lua, oid) {
-                            error!("failed to sync objective {oid} from warehouse {:?}", e)
+                        // This queue was snapshotted when the stage began and drains
+                        // slowly (one objective per tick); by the time a given entry
+                        // is reached its airbase registration may legitimately be
+                        // gone (owner change, pad respawn, objective destroyed) --
+                        // that's an expected race against the slow drain, not a real
+                        // failure, so skip quietly instead of erroring every time.
+                        if self.ephemeral.airbase_by_oid.contains_key(&oid) {
+                            let start_ts = Utc::now();
+                            if let Err(e) = self.sync_warehouse_to_objective(lua, oid) {
+                                error!("failed to sync objective {oid} from warehouse {:?}", e)
+                            }
+                            record_perf(&mut perf.logistics_sync_from, start_ts);
                         }
-                        record_perf(&mut perf.logistics_sync_from, start_ts);
                         // Supply critical alert check
                         let threshold = self.ephemeral.cfg.supply_alert_threshold;
                         if threshold > 0 {
@@ -1567,11 +1575,16 @@ impl Db {
                 LogiStage::SyncToWarehouses { objectives } => match objectives.pop() {
                     None => self.ephemeral.logistics_stage = LogiStage::Complete { last_tick: ts },
                     Some(oid) => {
-                        let start_ts = Utc::now();
-                        if let Err(e) = self.sync_objective_to_warehouse(lua, oid) {
-                            error!("failed to sync objective {oid} to warehouse {:?}", e)
+                        // See the matching comment in SyncFromWarehouses above: this
+                        // queue drains slowly and an entry's airbase registration can
+                        // legitimately disappear before it's reached.
+                        if self.ephemeral.airbase_by_oid.contains_key(&oid) {
+                            let start_ts = Utc::now();
+                            if let Err(e) = self.sync_objective_to_warehouse(lua, oid) {
+                                error!("failed to sync objective {oid} to warehouse {:?}", e)
+                            }
+                            record_perf(&mut perf.logistics_sync_to, start_ts);
                         }
-                        record_perf(&mut perf.logistics_sync_to, start_ts);
                     }
                 },
             }
