@@ -10,6 +10,14 @@
   Data is sent as newline-terminated JSON, split into 50-unit batches to
   stay within UDP's practical payload limits.
 
+  It also runs a client-side performance monitor (see BF_PERFMON_* below)
+  that logs FPS, this Lua VM's memory, and world object count every few
+  seconds to:
+    %USERPROFILE%\Saved Games\DCS\Logs\bf_perfmon.csv
+  Open that CSV (Excel/Sheets) after a flight to spot FPS dips or memory
+  growth and correlate them to mission time. Set BF_PERFMON_ENABLE = false
+  to turn it off.
+
   Coalition values from DCS:
     0 = Neutral / No coalition
     1 = Red
@@ -28,6 +36,134 @@ local BF_PORT = 42001
 local BF_INTERVAL = 0.25  -- seconds between exports
 
 local bf_socket = nil
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Client-side performance monitor
+--
+-- Runs entirely inside the DCS client process (this Export.lua runs in
+-- its own Lua VM, separate from the mission/server scripting engine).
+-- Samples real frame rate, this VM's Lua GC memory, and world object
+-- count, and appends a CSV row to Logs/bf_perfmon.csv every
+-- BF_PERFMON_INTERVAL seconds. Use this to correlate FPS drops/stutters
+-- and memory growth with what's happening in the mission while you fly.
+--
+-- Set BF_PERFMON_ENABLE = false to disable without removing the code.
+-- ═══════════════════════════════════════════════════════════════════════
+local BF_PERFMON_ENABLE = true
+local BF_PERFMON_INTERVAL = 5       -- seconds between CSV samples
+local BF_PERFMON_LEAK_WINDOW = 12   -- samples (~1 min at default interval) to judge a leak trend
+local BF_PERFMON_LEAK_KB = 51200    -- warn if export-VM memory grew this much (50MB) over the window
+
+local bf_pm_logpath = nil
+local bf_pm_frame_count = 0         -- frames seen since last 1s fps tick
+local bf_pm_fps_last_tick = nil     -- os.clock() of last 1s fps tick
+local bf_pm_fps_samples = {}        -- fps values collected during current BF_PERFMON_INTERVAL window
+local bf_pm_min_fps_window = nil
+local bf_pm_mem_history = {}        -- ring buffer of recent export-VM mem_kb samples (for leak trend)
+
+local function bf_pm_logdir()
+  return (lfs and lfs.writedir and lfs.writedir() or "") .. "Logs\\"
+end
+
+local function bf_pm_init()
+  local ok = pcall(function()
+    bf_pm_logpath = bf_pm_logdir() .. "bf_perfmon.csv"
+    local exists = false
+    local f = io.open(bf_pm_logpath, "r")
+    if f then exists = true; f:close() end
+    if not exists then
+      local w = io.open(bf_pm_logpath, "w")
+      if w then
+        w:write("timestamp,model_time,fps_avg,fps_min,export_mem_kb,export_mem_delta_kb,world_objects\n")
+        w:close()
+      end
+    end
+  end)
+  if not ok then bf_pm_logpath = nil end
+end
+
+local function bf_pm_write_row(row)
+  if not bf_pm_logpath then return end
+  pcall(function()
+    local f = io.open(bf_pm_logpath, "a")
+    if f then
+      f:write(row .. "\n")
+      f:close()
+    end
+  end)
+end
+
+-- Called every real frame (DCS export callback) to accumulate an FPS estimate.
+local function bf_pm_on_frame()
+  if not BF_PERFMON_ENABLE then return end
+  bf_pm_frame_count = bf_pm_frame_count + 1
+  local now = os.clock()
+  if not bf_pm_fps_last_tick then
+    bf_pm_fps_last_tick = now
+    return
+  end
+  local elapsed = now - bf_pm_fps_last_tick
+  if elapsed >= 1.0 then
+    local fps = bf_pm_frame_count / elapsed
+    bf_pm_fps_samples[#bf_pm_fps_samples + 1] = fps
+    if not bf_pm_min_fps_window or fps < bf_pm_min_fps_window then
+      bf_pm_min_fps_window = fps
+    end
+    bf_pm_frame_count = 0
+    bf_pm_fps_last_tick = now
+  end
+end
+
+-- Called on the BF_PERFMON_INTERVAL schedule to sample memory/objects and log a row.
+local function bf_pm_sample(mtime)
+  if not BF_PERFMON_ENABLE then return end
+  if not bf_pm_logpath then bf_pm_init() end
+
+  local fps_avg = 0
+  if #bf_pm_fps_samples > 0 then
+    local sum = 0
+    for _, v in ipairs(bf_pm_fps_samples) do sum = sum + v end
+    fps_avg = sum / #bf_pm_fps_samples
+  end
+  local fps_min = bf_pm_min_fps_window or fps_avg
+  bf_pm_fps_samples = {}
+  bf_pm_min_fps_window = nil
+
+  collectgarbage("collect")
+  local mem_kb = collectgarbage("count")
+
+  bf_pm_mem_history[#bf_pm_mem_history + 1] = mem_kb
+  while #bf_pm_mem_history > BF_PERFMON_LEAK_WINDOW do
+    table.remove(bf_pm_mem_history, 1)
+  end
+  local mem_delta = 0
+  if #bf_pm_mem_history > 1 then
+    mem_delta = mem_kb - bf_pm_mem_history[1]
+  end
+
+  local world_objects = 0
+  if LoGetWorldObjects then
+    local ok, objs = pcall(LoGetWorldObjects)
+    if ok and objs then
+      for _ in pairs(objs) do world_objects = world_objects + 1 end
+    end
+  end
+
+  local ts = os.date("%Y-%m-%d %H:%M:%S")
+  bf_pm_write_row(string.format(
+    "%s,%.1f,%.1f,%.1f,%.0f,%.0f,%d",
+    ts, mtime or 0, fps_avg, fps_min, mem_kb, mem_delta, world_objects
+  ))
+
+  if #bf_pm_mem_history >= BF_PERFMON_LEAK_WINDOW and mem_delta >= BF_PERFMON_LEAK_KB then
+    local msg = string.format(
+      "BF_PERFMON: possible memory growth: export VM memory grew %.0f KB over last %d samples (now %.0f KB)",
+      mem_delta, BF_PERFMON_LEAK_WINDOW, mem_kb
+    )
+    bf_pm_write_row(string.format("%s,,,,,,%s", ts, "\"" .. msg .. "\""))
+    if log then log.write("BF_PERFMON", log.WARNING, msg) end
+  end
+end
 
 -- ── JSON encoder (minimal, no external dependency) ────────────────────
 local function jsonVal(v)
@@ -89,8 +225,14 @@ local function bf_send(data)
 end
 
 -- ── DCS export callbacks ───────────────────────────────────────────────
+local bf_pm_next_sample = 0
+
 function LuaExportStart()
   bf_connect()
+  if BF_PERFMON_ENABLE then
+    bf_pm_init()
+    bf_pm_next_sample = 0
+  end
 end
 
 function LuaExportStop()
@@ -100,11 +242,29 @@ function LuaExportStop()
   end
 end
 
+-- Called by DCS every real frame; used only to accumulate the FPS estimate.
+function LuaExportBeforeNextFrame()
+  local ok, err = pcall(bf_pm_on_frame)
+  if not ok and log then
+    log.write("BF_PERFMON", log.ERROR, tostring(err))
+  end
+end
+
 function LuaExportActivityNextEvent(t)
   local ok, err = pcall(doExport)
   if not ok and log then
     log.write("BF_EXPORT", log.ERROR, tostring(err))
   end
+
+  if BF_PERFMON_ENABLE and t >= bf_pm_next_sample then
+    local mtime = LoGetModelTime and LoGetModelTime() or 0
+    local okPm, errPm = pcall(bf_pm_sample, mtime)
+    if not okPm and log then
+      log.write("BF_PERFMON", log.ERROR, tostring(errPm))
+    end
+    bf_pm_next_sample = t + BF_PERFMON_INTERVAL
+  end
+
   return t + BF_INTERVAL
 end
 
