@@ -21,17 +21,21 @@
 --   %USERPROFILE%\Saved Games\DCS\Logs\dcs.log
 -- search that file for "BFCOCKPIT" after joining a mission.
 --
--- STATUS as of the last live test: dxgui/Window/WebViewWidget access from
--- a Hooks script works, and plain (non-CEF) dxgui widgets render fine.
--- CEF itself receives cefLoadUrl calls (confirmed on its own browser
--- thread in dcs.log) but never paints anything -- gray-blue blank surface
--- even for https://www.google.com. Current hypothesis: DCS's embedded CEF
--- may have no external network access at all (plausible for a build only
--- ever intended for local/internal content). This version tests that
--- directly by writing a tiny local HTML file and loading it via file://
--- instead of https:// -- if THIS renders, the fix is serving/mirroring
--- the cockpit page locally instead of loading it over the network; if
--- this ALSO stays blank, the problem is deeper than network access.
+-- STATUS as of the last live test: dxgui/Window/WebViewWidget access from a
+-- Hooks script works, and plain (non-CEF) dxgui widgets render fine. The
+-- window opens, but the webview area stays blank -- and dcs.log shows the
+-- "loading file:///..." line (inside webview:browserCreated's callback)
+-- NEVER appears at all, even for a local file:// page. So this isn't a
+-- network-access or paint problem -- browserCreated's callback itself
+-- never fires. Leading hypothesis: a subscribe-after-fire race -- if
+-- window:insertWidget(webview) synchronously creates the underlying CEF
+-- browser on DCS's side, then registering browserCreated(fn) on the next
+-- line is already too late to catch that event. This version hedges
+-- against that by also calling cefLoadUrl immediately after insertWidget,
+-- in addition to inside browserCreated -- whichever path actually fires
+-- wins, and calling cefLoadUrl twice should be harmless. It also logs the
+-- instant browserCreated's callback fires (if ever), to confirm/refute
+-- the race theory directly from dcs.log.
 
 local net = require('net')
 
@@ -140,19 +144,48 @@ local function open()
 
         webview = WebViewWidget.new()
         webview:setBounds(0, 48, 420, 292)
-        window:insertWidget(webview)
+
+        local url = test_url or "https://www.google.com"
+        local load_attempted = false
+        local function try_load(from)
+            if load_attempted then
+                logmsg("try_load(" .. from .. ") skipped, already loaded")
+                return
+            end
+            load_attempted = true
+            logmsg("loading " .. url .. " (triggered by " .. from .. ")")
+            local ok_load, load_err = pcall(function() webview:cefLoadUrl(url) end)
+            if not ok_load then
+                logmsg("FATAL: cefLoadUrl failed: " .. tostring(load_err))
+                load_attempted = false -- allow the other trigger to retry
+            end
+        end
+
         -- NOTE: the real dxgui/bind/WebViewWidget.lua only exposes
         -- browserCreated(self, callback) + cefLoadUrl(self, url) as two
         -- separate methods -- CEFTest.lua's own example calls a
         -- webview:cefCallback(...) that doesn't actually exist in that
-        -- binding, which silently no-ops the load. browserCreated is the
-        -- real hook: it fires once the underlying CEF browser instance
-        -- exists, which is the right time to call cefLoadUrl.
-        webview:browserCreated(function()
-            local url = test_url or "https://www.google.com"
-            logmsg("loading " .. url)
-            webview:cefLoadUrl(url)
+        -- binding, which silently no-ops the load. browserCreated is
+        -- documented to fire once the underlying CEF browser instance
+        -- exists -- but the last live test showed it never fires at all,
+        -- which smells like insertWidget below already creates the browser
+        -- synchronously, so registering the callback beforehand (as done
+        -- here) is the first half of the fix; calling cefLoadUrl
+        -- immediately after insertWidget as well is the hedge in case
+        -- browserCreated simply never fires on this DCS build regardless
+        -- of ordering.
+        local ok_bc, bc_err = pcall(function()
+            webview:browserCreated(function()
+                logmsg("browserCreated callback fired")
+                try_load("browserCreated callback")
+            end)
         end)
+        if not ok_bc then
+            logmsg("browserCreated registration failed: " .. tostring(bc_err))
+        end
+
+        window:insertWidget(webview)
+        try_load("immediate fallback after insertWidget")
     end)
 
     if not ok then
