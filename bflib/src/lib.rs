@@ -1152,7 +1152,12 @@ fn force_players_to_spectators(ctx: &mut Context, net: &Net, ts: DateTime<Utc>) 
     for (_, ids) in ctx.db.ephemeral.players_to_force_to_spectators(ts) {
         for ucid in ids {
             match ctx.connected.id_by_ucid.get(&ucid) {
-                None => warn!("no id for player ucid {:?}", ucid),
+                // Expected when the player disconnected between being queued
+                // for this and the scheduled time arriving -- nothing to
+                // enforce on someone who already left, and this entry isn't
+                // retried (players_to_force_to_spectators consumes it via
+                // split_off regardless), so it's a one-shot no-op, not a bug.
+                None => debug!("no id for player ucid {:?} (already disconnected)", ucid),
                 Some(id) => {
                     info!("forcing player {} to spectators", ucid);
                     if let Err(e) =
