@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, KeyRound, User } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
+import ThemeToggle from '../components/ThemeToggle'
 
 export default function LoginPage() {
   const { refresh } = useAuth()
@@ -48,14 +49,15 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--bg)' }}>
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--bg)' }}>
+      <ThemeToggle style={{ position: 'absolute', top: '1.25rem', right: '1.25rem' }} />
       <div style={{ padding: '2rem', width: '100%', maxWidth: '340px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--bg-card)' }}>
         <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
           <div style={{
             width: 48, height: 48, borderRadius: 6, margin: '0 auto 0.75rem',
             background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.1rem', color: '#0a0d07',
+            fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.1rem', color: 'var(--accent-fg)',
           }}>
             FE
           </div>
@@ -157,7 +159,7 @@ export default function LoginPage() {
             <button
               type="submit" disabled={loading || !username || !password}
               style={{
-                padding: '0.65rem', background: 'var(--accent)', color: '#fff', border: 'none',
+                padding: '0.65rem', background: 'var(--accent)', color: 'var(--accent-fg)', border: 'none',
                 borderRadius: '3px', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '0.78rem',
                 letterSpacing: '0.12em', fontFamily: "'Bebas Neue', sans-serif",
                 opacity: loading || (!username || !password) ? 0.6 : 1, transition: 'opacity 0.15s',

@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { LogOut, Shield, Plus, Search, Menu, X } from 'lucide-react'
 import { api, type WikiPageMeta } from '../api'
 import { useAuth } from '../context/AuthContext'
+import ThemeToggle from './ThemeToggle'
 
 function groupBySection(pages: WikiPageMeta[]) {
   const groups = new Map<string, WikiPageMeta[]>()
@@ -49,7 +50,7 @@ export default function Layout() {
             width: 28, height: 28, borderRadius: 4, flexShrink: 0,
             background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.7rem', color: '#0a0d07',
+            fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.7rem', color: 'var(--accent-fg)',
           }}>FE</div>
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.05rem', letterSpacing: '0.18em', color: 'var(--text)' }}>
             FOWL ENGINE WIKI
@@ -57,6 +58,8 @@ export default function Layout() {
         </NavLink>
 
         <div style={{ flex: 1 }} />
+
+        <ThemeToggle style={{ marginRight: 12 }} />
 
         {user?.is_admin && (
           <button
