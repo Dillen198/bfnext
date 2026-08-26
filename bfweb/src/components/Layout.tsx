@@ -1,12 +1,12 @@
 import React from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Map, Target, BarChart3, Users, Crosshair,
   Zap, LogOut, Shield, Settings, Settings2, Info, Server, Radio,
   ChevronRight, Plane, Menu, X, ChevronsLeft, ChevronsRight, BookOpen,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { api, type Weather } from '../api'
+import { api } from '../api'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
@@ -27,6 +27,17 @@ const CONFIG_NAV = { to: '/admin/config', icon: Settings2, label: 'CONFIG' }
 const PROFILE_NAV = (ucid: string) => ({ to: `/pilots?ucid=${ucid}`, icon: Users, label: 'MY PROFILE' })
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// NavLink's built-in isActive only matches pathname, so PILOTS (/pilots) and
+// MY PROFILE (/pilots?ucid=...) -- same route, different query string --
+// would both light up together on the pilot profile page. Match search too
+// so only one of them is active at a time.
+function isNavActive(to: string, pathname: string, search: string, exact: boolean): boolean {
+  const [toPath, toQuery] = to.split('?')
+  const pathMatches = exact ? pathname === toPath : pathname === toPath || pathname.startsWith(toPath + '/')
+  if (!pathMatches) return false
+  return toQuery ? search === `?${toQuery}` : search === ''
+}
 
 function pad(n: number) { return String(n).padStart(2, '0') }
 function fmtDuration(s: number) {
@@ -89,77 +100,6 @@ function RestartCountdown({ restartAt }: { restartAt: string }) {
   )
 }
 
-// ── Weather pill ──────────────────────────────────────────────────────────────
-
-const COMPASS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW']
-const windDir = (deg: number) => COMPASS[Math.round(deg / 22.5) % 16]
-
-type FlightRule = 'VFR' | 'MVFR' | 'IFR' | 'LIFR'
-function flightRule(ceilingFt: number | null, visM: number | null): FlightRule {
-  const visKm = visM !== null ? visM / 1000 : 99
-  const ceil  = ceilingFt ?? 9999
-  if (ceil < 500  || visKm < 1.6) return 'LIFR'
-  if (ceil < 1000 || visKm < 4.8) return 'IFR'
-  if (ceil < 3000 || visKm < 8)   return 'MVFR'
-  return 'VFR'
-}
-const RULE_COLOR: Record<FlightRule, string> = {
-  VFR: '#4ade80', MVFR: '#60a5fa', IFR: '#f87171', LIFR: '#c084fc',
-}
-const CLOUD: Record<number, string> = { 0:'SKC',1:'FEW',2:'FEW',3:'FEW',4:'FEW',5:'SCT',6:'SCT',7:'BKN',8:'OVC' }
-const cloudCover = (d: number | null) => d === null ? 'CLR' : (CLOUD[Math.round(Math.max(0, Math.min(8, d)))] ?? 'CLR')
-
-function WeatherPill({ w }: { w: Weather }) {
-  const hasCeiling = (w.cloud_density ?? 0) >= 5
-  const cloudFt    = Math.round(w.cloud_base_m * 3.281 / 100) * 100
-  const rule       = flightRule(hasCeiling ? cloudFt : null, w.visibility_m ?? null)
-  const color      = RULE_COLOR[rule]
-  const cover      = cloudCover(w.cloud_density ?? null)
-  const vis        = w.visibility_m !== null
-    ? w.visibility_m >= 9999 ? '10+km' : `${(w.visibility_m / 1000).toFixed(1)}km`
-    : null
-  const cell = (label: string, val: string, c = 'var(--text-muted)') => (
-    <div style={{ lineHeight: 1.2, textAlign: 'center' }}>
-      <div style={{ fontSize: '0.52rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>{label}</div>
-      <div className="font-mono-vs" style={{ fontSize: '0.72rem', color: c, fontWeight: 600 }}>{val}</div>
-    </div>
-  )
-  const calm = w.wind_speed_kts < 1
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-      <span style={{
-        fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.1em',
-        color, border: `1px solid ${color}44`, padding: '3px 8px', borderRadius: 4,
-        background: `${color}10`, lineHeight: 1,
-      }}>{rule}</span>
-      <div style={{ width: 1, height: 26, background: 'var(--border-light)', flexShrink: 0 }} />
-      {cell('WIND', calm ? 'CALM' : `${windDir(w.wind_from_deg)} ${Math.round(w.wind_speed_kts)}kt`)}
-      {cell('TEMP', `${Math.round(w.temp_c)}°C`)}
-      {cell('QNH',  `${Math.round(w.qnh_hpa)}`)}
-      {cell('SKY',  hasCeiling ? `${cover} ${cloudFt}ft` : cover)}
-      {vis && cell('VIS', vis)}
-    </div>
-  )
-}
-
-// ── Territory bar ─────────────────────────────────────────────────────────────
-
-function TerritoryBar({ bluePct, redPct }: { bluePct: number; redPct: number }) {
-  const neutPct = Math.max(0, 100 - bluePct - redPct)
-  return (
-    <div style={{ flexShrink: 0 }}>
-      <div style={{ width: 90, height: 5, overflow: 'hidden', display: 'flex', background: 'var(--border-light)', borderRadius: 3 }}>
-        <div style={{ width: `${bluePct}%`, background: 'var(--blue)',  transition: 'width 0.5s' }} />
-        <div style={{ width: `${neutPct}%`, background: '#2d3748',     transition: 'width 0.5s' }} />
-        <div style={{ width: `${redPct}%`,  background: 'var(--red)',   transition: 'width 0.5s' }} />
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3 }}>
-        <span className="font-mono-vs" style={{ fontSize: '0.62rem', color: 'var(--blue)', fontWeight: 700 }}>{bluePct}%</span>
-        <span className="font-mono-vs" style={{ fontSize: '0.62rem', color: 'var(--red)',  fontWeight: 700 }}>{redPct}%</span>
-      </div>
-    </div>
-  )
-}
 
 // ── Discord icon ──────────────────────────────────────────────────────────────
 
@@ -176,6 +116,7 @@ function DiscordIcon({ size = 11 }: { size?: number }) {
 export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
     try { return localStorage.getItem('vs_sidebar_collapsed') === '1' } catch { return false }
@@ -185,16 +126,9 @@ export default function Layout() {
   }, [sidebarCollapsed])
 
   const { data: stats }       = useQuery({ queryKey: ['stats'],      queryFn: api.stats,      refetchInterval: 30_000 })
-  const { data: objectives = [] } = useQuery({ queryKey: ['objectives'], queryFn: () => api.objectives(), refetchInterval: 30_000 })
   const { data: rounds = [] } = useQuery({ queryKey: ['rounds'],     queryFn: api.rounds,     refetchInterval: 60_000 })
 
   const { selectedRound, setSelectedRound } = useRound()
-
-  const blueCount = objectives.filter(o => o.owner === 'Blue').length
-  const redCount  = objectives.filter(o => o.owner === 'Red').length
-  const total     = objectives.length
-  const bluePct   = total > 0 ? Math.round(blueCount / total * 100) : 0
-  const redPct    = total > 0 ? Math.round(redCount  / total * 100) : 0
 
   const isLive      = !!stats?.active_round
   const activeRound = rounds.find(r => r.active)
@@ -276,12 +210,6 @@ export default function Layout() {
           )}
           {stats?.restart_at && (
             <><Sep /><div style={{ padding: '0 4px' }}><RestartCountdown restartAt={stats.restart_at} /></div></>
-          )}
-          {stats?.weather && (
-            <><Sep /><WeatherPill w={stats.weather} /></>
-          )}
-          {total > 0 && (
-            <><Sep /><TerritoryBar bluePct={bluePct} redPct={redPct} /></>
           )}
         </div>
 
@@ -403,7 +331,7 @@ export default function Layout() {
                 to={to}
                 end={to === '/' || to === '/admin'}
                 onClick={() => setSidebarOpen(false)}
-                className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+                className={() => `nav-item${isNavActive(to, location.pathname, location.search, to === '/' || to === '/admin') ? ' active' : ''}`}
                 title={sidebarCollapsed ? label : undefined}
               >
                 <Icon size={16} style={{ flexShrink: 0 }} />

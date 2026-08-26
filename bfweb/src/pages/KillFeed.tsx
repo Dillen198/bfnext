@@ -197,10 +197,10 @@ export default function KillFeed() {
             <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>Event Log</span>
             <span className="ml-auto font-mono" style={{ fontSize: '0.58rem', color: '#374151' }}>{kills.length} events</span>
           </div>
-          <div className="overflow-x-auto">
+          <div style={{ maxHeight: 480, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr style={{ background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)' }}>
+                <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 1 }}>
                   {['Time (Z)', 'Category', 'Killer', 'Airframe', 'Weapon', 'Target Unit', 'Victim'].map(h => (
                     <th key={h} style={{ padding: '7px 12px', textAlign: 'left', fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: '#374151', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}

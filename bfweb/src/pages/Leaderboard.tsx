@@ -207,12 +207,12 @@ export default function Leaderboard() {
           </span>
         </div>
 
-        {/* ── Main table ── */}
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', flexShrink: 0 }}>
-          <div style={{ overflowX: 'auto' }}>
+        {/* ── Main table (scrolls internally, not the whole page) ── */}
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: '1 1 0', minHeight: 240 }}>
+          <div style={{ overflow: 'auto', flex: '1 1 auto', minHeight: 0 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr style={{ background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)' }}>
+                <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 1 }}>
                   <th style={{ padding: '10px 14px', textAlign: 'left', width: 36, fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>#</th>
                   <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>Pilot</th>
                   {COLS.map(c => (
