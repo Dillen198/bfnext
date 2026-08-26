@@ -1705,7 +1705,10 @@ impl Ephemeral {
                 .spawn_with_link(template, carrier_link_id)
                 .with_context(|| format_compact!("spawning template {}", group.template_name))?;
             match &spawned {
-                Spawned::Static => (),
+                Spawned::Static(oid) => {
+                    self.object_id_by_gid.insert(group.id, oid.clone());
+                    self.gid_by_object_id.insert(oid.clone(), group.id);
+                }
                 Spawned::Group(g) => {
                     let oid = g.object_id()?.erased();
                     self.object_id_by_gid.insert(group.id, oid.clone());

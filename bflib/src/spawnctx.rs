@@ -120,7 +120,7 @@ pub enum Despawn {
 #[derive(Debug, Clone)]
 pub enum Spawned<'lua> {
     Group(Group<'lua>),
-    Static,
+    Static(DcsOid<ClassObject>),
 }
 
 impl<'lua> SpawnCtx<'lua> {
@@ -239,12 +239,17 @@ impl<'lua> SpawnCtx<'lua> {
                 // accept that the crate won't track further ship movement,
                 // rather than silently misplacing it.
                 let _ = link_unit_name;
-                self.coalition
+                let obj = self
+                    .coalition
                     .add_static_object(template.country, unit)
                     .with_context(|| {
                         format_compact!("spawning static object from template {:?}", template)
                     })?;
-                Ok(Spawned::Static)
+                let oid = match &obj {
+                    Static::Airbase(a) => a.object_id()?.erased(),
+                    Static::Static(s) => s.object_id()?.erased(),
+                };
+                Ok(Spawned::Static(oid))
             }
         }
     }
