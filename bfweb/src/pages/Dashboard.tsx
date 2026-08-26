@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { MapContainer, TileLayer, CircleMarker, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet'
+import L from 'leaflet'
 import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useNavigate } from 'react-router-dom'
@@ -95,13 +96,34 @@ function FitBounds({ objectives }: { objectives: Objective[] }) {
 
 function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenTacmap: () => void }) {
   const valid = objectives.filter(o => o.lat !== 0 || o.lon !== 0)
-  const dot = (owner: string) =>
-    owner === 'Blue' ? { color: campaign.blueColor, fillColor: campaign.blueColor } :
-    owner === 'Red'  ? { color: campaign.redColor,  fillColor: campaign.redColor  } :
-                       { color: '#4a5240',           fillColor: '#3a4030'          }
+  const ownerColor = (owner: string) =>
+    owner === 'Blue' ? campaign.blueColor :
+    owner === 'Red'  ? campaign.redColor  :
+                       '#4a5240'
   const blue = valid.filter(o => o.owner === 'Blue').length
   const red  = valid.filter(o => o.owner === 'Red').length
   const neu  = valid.filter(o => o.owner === 'Neutral').length
+
+  // Generic shape-language glyphs (airbase/naval/factory/etc), not NATO or
+  // Warsaw Pact military symbology -- same OBJ_ICON set used by the
+  // Critical Objectives list below, so an objective reads the same way in
+  // both places on this page.
+  const markerIcon = (obj: Objective) => {
+    const c = ownerColor(obj.owner)
+    const alive = obj.health > 0
+    const size = obj.kind === 'Airbase' ? 20 : (obj.kind === 'Carrier Group' || obj.kind === 'Naval Base') ? 18 : 15
+    const symbol = OBJ_ICON[obj.kind] ?? '●'
+    return L.divIcon({
+      html: `<div style="width:${size}px;height:${size}px;border-radius:50%;
+               background:${c}${alive ? '33' : '11'};border:1.5px solid ${c}${alive ? 'ff' : '66'};
+               display:flex;align-items:center;justify-content:center;
+               font-size:${Math.round(size * 0.55)}px;line-height:1;color:${c}${alive ? 'ff' : '77'};
+               box-shadow:0 0 ${alive ? 6 : 0}px ${c}77;">${symbol}</div>`,
+      className: '',
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+    })
+  }
 
   return (
     <div style={{ position: 'relative', height: '100%', background: '#050806' }}>
@@ -110,10 +132,7 @@ function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenT
         <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" maxZoom={19} opacity={0.5} />
         {valid.length > 0 && <FitBounds objectives={valid} />}
         {valid.map(obj => (
-          <CircleMarker key={obj.id} center={[obj.lat, obj.lon]}
-            radius={obj.kind === 'Airbase' ? 8 : obj.kind === 'Carrier Group' ? 7 : 5}
-            pathOptions={{ ...dot(obj.owner), fillOpacity: obj.health > 0 ? 0.9 : 0.2, weight: 1.5 }}
-          />
+          <Marker key={obj.id} position={[obj.lat, obj.lon]} icon={markerIcon(obj)} />
         ))}
       </MapContainer>
 
