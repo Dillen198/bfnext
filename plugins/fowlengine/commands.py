@@ -8,6 +8,9 @@ import json
 import os
 import re
 import asyncio
+import shutil
+import subprocess
+import time
 from collections import deque
 
 # NOTE: this plugin previously subclassed Plugin[FowlEngineEventListener] and
@@ -36,6 +39,16 @@ ENGINE_LOG_LEVEL_RE = re.compile(r"\[(ERROR|WARN|WARNING)\]", re.IGNORECASE)
 CAMPAIGN_POLL_SECS = 20
 CAMPAIGN_RECONNECT_SECS = 15
 ACHIEVEMENT_THRESHOLDS = [(15, "God of War"), (10, "Unstoppable"), (5, "Ace")]
+
+# ── bfdb process supervision ────────────────────────────────────────────────
+# bfdb.exe isn't managed by DCSServerBot's own Server object (that only
+# controls the DCS process) -- it's a plain sidecar process on the same
+# machine, so this plugin health-checks it independently and relaunches it
+# via bfsystem.ps1 when it stops responding, the same way an admin would by
+# hand today.
+BFDB_HEALTH_CHECK_SECS = 30
+BFDB_DEFAULT_HEALTH_FAILURES = 3   # consecutive failed checks before relaunching
+BFDB_DEFAULT_RESTART_COOLDOWN = 120  # min seconds between relaunch attempts
 
 # ── bfdb admin auth ──────────────────────────────────────────────────────────
 # bfdb's admin-gated endpoints (e.g. /api/commander/spawn, /ws/engine-logs) only
@@ -196,6 +209,10 @@ class FowlEngine(Plugin):
         self._kill_streaks = {}         # server name -> {ucid: consecutive kill count}
         self._kill_announced = {}       # server name -> {ucid: highest threshold already announced}
         self._capture_cursor = {}       # server name -> last-processed capture-event ISO timestamp
+        self._active_round = {}         # server name -> last-seen active round id
+        # Per-server bfdb health-check state (not persisted -- rebuilt on connect).
+        self._bfdb_fail_count = {}      # server name -> consecutive failed health checks
+        self._bfdb_last_restart = {}    # server name -> monotonic time.time() of last relaunch attempt
 
     async def cog_load(self) -> None:
         await super().cog_load()
@@ -204,6 +221,7 @@ class FowlEngine(Plugin):
         utils.safe_start(self.supervise_engine_logs)
         utils.safe_start(self.supervise_campaign_events)
         utils.safe_start(self.update_perf_status)
+        utils.safe_start(self.supervise_bfdb)
 
     async def cog_unload(self):
         await utils.safe_cancel(self.update_status)
@@ -211,6 +229,7 @@ class FowlEngine(Plugin):
         await utils.safe_cancel(self.supervise_engine_logs)
         await utils.safe_cancel(self.supervise_campaign_events)
         await utils.safe_cancel(self.update_perf_status)
+        await utils.safe_cancel(self.supervise_bfdb)
         for task in self._log_relay_tasks.values():
             task.cancel()
         for task in self._campaign_poll_tasks.values():
@@ -584,6 +603,97 @@ class FowlEngine(Plugin):
     async def before_update_perf_status(self):
         await self.bot.wait_until_ready()
 
+    # ── bfdb process supervision ─────────────────────────────────────────────
+
+    @tasks.loop(seconds=BFDB_HEALTH_CHECK_SECS)
+    async def supervise_bfdb(self):
+        """Health-checks bfdb.exe (independent of DCS server status -- bfdb
+        should be up serving the dashboard even between missions) and
+        relaunches it via bfsystem_script when it stops answering."""
+        for server in self.bot.servers.values():
+            config = self.get_config(server) or {}
+            if not config.get('bfdb_supervisor'):
+                continue
+            script = config.get('bfsystem_script')
+            if not script:
+                self.log.error(f"FowlEngine: bfdb_supervisor is enabled for {server.name} but bfsystem_script is not set")
+                continue
+
+            api_url = config.get("api_url", "http://localhost:8765")
+            healthy = await self._bfdb_health_check(api_url)
+
+            if healthy:
+                self._bfdb_fail_count[server.name] = 0
+                continue
+
+            fail_count = self._bfdb_fail_count.get(server.name, 0) + 1
+            self._bfdb_fail_count[server.name] = fail_count
+            threshold = int(config.get('bfdb_health_failures', BFDB_DEFAULT_HEALTH_FAILURES))
+            if fail_count < threshold:
+                self.log.warning(f"FowlEngine: bfdb health check failed for {server.name} ({fail_count}/{threshold})")
+                continue
+
+            cooldown = int(config.get('bfdb_restart_cooldown', BFDB_DEFAULT_RESTART_COOLDOWN))
+            last_restart = self._bfdb_last_restart.get(server.name, 0)
+            if time.time() - last_restart < cooldown:
+                continue  # already tried recently -- give it time to come up before trying again
+
+            self._bfdb_fail_count[server.name] = 0
+            self._bfdb_last_restart[server.name] = time.time()
+            self.log.error(f"FowlEngine: bfdb unreachable at {api_url} after {fail_count} checks -- relaunching via {script}")
+            ok, err = self._launch_bfsystem(script)
+            await self._notify_ops(
+                config,
+                f"⚠️ **bfdb was unreachable at `{api_url}`** after {fail_count} failed health checks.\n"
+                + (f"Relaunched via `{script}`." if ok else f"❌ Failed to relaunch: {err}")
+            )
+
+    @supervise_bfdb.before_loop
+    async def before_supervise_bfdb(self):
+        await self.bot.wait_until_ready()
+
+    @staticmethod
+    async def _bfdb_health_check(api_url: str) -> bool:
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{api_url}/api/stats", timeout=8) as resp:
+                    return resp.status == 200
+        except Exception:
+            return False
+
+    @staticmethod
+    def _launch_bfsystem(script: str) -> tuple:
+        """Launches bfsystem.ps1 in its own console, independent of this bot
+        process. bfsystem.ps1 isn't a plain one-shot launcher -- it starts
+        bfdb as a background job and then runs its own interactive status
+        loop (Console.ReadKey() to catch 'Q' for shutdown), so it needs a
+        real console attached; CREATE_NEW_CONSOLE gives it one without tying
+        its lifetime to the bot's own console/process."""
+        try:
+            subprocess.Popen(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+                close_fds=True,
+            )
+            return True, None
+        except Exception as ex:
+            return False, str(ex)
+
+    async def _notify_ops(self, config: dict, message: str):
+        """Best-effort notice to ops_channel (falling back to alerts_channel)
+        about bfdb supervision events. Silent if neither is configured."""
+        channel_id = config.get('ops_channel') or config.get('alerts_channel')
+        if not channel_id:
+            return
+        channel = self.bot.get_channel(int(channel_id))
+        if not channel:
+            return
+        try:
+            await channel.send(message)
+        except discord.HTTPException as ex:
+            self.log.error(f"FowlEngine: failed to send ops notice: {ex}")
+
     @tasks.loop(minutes=5.0)
     async def sync_ranks(self):
         for server in self.bot.servers.values():
@@ -840,6 +950,40 @@ class FowlEngine(Plugin):
             self.save_state()
         return result
 
+    async def _check_round_transition(self, session, api_url, server_name):
+        """Detects when bfdb's active round id changes -- an admin `reset` or a
+        scheduled rotation both end the current round and start a fresh one --
+        and clears the per-round diff baselines. Without this, the pollers keep
+        comparing new-round data against whatever owner/health/cursor was last
+        seen in the round that just ended, so a reset can silently suppress the
+        alerts for the objectives/kills that carried over unchanged."""
+        async with session.get(f"{api_url}/api/stats", timeout=10) as resp:
+            if resp.status != 200:
+                return
+            stats = await resp.json()
+        active_round = stats.get('active_round')
+        if not active_round:
+            return
+        rid = active_round.get('id')
+        if rid is None:
+            return
+        prev_rid = self._active_round.get(server_name)
+        self._active_round[server_name] = rid
+        if prev_rid is not None and prev_rid != rid:
+            self.log.info(
+                f"FowlEngine: {server_name} started round {rid} (was {prev_rid}) -- "
+                "resetting alert/achievement baselines"
+            )
+            # .clear() rather than reassignment: _campaign_event_poll holds a
+            # long-lived reference to the obj_state dict across loop iterations,
+            # so replacing self._obj_state[name] with a new dict wouldn't be
+            # visible through that reference.
+            self._obj_state.setdefault(server_name, {}).clear()
+            self._capture_cursor.pop(server_name, None)
+            self._kill_cursor.pop(server_name, None)
+            self._kill_streaks.setdefault(server_name, {}).clear()
+            self._kill_announced.setdefault(server_name, {}).clear()
+
     async def _campaign_event_poll(self, server: Server):
         config = self.get_config(server) or {}
         api_url = config.get("api_url", "http://localhost:8765")
@@ -854,6 +998,10 @@ class FowlEngine(Plugin):
             any_failed = False
             try:
                 async with aiohttp.ClientSession() as session:
+                    any_failed |= await self._poll_step(
+                        server.name, api_url, "/api/stats (round check)",
+                        self._check_round_transition(session, api_url, server.name),
+                    )
                     if alerts_channel_id:
                         main_channel = self.bot.get_channel(int(alerts_channel_id))
                         if not main_channel:
@@ -1630,6 +1778,63 @@ class FowlEngine(Plugin):
             await interaction.followup.send(embed=embed, view=view)
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
+
+    # ── bflib.dll upload ─────────────────────────────────────────────────────
+    # One step, not stage-then-deploy: DCS.exe only releases bflib.dll's file
+    # lock once it's actually shut down, so there's no way to swap the file in
+    # while the server is still up anyway -- the ServerTransformer status
+    # filter below only offers servers that are already SHUTDOWN/STOPPED (shut
+    # it down first, e.g. via DCSServerBot's own server stop/shutdown command).
+    # Overwrites bflib_dll_path directly after a timestamped backup, then
+    # restarts the server unless restart:False is passed.
+    @command(description='Upload a new bflib.dll and restart the server with it (server must already be shut down).')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def fe_upload_bflib(self, interaction: discord.Interaction,
+                               server: app_commands.Transform[Server, utils.ServerTransformer(status=[Status.SHUTDOWN, Status.STOPPED])],
+                               file: discord.Attachment, restart: bool = True):
+        await interaction.response.defer(ephemeral=True)
+        config = self.get_config(server) or {}
+        live_path = config.get('bflib_dll_path')
+        if not live_path:
+            await interaction.followup.send("❌ `bflib_dll_path` is not set in fowlengine.yaml.")
+            return
+        if server.status not in (Status.SHUTDOWN, Status.STOPPED):
+            await interaction.followup.send(
+                f"❌ **{server.name}** is currently `{server.status.name}` -- shut it down first. "
+                f"DCS.exe has to release bflib.dll before it can be replaced."
+            )
+            return
+        if not file.filename.lower().endswith('.dll'):
+            await interaction.followup.send(f"❌ `{file.filename}` doesn't look like a .dll -- refusing.")
+            return
+        if file.size > 200 * 1024 * 1024:
+            await interaction.followup.send(f"❌ `{file.filename}` is {file.size / 1024 / 1024:.1f} MB -- too large to be a real bflib.dll, refusing.")
+            return
+
+        try:
+            if os.path.exists(live_path):
+                backup_path = f"{live_path}.backup-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+                shutil.copy2(live_path, backup_path)
+            await file.save(live_path)
+        except Exception as ex:
+            await interaction.followup.send(f"❌ Failed to write `{live_path}`: {ex}")
+            return
+
+        if not restart:
+            await interaction.followup.send(
+                f"✅ `{live_path}` overwritten with `{file.filename}` ({file.size / 1024:.0f} KB). "
+                f"Start **{server.name}** when you're ready."
+            )
+            return
+
+        await interaction.followup.send(f"✅ `{live_path}` overwritten with `{file.filename}`. Starting **{server.name}**...")
+        try:
+            await server.startup()
+        except Exception as ex:
+            await interaction.followup.send(f"❌ Server failed to come back up: {ex}\nStart it manually and check its logs.")
+            return
+        await interaction.followup.send(f"✅ **{server.name}** is back up with the new bflib.dll.")
 
 async def setup(bot: DCSServerBot):
     await bot.add_cog(FowlEngine(bot))

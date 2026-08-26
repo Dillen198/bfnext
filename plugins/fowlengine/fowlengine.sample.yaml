@@ -93,6 +93,43 @@ DEFAULT:
   admin_username: ""
   admin_password: ""
 
+  # ---------------------------------------------
+  # bfdb Process Supervision (optional)
+  # ---------------------------------------------
+  # bfdb.exe isn't controlled by DCSServerBot's own server start/stop -- it's
+  # a separate sidecar process that normally has to be relaunched by hand
+  # (re-running bfsystem.ps1) if it crashes or is unreachable. When true, the
+  # bot health-checks it (GET api_url/api/stats) every ~30s and relaunches it
+  # via bfsystem_script if it stops responding for bfdb_health_failures
+  # checks in a row. Requires the bot itself to be running on the same
+  # Windows machine as bfdb/bfsystem.ps1.
+  bfdb_supervisor: false
+
+  # Absolute path to bfsystem.ps1 (or an equivalent launcher) on the machine
+  # this bot runs on. Required if bfdb_supervisor is true.
+  bfsystem_script: "C:\\path\\to\\bfsystem.ps1"
+
+  # (Optional) Consecutive failed health checks before relaunching. Default 3.
+  bfdb_health_failures: 3
+
+  # (Optional) Minimum seconds between relaunch attempts, so a bfdb that's
+  # merely slow to start doesn't get relaunched repeatedly. Default 120.
+  bfdb_restart_cooldown: 120
+
+  # (Optional) Discord channel for "bfdb went unreachable / relaunched"
+  # notices. Falls back to alerts_channel if unset, otherwise silent.
+  ops_channel: 123456789012345678
+
+  # ---------------------------------------------
+  # bflib.dll Upload (optional, admin-only)
+  # ---------------------------------------------
+  # Live path bflib.dll is loaded from (wherever your mission's `require`
+  # resolves it). /vs fe_upload_bflib only accepts a server that's already
+  # shut down (DCS.exe holds a file lock on bflib.dll while running), backs
+  # up the current DLL, overwrites it with the uploaded one, and restarts the
+  # server -- so a new build can be shipped without RDPing into the server.
+  # Leave unset to disable the command.
+  bflib_dll_path: "C:\\path\\to\\Scripts\\bflib.dll"
 
   # ---------------------------------------------
   # Localization & Message Formats

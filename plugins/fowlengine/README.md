@@ -13,6 +13,9 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 - **Server Performance Embed:** Posts and edits a live CPU/RAM/GPU/disk/temp + DCS frame-time embed every 5 minutes, pulled from bfdb's admin-only `/api/admin/perf`.
 - **Dual-Login Dashboard:** Supports both standard Discord OAuth web-login and securely generated HMAC bot-tokens to seamlessly bridge the `bfweb` dashboard.
 - **Interactive Commander Terminal:** A slick UI terminal allowing commanders to drop crates and infantry squads at airbases directly from Discord.
+- **bfdb Crash Supervision:** Optionally health-checks bfdb.exe every ~30s and relaunches it via `bfsystem.ps1` if it stops responding, so a bfdb crash doesn't need someone to RDP in and restart it by hand. See `bfdb_supervisor` in Configuration.
+- **bflib.dll Upload:** Admin-only `/vs fe_upload_bflib` command lets you ship a new engine build straight from Discord -- server must already be shut down, then it backs up the current DLL, overwrites it with your upload, and restarts the server.
+- **Engine Error Feed:** bfdb keeps a rolling buffer of ERROR/WARN lines from the live engine log and exposes it at the admin-only `/api/admin/engine-errors` endpoint, shown as a persistent panel on the `bfweb` admin page -- so recent errors are visible even if nobody had the dashboard or Discord open when they happened, alongside the existing Discord relay (Live Engine Log Relay, above).
 
 ## Installation
 
@@ -83,11 +86,13 @@ DEFAULT:
 - `/vs priority [objective]` - Marks an objective as a high priority target for your team.
 - `/vs ban [ucid] [name] [reason] [until]` - Bans a pilot from the campaign (requires admin_username/admin_password).
 - `/vs unban [ucid]` - Removes a ban.
+- `/vs fe_upload_bflib [server] [file] [restart]` - Uploads a `.dll` attachment and overwrites `bflib_dll_path` with it (after a timestamped backup of the current file), then restarts the server unless `restart:False` is passed. The server must already be shut down -- DCS.exe holds a file lock on bflib.dll while running, so there's no way to replace it live; shut the server down first (e.g. via DCSServerBot's own server stop/shutdown command), then run this. Requires `bflib_dll_path` to be set.
 
 ## Architecture & Integration
-This plugin talks to bfdb, not directly to the DCS process. Two integration paths:
+This plugin talks to bfdb, not directly to the DCS process. Three integration paths:
 
 - **Read-only data** (`/status`, `fe_objectives`, `fe_stats`, capture/achievement polling, the engine log relay's history replay): plain HTTP/WebSocket calls to bfdb, no DCS-side setup needed beyond running bfdb itself.
 - **Commander actions** (`fe_priority`, `fe_spawn_deployable`, `fe_terminal`): bfdb calls into bflib's live netidx RPC server (`bflib/src/bg/rpcs.rs`) -- e.g. `spawn-deployable`, `set-objective-priority` -- which requires `admin_username`/`admin_password` to authenticate against bfdb, and requires bfdb to have been started with `--base` pointing at the mission's netidx path so it can reach bflib's RPCs.
+- **Server/process control** (`fe_upload_bflib`, and the `bfdb_supervisor` background task): neither goes through bfdb at all. `fe_upload_bflib` only accepts servers that are already `SHUTDOWN`/`STOPPED` (DCS.exe holds a file lock on bflib.dll while running), overwrites it directly, and calls `server.startup()` on DCSServerBot's own `Server` object to bring the server back up. The bfdb supervisor shells out to `bfsystem_script` (`bfsystem.ps1`) in its own console when bfdb's `/api/stats` stops responding. Both run with whatever OS privileges the bot process itself has, on the machine it's running on -- `fe_upload_bflib` is gated to `DCS Admin`.
 
 `lua/callbacks.lua` and `lua/commands.lua` are legacy from an earlier design (a direct Lua-hooks bridge) and are not used by any of the above -- they're unwired stubs kept only in case a lower-latency native bridge is built later.
