@@ -1,6 +1,7 @@
 import React from 'react'
 import { campaign } from '../config/campaign'
 import { Zap, Menu, X, BookOpen } from 'lucide-react'
+import ThemeToggle from './ThemeToggle'
 
 const links = [
   { href: '#about',    label: 'ABOUT' },
@@ -24,7 +25,7 @@ export default function Nav() {
     <header
       className="fixed top-0 inset-x-0 z-50 transition-all duration-300"
       style={{
-        background: scrolled ? 'rgba(10,10,10,0.95)' : 'transparent',
+        background: scrolled ? 'var(--nav-bg)' : 'transparent',
         backdropFilter: scrolled ? 'blur(12px)' : 'none',
         borderBottom: scrolled ? '1px solid var(--border)' : '1px solid transparent',
       }}
@@ -40,7 +41,7 @@ export default function Nav() {
               borderRadius: '2px',
               fontFamily: "'Bebas Neue', sans-serif",
               fontSize: '1rem',
-              color: '#fff',
+              color: 'var(--accent-fg)',
               letterSpacing: '0.05em',
             }}
           >
@@ -80,6 +81,7 @@ export default function Nav() {
 
         {/* CTA */}
         <div className="hidden md:flex items-center gap-3">
+          <ThemeToggle />
           <a href={campaign.dashboardUrl} className="vs-btn" style={{ padding: '0.45rem 1rem', fontSize: '0.78rem' }}>
             <Zap size={12} />
             OPS DASHBOARD
@@ -100,18 +102,20 @@ export default function Nav() {
         </div>
 
         {/* Mobile hamburger */}
-        <button
-          className="md:hidden"
-          onClick={() => setOpen(o => !o)}
-          style={{ background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', padding: '0.25rem' }}
-        >
-          {open ? <X size={22} /> : <Menu size={22} />}
-        </button>
+        <div className="md:hidden flex items-center gap-2">
+          <ThemeToggle />
+          <button
+            onClick={() => setOpen(o => !o)}
+            style={{ background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', padding: '0.25rem' }}
+          >
+            {open ? <X size={22} /> : <Menu size={22} />}
+          </button>
+        </div>
       </div>
 
       {/* Mobile menu */}
       {open && (
-        <div style={{ background: 'rgba(10,10,10,0.98)', borderBottom: '1px solid var(--border)', padding: '1rem 1.5rem' }}>
+        <div style={{ background: 'var(--nav-bg-mobile)', borderBottom: '1px solid var(--border)', padding: '1rem 1.5rem' }}>
           {links.map(l => (
             <a
               key={l.href}

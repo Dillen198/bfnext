@@ -74,7 +74,7 @@ function CommandTable({ rows }: { rows: CmdRow[] }) {
         style={{
           display: 'grid',
           gridTemplateColumns: '220px 1fr',
-          background: '#0d0d0d',
+          background: 'var(--bg-card)',
           borderBottom: '1px solid var(--border)',
           padding: '0.55rem 1rem',
         }}

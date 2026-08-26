@@ -33,7 +33,7 @@ export default function StatsSection() {
     .slice(0, 3)
 
   return (
-    <section id="stats" style={{ background: '#0d0d0d', padding: '6rem 0', borderTop: '1px solid var(--border)' }}>
+    <section id="stats" style={{ background: 'var(--bg-alt)', padding: '6rem 0', borderTop: '1px solid var(--border)' }}>
       <div className="max-w-7xl mx-auto px-6">
 
         {/* Header */}

@@ -5,7 +5,7 @@ export default function HeroSection() {
   return (
     <section
       id="hero"
-      className="relative min-h-screen flex flex-col justify-center overflow-hidden"
+      className="theme-locked-dark relative min-h-screen flex flex-col justify-center overflow-hidden"
       style={{ background: '#050505' }}
     >
       {/* Background image + overlay */}

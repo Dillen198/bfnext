@@ -3,7 +3,7 @@ import Reveal from './Reveal'
 
 export default function SpecialThanksSection() {
   return (
-    <section id="thanks" style={{ background: '#060606', padding: '5rem 0', borderTop: '1px solid var(--border)' }}>
+    <section id="thanks" style={{ background: 'var(--bg-alt2)', padding: '5rem 0', borderTop: '1px solid var(--border)' }}>
       <div className="max-w-7xl mx-auto px-6">
 
         <div className="vs-section-label mb-4">Special Thanks</div>
@@ -27,7 +27,7 @@ export default function SpecialThanksSection() {
           <Reveal
             delay={0}
             style={{
-              background: '#0d0d0d',
+              background: 'var(--bg-card)',
               border: '1px solid var(--border)',
               borderLeft: '3px solid var(--accent)',
               borderRadius: '3px',
@@ -81,7 +81,7 @@ export default function SpecialThanksSection() {
           <Reveal
             delay={100}
             style={{
-              background: '#0d0d0d',
+              background: 'var(--bg-card)',
               border: '1px solid var(--border)',
               borderRadius: '3px',
               padding: '1.75rem',
@@ -139,7 +139,7 @@ export default function SpecialThanksSection() {
           <Reveal
             delay={200}
             style={{
-              background: '#0d0d0d',
+              background: 'var(--bg-card)',
               border: '1px solid var(--border)',
               borderLeft: '3px solid var(--accent)',
               borderRadius: '3px',
@@ -179,7 +179,7 @@ export default function SpecialThanksSection() {
           <Reveal
             delay={300}
             style={{
-              background: '#0d0d0d',
+              background: 'var(--bg-card)',
               border: '1px solid var(--border)',
               borderRadius: '3px',
               padding: '1.75rem',

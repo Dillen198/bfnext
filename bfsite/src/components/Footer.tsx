@@ -5,7 +5,7 @@ export default function Footer() {
   const year = new Date().getFullYear()
 
   return (
-    <footer style={{ background: '#060606', borderTop: '1px solid var(--border)', padding: '3rem 0 2rem' }}>
+    <footer style={{ background: 'var(--bg-alt2)', borderTop: '1px solid var(--border)', padding: '3rem 0 2rem' }}>
       <div className="max-w-7xl mx-auto px-6">
 
         {/* Top row */}
@@ -25,7 +25,7 @@ export default function Footer() {
                   justifyContent: 'center',
                   fontFamily: "'Bebas Neue', sans-serif",
                   fontSize: '0.95rem',
-                  color: '#fff',
+                  color: 'var(--accent-fg)',
                   letterSpacing: '0.05em',
                   flexShrink: 0,
                 }}

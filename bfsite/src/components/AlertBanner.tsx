@@ -14,9 +14,9 @@ export default function AlertBanner() {
   return (
     <div
       style={{
-        background: isLive ? 'rgba(77,124,15,0.08)' : 'rgba(30,30,30,0.5)',
-        borderTop: `1px solid ${isLive ? 'rgba(77,124,15,0.25)' : 'rgba(40,40,40,0.8)'}`,
-        borderBottom: `1px solid ${isLive ? 'rgba(77,124,15,0.25)' : 'rgba(40,40,40,0.8)'}`,
+        background: isLive ? 'rgba(77,124,15,0.08)' : 'var(--standby-bg)',
+        borderTop: `1px solid ${isLive ? 'rgba(77,124,15,0.25)' : 'var(--standby-border)'}`,
+        borderBottom: `1px solid ${isLive ? 'rgba(77,124,15,0.25)' : 'var(--standby-border)'}`,
         padding: '0.6rem 1.5rem',
       }}
     >
@@ -31,7 +31,7 @@ export default function AlertBanner() {
               <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.8rem', letterSpacing: '0.2em', color: '#65a30d' }}>
                 MISSION ACTIVE
               </span>
-              <span style={{ color: 'rgba(255,255,255,0.15)', fontSize: '0.75rem' }}>·</span>
+              <span style={{ color: 'var(--divider-dim)', fontSize: '0.75rem' }}>·</span>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
                 Round #{stats?.active_round?.id} · {stats?.active_round?.scenario}
               </span>

@@ -76,7 +76,7 @@ export default function HowToJoin() {
         {/* CTA block */}
         <Reveal
           style={{
-            background: '#0d0d0d',
+            background: 'var(--bg-card)',
             border: '1px solid var(--border)',
             borderLeft: '4px solid var(--accent)',
             borderRadius: '2px',

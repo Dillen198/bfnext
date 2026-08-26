@@ -3,17 +3,89 @@
 /* ── Design Tokens ── */
 :root {
   --bg:           #0a0a0a;
+  --bg-alt:       #0d0d0d;
+  --bg-alt2:      #060606;
   --bg-card:      #111111;
   --bg-elevated:  #181818;
   --accent:       #4d7c0f;
   --accent-warm:  #f97316;
   --accent-hover: #65a30d;
+  --accent-fg:    #ffffff;
   --blue:         #3b82f6;
   --red:          #ef4444;
   --text:         #f1f5f9;
   --text-muted:   #64748b;
   --text-dim:     #374151;
   --border:       #222222;
+  --border-strong: #2a2a2a;
+
+  --nav-bg:          rgba(10,10,10,0.95);
+  --nav-bg-mobile:   rgba(10,10,10,0.98);
+  --overlay-border:      rgba(255,255,255,0.2);
+  --overlay-border-hover: rgba(255,255,255,0.4);
+  --overlay-bg-hover:     rgba(255,255,255,0.05);
+  --standby-bg:      rgba(30,30,30,0.5);
+  --standby-border:  rgba(40,40,40,0.8);
+  --divider-dim:     rgba(255,255,255,0.15);
+
+  --scrollbar:       #222222;
+  --scrollbar-hover:  #4d7c0f60;
+}
+
+/* ── Light theme — toggled via data-theme="light" on <html> ── */
+:root[data-theme="light"] {
+  --bg:           #f6f7f3;
+  --bg-alt:       #eef0e8;
+  --bg-alt2:      #e6e9de;
+  --bg-card:      #ffffff;
+  --bg-elevated:  #f0f2ea;
+  --accent:       #3c6511;
+  --accent-warm:  #c2530d;
+  --accent-hover: #4d7c0f;
+  --accent-fg:    #ffffff;
+  --blue:         #2f6cb3;
+  --red:          #c0392b;
+  --text:         #171a15;
+  --text-muted:   #55604a;
+  --text-dim:     #7a8570;
+  --border:       #dde1d4;
+  --border-strong: #cfd5c3;
+
+  --nav-bg:          rgba(255,255,255,0.92);
+  --nav-bg-mobile:   rgba(255,255,255,0.98);
+  --overlay-border:      rgba(0,0,0,0.15);
+  --overlay-border-hover: rgba(0,0,0,0.3);
+  --overlay-bg-hover:     rgba(0,0,0,0.04);
+  --standby-bg:      rgba(0,0,0,0.04);
+  --standby-border:  rgba(0,0,0,0.1);
+  --divider-dim:     rgba(0,0,0,0.15);
+
+  --scrollbar:       #dde1d4;
+  --scrollbar-hover:  #4d7c0f60;
+}
+
+/* Elements meant to always render dark regardless of site theme
+   (e.g. the photographic hero, which keeps a dark scrim for legibility). */
+.theme-locked-dark {
+  --bg:           #0a0a0a;
+  --bg-alt:       #0d0d0d;
+  --bg-alt2:      #060606;
+  --bg-card:      #111111;
+  --bg-elevated:  #181818;
+  --accent:       #4d7c0f;
+  --accent-warm:  #f97316;
+  --accent-hover: #65a30d;
+  --accent-fg:    #ffffff;
+  --blue:         #3b82f6;
+  --red:          #ef4444;
+  --text:         #f1f5f9;
+  --text-muted:   #64748b;
+  --text-dim:     #374151;
+  --border:       #222222;
+  --border-strong: #2a2a2a;
+  --overlay-border:      rgba(255,255,255,0.2);
+  --overlay-border-hover: rgba(255,255,255,0.4);
+  --overlay-bg-hover:     rgba(255,255,255,0.05);
 }
 
 /* ── Reset ── */
@@ -32,8 +104,8 @@ body {
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: #4d7c0f60; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 
 /* ── Typography helpers ── */
 .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.05em; }
@@ -58,7 +130,7 @@ body {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .feature-card:hover {
-  border-color: #2a2a2a;
+  border-color: var(--border-strong);
   box-shadow: 0 4px 24px rgba(77,124,15,0.08);
 }
 
@@ -78,7 +150,7 @@ body {
   gap: 0.5rem;
   padding: 0.65rem 1.5rem;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   font-family: 'Bebas Neue', sans-serif;
   font-size: 1rem;
   letter-spacing: 0.12em;
@@ -94,11 +166,11 @@ body {
 .vs-btn-outline {
   background: transparent;
   color: var(--text);
-  border-color: rgba(255,255,255,0.2);
+  border-color: var(--overlay-border);
 }
 .vs-btn-outline:hover {
-  background: rgba(255,255,255,0.05);
-  border-color: rgba(255,255,255,0.4);
+  background: var(--overlay-bg-hover);
+  border-color: var(--overlay-border-hover);
   transform: translateY(-1px);
 }
 

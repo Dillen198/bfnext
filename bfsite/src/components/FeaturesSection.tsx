@@ -9,7 +9,7 @@ const ICONS: Record<string, LucideIcon> = {
 
 export default function FeaturesSection() {
   return (
-    <section id="features" style={{ background: '#0d0d0d', padding: '6rem 0', borderTop: '1px solid var(--border)' }}>
+    <section id="features" style={{ background: 'var(--bg-alt)', padding: '6rem 0', borderTop: '1px solid var(--border)' }}>
       <div className="max-w-7xl mx-auto px-6">
 
         {/* Header */}
