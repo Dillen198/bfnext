@@ -372,6 +372,17 @@ export interface BanRecord {
   source:    'web' | 'engine'
 }
 
+export interface BotStatus {
+  configured: boolean
+  name:       string | null
+  status:     string | null  // e.g. "running" | "stopped" | "paused", per DCSServerBot
+}
+
+export interface BotActionResult {
+  message: string
+  status:  string
+}
+
 export interface PerfTimelinePoint {
   time:            string
   frame:           { mean: number; p99: number }
@@ -475,6 +486,13 @@ export const api = {
     ban:         (ucid: string, name: string, reason = '', until?: string) =>
                    post<{ ok: boolean }>('/admin/ban', { ucid, name, reason, until: until ?? null }),
     unban:       (ucid: string) => post<{ ok: boolean }>('/admin/unban', { ucid }),
+    botStatus:          () => get<BotStatus>('/admin/bot/status'),
+    botStart:           () => post<BotActionResult>('/admin/bot/start', {}),
+    botStop:            () => post<BotActionResult>('/admin/bot/stop', {}),
+    botRestart:         () => post<BotActionResult>('/admin/bot/restart', {}),
+    botMissionRestart:  () => post<BotActionResult>('/admin/bot/mission/restart', {}),
+    botMissionPause:    () => post<BotActionResult>('/admin/bot/mission/pause', {}),
+    botMissionUnpause:  () => post<BotActionResult>('/admin/bot/mission/unpause', {}),
     cfg:         () => get<Record<string, unknown>>('/admin/cfg'),
     cfgSchema:   () => get<JsonSchema>('/admin/cfg/schema'),
     cfgSave:     (cfg: Record<string, unknown>) => post<{ ok: boolean }>('/admin/cfg', { cfg }),

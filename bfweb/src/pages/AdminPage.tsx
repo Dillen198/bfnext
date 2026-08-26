@@ -3,12 +3,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { api, connectLiveLogs, connectEngineLogs, type LogLine, type PerfRow, type PerfTimelinePoint } from '../api'
+import { api, connectLiveLogs, connectEngineLogs, type LogLine, type PerfRow, type PerfTimelinePoint, type BotActionResult } from '../api'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
 import {
   Shield, Users, Trash2, AlertTriangle, RotateCcw,
   Activity, Ban, UserX, Terminal, Search, ChevronsDown,
+  Server, Play, Square, RotateCw, Pause, PlayCircle,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
@@ -220,7 +221,7 @@ function LogAnalyzer() {
     <div className="vs-card" style={{ display: 'flex', flexDirection: 'column', height: 520 }}>
       <CardHeader
         icon={<Terminal size={13} style={{ color: 'var(--accent)' }} />}
-        label="Live Log Analyzer"
+        label="BACKEND Log Analyzer"
         badge={
           <span style={{ fontSize: '0.6rem', color: statusCol, fontFamily: 'var(--font-mono)', border: `1px solid ${statusCol}`, padding: '1px 6px', letterSpacing: '0.1em' }}>
             {statusLabel}
@@ -468,10 +469,117 @@ function EngineErrorFeed({ lines }: { lines: string[] }) {
   )
 }
 
+// ── DCSServerBot server control ─────────────────────────────────────────────
+
+interface BotAction {
+  key: string
+  label: string
+  icon: typeof Server
+  fn: () => Promise<BotActionResult>
+  danger: boolean
+  confirmText: string
+}
+
+const BOT_ACTIONS: BotAction[] = [
+  { key: 'start',           label: 'Start',            icon: Play,       fn: api.admin.botStart,          danger: false, confirmText: '' },
+  { key: 'stop',             label: 'Stop',              icon: Square,     fn: api.admin.botStop,            danger: true,  confirmText: 'Stop the DCS server? Every player will be disconnected.' },
+  { key: 'restart',          label: 'Restart Server',    icon: RotateCw,   fn: api.admin.botRestart,          danger: true,  confirmText: 'Restart the DCS server? Every player will be disconnected.' },
+  { key: 'mission_restart',  label: 'Restart Mission',   icon: RotateCcw,  fn: api.admin.botMissionRestart,   danger: true,  confirmText: 'Restart the current mission? Every player will be disconnected.' },
+  { key: 'mission_pause',    label: 'Pause Mission',     icon: Pause,      fn: api.admin.botMissionPause,     danger: false, confirmText: '' },
+  { key: 'mission_unpause',  label: 'Unpause Mission',   icon: PlayCircle, fn: api.admin.botMissionUnpause,   danger: false, confirmText: '' },
+]
+
+function ServerControlPanel() {
+  const queryClient = useQueryClient()
+  const { data: botStatus, isLoading: statusLoading } = useQuery({
+    queryKey: ['admin', 'bot-status'], queryFn: api.admin.botStatus, refetchInterval: 15_000,
+  })
+  const [confirmKey, setConfirmKey] = useState<string | null>(null)
+  const [busy,       setBusy]       = useState<string | null>(null)
+  const [result,     setResult]     = useState<{ ok: boolean; message: string } | null>(null)
+
+  async function run(action: BotAction) {
+    setConfirmKey(null)
+    setBusy(action.key)
+    setResult(null)
+    try {
+      const r = await action.fn()
+      setResult({ ok: true, message: r.message })
+      queryClient.invalidateQueries({ queryKey: ['admin', 'bot-status'] })
+    } catch (e) {
+      setResult({ ok: false, message: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const statusColor = botStatus?.status === 'running' ? 'var(--accent)' : botStatus?.status === 'paused' ? '#f59e0b' : 'var(--text-dim)'
+  const confirmAction = confirmKey ? BOT_ACTIONS.find(a => a.key === confirmKey) : undefined
+
+  return (
+    <div className="vs-card">
+      <CardHeader
+        icon={<Server size={13} style={{ color: 'var(--accent)' }} />}
+        label="DCSServerBot Server Control"
+        badge={botStatus?.configured && botStatus.status ? (
+          <span style={{ fontSize: '0.6rem', color: statusColor, border: `1px solid ${statusColor}`, padding: '1px 8px', borderRadius: 2, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            {botStatus.name ?? 'server'}: {botStatus.status}
+          </span>
+        ) : undefined}
+      />
+      {!statusLoading && botStatus && !botStatus.configured && (
+        <div style={{ padding: '1rem', ...DIM }}>
+          DCSServerBot isn't configured (--dcsserverbot-url / --dcsserverbot-api-key on bfdb) — these controls are disabled.
+        </div>
+      )}
+      {(!botStatus || botStatus.configured) && (
+        <div className="p-4 flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2">
+            {BOT_ACTIONS.map(a => (
+              <button key={a.key}
+                disabled={busy !== null}
+                onClick={() => a.danger ? setConfirmKey(a.key) : run(a)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  fontSize: '0.68rem', letterSpacing: '0.06em',
+                  color: a.danger ? '#ef4444' : 'var(--text)',
+                  background: 'none', border: `1px solid ${a.danger ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
+                  padding: '0.4rem 0.9rem', borderRadius: 3,
+                  cursor: busy !== null ? 'not-allowed' : 'pointer', opacity: busy !== null ? 0.6 : 1,
+                }}>
+                <a.icon size={12} />
+                {busy === a.key ? 'Working…' : a.label}
+              </button>
+            ))}
+          </div>
+          {confirmAction && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0.6rem 0.8rem', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 3 }}>
+              <span style={{ fontSize: '0.68rem', color: '#ef4444', flex: 1 }}>{confirmAction.confirmText}</span>
+              <button onClick={() => run(confirmAction)}
+                style={{ fontSize: '0.65rem', color: '#fff', background: '#ef4444', border: 'none', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: 'pointer' }}>
+                Confirm
+              </button>
+              <button onClick={() => setConfirmKey(null)}
+                style={{ fontSize: '0.65rem', color: 'var(--text-dim)', background: 'none', border: '1px solid var(--border)', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: 'pointer' }}>
+                Cancel
+              </button>
+            </div>
+          )}
+          {result && (
+            <div style={{ fontSize: '0.68rem', color: result.ok ? 'var(--accent)' : '#ef4444' }}>
+              {result.ok ? '✓ ' : '✗ '}{result.message}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -492,6 +600,11 @@ export default function AdminPage() {
   const { data: perf }                                       = useQuery({ queryKey: ['admin', 'perf'],         queryFn: api.admin.perf,        refetchInterval: 30_000 })
   const { data: perfHistory }                                = useQuery({ queryKey: ['admin', 'perf-history'], queryFn: api.admin.perfHistory, refetchInterval: 60_000 })
 
+  // Wait for the auth check to actually resolve before deciding to bounce --
+  // on a hard refresh `user` starts out null while /api/auth/me is still in
+  // flight, and redirecting on that transient state kicked an already-logged
+  // -in admin back to /login every time they reloaded this page.
+  if (loading) return null
   if (!user) { navigate('/login'); return null }
   if (!user.is_admin) { navigate('/'); return null }
 
@@ -802,6 +915,9 @@ export default function AdminPage() {
 
         {/* ── Engine log analyzer (live bflib logs, requires bfdb --base) ── */}
         <EngineLogAnalyzer />
+
+        {/* ── DCSServerBot server control ── */}
+        <ServerControlPanel />
 
         {/* ── Danger zone ── */}
         <div className="vs-card" style={{ border: '1px solid rgba(239,68,68,0.25)' }}>

@@ -223,6 +223,10 @@ struct BotWeather {
 
 #[derive(Deserialize, Clone)]
 struct BotServerInfo {
+    #[serde(default)]
+    name:         std::string::String,
+    #[serde(default)]
+    status:       Option<std::string::String>,
     restart_time: Option<std::string::String>,
     weather:      Option<BotWeather>,
 }
@@ -267,6 +271,55 @@ async fn fetch_bot_server_info(bot_cfg: &Option<BotLinkConfig>) -> Option<BotSer
             None
         }
     }
+}
+
+/// Calls one of DCSServerBot's RestAPI instance/mission control endpoints
+/// (POST {base_url}/{path}?server_name=...) against the single server this
+/// deployment assumes -- the server name is looked up from GET /servers on
+/// every call rather than cached, since it's cheap and avoids acting on a
+/// stale name after the bot restarts or the server gets renamed. Unlike
+/// resolve_ucid_via_bot/fetch_bot_server_info this does NOT swallow errors:
+/// these are admin-triggered actions (start/stop/restart the live DCS
+/// server), so the caller needs to know if it actually happened.
+async fn bot_instance_action(
+    bot_cfg: &Option<BotLinkConfig>,
+    path: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let cfg = bot_cfg.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("DCSServerBot is not configured (--dcsserverbot-url/--dcsserverbot-api-key)")
+    })?;
+    let http = reqwest::Client::new();
+    let servers: Vec<BotServerInfo> = http
+        .get(format!("{}/servers", cfg.base_url))
+        .header("X-API-Key", &cfg.api_key)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("DCSServerBot /servers request failed: {e}"))?
+        .json()
+        .await
+        .map_err(|e| anyhow::anyhow!("DCSServerBot /servers response parse failed: {e}"))?;
+    let name = servers
+        .into_iter()
+        .next()
+        .map(|s| s.name)
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("DCSServerBot has no servers registered"))?;
+    let resp = http
+        .post(format!("{}/{path}", cfg.base_url))
+        .header("X-API-Key", &cfg.api_key)
+        .query(&[("server_name", name.as_str())])
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("DCSServerBot {path} request failed: {e}"))?;
+    let status = resp.status();
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| anyhow::anyhow!("DCSServerBot {path} response parse failed: {e}"))?;
+    if !status.is_success() {
+        anyhow::bail!("DCSServerBot {path} returned {status}: {body}");
+    }
+    Ok(body)
 }
 
 #[derive(Debug)]
@@ -1415,6 +1468,91 @@ async fn api_admin_reset(
     task::block_in_place(|| db.reset_campaign_data())?;
     log::info!("ADMIN: campaign data reset by admin");
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
+/// GET /api/admin/bot/status  — current DCS server name/status via
+/// DCSServerBot, so the admin panel can show state before offering actions
+/// (admin only)
+async fn api_admin_bot_status(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let info = fetch_bot_server_info(&bot_cfg).await;
+    Ok(warp::reply::json(&serde_json::json!({
+        "configured": bot_cfg.is_some(),
+        "name": info.as_ref().map(|s| s.name.clone()),
+        "status": info.and_then(|s| s.status),
+    })))
+}
+
+/// Shared body for the six DCSServerBot instance/mission control endpoints
+/// below -- each just supplies its own admin-role check and RestAPI path.
+async fn api_admin_bot_action(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    path: &'static str,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let body = bot_instance_action(&bot_cfg, path).await.map_err(Error)?;
+    log::info!("ADMIN: DCSServerBot {path} triggered");
+    Ok(warp::reply::json(&body))
+}
+
+/// POST /api/admin/bot/start  — DCSServerBot: start the DCS server instance
+async fn api_admin_bot_start(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    api_admin_bot_action(session_id, db, bot_cfg, "instance/start").await
+}
+
+/// POST /api/admin/bot/stop  — DCSServerBot: stop the DCS server instance
+async fn api_admin_bot_stop(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    api_admin_bot_action(session_id, db, bot_cfg, "instance/stop").await
+}
+
+/// POST /api/admin/bot/restart  — DCSServerBot: restart the DCS server instance
+async fn api_admin_bot_restart(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    api_admin_bot_action(session_id, db, bot_cfg, "instance/restart").await
+}
+
+/// POST /api/admin/bot/mission/restart  — DCSServerBot: restart the current mission
+async fn api_admin_bot_mission_restart(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    api_admin_bot_action(session_id, db, bot_cfg, "instance/mission/restart").await
+}
+
+/// POST /api/admin/bot/mission/pause  — DCSServerBot: pause the current mission
+async fn api_admin_bot_mission_pause(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    api_admin_bot_action(session_id, db, bot_cfg, "instance/mission/pause").await
+}
+
+/// POST /api/admin/bot/mission/unpause  — DCSServerBot: unpause the current mission
+async fn api_admin_bot_mission_unpause(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    api_admin_bot_action(session_id, db, bot_cfg, "instance/mission/unpause").await
 }
 
 /// GET /api/admin/cfg  — read the current campaign engine config JSON (admin only)
@@ -2799,6 +2937,54 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_admin_reset);
 
+    let admin_bot_status = warp::path!("api" / "admin" / "bot" / "status")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_admin_bot_status);
+
+    let admin_bot_start = warp::path!("api" / "admin" / "bot" / "start")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_admin_bot_start);
+
+    let admin_bot_stop = warp::path!("api" / "admin" / "bot" / "stop")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_admin_bot_stop);
+
+    let admin_bot_restart = warp::path!("api" / "admin" / "bot" / "restart")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_admin_bot_restart);
+
+    let admin_bot_mission_restart = warp::path!("api" / "admin" / "bot" / "mission" / "restart")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_admin_bot_mission_restart);
+
+    let admin_bot_mission_pause = warp::path!("api" / "admin" / "bot" / "mission" / "pause")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_admin_bot_mission_pause);
+
+    let admin_bot_mission_unpause = warp::path!("api" / "admin" / "bot" / "mission" / "unpause")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_admin_bot_mission_unpause);
+
     let admin_perf = warp::path!("api" / "admin" / "perf")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
@@ -3031,6 +3217,7 @@ async fn main() -> Result<()> {
         .or(admin_perf_history)
         .or(admin_banned)
         .or(admin_engine_errors)
+        .or(admin_bot_status)
         .or(admin_cfg_get_route)
         .or(admin_cfg_schema_route)
         .boxed();
@@ -3055,6 +3242,13 @@ async fn main() -> Result<()> {
         .or(cockpit_ewr_toggle_route.or(cockpit_ewr_units_route).or(cockpit_cargo_spawn_route).boxed())
         .boxed()
         .or(wiki_save_route.or(wiki_delete_route).or(wiki_upload_image_route).boxed())
+        .or(admin_bot_start
+            .or(admin_bot_stop)
+            .or(admin_bot_restart)
+            .or(admin_bot_mission_restart)
+            .or(admin_bot_mission_pause)
+            .or(admin_bot_mission_unpause)
+            .boxed())
         .with(cors);
 
     log::info!("API server listening on http://{}", args.listen_address);

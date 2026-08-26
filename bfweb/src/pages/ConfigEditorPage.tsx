@@ -9,7 +9,7 @@ import { SchemaSection, resolve } from '../components/SchemaForm'
 import { CFG_CATEGORIES } from '../config/cfgCategories'
 
 export default function ConfigEditorPage() {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -63,6 +63,7 @@ export default function ConfigEditorPage() {
 
   const visibleKeys = fieldsByCat.get(activeCat) ?? []
 
+  if (loading) return null
   if (!user) { navigate('/login'); return null }
   if (!user.is_admin) { navigate('/'); return null }
 
