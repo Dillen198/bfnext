@@ -579,7 +579,7 @@ export default function Pilots() {
             {showDropdown && filtered.length > 0 && (
               <div style={{
                 position: 'absolute', top: '100%', left: '0.75rem', right: '0.75rem',
-                background: '#111', border: '1px solid var(--border)', borderRadius: '3px',
+                background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: '3px',
                 boxShadow: '0 8px 24px rgba(0,0,0,0.5)', zIndex: 50, maxHeight: 300, overflowY: 'auto',
               }}>
                 {filtered.map((p, i) => {

@@ -4,6 +4,7 @@ import { Eye, EyeOff, KeyRound, User } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
+import ThemeToggle from '../components/ThemeToggle'
 
 export default function LoginPage() {
   const { refresh } = useAuth()
@@ -53,8 +54,9 @@ export default function LoginPage() {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      height: '100%', background: 'var(--bg)',
+      height: '100%', background: 'var(--bg)', position: 'relative',
     }}>
+      <ThemeToggle style={{ position: 'absolute', top: 16, right: 16 }} />
       <div style={{
         padding: '2rem', width: '100%', maxWidth: '340px',
         border: '1px solid var(--border)', borderRadius: '4px',

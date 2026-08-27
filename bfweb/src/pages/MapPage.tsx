@@ -801,7 +801,7 @@ export default function MapPage() {
 
   // ── Render ───────────────────────────────────────────────────────────
   return (
-    <div style={{ position: 'relative', flex: 1, overflow: 'hidden', display: 'flex' }}>
+    <div className="theme-locked-dark" style={{ position: 'relative', flex: 1, overflow: 'hidden', display: 'flex' }}>
 
       {/* Backdrop for the console/plan drawers on mobile */}
       {isMobile && !kneeboardMode && (showConsole || showPlan) && (

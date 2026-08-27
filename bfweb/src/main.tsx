@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { ThemeProvider } from './context/ThemeContext'
 import { campaign, campaignDefaults, type CampaignConfig } from './config/campaign'
 import { API_ROOT } from './api'
 
@@ -139,16 +140,43 @@ function applyCampaignConfig(cfg: Partial<CampaignConfig>) {
   root.style.setProperty('--scrollbar-h',   campaign.accentColor + '80')
   root.style.setProperty('--blue',          campaign.blueColor)
   root.style.setProperty('--red',           campaign.redColor)
-  root.style.setProperty('--bg',            campaign.bgColor)
-  root.style.setProperty('--bg-card',       campaign.bgCardColor)
-  root.style.setProperty('--bg-elevated',   campaign.bgElevatedColor)
-  root.style.setProperty('--border',        campaign.borderColor)
+
+  // Background/surface tokens are theme-dependent. Injecting them inline on
+  // <html> would beat the light-theme stylesheet override (inline styles win
+  // over any selector), so scope the campaign-configured dark surfaces to
+  // [data-theme="dark"] instead. The light palette lives in index.css.
+  let darkTokens = document.getElementById('campaign-dark-tokens') as HTMLStyleElement | null
+  if (!darkTokens) {
+    darkTokens = document.createElement('style')
+    darkTokens.id = 'campaign-dark-tokens'
+    document.head.appendChild(darkTokens)
+  }
+  darkTokens.textContent = `:root[data-theme="dark"] {
+    --bg:          ${campaign.bgColor};
+    --bg-card:     ${campaign.bgCardColor};
+    --bg-elevated: ${campaign.bgElevatedColor};
+    --bg-chrome:   ${campaign.bgColor};
+    --border:      ${campaign.borderColor};
+  }`
 
   // Apply background image and camo pattern
   applyBackground(campaign)
 }
 
 async function bootstrap() {
+  // Resolve the theme before first paint so campaign tokens land on the right
+  // [data-theme] and there's no dark/light flash. ThemeProvider keeps it in
+  // sync afterwards.
+  try {
+    const stored = localStorage.getItem('bfweb-theme')
+    const theme = stored === 'light' || stored === 'dark'
+      ? stored
+      : (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    document.documentElement.setAttribute('data-theme', theme)
+  } catch {
+    document.documentElement.setAttribute('data-theme', 'dark')
+  }
+
   // Start with compiled-in defaults
   applyCampaignConfig(campaignDefaults)
 
@@ -168,7 +196,9 @@ async function bootstrap() {
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <App />
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>
     </StrictMode>,
   )
 }

@@ -126,7 +126,7 @@ function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenT
   }
 
   return (
-    <div style={{ position: 'relative', height: '100%', background: '#050806' }}>
+    <div className="theme-locked-dark" style={{ position: 'relative', height: '100%', background: '#050806' }}>
       <MapContainer center={campaign.mapCenter} zoom={campaign.mapZoom}
         style={{ position: 'absolute', inset: 0 }} zoomControl={false} attributionControl={false}>
         <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}" maxZoom={19} opacity={0.5} />

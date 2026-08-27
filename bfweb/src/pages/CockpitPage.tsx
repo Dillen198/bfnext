@@ -83,7 +83,7 @@ function FnKey({ active, onClick, children }: { active: boolean; onClick: () => 
 
 function Shell({ children, tabs }: { children: React.ReactNode; tabs?: React.ReactNode }) {
   return (
-    <div style={{
+    <div className="theme-locked-dark" style={{
       height: '100%', minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)',
       display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-mono)',
     }}>
@@ -106,7 +106,7 @@ function Shell({ children, tabs }: { children: React.ReactNode; tabs?: React.Rea
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{
+    <div className="theme-locked-dark" style={{
       height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'var(--bg)', color: 'var(--text-dim)', fontSize: '0.8rem', fontFamily: 'var(--font-mono)',
     }}>

@@ -110,7 +110,7 @@ export default function GciMapPage() {
   )
 
   return (
-    <div className="gci-root">
+    <div className="gci-root theme-locked-dark">
       <header className="gci-bar">
         <div className="gci-bar-title">
           <span className="gci-bar-eyebrow">VECTOR STRIKE · GCI</span>

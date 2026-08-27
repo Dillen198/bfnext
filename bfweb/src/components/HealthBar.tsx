@@ -13,7 +13,7 @@ export default function HealthBar({ value, showLabel = true, height = 6 }: Props
     <div className="flex items-center gap-2">
       <div
         className="flex-1 rounded-full overflow-hidden min-w-[48px]"
-        style={{ height, background: '#0a1117' }}
+        style={{ height, background: 'var(--bg-hover)' }}
       >
         <div
           className="h-full rounded-full health-fill"

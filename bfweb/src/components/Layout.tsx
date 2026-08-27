@@ -10,6 +10,7 @@ import { api } from '../api'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
+import ThemeToggle from './ThemeToggle'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 
@@ -259,6 +260,10 @@ export default function Layout() {
             </div>
           </div>
         )}
+
+        <Sep />
+
+        <ThemeToggle style={{ marginRight: 4 }} />
 
         <Sep />
 

@@ -11,7 +11,7 @@ import { Crosshair, Zap, Activity, Users, Plane } from 'lucide-react'
 import { useRound } from '../context/RoundContext'
 
 const TT = {
-  contentStyle: { background: '#0f0f0f', border: '1px solid #222', borderRadius: 3, color: '#e2e8f0', fontSize: 11 },
+  contentStyle: { background: 'var(--bg-elevated)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text)', fontSize: 11 },
   cursor: { fill: 'rgba(77,124,15,0.04)' },
 }
 

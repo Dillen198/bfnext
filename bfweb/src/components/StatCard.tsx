@@ -9,10 +9,10 @@ interface Props {
 
 export default function StatCard({ label, value, sub, color = 'text-blue-400' }: Props) {
   return (
-    <div className="bg-[#111827] border border-[#1e3a5f] rounded-xl p-5">
-      <div className="text-xs text-slate-500 uppercase tracking-widest mb-2">{label}</div>
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: '1.25rem' }}>
+      <div className="uppercase tracking-widest" style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '0.5rem' }}>{label}</div>
       <div className={`text-3xl font-bold ${color}`}>{value}</div>
-      {sub && <div className="text-xs text-slate-500 mt-1">{sub}</div>}
+      {sub && <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '0.25rem' }}>{sub}</div>}
     </div>
   )
 }
