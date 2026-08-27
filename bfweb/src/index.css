@@ -163,27 +163,27 @@ body {
    LEAFLET OVERRIDES
    ═══════════════════════════════════════════════════════════════ */
 .leaflet-container {
-  background: #050806 !important;
+  background: var(--bg) !important;
   font-family: var(--font-body);
 }
 .leaflet-popup-content-wrapper {
-  background: #0d1009 !important;
+  background: var(--bg-card) !important;
   color: var(--text) !important;
   border: 1px solid var(--accent-border) !important;
   border-radius: 2px !important;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.8) !important;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.55) !important;
 }
-.leaflet-popup-tip             { background: #0d1009 !important; }
+.leaflet-popup-tip             { background: var(--bg-card) !important; }
 .leaflet-popup-close-button    { color: var(--text-muted) !important; }
 .leaflet-control-zoom a {
-  background: #0d1009 !important;
+  background: var(--bg-card) !important;
   color: var(--text-muted) !important;
   border-color: var(--border-light) !important;
   border-radius: 0 !important;
 }
 .leaflet-control-zoom a:hover  { color: var(--accent) !important; }
 .leaflet-control-attribution {
-  background: rgba(8,11,6,0.88) !important;
+  background: var(--bg-card) !important;
   color: var(--text-dim) !important;
   font-size: 10px !important;
 }

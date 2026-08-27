@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type SrsClient, type SrsStatus } from '../api'
 import { campaign } from '../config/campaign'
+import { useTheme } from '../context/ThemeContext'
 import { useRound } from '../context/RoundContext'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -125,11 +126,16 @@ function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenT
     })
   }
 
+  const { theme } = useTheme()
+  const canvasBase = theme === 'light'
+    ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+    : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+
   return (
-    <div className="theme-locked-dark" style={{ position: 'relative', height: '100%', background: '#050806' }}>
+    <div style={{ position: 'relative', height: '100%', background: theme === 'light' ? '#dfe0d8' : '#050806' }}>
       <MapContainer center={campaign.mapCenter} zoom={campaign.mapZoom}
         style={{ position: 'absolute', inset: 0 }} zoomControl={false} attributionControl={false}>
-        <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}" maxZoom={19} opacity={0.5} />
+        <TileLayer key={theme} url={canvasBase} maxZoom={19} opacity={0.5} />
         {valid.length > 0 && <FitBounds objectives={valid} />}
         {valid.map(obj => (
           <Marker key={obj.id} position={[obj.lat, obj.lon]} icon={markerIcon(obj)} />

@@ -25,6 +25,7 @@ import {
 import { createMapIcon, spriteIconUrl, radarGlyphSvg, type IconStyle, type Side } from '../lib/mapIcons'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
 
 // ── Constants ──────────────────────────────────────────────────────────
 const TRAIL_MAX = 10000
@@ -61,8 +62,14 @@ function restUnitColor(owner: string, watched: boolean) {
 }
 
 // ── Tile layers ────────────────────────────────────────────────────────
+// The tactical (canvas) basemap follows the app theme — dark-grey canvas in
+// dark mode, light-grey canvas in light mode. Satellite/topo are imagery and
+// look the same either way.
+const TACTICAL_TILE_DARK = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+const TACTICAL_TILE_LIGHT = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+
 const TILE_LAYERS = {
-  tactical: { label: 'TACMAP', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', attr: 'Esri' },
+  tactical: { label: 'TACMAP', url: TACTICAL_TILE_DARK, attr: 'Esri' },
   satellite: { label: 'SAT', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: 'Esri' },
   topo: { label: 'TOPO', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attr: 'Esri' },
 } as const
@@ -429,6 +436,7 @@ function MissionTimer({ liveTime }: { liveTime: number }) {
 // Main MapPage
 // ═══════════════════════════════════════════════════════════════════════
 export default function MapPage() {
+  const { theme } = useTheme()
   // ── Persisted settings ──────────────────────────────────────────────
   const [tileKey, setTileKey] = usePersisted<TileKey>('tileKey', 'tactical')
   const [iconStyle, setIconStyle] = usePersisted<IconStyle>('iconStyle', 'nato')
@@ -801,7 +809,7 @@ export default function MapPage() {
 
   // ── Render ───────────────────────────────────────────────────────────
   return (
-    <div className="theme-locked-dark" style={{ position: 'relative', flex: 1, overflow: 'hidden', display: 'flex' }}>
+    <div style={{ position: 'relative', flex: 1, overflow: 'hidden', display: 'flex' }}>
 
       {/* Backdrop for the console/plan drawers on mobile */}
       {isMobile && !kneeboardMode && (showConsole || showPlan) && (
@@ -1015,10 +1023,12 @@ export default function MapPage() {
       <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
         <MapContainer
           center={[42.35, 43.50]} zoom={7}
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#060a06' }}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: theme === 'light' ? '#dfe0d8' : '#060a06' }}
           zoomControl={false} attributionControl={false}
         >
-          <TileLayer key={tileKey} url={TILE_LAYERS[tileKey].url}
+          <TileLayer
+            key={`${tileKey}-${theme}`}
+            url={tileKey === 'tactical' && theme === 'light' ? TACTICAL_TILE_LIGHT : TILE_LAYERS[tileKey].url}
             attribution={TILE_LAYERS[tileKey].attr} maxZoom={19}
             opacity={tileKey === 'tactical' ? 0.85 : 0.70} />
 
