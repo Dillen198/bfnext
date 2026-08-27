@@ -129,7 +129,7 @@ function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenT
     <div style={{ position: 'relative', height: '100%', background: '#050806' }}>
       <MapContainer center={campaign.mapCenter} zoom={campaign.mapZoom}
         style={{ position: 'absolute', inset: 0 }} zoomControl={false} attributionControl={false}>
-        <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" maxZoom={19} opacity={0.5} />
+        <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}" maxZoom={19} opacity={0.5} />
         {valid.length > 0 && <FitBounds objectives={valid} />}
         {valid.map(obj => (
           <Marker key={obj.id} position={[obj.lat, obj.lon]} icon={markerIcon(obj)} />

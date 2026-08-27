@@ -595,8 +595,8 @@ function CarpMap({ entries, activeId, onPick }: {
     }}>
       <MapContainer center={center} zoom={objectives.length ? 8 : 6} style={{ width: '100%', flex: 1, background: '#040603' }}>
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          attribution="&copy; CARTO"
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+          attribution="Esri"
         />
         <MapClickHandler onClick={(lat, lon) => onPick(activeId, lat, lon)} />
         {entries.map(e => {

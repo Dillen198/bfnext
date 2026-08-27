@@ -62,7 +62,7 @@ function restUnitColor(owner: string, watched: boolean) {
 
 // ── Tile layers ────────────────────────────────────────────────────────
 const TILE_LAYERS = {
-  tactical: { label: 'TACMAP', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attr: '© CARTO' },
+  tactical: { label: 'TACMAP', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', attr: 'Esri' },
   satellite: { label: 'SAT', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: 'Esri' },
   topo: { label: 'TOPO', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attr: 'Esri' },
 } as const
