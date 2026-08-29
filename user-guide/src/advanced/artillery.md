@@ -26,10 +26,15 @@ F10 → JTAC → [JTAC ID] → Artillery → [Battery ID] → [Rounds]
 
 **Process**:
 1. JTAC identifies target
-2. Select artillery battery
-3. Choose rounds (1, 3, 5, 10, All)
-4. Battery fires
+2. Select a battery, or **Fire All Groups Together** to salvo every battery
+   in range
+3. Choose rounds: 1 / 3 / 5 / 10 / **all ammo**
+4. The battery turns to face the target if needed, then fires
 5. Rounds impact near target
+
+Missile TELs (Scud, Iskander, Silkworm) can be commanded through this menu
+too. Each unit type has its own min/max range — the menu tells you which
+guns are too close or too far for the current target.
 
 ## Fire Adjustment
 

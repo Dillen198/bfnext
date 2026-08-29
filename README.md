@@ -19,6 +19,8 @@ dashboard — built in Rust.
 | `bftools` | CLI: builds the final `.miz` mission file from templates, and generates `special_sam_sites` config from a mission editor template |
 | `bfweb` | The admin/stats dashboard (React) |
 | `bfsite` | The public-facing campaign website (React) |
+| `bfwiki` | The player/gameplay wiki (React) — public to read, admin login to edit; content lives in `bfdb`, seeded from `bfdb/seed_wiki/*.md` |
+| `user-guide` | Static mdBook version of the gameplay docs |
 | `yats` | Small typed wrapper around the Sled embedded database |
 
 ## Prerequisites
@@ -61,10 +63,15 @@ test in-game.
 cargo build --release          # bfdb, bftools, dcso3, bfprotocols, yats
 cd bfweb  && npm ci && npm run build   # dashboard
 cd bfsite && npm ci && npm run build   # public site
+cd bfwiki && npm ci && npm run build   # player wiki (deployed separately, e.g. Vercel)
 ```
 
 `bfdb` embeds the built `bfweb`/`bfsite` directly (via `rust-embed`), so
 build the frontends *before* `bfdb` if you want an up-to-date embedded copy.
+`bfwiki` is hosted separately and talks to `bfdb`'s API; on first run `bfdb`
+seeds the wiki database from `bfdb/seed_wiki/*.md`, after which pages are
+edited live through the site by anyone with admin access. Edit the seed
+files for the *initial* content of a fresh database.
 
 ## Running the campaign config + dashboard (bfdb)
 

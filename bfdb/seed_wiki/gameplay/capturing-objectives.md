@@ -10,36 +10,43 @@ A round is won by **territory, not kill count**. The coalition that controls the
 
 An objective can only be captured when **ALL** of these conditions are met:
 
-1. **Logistics = 0%** ✓
-2. **Capture troops in zone** ✓
-3. **Troops are correct type** ✓
-4. **No enemy contest** ✓
+1. **Health ≤ 20%** — the objective's defending units are almost wiped out ✓
+2. **No infantry left** — every infantry defender in the zone is dead ✓
+3. **Capture troops in zone** ✓
+4. **Troops are correct type** ✓
+5. **No enemy contest** ✓
+
+> Health/infantry — not logistics — is what gates capture. Logistics still
+> matters (it drives repair speed and the objective's own garrison), but you
+> capture a base by killing its defenders, not by emptying its warehouse.
 
 ## The Capture Process
 
-### Step 1: Reduce Logistics to 0%
+### Step 1: Grind the objective down to ≤ 20% health, no infantry
 
-Logistics must be destroyed before capture. Methods:
+You have to destroy the objective's defending units — armour, AAA, SAMs,
+and especially the **infantry**, which must be *completely* eliminated.
+Methods:
 
 **Ground Strikes**:
-- Attack logistics buildings with bombs
-- Use precision weapons (GBUs, AGMs)
-- Target specific logi structures
+- CAS with bombs, rockets, guns, GBUs, AGMs
+- Sweep the zone for infantry — a single surviving squad blocks the capture
 
 **Artillery**:
-- JTAC-directed artillery fire
-- Area bombardment
-- Sustained fire missions
+- JTAC-directed artillery / MLRS fire
+- Area bombardment against troop concentrations
 
-**Cruise Missiles**:
-- Long-range strikes
-- High accuracy on logi buildings
-- Coordinate via Actions menu
+**Cruise / Ballistic Missiles**:
+- Long-range strikes via the Actions menu
+- Good against hardened defenders
 
 **Monitoring Progress**:
-- Check F10 map marker: `Logi: 0` indicates ready (fully destroyed)
-- **Circle turns WHITE** on F10 map when capturable (instead of owner's color)
-- System announces when objective becomes capturable
+- F10 map marker shows the objective's Health % and Infantry %
+- **The inner ring turns WHITE** on the F10 map when it's capturable
+  (instead of the owner's colour)
+- If troops are in the zone but it isn't taking, the system announces why —
+  e.g. *"health still above 20% (34%)"* or *"enemy infantry still defending
+  (12% left)"*
 
 ### Step 2: Deploy Capture Troops
 
@@ -83,12 +90,30 @@ The capture zone is the designated area around the objective.
 - Dead troops don't count
 - Objective must NOT be threatened (cannot unload at threatened objectives)
 
-### Step 4: Hold the Zone
+### Step 4: Hold the Zone Until the Timer Runs
 
 **Capture Timer**:
-- Capture is not instantaneous
-- System checks periodically
-- All conditions must remain met until capture completes
+- Base capture time is **180 seconds** of holding the zone with all
+  conditions met.
+- **Bring more squads to go faster.** The timer is divided by the number of
+  capturing troop groups in the zone: 1 group ≈ 180 s, 2 ≈ 90 s, 3 ≈ 60 s
+  (floored at 30 s — it never goes instant).
+- If enemy troops enter, or your troops die/leave, or logistics repairs the
+  objective back above the threshold, the timer pauses/resets.
+
+### Step 5: Consolidate
+
+The base flips owner the moment the timer completes — but it isn't fully
+yours yet. Your assault troops **stay on the ground and hold** for a
+**consolidation window** (~5 minutes) while the new garrison moves in:
+
+- The F10 label shows **"NOT CONSOLIDATED — hold with troops or it goes
+  Neutral"** during this window.
+- If the enemy wipes out your holding troops before it consolidates, the
+  base goes **Neutral** (contested) — nobody owns it, and it has to be
+  taken again from scratch.
+- If your troops survive the window, the garrison spawns and the base is
+  firmly yours. The holding troops are then removed.
 
 ## Success!
 
@@ -106,9 +131,10 @@ When capture succeeds:
 
 **Immediate Effects**:
 - Airbase coalition changes
-- Defensive units respawn for new owner
 - Logistics begins one step of repair
-- Supply lines recalculate
+- Supply lines and warehouse stock transfer to the new owner
+- The garrison respawns for the new owner **only once your troops finish
+  consolidating** (see Step 5)
 
 ## Failed Captures
 
@@ -119,8 +145,9 @@ Captures can fail if:
 - Capture becomes impossible until logi reduced again
 
 **Troops Killed**:
-- All capturing troops die
-- Need to deploy fresh troops
+- All capturing troops die before the timer completes → deploy fresh troops
+- All *holding* troops die during the consolidation window → the base goes
+  **Neutral** and must be re-captured
 
 **Zone Contested**:
 - Enemy troops enter the zone
@@ -185,7 +212,8 @@ When capture succeeds:
 - Airbase coalition switches
 - Logistics repairs one step automatically
 - Supply lines recalculate
-- Capturing troops are deleted
+- Capturing troops stay to hold the zone through the consolidation window,
+  then are removed once the garrison is established
 - Points awarded to participants
 
 ## Next Steps

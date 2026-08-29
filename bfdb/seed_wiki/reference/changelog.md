@@ -22,14 +22,20 @@ Ejecting no longer costs a life outright. A downed pilot unit spawns at the cras
 **C-130 Hercules & Airdrop System**
 A dedicated logistics role: the C-130 can deliver cargo, troops, and vehicles via parachute or LAPES (low-altitude extraction) runs to unprepared landing zones, with automatic detection-and-unpack on delivery — no manual trigger needed. See [C-130 Hercules & Airdrop](../advanced/c130-airdrop.md).
 
-**SAM Site & Naval Carrier capture mechanics**
-SAM site positions are classified (not shown on F10 map or dashboard) and capture instantly once the zone is held, with no timer. Naval Carrier Groups can't be boarded while combat-effective — disable one by sinking its logistics to zero, then capture it directly or by taking its linked naval base. See [Capturing Objectives](../gameplay/capturing-objectives.md).
+**Capture mechanics — health/infantry gate, troop scaling, consolidation**
+A base is capturable once its **health is ≤ 20% and every infantry defender is dead** — not when its logistics hit zero. The hold timer is **180 s base, divided by how many troop squads you have in the zone** (more squads = faster, floored at 30 s). After the timer completes the base flips, but your troops must then **hold for a ~5-minute consolidation window** while the garrison moves in — if they're wiped out first, the base goes **Neutral** and has to be retaken. SAM sites still capture instantly (no timer); Naval Carrier Groups still can't be boarded while combat-effective. See [Capturing Objectives](../gameplay/capturing-objectives.md).
+
+**Artillery — missile TELs, salvos, auto-turn**
+The JTAC artillery menu now also commands **ballistic/cruise missile launchers** (Scud, Iskander, Silkworm), enforces each unit type's real min/max range, and adds a **"Fire All Groups Together"** salvo and an **"all ammo"** option. Batteries that spawn facing the wrong way now **reposition to bring the launcher onto the target bearing** before firing, so hull-traverse systems that used to silently no-op actually shoot. The **Move** action follows roads instead of driving cross-country. See [Artillery Missions](../advanced/artillery.md).
+
+**ATIS & weather**
+The airfield ATIS now reports the **real DCS runway designator** (it was deriving the number from runway heading and sometimes naming a runway that doesn't exist), fixes a mirrored surface-wind bearing, and adds field elevation, QFE, cloud base AGL, visibility and precipitation — all in **both metric and imperial**. Live weather sync also corrects the wind-speed units and syncs the upper (2000 m / 8000 m) wind layers, not just the surface.
 
 **Last Stand**
 A coalition reduced to its last primary objective (airbase, naval base, or FARP) gets a do-or-die countdown timer instead of being able to turtle indefinitely.
 
 **Automated Convoys & Strategic Infrastructure**
-Ground supply convoys run automatically between logistics hubs and the front — and can be interdicted. Real map buildings (warehouses, fuel depots, industrial complexes) near objectives are marked on the F10 map and, when destroyed, permanently degrade that objective's logistics — a second, independent way to attack enemy supply. **Factories** are a new objective type that passively produces ground units for their owner.
+Ground supply convoys run automatically between logistics hubs and the front — and can be interdicted. Real map buildings (warehouses, fuel depots, industrial complexes) near objectives, when destroyed, permanently degrade that objective's logistics — a second, independent way to attack enemy supply. Each objective's logistics buildings are pinned on the F10 map for the owning coalition while a friendly aircraft is nearby (they cull with the objective's units so the map stays clean). **Factories** are a new objective type that passively produces ground units for their owner.
 
 **Live Weather Sync**
 Server weather now syncs automatically from the running DCS mission via `bftools`/DCSServerBot integration, instead of being fixed at mission build time.
@@ -40,7 +46,7 @@ Server weather now syncs automatically from the running DCS mission via `bftools
 An overlay panel that renders inside the DCS window itself (EWR reports, a C-130J CARP bombing-solution planner, crate spawning) for players who install it — strictly additive, the F10 menu is unchanged and always available alongside it.
 
 **bfweb Ops Dashboard**
-A full web dashboard: live tactical map with pilot names and NATO-style unit symbology, A/A / A/G / Logistics leaderboard tabs, objective Health/Logistics/Supply/Fuel status with repair-progress percentages, engine performance history and hardware monitoring, and Discord OAuth login.
+A full web dashboard: live tactical map with pilot names and NATO-style unit symbology (and a light/dark theme), A/A / A/G / Logistics leaderboard tabs, objective Health/Logistics/Supply/Fuel status with colour-graded bars and repair-progress percentages, sortable columns (ascending/descending) on the Objectives, Kill Feed and Admin tables, engine performance history and hardware monitoring, and Discord OAuth login.
 
 **bfwiki**
 This wiki — an admin-editable player reference, separate from the web dashboard, backed by the same login.

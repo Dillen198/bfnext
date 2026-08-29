@@ -17,9 +17,15 @@ Artillery provides:
 ## Requirements
 
 1. **JTAC unit** with target
-2. **Artillery battery** in range
+2. **Artillery battery** in range — this includes **missile TELs** (Scud,
+   Iskander/9K720, Silkworm) as well as tube guns and MLRS
 3. **Clear line of fire**
 4. **Ammunition**
+
+Each unit type has its own minimum/maximum range in the server config, so a
+Scud won't accept a target inside its ~50 km minimum, and a 122 mm gun won't
+accept one 40 km away. If a battery is out of range the JTAC menu tells you
+which one and why.
 
 ## Requesting Fire
 
@@ -30,10 +36,17 @@ F10 → JTAC → [JTAC ID] → Artillery → [Battery ID] → [Rounds]
 
 **Process**:
 1. JTAC identifies target
-2. Select artillery battery
-3. Choose rounds (1, 3, 5, 10, All)
-4. Battery fires
+2. Select a battery — or **Fire All Groups Together** to salvo every battery
+   in range at once
+3. Choose rounds: **1 / 3 / 5 / 10 / all ammo** ("all ammo" dumps each gun's
+   full remaining load)
+4. The battery turns to face the target if it needs to, then fires
 5. Rounds impact near target
+
+> **Turning to fire**: fixed- or limited-traverse launchers (Grad, Smerch,
+> Scud, Silkworm…) spawn facing north. When you call fire they now reposition
+> a few metres to bring the launcher onto the target bearing before firing,
+> so shots that used to silently fail now land.
 
 ## Fire Adjustment
 
@@ -101,7 +114,7 @@ available artillery: [54321(25)]
 
 ## Artillery Specifications
 
-**Range**: Varies hugely by unit — towed/self-propelled guns and MLRS reach roughly 4-70km, while tactical ballistic systems (e.g. ATACMS, Iskander) can range into the hundreds of kilometres. Check what's actually in range before calling it in — don't assume every battery listed can reach a distant target.
+**Range**: Varies hugely by unit — towed/self-propelled guns and MLRS reach roughly 4-70km, while tactical ballistic systems (e.g. ATACMS, Iskander, Scud) can range into the hundreds of kilometres but have a large *minimum* range too. The JTAC menu enforces each battery's real min/max and tells you which guns are too close or too far for the current target.
 
 **Fire-for-Effect Scatter**: Impacts scatter across roughly a 200m radius around the target point.
 
