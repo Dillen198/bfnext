@@ -28,6 +28,10 @@ pub struct ObjectiveInfo {
     pub fuel: u8,
     /// Whether the objective is currently threatened
     pub threatened: bool,
+    /// Whether the objective can be captured right now (health low enough and
+    /// no infantry left). Mirrors `Objective::captureable()` in bflib.
+    #[serde(default)]
+    pub captureable: bool,
     /// Number of groups stationed at this objective per side
     pub group_count: HashMap<String, usize>,
     /// Commander's intent marker -- a display/coordination flag only, does not

@@ -47,7 +47,7 @@ use bfprotocols::{
     stats::Stat,
 };
 use chrono::prelude::*;
-use compact_str::format_compact;
+use compact_str::{CompactString, format_compact};
 use dcso3::{
     LuaVec2, MizLua, Position3, String, Vector2,
     airbase::ClassAirbase,
@@ -127,6 +127,16 @@ pub(super) struct ProtectedStatic {
 pub(super) struct TrackedScenery {
     pub(super) objective: ObjectiveId,
     pub(super) label: String,
+    /// Ground position of the building, kept so its map marker can be recreated
+    /// for a new side when the objective is captured or re-spawned.
+    pub(super) pos: Vector2,
+    /// F10 map marker for this building. Present only while the parent objective
+    /// is spawned (culled the same way units are) and the building is standing;
+    /// `None` otherwise.
+    pub(super) marker: Option<dcso3::trigger::MarkId>,
+    /// Which side the current `marker` was drawn for, so a capture while the
+    /// objective is still spawned can re-scope it.
+    pub(super) marker_side: Option<Side>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -253,6 +263,10 @@ pub struct Ephemeral {
     /// Maps ObjectiveId -> (capturing Side, entry DateTime, last_seen DateTime).
     /// last_seen is updated each tick troops are in zone; cleared only after a grace period.
     pub(super) capture_progress: FxHashMap<ObjectiveId, (dcso3::coalition::Side, DateTime<Utc>, DateTime<Utc>)>,
+    /// Last time we told players in an objective's zone why it isn't capturable yet
+    /// (e.g. troops still in zone but health/infantry/destruction-ratio conditions unmet).
+    /// Cooldown-throttled per objective so it doesn't spam every tick.
+    pub(super) capture_blocked_notice: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Last time treasury income was deposited (Smart Commander).
     pub(crate) last_treasury_income: DateTime<Utc>,
     /// Last time objectives were funded (Smart Commander).
@@ -340,6 +354,7 @@ impl Default for Ephemeral {
             csar_smoke_cooldown: FxHashMap::default(),
             supply_warned: FxHashMap::default(),
             capture_progress: FxHashMap::default(),
+            capture_blocked_notice: FxHashMap::default(),
             last_treasury_income: DateTime::<Utc>::default(),
             last_objective_fund: DateTime::<Utc>::default(),
             map_layer: MapLayer::default(),
@@ -375,6 +390,23 @@ impl Ephemeral {
         self.airbase_by_oid.get(oid)
     }
 
+    /// Logistics-relevant scenery buildings (warehouses, depots, fuel, storage)
+    /// still standing at `oid`, sorted by label for stable ordering (used by
+    /// JTAC to cycle through them as designatable/callable targets).
+    pub fn scenery_at_objective(
+        &self,
+        oid: ObjectiveId,
+    ) -> SmallVec<[(DcsOid<ClassObject>, CompactString); 8]> {
+        let mut v: SmallVec<[(DcsOid<ClassObject>, CompactString); 8]> = self
+            .tracked_scenery
+            .iter()
+            .filter(|(_, ts)| ts.objective == oid)
+            .map(|(id, ts)| (id.clone(), CompactString::from(ts.label.as_str())))
+            .collect();
+        v.sort_by(|a, b| a.1.cmp(&b.1));
+        v
+    }
+
     pub fn get_slot_info_by_miz_gid(&self, gid: &miz::GroupId) -> Option<(SlotId, &SlotInfo)> {
         self.slot_by_miz_gid
             .get(gid)
@@ -386,7 +418,12 @@ impl Ephemeral {
     /// no meaningful bar to show there.
     fn capture_pct_for(&self, oid: &ObjectiveId) -> Option<u8> {
         let (_, start, _) = self.capture_progress.get(oid)?;
-        let total = self.cfg.campaign_events.as_ref()?.capture_time_secs;
+        // Missing campaign_events still means the default 60s momentum, not instant.
+        let total = self
+            .cfg
+            .campaign_events
+            .as_ref()
+            .map_or(180, |c| c.capture_time_secs);
         if total == 0 {
             return None;
         }
@@ -414,6 +451,13 @@ impl Ephemeral {
             let elapsed = (Utc::now() - *start).num_seconds().max(0) as f64;
             let pct = ((elapsed / total) * 100.0).clamp(0.0, 100.0) as u8;
             return Some((pct, (total - elapsed).max(0.0) as i64));
+        }
+        // Match maybe_do_repairs: a threatened / actively-contested objective
+        // does not auto-repair, so don't show a phantom repair ETA. (A merely
+        // capturable base does still repair -- burning supply -- so its ETA is
+        // real and worth showing.)
+        if obj.threatened || self.capture_progress.contains_key(&obj.id) {
+            return None;
         }
         if obj.health < 100 && obj.logi > 0 {
             let logi_frac = obj.logi as f64 / 100.;
@@ -1685,19 +1729,51 @@ impl Ephemeral {
                 }
             }
             // Crates spawn from one shared template per side (crate_template /
-            // c130_cargo_template / helo_cargo_template); per-crate dcs_type/weight
-            // overrides are applied to the cloned template's single unit here,
+            // c130_cargo_template / helo_cargo_template); per-crate weight
+            // override is applied to the cloned template's single unit here,
             // right before spawn. Both the C-130 and helicopters load crates
             // into an internal cargo bay (not a DCS sling-load hook), so the
-            // override applies uniformly to all crate templates.
+            // weight override applies uniformly to all crate templates.
+            //
+            // The `dcs_type` reskin is C-130-only: helo_cargo_template
+            // (RCRATE_HELO/BCRATE_HELO) already IS the correct helicopter
+            // crate model per side -- reskinning it to a crate's configured
+            // dcs_type (meant for the C-130 pallet model) replaced that model
+            // with one whose baked-in default mass ignored our weight
+            // override, which is why helo crates always showed the same
+            // weight regardless of config.
             if let DeployKind::Crate { spec, .. } = &group.origin {
-                if let Ok(units) = template.group.units() {
-                    if let Ok(unit) = units.get(1) {
-                        if let Some(dcs_type) = spec.dcs_type.clone() {
-                            unit.set_typ(dcs_type)?;
+                let is_helo_template = self
+                    .cfg
+                    .helo_cargo_template
+                    .values()
+                    .any(|t| t.as_str() == group.template_name.as_str());
+                match template.group.units() {
+                    Ok(units) => match units.get(1) {
+                        Ok(unit) => {
+                            if !is_helo_template {
+                                if let Some(dcs_type) = spec.dcs_type.clone() {
+                                    unit.set_typ(dcs_type)?;
+                                }
+                            }
+                            unit.set_mass(spec.weight)?;
+                            info!(
+                                "[CRATE_MASS] set mass={}kg on template {} (unit type after override: {:?}) for crate {}",
+                                spec.weight,
+                                group.template_name,
+                                unit.typ(),
+                                spec.name
+                            );
                         }
-                        unit.set_mass(spec.weight)?;
-                    }
+                        Err(e) => warn!(
+                            "[CRATE_MASS] template {} has no unit at index 1, cannot set mass={}kg: {e:?}",
+                            group.template_name, spec.weight
+                        ),
+                    },
+                    Err(e) => warn!(
+                        "[CRATE_MASS] template {} has no units() table, cannot set mass={}kg: {e:?}",
+                        group.template_name, spec.weight
+                    ),
                 }
             }
             let carrier_link_id = self.carrier_linked_groups.remove(&group.id);

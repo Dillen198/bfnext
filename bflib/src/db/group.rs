@@ -14,7 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{ephemeral::SlotInfo, objective::ObjGroupClass, player::SlotAuth, Db, SetS};
+use super::{cargo::C130CargoState, ephemeral::SlotInfo, objective::ObjGroupClass, player::SlotAuth, Db, SetS};
 use crate::{
     group, group_health, group_mut, objective,
     spawnctx::{Despawn, SpawnCtx, SpawnLoc},
@@ -1192,7 +1192,38 @@ impl Db {
             None => return Ok(()),
             Some((uid, ucid)) => {
                 if let Some(ucid) = ucid {
-                    self.player_deslot(&ucid)
+                    self.player_deslot(&ucid);
+                    // Physical cargo crates this player was carrying die with the
+                    // aircraft -- a crashed delivery must not leave free crates
+                    // behind to be recovered or auto-unpacked. Only crates that
+                    // actually moved with the aircraft are removed; ones still
+                    // sitting where they were spawned stay put for another pilot.
+                    let orphaned: Vec<String> = self
+                        .ephemeral
+                        .c130_crates
+                        .iter()
+                        .filter(|(_, c)| {
+                            c.player == ucid
+                                && matches!(
+                                    c.state,
+                                    C130CargoState::Spawned | C130CargoState::Loaded
+                                )
+                                && na::distance(&c.last_pos.into(), &c.spawn_pos.into()) > 50.0
+                        })
+                        .map(|(name, _)| name.clone())
+                        .collect();
+                    for name in orphaned {
+                        if let Some(c) = self.ephemeral.c130_crates.remove(&name) {
+                            if let Some(id) = c.missing_marker {
+                                self.ephemeral.msgs().delete_mark(id);
+                            }
+                            if let Err(e) = self.delete_group(&c.group_id) {
+                                error!(
+                                    "[C130_CARGO] failed to delete orphaned crate {name}: {e:?}"
+                                );
+                            }
+                        }
+                    }
                 }
                 uid
             }
@@ -1359,7 +1390,13 @@ impl Db {
         let artillery = self
             .deployed()
             .filter_map(|group| {
-                if group.tags.contains(UnitTag::Artillery) && group.side == side {
+                // Tube/rocket artillery is tagged Artillery; ballistic/cruise TELs
+                // (Scud, Iskander, Silkworm, ...) are tagged Launcher. Accept both,
+                // but exclude SAM launchers (SA-x) which also carry Launcher.
+                let is_arty = group.tags.contains(UnitTag::Artillery)
+                    || (group.tags.contains(UnitTag::Launcher)
+                        && !group.tags.contains(UnitTag::SAM));
+                if is_arty && group.side == side {
                     let center = self.group_center(&group.id).ok()?;
                     if na::distance_squared(&center.into(), &pos.into()) <= range2 {
                         Some(group.id)

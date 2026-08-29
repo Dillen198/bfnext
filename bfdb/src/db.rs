@@ -696,13 +696,42 @@ impl StatsDb {
         }));
         t.seed_wiki_if_empty()?;
         t.seed_wiki_images_if_empty()?;
-        // Prime current_sortie from whatever round is already open in the DB.
-        // On restart, the archive replay resumes from replay_cursor and may
+        // A older bug fabricated a round named after the last segment of the
+        // netidx base (e.g. "campaign" from "/local/fowl/campaign") whenever a
+        // SessionStart was replayed without a NewRound. Those bogus rounds are
+        // never the real sortie and, being left open, hijack round selection.
+        // Close any that are still open so they stop shadowing the real round.
+        let base_tail = t
+            .0
+            .base
+            .as_ref()
+            .and_then(|p| format!("{p}").rsplit('/').next().map(String::from));
+        if let Some(bogus) = &base_tail {
+            let open_bogus: Vec<(RoundId, Round)> = t
+                .round
+                .scan_prefix(bogus)?
+                .filter_map(|r| r.ok())
+                .filter(|((_, _), rd)| rd.end.is_none())
+                .map(|((_, rid), rd)| (rid, rd))
+                .collect();
+            for (rid, mut rd) in open_bogus {
+                warn!("closing bogus open round {rid:?} (scenario {bogus:?} == netidx base tail, not a real sortie)");
+                rd.end = Some(chrono::Utc::now());
+                let _ = t.round.insert(&(bogus.clone(), rid), &rd)?;
+            }
+        }
+        // Prime current_sortie from whatever *real* round is already open in the
+        // DB. On restart, the archive replay resumes from replay_cursor and may
         // never re-witness the NewRound/SessionStart stat that originally
-        // started the active round (they're before the cursor) -- without
-        // this, the engine log/RPC subscriptions would wait forever for a
-        // sortie that already exists.
-        if let Some((sortie, _, _)) = t.latest_rounds()?.into_iter().find(|(_, _, r)| r.end.is_none()) {
+        // started the active round (they're before the cursor) -- without this,
+        // the engine log/RPC subscriptions would wait forever for a sortie that
+        // already exists.
+        if let Some((sortie, _, _)) = t
+            .latest_rounds()?
+            .into_iter()
+            .filter(|(s, _, _)| base_tail.as_ref().map(|t| t.as_str()) != Some(s.as_str()))
+            .find(|(_, _, r)| r.end.is_none())
+        {
             info!("resuming with active round sortie={sortie:?}");
             *t.current_sortie.lock().unwrap() = Some(sortie);
         }
@@ -1365,6 +1394,16 @@ impl StatsDb {
     }
 
     /// Get all pilot UCIDs and their most recent names (all-time, for name resolution)
+    /// Latest known display name for a pilot, if we've ever seen them.
+    pub(crate) fn pilot_name(&self, ucid: &Ucid) -> Option<std::string::String> {
+        self.pilots
+            .pilots
+            .get(ucid)
+            .ok()
+            .flatten()
+            .and_then(|p| p.name.last().map(|s| s.to_string()))
+    }
+
     pub(crate) fn all_pilot_names(&self) -> Result<Vec<(Ucid, String)>> {
         let mut entries = Vec::new();
         for r in self.pilots.pilots.iter() {
@@ -1863,16 +1902,21 @@ impl StatsDb {
     }
 
     pub(crate) fn recent_kills(&self, round: RoundId, limit: usize) -> Result<Vec<Dead>> {
+        // The kills tree is keyed (killer EnId, round, KillId), so iterating it
+        // (even reversed) orders by *killer*, not time -- a naive `.rev().take(n)`
+        // returns only AI-made kills (EnId::Unit sorts after EnId::Player) and
+        // never reaches player kills once the cap is hit. Collect the whole
+        // round, dedupe multi-shooter kills by KillId, then sort by time.
+        let mut seen: std::collections::HashSet<KillId> = std::collections::HashSet::new();
         let mut kills = Vec::new();
-        for r in self.kills.iter().rev() {
-            let ((_, rid, _), dead) = r?;
-            if rid == round {
+        for r in self.kills.iter() {
+            let ((_, rid, kid), dead) = r?;
+            if rid == round && seen.insert(kid) {
                 kills.push(dead);
-                if kills.len() >= limit {
-                    break;
-                }
             }
         }
+        kills.sort_by(|a, b| b.time.cmp(&a.time));
+        kills.truncate(limit);
         Ok(kills)
     }
 
@@ -1941,16 +1985,55 @@ impl StatsDb {
         // context yet" by dropping the stat gracefully.
         if let Stat::SessionStart { cfg, .. } = &stat {
             if ctx.0.is_none() {
-                match cfg.netidx_base.as_ref().map(|p| {
-                    let s = format!("{p}");
-                    String::from(s.rsplit('/').next().unwrap_or("unknown").to_string())
-                }) {
+                // Prefer the real sortie already primed from the open round in
+                // our DB (see the "resuming with active round" prime at startup).
+                // `netidx_base` is the BASE, not `base/sortie` -- its last path
+                // segment (e.g. "campaign" from "/local/fowl/campaign") is NOT a
+                // sortie, and new_round() would clobber the live current_sortie
+                // with it, silently redirecting RPC/log subscriptions to a path
+                // that doesn't exist. Only fall back to that guess with nothing.
+                let sortie = self
+                    .current_sortie
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .or_else(|| {
+                        cfg.netidx_base.as_ref().map(|p| {
+                            let s = format!("{p}");
+                            String::from(s.rsplit('/').next().unwrap_or("unknown"))
+                        })
+                    });
+                match sortie {
                     Some(sortie) => {
-                        info!("auto-creating round from SessionStart, sortie={sortie:?}");
-                        self.new_round(ctx, time, sortie, time)?;
+                        // Reattach to the sortie's existing open round if there is
+                        // one, instead of spawning a duplicate. A second round id
+                        // fragments stats -- deploys/kills/health land in a round
+                        // the dashboard never queries.
+                        let open = self
+                            .seq
+                            .scan_prefix(&sortie)?
+                            .next_back()
+                            .transpose()?
+                            .and_then(|((_, round), seq)| {
+                                match self.round.get(&(sortie.clone(), round)) {
+                                    Ok(Some(r)) if r.end.is_none() => Some((round, seq)),
+                                    _ => None,
+                                }
+                            });
+                        match open {
+                            Some((round, seq)) => {
+                                info!("SessionStart: reattaching to open round {round:?} for sortie {sortie:?}");
+                                *self.current_sortie.lock().unwrap() = Some(sortie.clone());
+                                ctx.0 = Some(StatCtxInner { sortie, round, seq });
+                            }
+                            None => {
+                                info!("auto-creating round from SessionStart, sortie={sortie:?}");
+                                self.new_round(ctx, time, sortie, time)?;
+                            }
+                        }
                     }
                     None => {
-                        warn!("SessionStart with no round context and no netidx_base to derive a sortie from -- skipping instead of fabricating a placeholder round");
+                        warn!("SessionStart with no round context and no sortie to derive -- skipping instead of fabricating a placeholder round");
                     }
                 }
             }
@@ -2004,6 +2087,16 @@ impl StatsDb {
                 owner,
                 kind,
             } => {
+                // bflib re-emits Stat::Objective for every objective on a mission
+                // reload. If we already have this objective in the current round,
+                // keep its health/logi/supply/fuel rather than resetting to 100 --
+                // a fresh ObjectiveHealth only follows when those values change,
+                // so clobbering here left the tactical map stuck at 100%.
+                let prev = self.objectives.get(&(ctx.round, id))?;
+                let (health, logi, supply, fuel, last_change) = match &prev {
+                    Some(o) => (o.health, o.logi, o.supply, o.fuel, o.last_change),
+                    None => (100, 100, 100, 100, time),
+                };
                 self.objectives.insert(
                     &(ctx.round, id),
                     &Objective {
@@ -2012,11 +2105,11 @@ impl StatsDb {
                         kind,
                         owner,
                         by: None,
-                        last_change: time,
-                        health: 100,
-                        logi: 100,
-                        supply: 100,
-                        fuel: 100,
+                        last_change,
+                        health,
+                        logi,
+                        supply,
+                        fuel,
                     },
                 )?;
             }
@@ -2115,12 +2208,17 @@ impl StatsDb {
                     |p| p.total.troops += 1,
                     |a| a.troops += 1,
                 )?;
-                self.with_group((ctx.round, gid), |group| {
+                // The group row is created later (from Stat::Unit once the units
+                // actually spawn in DCS -- the deploy is queued), so tag it if
+                // present but never fail the whole stat over a missing row.
+                if let Err(e) = self.with_group((ctx.round, gid), |group| {
                     group.kind = GroupKind::Troop {
                         by,
                         name: troop.clone(),
                     }
-                })?;
+                }) {
+                    debug!("DeployTroop: group {gid:?} not tracked yet ({e})");
+                }
             }
             Stat::DeployGroup {
                 by,
@@ -2135,12 +2233,16 @@ impl StatsDb {
                     |p| p.total.deploys += 1,
                     |a| a.deploys += 1,
                 )?;
-                self.with_group((ctx.round, gid), |group| {
+                // See DeployTroop above -- the group row may not exist yet.
+                // Recording the deploy (counter + log) must not depend on it.
+                if let Err(e) = self.with_group((ctx.round, gid), |group| {
                     group.kind = GroupKind::Deployed {
                         by,
                         name: deployable.clone(),
                     }
-                })?;
+                }) {
+                    debug!("DeployGroup: group {gid:?} not tracked yet ({e})");
+                }
                 let did = DeployId::new(&self.db)?;
                 self.deploys.insert(
                     &(by, ctx.round, did),

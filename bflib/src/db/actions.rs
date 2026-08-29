@@ -3,7 +3,7 @@ use crate::{
     admin,
     db::{cargo::Oldest, group::DeployKind},
     group, group_mut,
-    jtac::{JtId, Jtacs},
+    jtac::{aim_and_fire_route, group_facing, JtId, Jtacs},
     objective,
     spawnctx::{SpawnCtx, SpawnLoc},
     unit,
@@ -36,7 +36,7 @@ use dcso3::{
     },
     env::miz::MizIndex,
     group::Group,
-    land::Land,
+    land::{Land, RoadType},
     net::Ucid,
     object::DcsObject,
     pointing_towards2,
@@ -46,7 +46,7 @@ use dcso3::{
 };
 use enumflags2::BitFlags;
 use fxhash::FxHashSet;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use rand::{Rng, thread_rng};
 use smallvec::{SmallVec, smallvec};
 use std::{cmp::max, f64, vec};
@@ -492,7 +492,7 @@ impl Db {
                 Some(player) => {
                     if cost > 0 && player.points < cost as i32 {
                         bail!(
-                            "{ucid}({}) this action costs {} points and you have {} points",
+                            "{}: this action costs {} points and you have {} points",
                             player.name,
                             cost,
                             player.points
@@ -1457,57 +1457,92 @@ impl Db {
             max_dist: Some(2_000.),
             priority: None,
         };
+        let mut route: Vec<MissionPoint> = vec![MissionPoint {
+            action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
+            airdrome_id: None,
+            helipad: None,
+            typ: PointType::TurningPoint,
+            link_unit: None,
+            pos: LuaVec2(pos),
+            alt: alt0,
+            alt_typ: Some(AltType::BARO),
+            time_re_fu_ar: None,
+            eta: Some(Time(0.)),
+            eta_locked: Some(true),
+            speed: 20.,
+            speed_locked: Some(true),
+            name: None,
+            task: Box::new(Task::ComboTask(vec![
+                Task::WrappedOption(AiOption::Ground(GroundOption::AlarmState(
+                    AlarmState::Green,
+                ))),
+                Task::WrappedOption(AiOption::Ground(GroundOption::AlarmState(
+                    AlarmState::Auto,
+                ))),
+                att.clone(),
+            ])),
+        }];
+        // Route along roads automatically. DCS's findPathOnRoads gives the
+        // road-network path between here and the destination; feed each point
+        // as an On Road waypoint so the group actually uses roads instead of
+        // driving straight through terrain. A final Off Road leg still puts it
+        // on the exact spot the player designated.
+        match land.find_path_on_roads(RoadType::Road, LuaVec2(pos), LuaVec2(args.pos)) {
+            std::result::Result::Ok(path) => {
+                let pts: Vec<_> = path.into_iter().filter_map(|w| w.ok()).collect();
+                // DCS caps route length; decimate a long road path so we stay
+                // well under it while still following the road.
+                let step = (pts.len() / 80).max(1);
+                for wp in pts.iter().step_by(step).copied() {
+                    let alt = land.get_height(wp).unwrap_or(0.0);
+                    route.push(MissionPoint {
+                        action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+                        airdrome_id: None,
+                        helipad: None,
+                        typ: PointType::TurningPoint,
+                        link_unit: None,
+                        pos: wp,
+                        alt,
+                        alt_typ: Some(AltType::BARO),
+                        time_re_fu_ar: None,
+                        eta: None,
+                        eta_locked: None,
+                        speed: 20.,
+                        speed_locked: None,
+                        name: None,
+                        task: Box::new(Task::ComboTask(vec![])),
+                    });
+                }
+            }
+            std::result::Result::Err(e) => {
+                debug!("move: no road path for {:?}, going direct: {e}", args.group)
+            }
+        }
+        route.push(MissionPoint {
+            action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
+            airdrome_id: None,
+            helipad: None,
+            typ: PointType::TurningPoint,
+            time_re_fu_ar: None,
+            link_unit: None,
+            pos: LuaVec2(args.pos),
+            alt: alt1,
+            alt_typ: Some(AltType::BARO),
+            speed: 20.,
+            speed_locked: None,
+            eta: None,
+            eta_locked: None,
+            name: Some(String::from("move")),
+            task: Box::new(Task::ComboTask(vec![
+                Task::WrappedOption(AiOption::Ground(GroundOption::AlarmState(
+                    AlarmState::Red,
+                ))),
+                att,
+            ])),
+        });
         con.set_task(Task::Mission {
             airborne: Some(false),
-            route: vec![
-                MissionPoint {
-                    action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
-                    airdrome_id: None,
-                    helipad: None,
-                    typ: PointType::TurningPoint,
-                    link_unit: None,
-                    pos: LuaVec2(pos),
-                    alt: alt0,
-                    alt_typ: Some(AltType::BARO),
-                    time_re_fu_ar: None,
-                    eta: Some(Time(0.)),
-                    eta_locked: Some(true),
-                    speed: 20.,
-                    speed_locked: Some(true),
-                    name: None,
-                    task: Box::new(Task::ComboTask(vec![
-                        Task::WrappedOption(AiOption::Ground(GroundOption::AlarmState(
-                            AlarmState::Green,
-                        ))),
-                        Task::WrappedOption(AiOption::Ground(GroundOption::AlarmState(
-                            AlarmState::Auto,
-                        ))),
-                        att.clone(),
-                    ])),
-                },
-                MissionPoint {
-                    action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
-                    airdrome_id: None,
-                    helipad: None,
-                    typ: PointType::TurningPoint,
-                    time_re_fu_ar: None,
-                    link_unit: None,
-                    pos: LuaVec2(args.pos),
-                    alt: alt1,
-                    alt_typ: Some(AltType::BARO),
-                    speed: 20.,
-                    speed_locked: None,
-                    eta: None,
-                    eta_locked: None,
-                    name: Some(String::from("move")),
-                    task: Box::new(Task::ComboTask(vec![
-                        Task::WrappedOption(AiOption::Ground(GroundOption::AlarmState(
-                            AlarmState::Red,
-                        ))),
-                        att,
-                    ])),
-                },
-            ],
+            route,
         })?;
         Ok(None)
     }
@@ -3474,7 +3509,10 @@ impl Db {
                     continue;
                 }
             };
-            match controller.set_task(fire_task.clone()) {
+            let center = self.group_center(gid).unwrap_or(target_pos);
+            let aim_task =
+                aim_and_fire_route(center, target_pos, group_facing(self, gid), fire_task.clone());
+            match controller.set_task(aim_task) {
                 std::result::Result::Err(e) => {
                     error!("artillery_strike: set_task {group_name}: {e}");
                 }

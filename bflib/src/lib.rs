@@ -75,7 +75,7 @@ use dcso3::{
 use ewr::Ewr;
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use indexmap::IndexSet;
-use jtac::{JtId, Jtacs};
+use jtac::{aim_and_fire_route, group_facing, JtId, Jtacs};
 use landcache::LandCache;
 use log::{debug, error, info, warn};
 use mlua::prelude::*;
@@ -714,6 +714,20 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                         if let Err(e) = atis::schedule_atis(lua, slot) {
                             error!("could not schedule atis: {:?}", e);
                         }
+                        // Force EPLRS on for every player group so fixed-wing
+                        // slots show up on the coalition F10 map / datalink the
+                        // same way helicopters (which usually have it enabled in
+                        // the .miz) already do. Best effort -- a failure here
+                        // just means that slot relies on the .miz setting.
+                        if let Err(e) = unit
+                            .get_controller()
+                            .and_then(|c| c.set_command(dcso3::controller::Command::EPLRS {
+                                enable: true,
+                                group: None,
+                            }))
+                        {
+                            debug!("could not enable EPLRS for born slot {slot}: {e:?}");
+                        }
                     }
                     Ok(BirthRes::DynamicSlotDenied(ucid, rej)) => {
                         if let Some(id) = ctx.connected.id_by_ucid.get(&ucid) {
@@ -1048,6 +1062,9 @@ fn advise_captureable(ctx: &mut Context) -> Result<()> {
 
 fn advise_captured(ctx: &mut Context, lua: MizLua, ts: DateTime<Utc>) -> Result<bool> {
     let mut has_captures = false;
+    if let Err(e) = ctx.db.check_capture_hold(ts) {
+        error!("check_capture_hold failed: {e:?}");
+    }
     for (side, oid) in ctx.db.check_capture(lua, ts)? {
         has_captures = true;
         ctx.event_scheduler.owned_cache_dirty = true;
@@ -1452,35 +1469,41 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     let group_pos = ctx.db.group_center(gid).unwrap_or(target_pos);
                     let dist = na::distance(&group_pos.into(), &target_pos.into());
 
-                    // Compute the waypoint the group should move to before firing.
-                    // If already in range, waypoint = current position (fire in place).
-                    let waypoint_pos = if dist <= arty_range {
-                        group_pos
+                    // If already in range, nudge the battery to face the target then
+                    // fire in place (aim_and_fire_route). If out of range, drive it to
+                    // arty_range from the target along the target->group vector; that
+                    // long leg already aligns the hull, so fire on arrival.
+                    let mission = if dist <= arty_range {
+                        aim_and_fire_route(
+                            group_pos,
+                            target_pos,
+                            group_facing(&ctx.db, gid),
+                            fire_task.clone(),
+                        )
                     } else {
                         // Step from target toward group at arty_range distance.
                         let dir = (group_pos - target_pos).normalize();
-                        target_pos + dir * arty_range
-                    };
-
-                    let mission = Task::Mission {
-                        airborne: Some(false),
-                        route: vec![MissionPoint {
-                            action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
-                            typ: PointType::TurningPoint,
-                            airdrome_id: None,
-                            helipad: None,
-                            time_re_fu_ar: None,
-                            link_unit: None,
-                            pos: LuaVec2(waypoint_pos),
-                            alt: 0.,
-                            alt_typ: Some(AltType::RADIO),
-                            speed: 0.,
-                            speed_locked: None,
-                            eta: None,
-                            eta_locked: None,
-                            name: None,
-                            task: Box::new(fire_task.clone()),
-                        }],
+                        let waypoint_pos = target_pos + dir * arty_range;
+                        Task::Mission {
+                            airborne: Some(false),
+                            route: vec![MissionPoint {
+                                action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
+                                typ: PointType::TurningPoint,
+                                airdrome_id: None,
+                                helipad: None,
+                                time_re_fu_ar: None,
+                                link_unit: None,
+                                pos: LuaVec2(waypoint_pos),
+                                alt: 0.,
+                                alt_typ: Some(AltType::RADIO),
+                                speed: 0.,
+                                speed_locked: None,
+                                eta: None,
+                                eta_locked: None,
+                                name: None,
+                                task: Box::new(fire_task.clone()),
+                            }],
+                        }
                     };
 
                     if let Ok(dcs_group) = Group::get_by_name(lua, group_name.as_str()) {
@@ -1543,9 +1566,13 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     });
                     if !alive { continue; }
                     let group_name = group.name.clone();
+                    let center = ctx.db.group_center(gid).unwrap_or(target_pos);
+                    let facing = group_facing(&ctx.db, gid);
                     if let Ok(dcs_group) = Group::get_by_name(lua, group_name.as_str()) {
                         if let Ok(controller) = dcs_group.get_controller() {
-                            if let Err(e) = controller.set_task(fire_task.clone()) {
+                            let task =
+                                aim_and_fire_route(center, target_pos, facing, fire_task.clone());
+                            if let Err(e) = controller.set_task(task) {
                                 error!("FireMissileStrike: set_task {group_name}: {e}");
                             } else {
                                 fired += 1;
@@ -2312,7 +2339,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
                 false,
                 attacking_side,
                 format_compact!(
-                    "⚠ THREAT: Enemy CAP scrambled to the {} — {} aircraft detected by EWR!",
+                    "THREAT: Enemy CAP scrambled to the {} - {} aircraft detected by EWR!",
                     direction,
                     cluster_count
                 ),
@@ -2856,6 +2883,21 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
                         kind: obj.kind().clone(),
                         owner: obj.owner,
                         pos: llpos,
+                    });
+                    // bfdb's Stat::Objective handler seeds health/logi/supply/fuel
+                    // at 100. Follow up with the real persisted values so a
+                    // dashboard reload after a server restart doesn't show every
+                    // battered base as pristine until its health next changes.
+                    ctx.db.ephemeral.stat(Stat::ObjectiveHealth {
+                        id: *oid,
+                        last_change: obj.last_change(),
+                        health: obj.health(),
+                        logi: obj.logi(),
+                    });
+                    ctx.db.ephemeral.stat(Stat::ObjectiveSupply {
+                        id: *oid,
+                        supply: obj.supply(),
+                        fuel: obj.fuel(),
                     });
                 }
                 Err(e) => error!("failed to convert objective position for {}: {e:?}", obj.name),

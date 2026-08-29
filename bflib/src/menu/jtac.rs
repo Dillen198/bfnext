@@ -210,6 +210,24 @@ pub fn jtac_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     Ok(())
 }
 
+pub fn jtac_designate_building(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
+    let side = jtac.side();
+    match jtac.designate_building(&mut ctx.db, lua).context("designating building")? {
+        Some(_) => {}
+        None => {
+            ctx.db.ephemeral.msgs().panel_to_side(
+                10,
+                false,
+                side,
+                "No logistics buildings left standing here",
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn jtac_artillery_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, u8, Ucid>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     match ctx
@@ -283,17 +301,26 @@ pub fn jtac_fire_all_artillery_together(
         .jtac
         .fire_all_artillery_together(&ctx.db, lua, &arg.fst, arg.snd)
     {
-        Ok(count) => {
+        Ok((count, skipped)) => {
             let jtac = get_jtac(&ctx.jtac, &arg.fst).context("getting jtac")?;
             let (near, name) = change_info(jtac, &ctx.db, &arg.trd);
-            let msg = format_compact!(
+            let rounds = if arg.snd == 0 {
+                format_compact!("all remaining")
+            } else {
+                format_compact!("{}", arg.snd)
+            };
+            let mut msg = format_compact!(
                 "GROUP FIRE MISSION: {} guns firing {} rounds each\njtac {} near {}\nrequested by {}",
                 count,
-                arg.snd,
+                rounds,
                 arg.fst,
                 near,
                 name
             );
+            for reason in &skipped {
+                msg.push_str("\nskipped ");
+                msg.push_str(reason);
+            }
             ctx.db
                 .ephemeral
                 .msgs()
@@ -492,8 +519,16 @@ fn add_artillery_menu_for_jtac(
     arty: &[DbGid],
 ) -> Result<()> {
     let mc = MissionCommands::singleton(lua)?;
-    let root = mc.add_submenu_for_group(mizgid, "Artillery".into(), Some(root.clone()))?;
+    let mut root = mc.add_submenu_for_group(mizgid, "Artillery".into(), Some(root.clone()))?;
+    // DCS caps each menu page at 10 entries -- spill the gun list into "More>>"
+    // sub-pages when a JTAC has many artillery groups in range.
+    let mut page_n = 0u32;
     for gid in arty {
+        if page_n >= 9 {
+            root = mc.add_submenu_for_group(mizgid, "More>>".into(), Some(root.clone()))?;
+            page_n = 0;
+        }
+        page_n += 1;
         let root =
             mc.add_submenu_for_group(mizgid, format_compact!("{gid}").into(), Some(root.clone()))?;
         mc.add_command_for_group(
@@ -621,7 +656,13 @@ fn add_artillery_menu_for_jtac(
     if arty.len() >= 2 {
         let group_fire =
             mc.add_submenu_for_group(mizgid, "Fire All Groups Together".into(), Some(root.clone()))?;
-        for (label, n) in &[("1 round each", 1u8), ("3 rounds each", 3), ("5 rounds each", 5), ("10 rounds each", 10)] {
+        for (label, n) in &[
+            ("1 round each", 1u8),
+            ("3 rounds each", 3),
+            ("5 rounds each", 5),
+            ("10 rounds each", 10),
+            ("all ammo", 0),
+        ] {
             mc.add_command_for_group(
                 mizgid,
                 (*label).into(),
@@ -649,8 +690,15 @@ fn add_alcm_menu_for_jtac(
 ) -> Result<()> {
     let mc = MissionCommands::singleton(lua)?;
 
-    let root = mc.add_submenu_for_group(mizgid, "ALCM".into(), Some(root.clone()))?;
+    let mut root = mc.add_submenu_for_group(mizgid, "ALCM".into(), Some(root.clone()))?;
+    // DCS caps each menu page at 10 entries -- spill into "More>>" sub-pages.
+    let mut page_n = 0u32;
     for (gid, ammo) in alcm {
+        if page_n >= 9 {
+            root = mc.add_submenu_for_group(mizgid, "More>>".into(), Some(root.clone()))?;
+            page_n = 0;
+        }
+        page_n += 1;
         let root = mc.add_submenu_for_group(
             mizgid,
             format_compact!("{gid}({ammo})").into(),
@@ -770,9 +818,10 @@ fn toggle_pin_jtac(lua: MizLua, arg: ArgTuple<SlotId, JtId>) -> Result<()> {
     init_jtac_menu_for_slot(ctx, lua, &arg.fst)
 }
 
+#[allow(unused_assignments)] // trailing page!() bumps item_count without a reader
 pub(super) fn add_menu_for_jtac(
     db: &Db,
-    side: Side,
+    _side: Side,
     root: GroupSubMenu,
     lua: MizLua,
     mizgid: GroupId,
@@ -829,7 +878,20 @@ pub(super) fn add_menu_for_jtac(
         }
         }
     };
-    let root = mc.add_submenu_for_group(mizgid, name.clone().into(), Some(root))?;
+    let mut root = mc.add_submenu_for_group(mizgid, name.clone().into(), Some(root))?;
+    // DCS only shows 10 entries per menu page. Spill overflow into a chain of
+    // "More>>" submenus so entries like Artillery/ALCM/Bomber remain reachable.
+    let mut item_count = 0u32;
+    macro_rules! page {
+        () => {{
+            if item_count >= 9 {
+                root = mc.add_submenu_for_group(mizgid, "More>>".into(), Some(root.clone()))?;
+                item_count = 0;
+            }
+            item_count += 1;
+        }};
+    }
+    page!();
     mc.add_command_for_group(
         mizgid,
         if !pinned {
@@ -844,6 +906,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
+    page!();
     mc.add_command_for_group(
         mizgid,
         "Status".into(),
@@ -854,6 +917,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
+    page!();
     mc.add_command_for_group(
         mizgid,
         "9-Line".into(),
@@ -864,6 +928,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
+    page!();
     mc.add_command_for_group(
         mizgid,
         "Toggle Auto Shift".into(),
@@ -874,6 +939,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
+    page!();
     mc.add_command_for_group(
         mizgid,
         "Toggle IR Pointer".into(),
@@ -884,6 +950,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
+    page!();
     mc.add_command_for_group(
         mizgid,
         "Smoke Current Target".into(),
@@ -894,6 +961,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
+    page!();
     mc.add_command_for_group(
         mizgid,
         "Shift".into(),
@@ -904,6 +972,18 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
+    page!();
+    mc.add_command_for_group(
+        mizgid,
+        "Designate Building".into(),
+        Some(root.clone()),
+        jtac_designate_building,
+        ArgTuple {
+            fst: *ucid,
+            snd: jtac.gid(),
+        },
+    )?;
+    page!();
     let mut filter_root = mc.add_submenu_for_group(mizgid, "Filter".into(), Some(root.clone()))?;
     mc.add_command_for_group(
         mizgid,
@@ -932,6 +1012,7 @@ pub(super) fn add_menu_for_jtac(
             },
         )?;
     }
+    page!();
     let code_root = mc.add_submenu_for_group(mizgid, "Code".into(), Some(root.clone()))?;
     let thou_root = mc.add_submenu_for_group(mizgid, "Xxxx".into(), Some(code_root.clone()))?;
     let hund_root = mc.add_submenu_for_group(mizgid, "xXxx".into(), Some(code_root.clone()))?;
@@ -953,49 +1034,61 @@ pub(super) fn add_menu_for_jtac(
             )?;
         }
     }
-    add_artillery_menu_for_jtac(
-        lua,
-        mizgid,
-        *ucid,
-        root.clone(),
-        jtac.gid(),
-        jtac.nearby_artillery(),
-    )?;
-
-    add_alcm_menu_for_jtac(
-        lua,
-        mizgid,
-        *ucid,
-        root.clone(),
-        jtac.gid(),
-        jtac.nearby_alcm(),
-    )?;
-
-    let bomber_missions = db.ephemeral.cfg.actions.get(&side);
-    let bomber_missions = bomber_missions.iter().flat_map(|acts| {
-        acts.iter().filter_map(|(n, a)| match a.kind {
-            ActionKind::Bomber(_) => Some(n.clone()),
-            _ => None,
-        })
-    });
-    for name in bomber_missions {
-        let root = mc.add_submenu_for_group(
-            mizgid,
-            format_compact!("Bomber Mission({name})").into(),
-            Some(root.clone()),
-        )?;
+    // Artillery / ALCM submenus are always present (drone JTACs included) so the
+    // option is discoverable; when nothing is in range they show a single
+    // informational line instead of being empty.
+    page!();
+    if jtac.nearby_artillery().is_empty() {
+        let arty_root =
+            mc.add_submenu_for_group(mizgid, "Artillery".into(), Some(root.clone()))?;
         mc.add_command_for_group(
             mizgid,
-            "Yes, do it!".into(),
-            Some(root.clone()),
-            call_bomber,
-            ArgTriple {
-                fst: jtac.gid(),
-                snd: ucid.clone(),
-                trd: name,
+            "(no guns in range — deploy artillery nearby)".into(),
+            Some(arty_root.clone()),
+            jtac_status,
+            ArgTuple {
+                fst: Some(*ucid),
+                snd: jtac.gid(),
             },
         )?;
+    } else {
+        add_artillery_menu_for_jtac(
+            lua,
+            mizgid,
+            *ucid,
+            root.clone(),
+            jtac.gid(),
+            jtac.nearby_artillery(),
+        )?;
     }
+
+    page!();
+    if jtac.nearby_alcm().is_empty() {
+        let alcm_root = mc.add_submenu_for_group(mizgid, "ALCM".into(), Some(root.clone()))?;
+        mc.add_command_for_group(
+            mizgid,
+            "(no ALCM shooters in range)".into(),
+            Some(alcm_root.clone()),
+            jtac_status,
+            ArgTuple {
+                fst: Some(*ucid),
+                snd: jtac.gid(),
+            },
+        )?;
+    } else {
+        add_alcm_menu_for_jtac(
+            lua,
+            mizgid,
+            *ucid,
+            root.clone(),
+            jtac.gid(),
+            jtac.nearby_alcm(),
+        )?;
+    }
+
+    // Bomber-mission actions are surfaced in the Actions menu (each expands to a
+    // JTAC picker there), not here -- keeps the JTAC menu focused on targeting.
+    // `call_bomber` is still used by that Actions entry and the `-bomber` chat cmd.
     Ok(())
 }
 

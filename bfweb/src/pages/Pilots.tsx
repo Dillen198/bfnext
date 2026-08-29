@@ -356,7 +356,7 @@ function KillLog({ kills, allPilots, breakdown }: {
 
 type DeployCol = 'time' | 'deployable' | 'aircraft' | 'method'
 
-function DeployLog({ deploys }: { deploys: PilotDeploy[] }) {
+function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }) {
   const [sort, setSort] = useState<{ col: DeployCol; dir: SortDir }>({ col: 'time', dir: 'desc' })
   const [page, setPage] = useState(0)
   const PER_PAGE = 15
@@ -394,6 +394,7 @@ function DeployLog({ deploys }: { deploys: PilotDeploy[] }) {
         </span>
         <span className="ml-auto font-mono" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>
           {deploys.length} deploys
+          {total > deploys.length && ` (+${total - deploys.length} before logging)`}
         </span>
         {totalPages > 1 && (
           <div className="flex items-center gap-1 ml-2">
@@ -412,7 +413,9 @@ function DeployLog({ deploys }: { deploys: PilotDeploy[] }) {
         )}
       </div>
       {deploys.length === 0 ? (
-        <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.7rem' }}>No deploys recorded</div>
+        <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.7rem' }}>
+          {total > 0 ? `${total} deploy${total === 1 ? '' : 's'} recorded before per-deploy logging was added` : 'No deploys recorded'}
+        </div>
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
@@ -764,7 +767,7 @@ export default function Pilots() {
               <KillLog kills={kills} allPilots={pilots} breakdown={breakdown} />
 
               {/* ── Deploy log ── */}
-              <DeployLog deploys={deploys} />
+              <DeployLog deploys={deploys} total={pilot.deploys} />
             </div>
           </div>
         )}

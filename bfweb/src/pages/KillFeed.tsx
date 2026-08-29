@@ -9,6 +9,18 @@ import {
 } from 'recharts'
 import { Crosshair, Zap, Activity, Users, Plane } from 'lucide-react'
 import { useRound } from '../context/RoundContext'
+import { useTableSort, SortTh } from '../components/SortableTh'
+
+type KillCol = 'time' | 'category' | 'killer' | 'airframe' | 'weapon' | 'target' | 'victim'
+const KILL_COLS: { label: string; key: KillCol }[] = [
+  { label: 'Time (Z)', key: 'time' },
+  { label: 'Category', key: 'category' },
+  { label: 'Killer', key: 'killer' },
+  { label: 'Airframe', key: 'airframe' },
+  { label: 'Weapon', key: 'weapon' },
+  { label: 'Target Unit', key: 'target' },
+  { label: 'Victim', key: 'victim' },
+]
 
 const TT = {
   contentStyle: { background: 'var(--bg-elevated)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text)', fontSize: 11 },
@@ -107,6 +119,20 @@ export default function KillFeed() {
   const fmtTime = (iso: string) =>
     new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 
+  const killCols = useMemo(() => ({
+    time:     (k: (typeof kills)[number]) => k.time,
+    category: (k: (typeof kills)[number]) => classifyTarget(k.target_type).label,
+    killer:   (k: (typeof kills)[number]) =>
+      (k.killer?.ucid ? nameMap.get(k.killer.ucid) : null) ??
+      k.killer?.airframe ?? (k.killer ? 'AI' : 'Environment'),
+    airframe: (k: (typeof kills)[number]) => k.killer?.airframe ?? null,
+    weapon:   (k: (typeof kills)[number]) => k.killer?.weapon ?? null,
+    target:   (k: (typeof kills)[number]) => k.target_type ?? null,
+    victim:   (k: (typeof kills)[number]) => (k.victim.ucid ? nameMap.get(k.victim.ucid) : null) ?? null,
+  }), [nameMap, kills])
+  const { sorted: sortedKills, sortKey, sortDir, onSort } =
+    useTableSort(kills, killCols, { key: 'time', dir: 'desc' })
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <PageHeader
@@ -201,8 +227,16 @@ export default function KillFeed() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 1 }}>
-                  {['Time (Z)', 'Category', 'Killer', 'Airframe', 'Weapon', 'Target Unit', 'Victim'].map(h => (
-                    <th key={h} style={{ padding: '7px 12px', textAlign: 'left', fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: '#374151', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                  {KILL_COLS.map(c => (
+                    <SortTh
+                      key={c.key}
+                      label={c.label}
+                      colKey={c.key}
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={onSort}
+                      style={{ padding: '7px 12px', textAlign: 'left', fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: '#374151', fontWeight: 600 }}
+                    />
                   ))}
                 </tr>
               </thead>
@@ -213,7 +247,7 @@ export default function KillFeed() {
                 {kills.length === 0 && !isLoading && (
                   <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: '#374151', fontSize: '0.75rem' }}>No kills recorded yet</td></tr>
                 )}
-                {kills.map((k, i) => {
+                {sortedKills.map((k, i) => {
                   const killerName = k.killer?.ucid ? (nameMap.get(k.killer.ucid) ?? null) : null
                   const victimName = k.victim.ucid ? (nameMap.get(k.victim.ucid) ?? null) : null
                   const cat = classifyTarget(k.target_type)

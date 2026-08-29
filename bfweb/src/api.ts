@@ -58,6 +58,9 @@ export interface Objective {
   supply: number
   fuel: number
   last_change: string
+  priority?: boolean
+  threatened?: boolean
+  captureable?: boolean
 }
 
 export interface Pilot {

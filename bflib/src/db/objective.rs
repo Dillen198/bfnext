@@ -335,6 +335,14 @@ pub struct Objective {
     pub(super) unlimited_aircraft: bool,
     #[serde(default)]
     pub points: i32,
+    /// After a capture, the assaulting troop groups that are holding the base
+    /// during the consolidation window. While non-empty the garrison does not
+    /// spawn and `captureable()` stays true. Cleared on consolidation (troops
+    /// survived the timer) or when the base goes Neutral (troops wiped out).
+    #[serde(default)]
+    pub(super) capture_hold: Vec<GroupId>,
+    #[serde(default)]
+    pub(super) capture_hold_ts: Option<DateTime<Utc>>,
     /// Commander's intent marker, settable via the fowlengine Discord bot / bfdb
     /// admin API. Display/coordination only -- does not affect AI or logistics.
     #[serde(default)]
@@ -358,12 +366,24 @@ impl Objective {
         self.health
     }
 
+    pub fn last_change(&self) -> DateTime<Utc> {
+        self.last_change_ts
+    }
+
     pub fn logi(&self) -> u8 {
         self.logi
     }
 
     pub fn captureable(&self) -> bool {
-        self.health <= 20 && self.infantry == 0
+        // A base still in its post-capture hold (garrison not yet consolidated)
+        // is takeable by either side until it consolidates or goes Neutral.
+        !self.capture_hold.is_empty() || (self.health <= 20 && self.infantry == 0)
+    }
+
+    /// True while the base is held only by the assaulting troops after a
+    /// capture and hasn't consolidated its garrison yet.
+    pub fn in_capture_hold(&self) -> bool {
+        !self.capture_hold.is_empty()
     }
 
     pub fn owner(&self) -> Side {
@@ -785,6 +805,8 @@ impl Db {
             unlimited_aircraft: false,
             priority: false,
             points: 0,
+            capture_hold: vec![],
+            capture_hold_ts: None,
             last_threatened_ts: now,
             last_change_ts: now,
             last_activate: DateTime::<Utc>::default(),
@@ -868,7 +890,15 @@ impl Db {
             }
 
             let new_eligible = obj.captureable() || obj.kind.is_special_sam_site();
-            let newly_capturable = !prev_eligible && new_eligible;
+            // Don't fire the generic "is now capturable" broadcast while the
+            // objective is in its post-capture hold (announced by the capture
+            // flow instead), or while its garrison isn't even spawned -- a
+            // freshly captured / culled base reads as "capturable" transiently
+            // and firing the message right after a capture just confuses.
+            let newly_capturable = !prev_eligible
+                && new_eligible
+                && obj.capture_hold.is_empty()
+                && obj.spawned;
             (obj.kind.clone(), health, logi, prev_logi, obj.name.clone(), obj.owner, newly_capturable)
         };
         if newly_capturable {
@@ -876,7 +906,7 @@ impl Db {
                 15,
                 false,
                 format_compact!(
-                    "🎯 {name} ({owner:?}) is now capturable! Get troops into the zone."
+                    "{name} ({owner:?}) is now capturable -- get troops into the zone."
                 ),
             );
         }
@@ -947,9 +977,26 @@ impl Db {
                         if spawned || class == ObjGroupClass::Services {
                             self.ephemeral.push_spawn(gid)
                         }
-                        if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
-                            obj.supply = obj.supply.saturating_sub(repair_supply_cost);
+                        let owner = obj.owner;
+                        if let Some(production) =
+                            self.ephemeral.production_by_side.get(&owner).cloned()
+                        {
+                            let percent = repair_supply_cost as f32 / 100.;
+                            if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+                                for name in production.equipment.keys() {
+                                    if let Some(inv) = obj.warehouse.equipment.get_mut_cow(name) {
+                                        inv.reduce(percent);
+                                    }
+                                }
+                                for liq in production.liquids.keys() {
+                                    if let Some(inv) = obj.warehouse.liquids.get_mut_cow(liq) {
+                                        inv.reduce(percent);
+                                    }
+                                }
+                            }
                         }
+                        self.update_supply_status()
+                            .context("updating supply status after repair")?;
                         self.update_objective_status(&oid, now)?;
                         self.ephemeral.dirty();
                         return Ok(());
@@ -957,6 +1004,51 @@ impl Db {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Draw supply from the objectives that unpacked crates were spawned at --
+    /// one share per crate consumed. `origins` is (origin_oid, crates_from_it).
+    /// The draw is multiplicative on the warehouse stock (same mechanism as
+    /// `repair_objective`), so it tapers with each deploy and never fully
+    /// empties a base; several supplying bases each pay only for their crates.
+    pub(crate) fn consume_deploy_supply(
+        &mut self,
+        origins: impl IntoIterator<Item = (ObjectiveId, usize)>,
+    ) -> Result<()> {
+        let pct = self.ephemeral.cfg.deploy_supply_cost as f32 / 100.;
+        if pct <= 0. {
+            return Ok(());
+        }
+        for (oid, count) in origins {
+            if count == 0 {
+                continue;
+            }
+            let owner = match self.persisted.objectives.get(&oid) {
+                Some(obj) => obj.owner,
+                None => continue,
+            };
+            let production = match self.ephemeral.production_by_side.get(&owner).cloned() {
+                Some(p) => p,
+                None => continue,
+            };
+            // compounded fraction removed for `count` crates
+            let frac = 1. - (1. - pct).powi(count as i32);
+            if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+                for name in production.equipment.keys() {
+                    if let Some(inv) = obj.warehouse.equipment.get_mut_cow(name) {
+                        inv.reduce(frac);
+                    }
+                }
+                for liq in production.liquids.keys() {
+                    if let Some(inv) = obj.warehouse.liquids.get_mut_cow(liq) {
+                        inv.reduce(frac);
+                    }
+                }
+            }
+        }
+        self.update_supply_status()?;
+        self.ephemeral.dirty();
         Ok(())
     }
 
@@ -1010,8 +1102,15 @@ impl Db {
                         *spawn = true;
                         if unarmed {
                         } else if air {
-                            let threat_dist =
-                                (cfg.threatened_distance[unit.typ.as_str()] as f64).powi(2);
+                            // Fall back to a conservative range for types not in
+                            // the config table -- indexing panicked, which killed
+                            // threat detection (and culling) for the whole tick.
+                            let threat_dist = (cfg
+                                .threatened_distance
+                                .get(unit.typ.as_str())
+                                .copied()
+                                .unwrap_or(14400) as f64)
+                                .powi(2);
                             if dist <= threat_dist {
                                 *threat = true
                             }
@@ -1031,7 +1130,12 @@ impl Db {
                                        threat: &mut bool| {
             for (side, pos, v, typ) in &players {
                 if obj.owner != *side {
-                    let threat_dist = (cfg.threatened_distance[typ] as f64).powi(2);
+                    let threat_dist = (cfg
+                        .threatened_distance
+                        .get(typ.as_str())
+                        .copied()
+                        .unwrap_or(14400) as f64)
+                        .powi(2);
                     let ppos = Vector2::new(pos.x, pos.z);
                     let (future_ppos30, future_ppos60) = {
                         let pos30 = pos.0 + (v * 30.);
@@ -1060,6 +1164,9 @@ impl Db {
         };
         let mut became_threatened: SmallVec<[ObjectiveId; 4]> = smallvec![];
         let mut became_clear: SmallVec<[ObjectiveId; 4]> = smallvec![];
+        // Objectives whose spawn state flipped this tick -- their scenery markers
+        // need creating/removing to match (culled exactly like their units).
+        let mut scenery_dirty: SmallVec<[ObjectiveId; 8]> = smallvec![];
         let cooldown = Duration::seconds(self.ephemeral.cfg.threatened_cooldown as i64);
         const ARTY_WAKE_SECS: i64 = 300; // keep objective alive 5 min after last artillery targeting
         const DEPLOY_WAKE_DIST_SQ: f64 = 10_000.0 * 10_000.0; // 10 km radius for deployed-unit wake
@@ -1183,8 +1290,9 @@ impl Db {
                     self.ephemeral.dirty = true;
                 }
             }
-            if !obj.spawned && spawn {
+            if !obj.spawned && spawn && obj.capture_hold.is_empty() {
                 obj.spawned = true;
+                scenery_dirty.push(*oid);
                 let is_mobile = obj.kind.is_carrier_group();
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     let group = group!(self, gid)?;
@@ -1214,6 +1322,7 @@ impl Db {
                     continue;
                 }
                 obj.spawned = false;
+                scenery_dirty.push(*oid);
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     let group = group!(self, gid)?;
                     let farp = obj.kind.is_farp();
@@ -1291,6 +1400,9 @@ impl Db {
         self.ephemeral
             .artillery_targeted
             .retain(|_, t| now - *t <= Duration::seconds(ARTY_WAKE_SECS));
+        for oid in scenery_dirty {
+            self.sync_scenery_markers(oid);
+        }
         Ok((became_threatened, became_clear))
     }
 
@@ -1378,6 +1490,14 @@ impl Db {
             .objectives
             .into_iter()
             .filter_map(|(oid, obj)| {
+                // A base under active assault (enemy nearby, or troops already
+                // running the capture timer) can't rebuild itself. A capturable
+                // but un-pressured base still repairs -- it just burns supply to
+                // do it (see repair_objective), so an attacker who leaves gives
+                // it the chance to recover from its own stockpile.
+                if obj.threatened || self.ephemeral.capture_progress.contains_key(oid) {
+                    return None;
+                }
                 let logi = obj.logi as f32 / 100.;
                 let repair_time = self.ephemeral.cfg.repair_time as f32 / logi;
                 if repair_time < i64::MAX as f32 {
@@ -1565,6 +1685,7 @@ impl Db {
                 || obj.kind.is_special_sam_site()
                 || self.defender_destruction_ratio(obj) >= min_unit_pct;
             if (obj.captureable() || obj.kind.is_special_sam_site()) && unit_threshold_met {
+                self.ephemeral.capture_blocked_notice.remove(oid);
                 for gid in &self.persisted.troops {
                     let group = group!(self, gid)?;
                     match &group.origin {
@@ -1616,6 +1737,52 @@ impl Db {
                         }
                     }
                 }
+            } else {
+                // Not yet eligible -- if enemy capture-capable troops are already
+                // standing in the zone, tell them why nothing is happening instead
+                // of leaving them guessing. Throttled per-objective.
+                let mut enemy_in_zone = false;
+                for gid in &self.persisted.troops {
+                    let group = group!(self, gid)?;
+                    if let DeployKind::Troop { spec, .. } = &group.origin {
+                        if spec.can_capture
+                            && group.side != obj.owner
+                            && group
+                                .units
+                                .into_iter()
+                                .filter_map(|uid| self.persisted.units.get(uid))
+                                .any(|u| !u.dead && obj.zone.contains(u.pos))
+                        {
+                            enemy_in_zone = true;
+                            break;
+                        }
+                    }
+                }
+                if enemy_in_zone {
+                    let last = self.ephemeral.capture_blocked_notice.get(oid).copied();
+                    let due = last.map(|t| (now - t).num_seconds() >= 30).unwrap_or(true);
+                    if due {
+                        self.ephemeral.capture_blocked_notice.insert(*oid, now);
+                        let reason = if !unit_threshold_met {
+                            format_compact!(
+                                "not enough defenders destroyed yet ({:.0}% required)",
+                                min_unit_pct * 100.0
+                            )
+                        } else if obj.infantry > 0 {
+                            format_compact!("enemy infantry still defending ({}% left)", obj.infantry)
+                        } else {
+                            format_compact!("health still above 20% ({}%)", obj.health)
+                        };
+                        self.ephemeral.msgs().panel_to_all(
+                            15,
+                            false,
+                            format_compact!(
+                                "{} is not capturable yet: {reason}.",
+                                obj.name
+                            ),
+                        );
+                    }
+                }
             }
         }
         let mut actually_captured = smallvec![];
@@ -1635,12 +1802,17 @@ impl Db {
                 let capture_secs = if is_sam {
                     0i64
                 } else {
-                    self.ephemeral
+                    // Base momentum (default 180s), divided by the number of
+                    // capturing troop groups in the zone -- bring more squads,
+                    // take it faster. Floored so it never goes instant.
+                    let base_secs = self
+                        .ephemeral
                         .cfg
                         .campaign_events
                         .as_ref()
-                        .map(|c| c.capture_time_secs)
-                        .unwrap_or(0) as i64
+                        .map_or(180, |c| c.capture_time_secs) as i64;
+                    let n_groups = gids.len().max(1) as i64;
+                    (base_secs / n_groups).max(30)
                 };
 
                 if capture_secs > 0 {
@@ -1664,11 +1836,11 @@ impl Db {
                         let enemy = side.opposite();
                         self.ephemeral.msgs().panel_to_side(
                             15, false, *side,
-                            format_compact!("⚔ Capturing {}… ({} sec)", obj_name, remaining.max(0)),
+                            format_compact!("Capturing {} ({} sec)", obj_name, remaining.max(0)),
                         );
                         self.ephemeral.msgs().panel_to_side(
                             15, false, enemy,
-                            format_compact!("⚠ {} is being captured! Eliminate enemy troops!", obj_name),
+                            format_compact!("{} is being captured! Eliminate enemy troops!", obj_name),
                         );
                     }
                     if elapsed < capture_secs {
@@ -1692,7 +1864,7 @@ impl Db {
                 self.ephemeral.msgs().panel_to_all(
                     15,
                     true,
-                    format_compact!("🏴 BASE CAPTURE: {name} has been captured by {new_owner:?}!"),
+                    format_compact!("BASE CAPTURE: {name} has been taken by {new_owner:?}!"),
                 );
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     to_mark.push(*gid);
@@ -1728,19 +1900,35 @@ impl Db {
                     .context("repairing captured airbase services")?;
                 self.capture_warehouse(lua, oid)
                     .context("capturing warehouse")?;
+                self.sync_scenery_markers(oid);
                 self.setup_supply_lines().context("setup supply lines")?;
                 self.deliver_supplies_from_logistics_hubs(lua, now)
                     .context("delivering supplies")?;
                 let mut ucids: SmallVec<[Ucid; 1]> = smallvec![];
+                let mut hold_gids: Vec<GroupId> = vec![];
                 for (_, ucid, troop_origin, gid) in gids {
-                    self.delete_group(&gid)
-                        .context("deleting capturing troops")?;
+                    hold_gids.push(gid);
                     if let Some(ucid) = ucid {
                         if previous_owner != new_owner || troop_origin != Some(oid) {
                             if !ucids.contains(&ucid) {
                                 ucids.push(ucid);
                             }
                         }
+                    }
+                }
+                // Keep the assault troops holding the base through the
+                // consolidation window: garrison stays down and the base stays
+                // capturable until they either survive the timer (consolidate)
+                // or are wiped out (base goes Neutral). See check_capture_hold.
+                let consolidation = self.ephemeral.cfg.capture_consolidation_secs;
+                if consolidation > 0 && !hold_gids.is_empty() {
+                    let obj = objective_mut!(self, oid)?;
+                    obj.capture_hold = hold_gids;
+                    obj.capture_hold_ts = Some(now);
+                } else {
+                    for gid in hold_gids {
+                        self.delete_group(&gid)
+                            .context("deleting capturing troops")?;
                     }
                 }
                 self.ephemeral.stat(Stat::Capture {
@@ -1787,6 +1975,76 @@ impl Db {
             }
         }
         Ok(actually_captured)
+    }
+
+    /// Resolve post-capture holds. A base captured with
+    /// `capture_consolidation_secs > 0` is held only by the assaulting troop
+    /// groups until either they survive the timer (consolidate -> garrison may
+    /// spawn) or they are all wiped out (base goes Neutral).
+    pub fn check_capture_hold(&mut self, now: DateTime<Utc>) -> Result<()> {
+        let consolidation =
+            Duration::seconds(self.ephemeral.cfg.capture_consolidation_secs as i64);
+        let held: SmallVec<[ObjectiveId; 4]> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(_, o)| !o.capture_hold.is_empty())
+            .map(|(oid, _)| *oid)
+            .collect();
+        for oid in held {
+            let (alive, started, name, owner) = {
+                let obj = objective!(self, oid)?;
+                let started = obj.capture_hold_ts.unwrap_or(now);
+                let alive: Vec<GroupId> = obj
+                    .capture_hold
+                    .iter()
+                    .copied()
+                    .filter(|gid| {
+                        self.group_health(gid).map(|(a, _)| a > 0).unwrap_or(false)
+                    })
+                    .collect();
+                (alive, started, obj.name.clone(), obj.owner)
+            };
+            if alive.is_empty() {
+                let obj = objective_mut!(self, oid)?;
+                obj.capture_hold.clear();
+                obj.capture_hold_ts = None;
+                obj.owner = Side::Neutral;
+                obj.spawned = false;
+                obj.last_activate = now;
+                self.ephemeral.msgs().panel_to_all(
+                    15,
+                    true,
+                    format_compact!(
+                        "{name}: the assault force was wiped out -- the base is contested (Neutral)"
+                    ),
+                );
+                let obj = objective!(self, oid)?;
+                self.ephemeral.create_objective_markup(&self.persisted, obj);
+                self.ephemeral.dirty();
+                self.sync_scenery_markers(oid);
+            } else if now - started >= consolidation {
+                let obj = objective_mut!(self, oid)?;
+                obj.capture_hold.clear();
+                obj.capture_hold_ts = None;
+                obj.spawned = false;
+                obj.last_activate = now;
+                self.ephemeral.msgs().panel_to_side(
+                    10,
+                    false,
+                    owner,
+                    format_compact!("{name} consolidated -- garrison moving in"),
+                );
+                self.ephemeral.dirty();
+            } else {
+                let obj = objective_mut!(self, oid)?;
+                if obj.capture_hold.len() != alive.len() {
+                    obj.capture_hold = alive;
+                    self.ephemeral.dirty();
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn update_objectives_markup(&mut self) -> Result<()> {
@@ -2092,14 +2350,14 @@ impl Db {
         lua: MizLua,
         now: DateTime<Utc>,
     ) -> Result<Vec<(ObjectiveId, Side, Side)>> {
-        // Capture time reuses campaign_events.capture_time_secs (0 = instant)
+        // Capture time reuses campaign_events.capture_time_secs (0 = instant).
+        // A missing campaign_events block still means the default 60s, not instant.
         let capture_secs = self
             .ephemeral
             .cfg
             .campaign_events
             .as_ref()
-            .map(|c| c.capture_time_secs as i64)
-            .unwrap_or(0);
+            .map_or(180, |c| c.capture_time_secs as i64);
 
         // --- Pass 1: collect which carriers have qualifying troops in zone ---
         // Map: carrier ObjectiveId → Vec<(capturing_side, Option<ucid>, group_id)>
@@ -2207,13 +2465,13 @@ impl Db {
                         15,
                         false,
                         captor_side,
-                        format_compact!("⚔ Boarding {}… ({} sec)", obj_name, remaining.max(0)),
+                        format_compact!("Boarding {} ({} sec)", obj_name, remaining.max(0)),
                     );
                     self.ephemeral.msgs().panel_to_side(
                         15,
                         false,
                         enemy,
-                        format_compact!("⚠ {} is being boarded! Eliminate enemy troops!", obj_name),
+                        format_compact!("{} is being boarded! Eliminate enemy troops!", obj_name),
                     );
                 }
                 if elapsed < capture_secs {

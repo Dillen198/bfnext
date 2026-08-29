@@ -40,7 +40,7 @@ use dcso3::{
     group::Group,
     land::Land,
     net::{SlotId, Ucid},
-    object::{DcsObject, DcsOid},
+    object::{ClassObject, DcsObject, DcsOid, Object},
     radians_to_degrees, simple_enum,
     spot::{ClassSpot, Spot},
     trigger::{MarkId, SmokeColor, Trigger},
@@ -140,6 +140,72 @@ pub struct ArtilleryAdjustment {
     tracked: Option<(Weapon<'static>, Option<Vector3>)>,
 }
 
+/// How far (m) a battery is nudged toward its target before firing so that
+/// hull-traverse launchers (Grad, MLRS, Smerch, Scud-B, Silkworm, ...) physically
+/// slew to face the target instead of relying on turret traverse alone.
+const ARTILLERY_AIM_NUDGE_M: f64 = 35.0;
+/// If the battery is already within this many radians of the target bearing it
+/// fires in place -- avoids walking tube artillery downrange over repeated fire
+/// missions once it is lined up. ~17 degrees.
+const ARTILLERY_AIM_TOLERANCE_RAD: f64 = 0.30;
+
+/// Current facing (radians, DCS azimuth) of the first alive unit in `gid`.
+pub(crate) fn group_facing(db: &Db, gid: &GroupId) -> Option<f64> {
+    let g = db.group(gid).ok()?;
+    g.units
+        .into_iter()
+        .find_map(|uid| db.unit(uid).ok().filter(|u| !u.dead).map(|u| u.heading))
+}
+
+/// Wrap `fire_task` in a ground `Task::Mission`. If the battery is not already
+/// pointed at `target`, the mission first walks it ~`ARTILLERY_AIM_NUDGE_M`
+/// toward the target so the AI reorients the hull, then fires; otherwise it
+/// fires from `center` without moving. `facing` is the battery's current heading
+/// in radians (see `group_facing`).
+pub(crate) fn aim_and_fire_route<'lua>(
+    center: Vector2,
+    target: Vector2,
+    facing: Option<f64>,
+    fire_task: Task<'lua>,
+) -> Task<'lua> {
+    let delta = target - center;
+    let bearing = dcso3::azumith2d(delta);
+    let aligned = facing
+        .map(|h| {
+            let mut d = (bearing - h).abs() % std::f64::consts::TAU;
+            if d > std::f64::consts::PI {
+                d = std::f64::consts::TAU - d;
+            }
+            d <= ARTILLERY_AIM_TOLERANCE_RAD
+        })
+        .unwrap_or(false);
+    let (pos, speed) = if aligned || delta.norm() < 1.0 {
+        (center, 0.0)
+    } else {
+        (center + delta.normalize() * ARTILLERY_AIM_NUDGE_M, 5.5)
+    };
+    Task::Mission {
+        airborne: Some(false),
+        route: vec![MissionPoint {
+            action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
+            typ: PointType::TurningPoint,
+            airdrome_id: None,
+            helipad: None,
+            time_re_fu_ar: None,
+            link_unit: None,
+            pos: LuaVec2(pos),
+            alt: 0.,
+            alt_typ: Some(AltType::RADIO),
+            speed,
+            speed_locked: None,
+            eta: None,
+            eta_locked: None,
+            name: None,
+            task: Box::new(fire_task),
+        }],
+    }
+}
+
 type LocByCode = FxHashMap<Side, FxHashMap<ObjectiveId, FxHashMap<u16, FxHashSet<JtId>>>>;
 
 #[derive(Debug, Clone, Default)]
@@ -173,6 +239,34 @@ impl JtacTarget {
                 .destroy()
                 .context("destroying ir pointer")?
         }
+        if let Some(id) = self.mark {
+            Trigger::singleton(lua)?
+                .action()?
+                .remove_mark(id)
+                .context("removing mark")?
+        }
+        Ok(())
+    }
+}
+
+/// A designated logistics/scenery building target (from `scan_objective_scenery`).
+/// Kept separate from `JtacTarget` since buildings aren't `EnId` contacts --
+/// they don't die via unit-kill events, they're polled for destruction by
+/// `check_scenery_buildings`.
+#[derive(Debug, Clone)]
+struct BuildingTarget {
+    id: DcsOid<ClassObject>,
+    label: CompactString,
+    spot: DcsOid<ClassSpot>,
+    mark: Option<MarkId>,
+}
+
+impl BuildingTarget {
+    fn destroy(self, lua: MizLua) -> Result<()> {
+        Spot::get_instance(lua, &self.spot)
+            .context("getting laser spot")?
+            .destroy()
+            .context("destroying laser spot")?;
         if let Some(id) = self.mark {
             Trigger::singleton(lua)?
                 .action()?
@@ -255,6 +349,8 @@ pub struct Jtac {
     nearby_alcm: SmallVec<[(GroupId, i32); 8]>,
     menu_dirty: bool,
     air: bool,
+    building_target: Option<BuildingTarget>,
+    building_idx: usize,
 }
 
 impl Jtac {
@@ -326,6 +422,8 @@ impl Jtac {
             nearby_alcm: smallvec![],
             menu_dirty: false,
             air,
+            building_target: None,
+            building_idx: 0,
         }
     }
 
@@ -387,6 +485,9 @@ impl Jtac {
                 )?;
             }
         };
+        if let Some(bt) = &self.building_target {
+            write!(msg, "designating building: {}\n", bt.label)?;
+        }
         write!(
             msg,
             "position bearing {} for {:.1}km from {}\n\n",
@@ -488,11 +589,11 @@ impl Jtac {
             None => format_compact!("{}", self.gid),
         };
         let mut msg = CompactString::new("");
-        write!(msg, "━━ 9-LINE CAS — {jtac_name} ━━\n")?;
+        write!(msg, "== 9-LINE CAS - {jtac_name} ==\n")?;
         write!(msg, "1. IP: {ip_name} (JTAC {jtac_brg_deg}° / {:.1}km from IP)\n",
             self.location.distance / 1000.0)?;
         write!(msg, "2. HDG: {brg_deg}° to target (egress {recip_deg}°)\n")?;
-        write!(msg, "3. DIST: {:.1}km — ELEV: {elev_ft}ft\n", dist_m / 1000.0)?;
+        write!(msg, "3. DIST: {:.1}km - ELEV: {elev_ft}ft\n", dist_m / 1000.0)?;
         write!(msg, "4. TGT: {}\n", target.typ)?;
         write!(msg, "5. TGT POS: {tgt_brg_deg}° / {:.1}km from {tgt_obj_name}\n",
             tgt_dist_km / 1000.0)?;
@@ -660,6 +761,85 @@ impl Jtac {
         }
     }
 
+    /// Cycle through the logistics-relevant scenery buildings (the ones pinned
+    /// with logi markers on the F10 map, from `scan_objective_scenery`) tracked
+    /// at this JTAC's nearest objective, lase the next one, and call it out to
+    /// the JTAC's side. Returns the label of the designated building, or `None`
+    /// if there are none left standing there.
+    pub fn designate_building(&mut self, db: &mut Db, lua: MizLua) -> Result<Option<CompactString>> {
+        let candidates = db.ephemeral.scenery_at_objective(self.location.oid);
+        if candidates.is_empty() {
+            self.remove_building_target(lua)?;
+            return Ok(None);
+        }
+        self.building_idx = (self.building_idx + 1) % candidates.len();
+        let (id, label) = candidates[self.building_idx].clone();
+        if let Some(bt) = &self.building_target {
+            if bt.id == id {
+                return Ok(Some(bt.label.clone()));
+            }
+        }
+        let pos = match Object::get_instance(lua, &id) {
+            Ok(o) => o.get_point().context("getting building position")?.0,
+            Err(_) => {
+                // stale entry, e.g. destroyed between scan and now -- retry next cycle
+                self.remove_building_target(lua)?;
+                return Ok(None);
+            }
+        };
+        self.remove_building_target(lua)?;
+        let jtid = match &self.gid {
+            JtId::Group(gid) => db
+                .first_living_unit(gid)
+                .context("getting jtac beam source")?
+                .clone(),
+            JtId::Slot(sl) => db
+                .ephemeral
+                .get_object_id_by_slot(sl)
+                .ok_or_else(|| anyhow!("no unit for slot {sl}"))?
+                .clone(),
+        };
+        let jt = Unit::get_instance(lua, &jtid).context("getting jtac unit")?;
+        let offset = if self.air {
+            Vector3::new(0., -5., 0.)
+        } else {
+            Vector3::new(0., 10., 0.)
+        };
+        let spot = Spot::create_laser(lua, jt.as_object()?, Some(LuaVec3(offset)), LuaVec3(pos), self.code)
+            .context("creating laser spot")?
+            .object_id()?;
+        let mid = MarkId::new();
+        let diff = Vector2::new(pos.x, pos.z) - self.location.pos;
+        let brg_deg = radians_to_degrees(diff.y.atan2(diff.x).rem_euclid(std::f64::consts::TAU)) as u32;
+        let msg = format_compact!(
+            "JTAC {} designating building: {label} (logistics target) {brg_deg}° / {:.1}km, code {}",
+            self.gid,
+            diff.magnitude() / 1000.,
+            self.code
+        );
+        Trigger::singleton(lua)?
+            .action()?
+            .mark_to_coalition(mid, msg.clone().into(), LuaVec3(pos), self.side, true, None)
+            .context("marking building target")?;
+        self.building_target = Some(BuildingTarget {
+            id,
+            label: label.clone(),
+            spot,
+            mark: Some(mid),
+        });
+        db.ephemeral.msgs().panel_to_side(15, false, self.side, msg);
+        Ok(Some(label))
+    }
+
+    fn remove_building_target(&mut self, lua: MizLua) -> Result<()> {
+        if let Some(target) = self.building_target.take() {
+            target
+                .destroy(lua)
+                .with_context(|| format_compact!("destroying building target for jtac {}", self.gid))?;
+        }
+        Ok(())
+    }
+
     fn set_code(&mut self, lua: MizLua, code_part: u16) -> Result<()> {
         let thousands = code_part / 1000;
         let hundreds = code_part / 100;
@@ -724,6 +904,9 @@ impl Jtac {
             if let Some(target) = &self.target {
                 if &target.id == id {
                     self.remove_target(db, lua).context("removing target")?;
+                    // The shifted target is gone -- fall back to auto so
+                    // sort_contacts re-acquires the next one.
+                    self.autoshift = None;
                     return Ok(true);
                 }
             }
@@ -743,8 +926,16 @@ impl Jtac {
         };
         self.contacts
             .sort_by(|_, ct0, _, ct1| priority(ct0.tags).cmp(&priority(ct1.tags)));
-        if self.autoshift.is_none() && !self.contacts.is_empty() {
-            return self.set_target(db, lua, 0).context("setting target");
+        // Auto-acquire the top-priority contact when in auto mode, OR any time
+        // we have contacts but no target at all (e.g. the manually-shifted
+        // target just died/left -- don't sit on "no target" while enemies are
+        // still in view).
+        if !self.contacts.is_empty() && (self.autoshift.is_none() || self.target.is_none()) {
+            let i = match self.autoshift {
+                Some(i) if i < self.contacts.len() => i,
+                _ => 0,
+            };
+            return self.set_target(db, lua, i).context("setting target");
         }
         Ok(false)
     }
@@ -801,6 +992,9 @@ impl Jtac {
                 let name = db.group(gid)?.name.clone();
                 let apos = db.group_center(gid)?;
                 let pos = Vector2::new(target.pos.x, target.pos.z);
+                if let Some(reason) = Jtacs::artillery_range_reason(db, gid, pos) {
+                    bail!("{reason}");
+                }
                 adjustment.target = pos;
                 let pos = pos + adjustment.adjust;
                 let task = Task::FireAtPoint {
@@ -811,26 +1005,7 @@ impl Jtac {
                     altitude: Some(0.),
                     altitude_type: Some(AltType::RADIO),
                 };
-                let task = Task::Mission {
-                    airborne: Some(false),
-                    route: vec![MissionPoint {
-                        action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
-                        typ: PointType::TurningPoint,
-                        airdrome_id: None,
-                        helipad: None,
-                        time_re_fu_ar: None,
-                        link_unit: None,
-                        pos: LuaVec2(apos),
-                        alt: 0.,
-                        alt_typ: Some(AltType::RADIO),
-                        speed: 0.,
-                        speed_locked: None,
-                        eta: None,
-                        eta_locked: None,
-                        name: None,
-                        task: Box::new(task),
-                    }],
-                };
+                let task = aim_and_fire_route(apos, pos, group_facing(db, gid), task);
                 let group = Group::get_by_name(lua, &name)
                     .with_context(|| format_compact!("getting group {}", name))?;
                 adjustment.tracked = None;
@@ -857,10 +1032,11 @@ impl Jtac {
     ) -> Result<()> {
         match self.target.as_mut() {
             None => bail!("no target"),
-            Some(_target) => {
+            Some(target) => {
+                let aim_target = Vector2::new(target.pos.x, target.pos.z);
                 let name = db.group(gid)?.name.clone();
                 let apos = db.group_center(gid)?;
-                
+
                 // Get total ammunition from all units in the artillery group
                 let mut total_ammo = 0u8;
                 for unit_id in db.group(gid)?.units.into_iter() {
@@ -913,27 +1089,13 @@ impl Jtac {
                     bail!("Artillery Abort: No valid targets found for combo mission.");
                 }
                 
-                let task = Task::Mission {
-                    airborne: Some(false),
-                    route: vec![MissionPoint {
-                        action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
-                        typ: PointType::TurningPoint,
-                        airdrome_id: None,
-                        helipad: None,
-                        time_re_fu_ar: None,
-                        link_unit: None,
-                        pos: LuaVec2(apos),
-                        alt: 0.,
-                        alt_typ: Some(AltType::RADIO),
-                        speed: 0.,
-                        speed_locked: None,
-                        eta: None,
-                        eta_locked: None,
-                        name: None,
-                        task: Box::new(Task::ComboTask(fire_task_vec)),
-                    }],
-                };
-                
+                let task = aim_and_fire_route(
+                    apos,
+                    aim_target,
+                    group_facing(db, gid),
+                    Task::ComboTask(fire_task_vec),
+                );
+
                 let group = Group::get_by_name(lua, &name)
                     .with_context(|| format_compact!("getting group {}", name))?;
                 adjustment.tracked = None;
@@ -1333,6 +1495,40 @@ impl Jtacs {
         self.jtacs.values().flat_map(|jtx| jtx.values())
     }
 
+    pub fn artillery_range_reason(db: &Db, gid: &GroupId, target_pos: Vector2) -> Option<CompactString> {
+        let cfg = &db.ephemeral.cfg;
+        let apos = db.group_center(gid).ok()?;
+        let dist = na::distance(&apos.into(), &target_pos.into());
+        let group = db.group(gid).ok();
+        let name = group.map(|g| g.name.to_string()).unwrap_or_default();
+        // Prefer the per-unit-type range from cfg.artillery.units (keyed by DCS
+        // type, e.g. "Scud_B") -- a ballistic TEL has a huge minimum range the
+        // flat artillery_min_range doesn't capture. Fall back to the flat pair.
+        let per_unit = group
+            .and_then(|g| g.units.into_iter().next())
+            .and_then(|uid| db.unit(uid).ok())
+            .and_then(|u| {
+                cfg.artillery
+                    .as_ref()
+                    .and_then(|a| a.units.get(u.typ.as_str()))
+            });
+        let (min, max) = match per_unit {
+            Some(r) => (r.min_range_m, r.max_range_m),
+            None => (cfg.artillery_min_range as f64, cfg.artillery_mission_range as f64),
+        };
+        if dist < min {
+            Some(format_compact!(
+                "{gid} ({name}) too close to target: {dist:.0}m (min {min:.0}m)"
+            ))
+        } else if dist > max {
+            Some(format_compact!(
+                "{gid} ({name}) too far from target: {dist:.0}m (max {max:.0}m)"
+            ))
+        } else {
+            None
+        }
+    }
+
     pub fn artillery_mission(
         &mut self,
         db: &Db,
@@ -1411,7 +1607,7 @@ impl Jtacs {
         lua: MizLua,
         jtid: &JtId,
         n: u8,
-    ) -> Result<usize> {
+    ) -> Result<(usize, SmallVec<[CompactString; 4]>)> {
         let jtac = self
             .jtacs
             .iter_mut()
@@ -1427,7 +1623,12 @@ impl Jtacs {
         }
 
         let mut fired = 0usize;
+        let mut skipped: SmallVec<[CompactString; 4]> = smallvec![];
         for gid in &arty_gids {
+            if let Some(reason) = Jtacs::artillery_range_reason(db, gid, target_pos) {
+                skipped.push(reason);
+                continue;
+            }
             // Per-gun adjustment (zero if none set yet).
             let adjustment = self
                 .artillery_adjustment
@@ -1441,42 +1642,48 @@ impl Jtacs {
             let adjusted_pos = target_pos + adjustment.adjust;
             adjustment.target = target_pos;
 
-            let group_name = match db.group(gid) {
-                Ok(g) => g.name.clone(),
+            let group = match db.group(gid) {
+                Ok(g) => g,
                 Err(_) => continue,
             };
+            let group_name = group.name.clone();
             let apos = match db.group_center(gid) {
                 Ok(p) => p,
                 Err(_) => continue,
             };
+            // n == 0 is the "fire all ammo" sentinel: sum each gun's actual
+            // rounds and expend that. A fixed n just uses that count.
+            let expend = if n == 0 {
+                let mut total = 0i64;
+                for uid in group.units.into_iter() {
+                    if let Ok(u) = db.unit(uid) {
+                        if let Ok(unit) = Unit::get_by_name(lua, &u.name) {
+                            if let Ok(ammo) = unit.get_ammo() {
+                                if let Ok(info) = ammo.first() {
+                                    total += info.count().unwrap_or(0) as i64;
+                                }
+                            }
+                        }
+                    }
+                }
+                if total == 0 {
+                    skipped.push(format_compact!("{gid} ({group_name}) is out of ammunition"));
+                    continue;
+                }
+                total
+            } else {
+                n as i64
+            };
             let fire_task = Task::FireAtPoint {
                 point: LuaVec2(adjusted_pos),
                 radius: None,
-                expend_qty: Some(n as i64),
+                expend_qty: Some(expend),
                 weapon_type: None,
                 altitude: Some(0.),
                 altitude_type: Some(AltType::RADIO),
             };
-            let mission = Task::Mission {
-                airborne: Some(false),
-                route: vec![MissionPoint {
-                    action: Some(ActionTyp::Ground(VehicleFormation::OffRoad)),
-                    typ: PointType::TurningPoint,
-                    airdrome_id: None,
-                    helipad: None,
-                    time_re_fu_ar: None,
-                    link_unit: None,
-                    pos: LuaVec2(apos),
-                    alt: 0.,
-                    alt_typ: Some(AltType::RADIO),
-                    speed: 0.,
-                    speed_locked: None,
-                    eta: None,
-                    eta_locked: None,
-                    name: None,
-                    task: Box::new(fire_task),
-                }],
-            };
+            let mission =
+                aim_and_fire_route(apos, adjusted_pos, group_facing(db, gid), fire_task);
             if let Ok(group) = Group::get_by_name(lua, &group_name) {
                 if let Ok(con) = group.get_controller() {
                     if con.set_task(mission).is_ok() {
@@ -1487,9 +1694,13 @@ impl Jtacs {
         }
 
         if fired == 0 {
+            if !skipped.is_empty() {
+                let joined = skipped.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("; ");
+                bail!("no guns in range — {joined}");
+            }
             bail!("no artillery groups could be reached — are they spawned?");
         }
-        Ok(fired)
+        Ok((fired, skipped))
     }
 
     pub fn get_artillery_ammo(
@@ -1889,7 +2100,10 @@ impl Jtacs {
             }
             saw_units.insert(id);
             let detected = detected.entry(id).or_default();
-            if !unit.tags.contains(jtac.filter) {
+            // Filter is "target any of these types" -- keep a unit if it carries
+            // ANY selected tag (intersects), not only if it carries them all
+            // (contains), which made multi-tag filters match nothing.
+            if !jtac.filter.is_empty() && !unit.tags.intersects(jtac.filter) {
                 to_remove.push(id);
                 continue;
             }
@@ -1923,7 +2137,7 @@ impl Jtacs {
             saw_units.insert(id);
             let detected = detected.entry(id).or_default();
             let tags = db.ephemeral.cfg.unit_classification[&inst.typ];
-            if !tags.contains(jtac.filter) {
+            if !jtac.filter.is_empty() && !tags.intersects(jtac.filter) {
                 to_remove.push(id);
                 continue;
             }
@@ -2043,7 +2257,17 @@ impl Jtacs {
         let mut new_contacts: SmallVec<[&Jtac; 32]> = smallvec![];
         for j in self.jtacs.values_mut() {
             for (_, jtac) in j.iter_mut() {
-                jtac.nearby_alcm = db.alcm_near_point(jtac.side, lua, jtac.location().pos);
+                // Keep the fire-support lists fresh around the JTAC's own
+                // position, not just around an acquired target -- otherwise the
+                // Artillery / ALCM submenus vanish whenever the JTAC isn't
+                // currently lasing something.
+                let loc = jtac.location().pos;
+                let prev_arty = jtac.nearby_artillery.clone();
+                let prev_alcm = jtac.nearby_alcm.clone();
+                jtac.nearby_artillery = db.artillery_near_point(jtac.side, loc);
+                jtac.nearby_alcm = db.alcm_near_point(jtac.side, lua, loc);
+                jtac.menu_dirty |= prev_arty != jtac.nearby_artillery;
+                jtac.menu_dirty |= prev_alcm != jtac.nearby_alcm;
                 match jtac.sort_contacts(db, lua) {
                     Ok(false) => (),
                     Ok(true) => new_contacts.push(jtac),

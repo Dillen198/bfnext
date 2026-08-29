@@ -1,9 +1,10 @@
 interface Props { value: number; showLabel?: boolean; height?: number }
 
+// Green / yellow / red by value so the bars actually read at a glance.
 function barColor(v: number) {
-  if (v >= 75) return { solid: '#22c55e', glow: '#22c55e40' }
-  if (v >= 40) return { solid: '#eab308', glow: '#eab30840' }
-  return { solid: '#ef4444', glow: '#ef444440' }
+  if (v > 66) return { solid: '#22c55e', glow: '#22c55e40' } // green
+  if (v > 33) return { solid: '#eab308', glow: '#eab30840' } // yellow
+  return { solid: '#ef4444', glow: '#ef444440' }             // red
 }
 
 export default function HealthBar({ value, showLabel = true, height = 6 }: Props) {
@@ -20,7 +21,7 @@ export default function HealthBar({ value, showLabel = true, height = 6 }: Props
           style={{
             width: `${pct}%`,
             background: `linear-gradient(90deg, ${solid}cc, ${solid})`,
-            boxShadow: pct < 40 ? `0 0 6px ${glow}` : 'none',
+            boxShadow: pct <= 33 ? `0 0 6px ${glow}` : 'none',
           }}
         />
       </div>

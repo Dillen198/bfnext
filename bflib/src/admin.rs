@@ -985,6 +985,7 @@ pub(crate) fn query_objectives(ctx: &Context) -> Vec<ObjectiveInfo> {
                 supply: obj.supply(),
                 fuel: obj.fuel(),
                 threatened: obj.threatened(),
+                captureable: obj.captureable(),
                 group_count,
                 priority: obj.priority(),
             }
@@ -1028,6 +1029,7 @@ pub(crate) fn query_objective_details(ctx: &Context, name: &str) -> Result<Objec
             supply: obj.supply(),
             fuel: obj.fuel(),
             threatened: obj.threatened(),
+            captureable: obj.captureable(),
             group_count,
             priority: obj.priority(),
         },

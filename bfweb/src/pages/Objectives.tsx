@@ -14,6 +14,19 @@ const TT = {
 }
 
 type Filter = 'All' | 'Red' | 'Blue' | 'Neutral'
+type SortKey = 'name' | 'kind' | 'owner' | 'health' | 'logi' | 'supply' | 'fuel' | 'last_change'
+
+// Table columns, in order. `key` set = header is a clickable sort control.
+const COLS: { label: string; key?: SortKey }[] = [
+  { label: 'Name', key: 'name' },
+  { label: 'Type', key: 'kind' },
+  { label: 'Owner', key: 'owner' },
+  { label: 'Health', key: 'health' },
+  { label: 'Logistics', key: 'logi' },
+  { label: 'Supply', key: 'supply' },
+  { label: 'Fuel', key: 'fuel' },
+  { label: 'Last Change', key: 'last_change' },
+]
 
 const OBJ_KINDS = ['Airbase', 'FARP', 'FOB', 'Factory', 'Logistics Hub', 'Naval Base', 'Carrier Group', 'Command Center']
 const KIND_ICONS: Record<string, string> = {
@@ -68,7 +81,18 @@ export default function Objectives() {
   })
   const [filter, setFilter] = useState<Filter>('All')
   const [search, setSearch] = useState('')
-  const [sortBy, setSortBy] = useState<'name' | 'health' | 'logi' | 'supply' | 'fuel'>('health')
+  const [sortBy, setSortBy] = useState<SortKey>('health')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  function toggleSort(k: SortKey) {
+    if (k === sortBy) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortBy(k)
+      // text columns default A→Z, numeric/date columns default high→low
+      setSortDir(k === 'name' || k === 'kind' || k === 'owner' ? 'asc' : 'desc')
+    }
+  }
 
   const counts = useMemo(() => ({
     Red:     objectives.filter(o => o.owner === 'Red').length,
@@ -104,13 +128,18 @@ export default function Objectives() {
       return true
     })
     .sort((a, b) => {
-      if (sortBy === 'health')  return b.health - a.health
-      if (sortBy === 'logi')    return b.logi - a.logi
-      if (sortBy === 'supply')  return b.supply - a.supply
-      if (sortBy === 'fuel')    return b.fuel - a.fuel
-      return a.name.localeCompare(b.name)
+      const dir = sortDir === 'asc' ? 1 : -1
+      switch (sortBy) {
+        case 'name':  return dir * a.name.localeCompare(b.name)
+        case 'kind':  return dir * a.kind.localeCompare(b.kind)
+        case 'owner': return dir * a.owner.localeCompare(b.owner)
+        case 'last_change':
+          return dir * (new Date(a.last_change).getTime() - new Date(b.last_change).getTime())
+        default:
+          return dir * ((a[sortBy] as number) - (b[sortBy] as number))
+      }
     }),
-    [objectives, filter, search, sortBy]
+    [objectives, filter, search, sortBy, sortDir]
   )
 
   const bluePct    = total > 0 ? counts.Blue    / total * 100 : 0
@@ -297,28 +326,9 @@ export default function Objectives() {
               </button>
             ))}
           </div>
-          <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.12em', marginLeft: '0.25rem' }}>Sort:</span>
-          <div className="flex overflow-hidden" style={{ border: '1px solid var(--border)', borderRadius: '2px' }}>
-            {(['health', 'logi', 'supply', 'fuel', 'name'] as const).map(s => (
-              <button
-                key={s}
-                onClick={() => setSortBy(s)}
-                style={{
-                  fontFamily: "'Bebas Neue', sans-serif",
-                  fontSize: '0.75rem',
-                  letterSpacing: '0.1em',
-                  padding: '0.3rem 0.75rem',
-                  background: sortBy === s ? 'rgba(56,189,248,0.1)' : 'transparent',
-                  color: sortBy === s ? 'var(--accent)' : 'var(--text-muted)',
-                  border: 'none',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-              >
-                {s.toUpperCase()}
-              </button>
-            ))}
-          </div>
+          <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', marginLeft: '0.25rem' }}>
+            click a column header to sort
+          </span>
           <span className="ml-auto font-mono-vs" style={{ fontSize: '0.65rem', color: 'var(--text-dim)' }}>{filtered.length} shown</span>
         </div>
 
@@ -328,9 +338,28 @@ export default function Objectives() {
             <table className="w-full">
               <thead style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr>
-                  {(['Name', 'Type', 'Owner', 'Health', 'Logistics', 'Supply', 'Fuel', 'Last Change'] as const).map(h => (
-                    <th key={h} title={COLUMN_HELP[h]} style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', fontWeight: 700, whiteSpace: 'nowrap', cursor: COLUMN_HELP[h] ? 'help' : undefined }}>{h}</th>
-                  ))}
+                  {COLS.map(({ label, key }) => {
+                    const active = key && sortBy === key
+                    return (
+                      <th
+                        key={label}
+                        title={COLUMN_HELP[label]}
+                        onClick={key ? () => toggleSort(key) : undefined}
+                        style={{
+                          padding: '10px 14px', textAlign: 'left', fontSize: '0.62rem',
+                          textTransform: 'uppercase', letterSpacing: '0.1em',
+                          color: active ? 'var(--accent)' : 'var(--text-dim)',
+                          fontWeight: 700, whiteSpace: 'nowrap', userSelect: 'none',
+                          cursor: key ? 'pointer' : (COLUMN_HELP[label] ? 'help' : undefined),
+                        }}
+                      >
+                        {label}
+                        <span style={{ marginLeft: 4, opacity: active ? 1 : 0.25 }}>
+                          {active ? (sortDir === 'asc' ? '▲' : '▼') : (key ? '↕' : '')}
+                        </span>
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
               <tbody>

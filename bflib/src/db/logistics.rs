@@ -1375,12 +1375,14 @@ impl Db {
                     };
 
                     let mut completed = Vec::new();
+                    let mut despawn: Vec<bfprotocols::db::group::GroupId> = Vec::new();
                     for route_id in self.ephemeral.active_air_routes.keys().cloned().collect::<Vec<_>>() {
                         if let Some(route) = self.ephemeral.active_air_routes.get_mut(&route_id) {
                             if (ts - route.last_check).num_seconds() < check_interval_secs as i64 {
                                 continue;
                             }
                             route.last_check = ts;
+                            let route_group_id: bfprotocols::db::group::GroupId = route.group_id;
 
                             let group_name = match group!(self, &route.group_id) {
                                 Ok(g) => g.name.clone(),
@@ -1418,6 +1420,7 @@ impl Db {
                                                 side: route.side,
                                             }));
                                         }
+                                        despawn.push(route_group_id);
                                         completed.push(route_id.clone());
                                     }
                                 }
@@ -1443,6 +1446,13 @@ impl Db {
 
                     for route_id in completed {
                         self.ephemeral.active_air_routes.remove(&route_id);
+                    }
+                    // Despawn the cargo aircraft once it has delivered -- otherwise
+                    // it loiters at the destination forever and they pile up.
+                    for gid in despawn {
+                        if let Err(e) = self.delete_group(&gid) {
+                            warn!("failed to despawn delivered air logistics group {gid}: {e:?}");
+                        }
                     }
 
                     if self.ephemeral.active_air_routes.is_empty() {
@@ -1486,12 +1496,14 @@ impl Db {
                     };
 
                     let mut completed = Vec::new();
+                    let mut despawn: Vec<bfprotocols::db::group::GroupId> = Vec::new();
                     for route_id in self.ephemeral.active_sea_routes.keys().cloned().collect::<Vec<_>>() {
                         if let Some(route) = self.ephemeral.active_sea_routes.get_mut(&route_id) {
                             if (ts - route.last_check).num_seconds() < check_interval_secs as i64 {
                                 continue;
                             }
                             route.last_check = ts;
+                            let route_group_id: bfprotocols::db::group::GroupId = route.group_id;
 
                             let group_name = match group!(self, &route.group_id) {
                                 Ok(g) => g.name.clone(),
@@ -1529,6 +1541,7 @@ impl Db {
                                                 side: route.side,
                                             }));
                                         }
+                                        despawn.push(route_group_id);
                                         completed.push(route_id.clone());
                                     }
                                 }
@@ -1554,6 +1567,11 @@ impl Db {
 
                     for route_id in completed {
                         self.ephemeral.active_sea_routes.remove(&route_id);
+                    }
+                    for gid in despawn {
+                        if let Err(e) = self.delete_group(&gid) {
+                            warn!("failed to despawn delivered sea logistics group {gid}: {e:?}");
+                        }
                     }
 
                     if self.ephemeral.active_sea_routes.is_empty() {
@@ -3064,7 +3082,7 @@ impl Db {
         Ok(())
     }
 
-    fn update_supply_status(&mut self) -> Result<()> {
+    pub(super) fn update_supply_status(&mut self) -> Result<()> {
         for (_, obj) in self.persisted.objectives.iter_mut_cow() {
             let current_supply = obj.supply;
             let current_fuel = obj.fuel;

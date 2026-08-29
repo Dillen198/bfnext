@@ -5,6 +5,7 @@ use crate::{
         actions::{ActionArgs, ActionCmd, WithObj, WithPos, WithPosAndGroup},
         group::DeployKind,
     },
+    menu::jtac::call_bomber,
     spawnctx::SpawnCtx,
 };
 use anyhow::{Context as ErrContext, Result, anyhow, bail};
@@ -550,28 +551,41 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     struct Mk {
         id: MarkId,
         pos: Vector3,
-        count: usize,
     }
-    let mut marks: FxHashMap<String, Mk> = FxHashMap::default();
+    // Collect this player's own F10 map marks. Named marks (<=24 chars) are keyed
+    // by text; a text that appears more than once is dropped as ambiguous. Blank
+    // marks (the common case -- players usually don't type anything) are each
+    // given a synthetic "Mark N" label so they stay usable instead of colliding
+    // on the empty string and vanishing.
+    let mut named: FxHashMap<String, (Mk, usize)> = FxHashMap::default();
+    let mut blank: Vec<Mk> = Vec::new();
     for mk in world.get_mark_panels()? {
         let mk = mk?;
-        if let Some(unit) = mk.initiator.as_ref() {
-            let id = unit.object_id()?;
-            if let Some(ucid) = ctx.db.player_in_unit(false, &id) {
-                if ucid == arg.fst && mk.text.len() <= 24 {
-                    marks
-                        .entry(mk.text.clone())
-                        .or_insert_with(|| Mk {
-                            id: mk.id,
-                            pos: mk.pos.0,
-                            count: 0,
-                        })
-                        .count += 1;
-                }
-            }
+        let Some(unit) = mk.initiator.as_ref() else { continue };
+        let id = unit.object_id()?;
+        let Some(ucid) = ctx.db.player_in_unit(false, &id) else { continue };
+        if ucid != arg.fst {
+            continue;
+        }
+        let text = mk.text.trim();
+        if text.is_empty() {
+            blank.push(Mk { id: mk.id, pos: mk.pos.0 });
+        } else if text.len() <= 24 {
+            let e = named
+                .entry(String::from(text))
+                .or_insert_with(|| (Mk { id: mk.id, pos: mk.pos.0 }, 0));
+            e.1 += 1;
         }
     }
-    marks.retain(|_, mk| mk.count == 1);
+    let mut marks: FxHashMap<String, Mk> = FxHashMap::default();
+    for (text, (mk, n)) in named {
+        if n == 1 {
+            marks.insert(text, mk);
+        }
+    }
+    for (i, mk) in blank.into_iter().enumerate() {
+        marks.insert(String::from(format_compact!("Mark {}", i + 1)), mk);
+    }
     let add_pos = |root: GroupSubMenu, name: String| -> Result<()> {
         for (text, mk) in &marks {
             mc.add_command_for_group(
@@ -745,6 +759,39 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
         }
         Ok(())
     };
+    // Bomber missions target whatever a JTAC is tracking, so the menu item
+    // expands into a list of friendly JTACs to direct the strike.
+    let add_bomber_jtacs = |mut root: GroupSubMenu, name: String| -> Result<()> {
+        let mut n = 0;
+        for jtac in ctx.jtac.jtacs() {
+            if jtac.side() != player.side {
+                continue;
+            }
+            if n >= 8 {
+                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
+                n = 0;
+            }
+            let label = match jtac.callsign() {
+                Some(cs) => format_compact!("{cs}"),
+                None => format_compact!("{}", jtac.gid()),
+            };
+            let jt_root =
+                mc.add_submenu_for_group(arg.snd, label.into(), Some(root.clone()))?;
+            mc.add_command_for_group(
+                arg.snd,
+                "Yes, do it!".into(),
+                Some(jt_root.clone()),
+                call_bomber,
+                ArgTriple {
+                    fst: jtac.gid(),
+                    snd: arg.fst,
+                    trd: name.clone(),
+                },
+            )?;
+            n += 1;
+        }
+        Ok(())
+    };
     let mut n = 0;
     for (name, action) in actions {
         if n >= 8 {
@@ -757,7 +804,11 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             name.clone()
         };
         match &action.kind {
-            ActionKind::Bomber(_) | ActionKind::LogisticsTransfer(_) => (),
+            ActionKind::LogisticsTransfer(_) => (),
+            ActionKind::Bomber(_) => {
+                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                add_bomber_jtacs(root.clone(), name.clone())?
+            }
             ActionKind::AttackersWaypoint
             | ActionKind::SeadWaypoint
             | ActionKind::AwacsWaypoint

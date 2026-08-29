@@ -31,6 +31,18 @@ impl<'lua> Runway<'lua> {
         Ok(self.t.raw_get("Name")?)
     }
 
+    /// The runway's designation as DCS reports it, e.g. "09-27", "13L-31R" or a
+    /// bare "22". DCS has stored this as either a string or a number across
+    /// versions, so accept both.
+    pub fn name(&self) -> Result<String> {
+        match self.t.raw_get::<_, Value>("Name")? {
+            Value::String(s) => Ok(String::from(s.to_str()?)),
+            Value::Integer(i) => Ok(String::from(format!("{:02}", i))),
+            Value::Number(n) => Ok(String::from(format!("{:02}", n as i64))),
+            _ => bail!("runway has no usable Name field"),
+        }
+    }
+
     pub fn course(&self) -> Result<f64> {
         Ok(self.t.raw_get("course")?)
     }

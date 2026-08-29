@@ -192,6 +192,8 @@ impl Db {
             last_threatened_ts: Utc::now(),
             warehouse: Warehouse::default(),
             points: 0,
+            capture_hold: vec![],
+            capture_hold_ts: None,
             logistics_detached,
             unlimited_supply,
             unlimited_aircraft,
@@ -464,6 +466,8 @@ impl Db {
                                     last_threatened_ts: Utc::now(),
                                     warehouse: Warehouse::default(),
                                     points: 0,
+                                    capture_hold: vec![],
+                                    capture_hold_ts: None,
                                     logistics_detached: true,
                                     unlimited_supply: false,
                                     unlimited_aircraft: false,
@@ -781,6 +785,8 @@ impl Db {
                 last_threatened_ts: Utc::now(),
                 warehouse: Warehouse::default(),
                 points: 0,
+                capture_hold: vec![],
+                capture_hold_ts: None,
                 logistics_detached: false,
                 unlimited_supply: false,
                 unlimited_aircraft: false,
@@ -926,17 +932,17 @@ impl Db {
     /// this would flood the F10 map with tens of thousands of markers.
     pub fn scan_objective_scenery(&mut self, lua: MizLua) -> Result<()> {
         use dcso3::{
-            Color,
             object::{ClassObject, DcsObject, DcsOid, ObjectCategory},
-            trigger::{LineType, MarkId, RectSpec, SideFilter},
             world::{SearchVolume, World},
         };
         use mlua::Value;
         use std::{cell::RefCell, rc::Rc};
         const RELEVANT_KEYWORDS: &[&str] = &["WAREHOUSE", "INDUSTRIAL", "DEPOT", "FUEL", "STORAGE"];
-        const MAX_BOXES_PER_OBJECTIVE: usize = 20;
-        // Half-width of the drawn box around each building's point, in meters.
-        const BOX_HALF_SIZE: f64 = 15.;
+        // Only the few buildings closest to the objective count as its logistics
+        // infrastructure -- a scan radius over a town otherwise pulls in dozens
+        // of unrelated structures, so destroying any one barely moves the logi
+        // bar. This is both the tracked-for-penalty count and the marker count.
+        const BUILDINGS_PER_OBJECTIVE: usize = 4;
         let world = World::singleton(lua)?;
         let land = Land::singleton(lua)?;
 
@@ -990,7 +996,14 @@ impl Db {
                 Ok(true)
             })?;
             let seen = *seen.borrow();
-            let found = found.borrow();
+            let mut found = found.borrow().clone();
+            // Keep only the closest BUILDINGS_PER_OBJECTIVE to the objective centre.
+            found.sort_by(|(_, a, _), (_, b, _)| {
+                let da = (a.x - center.x).powi(2) + (a.z - center.y).powi(2);
+                let db = (b.x - center.x).powi(2) + (b.z - center.y).powi(2);
+                da.total_cmp(&db)
+            });
+            found.truncate(BUILDINGS_PER_OBJECTIVE);
             if found.is_empty() {
                 info!(
                     "[SCENERY_SCAN] {name} ({kind_name}): no relevant buildings within {radius:.0}m ({seen} scenery objects scanned)"
@@ -1008,40 +1021,22 @@ impl Db {
                 self.ephemeral
                     .scenery_total_by_objective
                     .insert(oid, found.len() as u32);
-                for (label, _pos, id) in found.iter() {
+                for (label, pos, id) in found.iter() {
+                    // Registered for logi tracking always; the F10 marker itself is
+                    // created/removed by sync_scenery_markers, tied to the parent
+                    // objective's spawn state exactly like its units (culled when
+                    // no player is near) so the map isn't carrying hundreds of pins.
                     self.ephemeral.tracked_scenery.insert(
                         id.clone(),
                         super::ephemeral::TrackedScenery {
                             objective: oid,
                             label: label.clone().into(),
+                            pos: Vector2::new(pos.x, pos.z),
+                            marker: None,
+                            marker_side: None,
                         },
                     );
                     self.ephemeral.scenery_check_queue.push_back(id.clone());
-                }
-                for (label, pos, _) in found.iter().take(MAX_BOXES_PER_OBJECTIVE) {
-                    let start = LuaVec3(Vector3::new(
-                        pos.x - BOX_HALF_SIZE,
-                        pos.y,
-                        pos.z - BOX_HALF_SIZE,
-                    ));
-                    let end = LuaVec3(Vector3::new(
-                        pos.x + BOX_HALF_SIZE,
-                        pos.y,
-                        pos.z + BOX_HALF_SIZE,
-                    ));
-                    self.ephemeral.msgs().rect_to_all(
-                        SideFilter::All,
-                        MarkId::new(),
-                        RectSpec {
-                            start,
-                            end,
-                            color: Color::new(1., 0.55, 0., 0.9),
-                            fill_color: Color::new(1., 0.55, 0., 0.15),
-                            line_type: LineType::Solid,
-                            read_only: true,
-                        },
-                        Some(format_compact!("🏢 {name}: {label}").into()),
-                    );
                 }
             }
         }
@@ -1050,7 +1045,61 @@ impl Db {
             self.ephemeral.tracked_scenery.len(),
             self.ephemeral.scenery_total_by_objective.len()
         );
+        // Draw markers for whatever's already spawned (the cull loop keeps them
+        // in sync from here on).
+        let with_buildings: SmallVec<[ObjectiveId; 64]> =
+            self.ephemeral.scenery_total_by_objective.keys().copied().collect();
+        for oid in with_buildings {
+            self.sync_scenery_markers(oid);
+        }
         Ok(())
+    }
+
+    /// Reconcile `oid`'s logistics-building F10 markers with the objective's
+    /// current spawn state and owner. Markers exist only while the parent
+    /// objective is spawned (culled the same way its units are, so the F10 map
+    /// isn't carrying a pin for every building on the map at once) and are
+    /// scoped to the owning coalition (everyone if Neutral). Call on every
+    /// spawn/cull transition and on capture.
+    pub(super) fn sync_scenery_markers(&mut self, oid: ObjectiveId) {
+        let (side, oname, want) = match self.persisted.objectives.get(&oid) {
+            Some(o) => (o.owner, o.name.clone(), o.spawned && !o.kind.is_special_sam_site()),
+            None => return,
+        };
+        let ids: SmallVec<[_; 8]> = self
+            .ephemeral
+            .tracked_scenery
+            .iter()
+            .filter(|(_, ts)| ts.objective == oid)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ids {
+            let (label, pos, old, old_side) = match self.ephemeral.tracked_scenery.get(&id) {
+                Some(ts) => (ts.label.clone(), ts.pos, ts.marker, ts.marker_side),
+                None => continue,
+            };
+            let up_to_date = old.is_some() == want && (!want || old_side == Some(side));
+            if up_to_date {
+                continue;
+            }
+            if let Some(mk) = old {
+                self.ephemeral.msgs().delete_mark(mk);
+            }
+            let (marker, marker_side) = if want {
+                let text = format_compact!("{oname} logi: {label}");
+                let mk = match side {
+                    Side::Neutral => self.ephemeral.msgs().mark_to_all(pos, true, text),
+                    s => self.ephemeral.msgs().mark_to_side(s, pos, true, text),
+                };
+                (Some(mk), Some(side))
+            } else {
+                (None, None)
+            };
+            if let Some(ts) = self.ephemeral.tracked_scenery.get_mut(&id) {
+                ts.marker = marker;
+                ts.marker_side = marker_side;
+            }
+        }
     }
 
     /// Poll a small round-robin batch of `tracked_scenery` for destruction
@@ -1090,7 +1139,11 @@ impl Db {
             } else {
                 let oid = tracked.objective;
                 let label = tracked.label.clone();
+                let marker = tracked.marker;
                 self.ephemeral.tracked_scenery.remove(&id);
+                if let Some(mk) = marker {
+                    self.ephemeral.msgs().delete_mark(mk);
+                }
                 *self
                     .ephemeral
                     .scenery_destroyed_by_objective

@@ -320,41 +320,6 @@ fn spawn_c130_vehicle(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()>
     Ok(())
 }
 
-fn spawn_all_c130_crates_for_deployable(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
-    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
-    let origin = ctx.db.player_current_objective_id(&slot)?;
-
-    // Find the deployable by name
-    let deployable = ctx.db.ephemeral.cfg.deployables
-        .get(&side)
-        .and_then(|deps| deps.iter().find(|d| d.path.last() == Some(&arg.snd)))
-        .ok_or_else(|| anyhow!("deployable {} not found", arg.snd))?;
-
-    // Build list of all required crates for this deployable (excluding repair crate)
-    let crate_list: Vec<_> = deployable.crates
-        .iter()
-        .flat_map(|cr| std::iter::repeat((cr.name.clone(), cr.clone())).take(cr.required as usize))
-        .collect();
-
-    if crate_list.is_empty() {
-        let msg = format_compact!("{} has no crates to spawn", arg.snd);
-        ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
-        return Ok(());
-    }
-
-    match ctx.db.queue_c130_crate_spawns(lua, &slot, crate_list, side, origin, true) {
-        Ok(msg) => {
-            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
-        }
-        Err(e) => {
-            let msg = format_compact!("Failed to queue crates: {}", e);
-            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
-        }
-    }
-    Ok(())
-}
-
 /// Shared by the F10 menu closures below *and* the cockpit-UI RPC handler
 /// (`AdminCommand::CockpitSpawnCrate` in admin.rs): queue `qty` copies of a
 /// named crate for whichever slot `ucid` currently occupies, staggered the
@@ -645,6 +610,54 @@ fn deliver_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
     Ok(())
 }
 
+/// Resolve `path` to its leaf submenu, creating intermediate submenus on demand
+/// and caching them in `created`. The top-level (path[0]) category submenus are
+/// spread across a "More>>" page chain -- `page` holds the current page menu and
+/// how many entries it already has -- so a long deployable-category list never
+/// exceeds DCS's hard limit of 10 entries per menu page. When the leaf is the
+/// deployable's own priced entry it gets a "(N pts)" suffix.
+fn crate_category_menu(
+    mc: &MissionCommands,
+    group: GroupId,
+    created: &mut FxHashMap<String, GroupSubMenu>,
+    page: &mut (GroupSubMenu, u32),
+    path: &[String],
+    cost: u32,
+) -> Result<GroupSubMenu> {
+    let leaf = path.last().unwrap();
+    let mut cur = page.0.clone();
+    for (i, p) in path.iter().enumerate() {
+        cur = match created.entry(p.clone()) {
+            Entry::Occupied(e) => e.get().clone(),
+            Entry::Vacant(e) => {
+                let parent = if i == 0 {
+                    if page.1 >= 9 {
+                        page.0 = mc.add_submenu_for_group(
+                            group,
+                            "More>>".into(),
+                            Some(page.0.clone()),
+                        )?;
+                        page.1 = 0;
+                    }
+                    page.1 += 1;
+                    page.0.clone()
+                } else {
+                    cur.clone()
+                };
+                let item = if p == leaf && cost > 0 {
+                    String::from(format_compact!("{p}({cost} pts)"))
+                } else {
+                    p.clone()
+                };
+                let menu = mc.add_submenu_for_group(group, item, Some(parent))?;
+                e.insert(menu.clone());
+                menu
+            }
+        };
+    }
+    Ok(cur)
+}
+
 pub(super) fn add_cargo_menu_for_group(
     cfg: &Cfg,
     mc: &MissionCommands,
@@ -739,29 +752,20 @@ pub(super) fn add_cargo_menu_for_group(
         }
     }
     let mut created_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
+    // "Base Supply" already occupies one slot directly under "Crates".
+    let mut crate_page = (root.clone(), 1u32);
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
         if dep.crates.is_empty() && dep.repair_crate.is_none() {
             continue;
         }
-        let name = dep.path.last().unwrap();
-        let root = dep
-            .path
-            .iter()
-            .fold(Ok(root.clone()), |root: Result<_>, p| {
-                let root = root?;
-                match created_menus.entry(p.clone()) {
-                    Entry::Occupied(e) => Ok(e.get().clone()),
-                    Entry::Vacant(e) => {
-                        let item = if p == name && dep.cost > 0 {
-                            String::from(format_compact!("{p}({} pts)", dep.cost))
-                        } else {
-                            p.clone()
-                        };
-                        let menu = mc.add_submenu_for_group(group, item, Some(root))?;
-                        Ok(e.insert(menu).clone())
-                    }
-                }
-            })?;
+        let root = crate_category_menu(
+            mc,
+            group,
+            &mut created_menus,
+            &mut crate_page,
+            &dep.path,
+            dep.cost,
+        )?;
         for cr in dep.crates.iter().chain(dep.repair_crate.iter()) {
             let title = if cr.required > 1 {
                 String::from(format_compact!("{}({})", cr.name, cr.required))
@@ -918,46 +922,21 @@ pub(super) fn add_c130_cargo_menu_for_group(
 
     // Add all deployable crates (organized by path, excluding repair crates)
     let mut created_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
+    let base_items = if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() { 1 } else { 0 };
+    let mut crate_page = (crates_menu.clone(), base_items);
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
         if dep.crates.is_empty() {
             continue;
         }
 
-        let name = dep.path.last().unwrap();
-        let root = dep
-            .path
-            .iter()
-            .fold(Ok(crates_menu.clone()), |root: Result<_>, p| {
-                let root = root?;
-                match created_menus.entry(p.clone()) {
-                    Entry::Occupied(e) => Ok(e.get().clone()),
-                    Entry::Vacant(e) => {
-                        let item = if p == name && dep.cost > 0 {
-                            String::from(format_compact!("{p}({} pts)", dep.cost))
-                        } else {
-                            p.clone()
-                        };
-                        let menu = mc.add_submenu_for_group(group, item, Some(root))?;
-                        Ok(e.insert(menu).clone())
-                    }
-                }
-            })?;
-
-        // Add "Spawn All Crates" option whenever more than one crate is needed
-        // in total -- either multiple distinct crate types, or a single type
-        // with required > 1 (e.g. "SA15 Tor" needs 4 of just one crate).
-        if dep.crates.iter().map(|cr| cr.required).sum::<u32>() > 1 {
-            mc.add_command_for_group(
-                group,
-                "Spawn All Crates (Staggered)".into(),
-                Some(root.clone()),
-                spawn_all_c130_crates_for_deployable,
-                ArgTuple {
-                    fst: group,
-                    snd: name.clone(),
-                },
-            )?;
-        }
+        let root = crate_category_menu(
+            mc,
+            group,
+            &mut created_menus,
+            &mut crate_page,
+            &dep.path,
+            dep.cost,
+        )?;
 
         // Only add deployable crates, NOT repair crates
         for cr in &dep.crates {
@@ -976,13 +955,13 @@ pub(super) fn add_c130_cargo_menu_for_group(
                     snd: cr.name.clone(),
                 },
             )?;
-            // Quantity shortcuts for crates that need more than one, so the
-            // player doesn't have to click the single-crate command repeatedly.
-            for n in 2..=cr.required {
+            // "X" submenu: pick a quantity 1-9 of this crate to spawn at once.
+            let qty_menu = mc.add_submenu_for_group(group, "X".into(), Some(root.clone()))?;
+            for n in 1..=9u32 {
                 mc.add_command_for_group(
                     group,
-                    String::from(format_compact!("{} x{}", cr.name, n)),
-                    Some(root.clone()),
+                    String::from(format_compact!("{n}")),
+                    Some(qty_menu.clone()),
                     spawn_n_c130_crates,
                     ArgTriple { fst: group, snd: cr.name.clone(), trd: n },
                 )?;
@@ -1062,40 +1041,6 @@ fn spawn_helo_crate(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
         }
         Err(e) => {
             let msg = format_compact!("Failed to spawn crate: {}", e);
-            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
-        }
-    }
-    Ok(())
-}
-
-fn spawn_all_helo_crates_for_deployable(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
-    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
-    let origin = ctx.db.player_current_objective_id(&slot)?;
-    let auto_unpack = ctx.db.ephemeral.cfg.helo_cargo.as_ref().map(|c| c.auto_unpack).unwrap_or(false);
-
-    let deployable = ctx.db.ephemeral.cfg.deployables
-        .get(&side)
-        .and_then(|deps| deps.iter().find(|d| d.path.last() == Some(&arg.snd)))
-        .ok_or_else(|| anyhow!("deployable {} not found", arg.snd))?;
-
-    let crate_list: Vec<_> = deployable.crates
-        .iter()
-        .flat_map(|cr| std::iter::repeat((cr.name.clone(), cr.clone())).take(cr.required as usize))
-        .collect();
-
-    if crate_list.is_empty() {
-        let msg = format_compact!("{} has no crates to spawn", arg.snd);
-        ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
-        return Ok(());
-    }
-
-    match ctx.db.queue_c130_crate_spawns(lua, &slot, crate_list, side, origin, auto_unpack) {
-        Ok(msg) => {
-            ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
-        }
-        Err(e) => {
-            let msg = format_compact!("Failed to queue crates: {}", e);
             ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, msg);
         }
     }
@@ -1190,43 +1135,21 @@ pub(super) fn add_helo_cargo_menu_for_group(
     }
 
     let mut created_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
+    let base_items = if cfg.warehouse.is_some() { 1 } else { 0 };
+    let mut crate_page = (crates_menu.clone(), base_items);
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
         if dep.crates.is_empty() {
             continue;
         }
 
-        let name = dep.path.last().unwrap();
-        let dep_root = dep
-            .path
-            .iter()
-            .fold(Ok(crates_menu.clone()), |root: Result<_>, p| {
-                let root = root?;
-                match created_menus.entry(p.clone()) {
-                    Entry::Occupied(e) => Ok(e.get().clone()),
-                    Entry::Vacant(e) => {
-                        let item = if p == name && dep.cost > 0 {
-                            String::from(format_compact!("{p}({} pts)", dep.cost))
-                        } else {
-                            p.clone()
-                        };
-                        let menu = mc.add_submenu_for_group(group, item, Some(root))?;
-                        Ok(e.insert(menu).clone())
-                    }
-                }
-            })?;
-
-        // Add "Spawn All Crates" option whenever more than one crate is needed
-        // in total -- either multiple distinct crate types, or a single type
-        // with required > 1 (e.g. "SA15 Tor" needs 4 of just one crate).
-        if dep.crates.iter().map(|cr| cr.required).sum::<u32>() > 1 {
-            mc.add_command_for_group(
-                group,
-                "Spawn All Crates (Staggered)".into(),
-                Some(dep_root.clone()),
-                spawn_all_helo_crates_for_deployable,
-                ArgTuple { fst: group, snd: name.clone() },
-            )?;
-        }
+        let dep_root = crate_category_menu(
+            mc,
+            group,
+            &mut created_menus,
+            &mut crate_page,
+            &dep.path,
+            dep.cost,
+        )?;
 
         for cr in &dep.crates {
             let title = if cr.required > 1 {
@@ -1241,13 +1164,13 @@ pub(super) fn add_helo_cargo_menu_for_group(
                 spawn_helo_crate,
                 ArgTuple { fst: group, snd: cr.name.clone() },
             )?;
-            // Quantity shortcuts for crates that need more than one, so the
-            // player doesn't have to click the single-crate command repeatedly.
-            for n in 2..=cr.required {
+            // "X" submenu: pick a quantity 1-9 of this crate to spawn at once.
+            let qty_menu = mc.add_submenu_for_group(group, "X".into(), Some(dep_root.clone()))?;
+            for n in 1..=9u32 {
                 mc.add_command_for_group(
                     group,
-                    String::from(format_compact!("{} x{}", cr.name, n)),
-                    Some(dep_root.clone()),
+                    String::from(format_compact!("{n}")),
+                    Some(qty_menu.clone()),
                     spawn_n_helo_crates,
                     ArgTriple { fst: group, snd: cr.name.clone(), trd: n },
                 )?;

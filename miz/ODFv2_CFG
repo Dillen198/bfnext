@@ -52,10 +52,12 @@
     "Kh-35E"
   ],
   "repair_time": 1800,
+  "repair_supply_cost": 5,
+  "deploy_supply_cost": 3,
   "repair_crate": {
     "Red": {
       "name": "Base Repair Kit",
-      "weight": 2000,
+      "weight": 600,
       "required": 1,
       "pos_unit": null,
       "max_drop_height_agl": 10,
@@ -64,7 +66,7 @@
     },
     "Blue": {
       "name": "Base Repair Kit",
-      "weight": 1500,
+      "weight": 450,
       "required": 1,
       "pos_unit": null,
       "max_drop_height_agl": 10,
@@ -73,7 +75,7 @@
     },
     "Neutral": {
       "name": "Base Repair Kit",
-      "weight": 2000,
+      "weight": 600,
       "required": 1,
       "pos_unit": null,
       "max_drop_height_agl": 10,
@@ -90,7 +92,7 @@
     "supply_transfer_fuel_crate": {
       "Red": {
         "name": "Fuel Transfer",
-        "weight": 2000,
+        "weight": 600,
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
@@ -99,7 +101,7 @@
       },
       "Blue": {
         "name": "Fuel Transfer",
-        "weight": 1200,
+        "weight": 400,
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
@@ -110,7 +112,7 @@
     "supply_transfer_weapons_crate": {
       "Red": {
         "name": "Weapons Transfer",
-        "weight": 1500,
+        "weight": 450,
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
@@ -130,8 +132,8 @@
     "convoy": {
       "enabled": true,
       "truck_template": {
-        "Red": "Ural-375",
-        "Blue": "M939"
+        "Red": "RTRUCK",
+        "Blue": "BTRUCK"
       },
       "trucks_per_convoy": 5,
       "speed_kph": 60,
@@ -141,10 +143,10 @@
       "check_interval_secs": 10
     },
     "air_logistics": {
-      "enabled": false,
+      "enabled": true,
       "aircraft_template": {
         "Red": "IL-76_LOGI",
-        "Blue": "C-130_LOGI"
+        "Blue": "C-17_LOGI"
       },
       "altitude_m": 2500,
       "speed_kph": 400,
@@ -170,7 +172,7 @@
     "carrier_repair_crate": {
       "Red": {
         "name": "Carrier Repair",
-        "weight": 2000,
+        "weight": 600,
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
@@ -179,7 +181,7 @@
       },
       "Blue": {
         "name": "Carrier Repair",
-        "weight": 1200,
+        "weight": 400,
         "required": 1,
         "pos_unit": null,
         "max_drop_height_agl": 10,
@@ -199,6 +201,7 @@
   "unit_cull_distance": 37040,
   "ground_vehicle_cull_distance": 10000,
   "cull_after": 1800,
+  "capture_consolidation_secs": 300,
   "slow_timed_events_freq": 10,
   "threatened_distance": {
     "F-100D": 14400,
@@ -383,58 +386,107 @@
     "Ju-88A4": 0
   },
   "threatened_cooldown": 300,
-  "crate_load_distance": 50,
+  "crate_load_distance": 100,
   "crate_spread": 250,
-  "artillery_mission_range": 15000,
+  "artillery_mission_range": 500000,
+  "artillery_min_range": 1,
   "artillery": {
     "units": {
-      "M-109": {
-        "max_range_m": 30000,
-        "min_range_m": 4000
+      "Smerch": {
+        "max_range_m": 70000,
+        "min_range_m": 20000
+      },
+      "Smerch_HE": {
+        "max_range_m": 70000,
+        "min_range_m": 20000
+      },
+      "Uragan_BM-27": {
+        "max_range_m": 36000,
+        "min_range_m": 11500
+      },
+      "Grad-URAL": {
+        "max_range_m": 19000,
+        "min_range_m": 5000
+      },
+      "HL_B8M1": {
+        "max_range_m": 5000,
+        "min_range_m": 0
+      },
+      "tt_B8M1": {
+        "max_range_m": 5000,
+        "min_range_m": 0
+      },
+      "CHAP_M142_ATACMS_M39A1": {
+        "max_range_m": 300000,
+        "min_range_m": 50000
+      },
+      "CHAP_M142_ATACMS_M48": {
+        "max_range_m": 300000,
+        "min_range_m": 50000
+      },
+      "CHAP_M142_GMLRS_M30": {
+        "max_range_m": 70000,
+        "min_range_m": 15000
       },
       "CHAP_M142_GMLRS_M31": {
         "max_range_m": 70000,
         "min_range_m": 15000
       },
+      "MLRS": {
+        "max_range_m": 32000,
+        "min_range_m": 10000
+      },
       "CHAP_TOS1A": {
         "max_range_m": 6000,
         "min_range_m": 400
       },
-      "SAU Msta": {
-        "max_range_m": 29000,
-        "min_range_m": 4000
+      "PLZ05": {
+        "max_range_m": 23500,
+        "min_range_m": 60
       },
-      "HL_B8M1": {
-        "max_range_m": 6000,
-        "min_range_m": 400
+      "SAU Gvozdika": {
+        "max_range_m": 15000,
+        "min_range_m": 30
+      },
+      "SAU Msta": {
+        "max_range_m": 23500,
+        "min_range_m": 30
+      },
+      "SAU Akatsia": {
+        "max_range_m": 17000,
+        "min_range_m": 30
+      },
+      "SpGH_Dana": {
+        "max_range_m": 18500,
+        "min_range_m": 30
+      },
+      "M-109": {
+        "max_range_m": 22000,
+        "min_range_m": 30
+      },
+      "T155_Firtina": {
+        "max_range_m": 41000,
+        "min_range_m": 0
+      },
+      "SAU 2-C9": {
+        "max_range_m": 7000,
+        "min_range_m": 30
+      },
+      "CHAP_9K720_Cluster": {
+        "max_range_m": 400000,
+        "min_range_m": 75000
+      },
+      "CHAP_9K720_HE": {
+        "max_range_m": 400000,
+        "min_range_m": 75000
       },
       "Scud_B": {
-        "max_range_m": 300000,
+        "max_range_m": 285000,
         "min_range_m": 50000
       },
-      "SS_1B_Scud_A": {
-        "max_range_m": 180000,
-        "min_range_m": 30000
-      },
-      "SS-21_Scarab_TEL": {
-        "max_range_m": 70000,
-        "min_range_m": 15000
-      },
-      "9K720_Iskander_TEL": {
-        "max_range_m": 500000,
-        "min_range_m": 50000
-      },
-      "4K51_Rubezh": {
-        "max_range_m": 80000,
-        "min_range_m": 5000
-      },
-      "Bastion_LN": {
-        "max_range_m": 300000,
-        "min_range_m": 10000
-      },
-      "P-15_Termit_S": {
-        "max_range_m": 80000,
-        "min_range_m": 5000
+      "hy_launcher": {
+        "max_range_m": 100000,
+        "min_range_m": 0
       }
     },
     "default_max_range_m": 30000,
@@ -533,6 +585,7 @@
     "La-7": "Standard",
     "MiG-17F": "Standard",
     "KC130J": "Standard",
+    "KC130": "Standard",
     "UH-60L": "Standard",
     "C-130J-30": "Logistics",
     "MiG-29 Fulcrum": "Intercept",
@@ -1149,7 +1202,7 @@
         "crates": [
           {
             "name": "Kub Launcher",
-            "weight": 2000,
+            "weight": 600,
             "required": 3,
             "pos_unit": "Kub 2P25 ln",
             "max_drop_height_agl": 10,
@@ -1158,7 +1211,7 @@
           },
           {
             "name": "Kub Radar",
-            "weight": 2000,
+            "weight": 600,
             "required": 1,
             "pos_unit": "Kub 1S91 str",
             "max_drop_height_agl": 10,
@@ -1168,7 +1221,7 @@
         ],
         "repair_crate": {
           "name": "Kub Repair",
-          "weight": 2000,
+          "weight": 600,
           "required": 1,
           "pos_unit": null,
           "max_drop_height_agl": 10,
@@ -1199,7 +1252,7 @@
         "crates": [
           {
             "name": "SA3 Launcher",
-            "weight": 2000,
+            "weight": 600,
             "required": 2,
             "pos_unit": "Kub 2P25 ln",
             "max_drop_height_agl": 10,
@@ -1208,7 +1261,7 @@
           },
           {
             "name": "SA3 Track Radar",
-            "weight": 2000,
+            "weight": 600,
             "required": 1,
             "pos_unit": "Kub 1S91 str",
             "max_drop_height_agl": 10,
@@ -1217,7 +1270,7 @@
           },
           {
             "name": "SA3 Search Radar",
-            "weight": 1500,
+            "weight": 450,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 20,
@@ -1227,7 +1280,7 @@
         ],
         "repair_crate": {
           "name": "SA3 Repair",
-          "weight": 2000,
+          "weight": 600,
           "required": 1,
           "pos_unit": null,
           "max_drop_height_agl": 10,
@@ -1257,7 +1310,7 @@
         "crates": [
           {
             "name": "SA15 Tor",
-            "weight": 2000,
+            "weight": 600,
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1290,7 +1343,7 @@
         "crates": [
           {
             "name": "HQ7 LN",
-            "weight": 2000,
+            "weight": 600,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1299,7 +1352,7 @@
           },
           {
             "name": "HQ7 Radar",
-            "weight": 1500,
+            "weight": 450,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 20,
@@ -1309,7 +1362,7 @@
         ],
         "repair_crate": {
           "name": "HQ7 Repair",
-          "weight": 2000,
+          "weight": 600,
           "required": 1,
           "pos_unit": null,
           "max_drop_height_agl": 20,
@@ -1340,7 +1393,7 @@
         "crates": [
           {
             "name": "SA8 Osa",
-            "weight": 2000,
+            "weight": 600,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1373,7 +1426,7 @@
         "crates": [
           {
             "name": "SA9 Strela",
-            "weight": 2000,
+            "weight": 600,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1406,7 +1459,7 @@
         "crates": [
           {
             "name": "ZSU-57-2",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1437,7 +1490,7 @@
         "crates": [
           {
             "name": "SPAA HL Zu-23",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1468,7 +1521,7 @@
         "crates": [
           {
             "name": "SPAA ZSU-23 Shilka",
-            "weight": 2000,
+            "weight": 600,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1499,7 +1552,7 @@
         "crates": [
           {
             "name": "SA-19 Tunguska",
-            "weight": 2000,
+            "weight": 600,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1530,7 +1583,7 @@
         "crates": [
           {
             "name": "SA-22 Pantsir",
-            "weight": 2000,
+            "weight": 600,
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1561,7 +1614,7 @@
         "crates": [
           {
             "name": "SPH 2S19 Msta 152MM",
-            "weight": 2000,
+            "weight": 600,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1592,7 +1645,7 @@
         "crates": [
           {
             "name": "PLZ-05",
-            "weight": 2000,
+            "weight": 600,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1623,7 +1676,7 @@
         "crates": [
           {
             "name": "MLRS Smerch CM",
-            "weight": 2000,
+            "weight": 600,
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1654,7 +1707,7 @@
         "crates": [
           {
             "name": "MLRS Smerch HE",
-            "weight": 2000,
+            "weight": 600,
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1685,7 +1738,38 @@
         "crates": [
           {
             "name": "MLRS TOS-1A",
-            "weight": 2000,
+            "weight": 600,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13,
+            "dcs_type": "cds_crate"
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 0,
+        "ewr": null,
+        "jtac": null,
+        "gci": null
+      },
+      {
+        "path": [
+          "Artillery",
+          "MLRS GRAD"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPMLRSGRAD"
+          }
+        },
+        "persist": "Forever",
+        "limit": 15,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "MLRS GRAD",
+            "weight": 600,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1716,7 +1800,7 @@
         "crates": [
           {
             "name": "MLRS 9K57",
-            "weight": 2000,
+            "weight": 600,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1747,7 +1831,7 @@
         "crates": [
           {
             "name": "ZTZ-96B",
-            "weight": 2000,
+            "weight": 600,
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1778,7 +1862,7 @@
         "crates": [
           {
             "name": "T-84",
-            "weight": 2000,
+            "weight": 600,
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1809,7 +1893,7 @@
         "crates": [
           {
             "name": "T-90M",
-            "weight": 2000,
+            "weight": 600,
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1840,7 +1924,7 @@
         "crates": [
           {
             "name": "BMPT Terminator",
-            "weight": 2000,
+            "weight": 600,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1871,7 +1955,7 @@
         "crates": [
           {
             "name": "ZBD-04A",
-            "weight": 2000,
+            "weight": 600,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1902,7 +1986,38 @@
         "crates": [
           {
             "name": "BTR-82A",
-            "weight": 2000,
+            "weight": 600,
+            "required": 1,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13,
+            "dcs_type": "cds_crate"
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 0,
+        "ewr": null,
+        "jtac": null,
+        "gci": null
+      },
+      {
+        "path": [
+          "IFV",
+          "BMP-3"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPBMP3"
+          }
+        },
+        "persist": "Forever",
+        "limit": 20,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "BMP-3",
+            "weight": 600,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1932,7 +2047,7 @@
         "crates": [
           {
             "name": "Scout BRDM ",
-            "weight": 2000,
+            "weight": 600,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1967,7 +2082,7 @@
         "crates": [
           {
             "name": "Ammo Truck",
-            "weight": 2000,
+            "weight": 600,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -1997,7 +2112,7 @@
         "crates": [
           {
             "name": "EWR 55G6",
-            "weight": 2000,
+            "weight": 600,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2024,13 +2139,13 @@
             "template": "DEPGCI"
           }
         },
-        "persist": "UntilRestart",
+        "persist": "Forever",
         "limit": 4,
         "limit_enforce": "DeleteOldest",
         "crates": [
           {
             "name": "GCI Station Crate",
-            "weight": 2000,
+            "weight": 600,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 20,
@@ -2047,6 +2162,161 @@
           "channel": 1,
           "radius": 399600
         }
+      },
+      {
+        "path": [
+          "APC",
+          "MRAP TITAN"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPMRAPTITAN"
+          }
+        },
+        "persist": "Forever",
+        "limit": 20,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "MRAP TITAN",
+            "weight": 300,
+            "required": 1,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13,
+            "dcs_type": "cds_crate"
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 0,
+        "ewr": null,
+        "jtac": null,
+        "gci": null
+      },
+      {
+        "path": [
+          "ATGM",
+          "AT-3 Sagger"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPRATGM"
+          }
+        },
+        "persist": "Forever",
+        "limit": 15,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "AT-3 Sagger",
+            "weight": 500,
+            "required": 1,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13,
+            "dcs_type": "cds_crate"
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 0,
+        "ewr": null,
+        "jtac": null,
+        "gci": null
+      },
+      {
+        "path": [
+          "Missiles",
+          "SRBM 9K720 CM"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPSRBM9K720CM"
+          }
+        },
+        "persist": "Forever",
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "SRBM 9K720 CM",
+            "weight": 1200,
+            "required": 4,
+            "pos_unit": null,
+            "max_drop_height_agl": 20,
+            "max_drop_speed": 349,
+            "dcs_type": "cds_crate"
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 0,
+        "ewr": null,
+        "jtac": null,
+        "gci": null
+      },
+      {
+        "path": [
+          "Missiles",
+          "SRBM 9K720 HE"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPSRBM9K720HE"
+          }
+        },
+        "persist": "Forever",
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "SRBM 9K720 HE",
+            "weight": 1200,
+            "required": 4,
+            "pos_unit": null,
+            "max_drop_height_agl": 20,
+            "max_drop_speed": 349,
+            "dcs_type": "cds_crate"
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 0,
+        "ewr": null,
+        "jtac": null,
+        "gci": null
+      },
+      {
+        "path": [
+          "Missiles",
+          "SSM Scud"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPSSMSCUD"
+          }
+        },
+        "persist": "Forever",
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "SSM Scud",
+            "weight": 1200,
+            "required": 3,
+            "pos_unit": null,
+            "max_drop_height_agl": 20,
+            "max_drop_speed": 349,
+            "dcs_type": "cds_crate"
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 0,
+        "ewr": null,
+        "jtac": null,
+        "gci": null
       }
     ],
     "Blue": [
@@ -2061,12 +2331,12 @@
           }
         },
         "persist": "Forever",
-        "limit": 10,
+        "limit": 15,
         "limit_enforce": "DeleteOldest",
         "crates": [
           {
-            "name": "Roland ADS",
-            "weight": 1000,
+            "name": "Roland",
+            "weight": 500,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2099,7 +2369,7 @@
         "crates": [
           {
             "name": "Hawk Launcher",
-            "weight": 1000,
+            "weight": 300,
             "required": 3,
             "pos_unit": "Hawk ln",
             "max_drop_height_agl": 10,
@@ -2108,7 +2378,7 @@
           },
           {
             "name": "Hawk Search Radar",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": "Hawk sr",
             "max_drop_height_agl": 10,
@@ -2117,7 +2387,7 @@
           },
           {
             "name": "Hawk Track Radar",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": "Hawk tr",
             "max_drop_height_agl": 10,
@@ -2126,7 +2396,7 @@
           },
           {
             "name": "Hawk CC",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": "Hawk pcp",
             "max_drop_height_agl": 10,
@@ -2136,7 +2406,7 @@
         ],
         "repair_crate": {
           "name": "Hawk Repair",
-          "weight": 1000,
+          "weight": 300,
           "required": 1,
           "pos_unit": null,
           "max_drop_height_agl": 10,
@@ -2167,7 +2437,7 @@
         "crates": [
           {
             "name": "Avenger",
-            "weight": 1000,
+            "weight": 300,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2198,7 +2468,7 @@
         "crates": [
           {
             "name": "Linebacker",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2229,7 +2499,7 @@
         "crates": [
           {
             "name": "C-RAM",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2260,7 +2530,7 @@
         "crates": [
           {
             "name": "IRIST C2",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": "IRIST c2",
             "max_drop_height_agl": 10,
@@ -2269,7 +2539,7 @@
           },
           {
             "name": "IRIST STR",
-            "weight": 1001,
+            "weight": 300,
             "required": 1,
             "pos_unit": "IRIST str",
             "max_drop_height_agl": 20,
@@ -2278,7 +2548,7 @@
           },
           {
             "name": "IRIST LN",
-            "weight": 1500,
+            "weight": 450,
             "required": 2,
             "pos_unit": "IRIST ln",
             "max_drop_height_agl": 20,
@@ -2288,7 +2558,7 @@
         ],
         "repair_crate": {
           "name": "IRIST REPAIR",
-          "weight": 1500,
+          "weight": 450,
           "required": 1,
           "pos_unit": null,
           "max_drop_height_agl": 20,
@@ -2319,7 +2589,7 @@
         "crates": [
           {
             "name": "Flakpanzergepard",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2350,7 +2620,7 @@
         "crates": [
           {
             "name": "Vulkan",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2381,7 +2651,7 @@
         "crates": [
           {
             "name": "Firtina 155MM",
-            "weight": 1000,
+            "weight": 300,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2412,7 +2682,38 @@
         "crates": [
           {
             "name": "Dana 152MM",
-            "weight": 1000,
+            "weight": 300,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13,
+            "dcs_type": "cds_crate"
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 0,
+        "ewr": null,
+        "jtac": null,
+        "gci": null
+      },
+      {
+        "path": [
+          "Artillery",
+          "MLRS M270"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPMLRSM270"
+          }
+        },
+        "persist": "Forever",
+        "limit": 15,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "MLRS M270",
+            "weight": 300,
             "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2443,8 +2744,8 @@
         "crates": [
           {
             "name": "Himars GMLRS HE",
-            "weight": 1000,
-            "required": 2,
+            "weight": 300,
+            "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2474,8 +2775,8 @@
         "crates": [
           {
             "name": "Himars GMLRS CM",
-            "weight": 1000,
-            "required": 2,
+            "weight": 300,
+            "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2505,8 +2806,8 @@
         "crates": [
           {
             "name": "Himars ATACMS HE",
-            "weight": 1000,
-            "required": 2,
+            "weight": 300,
+            "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2536,8 +2837,8 @@
         "crates": [
           {
             "name": "Himars ATACMS CM",
-            "weight": 1000,
-            "required": 2,
+            "weight": 300,
+            "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2567,7 +2868,7 @@
         "crates": [
           {
             "name": "M2A2 Bradley",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2598,7 +2899,38 @@
         "crates": [
           {
             "name": "M1130 Stryker ",
-            "weight": 1000,
+            "weight": 300,
+            "required": 1,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13,
+            "dcs_type": "cds_crate"
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 0,
+        "ewr": null,
+        "jtac": null,
+        "gci": null
+      },
+      {
+        "path": [
+          "IFV",
+          "M1296 Dragoon"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPIFVDRAGON"
+          }
+        },
+        "persist": "Forever",
+        "limit": 20,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "MM1296 Dragoon",
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2629,7 +2961,7 @@
         "crates": [
           {
             "name": "MRAP MaxxPro",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2660,7 +2992,7 @@
         "crates": [
           {
             "name": "MRAP M-ATV",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2690,7 +3022,7 @@
         "crates": [
           {
             "name": "MRAP JTAC",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2726,7 +3058,7 @@
         "crates": [
           {
             "name": "2A6M Leopard",
-            "weight": 1000,
+            "weight": 300,
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2757,7 +3089,7 @@
         "crates": [
           {
             "name": "M1A2C Abrams",
-            "weight": 1000,
+            "weight": 300,
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2788,7 +3120,7 @@
         "crates": [
           {
             "name": "Merkava IV",
-            "weight": 1000,
+            "weight": 300,
             "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2823,7 +3155,7 @@
         "crates": [
           {
             "name": "Ammo Truck",
-            "weight": 2000,
+            "weight": 600,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2853,7 +3185,7 @@
         "crates": [
           {
             "name": "AN/FPS-117",
-            "weight": 1000,
+            "weight": 300,
             "required": 1,
             "pos_unit": null,
             "max_drop_height_agl": 10,
@@ -2867,6 +3199,37 @@
         "ewr": {
           "range": 500000
         },
+        "jtac": null,
+        "gci": null
+      },
+      {
+        "path": [
+          "ATGM",
+          "VAB Mephisto"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPBATGM"
+          }
+        },
+        "persist": "Forever",
+        "limit": 15,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "VAB Mephisto",
+            "weight": 500,
+            "required": 1,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13,
+            "dcs_type": null
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 0,
+        "ewr": null,
         "jtac": null,
         "gci": null
       }
@@ -2989,6 +3352,103 @@
     ]
   },
   "unit_classification": {
+    "CHAP_HX77": [
+      "Logistics",
+      "Unarmed",
+      "Driveable"
+    ],
+    "BRDM-2_malyutka": [
+      "APC",
+      "MR",
+      "ATGM",
+      "SmallArms",
+      "Driveable"
+    ],
+    "CHAP_Titan": [
+      "APC",
+      "MR",
+      "SmallArms",
+      "Driveable"
+    ],
+    "CHAP_M1296": [
+      "APC",
+      "MR",
+      "LightCannon",
+      "SmallArms",
+      "Driveable"
+    ],
+    "CHAP_BMP3_ERA": [
+      "APC",
+      "MR",
+      "ATGM",
+      "LightCannon",
+      "Driveable"
+    ],
+    "C-17A": [
+      "Aircraft"
+    ],
+    "IL-76MD": [
+      "Aircraft"
+    ],
+    "Grad-URAL": [
+      "Armor",
+      "MR",
+      "Artillery",
+      "SmallArms",
+      "Driveable"
+    ],
+    "MLRS": [
+      "Armor",
+      "LR",
+      "Artillery",
+      "Driveable"
+    ],
+    "SAU Gvozdika": [
+      "Armor",
+      "MR",
+      "Artillery",
+      "SmallArms",
+      "Driveable"
+    ],
+    "SAU Akatsia": [
+      "Armor",
+      "MR",
+      "Artillery",
+      "SmallArms",
+      "Driveable"
+    ],
+    "SAU 2-C9": [
+      "Armor",
+      "SR",
+      "Artillery",
+      "SmallArms",
+      "Driveable"
+    ],
+    "tt_B8M1": [
+      "Armor",
+      "MR",
+      "Artillery",
+      "SmallArms",
+      "Driveable"
+    ],
+    "CHAP_9K720_Cluster": [
+      "Armor",
+      "LR",
+      "Launcher",
+      "Driveable"
+    ],
+    "CHAP_9K720_HE": [
+      "Armor",
+      "LR",
+      "Launcher",
+      "Driveable"
+    ],
+    "hy_launcher": [
+      "Armor",
+      "LR",
+      "Launcher",
+      "Driveable"
+    ],
     "Dog Ear radar": [
       "SearchRadar"
     ],
@@ -5234,6 +5694,24 @@
   "factory": {
     "production_rate": 100,
     "production_interval": 600
+  },
+  "campaign_events": {
+    "enabled": true,
+    "enemy_cap_enabled": true,
+    "cap_template_red": "RCAP",
+    "cap_template_blue": "BCAP",
+    "cap_duration_secs": 600,
+    "cap_orbit_radius_m": 15000,
+    "cap_trigger_radius_m": 90000,
+    "cap_max_concurrent": 3,
+    "cap_max_per_side": 2,
+    "cap_min_threat_count": 2,
+    "cap_respawn_cooldown_secs": 120,
+    "cap_probability": 0.35,
+    "barrage_enabled": false,
+    "ambush_enabled": false,
+    "capture_time_secs": 180,
+    "capture_min_unit_pct_destroyed": 0
   },
   "csar": {
     "enabled": true,

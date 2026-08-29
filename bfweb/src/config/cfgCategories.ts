@@ -35,12 +35,12 @@ export const CFG_CATEGORIES: CfgCategory[] = [
       'cargo', 'c130_cargo', 'c130_cargo_template', 'helo_cargo', 'helo_cargo_template',
       'crate_template', 'crate_load_distance', 'crate_spread', 'max_crates', 'ground_vehicle_cargo',
       'warehouse', 'logistics_exclusion', 'supply_alert_threshold', 'supply_auto_convoy_delay_secs',
-      'factory', 'repair_crate', 'repair_time',
+      'factory', 'repair_crate', 'repair_time', 'repair_supply_cost', 'deploy_supply_cost',
     ],
   },
   {
     key: 'objectives', label: 'Objectives & Deployables', icon: Flag,
-    fields: ['deployables', 'troops', 'dismount', 'unit_classification', 'extra_fixed_wing_objectives', 'frontline', 'actions'],
+    fields: ['deployables', 'troops', 'dismount', 'unit_classification', 'extra_fixed_wing_objectives', 'frontline', 'actions', 'capture_consolidation_secs'],
   },
   {
     key: 'airdefense', label: 'SAM Sites & Air Defense', icon: Radar,
@@ -53,7 +53,7 @@ export const CFG_CATEGORIES: CfgCategory[] = [
   {
     key: 'jtac', label: 'JTAC & Targeting', icon: Crosshair,
     fields: [
-      'airborne_jtacs', 'jtac_priority', 'artillery', 'artillery_mission_range', 'alcm_mission_range',
+      'airborne_jtacs', 'jtac_priority', 'artillery', 'artillery_mission_range', 'artillery_min_range', 'alcm_mission_range',
       'weapon_target_exclusions', 'threatened_distance', 'threatened_cooldown',
     ],
   },

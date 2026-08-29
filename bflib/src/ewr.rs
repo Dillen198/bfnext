@@ -1370,7 +1370,7 @@ impl Ewr {
             if diff <= (half_angle as f64).to_radians() {
                 spiked = true;
                 let label = if donor.airborne { "airborne radar" } else { "ground radar" };
-                warnings.push(format_compact!("⚠ SPIKE: enemy {label} has you in cone"));
+                warnings.push(format_compact!("SPIKE: enemy {label} has you in cone"));
             }
         }
         if spiked {

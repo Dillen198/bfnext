@@ -1156,34 +1156,66 @@ impl WarehouseTemplate {
             let (id, _) = wh?;
             airport_ids.push(id);
         }
+        // Each airbase/warehouse takes its stock, fuel levels and the
+        // unlimitedMunitions/unlimitedFuel/unlimitedAircrafts flags from the
+        // inventory template of its coalition: BINVENTRY for blue, RINVENTRY for
+        // red, DEFAULT for neutral/unknown. So if BINVENTRY has
+        // unlimitedMunitions = true, blue bases are unlimited; if it's false they
+        // draw down. (dynSpawn aircraft links are still patched in below from
+        // both inventories.)
+        let inv_for_coalition = |coa: Option<&str>| -> &Table {
+            match coa {
+                Some("blue") => &self.blue_inventory,
+                Some("red") => &self.red_inventory,
+                _ => &self.default,
+            }
+        };
+        // bflib is the sole authority for weapons/fuel stock (production_by_side +
+        // hubs/convoys/air-sea routes). Zero DCS's own equipment/fuel production
+        // so it doesn't stack on top of bflib's -- that double production is what
+        // made stock run away (1000 -> 5000). Aircraft (OperatingLevel_Air) is
+        // left alone; dynSpawn amounts are handled by the link propagation below.
+        let stop_dcs_production = |wh: &Table| -> Result<()> {
+            for lvl in ["OperatingLevel_Eqp", "OperatingLevel_Fuel"] {
+                wh.raw_set(lvl, 0)?;
+            }
+            Ok(())
+        };
         for id in airport_ids {
-            let new_wh = self.default.deep_clone(lua)?;
+            let orig = airports.raw_get::<_, Table>(id).ok();
+            let coa = orig
+                .as_ref()
+                .and_then(|o| o.raw_get::<_, String>("coalition").ok());
+            let new_wh = inv_for_coalition(coa.as_ref().map(|s| s.as_str())).deep_clone(lua)?;
+            stop_dcs_production(&new_wh)?;
             // Preserve original aircrafts and coalition from the base mission.
             // Propagation will add linkDynTempl into the aircraft entries.
-            // Coalition must be preserved so propagate_links picks the correct
-            // blue/red inventory for each airport.
-            if let Ok(orig) = airports.raw_get::<_, Table>(id) {
+            if let Some(orig) = &orig {
                 if let Ok(orig_ac) = orig.raw_get::<_, Table>("aircrafts") {
                     new_wh.raw_set("aircrafts", orig_ac)?;
                 }
-                if let Ok(orig_coa) = orig.raw_get::<_, String>("coalition") {
-                    new_wh.raw_set("coalition", orig_coa)?;
-                }
+            }
+            if let Some(c) = &coa {
+                new_wh.raw_set("coalition", c.clone())?;
             }
             airports
                 .set(id, new_wh)
                 .with_context(|| format_compact!("setting airport {id}"))?;
         }
         for id in &whids {
-            let new_wh = self.default.deep_clone(lua)?;
-            // Same: preserve original aircrafts and coalition.
-            if let Ok(orig) = warehouses.raw_get::<_, Table>(*id) {
+            let orig = warehouses.raw_get::<_, Table>(*id).ok();
+            let coa = orig
+                .as_ref()
+                .and_then(|o| o.raw_get::<_, String>("coalition").ok());
+            let new_wh = inv_for_coalition(coa.as_ref().map(|s| s.as_str())).deep_clone(lua)?;
+            stop_dcs_production(&new_wh)?;
+            if let Some(orig) = &orig {
                 if let Ok(orig_ac) = orig.raw_get::<_, Table>("aircrafts") {
                     new_wh.raw_set("aircrafts", orig_ac)?;
                 }
-                if let Ok(orig_coa) = orig.raw_get::<_, String>("coalition") {
-                    new_wh.raw_set("coalition", orig_coa)?;
-                }
+            }
+            if let Some(c) = &coa {
+                new_wh.raw_set("coalition", c.clone())?;
             }
             warehouses
                 .set(*id, new_wh)

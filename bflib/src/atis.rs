@@ -25,7 +25,10 @@ struct WeatherData {
     temp_c: f64,
     cloud_base_m: f64,
     cloud_density: u8,
+    cloud_preset: Option<compact_str::CompactString>,
+    precip: bool,
     visibility_m: f64,
+    ground_elev_m: f64,
     winds_aloft: Vec<AltitudeWind>,
 }
 
@@ -53,14 +56,15 @@ fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
     pt.set("y", y)?;
     pt.set("z", z)?;
     let wind: LuaTable = atmosphere.call_function("getWind", pt)?;
-    let wind_x: f64 = wind.get("x")?;
-    let wind_z: f64 = wind.get("z")?;
+    // DCS world frame: X = North, Z = East. getWind returns the velocity vector,
+    // i.e. the direction the air is moving TOWARD. Meteorological wind direction
+    // is the compass bearing it comes FROM: atan2(East, North) of the reversed
+    // vector.
+    let wind_x: f64 = wind.get("x")?; // north component
+    let wind_z: f64 = wind.get("z")?; // east component
     let wind_speed_ms = (wind_x * wind_x + wind_z * wind_z).sqrt();
     let wind_speed_kts = wind_speed_ms * 1.944;
-    let wind_from_deg = {
-        let deg = (-wind_x).atan2(-wind_z).to_degrees();
-        if deg < 0.0 { deg + 360.0 } else { deg }
-    };
+    let wind_from_deg = (-wind_z).atan2(-wind_x).to_degrees().rem_euclid(360.0);
     Ok((wind_from_deg, wind_speed_kts))
 }
 
@@ -98,6 +102,17 @@ fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
         .and_then(|c| c.get::<_, f64>("density").ok())
         .map(|d| d.round() as u8)
         .unwrap_or(0);
+    let cloud_preset: Option<compact_str::CompactString> = clouds
+        .as_ref()
+        .and_then(|c| c.get::<_, std::string::String>("preset").ok())
+        .map(|s| compact_str::CompactString::from(s.as_str()))
+        .filter(|s| !s.is_empty());
+    let precip: bool = clouds
+        .as_ref()
+        .and_then(|c| c.get::<_, f64>("iprecptns").ok())
+        .map(|p| p > 0.0)
+        .unwrap_or(false)
+        || cloud_preset.as_deref().is_some_and(|p| p.starts_with("Rainy"));
 
     // Fog / visibility
     let fog_enabled: bool = wx.get("enable_fog").unwrap_or(false);
@@ -125,34 +140,150 @@ fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
         })
         .collect();
 
-    Ok(WeatherData { wind_from_deg, wind_speed_kts, qnh_inhg, qnh_hpa, temp_c, cloud_base_m, cloud_density, visibility_m, winds_aloft })
+    Ok(WeatherData {
+        wind_from_deg,
+        wind_speed_kts,
+        qnh_inhg,
+        qnh_hpa,
+        temp_c,
+        cloud_base_m,
+        cloud_density,
+        cloud_preset,
+        precip,
+        visibility_m,
+        ground_elev_m,
+        winds_aloft,
+    })
 }
 
-fn active_runway(lua: MizLua, airbase_id: &DcsOid<ClassAirbase>, wind_from_deg: f64) -> Option<compact_str::CompactString> {
+/// Designator number 01-36 for a heading in degrees.
+fn rwy_num_for(heading: f64) -> i32 {
+    let n = ((heading / 10.0).round() as i32).rem_euclid(36);
+    if n == 0 { 36 } else { n }
+}
+
+/// Leading digits of a runway-name part, e.g. "31R" -> 31, "09" -> 9.
+fn part_num(part: &str) -> Option<i32> {
+    part.trim_matches(|c: char| !c.is_ascii_digit())
+        .parse()
+        .ok()
+        .filter(|n| (1..=36).contains(n))
+}
+
+/// Pick the runway end best aligned with the wind, reported with the real DCS
+/// designator (so it can't name a runway the airfield doesn't have). Falls back
+/// to a heading-derived number only when DCS gives no usable name.
+fn active_runway(
+    lua: MizLua,
+    airbase_id: &DcsOid<ClassAirbase>,
+    wind_from_deg: f64,
+) -> Option<compact_str::CompactString> {
     let ab = Airbase::get_instance(lua, airbase_id).ok()?;
+    let ab_name = ab
+        .as_object()
+        .and_then(|o| o.get_name())
+        .map(|n| n.to_string())
+        .unwrap_or_default();
     let runways = ab.get_runways().ok()?;
-    let mut best_rwy: Option<compact_str::CompactString> = None;
-    let mut best_diff = f64::MAX;
+    // Collect every physical runway end: (heading_deg, designator).
+    let mut ends: Vec<(f64, compact_str::CompactString)> = Vec::new();
     for rwy in runways {
-        let rwy = rwy.ok()?;
-        let course_rad = rwy.course().ok()?;
-        let course_deg = course_rad.to_degrees().rem_euclid(360.0);
-        for &heading in &[course_deg, (course_deg + 180.0).rem_euclid(360.0)] {
-            let diff = angle_diff(wind_from_deg, heading);
-            if diff < best_diff {
-                best_diff = diff;
-                let rwy_num = ((heading / 10.0).round() as i32).rem_euclid(36);
-                let rwy_num = if rwy_num == 0 { 36 } else { rwy_num };
-                best_rwy = Some(format_compact!("{:02}", rwy_num));
+        let Ok(rwy) = rwy else { continue };
+        let Ok(course) = rwy.course() else { continue };
+        let raw_name = rwy.name().ok();
+        // DCS's `course` has been unreliable in sign across versions; normalise
+        // both a straight and a negated reading and keep whichever end the name
+        // agrees with.
+        let c1 = course.to_degrees().rem_euclid(360.0);
+        let c2 = (-course).to_degrees().rem_euclid(360.0);
+        let parts: Vec<compact_str::CompactString> = raw_name
+            .as_deref()
+            .map(|n| {
+                n.split(['-', '/', ' '])
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty() && part_num(s).is_some())
+                    .map(compact_str::CompactString::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        log::debug!(
+            "[ATIS_RWY] {ab_name}: runway name={raw_name:?} course={course:.4}rad \
+             ({c1:.0}deg / neg {c2:.0}deg) parsed_parts={parts:?}"
+        );
+        // Anchor the name parts to real headings. If DCS gave us two designators,
+        // each maps to ~num*10 degrees; that's the ground truth regardless of the
+        // course field. Otherwise fall back to the course.
+        if parts.len() == 2 {
+            for p in &parts {
+                if let Some(n) = part_num(p) {
+                    ends.push((n as f64 * 10.0, p.clone()));
+                }
+            }
+        } else if parts.len() == 1 {
+            let n = part_num(&parts[0]).unwrap();
+            ends.push((n as f64 * 10.0, parts[0].clone()));
+            let recip = ((n + 18 - 1) % 36) + 1;
+            ends.push((recip as f64 * 10.0, format_compact!("{recip:02}")));
+        } else {
+            for h in [c1, (c1 + 180.0).rem_euclid(360.0)] {
+                let n = rwy_num_for(h);
+                ends.push((h, format_compact!("{n:02}")));
             }
         }
     }
-    best_rwy
+    // Pick the end whose heading is most into the wind.
+    let best = ends
+        .into_iter()
+        .min_by(|(ha, _), (hb, _)| {
+            angle_diff(wind_from_deg, *ha)
+                .partial_cmp(&angle_diff(wind_from_deg, *hb))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    log::debug!("[ATIS_RWY] {ab_name}: wind_from={wind_from_deg:.0}deg -> active {best:?}");
+    best.map(|(_, l)| l)
 }
 
 fn angle_diff(a: f64, b: f64) -> f64 {
     let diff = (a - b).rem_euclid(360.0);
     if diff > 180.0 { 360.0 - diff } else { diff }
+}
+
+/// Cloud layer line: coverage + base AGL. DCS 2.9 preset weather usually
+/// reports density 0 even with a solid overcast, so fall back to the preset
+/// name when we have one.
+fn clouds_line(wx: &WeatherData) -> compact_str::CompactString {
+    let base_agl_m = (wx.cloud_base_m - wx.ground_elev_m).max(0.0);
+    let base_agl_ft = (base_agl_m * M_TO_FT).round() as i64;
+    let base_agl_m = base_agl_m.round() as i64;
+    let cover = match wx.cloud_density {
+        0 => None,
+        1..=2 => Some("FEW"),
+        3..=4 => Some("SCT"),
+        5..=7 => Some("BKN"),
+        _ => Some("OVC"),
+    };
+    match (cover, wx.cloud_preset.as_deref()) {
+        (Some(c), _) => format_compact!("\nClouds: {c} {base_agl_ft}ft / {base_agl_m}m AGL"),
+        (None, Some(p)) => format_compact!("\nClouds: {p} @ {base_agl_ft}ft / {base_agl_m}m AGL"),
+        (None, None) => compact_str::CompactString::from("\nClouds: SKC"),
+    }
+}
+
+fn visibility_line(vis_m: f64) -> compact_str::CompactString {
+    let sm = vis_m / 1609.344;
+    if vis_m >= 10000.0 {
+        compact_str::CompactString::from("\nVisibility: 10km+ / 6SM+")
+    } else if vis_m >= 1000.0 {
+        format_compact!("\nVisibility: {:.1}km / {sm:.1}SM", vis_m / 1000.0)
+    } else {
+        format_compact!("\nVisibility: {:.0}m / {sm:.1}SM", vis_m)
+    }
+}
+
+/// QFE (pressure at field elevation) from QNH via the ISA barometric formula.
+fn qfe(qnh_hpa: f64, elev_m: f64) -> (f64, f64) {
+    let hpa = qnh_hpa * (1.0 - 0.0065 * elev_m / 288.15).powf(5.25588);
+    (hpa, hpa / 33.8639)
 }
 
 fn case_advisory(cloud_base_m: f64) -> &'static str {
@@ -169,18 +300,33 @@ fn temp_sign(t: f64) -> &'static str {
     if t >= 0.0 { "+" } else { "" }
 }
 
+fn c_to_f(c: f64) -> f64 {
+    c * 9.0 / 5.0 + 32.0
+}
+
+/// "+18°C (64°F)"
+fn temp_both(c: f64) -> compact_str::CompactString {
+    let f = c_to_f(c);
+    format_compact!("{}{:.0}°C ({}{:.0}°F)", temp_sign(c), c, temp_sign(f), f)
+}
+
+/// "13kt (7m/s)"
+fn wind_speed_both(kts: f64) -> compact_str::CompactString {
+    format_compact!("{:.0}kt ({:.0}m/s)", kts, kts * 0.514444)
+}
+
 fn format_winds_aloft(winds: &[AltitudeWind]) -> compact_str::CompactString {
     use std::fmt::Write;
     let mut s = compact_str::CompactString::from("\nWinds Aloft:");
     for w in winds {
+        let alt_m = (w.alt_ft as f64 / M_TO_FT).round() as u32;
         let _ = write!(
             s,
-            "\n  {alt:>5}ft: {wdir:03}°/{wspd:.0}kt {sign}{temp:.0}°C",
+            "\n  {alt:>5}ft/{alt_m}m: {wdir:03}°/{wspd} {temp}",
             alt = w.alt_ft,
             wdir = w.wind_from_deg as u32,
-            wspd = w.wind_speed_kts,
-            sign = temp_sign(w.temp_c),
-            temp = w.temp_c,
+            wspd = wind_speed_both(w.wind_speed_kts),
+            temp = temp_both(w.temp_c),
         );
     }
     s
@@ -237,23 +383,45 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<()> {
     };
 
     let pos = obj.pos();
+    let obj_name = obj.name().to_string();
     let wx = fetch_weather(lua, pos.x as f64, pos.y as f64)?;
+    // Diagnostic: compare our computed FROM bearing with the .miz authored wind
+    // (which stores the TOWARD direction). computed_from should ~= authored + 180.
+    if let Ok(authored) = lua
+        .inner()
+        .globals()
+        .raw_get::<_, LuaTable>("env")
+        .and_then(|e| e.raw_get::<_, LuaTable>("mission"))
+        .and_then(|m| m.raw_get::<_, LuaTable>("weather"))
+        .and_then(|w| w.raw_get::<_, LuaTable>("wind"))
+        .and_then(|w| w.raw_get::<_, LuaTable>("atGround"))
+    {
+        let a_dir: f64 = authored.get("dir").unwrap_or(-1.0);
+        let a_spd: f64 = authored.get("speed").unwrap_or(-1.0);
+        log::debug!(
+            "[ATIS_WIND] {obj_name}: authored atGround dir(TOWARD)={a_dir:.0} speed={a_spd:.1}m/s \
+             -> expected FROM={:.0}; computed FROM={:.0} speed={:.1}kt",
+            (a_dir + 180.0).rem_euclid(360.0),
+            wx.wind_from_deg,
+            wx.wind_speed_kts,
+        );
+    }
     let aloft_str = if full { format_winds_aloft(&wx.winds_aloft) } else { compact_str::CompactString::default() };
 
     let mut msg: compact_str::CompactString = if obj.kind().is_carrier_group() {
         let brc_deg = carrier_brc(&ctx.db, obj.kind());
         let case = case_advisory(wx.cloud_base_m);
         format_compact!(
-            "CARRIER ATIS - {name}\nBRC: {brc:03}°\nWind: {wdir:03}° at {wspd:.0}kts | Deck: {deck:.0}kts\nQNH: {inhg:.2} inHg / {hpa:.0} hPa\nTemp: {sign}{temp:.0}°C\nRecovery: {case}",
+            "CARRIER ATIS - {name}\nBRC: {brc:03}°\nWind: {wdir:03}° at {wind} | Deck: {wind}\n\
+             QNH: {inhg:.2} inHg / {hpa:.0} hPa / {mmhg:.0} mmHg\nTemp: {temp}\nRecovery: {case}",
             name = obj.name(),
             brc = brc_deg,
             wdir = wx.wind_from_deg as u32,
-            wspd = wx.wind_speed_kts,
-            deck = wx.wind_speed_kts,
+            wind = wind_speed_both(wx.wind_speed_kts),
             inhg = wx.qnh_inhg,
             hpa = wx.qnh_hpa,
-            sign = temp_sign(wx.temp_c),
-            temp = wx.temp_c,
+            mmhg = wx.qnh_hpa / 1.33322,
+            temp = temp_both(wx.temp_c),
             case = case,
         )
     } else if obj.kind().is_airbase() {
@@ -264,15 +432,27 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<()> {
             .and_then(|ab_id| active_runway(lua, ab_id, wx.wind_from_deg))
             .map(|r| format_compact!("\nActive RWY: {}", r))
             .unwrap_or_default();
+        let elev_ft = (wx.ground_elev_m * M_TO_FT).round() as i64;
+        let elev_m = wx.ground_elev_m.round() as i64;
+        let (qfe_hpa, qfe_inhg) = qfe(wx.qnh_hpa, wx.ground_elev_m);
         format_compact!(
-            "ATIS - {name}\nWind: {wdir:03}° at {wspd:.0}kts\nQNH: {inhg:.2} inHg / {hpa:.0} hPa\nTemp: {sign}{temp:.0}°C{rwy}",
+            "ATIS - {name}\nField elev: {elev_ft}ft / {elev_m}m{rwy}\nWind: {wdir:03}° at {wind}\n\
+             QNH: {inhg:.2} inHg / {hpa:.0} hPa / {mmhg:.0} mmHg\n\
+             QFE: {qfe_inhg:.2} inHg / {qfe_hpa:.0} hPa / {qfe_mmhg:.0} mmHg\n\
+             Temp: {temp}{clouds}{vis}{precip}",
             name = obj.name(),
             wdir = wx.wind_from_deg as u32,
-            wspd = wx.wind_speed_kts,
+            wind = wind_speed_both(wx.wind_speed_kts),
             inhg = wx.qnh_inhg,
             hpa = wx.qnh_hpa,
-            sign = temp_sign(wx.temp_c),
-            temp = wx.temp_c,
+            mmhg = wx.qnh_hpa / 1.33322,
+            qfe_hpa = qfe_hpa,
+            qfe_inhg = qfe_inhg,
+            qfe_mmhg = qfe_hpa / 1.33322,
+            temp = temp_both(wx.temp_c),
+            clouds = clouds_line(&wx),
+            vis = visibility_line(wx.visibility_m),
+            precip = if wx.precip { "\nPrecipitation: yes" } else { "" },
             rwy = rwy_str,
         )
     } else {

@@ -354,6 +354,7 @@ impl KindSymbol {
 pub(super) struct ObjectiveMarkup {
     side: Side,
     threatened: bool,
+    capturable: bool,
     health: u8,
     logi: u8,
     supply: u8,
@@ -424,6 +425,15 @@ fn objective_label(
     // Both are mutually exclusive in practice (a carrier that's mid-repair
     // isn't simultaneously being boarded), but neither is asserted against
     // the other -- just append whichever is currently active.
+    // Tell players why a battered objective is or isn't takeable yet -- the
+    // health bar alone doesn't reveal that the last infantry must also be dead.
+    if obj.in_capture_hold() {
+        let _ = write!(s, "\n>> NOT CONSOLIDATED - hold with troops or it goes Neutral");
+    } else if obj.captureable() {
+        let _ = write!(s, "\n>> CAPTURABLE - land troops in the zone");
+    } else if obj.health <= 20 && obj.infantry > 0 {
+        let _ = write!(s, "\nInfantry: {}% — clear all defenders to capture", obj.infantry);
+    }
     if let Some(pct) = capture_pct {
         let _ = write!(s, "\nCapturing: {pct}%");
     }
@@ -448,6 +458,7 @@ impl ObjectiveMarkup {
         let ObjectiveMarkup {
             side: _,
             threatened: _,
+            capturable: _,
             health: _,
             logi: _,
             supply: _,
@@ -503,6 +514,18 @@ impl ObjectiveMarkup {
                 Color::yellow(if self.threatened { 0.75 } else { 0. }),
             );
         }
+        // The inner capturable ring must track captureable() directly. It used
+        // to only refresh when `logi` changed, but capturability is now
+        // `health <= 20 && infantry == 0` -- a base can flip to capturable with
+        // logi untouched, which left the ring invisible. (SAM sites drive this
+        // ring from owner/health blocks instead, so skip them here.)
+        if !obj.kind.is_special_sam_site() && obj.captureable() != self.capturable {
+            self.capturable = obj.captureable();
+            msgq.set_markup_color(
+                self.capturable_ring,
+                Color::white(if self.capturable { 0.75 } else { 0. }),
+            );
+        }
         if self.health != obj.health
             || self.logi != obj.logi
             || self.supply != obj.supply
@@ -511,12 +534,15 @@ impl ObjectiveMarkup {
             || self.capture_pct != capture_pct
             || self.repair_pct != repair_pct
         {
-            if self.logi != obj.logi || (obj.kind.is_special_sam_site() && self.health != obj.health) {
+            // Non-SAM capturable ring is handled by the captureable() check
+            // above; here only the SAM-site ring (owner colour / white when
+            // the site is dead) needs refreshing on a health change.
+            if obj.kind.is_special_sam_site() && self.health != obj.health {
                 let text_color = |a| text_color(obj.owner, a);
-                let capturable_color = if obj.kind.is_special_sam_site() {
-                    if obj.health == 0 { Color::white(0.75) } else { text_color(0.75) }
+                let capturable_color = if obj.health == 0 {
+                    Color::white(0.75)
                 } else {
-                    Color::white(if obj.captureable() { 0.75 } else { 0. })
+                    text_color(0.75)
                 };
                 msgq.set_markup_color(self.capturable_ring, capturable_color);
             }
@@ -572,6 +598,7 @@ impl ObjectiveMarkup {
         let mut t = ObjectiveMarkup::default();
         t.side = obj.owner;
         t.threatened = obj.threatened;
+        t.capturable = obj.captureable();
         t.health = obj.health;
         t.logi = obj.logi;
         t.supply = obj.supply;

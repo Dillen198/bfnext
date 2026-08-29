@@ -6,6 +6,7 @@ import {
 import { api, connectLiveLogs, connectEngineLogs, type LogLine, type PerfRow, type PerfTimelinePoint, type BotActionResult } from '../api'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
+import { useTableSort, SortTh } from '../components/SortableTh'
 import {
   Shield, Users, Trash2, AlertTriangle, RotateCcw,
   Activity, Ban, UserX, Terminal, Search, ChevronsDown,
@@ -101,9 +102,26 @@ function PerfChart({ data, group }: { data: PerfTimelinePoint[]; group: typeof C
 
 // ── perf table ────────────────────────────────────────────────────────────────
 
+const PERF_COLS = {
+  name: (r: PerfRow) => r.name,
+  n: (r: PerfRow) => r.n,
+  mean: (r: PerfRow) => r.mean,
+  p50: (r: PerfRow) => r.p50,
+  p90: (r: PerfRow) => r.p90,
+  p99: (r: PerfRow) => r.p99,
+  p999: (r: PerfRow) => r.p999,
+} as const
+const PERF_HEADERS: { label: string; key: keyof typeof PERF_COLS }[] = [
+  { label: 'Metric', key: 'name' }, { label: 'N', key: 'n' }, { label: 'Mean', key: 'mean' },
+  { label: 'p50', key: 'p50' }, { label: 'p90', key: 'p90' }, { label: 'p99', key: 'p99' },
+  { label: 'p999', key: 'p999' },
+]
+
 function PerfPanel({ title, icon, rows, time, available }: {
   title: string; icon: React.ReactNode; rows?: PerfRow[]; time?: string; available?: boolean
 }) {
+  const { sorted, sortKey, sortDir, onSort } =
+    useTableSort(rows ?? [], PERF_COLS, { key: 'p99', dir: 'desc' })
   return (
     <div className="vs-card">
       <CardHeader
@@ -119,13 +137,21 @@ function PerfPanel({ title, icon, rows, time, available }: {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
-                {['Metric', 'N', 'Mean', 'p50', 'p90', 'p99', 'p999'].map(h => (
-                  <th key={h} style={{ ...CELL, textAlign: h === 'Metric' ? 'left' : 'right', color: 'var(--text-dim)', fontWeight: 600 }}>{h}</th>
+                {PERF_HEADERS.map(h => (
+                  <SortTh
+                    key={h.key}
+                    label={h.label}
+                    colKey={h.key}
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={onSort}
+                    style={{ ...CELL, textAlign: h.key === 'name' ? 'left' : 'right', color: 'var(--text-dim)', fontWeight: 600 }}
+                  />
                 ))}
               </tr>
             </thead>
             <tbody>
-              {rows.filter(r => r.n > 0).map(r => (
+              {sorted.filter(r => r.n > 0).map(r => (
                 <tr key={r.name}>
                   <td style={{ ...CELL, ...MONO, fontSize: '0.65rem', color: 'var(--text)' }}>{r.name}</td>
                   <td style={{ ...CELL, ...MONO, textAlign: 'right', color: 'var(--text-dim)' }}>{r.n.toLocaleString()}</td>
@@ -595,6 +621,15 @@ export default function AdminPage() {
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery({ queryKey: ['admin', 'sessions'],     queryFn: api.admin.sessions,    refetchInterval: 15_000 })
   const { data: online = [],   isLoading: onlineLoading }   = useQuery({ queryKey: ['online'],                queryFn: api.online,            refetchInterval: 10_000 })
+  const onlineSort = useTableSort(
+    online,
+    {
+      name: (p: (typeof online)[number]) => p.name?.toLowerCase() ?? '',
+      side: (p: (typeof online)[number]) => p.side ?? '',
+      slot: (p: (typeof online)[number]) => p.aircraft ?? '',
+    },
+    { key: 'name', dir: 'asc' },
+  )
   const { data: banned = [] }                                = useQuery({ queryKey: ['admin', 'banned'],       queryFn: api.admin.banned,      refetchInterval: 30_000 })
   const { data: engineErrors = [] }                          = useQuery({ queryKey: ['admin', 'engine-errors'], queryFn: api.admin.engineErrors, refetchInterval: 20_000 })
   const { data: perf }                                       = useQuery({ queryKey: ['admin', 'perf'],         queryFn: api.admin.perf,        refetchInterval: 30_000 })
@@ -652,13 +687,21 @@ export default function AdminPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
-                  {['Name', 'Side', 'Slot', 'Actions'].map(h => (
-                    <th key={h} style={{ ...CELL, color: 'var(--text-dim)', textAlign: 'left', fontWeight: 600 }}>{h}</th>
+                  {([['Name', 'name'], ['Side', 'side'], ['Slot', 'slot'], ['Actions', undefined]] as const).map(([label, key]) => (
+                    <SortTh
+                      key={label}
+                      label={label}
+                      colKey={key}
+                      sortKey={onlineSort.sortKey}
+                      sortDir={onlineSort.sortDir}
+                      onSort={onlineSort.onSort}
+                      style={{ ...CELL, color: 'var(--text-dim)', textAlign: 'left', fontWeight: 600 }}
+                    />
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {online.map(p => (
+                {onlineSort.sorted.map(p => (
                   <tr key={p.ucid}>
                     <td style={{ ...CELL, color: 'var(--text)', ...MONO, fontSize: '0.67rem' }}>{p.name}</td>
                     <td style={{ ...CELL }}>

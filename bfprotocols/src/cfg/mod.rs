@@ -1738,6 +1738,10 @@ fn default_cull_after() -> u32 {
     1800
 }
 
+fn default_capture_consolidation_secs() -> u32 {
+    300
+}
+
 fn default_lr_cull_distance() -> u32 {
     80_000
 }
@@ -1864,6 +1868,14 @@ fn default_carrier_repair_time() -> u32 {
 
 fn default_repair_supply_cost() -> u8 {
     5
+}
+
+fn default_deploy_supply_cost() -> u8 {
+    3
+}
+
+fn default_artillery_min_range() -> u32 {
+    1500
 }
 
 fn default_sam_capture_radius() -> f64 {
@@ -2114,7 +2126,7 @@ fn default_cap_template_blue() -> String { "BCAP".into() }
 fn default_cap_duration() -> u32 { 600 }
 fn default_cap_orbit_radius() -> f64 { 15_000.0 }
 fn default_cap_probability() -> f64 { 0.35 }
-fn default_capture_time() -> u32 { 60 }
+fn default_capture_time() -> u32 { 180 }
 fn default_barrage_radius_m() -> f64 { 500.0 }
 fn default_barrage_max_groups() -> usize { 5 }
 fn default_cap_trigger_radius() -> f64 { 90_000.0 }
@@ -2254,6 +2266,13 @@ pub struct Cfg {
     /// skipped until supply is replenished.
     #[serde(default = "default_repair_supply_cost")]
     pub repair_supply_cost: u8,
+    /// Supply (0-100) drawn from a crate's origin objective for every crate
+    /// consumed when a deployable is unpacked. Multiple origin objectives each
+    /// pay for the crates that came from them. Applied multiplicatively to the
+    /// warehouse stock (like repair), so it tapers and never fully drains a
+    /// base. 0 disables the cost. Default 3.
+    #[serde(default = "default_deploy_supply_cost")]
+    pub deploy_supply_cost: u8,
     /// The base repair crate
     pub repair_crate: FxHashMap<Side, Crate>,
     /// Global artillery fire-support system. When set, a "Request Fires" item
@@ -2304,6 +2323,14 @@ pub struct Cfg {
     /// If a base has been inactive for this long then cull it's units (Seconds)
     #[serde(default = "default_cull_after")]
     pub cull_after: u32,
+    /// After a capture the objective is "held" only by the assaulting troops
+    /// until this many seconds pass. During the hold its garrison does not
+    /// spawn and it stays capturable. If the assault troops are all killed
+    /// before the timer, the base goes Neutral; if they survive it, the base
+    /// consolidates and its garrison spawns. Default 300. 0 = instant
+    /// consolidation (old behaviour).
+    #[serde(default = "default_capture_consolidation_secs")]
+    pub capture_consolidation_secs: u32,
     /// how often to do more expensive checks such as unit culling and
     /// updating unit positions (Seconds)
     pub slow_timed_events_freq: u32,
@@ -2319,8 +2346,14 @@ pub struct Cfg {
     /// how far crates apart crates can be and still unpack (Meters)
     pub crate_spread: u32,
     /// how close must artillery be to participate in an artillery mission
-    /// (meters).
+    /// (meters). Also the maximum gun->target distance for a fire order.
     pub artillery_mission_range: u32,
+    /// minimum gun->target distance (meters) for an artillery fire order.
+    /// Guns closer than this to the target are reported as "too close" and
+    /// skipped rather than firing at a target inside their minimum range.
+    /// Default 1500.
+    #[serde(default = "default_artillery_min_range")]
+    pub artillery_min_range: u32,
     /// how close must alcm be to participate in an alcm mission
     /// (meters).
     pub alcm_mission_range: u32,

@@ -143,7 +143,9 @@ fn return_troops(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 // ─── Ground Vehicle Troop Transport ──────────────────────────────────────────
+// Menu currently hidden (see add_troops_menu); handlers kept for easy re-enable.
 
+#[allow(dead_code)]
 fn board_ground_vehicle(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
@@ -165,6 +167,7 @@ fn board_ground_vehicle(lua: MizLua, gid: GroupId) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn disembark_ground_vehicle(lua: MizLua, arg: ArgTuple<GroupId, bfprotocols::db::group::UnitId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
@@ -183,6 +186,7 @@ fn disembark_ground_vehicle(lua: MizLua, arg: ArgTuple<GroupId, bfprotocols::db:
     Ok(())
 }
 
+#[allow(dead_code)]
 fn list_ground_vehicle_passengers(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, _slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
@@ -279,30 +283,9 @@ pub(super) fn add_troops_menu_for_group(
         }
     }
 
-    // Ground vehicle transport menu — only shown when any vehicle types are configured.
-    if !cfg.ground_vehicle_cargo.is_empty() {
-        let gv_root = mc.add_submenu_for_group(group, "Ground Vehicle".into(), None)?;
-        mc.add_command_for_group(
-            group,
-            "Board Vehicle (transfer squad)".into(),
-            Some(gv_root.clone()),
-            board_ground_vehicle,
-            group,
-        )?;
-        mc.add_command_for_group(
-            group,
-            "Dismount Squad from Vehicle".into(),
-            Some(gv_root.clone()),
-            disembark_ground_vehicle,
-            ArgTuple { fst: group, snd: bfprotocols::db::group::UnitId::default() },
-        )?;
-        mc.add_command_for_group(
-            group,
-            "Vehicle Passenger Manifest".into(),
-            Some(gv_root.clone()),
-            list_ground_vehicle_passengers,
-            group,
-        )?;
-    }
+    // Ground vehicle transport menu — hidden per request. The board/dismount
+    // handlers still exist; re-add this block to expose the "Ground Vehicle"
+    // submenu again.
+    let _ = &cfg.ground_vehicle_cargo;
     Ok(())
 }

@@ -1089,6 +1089,13 @@ export default function MapPage() {
             )
           })}
 
+          {/* ── Capturable rings ─────────────────────────────────── */}
+          {shownObjs.filter(o => o.captureable).map(obj => (
+            <Circle key={`cap-${obj.id}`} center={[obj.lat, obj.lon]} radius={1800}
+              pathOptions={{ color: '#ffffff', fillColor: '#ffffff', fillOpacity: 0.05, weight: 1.5, dashArray: '6 6' }}
+              interactive={false} />
+          ))}
+
           {/* ── Objectives ────────────────────────────────────────── */}
           {shownObjs.map(obj => {
             const c = obj.owner === 'Red' ? COL_RED : obj.owner === 'Blue' ? COL_BLUE : COL_NEUTRAL
@@ -1132,7 +1139,18 @@ export default function MapPage() {
                         </div>
                       )
                     })}
-                    
+
+                    {obj.captureable && (
+                      <div style={{ marginTop: '6px', padding: '3px 6px', borderRadius: '2px', fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.08em', color: '#060a06', background: '#ffffff' }}>
+                        ⚑ CAPTURABLE — land troops in the zone
+                      </div>
+                    )}
+                    {!obj.captureable && obj.threatened && (
+                      <div style={{ marginTop: '6px', padding: '3px 6px', borderRadius: '2px', fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.08em', color: '#060a06', background: '#ffcc00' }}>
+                        ⚠ THREATENED
+                      </div>
+                    )}
+
                     {/* COMMANDER ACTIONS */}
                     {user?.is_admin && obj.owner !== 'Neutral' && (
                       <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: `1px solid ${HUD_BORDER}` }}>

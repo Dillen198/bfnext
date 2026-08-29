@@ -478,6 +478,26 @@ async fn api_all_pilots(db: StatsDb) -> std::result::Result<impl warp::Reply, Er
 
 /// Call one of bflib's netidx RPC procs and return its reply as an owned
 /// String (bail on Value::Error or an unexpected reply shape).
+/// Move an existing log file aside as `<stem><UTC-timestamp>.<ext>` so each run
+/// starts a fresh file. No-op if the file doesn't exist. Mirrors bflib's
+/// `rotate_log`.
+fn rotate_log(path: &std::path::Path) {
+    if !path.exists() {
+        return;
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("log");
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("bfdb");
+    let ts: std::string::String = chrono::Utc::now()
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        .chars()
+        .filter(|c| *c != '-' && *c != ':')
+        .collect();
+    let rotated = path.with_file_name(format!("{stem}{ts}.{ext}"));
+    if let Err(e) = std::fs::rename(path, &rotated) {
+        eprintln!("could not rotate log file {path:?} to {rotated:?}: {e}");
+    }
+}
+
 async fn call_engine_rpc_str(
     db: &StatsDb,
     proc_name: &str,
@@ -529,9 +549,11 @@ async fn api_objectives(
                     "supply": obj.supply,
                     "fuel": obj.fuel,
                     "last_change": obj.last_change.to_rfc3339(),
-                    // Overwritten below with a live value for the active round,
-                    // when bflib is reachable. Historical rounds keep this default.
+                    // Overwritten below with live values for the active round,
+                    // when bflib is reachable. Historical rounds keep the defaults.
                     "priority": false,
+                    "threatened": false,
+                    "captureable": false,
                 }))
             })
             .collect();
@@ -553,12 +575,24 @@ async fn api_objectives(
         ).await {
             Ok(Ok(json)) => {
                 if let Ok(live) = serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(&json) {
-                    let priorities: std::collections::HashMap<&str, bool> =
-                        live.iter().map(|o| (o.name.as_str(), o.priority)).collect();
+                    // The persisted health/logi/supply/fuel can lag the engine
+                    // (e.g. after a mission reload re-emits Stat::Objective at
+                    // 100, or if the archive replay missed a batch), which made
+                    // the tactical map disagree with the in-game markup. For the
+                    // active round, take these straight from the engine.
+                    let by_name: std::collections::HashMap<&str, &bfprotocols::api::ObjectiveInfo> =
+                        live.iter().map(|o| (o.name.as_str(), o)).collect();
                     for entry in entries.iter_mut() {
                         if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
-                            if let Some(&p) = priorities.get(name) {
-                                entry["priority"] = serde_json::Value::Bool(p);
+                            if let Some(&o) = by_name.get(name) {
+                                entry["priority"] = serde_json::Value::Bool(o.priority);
+                                entry["health"] = serde_json::json!(o.health);
+                                entry["logi"] = serde_json::json!(o.logi);
+                                entry["supply"] = serde_json::json!(o.supply);
+                                entry["fuel"] = serde_json::json!(o.fuel);
+                                entry["owner"] = serde_json::json!(format!("{:?}", o.owner));
+                                entry["threatened"] = serde_json::Value::Bool(o.threatened);
+                                entry["captureable"] = serde_json::Value::Bool(o.captureable);
                             }
                         }
                     }
@@ -932,7 +966,11 @@ async fn api_capture_events(
                     "time": c.time.to_rfc3339(),
                     "objective": c.objective_name,
                     "side": format!("{:?}", c.side),
-                    "by": c.by.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
+                    // pilot display names (fall back to ucid only if unknown)
+                    "by": c.by.iter()
+                        .map(|u| db.pilot_name(u).unwrap_or_else(|| u.to_string()))
+                        .collect::<Vec<_>>(),
+                    "by_ucid": c.by.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
                 })
             })
             .collect();
@@ -2631,9 +2669,14 @@ async fn main() -> Result<()> {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            // Rotate the previous run's log aside on startup (same convention as
+            // bflib): foo.log -> foo<timestamp>.log, then start a fresh file, so
+            // the active log doesn't grow unbounded across restarts.
+            rotate_log(path);
             let file = std::fs::OpenOptions::new()
                 .create(true)
-                .append(true)
+                .write(true)
+                .truncate(true)
                 .open(path)
                 .map_err(|e| anyhow::anyhow!("opening --log-file {path:?}: {e}"))?;
             builder.target(env_logger::Target::Pipe(Box::new(file)));
