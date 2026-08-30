@@ -184,6 +184,7 @@ fn active_runway(
         .and_then(|o| o.get_name())
         .map(|n| n.to_string())
         .unwrap_or_default();
+    let ab_callsign = ab.get_callsign().map(|c| c.to_string()).unwrap_or_default();
     let runways = ab.get_runways().ok()?;
     // Collect every physical runway end: (heading_deg, designator).
     let mut ends: Vec<(f64, compact_str::CompactString)> = Vec::new();
@@ -191,11 +192,8 @@ fn active_runway(
         let Ok(rwy) = rwy else { continue };
         let Ok(course) = rwy.course() else { continue };
         let raw_name = rwy.name().ok();
-        // DCS's `course` has been unreliable in sign across versions; normalise
-        // both a straight and a negated reading and keep whichever end the name
-        // agrees with.
+        let rwy_pos = rwy.position().ok();
         let c1 = course.to_degrees().rem_euclid(360.0);
-        let c2 = (-course).to_degrees().rem_euclid(360.0);
         let parts: Vec<compact_str::CompactString> = raw_name
             .as_deref()
             .map(|n| {
@@ -206,9 +204,9 @@ fn active_runway(
                     .collect()
             })
             .unwrap_or_default();
-        log::debug!(
-            "[ATIS_RWY] {ab_name}: runway name={raw_name:?} course={course:.4}rad \
-             ({c1:.0}deg / neg {c2:.0}deg) parsed_parts={parts:?}"
+        log::info!(
+            "[ATIS_RWY] {ab_name} (cs {ab_callsign}): runway name={raw_name:?} \
+             course={course:.4}rad ({c1:.0}deg) pos={rwy_pos:?} parsed_parts={parts:?}"
         );
         // Anchor the name parts to real headings. If DCS gave us two designators,
         // each maps to ~num*10 degrees; that's the ground truth regardless of the
@@ -239,7 +237,7 @@ fn active_runway(
                 .partial_cmp(&angle_diff(wind_from_deg, *hb))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-    log::debug!("[ATIS_RWY] {ab_name}: wind_from={wind_from_deg:.0}deg -> active {best:?}");
+    log::info!("[ATIS_RWY] {ab_name}: wind_from={wind_from_deg:.0}deg -> active {best:?}");
     best.map(|(_, l)| l)
 }
 
@@ -398,7 +396,7 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<()> {
     {
         let a_dir: f64 = authored.get("dir").unwrap_or(-1.0);
         let a_spd: f64 = authored.get("speed").unwrap_or(-1.0);
-        log::debug!(
+        log::info!(
             "[ATIS_WIND] {obj_name}: authored atGround dir(TOWARD)={a_dir:.0} speed={a_spd:.1}m/s \
              -> expected FROM={:.0}; computed FROM={:.0} speed={:.1}kt",
             (a_dir + 180.0).rem_euclid(360.0),
