@@ -26,11 +26,6 @@ pub enum ObjectiveKind {
         parent_naval_base: Option<ObjectiveId>,
         #[serde(default)]
         repair_start_time: Option<DateTime<Utc>>,
-        /// How many repair crates have been delivered for the repair
-        /// currently in progress. The repair timer is divided by
-        /// `max(1, repair_crates)`, so stacking crates finishes it faster.
-        #[serde(default)]
-        repair_crates: u32,
     },
     Factory {
         #[serde(default)]

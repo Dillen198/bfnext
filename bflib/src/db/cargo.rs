@@ -4171,18 +4171,19 @@ impl Db {
                         .unwrap_or(1800);
 
                     // Start the repair, or if one's already running, add this
-                    // crate to it -- the timer is divided by the crate count,
-                    // so stacking crates finishes the repair faster.
+                    // crate to it -- the timer is divided by the crate count
+                    // (tracked in ephemeral), so stacking crates finishes the
+                    // repair faster.
                     let mut crates = 1u32;
                     if let Some(carrier_obj) = self.persisted.objectives.get_mut_cow(&carrier_id) {
-                        if let ObjectiveKind::CarrierGroup { repair_start_time, repair_crates, .. } = &mut carrier_obj.kind {
-                            if repair_start_time.is_none() {
+                        if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut carrier_obj.kind {
+                            let fresh = repair_start_time.is_none();
+                            if fresh {
                                 *repair_start_time = Some(now);
-                                *repair_crates = 1;
-                            } else {
-                                *repair_crates = repair_crates.saturating_add(1);
                             }
-                            crates = (*repair_crates).max(1);
+                            let n = self.ephemeral.carrier_repair_crates.entry(carrier_id).or_insert(0);
+                            *n = if fresh { 1 } else { n.saturating_add(1) };
+                            crates = (*n).max(1);
                             info!("[CARRIER_REPAIR] {} repair now has {} crate(s) -- ~{} min",
                                   carrier_name, crates, (repair_time_secs / crates) / 60);
                         }

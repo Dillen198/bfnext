@@ -283,6 +283,10 @@ pub struct Ephemeral {
     pub(crate) last_under_attack_notif: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Last time a counter-battery report was sent per grid cell (x_cell, y_cell).
     pub(crate) counter_battery_reports: FxHashMap<(i64, i64), DateTime<Utc>>,
+    /// How many repair crates are stacked on each carrier's in-progress
+    /// repair. Divides the repair timer (see check_carrier_repairs). Not
+    /// persisted -- a repair spanning a restart just reverts to base speed.
+    pub(crate) carrier_repair_crates: FxHashMap<ObjectiveId, u32>,
     /// ELINT/SIGINT persistent intel database (populated when cfg.elint is Some).
     pub(crate) intel_db: IntelDatabase,
     /// Ground vehicle passenger manifests: vehicle UnitId -> passengers.
@@ -362,6 +366,7 @@ impl Default for Ephemeral {
             last_stand_state: None,
             last_under_attack_notif: FxHashMap::default(),
             counter_battery_reports: FxHashMap::default(),
+            carrier_repair_crates: FxHashMap::default(),
             intel_db: IntelDatabase::default(),
             ground_vehicle_passengers: FxHashMap::default(),
         }
