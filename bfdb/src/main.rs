@@ -2873,6 +2873,13 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_pilot_deploys);
 
+    // Cheap liveness probe -- no DB access, no archive-replay contention.
+    // Process supervisors should poll this, not /api/stats (which runs
+    // several Sled queries and can be slow while the stats archive is
+    // still replaying at startup).
+    let health = warp::path!("api" / "health")
+        .map(|| warp::reply::with_status("ok", warp::http::StatusCode::OK));
+
     let stats = warp::path!("api" / "stats")
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
@@ -3225,6 +3232,7 @@ async fn main() -> Result<()> {
 
     // Box sub-chains to avoid warp filter type overflow
     let api_routes = rounds
+        .or(health)
         .or(leaderboard)
         .or(objectives)
         .or(kills)

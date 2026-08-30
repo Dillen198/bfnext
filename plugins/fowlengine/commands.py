@@ -49,6 +49,10 @@ ACHIEVEMENT_THRESHOLDS = [(15, "God of War"), (10, "Unstoppable"), (5, "Ace")]
 BFDB_HEALTH_CHECK_SECS = 30
 BFDB_DEFAULT_HEALTH_FAILURES = 3   # consecutive failed checks before relaunching
 BFDB_DEFAULT_RESTART_COOLDOWN = 120  # min seconds between relaunch attempts
+# If bfdb.exe is still running but unresponsive, wait this long before force-
+# relaunching it -- long enough to cover a full stats-archive replay on
+# startup. (If the process is gone, it's relaunched immediately.)
+BFDB_DEFAULT_HUNG_RELAUNCH = 600
 
 # ── bfdb admin auth ──────────────────────────────────────────────────────────
 # bfdb's admin-gated endpoints (e.g. /api/commander/spawn, /ws/engine-logs) only
@@ -212,6 +216,7 @@ class FowlEngine(Plugin):
         self._active_round = {}         # server name -> last-seen active round id
         # Per-server bfdb health-check state (not persisted -- rebuilt on connect).
         self._bfdb_fail_count = {}      # server name -> consecutive failed health checks
+        self._bfdb_first_fail = {}      # server name -> time.time() of first fail in the current unhealthy streak
         self._bfdb_last_restart = {}    # server name -> monotonic time.time() of last relaunch attempt
 
     async def cog_load(self) -> None:
@@ -624,6 +629,7 @@ class FowlEngine(Plugin):
 
             if healthy:
                 self._bfdb_fail_count[server.name] = 0
+                self._bfdb_first_fail[server.name] = None
                 continue
 
             fail_count = self._bfdb_fail_count.get(server.name, 0) + 1
@@ -633,18 +639,41 @@ class FowlEngine(Plugin):
                 self.log.warning(f"FowlEngine: bfdb health check failed for {server.name} ({fail_count}/{threshold})")
                 continue
 
+            # If bfdb.exe is still running, do NOT relaunch it: bfsystem.ps1
+            # kills + restarts bfdb (and the netidx resolver, dropping bflib's
+            # publisher for ~60s), and a bfdb that's merely slow to answer --
+            # e.g. still replaying its stats archive on startup, or under a
+            # heavy query burst -- would get stuck in a kill/restart/kill loop
+            # ("keeps opening bfdb.exe even though it's running"). Only step in
+            # when the process is genuinely gone, or has been unresponsive for
+            # a very long time (a real hang).
+            hung_after = int(config.get('bfdb_hung_relaunch_secs', BFDB_DEFAULT_HUNG_RELAUNCH))
+            first_fail = self._bfdb_first_fail.get(server.name) or time.time()
+            self._bfdb_first_fail[server.name] = first_fail
+            unresponsive_for = time.time() - first_fail
+            running = self._bfdb_process_running()
+            if running and unresponsive_for < hung_after:
+                self.log.warning(
+                    f"FowlEngine: bfdb at {api_url} not answering ({fail_count} checks, "
+                    f"{unresponsive_for:.0f}s) but bfdb.exe is running -- assuming startup/busy, "
+                    f"not relaunching (would relaunch after {hung_after}s)"
+                )
+                continue
+
             cooldown = int(config.get('bfdb_restart_cooldown', BFDB_DEFAULT_RESTART_COOLDOWN))
             last_restart = self._bfdb_last_restart.get(server.name, 0)
             if time.time() - last_restart < cooldown:
                 continue  # already tried recently -- give it time to come up before trying again
 
             self._bfdb_fail_count[server.name] = 0
+            self._bfdb_first_fail[server.name] = None
             self._bfdb_last_restart[server.name] = time.time()
-            self.log.error(f"FowlEngine: bfdb unreachable at {api_url} after {fail_count} checks -- relaunching via {script}")
+            why = "hung" if running else "not running"
+            self.log.error(f"FowlEngine: bfdb {why} at {api_url} after {fail_count} checks -- relaunching via {script}")
             ok, err = self._launch_bfsystem(script)
             await self._notify_ops(
                 config,
-                f"⚠️ **bfdb was unreachable at `{api_url}`** after {fail_count} failed health checks.\n"
+                f"⚠️ **bfdb was {why} at `{api_url}`** after {fail_count} failed health checks.\n"
                 + (f"Relaunched via `{script}`." if ok else f"❌ Failed to relaunch: {err}")
             )
 
@@ -654,13 +683,40 @@ class FowlEngine(Plugin):
 
     @staticmethod
     async def _bfdb_health_check(api_url: str) -> bool:
+        """True if bfdb answers its liveness probe. Uses the cheap /api/health
+        endpoint (no DB access); falls back to /api/stats for older bfdb builds
+        that predate it."""
         try:
             import aiohttp
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{api_url}/api/stats", timeout=8) as resp:
+                try:
+                    async with session.get(f"{api_url}/api/health", timeout=10) as resp:
+                        if resp.status == 200:
+                            return True
+                        if resp.status != 404:
+                            return False
+                        # 404 -> old bfdb without /api/health, fall through
+                except aiohttp.ClientResponseError:
+                    pass
+                async with session.get(f"{api_url}/api/stats", timeout=15) as resp:
                     return resp.status == 200
         except Exception:
             return False
+
+    @staticmethod
+    def _bfdb_process_running() -> bool:
+        """True if a bfdb.exe process is alive on this machine. Used to avoid
+        relaunching a bfdb that's up but merely slow to answer."""
+        try:
+            import psutil
+            for p in psutil.process_iter(['name']):
+                name = (p.info.get('name') or '').lower()
+                if name in ('bfdb.exe', 'bfdb'):
+                    return True
+            return False
+        except Exception:
+            # Can't tell -- assume it IS running so we don't relaunch blindly.
+            return True
 
     @staticmethod
     def _launch_bfsystem(script: str) -> tuple:

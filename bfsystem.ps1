@@ -139,9 +139,20 @@ if ([string]::IsNullOrWhiteSpace($adminPassword)) {
 function Start-VECTOR {
     Write-Host "Cleaning up existing processes..." -ForegroundColor Gray
     Stop-Process -Name "bfdb" -Force -ErrorAction SilentlyContinue
-    Stop-Process -Name "netidx" -Force -ErrorAction SilentlyContinue
     Get-Job -Name "DBEngine" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
-    Get-Job -Name "NetidxResolver" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
+
+    # Only recycle the netidx resolver if it's NOT already serving. Killing a
+    # healthy resolver drops bflib's publisher inside DCS for ~60s (its
+    # heartbeat TTL) -- so if the FowlEngine supervisor relaunches bfdb, we
+    # don't want to also blind the engine for a minute. If 4564 is already
+    # listening, leave the resolver (and its job) alone.
+    $resolverUp = Test-NetConnection -ComputerName 127.0.0.1 -Port 4564 -InformationLevel Quiet -WarningAction SilentlyContinue
+    if (-not $resolverUp) {
+        Stop-Process -Name "netidx" -Force -ErrorAction SilentlyContinue
+        Get-Job -Name "NetidxResolver" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Host "netidx resolver already listening on 127.0.0.1:4564 -- leaving it running." -ForegroundColor Gray
+    }
 
     # Ensure DB directory exists
     if (-not (Test-Path $dbPath)) {
@@ -154,7 +165,10 @@ function Start-VECTOR {
     # up before bfdb tries to connect. Requires netidx-tools installed
     # (cargo install netidx-tools) and %APPDATA%\netidx\client.json set up
     # for this account -- see user-guide/src/server-setup.
-    if ($netidxBase -ne "") {
+    if ($netidxBase -ne "" -and $resolverUp) {
+        Write-Host "Skipping netidx resolver start -- already up on 127.0.0.1:4564." -ForegroundColor Gray
+    }
+    elseif ($netidxBase -ne "") {
         if (-not (Get-Command netidx -ErrorAction SilentlyContinue)) {
             Write-Host "netidx CLI not found on PATH -- run 'cargo install netidx-tools' first, or clear `$netidxBase to skip the resolver." -ForegroundColor Red
         } else {

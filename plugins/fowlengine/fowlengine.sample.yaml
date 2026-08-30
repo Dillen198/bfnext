@@ -99,18 +99,27 @@ DEFAULT:
   # bfdb.exe isn't controlled by DCSServerBot's own server start/stop -- it's
   # a separate sidecar process that normally has to be relaunched by hand
   # (re-running bfsystem.ps1) if it crashes or is unreachable. When true, the
-  # bot health-checks it (GET api_url/api/stats) every ~30s and relaunches it
-  # via bfsystem_script if it stops responding for bfdb_health_failures
-  # checks in a row. Requires the bot itself to be running on the same
-  # Windows machine as bfdb/bfsystem.ps1.
+  # bot health-checks it (GET api_url/api/health, a cheap no-DB probe) every
+  # ~30s and relaunches it via bfsystem_script if it stops responding for
+  # bfdb_health_failures checks in a row AND the process is either gone or
+  # has been unresponsive longer than bfdb_hung_relaunch_secs. A bfdb that's
+  # merely slow (e.g. replaying its stats archive at startup) is left alone.
+  # Requires the bot itself to be running on the same Windows machine as
+  # bfdb/bfsystem.ps1.
   bfdb_supervisor: false
 
   # Absolute path to bfsystem.ps1 (or an equivalent launcher) on the machine
   # this bot runs on. Required if bfdb_supervisor is true.
   bfsystem_script: "C:\\path\\to\\bfsystem.ps1"
 
-  # (Optional) Consecutive failed health checks before relaunching. Default 3.
+  # (Optional) Consecutive failed health checks before considering a relaunch. Default 3.
   bfdb_health_failures: 3
+
+  # (Optional) If bfdb.exe is still running but unresponsive, wait this many
+  # seconds before force-relaunching it (long enough for a full stats-archive
+  # replay on startup). If the process is gone entirely it's relaunched
+  # immediately regardless. Default 600.
+  bfdb_hung_relaunch_secs: 600
 
   # (Optional) Minimum seconds between relaunch attempts, so a bfdb that's
   # merely slow to start doesn't get relaunched repeatedly. Default 120.
