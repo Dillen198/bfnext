@@ -552,94 +552,116 @@ impl Db {
         // Template groups should be named like: BCARRIER, RCARRIER, etc.
         // They match carrier group objectives by the side prefix (B/R)
 
-        // Find all groups with CARRIER in the name (these are the carrier task force templates)
-        let carrier_template_groups: Vec<(GroupId, Side, String)> = self
+        // Find all naval groups with CARRIER in the name -- these are the
+        // carrier task-force groups. Record each group's centroid from its
+        // persisted units so we can match it to an objective by position.
+        let carrier_template_groups: Vec<(GroupId, Side, String, Vector2)> = self
             .persisted
             .groups
             .into_iter()
             .filter_map(|(gid, group)| {
                 if group.name.contains("CARRIER") && matches!(group.class, ObjGroupClass::Naval) {
-                    info!("[CARRIER_INIT] Found carrier template group: {} (side: {:?})", group.name, group.side);
-                    Some((*gid, group.side, group.name.clone()))
+                    let mut sum = Vector2::default();
+                    let mut n = 0u32;
+                    for uid in &group.units {
+                        if let Some(u) = self.persisted.units.get(uid) {
+                            sum += u.pos;
+                            n += 1;
+                        }
+                    }
+                    let pos = if n > 0 { sum / n as f64 } else { Vector2::default() };
+                    info!("[CARRIER_INIT] Found carrier task-force group: {} (side: {:?}) at ({:.0},{:.0})",
+                          group.name, group.side, pos.x, pos.y);
+                    Some((*gid, group.side, group.name.clone(), pos))
                 } else {
                     None
                 }
             })
             .collect();
 
-        info!("[CARRIER_INIT] Found {} carrier template groups total", carrier_template_groups.len());
-        info!("[CARRIER_INIT] Found {} carrier group objectives total", self.persisted.carrier_groups.len());
-
-        // Match carrier template groups to carrier group objectives
         let carrier_ids: Vec<ObjectiveId> = self.persisted.carrier_groups.into_iter().copied().collect();
-        info!("[CARRIER_INIT] Carrier group IDs: {:?}", carrier_ids);
+        info!("[CARRIER_INIT] {} carrier task-force group(s), {} carrier objective(s): {:?}",
+              carrier_template_groups.len(), carrier_ids.len(), carrier_ids);
 
+        // Objective zone centres (carrier objectives are created at their
+        // task force's mission-editor position).
+        let mut obj_pos: Vec<(ObjectiveId, Vector2)> = Vec::with_capacity(carrier_ids.len());
         for cg_id in &carrier_ids {
-            info!("[CARRIER_INIT] About to process carrier group ID: {:?}", cg_id);
-            let obj = objective!(self, cg_id)?;
-            let cg_name = obj.name.clone();
-            let cg_owner = obj.owner;
+            obj_pos.push((*cg_id, objective!(self, cg_id)?.zone.pos()));
+        }
 
-            info!("[CARRIER_INIT] Processing carrier group: {} (owner: {:?})", cg_name, cg_owner);
-            info!("[CARRIER_INIT] Available template groups: {:?}", carrier_template_groups);
-
-            // Find all carrier template groups that match this carrier group's side
-            let matching_groups: Vec<(GroupId, String)> = carrier_template_groups
-                .iter()
-                .filter_map(|(gid, side, name)| {
-                    info!("[CARRIER_INIT] Checking template {} (side: {:?}) against {} (owner: {:?})", name, side, cg_name, cg_owner);
-                    if *side == cg_owner {
-                        info!("[CARRIER_INIT] MATCH! Adding {} to carrier group {}", name, cg_name);
-                        Some((*gid, name.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if matching_groups.is_empty() {
-                info!("[CARRIER_INIT] No carrier template groups found for {} ({:?})", cg_name, cg_owner);
-                continue;
-            }
-
-            // Assign all matching groups to this carrier group and queue them for spawning
-            let mut carrier_template_set = false;
-            for (gid, group_name) in &matching_groups {
+        // Wipe every carrier objective's task-force group list -- we rebuild
+        // it below from a clean position match. This clears any cross-linked
+        // group left by the old side-based matcher (a single Red task force
+        // stapled onto every Red-owned carrier objective, captured ones
+        // included).
+        let tmpl_gids: FxHashSet<GroupId> =
+            carrier_template_groups.iter().map(|(g, _, _, _)| *g).collect();
+        for cg_id in &carrier_ids {
+            let stale: SmallVec<[(Side, GroupId); 8]> = {
+                let obj = objective!(self, cg_id)?;
+                (&obj.groups)
+                    .into_iter()
+                    .flat_map(|(s, set)| {
+                        let s = *s;
+                        set.into_iter()
+                            .copied()
+                            .filter(|g| tmpl_gids.contains(g))
+                            .map(move |g| (s, g))
+                    })
+                    .collect()
+            };
+            for (s, g) in stale {
                 let obj = objective_mut!(self, cg_id)?;
-                obj.groups.get_or_default_cow(cg_owner).insert_cow(*gid);
-                info!("[CARRIER_INIT] After insert, objective {} has groups: {:?}", obj.name, obj.groups);
-                self.persisted.objectives_by_group.insert_cow(*gid, *cg_id);
-
-                // Update the group's origin
-                let group = group_mut!(self, gid)?;
-                group.origin = DeployKind::Objective { origin: *cg_id };
-
-                // Queue group for spawning
-                self.ephemeral.push_spawn(*gid);
-
-                // If this group has CARRIER in the name (not just escort/supply), set carrier_template
-                // Use the TEMPLATE name (e.g. "BCARRIER") not the bflib group name (e.g. "BCARRIER-490"),
-                // since Group.activate() keeps the original DCS group name for carrier_waypoint lookups
-                if !carrier_template_set && group_name.contains("CARRIER") && !group_name.contains("ESCORT") && !group_name.contains("SUPPLY") {
-                    let template_name = group!(self, gid)?.template_name.clone();
-                    let obj = objective_mut!(self, cg_id)?;
-                    if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &mut obj.kind {
-                        *carrier_template = template_name.clone();
-                        carrier_template_set = true;
-                        info!("[CARRIER_INIT] Set carrier_template for {} to DCS template name {}", cg_name, template_name);
-                    }
+                if let Some(set) = obj.groups.get_mut_cow(&s) {
+                    set.remove_cow(&g);
                 }
             }
+        }
 
-            // Mark the carrier group as spawned so that cull_or_respawn_objectives
-            // doesn't try to re-spawn it (spawned is #[serde(skip)] so defaults to false on load)
-            let obj = objective_mut!(self, cg_id)?;
-            obj.spawned = true;
+        // Assign each task-force group to the nearest carrier objective,
+        // keyed by the GROUP's own side (never the objective's owner).
+        for (gid, g_side, g_name, g_pos) in &carrier_template_groups {
+            let Some((cg_id, _)) = obj_pos
+                .iter()
+                .map(|(oid, p)| (*oid, na::distance_squared(&(*p).into(), &(*g_pos).into())))
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            else {
+                info!("[CARRIER_INIT] no carrier objective to match {} to", g_name);
+                continue;
+            };
+            let cg_name = objective!(self, &cg_id)?.name.clone();
+            info!("[CARRIER_INIT] {} -> {} (nearest, side {:?})", g_name, cg_name, g_side);
 
-            info!("[CARRIER_INIT] {} initialized with {} naval groups (owner: {:?}), marked as spawned",
-                  cg_name,
-                  matching_groups.len(),
-                  cg_owner);
+            let obj = objective_mut!(self, &cg_id)?;
+            obj.groups.get_or_default_cow(*g_side).insert_cow(*gid);
+            self.persisted.objectives_by_group.insert_cow(*gid, cg_id);
+
+            let group = group_mut!(self, gid)?;
+            group.origin = DeployKind::Objective { origin: cg_id };
+            self.ephemeral.push_spawn(*gid);
+
+            // carrier_template points at the DCS template of whichever task
+            // force belongs to the objective's *current owner*. A captured
+            // carrier whose owner has no task force here yet is left for
+            // reconcile_carrier_task_forces to fill.
+            let is_primary = g_name.contains("CARRIER")
+                && !g_name.contains("ESCORT")
+                && !g_name.contains("SUPPLY");
+            if is_primary && objective!(self, &cg_id)?.owner == *g_side {
+                let template_name = group!(self, gid)?.template_name.clone();
+                let obj = objective_mut!(self, &cg_id)?;
+                if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &mut obj.kind {
+                    *carrier_template = template_name.clone();
+                    info!("[CARRIER_INIT] {} carrier_template = {}", cg_name, template_name);
+                }
+            }
+        }
+
+        // Mark every carrier objective spawned so cull_or_respawn_objectives
+        // leaves it alone (spawned is #[serde(skip)], defaults false on load).
+        for cg_id in &carrier_ids {
+            objective_mut!(self, cg_id)?.spawned = true;
         }
 
         // Link carrier groups to their nearest naval base
