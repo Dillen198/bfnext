@@ -2426,6 +2426,38 @@ impl Db {
                 }
             };
 
+            // ---- Auto-rescue: pilot is standing in a friendly objective ----
+            // Covers ejecting over your own airfield and being walked/driven
+            // into a friendly zone -- no helo needed, the base recovers them.
+            let friendly_obj = self
+                .persisted
+                .objectives
+                .into_iter()
+                .find(|(_, obj)| obj.owner == pilot_side && obj.zone.contains(pilot_pos))
+                .map(|(_, obj)| obj.name.clone());
+            if let Some(obj_name) = friendly_obj {
+                if let Some(DeployKind::DownedPilot { ucid, life_type, .. }) =
+                    self.persisted.groups.get(&gid).map(|g| g.origin.clone())
+                {
+                    if let Some(new_count) = self.restore_life(&ucid, life_type) {
+                        let msg = format_compact!(
+                            "your pilot reached {obj_name} and was recovered — you have {new_count} {life_type} lives"
+                        );
+                        self.ephemeral.panel_to_player(&self.persisted, 15, &ucid, msg);
+                    }
+                    let side_msg =
+                        format_compact!("CSAR: {pilot_name} made it to {obj_name} — recovered");
+                    self.ephemeral
+                        .msgs()
+                        .panel_to_side(10, false, pilot_side, side_msg);
+                }
+                self.delete_group(&gid)?;
+                self.ephemeral.csar_flared.remove(&gid);
+                self.ephemeral.csar_moving.remove(&gid);
+                self.ephemeral.csar_notified.remove(&gid);
+                continue;
+            }
+
             // ---- Capture timer: auto-capture if unrescued too long ----
             if let Some(timeout) = capture_timeout {
                 let spawn_time = self
@@ -2434,7 +2466,17 @@ impl Db {
                     .get(&gid)
                     .copied()
                     .unwrap_or(now);
-                if now - spawn_time >= timeout {
+                // A friendly helo sitting on top of the pilot means a pickup is
+                // in progress (pilot walking to / boarding the helo) -- don't
+                // yank them at the buzzer, let the board logic below finish.
+                let rescue_in_progress = all_helos.iter().any(|(_, _, hpos, hside)| {
+                    *hside == pilot_side && {
+                        let dx = pilot_pos.x - hpos.x;
+                        let dy = pilot_pos.y - hpos.y;
+                        dx * dx + dy * dy <= pickup_r2
+                    }
+                });
+                if !rescue_in_progress && now - spawn_time >= timeout {
                     // Notify downed player
                     if let Some(DeployKind::DownedPilot { ucid, life_type, .. }) =
                         self.persisted.groups.get(&gid).map(|g| g.origin.clone())
