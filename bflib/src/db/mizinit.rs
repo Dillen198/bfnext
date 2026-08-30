@@ -1457,6 +1457,8 @@ impl Db {
             .context("re-initializing carrier template groups")?;
         self.init_carrier_groups()
             .context("re-initializing carrier groups")?;
+        self.reconcile_carrier_task_forces(lua, idx)
+            .context("reconciling carrier task forces")?;
         self.init_special_sam_sites(spctx, idx, lua)
             .context("re-init special sam sites")?;
         self.init_protected_statics(miz, lua)

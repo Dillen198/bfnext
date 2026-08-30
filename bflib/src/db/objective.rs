@@ -2291,7 +2291,6 @@ impl Db {
     ) -> Result<Side> {
         let obj = objective_mut!(self, oid)?;
         let old_owner = obj.owner;
-        let obj_name = obj.name.clone();
 
         obj.owner = new_owner;
         obj.health = 50; // Carrier starts at 50% after changing hands
@@ -2338,83 +2337,11 @@ impl Db {
                 self.ephemeral.push_spawn(*gid);
             }
         } else {
-            // No pre-defined group set for the new owner. Spawn a fresh task
-            // force from that side's own carrier template (e.g. RCARRIER) at
-            // the sunk carrier's last position, so a captured carrier group
-            // actually becomes a working carrier for the captor instead of a
-            // shipless phantom objective with only F10 markers.
-            let old_centroid = {
-                let mut sum = Vector2::default();
-                let mut n = 0u32;
-                if let Some(groups) = objective!(self, oid)?.groups.get(&old_owner).cloned() {
-                    for gid in &groups {
-                        if let Some(group) = self.persisted.groups.get(gid) {
-                            for uid in &group.units {
-                                if let Some(u) = self.persisted.units.get(uid) {
-                                    sum += u.pos;
-                                    n += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-                if n > 0 { Some(sum / n as f64) } else { None }
-            };
-            // The new owner's primary carrier template name, taken from their
-            // existing carrier task force elsewhere on the map.
-            let template = self.persisted.groups.into_iter().find_map(|(_, g)| {
-                let n = g.name.as_str();
-                if g.side == new_owner
-                    && matches!(g.class, ObjGroupClass::Naval)
-                    && n.contains("CARRIER")
-                    && !n.contains("ESCORT")
-                    && !n.contains("SUPPLY")
-                {
-                    Some(g.template_name.clone())
-                } else {
-                    None
-                }
-            });
-            match (old_centroid, template) {
-                (Some(pos), Some(template)) => {
-                    let spctx = SpawnCtx::new(lua)?;
-                    let gid = self.add_and_queue_group(
-                        &spctx,
-                        idx,
-                        new_owner,
-                        SpawnLoc::AtPos {
-                            pos,
-                            offset_direction: Vector2::default(),
-                            group_heading: 0.,
-                        },
-                        template.as_str(),
-                        DeployKind::Objective { origin: oid },
-                        BitFlags::empty(),
-                        None,
-                    )?;
-                    self.persisted.objectives_by_group.insert_cow(gid, oid);
-                    let obj = objective_mut!(self, oid)?;
-                    obj.groups.get_or_default_cow(new_owner).insert_cow(gid);
-                    if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &mut obj.kind {
-                        *carrier_template = template.clone();
-                    }
-                    // The old owner's deck airbase is gone; drop the stale
-                    // mapping so a mission reload re-registers the new deck
-                    // (mid-game deck slotting on a captured carrier still
-                    // needs a reload -- tracked separately).
-                    self.ephemeral.airbase_by_oid.remove(&oid);
-                    info!(
-                        "[CARRIER_CAPTURE] {} flipped to {:?}: spawned fresh task force from template {}",
-                        obj_name, new_owner, template
-                    );
-                }
-                _ => warn!(
-                    "[CARRIER_CAPTURE] {} flipped to {:?} but no {:?} carrier template \
-                     (or no old position) to spawn a replacement task force -- \
-                     objective will have no ships",
-                    obj_name, new_owner, new_owner
-                ),
-            }
+            // No pre-defined group set for the new owner -- spawn a fresh task
+            // force from that side's own carrier template so a captured carrier
+            // becomes a working carrier for the captor instead of a shipless
+            // phantom objective with only F10 markers.
+            self.ensure_carrier_task_force(lua, idx, oid, new_owner)?;
         }
 
         // Re-map warehouse capacity to new owner's production (keeps captured aircraft)
@@ -2428,6 +2355,133 @@ impl Db {
             .context("delivering supplies after carrier ownership change")?;
 
         Ok(old_owner)
+    }
+
+    /// Ensure carrier objective `oid` has a ship group set for `owner`,
+    /// spawning a fresh task force from that side's own carrier template
+    /// (RCARRIER / BCARRIER, found from their existing carrier group) if it
+    /// doesn't. Positioned at the objective's last known ship centroid (any
+    /// side, live or dead units), falling back to the objective zone centre.
+    /// Returns true if a task force was spawned. No-op (with a warning) if
+    /// that side has no carrier template in the mission.
+    pub(super) fn ensure_carrier_task_force(
+        &mut self,
+        lua: MizLua,
+        idx: &MizIndex,
+        oid: ObjectiveId,
+        owner: Side,
+    ) -> Result<bool> {
+        let obj = objective!(self, &oid)?;
+        let obj_name = obj.name.clone();
+        if obj
+            .groups
+            .get(&owner)
+            .map(|s| s.into_iter().next().is_some())
+            .unwrap_or(false)
+        {
+            return Ok(false); // already has ships for this side
+        }
+        // Last known position of whatever ships this objective has/had.
+        let pos = {
+            let mut sum = Vector2::default();
+            let mut n = 0u32;
+            for (_, groups) in &obj.groups {
+                for gid in groups {
+                    if let Some(group) = self.persisted.groups.get(gid) {
+                        for uid in &group.units {
+                            if let Some(u) = self.persisted.units.get(uid) {
+                                sum += u.pos;
+                                n += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            if n > 0 { sum / n as f64 } else { obj.zone.pos() }
+        };
+        let template = self.persisted.groups.into_iter().find_map(|(_, g)| {
+            let n = g.name.as_str();
+            if g.side == owner
+                && matches!(g.class, ObjGroupClass::Naval)
+                && n.contains("CARRIER")
+                && !n.contains("ESCORT")
+                && !n.contains("SUPPLY")
+            {
+                Some(g.template_name.clone())
+            } else {
+                None
+            }
+        });
+        let Some(template) = template else {
+            warn!(
+                "[CARRIER_CAPTURE] {} has no ships for {:?} and the mission has no \
+                 {:?} carrier template to spawn a replacement -- objective stays shipless",
+                obj_name, owner, owner
+            );
+            return Ok(false);
+        };
+        let spctx = SpawnCtx::new(lua)?;
+        let gid = self.add_and_queue_group(
+            &spctx,
+            idx,
+            owner,
+            SpawnLoc::AtPos {
+                pos,
+                offset_direction: Vector2::default(),
+                group_heading: 0.,
+            },
+            template.as_str(),
+            DeployKind::Objective { origin: oid },
+            BitFlags::empty(),
+            None,
+        )?;
+        self.persisted.objectives_by_group.insert_cow(gid, oid);
+        let obj = objective_mut!(self, oid)?;
+        obj.groups.get_or_default_cow(owner).insert_cow(gid);
+        if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &mut obj.kind {
+            *carrier_template = template.clone();
+        }
+        // Any old deck-airbase mapping is stale; a mission reload re-registers
+        // the new deck (mid-game deck slotting still needs a reload).
+        self.ephemeral.airbase_by_oid.remove(&oid);
+        info!(
+            "[CARRIER_CAPTURE] {} given a fresh {:?} task force from template {}",
+            obj_name, owner, template
+        );
+        Ok(true)
+    }
+
+    /// Spawn missing task forces for any carrier objective that is owned by a
+    /// side but has no ship group for that side -- e.g. a carrier captured by
+    /// an engine build that couldn't spawn the captor's ships, so the save has
+    /// a shipless "phantom" carrier objective. Run once on load; self-heals
+    /// without a progress reset.
+    pub fn reconcile_carrier_task_forces(&mut self, lua: MizLua, idx: &MizIndex) -> Result<()> {
+        let carriers: SmallVec<[(ObjectiveId, Side); 4]> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter_map(|(oid, obj)| {
+                let ObjectiveKind::CarrierGroup { .. } = &obj.kind else {
+                    return None;
+                };
+                if obj.owner == Side::Neutral {
+                    return None;
+                }
+                let has_ships = obj
+                    .groups
+                    .get(&obj.owner)
+                    .map(|s| s.into_iter().next().is_some())
+                    .unwrap_or(false);
+                if has_ships { None } else { Some((*oid, obj.owner)) }
+            })
+            .collect();
+        for (oid, owner) in carriers {
+            if let Err(e) = self.ensure_carrier_task_force(lua, idx, oid, owner) {
+                error!("reconcile carrier {:?} task force failed: {:?}", oid, e);
+            }
+        }
+        Ok(())
     }
 
     pub fn check_carrier_group_capture(
