@@ -1849,7 +1849,9 @@ pub struct CarrierCfg {
     /// navigate back to where they were. Default: 100.0 m/s (~194 knots, ~6 min for 38km)
     #[serde(default = "default_carrier_spawn_repositioning_speed")]
     pub spawn_repositioning_speed: f64,
-    /// Time in seconds to complete carrier repair (default: 600 = 10 minutes)
+    /// Time in seconds to complete a carrier repair with a single repair
+    /// crate (default: 1800 = 30 minutes). Each additional repair crate
+    /// delivered while the repair is running divides this (floored at 60s).
     #[serde(default = "default_carrier_repair_time")]
     pub repair_time: u32,
     /// Carrier group definitions - maps template names to display names
@@ -1863,7 +1865,7 @@ fn default_carrier_spawn_repositioning_speed() -> f64 {
 }
 
 fn default_carrier_repair_time() -> u32 {
-    600
+    1800
 }
 
 fn default_repair_supply_cost() -> u8 {

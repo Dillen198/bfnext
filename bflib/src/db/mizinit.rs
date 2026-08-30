@@ -109,6 +109,7 @@ impl Db {
                 waypoint: None,
                 parent_naval_base: None,
                 repair_start_time: None,
+                repair_crates: 0,
             }, side, name)
         } else if let Some(name) = name.strip_prefix("FAC") {
             let (side, name) = side_and_name(name)?;
@@ -454,6 +455,7 @@ impl Db {
                                         waypoint: None,
                                         parent_naval_base: None,
                                         repair_start_time: None,
+                                        repair_crates: 0,
                                     },
                                     owner: side,
                                     groups: MapS::new(),

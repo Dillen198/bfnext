@@ -2155,17 +2155,21 @@ impl Db {
     }
 
     pub fn check_carrier_repairs(&mut self, now: DateTime<Utc>) -> Result<Vec<(ObjectiveId, String)>> {
-        let repair_time_secs = self.ephemeral.cfg.carrier
+        let base_repair_secs = self.ephemeral.cfg.carrier
             .as_ref()
             .map(|c| c.repair_time as i64)
-            .unwrap_or(600);
+            .unwrap_or(1800);
 
         let mut completed_repairs: Vec<(ObjectiveId, String)> = Vec::new();
 
         for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
-            if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut obj.kind {
+            if let ObjectiveKind::CarrierGroup { repair_start_time, repair_crates, .. } = &mut obj.kind {
                 if let Some(start_time) = repair_start_time {
                     let elapsed = (now - *start_time).num_seconds();
+                    // Each delivered repair crate divides the timer; floor at
+                    // 60s so a pile of crates can't make it instant.
+                    let repair_time_secs =
+                        (base_repair_secs / (*repair_crates).max(1) as i64).max(60);
 
                     if elapsed >= repair_time_secs {
                         // Repair complete! Resurrect all dead units and respawn groups
@@ -2173,6 +2177,7 @@ impl Db {
                         obj.logi = 100;
                         obj.warehouse.damaged = false;
                         *repair_start_time = None;
+                        *repair_crates = 0;
 
                         completed_repairs.push((*oid, obj.name.clone().into()));
                         info!("[CARRIER_REPAIR] {} fully repaired - resurrecting units", obj.name);
@@ -2240,8 +2245,9 @@ impl Db {
                 if base_supplies >= repair_cost {
                     // Auto-initiate repair
                     if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
-                        if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut obj.kind {
+                        if let ObjectiveKind::CarrierGroup { repair_start_time, repair_crates, .. } = &mut obj.kind {
                             *repair_start_time = Some(now);
+                            *repair_crates = 0; // auto-repair runs at base speed
                             self.ephemeral.dirty();
                             info!("[CARRIER_AUTO_REPAIR] {} auto-repair initiated (health: {}%)", name, health);
                             messages.push((
@@ -2297,8 +2303,9 @@ impl Db {
         obj.logi = 100;
         obj.last_change_ts = now;
         obj.warehouse.damaged = false;
-        if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut obj.kind {
+        if let ObjectiveKind::CarrierGroup { repair_start_time, repair_crates, .. } = &mut obj.kind {
             *repair_start_time = None; // a repair in flight belonged to the old owner
+            *repair_crates = 0;
         }
 
         // --- Despawn old owner's ship groups ---

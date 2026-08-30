@@ -5689,7 +5689,7 @@
     "repair_cost": 5000,
     "respawn_cost": 15000,
     "movement_speed": 25,
-    "repair_time": 600
+    "repair_time": 1800
   },
   "factory": {
     "production_rate": 100,

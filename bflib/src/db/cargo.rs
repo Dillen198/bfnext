@@ -4168,14 +4168,23 @@ impl Db {
                     let repair_time_secs = self.ephemeral.cfg.carrier
                         .as_ref()
                         .map(|c| c.repair_time)
-                        .unwrap_or(600);
+                        .unwrap_or(1800);
 
-                    // Start the repair process
+                    // Start the repair, or if one's already running, add this
+                    // crate to it -- the timer is divided by the crate count,
+                    // so stacking crates finishes the repair faster.
+                    let mut crates = 1u32;
                     if let Some(carrier_obj) = self.persisted.objectives.get_mut_cow(&carrier_id) {
-                        if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut carrier_obj.kind {
-                            *repair_start_time = Some(now);
-                            info!("[CARRIER_REPAIR] Started repairing {} - will complete in {} seconds ({} minutes)",
-                                  carrier_name, repair_time_secs, repair_time_secs / 60);
+                        if let ObjectiveKind::CarrierGroup { repair_start_time, repair_crates, .. } = &mut carrier_obj.kind {
+                            if repair_start_time.is_none() {
+                                *repair_start_time = Some(now);
+                                *repair_crates = 1;
+                            } else {
+                                *repair_crates = repair_crates.saturating_add(1);
+                            }
+                            crates = (*repair_crates).max(1);
+                            info!("[CARRIER_REPAIR] {} repair now has {} crate(s) -- ~{} min",
+                                  carrier_name, crates, (repair_time_secs / crates) / 60);
                         }
                     } else {
                         bail!("Carrier objective not found")
@@ -4193,9 +4202,10 @@ impl Db {
                     self.delete_group(&crate_data.group_id)?;
 
                     let msg = String::from(format!(
-                        "Carrier repair crate delivered to {} - repair in progress ({}m)",
+                        "Carrier repair crate delivered to {} ({} crate(s)) - ~{}m remaining",
                         carrier_name,
-                        repair_time_secs / 60
+                        crates,
+                        (repair_time_secs / crates) / 60
                     ));
                     info!("[CARRIER_REPAIR] {}", msg);
                     Ok(msg)
