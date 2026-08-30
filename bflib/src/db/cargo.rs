@@ -3669,6 +3669,51 @@ impl Db {
                     }
                 }
 
+                // Also fold in legacy crates -- ones spawned through the plain
+                // F10 "Spawn Crate" menu (helo pilots), which live only in
+                // `persisted.crates` and are NOT tracked in `c130_crates`.
+                // Without this an airdropped C-130 crate can never see the
+                // crates a helo flew in to complete the set (or vice-versa),
+                // so a mixed delivery stays "1 crate short" forever. Match by
+                // deployable + a 500 m radius, same as the C-130 scan above,
+                // and skip any group already counted by that scan.
+                for gid in &self.persisted.crates {
+                    let group = match self.persisted.groups.get(gid) {
+                        Some(g) => g,
+                        None => continue,
+                    };
+                    if group.side != crate_data.side {
+                        continue;
+                    }
+                    if self.ephemeral.c130_crates.contains_key(&group.name) {
+                        continue; // already handled by the c130_crates scan
+                    }
+                    let other_crate_name = match &group.origin {
+                        DeployKind::Crate { spec, .. } => spec.name.clone(),
+                        _ => continue,
+                    };
+                    match dep_idx.deployables_by_crates.get(&other_crate_name) {
+                        Some(other_dep_name) if other_dep_name == &deployable_name => {}
+                        _ => continue,
+                    }
+                    let unit_pos = group
+                        .units
+                        .into_iter()
+                        .next()
+                        .and_then(|uid| self.persisted.units.get(&uid))
+                        .map(|u| u.pos);
+                    let Some(unit_pos) = unit_pos else { continue };
+                    let dist = na::distance(&crate_pos.into(), &unit_pos.into());
+                    info!("[C130_CARGO]   - Found potential legacy crate '{}' for same deployable, distance={:.2}m",
+                        group.name, dist);
+                    if dist < 500.0 {
+                        nearby_crates
+                            .entry(other_crate_name)
+                            .or_default()
+                            .push(group.name.clone());
+                    }
+                }
+
                 info!("[C130_CARGO] Found {} nearby crate types for '{}'", nearby_crates.len(), deployable_name);
 
                 // Check if we have enough of each required crate type
@@ -3802,6 +3847,17 @@ impl Db {
                                 for cn in &crates_to_delete {
                                     if let Some(c) = self.ephemeral.c130_crates.get(cn) {
                                         *crates_by_origin.entry(c.origin).or_default() += 1;
+                                    } else if let Some(origin) = self
+                                        .persisted
+                                        .groups_by_name
+                                        .get(cn)
+                                        .and_then(|gid| self.persisted.groups.get(gid))
+                                        .and_then(|g| match &g.origin {
+                                            DeployKind::Crate { origin, .. } => Some(*origin),
+                                            _ => None,
+                                        })
+                                    {
+                                        *crates_by_origin.entry(origin).or_default() += 1;
                                     }
                                 }
 
@@ -3815,6 +3871,17 @@ impl Db {
                                         if let Err(e) = self.delete_group(&crate_to_delete.group_id) {
                                             error!("[C130_CARGO] Failed to delete crate group '{}' (group_id={:?}): {:?}",
                                                    cn, crate_to_delete.group_id, e);
+                                        }
+                                    } else if let Some(gid) =
+                                        self.persisted.groups_by_name.get(cn).copied()
+                                    {
+                                        // Legacy F10-menu crate folded into this set by the
+                                        // scan above -- despawn it the normal way.
+                                        info!("[C130_CARGO] Removing legacy crate '{}' (group_id={:?}) and despawning",
+                                              cn, gid);
+                                        if let Err(e) = self.delete_group(&gid) {
+                                            error!("[C130_CARGO] Failed to delete legacy crate group '{}' (group_id={:?}): {:?}",
+                                                   cn, gid, e);
                                         }
                                     } else {
                                         debug!("[C130_CARGO] Crate '{}' already removed from tracking (likely processed by earlier crate in batch)", cn);

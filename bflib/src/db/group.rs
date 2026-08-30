@@ -370,6 +370,12 @@ impl Db {
             DeployKind::Crate { player, .. } => {
                 self.persisted.crates.remove_cow(gid);
                 self.persisted.players[player].crates.remove_cow(gid);
+                // Drop any dynamic-cargo (C-130 / helo) tracking entry for this
+                // group too. Without this, unpacking or destroying a tracked
+                // crate through any path other than unpack_c130_crate leaves a
+                // zombie in c130_crates that update_c130_crates chases every
+                // tick ("has no object_id in map, skipping") forever.
+                self.ephemeral.c130_crates.remove(&group.name);
             }
             DeployKind::Deployed { spec, .. } => {
                 self.persisted.deployed.remove_cow(gid);
