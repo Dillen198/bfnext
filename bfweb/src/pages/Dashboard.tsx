@@ -5,10 +5,13 @@ import L from 'leaflet'
 import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useNavigate } from 'react-router-dom'
+import { renderToStaticMarkup } from 'react-dom/server'
 import {
   Crosshair, Plane, Users, Shield, AlertTriangle,
   Wind, Thermometer, Eye, Gauge, ExternalLink, Activity,
   TrendingUp, MapPin, Radio,
+  Hexagon, Tent, Factory as FactoryIcon, Warehouse, Anchor, Ship, RadioTower,
+  type LucideIcon,
 } from 'lucide-react'
 import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type SrsClient, type SrsStatus } from '../api'
 import { campaign } from '../config/campaign'
@@ -105,21 +108,21 @@ function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenT
   const red  = valid.filter(o => o.owner === 'Red').length
   const neu  = valid.filter(o => o.owner === 'Neutral').length
 
-  // Generic shape-language glyphs (airbase/naval/factory/etc), not NATO or
-  // Warsaw Pact military symbology -- same OBJ_ICON set used by the
-  // Critical Objectives list below, so an objective reads the same way in
-  // both places on this page.
+  // Real lucide icons (airbase/naval/factory/etc) rendered straight onto the
+  // map -- no circle, no fill -- same OBJ_ICON set used by the Critical
+  // Objectives list below, so an objective reads the same way in both places
+  // on this page. Owner colour + a drop-shadow keeps them legible over tiles.
   const markerIcon = (obj: Objective) => {
     const c = ownerColor(obj.owner)
     const alive = obj.health > 0
-    const size = obj.kind === 'Airbase' ? 20 : (obj.kind === 'Carrier Group' || obj.kind === 'Naval Base') ? 18 : 15
-    const symbol = OBJ_ICON[obj.kind] ?? '●'
+    const size = obj.kind === 'Airbase' ? 22 : (obj.kind === 'Carrier Group' || obj.kind === 'Naval Base') ? 20 : 17
+    const Icon = OBJ_ICON[obj.kind] ?? MapPin
+    const svg = renderToStaticMarkup(
+      <Icon size={size} color={c} strokeWidth={2.25}
+        style={{ opacity: alive ? 1 : 0.5, filter: `drop-shadow(0 0 2px rgba(0,0,0,0.9))${alive ? ` drop-shadow(0 0 5px ${c})` : ''}` }} />
+    )
     return L.divIcon({
-      html: `<div style="width:${size}px;height:${size}px;border-radius:50%;
-               background:${c}${alive ? '33' : '11'};border:1.5px solid ${c}${alive ? 'ff' : '66'};
-               display:flex;align-items:center;justify-content:center;
-               font-size:${Math.round(size * 0.55)}px;line-height:1;color:${c}${alive ? 'ff' : '77'};
-               box-shadow:0 0 ${alive ? 6 : 0}px ${c}77;">${symbol}</div>`,
+      html: svg,
       className: '',
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2],
@@ -233,9 +236,15 @@ function TerritoryBar({ objectives }: { objectives: Objective[] }) {
 
 // ── Critical objectives ───────────────────────────────────────────────────────
 
-const OBJ_ICON: Record<string, string> = {
-  Airbase: '✈', FARP: '⬡', FOB: '▲', Factory: '⚙',
-  'Logistics Hub': '◈', 'Naval Base': '⚓', 'Carrier Group': '⚓', 'Command Center': '◆',
+const OBJ_ICON: Record<string, LucideIcon> = {
+  Airbase: Plane, FARP: Hexagon, FOB: Tent, Factory: FactoryIcon,
+  'Logistics Hub': Warehouse, 'Naval Base': Anchor, 'Carrier Group': Ship, 'Command Center': RadioTower,
+}
+
+/** lucide icon for an objective kind, defaulting to MapPin for anything unmapped. */
+function ObjIcon({ kind, size, color, style }: { kind: string; size: number; color: string; style?: React.CSSProperties }) {
+  const Icon = OBJ_ICON[kind] ?? MapPin
+  return <Icon size={size} color={color} style={style} />
 }
 const OBJ_KIND_SHORT: Record<string, string> = {
   Airbase: 'AB', FARP: 'FARP', FOB: 'FOB', Factory: 'FAC',
@@ -259,7 +268,7 @@ function CriticalObjectives({ objectives }: { objectives: Objective[] }) {
         const hc  = obj.health < 30 ? 'var(--red)' : obj.health < 55 ? 'var(--yellow)' : 'var(--accent)'
         return (
           <div key={obj.id} style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: '0.85rem', color: oc, width: 16, textAlign: 'center', flexShrink: 0 }}>{OBJ_ICON[obj.kind] ?? '■'}</span>
+            <ObjIcon kind={obj.kind} size={14} color={oc} style={{ width: 16, flexShrink: 0 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
                 <span style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130 }}>
@@ -310,7 +319,7 @@ function ObjectiveRoster({ objectives }: { objectives: Objective[] }) {
     const hc = obj.health < 30 ? 'var(--red)' : obj.health < 60 ? 'var(--yellow)' : 'var(--accent)'
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 14px', borderBottom: '1px solid var(--border)' }}>
-        <span style={{ fontSize: '0.7rem', color: oc, width: 14, textAlign: 'center', flexShrink: 0 }}>{OBJ_ICON[obj.kind] ?? '■'}</span>
+        <ObjIcon kind={obj.kind} size={13} color={oc} style={{ width: 14, flexShrink: 0 }} />
         <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', width: 34, flexShrink: 0 }}>{OBJ_KIND_SHORT[obj.kind] ?? '—'}</span>
         <span style={{ fontSize: '0.75rem', color: 'var(--text)', fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{obj.name}</span>
         <div style={{ width: 50, height: 3, background: 'var(--bg-elevated)', flexShrink: 0, overflow: 'hidden' }}>
@@ -517,11 +526,10 @@ function TopShooters({ pilots }: { pilots: Pilot[] }) {
       {top.map((p, i) => {
         const kills = p.air_kills + p.ground_kills
         const pct   = kills / maxKills * 100
-        const medals = ['▲', '△', '○', '○', '○']
         return (
           <div key={p.ucid} onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)} className="kill-row"
             style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
-            <span style={{ fontSize: '0.68rem', color: i === 0 ? 'var(--yellow)' : 'var(--text-dim)', fontFamily: 'var(--font-mono)', width: 12, flexShrink: 0 }}>{medals[i]}</span>
+            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: i === 0 ? 'var(--yellow)' : 'var(--text-dim)', fontFamily: 'var(--font-mono)', width: 12, flexShrink: 0 }}>{i + 1}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2 }}>
                 {p.name}
