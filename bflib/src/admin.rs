@@ -338,8 +338,9 @@ impl FromStr for AdminCommand {
             Ok(Self::Repair { airbase: s.into() })
         } else if let Some(s) = s.strip_prefix("tim ") {
             match &s.split(" ").collect::<SmallVec<[&str; 4]>>()[..] {
-                [] => Ok(Self::Tim {
-                    key: String::from(s),
+                [] | [""] => bail!("tim <mark> [size] [alt]"),
+                [key] => Ok(Self::Tim {
+                    key: String::from(*key),
                     size: 3000,
                     alt: None,
                 }),
