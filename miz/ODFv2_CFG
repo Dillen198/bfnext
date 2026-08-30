@@ -5722,7 +5722,7 @@
     "rescue_reward": 50,
     "pickup_radius": 100,
     "board_radius": 20,
-    "capture_timer": 15,
+    "capture_timer": 30,
     "enemy_capture_radius": 50,
     "search_party_template": {
       "Red": "RSEARCH_PARTY",
