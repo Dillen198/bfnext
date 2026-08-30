@@ -177,6 +177,7 @@ fn active_runway(
     lua: MizLua,
     airbase_id: &DcsOid<ClassAirbase>,
     wind_from_deg: f64,
+    wind_speed_kts: f64,
 ) -> Option<compact_str::CompactString> {
     let ab = Airbase::get_instance(lua, airbase_id).ok()?;
     let ab_name = ab
@@ -186,8 +187,11 @@ fn active_runway(
         .unwrap_or_default();
     let ab_callsign = ab.get_callsign().map(|c| c.to_string()).unwrap_or_default();
     let runways = ab.get_runways().ok()?;
-    // Collect every physical runway end: (heading_deg, designator).
-    let mut ends: Vec<(f64, compact_str::CompactString)> = Vec::new();
+    // Each candidate end: (heading_deg, designator, course_aligned). The
+    // `course_aligned` flag marks the end pointing the same way as DCS's own
+    // `course` field for that runway — its "primary" direction, used as the
+    // calm-wind tie-break.
+    let mut ends: Vec<(f64, compact_str::CompactString, bool)> = Vec::new();
     for rwy in runways {
         let Ok(rwy) = rwy else { continue };
         let Ok(course) = rwy.course() else { continue };
@@ -208,37 +212,47 @@ fn active_runway(
             "[ATIS_RWY] {ab_name} (cs {ab_callsign}): runway name={raw_name:?} \
              course={course:.4}rad ({c1:.0}deg) pos={rwy_pos:?} parsed_parts={parts:?}"
         );
-        // Anchor the name parts to real headings. If DCS gave us two designators,
-        // each maps to ~num*10 degrees; that's the ground truth regardless of the
-        // course field. Otherwise fall back to the course.
-        if parts.len() == 2 {
-            for p in &parts {
-                if let Some(n) = part_num(p) {
-                    ends.push((n as f64 * 10.0, p.clone()));
-                }
-            }
+        // Designators (the number) come from DCS's runway name when it has one;
+        // each maps to ~num*10 deg. Only fall back to the raw course heading when
+        // there is no usable name.
+        let named: Vec<(f64, compact_str::CompactString)> = if parts.len() == 2 {
+            parts
+                .iter()
+                .filter_map(|p| part_num(p).map(|n| (n as f64 * 10.0, p.clone())))
+                .collect()
         } else if parts.len() == 1 {
             let n = part_num(&parts[0]).unwrap();
-            ends.push((n as f64 * 10.0, parts[0].clone()));
             let recip = ((n + 18 - 1) % 36) + 1;
-            ends.push((recip as f64 * 10.0, format_compact!("{recip:02}")));
+            vec![
+                (n as f64 * 10.0, parts[0].clone()),
+                (recip as f64 * 10.0, format_compact!("{recip:02}")),
+            ]
         } else {
-            for h in [c1, (c1 + 180.0).rem_euclid(360.0)] {
-                let n = rwy_num_for(h);
-                ends.push((h, format_compact!("{n:02}")));
-            }
+            [c1, (c1 + 180.0).rem_euclid(360.0)]
+                .into_iter()
+                .map(|h| (h, format_compact!("{:02}", rwy_num_for(h))))
+                .collect()
+        };
+        for (h, label) in named {
+            ends.push((h, label, angle_diff(h, c1) <= 90.0));
         }
     }
-    // Pick the end whose heading is most into the wind.
-    let best = ends
-        .into_iter()
-        .min_by(|(ha, _), (hb, _)| {
-            angle_diff(wind_from_deg, *ha)
-                .partial_cmp(&angle_diff(wind_from_deg, *hb))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-    log::info!("[ATIS_RWY] {ab_name}: wind_from={wind_from_deg:.0}deg -> active {best:?}");
-    best.map(|(_, l)| l)
+    // Wind ≥ 3 kt: land into it. Calm: use the runway's own primary (course-
+    // aligned) direction, then the lower-numbered end as a final tie-break.
+    let calm = wind_speed_kts < 3.0;
+    let best = ends.iter().min_by(|a, b| {
+        if calm {
+            b.2.cmp(&a.2).then(a.0.total_cmp(&b.0))
+        } else {
+            angle_diff(wind_from_deg, a.0).total_cmp(&angle_diff(wind_from_deg, b.0))
+        }
+    });
+    log::info!(
+        "[ATIS_RWY] {ab_name}: wind {wind_from_deg:.0}deg/{wind_speed_kts:.0}kt (calm={calm}) \
+         -> active {:?}",
+        best.map(|(_, l, _)| l)
+    );
+    best.map(|(_, l, _)| l.clone())
 }
 
 fn angle_diff(a: f64, b: f64) -> f64 {
@@ -427,7 +441,7 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<()> {
             .db
             .ephemeral
             .get_airbase_by_oid(&oid)
-            .and_then(|ab_id| active_runway(lua, ab_id, wx.wind_from_deg))
+            .and_then(|ab_id| active_runway(lua, ab_id, wx.wind_from_deg, wx.wind_speed_kts))
             .map(|r| format_compact!("\nActive RWY: {}", r))
             .unwrap_or_default();
         let elev_ft = (wx.ground_elev_m * M_TO_FT).round() as i64;
