@@ -903,10 +903,9 @@ impl MapLayer {
         if let Some(id) = label { msgs.delete_mark(id); }
     }
 
-    /// NATO hostile unit symbol (diamond) at the detected enemy arty position.
-    ///
-    /// A diamond (â—‡) is the NATO APP-6 symbol for a hostile ground unit.
-    /// Shown only to the friendly side so they can call counter-fire.
+    /// Text cue at the detected enemy arty position so the friendly side can
+    /// call counter-fire. (The NATO hostile diamond that used to sit under
+    /// this label was removed -- it read as map clutter.)
     pub fn on_counter_battery(
         &mut self,
         enemy_pos: Vector2,
@@ -919,23 +918,6 @@ impl MapLayer {
             Side::Blue => Color::red(0.95),
             _ => Color::blue(0.95),
         };
-        let r = 1_200_f64;
-        let diamond = MarkId::new();
-        msgs.quad_to_all(
-            sf,
-            diamond,
-            QuadSpec {
-                p0: v3(enemy_pos.x,     enemy_pos.y + r),
-                p1: v3(enemy_pos.x + r, enemy_pos.y),
-                p2: v3(enemy_pos.x,     enemy_pos.y - r),
-                p3: v3(enemy_pos.x - r, enemy_pos.y),
-                color: enemy_col,
-                fill_color: Color::new(1., 0., 0., 0.08),
-                line_type: LineType::Solid,
-                read_only: true,
-            },
-            None,
-        );
         let label = MarkId::new();
         msgs.text_to_all(
             sf,
@@ -949,7 +931,7 @@ impl MapLayer {
                 text: "ARTY\nCOUNTER-BATTERY".into(),
             },
         );
-        self.timed_marks.push(TimedMark::two(diamond, label, 60, now));
+        self.timed_marks.push(TimedMark::one(label, 60, now));
     }
 
     /// "ENEMY CONTACT" label at an objective that just became threatened.
