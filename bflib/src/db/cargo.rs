@@ -3628,19 +3628,23 @@ impl Db {
                 // Find all crates nearby (within 500m) for this deployable.
                 let mut nearby_crates: FxHashMap<String, Vec<String>> = FxHashMap::default();
                 let crate_pos = crate_data.last_pos;
-                // Auto-unpack (C-130 airdrop) only pairs with other Landed crates so
-                // it can't prematurely eat a crate still being loaded. A manual
-                // unpack is deliberate, so it also accepts Spawned crates -- e.g. a
-                // helo that flew in the missing crate and set it down without ever
-                // triggering the slingload "moved 100m" transition to Landed.
-                let accept_spawned = !crate_data.auto_unpack;
 
                 info!("[C130_CARGO] Searching for nearby crates for deployable '{}' from crate '{}' at pos ({:.2}, {:.2})",
                     deployable_name, crate_name, crate_pos.x, crate_pos.y);
 
                 for (other_name, other_data) in &self.ephemeral.c130_crates {
-                    let state_ok = other_data.state == C130CargoState::Landed
-                        || (accept_spawned && other_data.state == C130CargoState::Spawned);
+                    // Any friendly crate that's on the ground counts, regardless of
+                    // how it got there: Landed (C-130 airdrop, or a slingload that
+                    // moved >100m) or Spawned (set down in place by a helo, or by a
+                    // C-130 that never went airborne). Only Loaded (still inside an
+                    // aircraft) and Airborne (mid-drop) are excluded. This makes a
+                    // mixed set work either direction -- airdrop some + helo the
+                    // rest, or helo some + airdrop the rest -- and the 500 m radius
+                    // check below keeps unrelated staged crates out.
+                    let state_ok = matches!(
+                        other_data.state,
+                        C130CargoState::Landed | C130CargoState::Spawned
+                    );
                     if state_ok && other_data.side == crate_data.side {
                         // Check if it's for the same deployable
                         if let C130CargoType::Deployable { name: other_crate_name } = &other_data.crate_type {
