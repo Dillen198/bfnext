@@ -246,7 +246,7 @@ function sneakerUnitIcon(opts: UnitIconOpts): L.DivIcon {
       </div>`
 
   return L.divIcon({
-    html: `<div style="position:relative;display:inline-block;filter:drop-shadow(0 0 3px ${fillCol}66)">
+    html: `<div style="position:relative;display:inline-block;filter:drop-shadow(0 1px 2px #000a)">
              ${symSvg}
              ${labelHtml}
            </div>`,
@@ -292,8 +292,7 @@ function objectiveIcon(kind: string, owner: string, health: number, size: number
     html: `<div style="width:${size}px;height:${size}px;border-radius:50%;
              background:${c}${alive ? '30' : '10'};border:1.5px solid ${c}${alive ? 'ff' : '55'};
              display:flex;align-items:center;justify-content:center;
-             font-size:${Math.round(size * 0.55)}px;line-height:1;color:${c}${alive ? 'ff' : '66'};
-             box-shadow:0 0 ${alive ? 7 : 2}px ${c}${alive ? '88' : '00'};">${symbol}</div>`,
+             font-size:${Math.round(size * 0.55)}px;line-height:1;color:${c}${alive ? 'ff' : '66'};">${symbol}</div>`,
     className: '',
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
@@ -304,7 +303,7 @@ function waypointIcon(n: number, last: boolean): L.DivIcon {
   return L.divIcon({
     html: `<div style="width:22px;height:22px;border-radius:50%;background:${c}22;border:2px solid ${c};
                color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;
-               justify-content:center;font-family:${FONT_MONO};box-shadow:0 0 6px ${c}88;">${n}</div>`,
+               justify-content:center;font-family:${FONT_MONO};">${n}</div>`,
     className: '', iconSize: [22, 22], iconAnchor: [11, 11],
   })
 }
@@ -321,7 +320,7 @@ function planMarkerIcon(type: MarkerType): L.DivIcon {
     html: `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:none;">
       <div style="padding:3px 7px;border-radius:2px;background:${s.bg};color:${s.bd};
                   font-family:${FONT_MONO};font-size:9px;font-weight:700;letter-spacing:0.1em;
-                  border:1px solid ${s.bd};box-shadow:0 0 6px ${s.bd}66;
+                  border:1px solid ${s.bd};
                   display:flex;align-items:center;gap:4px;white-space:nowrap;">
         <span style="color:${s.bd}">${ICONS[type]}</span>${type}
       </div>
@@ -1062,7 +1061,7 @@ export default function MapPage() {
             const label = b.side === 1 ? 'RED BULL' : 'BLU BULL'
             const icon = L.divIcon({
               html: `<div style="position:relative;display:flex;flex-direction:column;align-items:center;pointer-events:none;">
-                <svg width="32" height="32" viewBox="0 0 32 32" style="filter:drop-shadow(0 0 4px ${col});">
+                <svg width="32" height="32" viewBox="0 0 32 32" style="filter:drop-shadow(0 1px 2px #000);">
                   <circle cx="16" cy="16" r="13" fill="none" stroke="${col}" stroke-width="1.2"/>
                   <circle cx="16" cy="16" r="7"  fill="none" stroke="${col}" stroke-width="1"/>
                   <circle cx="16" cy="16" r="2"  fill="${col}"/>

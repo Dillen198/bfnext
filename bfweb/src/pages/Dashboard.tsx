@@ -111,7 +111,8 @@ function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenT
   // Real lucide icons (airbase/naval/factory/etc) rendered straight onto the
   // map -- no circle, no fill -- same OBJ_ICON set used by the Critical
   // Objectives list below, so an objective reads the same way in both places
-  // on this page. Owner colour + a drop-shadow keeps them legible over tiles.
+  // on this page. Owner colour + a flat dark outline keeps them legible over
+  // tiles (no coloured glow).
   const markerIcon = (obj: Objective) => {
     const c = ownerColor(obj.owner)
     const alive = obj.health > 0
@@ -119,7 +120,7 @@ function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenT
     const Icon = OBJ_ICON[obj.kind] ?? MapPin
     const svg = renderToStaticMarkup(
       <Icon size={size} color={c} strokeWidth={2.25}
-        style={{ opacity: alive ? 1 : 0.5, filter: `drop-shadow(0 0 2px rgba(0,0,0,0.9))${alive ? ` drop-shadow(0 0 5px ${c})` : ''}` }} />
+        style={{ opacity: alive ? 1 : 0.5, filter: 'drop-shadow(0 1px 1.5px rgba(0,0,0,0.9))' }} />
     )
     return L.divIcon({
       html: svg,

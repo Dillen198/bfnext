@@ -533,17 +533,20 @@ async fn api_objectives(
         let entries: Vec<_> = objs
             .iter()
             .filter_map(|(oid, obj)| {
-                // Anti-cheat: hide carrier group and special SAM site exact positions
-                if obj.kind.is_carrier_group() || obj.kind.is_special_sam_site() {
+                // Special SAM sites are secret objectives -- hidden entirely.
+                if obj.kind.is_special_sam_site() {
                     return None;
                 }
+                // Carrier groups are shown for status (health/supply/owner/etc)
+                // but their position is withheld -- it's mobile and sensitive.
+                let hide_pos = obj.kind.is_carrier_group();
                 Some(serde_json::json!({
                     "id": format!("{:?}", oid),
                     "name": obj.name.to_string(),
                     "kind": obj.kind.name(),
                     "owner": format!("{:?}", obj.owner),
-                    "lat": obj.pos.latitude,
-                    "lon": obj.pos.longitude,
+                    "lat": if hide_pos { 0.0 } else { obj.pos.latitude },
+                    "lon": if hide_pos { 0.0 } else { obj.pos.longitude },
                     "health": obj.health,
                     "logi": obj.logi,
                     "supply": obj.supply,
@@ -810,12 +813,12 @@ async fn api_stats(
         let active_rid = active_round.map(|(_, rid, _)| *rid);
         let pilots = db.pilot_leaderboard(active_rid)?;
         let obj_count = if let Some((_, rid, _)) = active_round {
-            // Match the anti-cheat filtering in api_objectives (hides carrier
-            // groups and special SAM sites) so this count stays consistent
-            // with what /api/objectives actually reports.
+            // Match the filtering in api_objectives (only special SAM sites
+            // are hidden now) so this count stays consistent with what
+            // /api/objectives actually reports.
             db.objectives_for_round(*rid)?
                 .iter()
-                .filter(|(_, obj)| !obj.kind.is_carrier_group() && !obj.kind.is_special_sam_site())
+                .filter(|(_, obj)| !obj.kind.is_special_sam_site())
                 .count()
         } else {
             0

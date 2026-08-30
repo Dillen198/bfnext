@@ -190,7 +190,8 @@ function FlightLog({ sorties, breakdown }: { sorties: PilotSortie[]; breakdown: 
       {sorties.length === 0 ? (
         <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.7rem' }}>No sorties recorded</div>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <table style={{ width: '100%', minWidth: 560, borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
               <SortHeader col="date" label="Date" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
@@ -222,6 +223,7 @@ function FlightLog({ sorties, breakdown }: { sorties: PilotSortie[]; breakdown: 
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   )
@@ -301,7 +303,8 @@ function KillLog({ kills, allPilots, breakdown }: {
       {kills.length === 0 ? (
         <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.7rem' }}>No kills recorded</div>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <table style={{ width: '100%', minWidth: 560, borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
               <SortHeader col="time" label="Zulu" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
@@ -347,6 +350,7 @@ function KillLog({ kills, allPilots, breakdown }: {
             })}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   )
@@ -417,7 +421,8 @@ function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }
           {total > 0 ? `${total} deploy${total === 1 ? '' : 's'} recorded before per-deploy logging was added` : 'No deploys recorded'}
         </div>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <table style={{ width: '100%', minWidth: 420, borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
               <SortHeader col="time" label="When" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
@@ -441,6 +446,7 @@ function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   )
