@@ -2562,7 +2562,7 @@ fn run_slow_timed_events(
         }
         record_perf(&mut perf.slow_timed, ts);
         let ts = Utc::now();
-        match ctx.db.check_carrier_group_capture(lua, ts) {
+        match ctx.db.check_carrier_group_capture(lua, &ctx.idx, ts) {
             Ok(captures) => {
                 for (oid, old_owner, new_owner) in captures {
                     ctx.event_scheduler.owned_cache_dirty = true;

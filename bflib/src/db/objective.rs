@@ -2275,6 +2275,7 @@ impl Db {
     fn flip_carrier_group_owner(
         &mut self,
         lua: MizLua,
+        idx: &MizIndex,
         now: DateTime<Utc>,
         oid: ObjectiveId,
         new_owner: Side,
@@ -2310,11 +2311,11 @@ impl Db {
         }
 
         // --- Spawn new owner's ship groups (BCARRIER → Blue, RCARRIER → Red) ---
-        // These must already exist in obj.groups for new_owner (mission-defined).
-        let obj = objective!(self, oid)?;
-        if let Some(new_groups) = obj.groups.get(&new_owner).cloned() {
+        let new_groups = objective!(self, oid)?.groups.get(&new_owner).cloned();
+        if let Some(new_groups) = new_groups {
+            // Pre-defined co-located group set (mission author placed both
+            // sides' task forces at this carrier) -- just resurrect it.
             for gid in &new_groups {
-                // Resurrect all units
                 if let Some(group) = self.persisted.groups.get(gid) {
                     for uid in &group.units {
                         if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
@@ -2325,11 +2326,83 @@ impl Db {
                 self.ephemeral.push_spawn(*gid);
             }
         } else {
-            warn!(
-                "[CARRIER_CAPTURE] No {:?} ship groups found for carrier {}; \
-                 mission must define both BCARRIER and RCARRIER group sets",
-                new_owner, obj_name
-            );
+            // No pre-defined group set for the new owner. Spawn a fresh task
+            // force from that side's own carrier template (e.g. RCARRIER) at
+            // the sunk carrier's last position, so a captured carrier group
+            // actually becomes a working carrier for the captor instead of a
+            // shipless phantom objective with only F10 markers.
+            let old_centroid = {
+                let mut sum = Vector2::default();
+                let mut n = 0u32;
+                if let Some(groups) = objective!(self, oid)?.groups.get(&old_owner).cloned() {
+                    for gid in &groups {
+                        if let Some(group) = self.persisted.groups.get(gid) {
+                            for uid in &group.units {
+                                if let Some(u) = self.persisted.units.get(uid) {
+                                    sum += u.pos;
+                                    n += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                if n > 0 { Some(sum / n as f64) } else { None }
+            };
+            // The new owner's primary carrier template name, taken from their
+            // existing carrier task force elsewhere on the map.
+            let template = self.persisted.groups.into_iter().find_map(|(_, g)| {
+                let n = g.name.as_str();
+                if g.side == new_owner
+                    && matches!(g.class, ObjGroupClass::Naval)
+                    && n.contains("CARRIER")
+                    && !n.contains("ESCORT")
+                    && !n.contains("SUPPLY")
+                {
+                    Some(g.template_name.clone())
+                } else {
+                    None
+                }
+            });
+            match (old_centroid, template) {
+                (Some(pos), Some(template)) => {
+                    let spctx = SpawnCtx::new(lua)?;
+                    let gid = self.add_and_queue_group(
+                        &spctx,
+                        idx,
+                        new_owner,
+                        SpawnLoc::AtPos {
+                            pos,
+                            offset_direction: Vector2::default(),
+                            group_heading: 0.,
+                        },
+                        template.as_str(),
+                        DeployKind::Objective { origin: oid },
+                        BitFlags::empty(),
+                        None,
+                    )?;
+                    self.persisted.objectives_by_group.insert_cow(gid, oid);
+                    let obj = objective_mut!(self, oid)?;
+                    obj.groups.get_or_default_cow(new_owner).insert_cow(gid);
+                    if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &mut obj.kind {
+                        *carrier_template = template.clone();
+                    }
+                    // The old owner's deck airbase is gone; drop the stale
+                    // mapping so a mission reload re-registers the new deck
+                    // (mid-game deck slotting on a captured carrier still
+                    // needs a reload -- tracked separately).
+                    self.ephemeral.airbase_by_oid.remove(&oid);
+                    info!(
+                        "[CARRIER_CAPTURE] {} flipped to {:?}: spawned fresh task force from template {}",
+                        obj_name, new_owner, template
+                    );
+                }
+                _ => warn!(
+                    "[CARRIER_CAPTURE] {} flipped to {:?} but no {:?} carrier template \
+                     (or no old position) to spawn a replacement task force -- \
+                     objective will have no ships",
+                    obj_name, new_owner, new_owner
+                ),
+            }
         }
 
         // Re-map warehouse capacity to new owner's production (keeps captured aircraft)
@@ -2348,6 +2421,7 @@ impl Db {
     pub fn check_carrier_group_capture(
         &mut self,
         lua: MizLua,
+        idx: &MizIndex,
         now: DateTime<Utc>,
     ) -> Result<Vec<(ObjectiveId, Side, Side)>> {
         // Capture time reuses campaign_events.capture_time_secs (0 = instant).
@@ -2484,7 +2558,7 @@ impl Db {
             self.ephemeral.capture_progress.remove(&oid);
 
             let old_owner = self
-                .flip_carrier_group_owner(lua, now, oid, captor_side)
+                .flip_carrier_group_owner(lua, idx, now, oid, captor_side)
                 .context("flipping carrier ownership on boarding capture")?;
             let obj_name = objective!(self, oid)?.name.clone();
 
@@ -2562,7 +2636,7 @@ impl Db {
             naval_synced.push((*cg_id, cg_obj.owner, nb_obj.owner));
         }
         for (cg_id, old_owner, new_owner) in naval_synced {
-            match self.flip_carrier_group_owner(lua, now, cg_id, new_owner) {
+            match self.flip_carrier_group_owner(lua, idx, now, cg_id, new_owner) {
                 Ok(_) => {
                     let cg = objective!(self, cg_id)?;
                     let cg_name = cg.name.clone();
