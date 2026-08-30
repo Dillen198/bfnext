@@ -1711,6 +1711,8 @@ impl Db {
                 cg_mut.warehouse.damaged = false;
                 cg_mut.health = 100;
             }
+            // Actually bring the ships back, not just the health number.
+            self.resurrect_carrier_groups(args.oid)?;
         } else {
             bail!("Not enough supplies at Naval Base to repair carrier (need {}, have {})", repair_cost, available);
         }
@@ -1747,6 +1749,9 @@ impl Db {
                 cg_mut.health = 100;
                 cg_mut.warehouse.damaged = false;
             }
+            // Respawn the actual ships -- previously this action only reset
+            // the health number and the task force stayed sunk.
+            self.resurrect_carrier_groups(args.oid)?;
         } else {
             bail!("Not enough supplies at Naval Base to respawn carrier (need {}, have {})", respawn_cost, available);
         }

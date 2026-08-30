@@ -2126,6 +2126,34 @@ impl Db {
         Ok(())
     }
 
+    /// Resurrect and re-queue every ship group belonging to a carrier
+    /// objective's current owner. Shared by the repair crate
+    /// (`check_carrier_repairs`), the "Repair Carrier" action and the
+    /// "Respawn Carrier" action -- the two actions used to just set
+    /// `health = 100` and leave the ships on the seabed.
+    pub(super) fn resurrect_carrier_groups(&mut self, oid: ObjectiveId) -> Result<()> {
+        let obj = objective!(self, &oid)?;
+        let owner = obj.owner;
+        let gids: SmallVec<[GroupId; 4]> = obj
+            .groups
+            .get(&owner)
+            .into_iter()
+            .flat_map(|s| s.into_iter().copied())
+            .collect();
+        for gid in gids {
+            let uids: SmallVec<[UnitId; 16]> =
+                group!(self, gid)?.units.into_iter().copied().collect();
+            for uid in uids {
+                let unit = unit_mut!(self, uid)?;
+                if unit.dead {
+                    unit.dead = false;
+                }
+            }
+            self.ephemeral.push_spawn(gid);
+        }
+        Ok(())
+    }
+
     pub fn check_carrier_repairs(&mut self, now: DateTime<Utc>) -> Result<Vec<(ObjectiveId, String)>> {
         let repair_time_secs = self.ephemeral.cfg.carrier
             .as_ref()
@@ -2164,26 +2192,7 @@ impl Db {
 
         // Resurrect and respawn units for completed repairs
         for (oid, _) in &completed_repairs {
-            let obj = objective!(self, oid)?;
-            if let Some(groups) = obj.groups.get(&obj.owner) {
-                for gid in groups {
-                    let group = group!(self, gid)?;
-                    info!("[CARRIER_REPAIR] Repairing group {} in objective {}", group.name, obj.name);
-
-                    // Resurrect all dead units
-                    for uid in &group.units {
-                        let unit = unit_mut!(self, uid)?;
-                        if unit.dead {
-                            info!("[CARRIER_REPAIR] Resurrecting unit {}", unit.name);
-                            unit.dead = false;
-                        }
-                    }
-
-                    // Queue group for respawning
-                    info!("[CARRIER_REPAIR] Queueing group {} for respawn", group.name);
-                    self.ephemeral.push_spawn(*gid);
-                }
-            }
+            self.resurrect_carrier_groups(*oid)?;
         }
 
         Ok(completed_repairs)
@@ -2289,6 +2298,9 @@ impl Db {
         obj.logi = 100;
         obj.last_change_ts = now;
         obj.warehouse.damaged = false;
+        if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut obj.kind {
+            *repair_start_time = None; // a repair in flight belonged to the old owner
+        }
 
         // --- Despawn old owner's ship groups ---
         // The mission defines separate BCARRIER/RCARRIER group sets for each side.
