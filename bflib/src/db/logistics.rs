@@ -840,11 +840,22 @@ impl Db {
                   side, production.equipment.len(), production.liquids.len());
             let mut initialized_count = 0;
             for (name, equip) in &production.equipment {
+                let is_airframe = is_airframe_item(name);
                 for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
                     if obj.owner == side {
                         let is_carrier = self.persisted.carrier_groups.contains(&oid);
+                        // A carrier stocks only the aircraft physically in its
+                        // deck warehouse (the naval roster bftools set), NOT
+                        // the whole side's airframe production list -- otherwise
+                        // a Kuznetsov "carries" 700+ types incl. Spitfires and
+                        // land-only jets. Weapons/fuel still come from
+                        // production (side-neutral). setup_warehouses_after_load
+                        // reads the deck inventory into the model.
+                        if is_carrier && is_airframe {
+                            continue;
+                        }
                         let hub = self.persisted.logistics_hubs.contains(&oid) || is_carrier;
-                        let unlimited = if is_airframe_item(name) { obj.unlimited_aircraft } else { obj.unlimited_supply };
+                        let unlimited = if is_airframe { obj.unlimited_aircraft } else { obj.unlimited_supply };
                         let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, equip.production);
                         let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
                         inv.capacity = capacity;
@@ -903,9 +914,15 @@ impl Db {
 
         let obj = objective_mut!(self, oid)?;
 
-        // Initialize equipment inventory
+        // Initialize equipment inventory. A carrier gets weapons/fuel from
+        // production but NOT airframes -- its aircraft come from the deck
+        // warehouse (naval roster); see init_warehouses.
         for (name, equip) in &production.equipment {
-            let unlimited = if is_airframe_item(name) { obj.unlimited_aircraft } else { obj.unlimited_supply };
+            let is_airframe = is_airframe_item(name);
+            if is_carrier && is_airframe {
+                continue;
+            }
+            let unlimited = if is_airframe { obj.unlimited_aircraft } else { obj.unlimited_supply };
             let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, equip.production);
             let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
             inv.capacity = capacity;
@@ -1050,19 +1067,41 @@ impl Db {
                                         });
                                     }
                                 }
-                                if !aboard.is_empty() {
+                                // The carrier's deck warehouse is the ONLY
+                                // source of truth for which aircraft it can
+                                // operate (the naval roster). Drop any airframe
+                                // in the model that isn't physically aboard --
+                                // otherwise the whole side's airframe
+                                // production list leaks onto the carrier (a
+                                // Kuznetsov "carrying" 700+ types).
+                                {
                                     let objm = objective_mut!(self, oid)?;
+                                    let aboard_names: std::collections::HashSet<&str> =
+                                        aboard.iter().map(|(n, _)| n.as_str()).collect();
+                                    let stale: SmallVec<[String; 32]> = objm
+                                        .warehouse
+                                        .equipment
+                                        .into_iter()
+                                        .filter(|(n, _)| {
+                                            is_airframe_item(n.as_str())
+                                                && !aboard_names.contains(n.as_str())
+                                        })
+                                        .map(|(n, _)| n.clone())
+                                        .collect();
+                                    for n in stale {
+                                        objm.warehouse.equipment.remove_cow(&n);
+                                    }
                                     for (n, c) in &aboard {
                                         let cap = whcfg.capacity(true, (*c).max(1));
                                         let inv =
                                             objm.warehouse.equipment.get_or_default_cow(n.clone());
-                                        if inv.capacity < cap {
-                                            inv.capacity = cap;
-                                        }
+                                        inv.capacity = cap;
                                         if inv.stored < *c {
                                             inv.stored = *c;
                                         }
                                     }
+                                }
+                                if !aboard.is_empty() {
                                     log::info!("[CARRIER_WAREHOUSE] {} carries {} aircraft type(s) aboard: {:?}",
                                               obj_name, aboard.len(),
                                               aboard.iter().map(|(n, c)| format_compact!("{n}={c}")).collect::<Vec<_>>());
@@ -1140,24 +1179,41 @@ impl Db {
                         obj.warehouse.liquids.remove_cow(&liq);
                     }
                     for (name, eqip) in &prod.equipment {
-                        let unlimited = if is_airframe_item(name) { obj.unlimited_aircraft } else { obj.unlimited_supply };
+                        let is_airframe = is_airframe_item(name);
+                        // don't seed the side's full airframe list onto a
+                        // carrier -- its aircraft are the deck (naval) roster,
+                        // already loaded by load_and_sync_airbases. Weapons/fuel
+                        // still get topped up.
+                        if is_carrier && is_airframe {
+                            continue;
+                        }
+                        let unlimited = if is_airframe { obj.unlimited_aircraft } else { obj.unlimited_supply };
                         let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, eqip.production);
                         let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
                         inv.capacity = capacity;
                     }
                     if is_carrier {
+                        // Only refresh capacity on airframes the carrier
+                        // ALREADY has (i.e. physically aboard) -- a captured
+                        // carrier's retained foreign jets. Never create new
+                        // airframe entries from the opposite side's roster.
                         if let Some(other_prod) = &other_prod {
-                            for (name, eqip) in &other_prod.equipment {
-                                if prod.equipment.contains_key(name) {
-                                    continue;
-                                }
-                                let cap = whcfg.capacity(true, eqip.production);
-                                let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
+                            let present: SmallVec<[String; 16]> = obj
+                                .warehouse
+                                .equipment
+                                .into_iter()
+                                .filter(|(n, _)| {
+                                    is_airframe_item(n.as_str())
+                                        && !prod.equipment.contains_key(*n)
+                                        && other_prod.equipment.contains_key(*n)
+                                })
+                                .map(|(n, _)| n.clone())
+                                .collect();
+                            for name in present {
+                                let p = other_prod.equipment.get(&name).map(|e| e.production).unwrap_or(1);
+                                let cap = whcfg.capacity(true, p);
+                                let inv = obj.warehouse.equipment.get_or_default_cow(name);
                                 inv.capacity = cap;
-                                // a retained foreign jet with 0 stock can never
-                                // be slotted; give the captor a usable load,
-                                // consistent with capture_warehouse restocking
-                                // the owner's airframes to capacity on capture.
                                 if inv.stored == 0 {
                                     inv.stored = cap;
                                 }
@@ -1830,10 +1886,31 @@ impl Db {
         // hub numbers.
         let hub = obj.kind.is_hub() || is_carrier;
         map.for_each(|name, _| {
+            let is_airframe = is_airframe_item(name.as_str());
+            // A carrier's aircraft roster is its deck (naval) warehouse, not
+            // the captor's whole airframe production list. On capture the
+            // physical deck warehouse is untouched; a reload re-reads it into
+            // the model. So here: refresh capacity on airframes the carrier
+            // ALREADY has, never add new ones.
+            if is_carrier && is_airframe {
+                if let Some(inv) = obj.warehouse.equipment.get_mut_cow(&name) {
+                    let p = production
+                        .equipment
+                        .get(&name)
+                        .or_else(|| other_production.equipment.get(&name))
+                        .map(|e| e.production)
+                        .unwrap_or(1);
+                    inv.capacity = whcfg.capacity(true, p);
+                    if inv.stored == 0 {
+                        inv.stored = inv.capacity;
+                    }
+                }
+                return Ok(());
+            }
             match production.equipment.get(&name) {
                 Some(equip) => {
                     let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
-                    let unlimited = if is_airframe_item(name.as_str()) { obj.unlimited_aircraft } else { obj.unlimited_supply };
+                    let unlimited = if is_airframe { obj.unlimited_aircraft } else { obj.unlimited_supply };
                     let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, equip.production);
                     inv.capacity = capacity;
                     // Also (re)stock, not just resize -- this only ran on
