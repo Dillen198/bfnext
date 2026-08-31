@@ -585,19 +585,35 @@ impl Db {
         Ok(())
     }
 
-    fn init_carrier_groups(&mut self) -> Result<()> {
+    fn init_carrier_groups(&mut self, miz: &Miz) -> Result<()> {
         use super::objective::ObjGroupClass;
 
         info!("[CARRIER_INIT] Starting init_carrier_groups");
 
-        // Carrier groups are initialized by spawning their template groups
-        // Template groups should be named like: BCARRIER, RCARRIER, etc.
-        // They match carrier group objectives by the side prefix (B/R)
+        // Valid carrier task-force template names, straight from the miz ship
+        // groups (e.g. RCARRIER, RCARRIER2, BCARRIER, BCARRIER2). Any
+        // persisted carrier group whose template_name isn't one of these is
+        // a leftover from an older buggy build (some carried a mangled
+        // template_name like "RCARRIER-2023"); it gets deleted here and
+        // init_carrier_template_groups (already run) recreates a clean copy.
+        let mut valid_names: FxHashSet<String> = FxHashSet::default();
+        for side in Side::ALL {
+            let coa = miz.coalition(side)?;
+            for country in coa.countries()? {
+                let country = country?;
+                for ship_group in country.ships()? {
+                    let name = ship_group?.name()?;
+                    if name.contains("CARRIER") {
+                        valid_names.insert(name);
+                    }
+                }
+            }
+        }
+        info!("[CARRIER_INIT] valid carrier templates from miz: {:?}", valid_names);
 
-        // Find all naval groups with CARRIER in the name -- these are the
-        // carrier task-force groups. Record each group's centroid from its
-        // persisted units so we can match it to an objective by position.
-        let mut carrier_template_groups: Vec<(GroupId, Side, String, Vector2)> = self
+        // (gid, side, template_name, unit centroid) for every persisted
+        // carrier task-force group.
+        let mut cgs: Vec<(GroupId, Side, String, Vector2)> = self
             .persisted
             .groups
             .into_iter()
@@ -612,9 +628,9 @@ impl Db {
                         }
                     }
                     let pos = if n > 0 { sum / n as f64 } else { Vector2::default() };
-                    info!("[CARRIER_INIT] Found carrier task-force group: {} (side: {:?}) at ({:.0},{:.0})",
-                          group.name, group.side, pos.x, pos.y);
-                    Some((*gid, group.side, group.name.clone(), pos))
+                    info!("[CARRIER_INIT] found carrier group {} tmpl={} side={:?} at ({:.0},{:.0})",
+                          group.name, group.template_name, group.side, pos.x, pos.y);
+                    Some((*gid, group.side, group.template_name.clone(), pos))
                 } else {
                     None
                 }
@@ -623,14 +639,11 @@ impl Db {
 
         let carrier_ids: Vec<ObjectiveId> = self.persisted.carrier_groups.into_iter().copied().collect();
         info!("[CARRIER_INIT] {} carrier task-force group(s), {} carrier objective(s): {:?}",
-              carrier_template_groups.len(), carrier_ids.len(), carrier_ids);
+              cgs.len(), carrier_ids.len(), carrier_ids);
 
-        // (objective, zone centre, home side). The home side comes from the
-        // objective NAME ("Red Strike Group" / "Blue Strike Group", set at
-        // creation) -- NOT the zone position, which drifts as the carrier
-        // sails and could have been dragged onto the wrong task force by an
-        // earlier buggy assignment.
-        let mut obj_info: Vec<(ObjectiveId, Vector2, Side)> = Vec::with_capacity(carrier_ids.len());
+        // Home side per carrier objective, from its NAME ("Red Strike Group"
+        // / "Blue Strike Group") -- drift-immune, unlike the zone position.
+        let mut home_by_oid: FxHashMap<ObjectiveId, Side> = FxHashMap::default();
         for cg_id in &carrier_ids {
             let obj = objective!(self, cg_id)?;
             let home = if obj.name.starts_with("Red") {
@@ -640,53 +653,64 @@ impl Db {
             } else {
                 Side::Neutral
             };
-            obj_info.push((*cg_id, obj.zone.pos(), home));
+            home_by_oid.insert(*cg_id, home);
         }
 
-        // --- Dedup carrier task-force groups by template name ---
-        // The mission defines each task force exactly once (RCARRIER,
-        // BCARRIER, RCARRIER2, BCARRIER2). Any extra group sharing a
-        // template name is a leftover from the old dynamic-respawn path
-        // (e.g. a reconcile-spawned second RCARRIER). Two groups from one
-        // template collide on DCS unit names (the deck airbases), so keep
-        // only the lowest-GroupId copy of each template and delete the rest.
-        {
-            let mut keep: FxHashMap<String, GroupId> = FxHashMap::default();
-            for (gid, _, tname, _) in &carrier_template_groups {
-                keep.entry(tname.clone())
-                    .and_modify(|k| {
-                        if gid < k {
-                            *k = *gid;
-                        }
-                    })
-                    .or_insert(*gid);
+        // --- Delete corrupt / duplicate carrier task-force groups ---
+        // Keep a group only if its template_name is a current miz carrier
+        // template AND it's the lowest-GroupId group with that template.
+        // Everything else (mangled template_name from an old build, or a
+        // second copy of a template) is deleted -- two groups from one
+        // template collide on DCS deck-airbase unit names. Skip the whole
+        // pass if the miz gave us no carrier templates (parse failure) so we
+        // don't wipe every carrier group.
+        if !valid_names.is_empty() {
+            let mut best: FxHashMap<String, GroupId> = FxHashMap::default();
+            for (gid, _, tmpl, _) in &cgs {
+                if valid_names.contains(tmpl) {
+                    best.entry(tmpl.clone())
+                        .and_modify(|b| {
+                            if gid < b {
+                                *b = *gid;
+                            }
+                        })
+                        .or_insert(*gid);
+                }
             }
-            let dups: Vec<GroupId> = carrier_template_groups
+            let keep = |gid: &GroupId, tmpl: &String| {
+                valid_names.contains(tmpl) && best.get(tmpl) == Some(gid)
+            };
+            let doomed: Vec<(GroupId, String)> = cgs
                 .iter()
-                .filter(|(g, _, t, _)| keep.get(t) != Some(g))
-                .map(|(g, _, _, _)| *g)
+                .filter(|(g, _, t, _)| !keep(g, t))
+                .map(|(g, _, t, _)| (*g, t.clone()))
                 .collect();
-            for gid in dups {
-                info!("[CARRIER_INIT] deleting duplicate carrier group {:?} (template collision)", gid);
-                if let Ok(g) = group!(self, &gid) {
-                    let dcs_name = g.template_name.to_string();
-                    self.ephemeral
-                        .push_despawn(gid, Despawn::GroupByName(dcs_name));
+            for (gid, tmpl) in doomed {
+                let gname = group!(self, &gid).map(|g| g.name.to_string()).unwrap_or_default();
+                info!("[CARRIER_INIT] deleting stale carrier group {:?} ({} / tmpl {})", gid, gname, tmpl);
+                // Despawn by name ONLY for a mangled/unknown template name --
+                // that name is unique so it can't hit a live carrier. A
+                // duplicate of a VALID template (e.g. a second "RCARRIER")
+                // shares its DCS group name with the real one, so despawning
+                // by name could kill the wrong ship; just drop it from the DB
+                // (nothing is spawned yet at init time anyway) and let the
+                // real group spawn.
+                if !valid_names.contains(&tmpl) {
+                    self.ephemeral.push_despawn(gid, Despawn::GroupByName(tmpl.to_string()));
+                    if !gname.is_empty() && gname != tmpl.as_str() {
+                        self.ephemeral.push_despawn(gid, Despawn::GroupByName(gname));
+                    }
                 }
                 self.persisted.objectives_by_group.remove_cow(&gid);
                 if let Err(e) = self.delete_group(&gid) {
-                    error!("[CARRIER_INIT] failed to delete duplicate carrier group {:?}: {:?}", gid, e);
+                    error!("[CARRIER_INIT] failed to delete stale carrier group {:?}: {:?}", gid, e);
                 }
             }
-            carrier_template_groups.retain(|(g, _, t, _)| keep.get(t) == Some(g));
+            cgs.retain(|(g, _, t, _)| keep(g, t));
         }
 
-        // Wipe every carrier objective's task-force group list -- we rebuild
-        // it below from a clean position match. This clears any cross-linked
-        // group left by an earlier matcher, plus dangling references to
-        // groups we just deleted above.
-        let tmpl_gids: FxHashSet<GroupId> =
-            carrier_template_groups.iter().map(|(g, _, _, _)| *g).collect();
+        // Wipe every carrier objective's task-force group list (any naval
+        // CARRIER group, plus dead references) -- rebuilt below.
         for cg_id in &carrier_ids {
             let stale: SmallVec<[(Side, GroupId); 8]> = {
                 let obj = objective!(self, cg_id)?;
@@ -697,65 +721,61 @@ impl Db {
                         set.into_iter()
                             .copied()
                             .filter(|g| {
-                                tmpl_gids.contains(g)
-                                    || self.persisted.groups.get(g).is_none()
+                                self.persisted
+                                    .groups
+                                    .get(g)
+                                    .map(|grp| {
+                                        grp.name.contains("CARRIER")
+                                            && matches!(grp.class, ObjGroupClass::Naval)
+                                    })
+                                    .unwrap_or(true)
                             })
                             .map(move |g| (s, g))
                     })
                     .collect()
             };
             for (s, g) in stale {
-                let obj = objective_mut!(self, cg_id)?;
-                if let Some(set) = obj.groups.get_mut_cow(&s) {
+                if let Some(set) = objective_mut!(self, cg_id)?.groups.get_mut_cow(&s) {
                     set.remove_cow(&g);
                 }
             }
         }
 
-        // Home side per carrier objective (from its name: "Red Strike
-        // Group" / "Blue Strike Group"). Used only to give a Neutral-owned
-        // carrier objective a live task force.
-        let home_by_oid: FxHashMap<ObjectiveId, Side> =
-            obj_info.iter().map(|(oid, _, home)| (*oid, *home)).collect();
-
-        // --- Co-located task forces ---
-        // Each carrier objective holds BOTH sides' task forces: the mission
-        // author placed e.g. RCARRIER + BCARRIER2 at "Red Strike Group" and
-        // BCARRIER + RCARRIER2 at "Blue Strike Group". The task force whose
-        // side == the objective's current owner is the LIVE carrier; the
-        // other side's task force sits at the same spot with every unit
-        // dead -- a RESERVE that flip_carrier_group_owner resurrects on
-        // capture (no dynamic respawn, so no unit-name collision).
-        //
-        // Assignment is purely by position: each task force group is
-        // claimed by the nearest carrier objective, at most one group per
-        // side per objective (nearest wins a tie).
-        let mut claimed: FxHashSet<GroupId> = FxHashSet::default();
-        let mut assign: FxHashMap<(ObjectiveId, Side), (GroupId, Vector2, f64)> =
-            FxHashMap::default();
-        for (gid, g_side, _tname, g_pos) in carrier_template_groups.iter().cloned() {
-            let nearest = carrier_ids
+        // --- Assign each task force to a carrier objective BY NAME ---
+        // Each carrier objective holds BOTH sides' task forces (co-located
+        // in the miz). The naming convention picks which objective a group
+        // belongs to, drift- and zone-collapse-immune:
+        //   "<X>CARRIER"  -> the objective whose home side is X
+        //   "<X>CARRIER2" -> the objective whose home side is the OTHER side
+        //                    (X's reserve, pre-placed to take over when X
+        //                    captures the enemy carrier station)
+        // Falls back to the nearest carrier objective if the name doesn't
+        // resolve. The group whose side == the objective's owner is LIVE
+        // (spawned); the other side's group is a RESERVE (units dead) that
+        // flip_carrier_group_owner resurrects in place on capture.
+        let mut live_taken: FxHashSet<(ObjectiveId, Side)> = FxHashSet::default();
+        for (gid, g_side, tmpl, g_pos) in cgs.iter().cloned() {
+            let suffixed = tmpl
+                .rsplit("CARRIER")
+                .next()
+                .map(|s| s.chars().any(|c| c.is_ascii_digit()))
+                .unwrap_or(false);
+            let want_home = if suffixed { g_side.opposite() } else { g_side };
+            let target = carrier_ids
                 .iter()
-                .filter_map(|cg_id| {
-                    let p = objective!(self, cg_id).ok()?.zone.pos();
-                    Some((*cg_id, na::distance_squared(&p.into(), &g_pos.into())))
-                })
-                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            let Some((cg_id, d2)) = nearest else { continue };
-            match assign.get(&(cg_id, g_side)) {
-                Some((_, _, best)) if *best <= d2 => {}
-                _ => {
-                    assign.insert((cg_id, g_side), (gid, g_pos, d2));
-                }
-            }
-        }
+                .copied()
+                .find(|oid| home_by_oid.get(oid).copied() == Some(want_home))
+                .or_else(|| {
+                    carrier_ids.iter().copied().min_by(|a, b| {
+                        let pa = objective!(self, a).map(|o| o.zone.pos()).unwrap_or_default();
+                        let pb = objective!(self, b).map(|o| o.zone.pos()).unwrap_or_default();
+                        na::distance_squared(&pa.into(), &g_pos.into())
+                            .partial_cmp(&na::distance_squared(&pb.into(), &g_pos.into()))
+                            .unwrap()
+                    })
+                });
+            let Some(cg_id) = target else { continue };
 
-        let assignments: Vec<((ObjectiveId, Side), (GroupId, Vector2))> = assign
-            .into_iter()
-            .map(|(k, (gid, pos, _))| (k, (gid, pos)))
-            .collect();
-        for ((cg_id, g_side), (gid, g_pos)) in assignments {
-            claimed.insert(gid);
             let owner = objective!(self, &cg_id)?.owner;
             let cg_name = objective!(self, &cg_id)?.name.clone();
             let effective_owner = if owner == Side::Neutral {
@@ -763,7 +783,7 @@ impl Db {
             } else {
                 owner
             };
-            let live = g_side == effective_owner;
+            let live = g_side == effective_owner && live_taken.insert((cg_id, g_side));
 
             objective_mut!(self, &cg_id)?
                 .groups
@@ -774,10 +794,11 @@ impl Db {
 
             let uids: SmallVec<[bfprotocols::db::group::UnitId; 8]> =
                 group!(self, &gid)?.units.into_iter().copied().collect();
+            for uid in &uids {
+                unit_mut!(self, uid)?.dead = !live;
+            }
+
             if live {
-                for uid in &uids {
-                    unit_mut!(self, uid)?.dead = false;
-                }
                 if let Zone::Circle { pos, .. } = &mut objective_mut!(self, &cg_id)?.zone {
                     *pos = g_pos;
                 }
@@ -788,42 +809,9 @@ impl Db {
                 {
                     *carrier_template = template_name.clone();
                 }
-                info!(
-                    "[CARRIER_INIT] {} LIVE task force {:?} ({:?}) at ({:.0},{:.0})",
-                    cg_name, gid, g_side, g_pos.x, g_pos.y
-                );
+                info!("[CARRIER_INIT] {} LIVE {} {:?} ({:?})", cg_name, tmpl, gid, g_side);
             } else {
-                for uid in &uids {
-                    unit_mut!(self, uid)?.dead = true;
-                }
-                info!(
-                    "[CARRIER_INIT] {} RESERVE task force {:?} ({:?}) held dead at ({:.0},{:.0})",
-                    cg_name, gid, g_side, g_pos.x, g_pos.y
-                );
-            }
-        }
-
-        // Delete orphan carrier groups (never claimed by any objective).
-        let orphans: Vec<GroupId> = carrier_template_groups
-            .iter()
-            .filter(|(g, _, _, _)| !claimed.contains(g))
-            .map(|(g, _, _, _)| *g)
-            .collect();
-        for gid in orphans {
-            info!("[CARRIER_INIT] deleting orphan carrier group {:?}", gid);
-            // Carrier groups activate under their bare template name in DCS
-            // (e.g. "BCARRIER"), not the "-<gid>" bflib name, so also push a
-            // despawn by template name -- otherwise ships spawned under that
-            // name in a previous session are left as uncontrolled zombies
-            // sitting next to the real carrier.
-            if let Ok(g) = group!(self, &gid) {
-                let tname = g.template_name.to_string();
-                self.ephemeral
-                    .push_despawn(gid, Despawn::GroupByName(tname));
-            }
-            self.persisted.objectives_by_group.remove_cow(&gid);
-            if let Err(e) = self.delete_group(&gid) {
-                error!("[CARRIER_INIT] failed to delete orphan carrier group {:?}: {:?}", gid, e);
+                info!("[CARRIER_INIT] {} RESERVE {} {:?} ({:?})", cg_name, tmpl, gid, g_side);
             }
         }
 
@@ -1531,7 +1519,7 @@ impl Db {
         t.init_carrier_template_groups(&spctx, idx, miz, lua, true)
             .context("init_carrier_template_groups failed")?;
         info!("[CARRIER_SETUP] About to init carrier groups");
-        t.init_carrier_groups()
+        t.init_carrier_groups(miz)
             .context("init_carrier_groups failed")?;
         info!("[CARRIER_SETUP] Carrier initialization complete");
         t.init_special_sam_sites(&spctx, idx, lua)
@@ -1648,7 +1636,7 @@ impl Db {
         info!("[CARRIER_LOAD] Re-indexing carrier template groups after load");
         self.init_carrier_template_groups(spctx, idx, miz, lua, false)
             .context("re-initializing carrier template groups")?;
-        self.init_carrier_groups()
+        self.init_carrier_groups(miz)
             .context("re-initializing carrier groups")?;
         self.reconcile_carrier_task_forces(lua, idx)
             .context("reconciling carrier task forces")?;
