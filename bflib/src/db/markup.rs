@@ -403,6 +403,15 @@ fn objective_label(
     repair_pct: Option<(u8, i64)>,
 ) -> CompactString {
     use std::fmt::Write;
+    // Prefix the name with * when this objective has an UNLIMITED_SUPPLY /
+    // UNLIMITED_AIRCRAFTS trigger-zone prop, so players can spot the
+    // never-runs-dry bases at a glance on the F10 map.
+    let name = if obj.unlimited_supply || obj.unlimited_aircraft {
+        format_compact!("* {}", name)
+    } else {
+        CompactString::from(name)
+    };
+    let name = name.as_str();
     let mut s = match obj.kind {
         ObjectiveKind::SpecialSamSite => format_compact!(
             "{}\nHealth: {}\nSupply: {}\nFuel: {}\nPoints: {}",
