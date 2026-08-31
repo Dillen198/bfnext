@@ -50,7 +50,8 @@ use dcso3::{
 };
 use enumflags2::BitFlags;
 use fxhash::FxHashSet;
-use log::{debug, error, info};
+use dcso3::land::SurfaceType;
+use log::{debug, error, info, warn};
 use smallvec::SmallVec;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -319,7 +320,39 @@ impl Db {
             .map(|(oid, obj)| (*oid, obj.owner, obj.zone.pos()))
             .collect();
 
+        let land = Land::singleton(spctx.lua())?;
         for (oid, owner, pos) in targets {
+            // The objective zone centre can sit over water (naval bases,
+            // coastal airfields). Ground logi units can't spawn there, so
+            // probe outward on a ring for the nearest dry point.
+            let land_pos = {
+                let dry = |p: Vector2| {
+                    matches!(
+                        land.get_surface_type(LuaVec2(p)),
+                        Ok(SurfaceType::Land | SurfaceType::Road | SurfaceType::Runway)
+                    )
+                };
+                if dry(pos) {
+                    Some(pos)
+                } else {
+                    let mut found = None;
+                    'search: for r in [200.0, 500.0, 1000.0, 2000.0, 3500.0] {
+                        for k in 0..12 {
+                            let a = k as f64 * std::f64::consts::TAU / 12.0;
+                            let p = pos + Vector2::new(a.cos() * r, a.sin() * r);
+                            if dry(p) {
+                                found = Some(p);
+                                break 'search;
+                            }
+                        }
+                    }
+                    found
+                }
+            };
+            let Some(land_pos) = land_pos else {
+                warn!("[LOGI_FALLBACK] objective {:?} has no dry ground near its zone centre -- skipping default logi coverage", oid);
+                continue;
+            };
             for side in [Side::Red, Side::Blue] {
                 let obj = objective!(self, oid)?;
                 let has_logi = obj.groups.get(&side).is_some_and(|gids| {
@@ -340,19 +373,26 @@ impl Db {
                 {
                     continue;
                 }
-                let gid = self.add_group(
+                let gid = match self.add_group(
                     spctx,
                     idx,
                     side,
                     SpawnLoc::AtPos {
-                        pos,
+                        pos: land_pos,
                         offset_direction: Vector2::default(),
                         group_heading: 0.,
                     },
                     template_name,
                     DeployKind::Objective { origin: oid },
                     BitFlags::empty(),
-                )?;
+                ) {
+                    Ok(gid) => gid,
+                    Err(e) => {
+                        warn!("[LOGI_FALLBACK] objective {:?} side {:?}: could not place {}: {:?}",
+                              oid, side, template_name, e);
+                        continue;
+                    }
+                };
                 let o = objective_mut!(self, oid)?;
                 o.groups.get_or_default_cow(side).insert_cow(gid);
                 self.persisted.objectives_by_group.insert_cow(gid, oid);
