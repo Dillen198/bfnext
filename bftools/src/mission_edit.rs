@@ -961,6 +961,22 @@ impl WarehouseTemplate {
                         }
                     }
                 }
+                // Naval inventory templates are usually placed as an actual
+                // ship (so its warehouse can be configured with the ship
+                // warehouse UI in the ME) rather than an Invisible FARP.
+                for group in vehicle(&country, "ship")? {
+                    let group = group?;
+                    for unit in group.raw_get::<_, Table>("units")?.pairs::<Value, Table>() {
+                        let unit = unit?.1;
+                        let name = unit.raw_get::<_, String>("name")?;
+                        let id = unit.raw_get::<_, i64>("unitId")?;
+                        if *name == cfg.blue_navy_production_template {
+                            blue_navy_id = id;
+                        } else if *name == cfg.red_navy_production_template {
+                            red_navy_id = id;
+                        }
+                    }
+                }
                 for category in ["plane", "helicopter"] {
                     let is_heli = category == "helicopter";
                     for group in vehicle(&country, category)? {
@@ -992,13 +1008,23 @@ impl WarehouseTemplate {
             .warehouses
             .raw_get::<_, Table>("warehouses")
             .context("getting warehouses")?;
+        // A carrier acts as an airbase, so the ME saves a carrier ship's
+        // warehouse under `warehouses.airports[<unitId>]`, not `.warehouses`.
+        let wh_airports = wht.warehouses.raw_get::<_, Table>("airports").ok();
         let navy_wh = |id: i64, side: &str| -> Result<Option<Table<'static>>> {
             if id == 0 {
                 return Ok(None);
             }
             let t = warehouses
                 .raw_get::<_, Table>(id)
-                .with_context(|| format_compact!("getting {side} navy inventory warehouse"))?;
+                .ok()
+                .or_else(|| wh_airports.as_ref().and_then(|a| a.raw_get::<_, Table>(id).ok()))
+                .with_context(|| {
+                    format_compact!(
+                        "{side} navy template {id} has no warehouse in the --warehouse miz \
+                         (configure the ship's warehouse in the ME)"
+                    )
+                })?;
             info!("found {side} naval inventory template (warehouse id {id})");
             Ok(Some(t))
         };
@@ -1137,7 +1163,10 @@ impl WarehouseTemplate {
         // ship unit id -> coalition ("blue"/"red"/...) so ship warehouses can
         // be told apart from FARP-pad warehouses (both live in
         // warehouses.warehouses) and given the naval inventory roster.
-        let mut ship_coalition: HashMap<i64, std::string::String> = HashMap::new();
+        // carrier ship unit id -> coalition. Only groups whose name contains
+        // "CARRIER" (the bflib carrier task-force convention) -- escorts and
+        // other ships are left alone.
+        let mut carrier_coalition: HashMap<i64, std::string::String> = HashMap::new();
         for coa in base
             .mission
             .raw_get::<_, Table>("coalition")?
@@ -1177,11 +1206,18 @@ impl WarehouseTemplate {
                 if let Ok(iter) = vehicle(&country, "ship") {
                     for group in iter {
                         let group = group?;
+                        let gname = group
+                            .raw_get::<_, String>("name")
+                            .map(|s| s.as_str().to_uppercase())
+                            .unwrap_or_default();
+                        if !gname.contains("CARRIER") {
+                            continue;
+                        }
                         for unit in group.raw_get::<_, Table>("units")?.pairs::<Value, Table>() {
                             let unit = unit?.1;
                             if let Ok(id) = unit.raw_get::<_, i64>("unitId") {
                                 if let Some(c) = &coa_name {
-                                    ship_coalition.insert(id, c.clone());
+                                    carrier_coalition.insert(id, c.clone());
                                 }
                             }
                         }
@@ -1477,43 +1513,73 @@ impl WarehouseTemplate {
                 _ => None,
             }
         };
-        let force_limited_wf = |wh: &Table, is_ship: bool| -> Result<()> {
-            for flag in ["unlimitedMunitions", "unlimitedFuel"] {
+        let mut navy_applied = 0u32;
+        let mut carriers_seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        // Carrier warehouses can live under `warehouses.airports` (a carrier
+        // acts as an airbase) or `warehouses.warehouses` -- handle both. A
+        // land airbase (not in carrier_coalition) just gets weapons/fuel
+        // limited.
+        {
+            let mut sweep_wh = |id: i64, wh: &Table| -> Result<()> {
+                if id == blue_inventory || id == red_inventory {
+                    return Ok(());
+                }
+                for flag in ["unlimitedMunitions", "unlimitedFuel"] {
+                    wh.raw_set(flag, false)?;
+                }
+                for lvl in ["OperatingLevel_Eqp", "OperatingLevel_Fuel"] {
+                    wh.raw_set(lvl, 0)?;
+                }
+                let Some(coa) = carrier_coalition.get(&id).map(|s| s.as_str()) else {
+                    return Ok(()); // land airbase / FARP pad / non-carrier ship
+                };
+                carriers_seen.insert(id);
+                // carrier: clear unlimited aircraft so bflib can read what's
+                // aboard, and copy the naval roster if a template was supplied.
+                wh.raw_set("unlimitedAircrafts", false)?;
+                if let Some(navy) = navy_for(Some(coa)) {
+                    if let Ok(ac) = navy.raw_get::<_, Table>("aircrafts") {
+                        wh.raw_set("aircrafts", ac.deep_clone(lua)?)?;
+                        navy_applied += 1;
+                    }
+                }
+                Ok(())
+            };
+            for wh_pair in airports.clone().pairs::<i64, Table>() {
+                let (id, wh) = wh_pair?;
+                sweep_wh(id, &wh)?;
+            }
+            for wh_pair in warehouses.clone().pairs::<i64, Table>() {
+                let (id, wh) = wh_pair?;
+                sweep_wh(id, &wh)?;
+            }
+        }
+        // Carriers the ME never saved a warehouse for: create one from the
+        // naval template so bflib has a roster to read.
+        for (id, coa) in &carrier_coalition {
+            if carriers_seen.contains(id) {
+                continue;
+            }
+            let Some(navy) = navy_for(Some(coa.as_str())) else {
+                continue;
+            };
+            let wh = navy.deep_clone(lua)?;
+            for flag in ["unlimitedMunitions", "unlimitedFuel", "unlimitedAircrafts"] {
                 wh.raw_set(flag, false)?;
             }
             for lvl in ["OperatingLevel_Eqp", "OperatingLevel_Fuel"] {
                 wh.raw_set(lvl, 0)?;
             }
-            if is_ship {
-                wh.raw_set("unlimitedAircrafts", false)?;
-            }
-            Ok(())
-        };
-        for wh_pair in airports.clone().pairs::<i64, Table>() {
-            force_limited_wf(&wh_pair?.1, false)?;
-        }
-        let mut navy_applied = 0u32;
-        for wh_pair in warehouses.clone().pairs::<i64, Table>() {
-            let (id, wh) = wh_pair?;
-            if id == blue_inventory || id == red_inventory {
-                continue;
-            }
-            let ship_coa = ship_coalition.get(&id).map(|s| s.as_str());
-            let is_ship = ship_coa.is_some();
-            force_limited_wf(&wh, is_ship)?;
-            // Copy the naval aircraft roster onto this ship's warehouse, if a
-            // BINVENTORYNAVY / RINVENTORYNAVY template was supplied. This is
-            // the carrier-specific airframe list; bflib reads the ship's live
-            // inventory when it registers a carrier warehouse.
-            if let Some(navy) = navy_for(ship_coa) {
-                if let Ok(ac) = navy.raw_get::<_, Table>("aircrafts") {
-                    wh.raw_set("aircrafts", ac.deep_clone(lua)?)?;
-                    navy_applied += 1;
-                }
-            }
+            wh.raw_set("coalition", coa.clone())?;
+            warehouses.set(*id, wh)?;
+            navy_applied += 1;
+            info!("created carrier warehouse for ship unitId {id} from the {coa} naval template");
         }
         if navy_applied > 0 {
-            info!("applied naval inventory roster to {navy_applied} ship warehouse(s)");
+            info!("applied naval inventory roster to {navy_applied} carrier warehouse(s)");
+        } else if self.blue_navy.is_some() || self.red_navy.is_some() {
+            warn!("naval inventory template(s) present but no CARRIER ship group matched -- \
+                   carrier ship groups must have \"CARRIER\" in the group name");
         }
         base.warehouses.set("airports", airports)?;
         base.warehouses.set("warehouses", warehouses)?;
