@@ -1400,23 +1400,36 @@ impl WarehouseTemplate {
         // campaign's logistics. bflib is the sole authority for weapons/fuel
         // stock and pushes real counts every sync tick; objective-level
         // UNLIMITED_SUPPLY is still honoured (bflib keeps that model maxed).
-        // Aircraft (unlimitedAircrafts / OperatingLevel_Air) is left alone.
-        let force_limited_wf = |wh: &Table| -> Result<()> {
+        //
+        // SHIP warehouses also get unlimitedAircrafts cleared: a carrier with
+        // unlimited aircraft reports an empty inventory to the scripting API,
+        // so bflib can't see which airframes are actually aboard (it reads
+        // Warehouse:getInventory() when registering a carrier) and a captured
+        // carrier ends up unable to slot the jets sitting on its deck.
+        // Airports keep unlimitedAircrafts / OperatingLevel_Air as templated
+        // (dynSpawn links are handled by propagate_links above).
+        let force_limited_wf = |wh: &Table, is_ship: bool| -> Result<()> {
             for flag in ["unlimitedMunitions", "unlimitedFuel"] {
                 wh.raw_set(flag, false)?;
             }
             for lvl in ["OperatingLevel_Eqp", "OperatingLevel_Fuel"] {
                 wh.raw_set(lvl, 0)?;
             }
+            if is_ship {
+                wh.raw_set("unlimitedAircrafts", false)?;
+            }
             Ok(())
         };
         for wh_pair in airports.clone().pairs::<i64, Table>() {
-            force_limited_wf(&wh_pair?.1)?;
+            force_limited_wf(&wh_pair?.1, false)?;
         }
         for wh_pair in warehouses.clone().pairs::<i64, Table>() {
             let (id, wh) = wh_pair?;
             if id != blue_inventory && id != red_inventory {
-                force_limited_wf(&wh)?;
+                // ships carry a "speed" field in their warehouse entry; fixed
+                // warehouses (depots, FARP pads) don't.
+                let is_ship = wh.raw_get::<_, f64>("speed").is_ok();
+                force_limited_wf(&wh, is_ship)?;
             }
         }
         base.warehouses.set("airports", airports)?;
