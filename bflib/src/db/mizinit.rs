@@ -581,11 +581,22 @@ impl Db {
         info!("[CARRIER_INIT] {} carrier task-force group(s), {} carrier objective(s): {:?}",
               carrier_template_groups.len(), carrier_ids.len(), carrier_ids);
 
-        // Objective zone centres (carrier objectives are created at their
-        // task force's mission-editor position).
-        let mut obj_pos: Vec<(ObjectiveId, Vector2)> = Vec::with_capacity(carrier_ids.len());
+        // (objective, zone centre, home side). The home side comes from the
+        // objective NAME ("Red Strike Group" / "Blue Strike Group", set at
+        // creation) -- NOT the zone position, which drifts as the carrier
+        // sails and could have been dragged onto the wrong task force by an
+        // earlier buggy assignment.
+        let mut obj_info: Vec<(ObjectiveId, Vector2, Side)> = Vec::with_capacity(carrier_ids.len());
         for cg_id in &carrier_ids {
-            obj_pos.push((*cg_id, objective!(self, cg_id)?.zone.pos()));
+            let obj = objective!(self, cg_id)?;
+            let home = if obj.name.starts_with("Red") {
+                Side::Red
+            } else if obj.name.starts_with("Blue") {
+                Side::Blue
+            } else {
+                Side::Neutral
+            };
+            obj_info.push((*cg_id, obj.zone.pos(), home));
         }
 
         // Wipe every carrier objective's task-force group list -- we rebuild
@@ -617,42 +628,84 @@ impl Db {
             }
         }
 
-        // Assign each task-force group to the nearest carrier objective,
-        // keyed by the GROUP's own side (never the objective's owner).
-        for (gid, g_side, g_name, g_pos) in &carrier_template_groups {
-            let Some((cg_id, _)) = obj_pos
+        // Give each carrier objective EXACTLY ONE task force. For each
+        // objective, in priority order, pick an unclaimed carrier group:
+        //   1. one already linked to it (objectives_by_group), preferring the
+        //      objective's current owner side;
+        //   2. one whose side matches the objective's home side (from name);
+        //   3. one whose side matches the objective's current owner;
+        //   4. the nearest unclaimed group of any side.
+        // Every carrier group not claimed by an objective is an orphan from
+        // an earlier mis-assignment and is deleted.
+        let mut claimed: FxHashSet<GroupId> = FxHashSet::default();
+        for (cg_id, _zone, home) in obj_info.iter().copied() {
+            let owner = objective!(self, &cg_id)?.owner;
+            let unclaimed = |g: &GroupId| !claimed.contains(g);
+            let linked: Vec<(GroupId, Side, String, Vector2)> = carrier_template_groups
                 .iter()
-                .map(|(oid, p)| (*oid, na::distance_squared(&(*p).into(), &(*g_pos).into())))
-                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-            else {
-                info!("[CARRIER_INIT] no carrier objective to match {} to", g_name);
+                .filter(|(g, _, _, _)| unclaimed(g)
+                    && self.persisted.objectives_by_group.get(g) == Some(&cg_id))
+                .cloned()
+                .collect();
+            let chosen = linked.iter().find(|(_, s, _, _)| *s == owner).cloned()
+                .or_else(|| linked.first().cloned())
+                .or_else(|| carrier_template_groups.iter()
+                    .find(|(g, s, _, _)| unclaimed(g) && *s == home).cloned())
+                .or_else(|| carrier_template_groups.iter()
+                    .find(|(g, s, _, _)| unclaimed(g) && *s == owner).cloned())
+                .or_else(|| {
+                    let cg_pos = objective!(self, &cg_id).ok()?.zone.pos();
+                    carrier_template_groups.iter()
+                        .filter(|(g, _, _, _)| unclaimed(g))
+                        .min_by(|a, b| na::distance_squared(&a.3.into(), &cg_pos.into())
+                            .partial_cmp(&na::distance_squared(&b.3.into(), &cg_pos.into())).unwrap())
+                        .cloned()
+                });
+            let Some((gid, g_side, tmpl_name, g_pos)) = chosen else {
+                info!("[CARRIER_INIT] {:?} '{}' -- no task force available, reconcile will spawn one",
+                      cg_id, objective!(self, &cg_id)?.name);
                 continue;
             };
+            claimed.insert(gid);
             let cg_name = objective!(self, &cg_id)?.name.clone();
-            info!("[CARRIER_INIT] {} -> {} (nearest, side {:?})", g_name, cg_name, g_side);
+            info!("[CARRIER_INIT] {} '{}' -> group {:?} (side {:?})", cg_name, cg_name, gid, g_side);
 
             let obj = objective_mut!(self, &cg_id)?;
-            obj.groups.get_or_default_cow(*g_side).insert_cow(*gid);
-            self.persisted.objectives_by_group.insert_cow(*gid, cg_id);
+            obj.groups.get_or_default_cow(g_side).insert_cow(gid);
+            // Snap the (possibly-drifted) objective zone onto this task force.
+            if let Zone::Circle { pos, .. } = &mut obj.zone {
+                *pos = g_pos;
+            }
+            self.persisted.objectives_by_group.insert_cow(gid, cg_id);
+            group_mut!(self, &gid)?.origin = DeployKind::Objective { origin: cg_id };
+            self.ephemeral.push_spawn(gid);
 
-            let group = group_mut!(self, gid)?;
-            group.origin = DeployKind::Objective { origin: cg_id };
-            self.ephemeral.push_spawn(*gid);
-
-            // carrier_template points at the DCS template of whichever task
-            // force belongs to the objective's *current owner*. A captured
-            // carrier whose owner has no task force here yet is left for
-            // reconcile_carrier_task_forces to fill.
-            let is_primary = g_name.contains("CARRIER")
-                && !g_name.contains("ESCORT")
-                && !g_name.contains("SUPPLY");
-            if is_primary && objective!(self, &cg_id)?.owner == *g_side {
-                let template_name = group!(self, gid)?.template_name.clone();
-                let obj = objective_mut!(self, &cg_id)?;
-                if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &mut obj.kind {
+            // carrier_template = the DCS template of this objective's task
+            // force IF it belongs to the current owner; otherwise leave it
+            // for reconcile_carrier_task_forces to sort out.
+            if objective!(self, &cg_id)?.owner == g_side {
+                let template_name = group!(self, &gid)?.template_name.clone();
+                if let ObjectiveKind::CarrierGroup { carrier_template, .. } =
+                    &mut objective_mut!(self, &cg_id)?.kind
+                {
                     *carrier_template = template_name.clone();
                     info!("[CARRIER_INIT] {} carrier_template = {}", cg_name, template_name);
                 }
+            }
+            let _ = tmpl_name;
+        }
+
+        // Delete orphan carrier groups (never claimed by any objective).
+        let orphans: Vec<GroupId> = carrier_template_groups
+            .iter()
+            .filter(|(g, _, _, _)| !claimed.contains(g))
+            .map(|(g, _, _, _)| *g)
+            .collect();
+        for gid in orphans {
+            info!("[CARRIER_INIT] deleting orphan carrier group {:?}", gid);
+            self.persisted.objectives_by_group.remove_cow(&gid);
+            if let Err(e) = self.delete_group(&gid) {
+                error!("[CARRIER_INIT] failed to delete orphan carrier group {:?}: {:?}", gid, e);
             }
         }
 
