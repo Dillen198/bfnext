@@ -27,7 +27,7 @@ use crate::{
     group, group_health, group_mut,
     landcache::LandCache,
     objective, objective_mut,
-    spawnctx::{SpawnCtx, SpawnLoc},
+    spawnctx::{Despawn, SpawnCtx, SpawnLoc},
     unit, unit_mut,
 };
 use anyhow::{Context, Result, anyhow, bail};
@@ -781,6 +781,16 @@ impl Db {
             .collect();
         for gid in orphans {
             info!("[CARRIER_INIT] deleting orphan carrier group {:?}", gid);
+            // Carrier groups activate under their bare template name in DCS
+            // (e.g. "BCARRIER"), not the "-<gid>" bflib name, so also push a
+            // despawn by template name -- otherwise ships spawned under that
+            // name in a previous session are left as uncontrolled zombies
+            // sitting next to the real carrier.
+            if let Ok(g) = group!(self, &gid) {
+                let tname = g.template_name.to_string();
+                self.ephemeral
+                    .push_despawn(gid, Despawn::GroupByName(tname));
+            }
             self.persisted.objectives_by_group.remove_cow(&gid);
             if let Err(e) = self.delete_group(&gid) {
                 error!("[CARRIER_INIT] failed to delete orphan carrier group {:?}: {:?}", gid, e);
