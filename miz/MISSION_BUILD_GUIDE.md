@@ -582,14 +582,18 @@ from the inventory template. Objective-level `UNLIMITED_SUPPLY` /
 objective's model maxed); such objectives show a `*` above their name on the
 F10 map.
 
-**Naval aircraft roster (optional):** add Invisible FARP statics named
-`BINVENTORYNAVY` / `RINVENTORYNAVY` to `warehouse.miz` (same as
-`BINVENTORY` / `RINVENTORY` but with a carrier-appropriate aircraft list).
-`bftools miz` copies their `aircrafts` roster onto every ship warehouse of
-that coalition, so carriers stock carrier jets (F/A-18, F-14, …) without
-those types also appearing at land bases. Names overridable with
+**Naval aircraft roster (optional):** in `warehouse.miz`, place an actual
+**carrier ship** named `BINVENTORYNAVY` and one named `RINVENTORYNAVY`
+(anywhere — they're template-only, never spawned), and configure each one's
+**ship warehouse** in the ME with the aircraft that side's carriers should
+carry (F/A-18C, F-14, AV-8B, …) at a nonzero count. `bftools miz` copies
+that `aircrafts` roster onto every carrier in the base mission — a carrier
+being a **ship group whose name contains `CARRIER`** — and creates a
+warehouse for any carrier the ME never saved one for. So carrier jets are
+configured once, in one place, and don't leak onto land airbases. Types left
+at amount 0 are ignored. Names overridable with
 `--blue-navy-production-template` / `--red-navy-production-template`; omit the
-statics entirely and ships keep their editor roster.
+two ships entirely and carriers keep whatever roster is on them in the editor.
 
 The generated mission's campaign config (the JSON file `bflib` loads at
 startup — e.g. `ODFv2_CFG`, named whatever you point bflib's state path at,
