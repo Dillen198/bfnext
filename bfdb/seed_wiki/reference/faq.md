@@ -17,18 +17,18 @@ Common questions and answers about Fowl Engine.
 
 ### Q: How do I capture an objective?
 **A**:
-1. Reduce objective logistics to 0%
-2. Transport capture-capable infantry to the objective
+1. Grind the objective down to **≤ 20% health** and kill **every** infantry defender
+2. Transport capture-capable infantry of your own to the objective
 3. Unload troops inside the capture zone
-4. Wait for capture to complete
+4. Hold through the timer, then hold the consolidation window while the garrison moves in
 
 See [Capturing Objectives](../gameplay/capturing-objectives.md) for details.
 
 ### Q: Why can't I capture this objective?
 **A**: Check these requirements:
-- Logistics must be exactly 0%
-- You must have infantry troops IN the zone (unloaded, on ground)
-- Troops must be capture-capable type
+- Health must be **≤ 20%** (logistics at 0 is *not* the capture trigger — it just means the base stopped working)
+- **No** enemy infantry left alive — one surviving squad blocks it
+- You must have capture-capable infantry IN the zone (unloaded, on ground)
 - No enemy troops contesting the zone
 
 ### Q: How do I earn points?
@@ -42,6 +42,9 @@ See [Points System](../gameplay/points-and-lives.md) for full details.
 
 ### Q: What happens when I run out of lives?
 **A**: You're restricted to spectator mode. Contact an admin to request a life reset.
+
+### Q: I captured an enemy carrier — why can't I fly its jets?
+**A**: A captured carrier comes across at 50% health. Aircraft types your coalition doesn't normally produce ("foreign" airframes it had aboard) stay grounded until the carrier's repairs finish — deliver repair crates to it, use the naval base's Repair/Respawn Carrier actions, or park it by a friendly naval base to auto-repair. Your own coalition's aircraft work right away.
 
 ## F10 Menus
 
@@ -71,7 +74,7 @@ See [JTAC System](../f10-menu/jtac.md) for full guide.
 ## Logistics & Supply
 
 ### Q: What does "Logi: 0" mean?
-**A**: Logistics at 0 means the objective CAN be captured. The infrastructure is completely destroyed.
+**A**: The objective's infrastructure is completely destroyed — no repair, rearm or resupply. It does **not** by itself make the objective capturable; that needs health ≤ 20% and no infantry left.
 
 ### Q: How do I repair logistics?
 **A**: Logistics repair slowly over time automatically. Admins can speed this with `-admin repair`. Some servers allow player logistics repair actions.
