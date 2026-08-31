@@ -811,6 +811,15 @@ impl Db {
                 }
                 info!("[CARRIER_INIT] {} LIVE {} {:?} ({:?})", cg_name, tmpl, gid, g_side);
             } else {
+                // Reserve task force: keep it out of the DCS world. Push a
+                // despawn by template name too -- if the mission author
+                // forgot to tick "Late Activation" on the reserve group it
+                // spawns as an uncontrolled ship whose deck airbase would
+                // otherwise shadow the live carrier's.
+                self.ephemeral.push_despawn(
+                    gid,
+                    Despawn::GroupByName(group!(self, &gid)?.template_name.to_string()),
+                );
                 info!("[CARRIER_INIT] {} RESERVE {} {:?} ({:?})", cg_name, tmpl, gid, g_side);
             }
         }

@@ -602,6 +602,44 @@ fn get_supplier<'lua>(lua: MizLua<'lua>, template: String) -> Result<warehouse::
         .context("getting warehouse")
 }
 
+/// Resolve a carrier deck airbase (named after its ship unit) to the
+/// carrier objective it belongs to, via the ship unit -> group ->
+/// `objectives_by_group` chain. Returns:
+///   - `Ok(oid)` if the deck's group is that objective's LIVE task force
+///     (the group registered under the current owner side)
+///   - `Err(())` if the deck belongs to a carrier group that is NOT the
+///     live task force (a reserve, or the losing side's ships that
+///     haven't despawned) -- caller should skip the airbase entirely so a
+///     reserve/stale deck can't steal the objective's warehouse slot
+///   - `None` if the unit name doesn't resolve to any carrier group
+///     (caller falls back to position matching)
+fn carrier_deck_live_objective(
+    persisted: &super::persisted::Persisted,
+    unit_name: &str,
+) -> Option<std::result::Result<ObjectiveId, ()>> {
+    let gid = persisted.groups.into_iter().find_map(|(gid, g)| {
+        let is_carrier = g.name.contains("CARRIER")
+            && matches!(g.class, super::objective::ObjGroupClass::Naval);
+        if !is_carrier {
+            return None;
+        }
+        let has_unit = g
+            .units
+            .into_iter()
+            .filter_map(|uid| persisted.units.get(uid))
+            .any(|u| u.template_name.as_str() == unit_name);
+        if has_unit { Some(*gid) } else { None }
+    })?;
+    let oid = *persisted.objectives_by_group.get(&gid)?;
+    let obj = persisted.objectives.get(&oid)?;
+    let is_live = obj
+        .groups
+        .get(&obj.owner)
+        .map(|s| s.into_iter().any(|g| *g == gid))
+        .unwrap_or(false);
+    Some(if is_live { Ok(oid) } else { Err(()) })
+}
+
 /// The carrier-group objective whose LIVE task force is closest to `pos`.
 /// Both carrier objectives can be owned by the same side (one captured)
 /// and their 5km zones overlap once the carriers sail near the same naval
@@ -923,7 +961,20 @@ impl Db {
                     let is_carrier_deck =
                         name.starts_with("BCARRIER") || name.starts_with("RCARRIER");
                     let oid: Option<ObjectiveId> = if is_carrier_deck {
-                        nearest_carrier_objective(&self.persisted, pos)
+                        match carrier_deck_live_objective(&self.persisted, &name) {
+                            // deck of a live carrier task force -> its objective
+                            Some(Ok(oid)) => Some(oid),
+                            // deck of a reserve / stale carrier group -> don't
+                            // let it register (or steal) an objective warehouse
+                            Some(Err(())) => {
+                                log::info!(
+                                    "skipping carrier deck {name} (not the live task force)"
+                                );
+                                return Ok(());
+                            }
+                            // unrecognised carrier unit -> fall back to position
+                            None => nearest_carrier_objective(&self.persisted, pos),
+                        }
                     } else {
                         None
                     }
@@ -937,14 +988,21 @@ impl Db {
                     let w = airbase
                         .get_warehouse()
                         .context("getting airbase warehouse")?;
-                    let (oid, obj) = match oid
-                        .and_then(|oid| self.persisted.objectives.get(&oid).map(|o| (oid, o)))
-                    {
-                        Some((oid, obj)) => {
+                    let (oid, obj_owner, obj_name, is_carrier_group) = match oid.and_then(|oid| {
+                        self.persisted.objectives.get(&oid).map(|o| {
+                            (
+                                oid,
+                                o.owner,
+                                o.name.clone(),
+                                matches!(o.kind, ObjectiveKind::CarrierGroup { .. }),
+                            )
+                        })
+                    }) {
+                        Some(t) => {
                             airbase
-                                .set_coalition(obj.owner)
+                                .set_coalition(t.1)
                                 .context("setting airbase owner")?;
-                            (oid, obj)
+                            t
                         }
                         None if !self.ephemeral.global_pad_templates.contains(&name) => {
                             map.for_each(|name, _| {
@@ -964,22 +1022,52 @@ impl Db {
                             return Ok(());
                         }
                     };
-
-                    // For carrier groups, only register the first ship (the main carrier).
-                    // The DCS airbase name is the unit name (e.g., "Kurznetsov", "CVN73"),
-                    // not the group template name (e.g., "RCARRIER", "BCARRIER").
-                    // We identify the main carrier by being the first one we find in the zone.
-                    let is_carrier_group = matches!(&obj.kind, ObjectiveKind::CarrierGroup { .. });
+                    let _ = obj_owner;
 
                     match self.ephemeral.airbase_by_oid.entry(oid) {
                         Entry::Vacant(e) => {
                             e.insert(airbase.object_id().context("getting airbase object_id")?);
 
-                            // For carrier groups, sync the warehouse with zeroing to remove
-                            // items not in the production config
                             if is_carrier_group {
                                 log::info!("[CARRIER_WAREHOUSE] Registering carrier warehouse for {} (objective: {})",
-                                          name, obj.name);
+                                          name, obj_name);
+                                // Pull in whatever aircraft are physically aboard
+                                // this carrier that the model doesn't know about --
+                                // a captured carrier keeps the previous owner's
+                                // jets, and the mission designer may have loaded
+                                // types that aren't in either side's production
+                                // list. Without this the zeroing sync below wipes
+                                // them and players get "no <type> in stock" for a
+                                // jet that's sitting on the deck.
+                                let mut aboard: Vec<(dcso3::String, u32)> = vec![];
+                                if let Ok(inv) = w.get_inventory(None) {
+                                    if let Ok(ac) = inv.aircraft() {
+                                        let _ = ac.for_each(|n, c| {
+                                            if c > 0 {
+                                                aboard.push((n, c));
+                                            }
+                                            Ok(())
+                                        });
+                                    }
+                                }
+                                if !aboard.is_empty() {
+                                    let objm = objective_mut!(self, oid)?;
+                                    for (n, c) in &aboard {
+                                        let cap = whcfg.capacity(true, (*c).max(1));
+                                        let inv =
+                                            objm.warehouse.equipment.get_or_default_cow(n.clone());
+                                        if inv.capacity < cap {
+                                            inv.capacity = cap;
+                                        }
+                                        if inv.stored < *c {
+                                            inv.stored = *c;
+                                        }
+                                    }
+                                    log::info!("[CARRIER_WAREHOUSE] {} carries {} aircraft type(s) aboard: {:?}",
+                                              obj_name, aboard.len(),
+                                              aboard.iter().map(|(n, c)| format_compact!("{n}={c}")).collect::<Vec<_>>());
+                                }
+                                let obj = objective!(self, oid)?;
                                 sync_obj_to_warehouse_with_zeroing(obj, &w, &map)
                                     .context("syncing carrier warehouse with zeroing")?;
                             }
@@ -988,10 +1076,10 @@ impl Db {
                             // For carrier groups, skip escort ships (additional airbases in the zone)
                             if is_carrier_group {
                                 log::info!("[CARRIER_WAREHOUSE] Skipping escort ship {} in carrier group {} (warehouse already registered)",
-                                          name, obj.name);
+                                          name, obj_name);
                                 return Ok(());
                             }
-                            bail!("multiple airbases inside the trigger zone of {}", obj.name)
+                            bail!("multiple airbases inside the trigger zone of {}", obj_name)
                         }
                     }
                     Ok(())
@@ -1022,14 +1110,20 @@ impl Db {
                         .production_by_side
                         .get(&obj.owner.opposite())
                         .cloned();
-                    for (name, _) in &obj.warehouse.equipment {
+                    for (name, inv) in &obj.warehouse.equipment {
                         if !prod.equipment.contains_key(name) {
-                            let keep_foreign = is_carrier
-                                && other_prod
-                                    .as_ref()
-                                    .map(|p| p.equipment.contains_key(name))
-                                    .unwrap_or(false);
-                            if !keep_foreign {
+                            // On a carrier, never drop an airframe entry that
+                            // actually has stock (a captured carrier's retained
+                            // jets, or types the mission designer loaded aboard
+                            // that aren't in either side's production list) or
+                            // one that's in the opposite side's production.
+                            let keep_carrier = is_carrier
+                                && (is_airframe_item(name.as_str()) && inv.stored > 0
+                                    || other_prod
+                                        .as_ref()
+                                        .map(|p| p.equipment.contains_key(name))
+                                        .unwrap_or(false));
+                            if !keep_carrier {
                                 del_eq.push(name.clone());
                             }
                         }
