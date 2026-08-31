@@ -1213,9 +1213,15 @@ impl WarehouseTemplate {
                         if !gname.contains("CARRIER") {
                             continue;
                         }
-                        for unit in group.raw_get::<_, Table>("units")?.pairs::<Value, Table>() {
-                            let unit = unit?.1;
-                            if let Ok(id) = unit.raw_get::<_, i64>("unitId") {
+                        // Only the FIRST unit of the group is the carrier
+                        // (its deck is the airbase bflib registers); the rest
+                        // are escorts whose warehouses are never used. Applying
+                        // the naval roster only to the flagship keeps the six
+                        // ships from showing six different warehouses.
+                        if let Some(Ok(first)) =
+                            group.raw_get::<_, Table>("units")?.pairs::<Value, Table>().next()
+                        {
+                            if let Ok(id) = first.1.raw_get::<_, i64>("unitId") {
                                 if let Some(c) = &coa_name {
                                     carrier_coalition.insert(id, c.clone());
                                 }
@@ -1538,8 +1544,14 @@ impl WarehouseTemplate {
                 // aboard, and copy the naval roster if a template was supplied.
                 wh.raw_set("unlimitedAircrafts", false)?;
                 if let Some(navy) = navy_for(Some(coa)) {
-                    if let Ok(ac) = navy.raw_get::<_, Table>("aircrafts") {
-                        wh.raw_set("aircrafts", ac.deep_clone(lua)?)?;
+                    let mut applied = false;
+                    for field in ["aircrafts", "weapons"] {
+                        if let Ok(t) = navy.raw_get::<_, Table>(field) {
+                            wh.raw_set(field, t.deep_clone(lua)?)?;
+                            applied = true;
+                        }
+                    }
+                    if applied {
                         navy_applied += 1;
                     }
                 }
