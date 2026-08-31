@@ -1173,11 +1173,20 @@ impl WarehouseTemplate {
         // bflib is the sole authority for weapons/fuel stock (production_by_side +
         // hubs/convoys/air-sea routes). Zero DCS's own equipment/fuel production
         // so it doesn't stack on top of bflib's -- that double production is what
-        // made stock run away (1000 -> 5000). Aircraft (OperatingLevel_Air) is
-        // left alone; dynSpawn amounts are handled by the link propagation below.
+        // made stock run away (1000 -> 5000). Also clear unlimitedMunitions /
+        // unlimitedFuel: if the coalition inventory template has them true, DCS
+        // ignores bflib's per-tick set_item() counts and every base shows
+        // infinite weapons/fuel regardless of the campaign's logistics state.
+        // (objective-level UNLIMITED_SUPPLY is still honoured -- bflib just keeps
+        // that objective's model maxed and pushes it back each sync.) Aircraft
+        // (OperatingLevel_Air / unlimitedAircrafts) is left alone; dynSpawn
+        // amounts are handled by the link propagation below.
         let stop_dcs_production = |wh: &Table| -> Result<()> {
             for lvl in ["OperatingLevel_Eqp", "OperatingLevel_Fuel"] {
                 wh.raw_set(lvl, 0)?;
+            }
+            for flag in ["unlimitedMunitions", "unlimitedFuel"] {
+                wh.raw_set(flag, false)?;
             }
             Ok(())
         };
@@ -1382,6 +1391,34 @@ impl WarehouseTemplate {
         info!(
             "propagated dynSpawn linkDynTempl to all airbase/FARP warehouses"
         );
+        // Final sweep: force weapons/fuel LIMITED on every airport and every
+        // warehouse (ships included). The per-coalition inventory clone above
+        // already covers rebuilt airports/FARPs, but carrier & other ship
+        // warehouses (warehouses[<shipUnitId>]) are never rebuilt from a
+        // template, so they'd keep the editor default unlimitedMunitions/
+        // unlimitedFuel = true and show infinite ammo/fuel regardless of the
+        // campaign's logistics. bflib is the sole authority for weapons/fuel
+        // stock and pushes real counts every sync tick; objective-level
+        // UNLIMITED_SUPPLY is still honoured (bflib keeps that model maxed).
+        // Aircraft (unlimitedAircrafts / OperatingLevel_Air) is left alone.
+        let force_limited_wf = |wh: &Table| -> Result<()> {
+            for flag in ["unlimitedMunitions", "unlimitedFuel"] {
+                wh.raw_set(flag, false)?;
+            }
+            for lvl in ["OperatingLevel_Eqp", "OperatingLevel_Fuel"] {
+                wh.raw_set(lvl, 0)?;
+            }
+            Ok(())
+        };
+        for wh_pair in airports.clone().pairs::<i64, Table>() {
+            force_limited_wf(&wh_pair?.1)?;
+        }
+        for wh_pair in warehouses.clone().pairs::<i64, Table>() {
+            let (id, wh) = wh_pair?;
+            if id != blue_inventory && id != red_inventory {
+                force_limited_wf(&wh)?;
+            }
+        }
         base.warehouses.set("airports", airports)?;
         base.warehouses.set("warehouses", warehouses)?;
         let log = propagation_log.into_inner();
