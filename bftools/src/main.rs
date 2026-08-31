@@ -58,6 +58,15 @@ struct MizCmd {
     blue_production_template: String,
     #[clap(long, default_value = "RINVENTORY")]
     red_production_template: String,
+    /// Optional per-coalition NAVAL inventory templates (Invisible FARP
+    /// statics in the --warehouse miz). If present, their aircraft roster
+    /// is copied onto every ship warehouse of that coalition, so carriers
+    /// stock a carrier-appropriate airframe list. Absent => ships keep
+    /// their editor roster.
+    #[clap(long, default_value = "BINVENTORYNAVY")]
+    blue_navy_production_template: String,
+    #[clap(long, default_value = "RINVENTORYNAVY")]
+    red_navy_production_template: String,
     /// override the mission's date and start time with the current real-world
     /// local date/time (of the machine running bftools)
     #[clap(long)]

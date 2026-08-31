@@ -572,11 +572,24 @@ too — see [Special SAM Sites](#special-sam-sites-new) above.
 **Warehouses:** `bftools miz` forces **weapons and fuel to limited** on every
 airbase and every ship warehouse (carriers included) regardless of what the
 inventory template or editor has set — bflib is the sole authority for
-weapons/fuel stock and fills each warehouse to capacity at init. Aircraft
-(dynSpawn / `unlimitedAircrafts`) is left as templated. Objective-level
-`UNLIMITED_SUPPLY` / `UNLIMITED_AIRCRAFTS` trigger-zone props still work
-(bflib keeps that objective's model maxed); such objectives show a `*` above
-their name on the F10 map.
+weapons/fuel stock and fills each warehouse to capacity at init. Land airbase
+aircraft (dynSpawn / `unlimitedAircrafts`) is left as templated; **ship
+warehouses get `unlimitedAircrafts` cleared** so bflib can read the airframes
+actually aboard a carrier. Per-airbase fields (`allowHotStart`,
+`OperatingLevel_Air`) are now preserved from the **base mission**, not taken
+from the inventory template. Objective-level `UNLIMITED_SUPPLY` /
+`UNLIMITED_AIRCRAFTS` trigger-zone props still work (bflib keeps that
+objective's model maxed); such objectives show a `*` above their name on the
+F10 map.
+
+**Naval aircraft roster (optional):** add Invisible FARP statics named
+`BINVENTORYNAVY` / `RINVENTORYNAVY` to `warehouse.miz` (same as
+`BINVENTORY` / `RINVENTORY` but with a carrier-appropriate aircraft list).
+`bftools miz` copies their `aircrafts` roster onto every ship warehouse of
+that coalition, so carriers stock carrier jets (F/A-18, F-14, …) without
+those types also appearing at land bases. Names overridable with
+`--blue-navy-production-template` / `--red-navy-production-template`; omit the
+statics entirely and ships keep their editor roster.
 
 The generated mission's campaign config (the JSON file `bflib` loads at
 startup — e.g. `ODFv2_CFG`, named whatever you point bflib's state path at,

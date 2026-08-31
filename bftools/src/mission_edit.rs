@@ -904,6 +904,13 @@ struct WarehouseTemplate {
     blue_inventory: Table<'static>,
     red_inventory: Table<'static>,
     default: Table<'static>,
+    /// Optional per-coalition NAVAL inventory templates (Invisible FARP
+    /// statics named BINVENTORYNAVY / RINVENTORYNAVY in the --warehouse
+    /// miz). When present, their `aircrafts` roster is copied onto every
+    /// ship warehouse of that coalition, so carriers stock a
+    /// carrier-appropriate airframe list instead of the land-base one.
+    blue_navy: Option<Table<'static>>,
+    red_navy: Option<Table<'static>>,
     /// dynSpawnTemplate groups from the warehouse miz: (side, is_helicopter, original_group_id, group_table)
     dyn_spawn_groups: Vec<(Side, bool, i64, Table<'static>)>,
 }
@@ -913,6 +920,8 @@ impl WarehouseTemplate {
         let mut blue_inventory_id = 0;
         let mut red_inventory_id = 0;
         let mut default_id = 0;
+        let mut blue_navy_id = 0;
+        let mut red_navy_id = 0;
         let mut dyn_spawn_groups = vec![];
         for pair in wht
             .mission
@@ -940,6 +949,10 @@ impl WarehouseTemplate {
                                 blue_inventory_id = id;
                             } else if *name == cfg.red_production_template {
                                 red_inventory_id = id;
+                            } else if *name == cfg.blue_navy_production_template {
+                                blue_navy_id = id;
+                            } else if *name == cfg.red_navy_production_template {
+                                red_navy_id = id;
                             } else {
                                 bail!(
                                     "invalid warehouse template, unexpected {name} invisible farp"
@@ -979,6 +992,16 @@ impl WarehouseTemplate {
             .warehouses
             .raw_get::<_, Table>("warehouses")
             .context("getting warehouses")?;
+        let navy_wh = |id: i64, side: &str| -> Result<Option<Table<'static>>> {
+            if id == 0 {
+                return Ok(None);
+            }
+            let t = warehouses
+                .raw_get::<_, Table>(id)
+                .with_context(|| format_compact!("getting {side} navy inventory warehouse"))?;
+            info!("found {side} naval inventory template (warehouse id {id})");
+            Ok(Some(t))
+        };
         Ok(Self {
             blue_inventory: warehouses
                 .raw_get(blue_inventory_id)
@@ -989,6 +1012,8 @@ impl WarehouseTemplate {
             default: warehouses
                 .raw_get(default_id)
                 .context("getting default inventory")?,
+            blue_navy: navy_wh(blue_navy_id, "blue")?,
+            red_navy: navy_wh(red_navy_id, "red")?,
             dyn_spawn_groups,
         })
     }
@@ -1109,12 +1134,20 @@ impl WarehouseTemplate {
         let mut blue_inventory = 0;
         let mut red_inventory = 0;
         let mut whids = vec![];
+        // ship unit id -> coalition ("blue"/"red"/...) so ship warehouses can
+        // be told apart from FARP-pad warehouses (both live in
+        // warehouses.warehouses) and given the naval inventory roster.
+        let mut ship_coalition: HashMap<i64, std::string::String> = HashMap::new();
         for coa in base
             .mission
             .raw_get::<_, Table>("coalition")?
             .pairs::<Value, Table>()
         {
-            let coa = coa?.1;
+            let (coa_key, coa) = coa?;
+            let coa_name = match &coa_key {
+                Value::String(s) => s.to_str().ok().map(|s| s.to_string()),
+                _ => None,
+            };
             for country in coa.raw_get::<_, Table>("country")?.pairs::<Value, Table>() {
                 let country = country?.1;
                 if let Ok(iter) = vehicle(&country, "static") {
@@ -1136,6 +1169,19 @@ impl WarehouseTemplate {
                                     red_inventory = id;
                                 } else {
                                     whids.push(id);
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Ok(iter) = vehicle(&country, "ship") {
+                    for group in iter {
+                        let group = group?;
+                        for unit in group.raw_get::<_, Table>("units")?.pairs::<Value, Table>() {
+                            let unit = unit?.1;
+                            if let Ok(id) = unit.raw_get::<_, i64>("unitId") {
+                                if let Some(c) = &coa_name {
+                                    ship_coalition.insert(id, c.clone());
                                 }
                             }
                         }
@@ -1190,6 +1236,26 @@ impl WarehouseTemplate {
             }
             Ok(())
         };
+        // Fields that belong to the individual airbase/warehouse (set by the
+        // map or the base mission), NOT to the coalition supply template we
+        // clone from -- carry them across so cloning the roster doesn't also
+        // overwrite per-airbase gameplay settings. `allowHotStart` in
+        // particular decides whether ramp-hot starts are allowed at that
+        // field; taking it from the template forced every base to the
+        // template's value (usually false).
+        let preserve_from_orig = |orig: &Table, new_wh: &Table| -> Result<()> {
+            for key in ["allowHotStart", "OperatingLevel_Air"] {
+                if let Ok(v) = orig.raw_get::<_, Value>(key) {
+                    if !matches!(v, Value::Nil) {
+                        new_wh.raw_set(key, v)?;
+                    }
+                }
+            }
+            if let Ok(orig_ac) = orig.raw_get::<_, Table>("aircrafts") {
+                new_wh.raw_set("aircrafts", orig_ac)?;
+            }
+            Ok(())
+        };
         for id in airport_ids {
             let orig = airports.raw_get::<_, Table>(id).ok();
             let coa = orig
@@ -1197,12 +1263,10 @@ impl WarehouseTemplate {
                 .and_then(|o| o.raw_get::<_, String>("coalition").ok());
             let new_wh = inv_for_coalition(coa.as_ref().map(|s| s.as_str())).deep_clone(lua)?;
             stop_dcs_production(&new_wh)?;
-            // Preserve original aircrafts and coalition from the base mission.
-            // Propagation will add linkDynTempl into the aircraft entries.
+            // Preserve per-airbase fields + original aircrafts from the base
+            // mission. Propagation adds linkDynTempl into the aircraft entries.
             if let Some(orig) = &orig {
-                if let Ok(orig_ac) = orig.raw_get::<_, Table>("aircrafts") {
-                    new_wh.raw_set("aircrafts", orig_ac)?;
-                }
+                preserve_from_orig(orig, &new_wh)?;
             }
             if let Some(c) = &coa {
                 new_wh.raw_set("coalition", c.clone())?;
@@ -1219,9 +1283,7 @@ impl WarehouseTemplate {
             let new_wh = inv_for_coalition(coa.as_ref().map(|s| s.as_str())).deep_clone(lua)?;
             stop_dcs_production(&new_wh)?;
             if let Some(orig) = &orig {
-                if let Ok(orig_ac) = orig.raw_get::<_, Table>("aircrafts") {
-                    new_wh.raw_set("aircrafts", orig_ac)?;
-                }
+                preserve_from_orig(orig, &new_wh)?;
             }
             if let Some(c) = &coa {
                 new_wh.raw_set("coalition", c.clone())?;
@@ -1408,6 +1470,13 @@ impl WarehouseTemplate {
         // carrier ends up unable to slot the jets sitting on its deck.
         // Airports keep unlimitedAircrafts / OperatingLevel_Air as templated
         // (dynSpawn links are handled by propagate_links above).
+        let navy_for = |coa: Option<&str>| -> Option<&Table> {
+            match coa {
+                Some("blue") => self.blue_navy.as_ref(),
+                Some("red") => self.red_navy.as_ref(),
+                _ => None,
+            }
+        };
         let force_limited_wf = |wh: &Table, is_ship: bool| -> Result<()> {
             for flag in ["unlimitedMunitions", "unlimitedFuel"] {
                 wh.raw_set(flag, false)?;
@@ -1423,14 +1492,28 @@ impl WarehouseTemplate {
         for wh_pair in airports.clone().pairs::<i64, Table>() {
             force_limited_wf(&wh_pair?.1, false)?;
         }
+        let mut navy_applied = 0u32;
         for wh_pair in warehouses.clone().pairs::<i64, Table>() {
             let (id, wh) = wh_pair?;
-            if id != blue_inventory && id != red_inventory {
-                // ships carry a "speed" field in their warehouse entry; fixed
-                // warehouses (depots, FARP pads) don't.
-                let is_ship = wh.raw_get::<_, f64>("speed").is_ok();
-                force_limited_wf(&wh, is_ship)?;
+            if id == blue_inventory || id == red_inventory {
+                continue;
             }
+            let ship_coa = ship_coalition.get(&id).map(|s| s.as_str());
+            let is_ship = ship_coa.is_some();
+            force_limited_wf(&wh, is_ship)?;
+            // Copy the naval aircraft roster onto this ship's warehouse, if a
+            // BINVENTORYNAVY / RINVENTORYNAVY template was supplied. This is
+            // the carrier-specific airframe list; bflib reads the ship's live
+            // inventory when it registers a carrier warehouse.
+            if let Some(navy) = navy_for(ship_coa) {
+                if let Ok(ac) = navy.raw_get::<_, Table>("aircrafts") {
+                    wh.raw_set("aircrafts", ac.deep_clone(lua)?)?;
+                    navy_applied += 1;
+                }
+            }
+        }
+        if navy_applied > 0 {
+            info!("applied naval inventory roster to {navy_applied} ship warehouse(s)");
         }
         base.warehouses.set("airports", airports)?;
         base.warehouses.set("warehouses", warehouses)?;
