@@ -313,6 +313,7 @@ impl Db {
                         | ObjectiveKind::Fob
                         | ObjectiveKind::Farp { .. }
                         | ObjectiveKind::Logistics
+                        | ObjectiveKind::NavalBase
                 )
             })
             .map(|(oid, obj)| (*oid, obj.owner, obj.zone.pos()))
@@ -668,13 +669,50 @@ impl Db {
             };
             claimed.insert(gid);
             let cg_name = objective!(self, &cg_id)?.name.clone();
-            info!("[CARRIER_INIT] {} '{}' -> group {:?} (side {:?})", cg_name, cg_name, gid, g_side);
+
+            // Anchor position: where this carrier objective SHOULD be. Its
+            // own zone drifts as the carrier sails and an earlier bug could
+            // have dragged it onto the wrong task force, so prefer the
+            // mission-editor position of a still-present home-side task force
+            // (e.g. a sunk BCARRIER for "Blue Strike Group"). Falls back to
+            // the current zone.
+            let anchor = carrier_template_groups
+                .iter()
+                .filter(|(g, s, _, _)| *g != gid && *s == home)
+                .map(|(_, _, _, p)| *p)
+                .next()
+                .unwrap_or_else(|| g_pos);
+
+            // If the chosen task force is nowhere near the anchor (typical
+            // when it's a reconcile-spawned replacement created at the
+            // drifted zone), translate its units onto the anchor.
+            let final_pos = if na::distance(&anchor.into(), &g_pos.into()) > 5000.0 {
+                let delta = anchor - g_pos;
+                info!("[CARRIER_INIT] relocating {} task force {:?} by ({:.0},{:.0}) to anchor ({:.0},{:.0})",
+                      cg_name, gid, delta.x, delta.y, anchor.x, anchor.y);
+                let uids: SmallVec<[bfprotocols::db::group::UnitId; 8]> =
+                    group!(self, &gid)?.units.into_iter().copied().collect();
+                for uid in uids {
+                    let u = unit_mut!(self, &uid)?;
+                    u.pos += delta;
+                    u.spawn_pos += delta;
+                    u.position.p.x += delta.x;
+                    u.position.p.z += delta.y;
+                    u.spawn_position.p.x += delta.x;
+                    u.spawn_position.p.z += delta.y;
+                }
+                anchor
+            } else {
+                g_pos
+            };
+
+            info!("[CARRIER_INIT] {} '{}' -> group {:?} (side {:?}) at ({:.0},{:.0})",
+                  cg_name, cg_name, gid, g_side, final_pos.x, final_pos.y);
 
             let obj = objective_mut!(self, &cg_id)?;
             obj.groups.get_or_default_cow(g_side).insert_cow(gid);
-            // Snap the (possibly-drifted) objective zone onto this task force.
             if let Zone::Circle { pos, .. } = &mut obj.zone {
-                *pos = g_pos;
+                *pos = final_pos;
             }
             self.persisted.objectives_by_group.insert_cow(gid, cg_id);
             group_mut!(self, &gid)?.origin = DeployKind::Objective { origin: cg_id };
