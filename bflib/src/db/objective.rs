@@ -1898,6 +1898,37 @@ impl Db {
                     .context("repairing captured airbase logi")?;
                 self.repair_services(*side, now, oid)
                     .context("repairing captured airbase services")?;
+                // Bring the new owner's defensive garrison (armour, infantry,
+                // AAA, SAM) back to full. The .miz pre-places BOTH sides'
+                // garrisons at every objective with the non-owner's units
+                // dead, and nothing else revives them on capture -- so
+                // without this a freshly-taken base sits near 0% health,
+                // stays permanently re-capturable, and the capturing side
+                // can't fix it (friendly troops don't trigger a capture).
+                // Logi (gradual, via repair_one_logi_step) and services
+                // (delayed, via repair_services) are deliberately left alone.
+                {
+                    let garrison: SmallVec<[GroupId; 16]> = objective!(self, oid)?
+                        .groups
+                        .get(side)
+                        .into_iter()
+                        .flat_map(|s| s.into_iter().copied())
+                        .collect();
+                    for gid in garrison {
+                        let g = group!(self, &gid)?;
+                        if g.class.is_logi() || g.class.is_services() {
+                            continue;
+                        }
+                        let uids: SmallVec<[UnitId; 32]> =
+                            g.units.into_iter().copied().collect();
+                        for uid in uids {
+                            unit_mut!(self, &uid)?.dead = false;
+                        }
+                        if objective!(self, oid)?.spawned {
+                            self.ephemeral.push_spawn(gid);
+                        }
+                    }
+                }
                 self.capture_warehouse(lua, oid)
                     .context("capturing warehouse")?;
                 self.sync_scenery_markers(oid);
