@@ -104,6 +104,10 @@ pub enum AdminCommand {
     Repair {
         airbase: String,
     },
+    Capture {
+        objective: String,
+        side: Side,
+    },
     Tim {
         key: String,
         size: usize,
@@ -277,6 +281,7 @@ impl AdminCommand {
             "tick: execute a logistics tick now",
             "deliver: execute a logistics delivery now",
             "repair <airbase>: repair one step at the specified airbase",
+            "capture <objective> <blue|red|neutral>: force an objective to change hands",
             "tim <key> [size] [alt]: create explosions of [size] default 3000 at every f10 mark with text <key>",
             "spawn <key>: spawn at f10 mark. <key> <troop|deployable> <side> <heading> <name>",
             "switch <side> <alias|playerid|ucid>: force side switch a player",
@@ -336,6 +341,14 @@ impl FromStr for AdminCommand {
             Ok(Self::LogisticsDeliverNow)
         } else if let Some(s) = s.strip_prefix("repair ") {
             Ok(Self::Repair { airbase: s.into() })
+        } else if let Some(s) = s.strip_prefix("capture ") {
+            match s.rsplit_once(' ') {
+                None => bail!("capture <objective> <blue|red|neutral>"),
+                Some((objective, side)) => Ok(Self::Capture {
+                    objective: objective.trim().into(),
+                    side: side.trim().parse::<Side>()?,
+                }),
+            }
         } else if let Some(s) = s.strip_prefix("tim ") {
             match &s.split(" ").collect::<SmallVec<[&str; 4]>>()[..] {
                 [] | [""] => bail!("tim <mark> [size] [alt]"),
@@ -1562,6 +1575,13 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 match ctx.db.repair_objective(airbase!(&airbase), Utc::now()) {
                     Ok(()) => reply_ok!("repaired {airbase}"),
                     Err(e) => reply_ok!("failed to repair {e:?}"),
+                }
+            }
+            AdminCommand::Capture { objective, side } => {
+                let oid = airbase!(&objective);
+                match ctx.db.force_capture(lua, &ctx.idx, oid, side, Utc::now()) {
+                    Ok(prev) => reply_ok!("{objective}: {prev:?} -> {side:?}"),
+                    Err(e) => reply_err!("capture failed: {e:?}"),
                 }
             }
             AdminCommand::Tim { key, size, alt } => {

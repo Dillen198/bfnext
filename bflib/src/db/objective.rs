@@ -2008,6 +2008,97 @@ impl Db {
         Ok(actually_captured)
     }
 
+    /// Force an objective to change hands, applying the same side effects as
+    /// a normal troop capture (new owner's garrison revived, airbase
+    /// coalition flipped, warehouse re-owned, supply lines rebuilt, carrier
+    /// task force swapped). For admin use / testing -- no troops, no
+    /// consolidation hold. Returns the previous owner.
+    pub fn force_capture(
+        &mut self,
+        lua: MizLua,
+        idx: &MizIndex,
+        oid: ObjectiveId,
+        new_owner: Side,
+        now: DateTime<Utc>,
+    ) -> Result<Side> {
+        let (previous_owner, name, is_carrier, is_sam) = {
+            let obj = objective!(self, &oid)?;
+            (
+                obj.owner,
+                obj.name.clone(),
+                obj.kind.is_carrier_group(),
+                obj.kind.is_special_sam_site(),
+            )
+        };
+        if previous_owner == new_owner {
+            return Err(anyhow!("{name} is already owned by {new_owner:?}"));
+        }
+        if is_carrier {
+            self.flip_carrier_group_owner(lua, idx, now, oid, new_owner)?;
+            let obj = objective!(self, &oid)?;
+            self.ephemeral.create_objective_markup(&self.persisted, obj);
+            self.ephemeral.stat(Stat::Capture { id: oid, side: new_owner, by: smallvec![] });
+            self.ephemeral.dirty();
+            return Ok(previous_owner);
+        }
+
+        {
+            let obj = objective_mut!(self, &oid)?;
+            obj.owner = new_owner;
+            obj.spawned = false;
+            obj.threatened = true;
+            obj.last_threatened_ts = now;
+            obj.last_activate = now;
+            obj.last_change_ts = now;
+            obj.capture_hold.clear();
+            obj.capture_hold_ts = None;
+        }
+        self.ephemeral.capture_progress.remove(&oid);
+
+        if !is_sam {
+            if let Some(abid) = self.ephemeral.airbase_by_oid.get(&oid) {
+                if let Ok(airbase) = Airbase::get_instance(lua, abid) {
+                    let _ = airbase.set_coalition(new_owner);
+                }
+            }
+        }
+
+        self.repair_one_logi_step(new_owner, now, oid)
+            .context("force_capture: repairing logi")?;
+        self.repair_services(new_owner, now, oid)
+            .context("force_capture: repairing services")?;
+        // Revive the new owner's defensive garrison (same as check_capture).
+        let garrison: SmallVec<[GroupId; 16]> = objective!(self, &oid)?
+            .groups
+            .get(&new_owner)
+            .into_iter()
+            .flat_map(|s| s.into_iter().copied())
+            .collect();
+        for gid in garrison {
+            let g = group!(self, &gid)?;
+            if g.class.is_logi() || g.class.is_services() {
+                continue;
+            }
+            let uids: SmallVec<[UnitId; 32]> = g.units.into_iter().copied().collect();
+            for uid in uids {
+                unit_mut!(self, &uid)?.dead = false;
+            }
+        }
+        self.capture_warehouse(lua, oid)
+            .context("force_capture: capturing warehouse")?;
+        self.sync_scenery_markers(oid);
+        self.setup_supply_lines()
+            .context("force_capture: supply lines")?;
+        self.deliver_supplies_from_logistics_hubs(lua, now)
+            .context("force_capture: delivering supplies")?;
+
+        self.ephemeral.stat(Stat::Capture { id: oid, side: new_owner, by: smallvec![] });
+        let obj = objective!(self, &oid)?;
+        self.ephemeral.create_objective_markup(&self.persisted, obj);
+        self.ephemeral.dirty();
+        Ok(previous_owner)
+    }
+
     /// Resolve post-capture holds. A base captured with
     /// `capture_consolidation_secs > 0` is held only by the assaulting troop
     /// groups until either they survive the timer (consolidate -> garrison may
