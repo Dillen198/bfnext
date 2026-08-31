@@ -49,7 +49,7 @@ use dcso3::{
     land::Land, net::Net, trigger::Trigger, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3
 };
 use enumflags2::BitFlags;
-use fxhash::FxHashSet;
+use fxhash::{FxHashMap, FxHashSet};
 use dcso3::land::SurfaceType;
 use log::{debug, error, info, warn};
 use smallvec::SmallVec;
@@ -436,8 +436,11 @@ impl Db {
 
                         // Check if a group with this template name already exists in the database
                         // This prevents duplicate groups when re-indexing after load
+                        // Exact match: RCARRIER and RCARRIER2 are distinct
+                        // task forces -- a `starts_with` here would make one
+                        // suppress creation of the other.
                         let already_exists = self.persisted.groups.into_iter()
-                            .any(|(_, g)| g.template_name.starts_with(name.as_str()));
+                            .any(|(_, g)| g.template_name.as_str() == name.as_str());
                         if already_exists {
                             info!("[CARRIER_TEMPLATE] Skipping {} - already exists in database", name);
                             continue;
@@ -594,7 +597,7 @@ impl Db {
         // Find all naval groups with CARRIER in the name -- these are the
         // carrier task-force groups. Record each group's centroid from its
         // persisted units so we can match it to an objective by position.
-        let carrier_template_groups: Vec<(GroupId, Side, String, Vector2)> = self
+        let mut carrier_template_groups: Vec<(GroupId, Side, String, Vector2)> = self
             .persisted
             .groups
             .into_iter()
@@ -640,11 +643,48 @@ impl Db {
             obj_info.push((*cg_id, obj.zone.pos(), home));
         }
 
+        // --- Dedup carrier task-force groups by template name ---
+        // The mission defines each task force exactly once (RCARRIER,
+        // BCARRIER, RCARRIER2, BCARRIER2). Any extra group sharing a
+        // template name is a leftover from the old dynamic-respawn path
+        // (e.g. a reconcile-spawned second RCARRIER). Two groups from one
+        // template collide on DCS unit names (the deck airbases), so keep
+        // only the lowest-GroupId copy of each template and delete the rest.
+        {
+            let mut keep: FxHashMap<String, GroupId> = FxHashMap::default();
+            for (gid, _, tname, _) in &carrier_template_groups {
+                keep.entry(tname.clone())
+                    .and_modify(|k| {
+                        if gid < k {
+                            *k = *gid;
+                        }
+                    })
+                    .or_insert(*gid);
+            }
+            let dups: Vec<GroupId> = carrier_template_groups
+                .iter()
+                .filter(|(g, _, t, _)| keep.get(t) != Some(g))
+                .map(|(g, _, _, _)| *g)
+                .collect();
+            for gid in dups {
+                info!("[CARRIER_INIT] deleting duplicate carrier group {:?} (template collision)", gid);
+                if let Ok(g) = group!(self, &gid) {
+                    let dcs_name = g.template_name.to_string();
+                    self.ephemeral
+                        .push_despawn(gid, Despawn::GroupByName(dcs_name));
+                }
+                self.persisted.objectives_by_group.remove_cow(&gid);
+                if let Err(e) = self.delete_group(&gid) {
+                    error!("[CARRIER_INIT] failed to delete duplicate carrier group {:?}: {:?}", gid, e);
+                }
+            }
+            carrier_template_groups.retain(|(g, _, t, _)| keep.get(t) == Some(g));
+        }
+
         // Wipe every carrier objective's task-force group list -- we rebuild
         // it below from a clean position match. This clears any cross-linked
-        // group left by the old side-based matcher (a single Red task force
-        // stapled onto every Red-owned carrier objective, captured ones
-        // included).
+        // group left by an earlier matcher, plus dangling references to
+        // groups we just deleted above.
         let tmpl_gids: FxHashSet<GroupId> =
             carrier_template_groups.iter().map(|(g, _, _, _)| *g).collect();
         for cg_id in &carrier_ids {
@@ -656,7 +696,10 @@ impl Db {
                         let s = *s;
                         set.into_iter()
                             .copied()
-                            .filter(|g| tmpl_gids.contains(g))
+                            .filter(|g| {
+                                tmpl_gids.contains(g)
+                                    || self.persisted.groups.get(g).is_none()
+                            })
                             .map(move |g| (s, g))
                     })
                     .collect()
@@ -669,108 +712,95 @@ impl Db {
             }
         }
 
-        // Give each carrier objective EXACTLY ONE task force. For each
-        // objective, in priority order, pick an unclaimed carrier group:
-        //   1. one already linked to it (objectives_by_group), preferring the
-        //      objective's current owner side;
-        //   2. one whose side matches the objective's home side (from name);
-        //   3. one whose side matches the objective's current owner;
-        //   4. the nearest unclaimed group of any side.
-        // Every carrier group not claimed by an objective is an orphan from
-        // an earlier mis-assignment and is deleted.
+        // Home side per carrier objective (from its name: "Red Strike
+        // Group" / "Blue Strike Group"). Used only to give a Neutral-owned
+        // carrier objective a live task force.
+        let home_by_oid: FxHashMap<ObjectiveId, Side> =
+            obj_info.iter().map(|(oid, _, home)| (*oid, *home)).collect();
+
+        // --- Co-located task forces ---
+        // Each carrier objective holds BOTH sides' task forces: the mission
+        // author placed e.g. RCARRIER + BCARRIER2 at "Red Strike Group" and
+        // BCARRIER + RCARRIER2 at "Blue Strike Group". The task force whose
+        // side == the objective's current owner is the LIVE carrier; the
+        // other side's task force sits at the same spot with every unit
+        // dead -- a RESERVE that flip_carrier_group_owner resurrects on
+        // capture (no dynamic respawn, so no unit-name collision).
+        //
+        // Assignment is purely by position: each task force group is
+        // claimed by the nearest carrier objective, at most one group per
+        // side per objective (nearest wins a tie).
         let mut claimed: FxHashSet<GroupId> = FxHashSet::default();
-        for (cg_id, _zone, home) in obj_info.iter().copied() {
-            let owner = objective!(self, &cg_id)?.owner;
-            let unclaimed = |g: &GroupId| !claimed.contains(g);
-            let linked: Vec<(GroupId, Side, String, Vector2)> = carrier_template_groups
+        let mut assign: FxHashMap<(ObjectiveId, Side), (GroupId, Vector2, f64)> =
+            FxHashMap::default();
+        for (gid, g_side, _tname, g_pos) in carrier_template_groups.iter().cloned() {
+            let nearest = carrier_ids
                 .iter()
-                .filter(|(g, _, _, _)| unclaimed(g)
-                    && self.persisted.objectives_by_group.get(g) == Some(&cg_id))
-                .cloned()
-                .collect();
-            let chosen = linked.iter().find(|(_, s, _, _)| *s == owner).cloned()
-                .or_else(|| linked.first().cloned())
-                .or_else(|| carrier_template_groups.iter()
-                    .find(|(g, s, _, _)| unclaimed(g) && *s == home).cloned())
-                .or_else(|| carrier_template_groups.iter()
-                    .find(|(g, s, _, _)| unclaimed(g) && *s == owner).cloned())
-                .or_else(|| {
-                    let cg_pos = objective!(self, &cg_id).ok()?.zone.pos();
-                    carrier_template_groups.iter()
-                        .filter(|(g, _, _, _)| unclaimed(g))
-                        .min_by(|a, b| na::distance_squared(&a.3.into(), &cg_pos.into())
-                            .partial_cmp(&na::distance_squared(&b.3.into(), &cg_pos.into())).unwrap())
-                        .cloned()
-                });
-            let Some((gid, g_side, tmpl_name, g_pos)) = chosen else {
-                info!("[CARRIER_INIT] {:?} '{}' -- no task force available, reconcile will spawn one",
-                      cg_id, objective!(self, &cg_id)?.name);
-                continue;
-            };
-            claimed.insert(gid);
-            let cg_name = objective!(self, &cg_id)?.name.clone();
-
-            // Anchor position: where this carrier objective SHOULD be. Its
-            // own zone drifts as the carrier sails and an earlier bug could
-            // have dragged it onto the wrong task force, so prefer the
-            // mission-editor position of a still-present home-side task force
-            // (e.g. a sunk BCARRIER for "Blue Strike Group"). Falls back to
-            // the current zone.
-            let anchor = carrier_template_groups
-                .iter()
-                .filter(|(g, s, _, _)| *g != gid && *s == home)
-                .map(|(_, _, _, p)| *p)
-                .next()
-                .unwrap_or_else(|| g_pos);
-
-            // If the chosen task force is nowhere near the anchor (typical
-            // when it's a reconcile-spawned replacement created at the
-            // drifted zone), translate its units onto the anchor.
-            let final_pos = if na::distance(&anchor.into(), &g_pos.into()) > 5000.0 {
-                let delta = anchor - g_pos;
-                info!("[CARRIER_INIT] relocating {} task force {:?} by ({:.0},{:.0}) to anchor ({:.0},{:.0})",
-                      cg_name, gid, delta.x, delta.y, anchor.x, anchor.y);
-                let uids: SmallVec<[bfprotocols::db::group::UnitId; 8]> =
-                    group!(self, &gid)?.units.into_iter().copied().collect();
-                for uid in uids {
-                    let u = unit_mut!(self, &uid)?;
-                    u.pos += delta;
-                    u.spawn_pos += delta;
-                    u.position.p.x += delta.x;
-                    u.position.p.z += delta.y;
-                    u.spawn_position.p.x += delta.x;
-                    u.spawn_position.p.z += delta.y;
+                .filter_map(|cg_id| {
+                    let p = objective!(self, cg_id).ok()?.zone.pos();
+                    Some((*cg_id, na::distance_squared(&p.into(), &g_pos.into())))
+                })
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            let Some((cg_id, d2)) = nearest else { continue };
+            match assign.get(&(cg_id, g_side)) {
+                Some((_, _, best)) if *best <= d2 => {}
+                _ => {
+                    assign.insert((cg_id, g_side), (gid, g_pos, d2));
                 }
-                anchor
-            } else {
-                g_pos
-            };
-
-            info!("[CARRIER_INIT] {} '{}' -> group {:?} (side {:?}) at ({:.0},{:.0})",
-                  cg_name, cg_name, gid, g_side, final_pos.x, final_pos.y);
-
-            let obj = objective_mut!(self, &cg_id)?;
-            obj.groups.get_or_default_cow(g_side).insert_cow(gid);
-            if let Zone::Circle { pos, .. } = &mut obj.zone {
-                *pos = final_pos;
             }
+        }
+
+        let assignments: Vec<((ObjectiveId, Side), (GroupId, Vector2))> = assign
+            .into_iter()
+            .map(|(k, (gid, pos, _))| (k, (gid, pos)))
+            .collect();
+        for ((cg_id, g_side), (gid, g_pos)) in assignments {
+            claimed.insert(gid);
+            let owner = objective!(self, &cg_id)?.owner;
+            let cg_name = objective!(self, &cg_id)?.name.clone();
+            let effective_owner = if owner == Side::Neutral {
+                home_by_oid.get(&cg_id).copied().unwrap_or(Side::Neutral)
+            } else {
+                owner
+            };
+            let live = g_side == effective_owner;
+
+            objective_mut!(self, &cg_id)?
+                .groups
+                .get_or_default_cow(g_side)
+                .insert_cow(gid);
             self.persisted.objectives_by_group.insert_cow(gid, cg_id);
             group_mut!(self, &gid)?.origin = DeployKind::Objective { origin: cg_id };
-            self.ephemeral.push_spawn(gid);
 
-            // carrier_template = the DCS template of this objective's task
-            // force IF it belongs to the current owner; otherwise leave it
-            // for reconcile_carrier_task_forces to sort out.
-            if objective!(self, &cg_id)?.owner == g_side {
+            let uids: SmallVec<[bfprotocols::db::group::UnitId; 8]> =
+                group!(self, &gid)?.units.into_iter().copied().collect();
+            if live {
+                for uid in &uids {
+                    unit_mut!(self, uid)?.dead = false;
+                }
+                if let Zone::Circle { pos, .. } = &mut objective_mut!(self, &cg_id)?.zone {
+                    *pos = g_pos;
+                }
+                self.ephemeral.push_spawn(gid);
                 let template_name = group!(self, &gid)?.template_name.clone();
                 if let ObjectiveKind::CarrierGroup { carrier_template, .. } =
                     &mut objective_mut!(self, &cg_id)?.kind
                 {
                     *carrier_template = template_name.clone();
-                    info!("[CARRIER_INIT] {} carrier_template = {}", cg_name, template_name);
                 }
+                info!(
+                    "[CARRIER_INIT] {} LIVE task force {:?} ({:?}) at ({:.0},{:.0})",
+                    cg_name, gid, g_side, g_pos.x, g_pos.y
+                );
+            } else {
+                for uid in &uids {
+                    unit_mut!(self, uid)?.dead = true;
+                }
+                info!(
+                    "[CARRIER_INIT] {} RESERVE task force {:?} ({:?}) held dead at ({:.0},{:.0})",
+                    cg_name, gid, g_side, g_pos.x, g_pos.y
+                );
             }
-            let _ = tmpl_name;
         }
 
         // Delete orphan carrier groups (never claimed by any objective).

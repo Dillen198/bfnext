@@ -2436,9 +2436,18 @@ impl Db {
         // On capture: remove old side's groups from DCS world, then spawn new side's groups.
         if let Some(old_groups) = obj.groups.get(&old_owner).cloned() {
             for gid in &old_groups {
-                // Push despawn to remove from DCS world
+                // Push despawn to remove from DCS world. Carrier task forces
+                // activate under their bare miz template name (e.g.
+                // "BCARRIER"), not the "-<gid>" bflib name, so despawn by
+                // that name -- object_id_by_gid may not have tracked the
+                // ships that DCS spawned from the raw template.
                 if let Some(live_oid) = self.ephemeral.object_id_by_gid.get(gid) {
                     self.ephemeral.push_despawn(*gid, Despawn::Group(live_oid.clone()));
+                } else if let Some(group) = self.persisted.groups.get(gid) {
+                    self.ephemeral.push_despawn(
+                        *gid,
+                        Despawn::GroupByName(group.template_name.to_string()),
+                    );
                 }
                 // Mark all units dead in our DB
                 if let Some(group) = self.persisted.groups.get(gid) {
