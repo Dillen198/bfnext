@@ -1380,17 +1380,23 @@ impl Db {
 
             // For carrier-based slots, find the objective by matching the link_unit to carrier objective
             let obj = if has_link_unit {
-                // This is a carrier-based slot - find the carrier group objective for this side
-                // At init time, carriers haven't spawned yet so we just match by side
-                let mut found_obj: Option<ObjectiveId> = None;
-                for (oid, obj) in self.persisted.objectives.into_iter() {
-                    if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
-                        if obj.owner == side {
-                            found_obj = Some(*oid);
-                            break;
-                        }
-                    }
-                }
+                // Carrier-based slot. Map it to the carrier objective whose
+                // live task force is physically closest to the slot -- both
+                // carrier objectives can be owned by the same side (one
+                // captured) with overlapping zones, so "first carrier
+                // objective owned by side" would send every carrier's slots
+                // to the same objective. init_carrier_groups has already run
+                // so the ship positions are known. Falls back to the first
+                // carrier objective owned by this side.
+                let found_obj = super::logistics::nearest_carrier_objective(&self.persisted, pos)
+                    .or_else(|| {
+                        self.persisted.objectives.into_iter().find_map(|(oid, obj)| {
+                            match &obj.kind {
+                                ObjectiveKind::CarrierGroup { .. } if obj.owner == side => Some(*oid),
+                                _ => None,
+                            }
+                        })
+                    });
                 match found_obj {
                     Some(oid) => {
                         info!("[CARRIER_SLOT] Slot {:?} linked to carrier objective {:?}", slot.name(), oid);

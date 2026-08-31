@@ -602,6 +602,50 @@ fn get_supplier<'lua>(lua: MizLua<'lua>, template: String) -> Result<warehouse::
         .context("getting warehouse")
 }
 
+/// The carrier-group objective whose LIVE task force is closest to `pos`.
+/// Both carrier objectives can be owned by the same side (one captured)
+/// and their 5km zones overlap once the carriers sail near the same naval
+/// base, so attributing a carrier deck airbase / carrier slot by zone
+/// containment or "first carrier objective owned by side" mis-assigns
+/// then -- match the physical ship instead. Free fn (not a Db method) so
+/// callers inside a self-mutating closure can borrow only `persisted`.
+pub(super) fn nearest_carrier_objective(
+    persisted: &super::persisted::Persisted,
+    pos: Vector2,
+) -> Option<ObjectiveId> {
+    let mut best: Option<(ObjectiveId, f64)> = None;
+    for (oid, obj) in &persisted.objectives {
+        if !matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
+            continue;
+        }
+        let Some(set) = obj.groups.get(&obj.owner) else {
+            continue;
+        };
+        for gid in set {
+            let Some(g) = persisted.groups.get(gid) else {
+                continue;
+            };
+            let mut sum = Vector2::default();
+            let mut n = 0u32;
+            for uid in &g.units {
+                if let Some(u) = persisted.units.get(uid) {
+                    sum += u.pos;
+                    n += 1;
+                }
+            }
+            if n == 0 {
+                continue;
+            }
+            let c = sum / n as f64;
+            let d = na::distance_squared(&c.into(), &pos.into());
+            if best.map_or(true, |(_, bd)| d < bd) {
+                best = Some((*oid, d));
+            }
+        }
+    }
+    best.map(|(o, _)| o)
+}
+
 impl Db {
     fn init_resource_map(&mut self, lua: MizLua) -> Result<()> {
         let whcfg = match self.ephemeral.cfg.warehouse.as_ref() {
@@ -870,20 +914,37 @@ impl Db {
                     airbase
                         .auto_capture(false)
                         .context("setting airbase autocapture")?;
-                    let oid = self
-                        .persisted
-                        .objectives
-                        .into_iter()
-                        .find(|(_, obj)| obj.zone.contains(pos));
+                    // A carrier deck airbase is named after its ship unit. Both
+                    // carrier objectives can be owned by the same side with
+                    // overlapping 5km zones (one captured, both near the same
+                    // naval base), so zone containment attributes every deck to
+                    // whichever carrier objective iterates first -- match the
+                    // physical ship instead.
+                    let is_carrier_deck =
+                        name.starts_with("BCARRIER") || name.starts_with("RCARRIER");
+                    let oid: Option<ObjectiveId> = if is_carrier_deck {
+                        nearest_carrier_objective(&self.persisted, pos)
+                    } else {
+                        None
+                    }
+                    .or_else(|| {
+                        self.persisted
+                            .objectives
+                            .into_iter()
+                            .find(|(_, obj)| obj.zone.contains(pos))
+                            .map(|(oid, _)| *oid)
+                    });
                     let w = airbase
                         .get_warehouse()
                         .context("getting airbase warehouse")?;
-                    let (oid, obj) = match oid {
+                    let (oid, obj) = match oid
+                        .and_then(|oid| self.persisted.objectives.get(&oid).map(|o| (oid, o)))
+                    {
                         Some((oid, obj)) => {
                             airbase
                                 .set_coalition(obj.owner)
                                 .context("setting airbase owner")?;
-                            (*oid, obj)
+                            (oid, obj)
                         }
                         None if !self.ephemeral.global_pad_templates.contains(&name) => {
                             map.for_each(|name, _| {
@@ -948,9 +1009,29 @@ impl Db {
                     // to airbase-tier.
                     let is_carrier = self.persisted.carrier_groups.contains(oid);
                     let hub = self.persisted.logistics_hubs.contains(oid) || is_carrier;
+                    // A captured carrier keeps the previous owner's airframes so
+                    // the new owner can operate them once repairs finish (see
+                    // capture_warehouse's carrier branch + the CarrierNotRepaired
+                    // gate in try_occupy_slot_deferred). Don't let this pass
+                    // delete those "foreign" entries just because they're not in
+                    // the current owner's production -- that left a captured
+                    // carrier unable to slot its own retained jets ("Objective
+                    // does not have any FA-18C_hornet in stock").
+                    let other_prod = self
+                        .ephemeral
+                        .production_by_side
+                        .get(&obj.owner.opposite())
+                        .cloned();
                     for (name, _) in &obj.warehouse.equipment {
                         if !prod.equipment.contains_key(name) {
-                            del_eq.push(name.clone());
+                            let keep_foreign = is_carrier
+                                && other_prod
+                                    .as_ref()
+                                    .map(|p| p.equipment.contains_key(name))
+                                    .unwrap_or(false);
+                            if !keep_foreign {
+                                del_eq.push(name.clone());
+                            }
                         }
                     }
                     for name in del_eq {
@@ -969,6 +1050,25 @@ impl Db {
                         let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, eqip.production);
                         let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
                         inv.capacity = capacity;
+                    }
+                    if is_carrier {
+                        if let Some(other_prod) = &other_prod {
+                            for (name, eqip) in &other_prod.equipment {
+                                if prod.equipment.contains_key(name) {
+                                    continue;
+                                }
+                                let cap = whcfg.capacity(true, eqip.production);
+                                let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
+                                inv.capacity = cap;
+                                // a retained foreign jet with 0 stock can never
+                                // be slotted; give the captor a usable load,
+                                // consistent with capture_warehouse restocking
+                                // the owner's airframes to capacity on capture.
+                                if inv.stored == 0 {
+                                    inv.stored = cap;
+                                }
+                            }
+                        }
                     }
                     for (name, prod) in &prod.liquids {
                         let capacity = whcfg.capacity_for(&obj.name, obj.unlimited_supply, hub, *prod);
@@ -1662,8 +1762,15 @@ impl Db {
                         if is_carrier {
                             // captured carrier: keep the previous owner's aircraft available
                             // with hub capacity so the new owner can operate them
-                            inv.capacity = whcfg.capacity(true, equip.production);
-                            // stored stays as-is (whatever was on the carrier at capture)
+                            let cap = whcfg.capacity(true, equip.production);
+                            inv.capacity = cap;
+                            // a retained foreign jet with 0 stock can never be
+                            // slotted -- give the captor a usable load (the
+                            // CarrierNotRepaired gate still holds it until
+                            // repairs finish).
+                            if inv.stored == 0 {
+                                inv.stored = cap;
+                            }
                         } else {
                             inv.stored = 0;
                             inv.capacity = 0;
