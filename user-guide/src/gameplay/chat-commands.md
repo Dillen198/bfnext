@@ -306,6 +306,26 @@ Increases logi by one step.
 
 ---
 
+#### `-admin capture <objective> <blue|red|neutral>`
+Force an objective to change hands, with all the normal capture side effects (logistics/services repair, garrison revival, warehouse and supply-line transfer, markers). Works on carrier groups. Objective names with spaces are fine.
+
+```
+-admin capture Mersin red
+-admin capture Blue Strike Group red
+```
+
+---
+
+#### `-admin tim <key> [size] [alt]`
+Detonate explosions at every F10 map mark whose text is `<key>`. `size` defaults to 3000; `alt` is an optional altitude.
+
+```
+-admin tim boom
+-admin tim boom 500
+```
+
+---
+
 #### `-admin spawn <key>`
 Spawn units at F10 mark.
 

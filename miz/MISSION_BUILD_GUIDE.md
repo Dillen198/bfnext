@@ -72,11 +72,22 @@ Mobile naval task force:
 - Escort ships (2-4 destroyers/cruisers)
 - **Supply ship (optional)** - Include a unit/group with "SUPPLY" in the name
 - **Position persists and updates**
-- **Can be damaged and repaired via Naval Base supplies (10 minute repair time)**
-- **Can be captured when health reaches 0%**
+- **Can be damaged and repaired** - via Naval Base supplies, air-dropped/helo repair crates (stack to speed up, ~30 min base), or the Repair/Respawn Carrier actions
+- **Can be captured** - disable it (logistics to 0 by sinking escorts/supply ship) then take its parent Naval Base; the carrier group then flips to the captor as *their* coalition's ships
 - **Acts as mobile airbase**
 - **F10 arrow drawn from parent Naval Base**
 - **Warehouse disabled if supply ship is destroyed**
+
+**Co-located task forces (required for capture to work):** Each CG objective must have **BOTH** coalitions' carrier task forces placed at it, all late-activated, all with **distinct group AND unit names**. bflib picks which one is live from the objective owner and swaps them on capture (no dynamic respawn — that used to collide on deck-airbase unit names). Naming convention drives the assignment:
+
+| Group name | Belongs to | Role |
+|---|---|---|
+| `RCARRIER`  | the Red-home CG objective  | Red's own carrier (live while Red owns it) |
+| `BCARRIER2` | the Red-home CG objective  | Blue's reserve, takes over if Blue captures it |
+| `BCARRIER`  | the Blue-home CG objective | Blue's own carrier (live while Blue owns it) |
+| `RCARRIER2` | the Blue-home CG objective | Red's reserve, takes over if Red captures it |
+
+Rule: a group named `<S>CARRIER` (no trailing digit) belongs to the CG objective whose home side is `S` (from its name, e.g. "Red Strike Group"); `<S>CARRIER2` (trailing digit) belongs to the *other* side's CG objective. Group name must contain `CARRIER`. Place each side's reserve at (or near) the same spot as that objective's live carrier.
 
 ### Factory (FAC) **[NEW]**
 Strategic production facility:
@@ -156,10 +167,13 @@ mechanic (cueing, EMCON, HARM defense) and its config options.
 ## Naval Templates **[NEW]**
 
 ### CARRIER (Mission Objectives Only - NOT Deployable)
-**Blue** | CVN-73 George Washington (Template: `BCARRIER1`)
-**Red**  | Admiral Kuznetsov (Template: `RCARRIER1`)
+**Blue** | CVN-73 George Washington - groups `BCARRIER` (at the Blue CG objective) + `RCARRIER2` (Red's reserve, at the Blue CG objective)
+**Red**  | Admiral Kuznetsov - groups `RCARRIER` (at the Red CG objective) + `BCARRIER2` (Blue's reserve, at the Red CG objective)
 
-**IMPORTANT**: These are late-activated mission templates for Carrier Group objectives. Do NOT create deployable carrier actions - carriers should only exist as mission objectives linked to Naval Bases.
+**IMPORTANT**:
+- Late-activated mission templates for Carrier Group objectives only. Do NOT create deployable carrier actions.
+- All four groups need **distinct group AND unit names** — copying a group in the ME keeps its unit names, which will collide on the carrier deck airbases. Rename the units (e.g. `RCARRIER2-1`..`RCARRIER2-4`).
+- See the **Carrier Group (CG)** section above for the co-located task-force layout and the `<S>CARRIER` / `<S>CARRIER2` naming rule that decides which objective a group attaches to.
 
 ### ESCORT
 **Blue** | 2x Ticonderoga, 2x Arleigh Burke
@@ -555,6 +569,15 @@ cargo build --release --package=bftools
 If you're adding or updating Special SAM Sites, run `bftools special-sam`
 too — see [Special SAM Sites](#special-sam-sites-new) above.
 
+**Warehouses:** `bftools miz` forces **weapons and fuel to limited** on every
+airbase and every ship warehouse (carriers included) regardless of what the
+inventory template or editor has set — bflib is the sole authority for
+weapons/fuel stock and fills each warehouse to capacity at init. Aircraft
+(dynSpawn / `unlimitedAircrafts`) is left as templated. Objective-level
+`UNLIMITED_SUPPLY` / `UNLIMITED_AIRCRAFTS` trigger-zone props still work
+(bflib keeps that objective's model maxed); such objectives show a `*` above
+their name on the F10 map.
+
 The generated mission's campaign config (the JSON file `bflib` loads at
 startup — e.g. `ODFv2_CFG`, named whatever you point bflib's state path at,
 not a fixed filename) can also be edited live from the web dashboard's
@@ -600,29 +623,31 @@ root [README.md](../README.md) for setup.
 ### Carrier Groups
 - **Position Tracking**: Carrier positions automatically tracked and persisted to database
 - **Waypoint Control**: Players can set carrier waypoints via F10 menu (CarrierWaypoint action)
-- **Timed Repair** (NEW): Repair takes configurable time (default: 600s = 10 minutes)
-  - Delivers carrier repair crate to Naval Base to start repair
+- **Timed Repair**: Repair takes configurable time (default: 1800s = 30 minutes)
+  - Deliver a carrier repair crate to the carrier (air-drop or helo) to start / speed up repair
+  - **Stacking**: each additional crate delivered while a repair is running divides the remaining time (floored at 60s) — 2 crates ≈ 15 min, 3 ≈ 10 min
+  - Also startable from the naval-base actions menu (**Repair Carrier** / **Respawn Carrier**, paid from base supplies), or automatically when the carrier is near a friendly, stocked naval base
   - Progress notifications every 5 minutes
-  - Message when complete: "{Carrier} has been fully repaired and is operational"
   - Time configurable in the campaign config JSON `carrier.repair_time` (in seconds)
 - **Repair Cost**: Requires supplies from parent Naval Base (default: 5000 supplies)
 - **Respawn Cost**: Requires supplies from parent Naval Base (default: 15000 supplies)
-- **Capture Mechanics** (NEW):
-  - Carrier can be captured when health and logi both reach 0%
-  - Requires enemy units within 10km to trigger capture
+- **Capture Mechanics**:
+  - Disable the carrier (logistics to 0 — sink escorts / supply ship), then take its parent Naval Base (either order works)
+  - The enemy task force is **replaced by the captor's own co-located reserve group** in the same spot (see the CG section for the required `<S>CARRIER` / `<S>CARRIER2` layout) — no dynamic respawn
   - Captured carrier starts at 50% health, 100% logistics
-  - All carrier groups and aircraft transfer to new owner
-  - Enemy can use captured carrier's warehouse
+  - Retained "foreign" airframes (types the captor doesn't normally produce) stay grounded until repairs finish; the captor's own aircraft work immediately
   - Messages sent to both sides when capture occurs
+  - `-admin capture <CG objective name> <side>` forces it manually
 - **Supply Ship Dependency** (NEW):
   - Include a ship with "SUPPLY" in group/unit name (e.g., `BSUPPLY#001`)
   - When supply ship destroyed: logistics drops to 0%, warehouse disabled
   - No aircraft spawns, no supplies until carrier is repaired
   - Repairing carrier also repairs/respawns supply ship
 - **Movement Speed**: Configurable in the campaign config JSON (default: 5.0 m/s ≈ 10 knots)
-- **Template Naming**: Carrier template group must be named with `BCARRIER`/`RCARRIER` prefix and late-activated in mission file —
-  or explicitly listed in `carrier.groups` (`[{"template": "BCARRIER1", "display_name": "CVN-73 Washington"}, ...]`) **[NEW]**
-  if you'd rather not rely on prefix auto-detection
+- **Template Naming**: Carrier task-force groups must contain `CARRIER` in the group name and be late-activated. Use the
+  `<S>CARRIER` / `<S>CARRIER2` convention (see the CG objective section) so each of the two objectives gets one group per side —
+  the live one is chosen from the objective owner and swapped on capture. All groups need unique group **and** unit names.
+  `carrier.groups` in the campaign config can still list templates explicitly.
 - **Spawn Repositioning Speed** **[NEW]**: `carrier.spawn_repositioning_speed` (default: 100.0 m/s) — carriers always
   spawn at their mission-editor position on load; this controls how fast they navigate back to their last saved
   position afterward

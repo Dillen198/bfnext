@@ -179,7 +179,13 @@ A carrier can't be boarded while it's combat-effective:
 
 A disabled carrier flips to whoever holds its naval base, in whichever order the two fall — destroy the carrier then take the base, or take the base first and finish the carrier off later, both work.
 
-**Note**: A captured carrier keeps flying whatever aircraft it had aboard, even types your coalition doesn't otherwise have access to — but those "foreign" airframes are grounded until the carrier's repairs finish. Your own coalition's normal aircraft are never affected by this.
+On capture the enemy task force is **replaced by your own coalition's carrier group** in the same location, with your deck slots — the carrier group is now yours to sail and fly from. It comes across at **50%** and needs repairing before it's fully operational:
+
+- **Carrier repair crates** — request them from the cargo menu, then air-drop or fly them out to the carrier. Stack several to cut the repair time (roughly 30 minutes on a single crate).
+- **Repair Carrier / Respawn Carrier** actions — off the linked naval base's actions menu, paid for out of that base's supplies. Respawn needs the carrier fully sunk first.
+- If the carrier's naval base stays friendly and stocked, it also **auto-repairs** on its own over time.
+
+**Note**: A captured carrier keeps whatever aircraft it had aboard, even types your coalition doesn't otherwise have access to — but those "foreign" airframes stay grounded until the carrier's repairs finish (you'll get a "flyable once carrier repairs finish" message if you try to slot one early). Your own coalition's normal aircraft are never affected by this.
 
 ### Last Stand
 
@@ -187,7 +193,7 @@ When a coalition is reduced to its **last primary objective** (an airbase, naval
 
 ### What Capture Does On Success
 
-Capturing an airbase or naval base flips its coalition and repairs one step of its logistics and services automatically. Warehouse stock and supply routes transfer to the new owner immediately.
+Capturing an airbase or naval base flips its coalition and repairs one step of its logistics and services automatically. Warehouse stock and supply routes transfer to the new owner immediately, and the new owner's garrison is revived on the spot so the base isn't left sitting at 0% health, wide open to being taken straight back.
 
 ## Point Rewards
 

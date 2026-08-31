@@ -34,6 +34,10 @@ Unlike manual cargo systems that require a player on the ground to trigger unpac
 
 **Note**: Multiple C-130s can deliver to the same objective simultaneously. Deliveries stack — each crate is processed individually. There is no race condition or delivery conflict.
 
+**Mixed delivery**: A deployable that needs several crates doesn't care how they arrive. Air-drop two of three from a C-130 and fly the third out by helicopter (or the other way round) and they still combine into one unpack once all the crates are within range — dropped crates, helo-carried crates, and plain F10 "spawn crate" crates all count toward the same build.
+
+**Carrier repair crates**: Request a carrier repair crate from the cargo menu and deliver it to a friendly carrier to start (or speed up) its repair. Stacking several crates cuts the repair time — see [Capturing Objectives](../gameplay/capturing-objectives.md#capturing-a-naval-carrier-group).
+
 ## C-130 F10 Menu Options
 
 The C-130 slot has an expanded F10 Radio Menu with dedicated cargo and troop transport commands not available to other aircraft.

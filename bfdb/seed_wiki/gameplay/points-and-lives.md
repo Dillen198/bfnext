@@ -135,6 +135,10 @@ When a pilot ejects, a downed pilot unit spawns at their crash site instead of a
 2. **Locate & Smoke**: A helicopter uses the F10 → CSAR menu to request green smoke on the nearest downed pilot.
 3. **Pick Up & Deliver**: Helicopter lands nearby, picks up the pilot, and delivers them to a friendly base or FARP to restore the life.
 
+**Eject over friendly ground** and the pilot recovers themselves — land inside any friendly airbase, FARP or carrier zone and the life is restored automatically, no helicopter required.
+
+**The clock**: a downed pilot is on a capture countdown (a server setting, 30 minutes by default) — let it run out with an enemy nearby and the pilot is lost. A friendly rescue helicopter sitting on top of the pilot pauses that countdown, so a pickup that runs a little long still counts. A pilot already loaded into a helicopter is safe regardless of the timer.
+
 ### What Happens at 0 Lives?
 
 **Spectator Mode**:

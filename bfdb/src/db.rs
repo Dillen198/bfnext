@@ -1636,15 +1636,19 @@ impl StatsDb {
         self.wiki_images.get(id)
     }
 
-    /// One-time seed of the built-in gameplay wiki content (compiled in from
-    /// `bfdb/seed_wiki/`) -- only runs if the tree is completely empty, so an
-    /// admin's edits (or deletions) through bfwiki are never overwritten on
-    /// restart.
+    /// Seed / refresh the built-in gameplay wiki content (compiled in from
+    /// `bfdb/seed_wiki/`). A page is (re)written from the compiled-in source
+    /// only when it is missing or still at its seed version (`updated_by ==
+    /// "seed"`) -- once an admin edits a page through bfwiki its
+    /// `updated_by` changes and it is never overwritten again. So a bfdb
+    /// deploy carrying updated seed markdown pushes those updates to every
+    /// page nobody has hand-edited, without clobbering admin edits or
+    /// resurrecting admin-deleted pages that were themselves edited first.
     fn seed_wiki_if_empty(&self) -> Result<()> {
-        if self.wiki_pages.iter().next().is_some() {
-            return Ok(());
+        let empty = self.wiki_pages.iter().next().is_none();
+        if empty {
+            info!("seeding bfwiki with default gameplay content");
         }
-        info!("seeding bfwiki with default gameplay content");
         let now = Utc::now();
         let seed: &[(&str, &str, &str, i32, &str)] = &[
             ("introduction", "What is Fowl Engine?", "Introduction", 0, include_str!("../seed_wiki/introduction.md")),
@@ -1674,7 +1678,23 @@ impl StatsDb {
             ("advanced/c130-airdrop", "C-130 Hercules & Airdrop", "Advanced Topics", 2, include_str!("../seed_wiki/advanced/c130-airdrop.md")),
             ("advanced/deployables-guide", "Deployables Guide", "Advanced Topics", 3, include_str!("../seed_wiki/advanced/deployables-guide.md")),
         ];
+        let mut refreshed = 0u32;
         for (slug, title, section, order, content) in seed {
+            match self.wiki_pages.get(&slug.to_string())? {
+                // admin-edited (or newer): leave it alone
+                Some(existing) if existing.updated_by != "seed" => continue,
+                // still at seed version and unchanged: nothing to do
+                Some(existing)
+                    if existing.content == *content
+                        && existing.title == *title
+                        && existing.section == *section
+                        && existing.order == *order =>
+                {
+                    continue
+                }
+                Some(_) => refreshed += 1,
+                None => {}
+            }
             self.wiki_pages.insert(&slug.to_string(), &WikiPage {
                 title: title.to_string(),
                 section: section.to_string(),
@@ -1683,6 +1703,9 @@ impl StatsDb {
                 updated_at: now,
                 updated_by: "seed".to_string(),
             })?;
+        }
+        if refreshed > 0 {
+            info!("refreshed {refreshed} un-edited bfwiki page(s) from updated seed content");
         }
         Ok(())
     }

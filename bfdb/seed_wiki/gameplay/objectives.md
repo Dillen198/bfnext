@@ -50,7 +50,8 @@ Objectives represent strategic locations on the battlefield:
 ### Naval Bases
 - Spawn and resupply naval assets
 - Control coastal and maritime operations
-- Every carrier group auto-links to its nearest friendly naval base — see [Capturing Objectives](./capturing-objectives.md) for how that link affects capturing a carrier
+- Every carrier group auto-links to its nearest friendly naval base — see [Capturing Objectives](./capturing-objectives.md) for how that link affects capturing a carrier, and how a captured carrier is repaired from the base
+- Carrier groups show up in the web dashboard's Objectives list with full Health/Logi/Supply/Fuel status, but **no map position** — their location stays hidden, same as in-game
 
 ![Naval carrier strike group at sea](/api/wiki/images/f2ad53a9-2e98-4925-bced-de97267fc7e6)
 
@@ -106,10 +107,10 @@ Indicates physical damage to facilities:
 
 ### Logistics (Logi)
 Represents infrastructure for supply operations:
-- **0**: Completely destroyed, **can be captured**
-- **1-100**: Infrastructure present, **cannot be captured**
+- **0**: Completely destroyed — repair, rearm and resupply stop working
+- **1-100**: Infrastructure present and functioning
 
-**Key Rule**: An objective can only be captured when its Logi is at **0%** (destroyed).
+Logistics is about whether the base *works*, not whether it can be taken. **Capturing** an objective is gated on **health ≤ 20% and every infantry defender dead** — see [Capturing Objectives](./capturing-objectives.md).
 
 ### Supply Level
 Resources available for operations:
@@ -142,9 +143,9 @@ An objective becomes "threatened" when:
 
 ### Capturable
 Ready to be captured when:
-- Logi = 0
-- Troops in capture zone
-- Correct troop type present
+- Health ≤ 20%
+- Every infantry defender is dead
+- Capture-capable troops of yours in the zone
 
 **Visual Indicator**: Capturable objectives show a **white circle** on F10 map instead of the owner's color.
 
@@ -170,18 +171,20 @@ Breakdown:
 - **Fuel**: 100 - Fuel stocks (0-100)
 - **Points**: 0 - Point value for capturing
 
+A lone `*` on its own line **above** the objective name means that objective has **unlimited supply or unlimited aircraft** set by the mission — its stocks never run dry.
+
 **Capturable Example**:
 ```
 Enemy Base
-Health: 65
+Health: 15
 Logi: 0
 Supply: 45
 Fuel: 30
 Points: 0
 ```
-Note `Logi: 0` means this objective CAN be captured!
+`Health: 15` (≤ 20%) with no infantry left means this objective CAN be captured.
 
-**Visual Indicator**: When an objective becomes capturable (Logi: 0), the **circle around the airbase on the F10 map turns WHITE** instead of the owner's color. This is an easy way to spot capturable objectives at a glance!
+**Visual Indicator**: When an objective becomes capturable, the **circle around the airbase on the F10 map turns WHITE** instead of the owner's color. This is an easy way to spot capturable objectives at a glance.
 
 ## Objective Zones
 
