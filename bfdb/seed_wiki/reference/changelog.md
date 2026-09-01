@@ -41,7 +41,7 @@ A coalition reduced to its last primary objective (airbase, naval base, or FARP)
 Ground supply convoys run automatically between logistics hubs and the front — and can be interdicted. Real map buildings (warehouses, fuel depots, industrial complexes) near objectives, when destroyed, permanently degrade that objective's logistics — a second, independent way to attack enemy supply. Each objective's logistics buildings are pinned on the F10 map for the owning coalition while a friendly aircraft is nearby (they cull with the objective's units so the map stays clean). **Factories** are a new objective type that passively produces ground units for their owner. An objective flagged **fully detached** from the supply chain gets no automatic resupply at all — convoy, cargo plane, or otherwise — and has to be sustained by hand with transport crates and C-130 drops.
 
 **Frontline on the F10 map**
-When enabled, a dashed line is drawn along the boundary between Red and Blue territory. Each stretch is coloured by who holds the ground around it — blue, red, or white and dotted where the two sides are genuinely balanced — and it redraws whenever an objective changes hands.
+When enabled, a dashed line is drawn between the objectives one side holds and the objectives the other side holds. Each stretch is coloured by which side's bases along it are healthier — blue, red, or white and dotted where the two sides are even — and it redraws whenever an objective changes hands.
 
 **Live Weather Sync**
 Server weather now syncs automatically from the running DCS mission via `bftools`/DCSServerBot integration, instead of being fixed at mission build time.

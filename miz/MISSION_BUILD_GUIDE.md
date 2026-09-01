@@ -705,13 +705,15 @@ root [README.md](../README.md) for setup.
 
 ### Frontline Drawing **[NEW]**
 A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
-- **Boundary trace**: the engine builds a Voronoi ownership grid from every
-  objective, traces the edge where Red territory meets Blue territory, chains
-  those edges into connected polylines, simplifies each one, and stitches
-  fragments split by neutral ground back together so the map shows one line
-- **Coloured by local advantage**: each segment is blue where blue holds the
-  ground around it, red where red does, and **white / dotted** where the two
-  sides are roughly balanced (a genuinely contested stretch)
+- **Built from the objectives**: for every objective the engine looks at its
+  nearest neighbours; a neighbour on the other side is a *contested pair* and
+  the front crosses at the midpoint. Outlier pairs (an isolated pocket deep in
+  enemy land) are dropped, the midpoints are walked into a single path, and
+  the path is simplified to a handful of clean segments.
+- **Coloured by strength**: a segment is blue or red where that side's
+  objectives along it are healthier, and **white / dotted** where the two
+  sides are within ~15 health of each other (so a fresh campaign starts all
+  white).
 - **Automatic updates**: redrawn whenever an objective changes hands
 - **Replaces** the older semi-transparent territory shading
 
@@ -728,9 +730,10 @@ A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
 #### Parameters
 - **enabled**: `true` to draw the frontline
 - **update_on_objective_change_only**: only redraw when an objective changes owner (recommended for performance)
-- **samples_per_boundary**: ownership-grid resolution (50-200, higher = finer, fewer stair-steps, slower)
-- **max_marks**: cap on the number of line segments drawn (default 200). Fewer = lighter on server/clients;
-  the segment list is thinned to fit.
+- **samples_per_boundary**: *legacy* — was the ownership-grid resolution; unused by the objective-pair
+  renderer but still parsed.
+- **max_marks**: cap on the number of line segments drawn (default 200). If the path needs more, it is
+  simplified harder until it fits.
 - **territory_zone_alpha**: *legacy* — was the shading opacity; ignored by the line renderer but still parsed.
 
 ### Supply Convoy System **[NEW]**
@@ -971,12 +974,13 @@ All new features can be configured in the campaign config JSON:
 
 ### Version 2.8 (2026-09-01)
 **Changed: frontline is now a line; LOGISTICS_DETACHED means fully cut off**
-- **Frontline drawing**: the `frontline` overlay now draws a dashed line
-  along the Red/Blue territory boundary instead of semi-transparent
-  territory shading. Segments are coloured by local advantage — blue, red,
-  or white/dotted where contested. `frontline.territory_zone_alpha` is now
-  a legacy no-op (still parsed). See
-  [Frontline Drawing](#frontline-drawing-new).
+- **Frontline drawing**: the `frontline` overlay now draws a single dashed
+  line between each side's objectives (built from contested
+  nearest-neighbour objective pairs) instead of semi-transparent territory
+  shading. Segments are coloured by objective health — blue, red, or
+  white/dotted when even. `frontline.samples_per_boundary` and
+  `frontline.territory_zone_alpha` are now legacy no-ops (still parsed).
+  See [Frontline Drawing](#frontline-drawing-new).
 - **`LOGISTICS_DETACHED` semantics flipped**: `true` now cuts an objective
   off from *all* automatic resupply (no convoy, no air, no instant) —
   players fly supplies in by hand. `false` gets a convoy (or a cargo
