@@ -610,6 +610,78 @@ async fn api_objectives(
     Ok(json_response(data))
 }
 
+/// GET /api/frontline?round=N — the dividing line between blue-held and
+/// red-held ground, as `[{mid, blue, red}]` where each is a `[[lat, lon], …]`
+/// polyline. Computed with the exact same code bflib uses for the F10-map
+/// overlay (`bfprotocols::frontline`), so the two never disagree. Only the
+/// line geometry is returned — never an objective's position.
+async fn api_frontline(
+    db: StatsDb,
+    round_id: Option<u64>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let rounds = db.latest_rounds()?;
+        let rid = match round_id {
+            Some(id) => db::RoundId(id),
+            None => match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
+                Some((_, rid, _)) => *rid,
+                None => match rounds.first() {
+                    Some((_, rid, _)) => *rid,
+                    None => return Ok("[]".to_string()),
+                },
+            },
+        };
+        let objs = db.objectives_for_round(rid)?;
+
+        // Owned, on-the-ground objectives (SAM sites included, carriers not) —
+        // the same set bflib feeds the overlay.
+        let ll: Vec<(f64, f64, dcso3::coalition::Side)> = objs
+            .iter()
+            .filter(|(_, o)| matches!(o.owner, dcso3::coalition::Side::Blue | dcso3::coalition::Side::Red))
+            .filter(|(_, o)| !o.kind.is_carrier_group())
+            .map(|(_, o)| (o.pos.latitude, o.pos.longitude, o.owner))
+            .collect();
+        if ll.len() < 4 {
+            return Ok("[]".to_string());
+        }
+
+        // Project lat/lon to a local equirectangular frame in metres so the
+        // metre-denominated tuning in bfprotocols::frontline means the same
+        // thing here as it does in the engine.
+        const M_PER_DEG: f64 = 111_320.0;
+        let lat0 = ll.iter().map(|(la, _, _)| *la).sum::<f64>() / ll.len() as f64;
+        let lon0 = ll.iter().map(|(_, lo, _)| *lo).sum::<f64>() / ll.len() as f64;
+        let coslat = lat0.to_radians().cos().max(1e-6);
+        let to_m = |lat: f64, lon: f64| ((lat - lat0) * M_PER_DEG, (lon - lon0) * M_PER_DEG * coslat);
+        let to_ll = |x: f64, y: f64| [lat0 + x / M_PER_DEG, lon0 + y / (M_PER_DEG * coslat)];
+
+        let pts: Vec<(f64, f64, f64)> = ll
+            .iter()
+            .map(|&(lat, lon, side)| {
+                let (x, y) = to_m(lat, lon);
+                (x, y, if side == dcso3::coalition::Side::Blue { 1.0 } else { -1.0 })
+            })
+            .collect();
+
+        let fronts = bfprotocols::frontline::compute(&pts, &bfprotocols::frontline::Params::default());
+        let out: Vec<serde_json::Value> = fronts
+            .iter()
+            .map(|f| {
+                let cvt = |line: &[[f64; 2]]| -> Vec<[f64; 2]> {
+                    line.iter().map(|p| to_ll(p[0], p[1])).collect()
+                };
+                serde_json::json!({
+                    "mid": cvt(&f.mid),
+                    "blue": cvt(&f.blue),
+                    "red": cvt(&f.red),
+                })
+            })
+            .collect();
+        Ok(serde_json::to_string(&out)?)
+    })?;
+    Ok(json_response(data))
+}
+
 async fn api_kills(
     db: StatsDb,
     round_id: Option<u64>,
@@ -2835,6 +2907,14 @@ async fn main() -> Result<()> {
             api_objectives(db, round_id)
         });
 
+    let frontline = warp::path!("api" / "frontline")
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .then(|db, q: std::collections::HashMap<String, String>| {
+            let round_id = q.get("round").and_then(|s| s.parse().ok());
+            api_frontline(db, round_id)
+        });
+
     let kills = warp::path!("api" / "kills")
         .and(with_db(db.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
@@ -3235,6 +3315,7 @@ async fn main() -> Result<()> {
         .or(health)
         .or(leaderboard)
         .or(objectives)
+        .or(frontline)
         .or(kills)
         .or(capture_events)
         .or(pilot_sorties)

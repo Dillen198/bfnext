@@ -20,7 +20,7 @@ import 'leaflet.heat'
 import ms from 'milsymbol'
 import {
   api, connectLiveUnits,
-  type Objective, type MapUnit, type LiveUnit, type WsUnitsMsg, type Bullseye,
+  type Objective, type MapUnit, type LiveUnit, type WsUnitsMsg, type Bullseye, type Front,
 } from '../api'
 import { createMapIcon, spriteIconUrl, radarGlyphSvg, type IconStyle, type Side } from '../lib/mapIcons'
 import { useRound } from '../context/RoundContext'
@@ -535,6 +535,11 @@ export default function MapPage() {
   const { data: objectives = [], isLoading } = useQuery({
     queryKey: ['objectives', selectedRound],
     queryFn: () => api.objectives(selectedRound),
+    refetchInterval: OBJ_INT,
+  })
+  const { data: fronts = [] } = useQuery<Front[]>({
+    queryKey: ['frontline', selectedRound],
+    queryFn: () => api.frontline(selectedRound),
     refetchInterval: OBJ_INT,
   })
   const { data: restUnits = [] } = useQuery({
@@ -1094,6 +1099,22 @@ export default function MapPage() {
               pathOptions={{ color: '#ffffff', fillColor: '#ffffff', fillOpacity: 0.05, weight: 1.5, dashArray: '6 6' }}
               interactive={false} />
           ))}
+
+          {/* ── Frontline (blue-side / no-man's-land / red-side) ──── */}
+          {fronts.flatMap((f, i) => [
+            f.blue.length > 1 && (
+              <Polyline key={`front-b-${i}`} positions={f.blue as LatLngExpression[]}
+                pathOptions={{ color: '#2f7dff', weight: 2, opacity: 0.85, dashArray: '8 6' }} />
+            ),
+            f.red.length > 1 && (
+              <Polyline key={`front-r-${i}`} positions={f.red as LatLngExpression[]}
+                pathOptions={{ color: '#ff3b3b', weight: 2, opacity: 0.85, dashArray: '8 6' }} />
+            ),
+            f.mid.length > 1 && (
+              <Polyline key={`front-m-${i}`} positions={f.mid as LatLngExpression[]}
+                pathOptions={{ color: '#ffffff', weight: 1.5, opacity: 0.9, dashArray: '2 5' }} />
+            ),
+          ])}
 
           {/* ── Objectives ────────────────────────────────────────── */}
           {shownObjs.map(obj => {

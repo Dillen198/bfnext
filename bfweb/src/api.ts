@@ -63,6 +63,14 @@ export interface Objective {
   captureable?: boolean
 }
 
+/** One front: three [lat, lon] polylines — blue side, no-man's-land centre,
+ *  red side. Same geometry the engine draws on the F10 map. */
+export interface Front {
+  mid: [number, number][]
+  blue: [number, number][]
+  red: [number, number][]
+}
+
 export interface Pilot {
   ucid: string
   name: string
@@ -445,6 +453,8 @@ export const api = {
   allPilots: () => get<PilotName[]>('/pilots'),
   objectives: (roundId?: number) =>
     get<Objective[]>(roundId ? `/objectives?round=${roundId}` : '/objectives'),
+  frontline: (roundId?: number) =>
+    get<Front[]>(roundId ? `/frontline?round=${roundId}` : '/frontline'),
   kills: (roundId?: number, limit = 50) =>
     get<Kill[]>(`/kills?limit=${limit}${roundId ? `&round=${roundId}` : ''}`),
   pilot: (ucid: string) => get<Pilot>(`/pilot/${ucid}`),
