@@ -20,6 +20,7 @@ pub(crate) mod ewr;
 mod info;
 pub mod jtac;
 mod objectives;
+mod recon;
 mod troop;
 
 use crate::{db::Db, Context};
@@ -277,7 +278,11 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["CSAR".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Troops".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Actions".into()]))?;
+            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Recon".into()]))?;
             ewr::add_ewr_menu_for_group(&mc, miz_gid)?;
+            if ctx.db.recon_capable(&si_typ) {
+                recon::add_recon_menu_for_group(&mc, miz_gid)?;
+            }
             let cap = CarryCap::from_typ(&cfg, si_typ.as_str());
 
             let is_c130 = ctx.db.ephemeral.cfg.c130_cargo

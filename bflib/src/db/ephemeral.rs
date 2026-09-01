@@ -20,6 +20,7 @@ use super::{
     group::{DeployKind, SpawnedGroup, SpawnedUnit},
     intel::IntelDatabase,
     logistics::LogiStage,
+    recon::ReconSession,
     map_layer::MapLayer,
     markup::ObjectiveMarkup,
     objective::Objective,
@@ -291,6 +292,10 @@ pub struct Ephemeral {
     pub(crate) intel_db: IntelDatabase,
     /// Ground vehicle passenger manifests: vehicle UnitId -> passengers.
     pub(crate) ground_vehicle_passengers: FxHashMap<bfprotocols::db::group::UnitId, GroundVehiclePassengers>,
+    /// In-progress player "Recon Pass" sessions, keyed by pilot ucid.
+    pub(crate) recon_sessions: FxHashMap<Ucid, ReconSession>,
+    /// Per-pilot cooldown after a recon pass ends (completed or aborted).
+    pub(crate) recon_cooldown: FxHashMap<Ucid, DateTime<Utc>>,
 }
 
 impl Default for Ephemeral {
@@ -369,6 +374,8 @@ impl Default for Ephemeral {
             carrier_repair_crates: FxHashMap::default(),
             intel_db: IntelDatabase::default(),
             ground_vehicle_passengers: FxHashMap::default(),
+            recon_sessions: FxHashMap::default(),
+            recon_cooldown: FxHashMap::default(),
         }
     }
 }
@@ -561,11 +568,15 @@ impl Ephemeral {
     /// Remove all F10 map layer marks (e.g. on mission reset).
     pub fn remove_map_layer(&mut self) {
         self.map_layer.remove_all(&mut self.msgs);
+        self.recon_sessions.clear();
     }
 
     pub fn tick_intel_decay(&mut self, now: DateTime<Utc>) {
+        // The intel contact pipeline is shared by the ELINT/SIGINT system and
+        // the player Recon Pass -- run decay/marks if either is configured.
         let elint_cfg = match self.cfg.elint.as_ref() {
             Some(c) => c.clone(),
+            None if self.cfg.player_recon.is_some() => bfprotocols::cfg::ElintConfig::default(),
             None => return,
         };
         let (updated, removed) = self.intel_db.tick_decay(&elint_cfg, now, 1.0);

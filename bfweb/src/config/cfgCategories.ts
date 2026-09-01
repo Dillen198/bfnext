@@ -46,7 +46,7 @@ export const CFG_CATEGORIES: CfgCategory[] = [
     key: 'airdefense', label: 'SAM Sites & Air Defense', icon: Radar,
     fields: [
       'special_sam_sites', 'special_sam_capture_radius_m', 'special_sam_wake_distance',
-      'radar_physics', 'iadn', 'elint',
+      'radar_physics', 'iadn', 'elint', 'player_recon',
       'ground_radar_ewrs', 'airborne_ewrs', 'ewr_mode', 'ewr_delay', 'ewr_cull_distance',
     ],
   },

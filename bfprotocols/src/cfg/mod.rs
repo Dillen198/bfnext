@@ -172,6 +172,9 @@ pub enum UnitTag {
     /// self-protection pods) -- degrades nearby radar detection
     /// probability for the IADN jamming mechanic.
     Jammer,
+    /// Aircraft type is cleared to run a player "Recon Pass" (see
+    /// `Cfg::player_recon`). Only meaningful on Aircraft/Helicopter entries.
+    Recon,
 }
 
 #[derive(
@@ -651,6 +654,12 @@ pub struct ElintConfig {
     /// Confidence half-life (s) for EWR-fused intel. Default 180.
     #[serde(default = "default_half_life_ewr")]
     pub half_life_ewr_secs: u32,
+    /// Confidence half-life (s) for JTAC eyes-on intel. Refreshed to full
+    /// confidence every tick a JTAC still has the contact, so this only
+    /// governs how long it lingers on the map after the JTAC loses it.
+    /// Default 3600 (1 hour).
+    #[serde(default = "default_half_life_jtac")]
+    pub half_life_jtac_secs: u32,
     /// Confidence below which a contact is deleted. Default 0.05.
     #[serde(default = "default_confidence_delete_threshold")]
     pub confidence_delete_threshold: f32,
@@ -673,6 +682,7 @@ impl Default for ElintConfig {
             half_life_sf_secs: default_half_life_sf(),
             half_life_awacs_secs: default_half_life_awacs(),
             half_life_ewr_secs: default_half_life_ewr(),
+            half_life_jtac_secs: default_half_life_jtac(),
             confidence_delete_threshold: default_confidence_delete_threshold(),
             max_contacts_per_side: default_max_contacts_per_side(),
             show_unit_class: default_show_unit_class(),
@@ -686,6 +696,7 @@ fn default_half_life_recon() -> u32 { 600 }
 fn default_half_life_sf() -> u32 { 1800 }
 fn default_half_life_awacs() -> u32 { 300 }
 fn default_half_life_ewr() -> u32 { 180 }
+fn default_half_life_jtac() -> u32 { 3600 }
 fn default_confidence_delete_threshold() -> f32 { 0.05 }
 fn default_max_contacts_per_side() -> usize { 200 }
 fn default_show_unit_class() -> bool { true }
@@ -1730,6 +1741,65 @@ fn default_recon_duration() -> u32 {
     300
 }
 
+/// Player-flown reconnaissance ("Recon Pass").
+///
+/// A player in a `UnitTag::Recon` aircraft starts a timed pass from the F10
+/// menu while within `range_m` of an enemy objective. Holding station for
+/// `dwell_secs` scans every enemy unit within `scan_radius_m` of that objective
+/// (optionally gated by terrain line-of-sight from the aircraft) and feeds the
+/// detections into the ELINT/SIGINT `IntelDatabase`, which renders the decaying
+/// F10 map contacts.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
+pub struct PlayerReconCfg {
+    /// Max distance (m) aircraft -> objective to start and sustain a pass. Default 25000.
+    #[serde(default = "default_player_recon_range")]
+    pub range_m: f64,
+    /// Station time (s) required to complete a pass. Default 120.
+    #[serde(default = "default_player_recon_dwell")]
+    pub dwell_secs: u32,
+    /// Radius (m) around the objective scanned for enemy units. Default 12000.
+    #[serde(default = "default_player_recon_scan_radius")]
+    pub scan_radius_m: f64,
+    /// Require terrain line-of-sight from the aircraft to each unit. Default true.
+    #[serde(default = "default_true")]
+    pub require_los: bool,
+    /// Reveal contacts progressively at 25/50/75/100% dwell rather than only on
+    /// completion. Default true.
+    #[serde(default = "default_true")]
+    pub progressive: bool,
+    /// Points charged when a pass starts (refunded if it aborts). Default 0.
+    #[serde(default)]
+    pub cost: u32,
+    /// Per-player cooldown (s) between passes. Default 300.
+    #[serde(default = "default_player_recon_cooldown")]
+    pub cooldown_secs: u32,
+    /// Optional altitude ceiling (m MSL) for the aircraft during a pass.
+    /// 0 disables the check. Default 0.
+    #[serde(default)]
+    pub max_altitude_m: f64,
+}
+
+fn default_player_recon_range() -> f64 { 25_000.0 }
+fn default_player_recon_dwell() -> u32 { 120 }
+fn default_player_recon_scan_radius() -> f64 { 12_000.0 }
+fn default_player_recon_cooldown() -> u32 { 300 }
+
+impl Default for PlayerReconCfg {
+    fn default() -> Self {
+        Self {
+            range_m: default_player_recon_range(),
+            dwell_secs: default_player_recon_dwell(),
+            scan_radius_m: default_player_recon_scan_radius(),
+            require_los: true,
+            progressive: true,
+            cost: 0,
+            cooldown_secs: default_player_recon_cooldown(),
+            max_altitude_m: 0.0,
+        }
+    }
+}
+
 fn default_msgs_per_second() -> usize {
     5
 }
@@ -2526,6 +2596,12 @@ pub struct Cfg {
     /// Ground vehicle cargo (IFV/APC troop transport). Keyed by vehicle type.
     #[serde(default)]
     pub ground_vehicle_cargo: FxHashMap<Vehicle, GroundVehicleCargo>,
+    /// Player-flown reconnaissance: a timed F10 "Recon Pass" that reveals enemy
+    /// units (SAMs included) around an objective on the F10 map. Requires the
+    /// aircraft type to carry `UnitTag::Recon` in `unit_classification`.
+    /// Disabled if absent.
+    #[serde(default)]
+    pub player_recon: Option<PlayerReconCfg>,
 }
 
 fn default_supply_alert_threshold() -> u8 {

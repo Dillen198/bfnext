@@ -66,6 +66,26 @@ impl IntelUnitClass {
             Self::Unknown    => "UNK",
         }
     }
+
+    /// Classify a unit from its `unit_classification` tags. Shared by every
+    /// intel source (recon scan, JTAC contacts, ...) so they all bucket units
+    /// the same way.
+    pub fn from_tags(tags: bfprotocols::cfg::UnitTags) -> Self {
+        use bfprotocols::cfg::UnitTag;
+        if tags.0.contains(UnitTag::SAM) || tags.0.contains(UnitTag::AAA) {
+            Self::AirDefense
+        } else if tags.0.contains(UnitTag::Armor) || tags.0.contains(UnitTag::APC) {
+            Self::Armor
+        } else if tags.0.contains(UnitTag::Artillery) {
+            Self::Artillery
+        } else if tags.0.contains(UnitTag::Infantry) {
+            Self::Infantry
+        } else if tags.0.contains(UnitTag::Boat) {
+            Self::Naval
+        } else {
+            Self::Unknown
+        }
+    }
 }
 
 /// The sensor origin that produced an intel contact.
@@ -76,6 +96,11 @@ pub enum IntelSource {
     SpecialForces,
     Awacs,
     EwrFusion,
+    /// A JTAC (player or AI) currently has, or recently had, eyes-on the
+    /// contact. Refreshed to full confidence every tick the JTAC still sees
+    /// it, so it only starts decaying once the JTAC loses it -- and uses a
+    /// much longer half-life so it stays on the map long after that.
+    Jtac,
     /// Reserved for operator/admin-injected intel.
     HumanInt,
 }
@@ -88,6 +113,7 @@ impl IntelSource {
             Self::SpecialForces  => cfg.half_life_sf_secs,
             Self::Awacs          => cfg.half_life_awacs_secs,
             Self::EwrFusion      => cfg.half_life_ewr_secs,
+            Self::Jtac           => cfg.half_life_jtac_secs,
             Self::HumanInt       => cfg.half_life_sf_secs,
         }
     }

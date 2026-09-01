@@ -4263,7 +4263,8 @@
       "Aircraft"
     ],
     "MB-339A": [
-      "Aircraft"
+      "Aircraft",
+      "Recon"
     ],
     "BMP-1": [
       "APC",
@@ -4685,7 +4686,8 @@
       "Aircraft"
     ],
     "L-39ZA": [
-      "Aircraft"
+      "Aircraft",
+      "Recon"
     ],
     "F-5E-3": [
       "Aircraft"
@@ -5613,10 +5615,21 @@
     "half_life_recon_secs": 600,
     "half_life_awacs_secs": 300,
     "half_life_ewr_secs": 180,
+    "half_life_jtac_secs": 3600,
     "confidence_delete_threshold": 0.05,
     "max_contacts_per_side": 200,
     "show_unit_class": true,
     "show_confidence_on_map": true
+  },
+  "player_recon": {
+    "range_m": 25000,
+    "dwell_secs": 120,
+    "scan_radius_m": 12000,
+    "require_los": true,
+    "progressive": true,
+    "cost": 0,
+    "cooldown_secs": 300,
+    "max_altitude_m": 0
   },
   "ground_vehicle_cargo": {
     "M-2 Bradley": {

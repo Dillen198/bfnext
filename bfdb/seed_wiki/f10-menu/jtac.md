@@ -249,6 +249,16 @@ F10 → JTAC → [JTAC ID] → Smoke Target
 - 60-second cooldown
 - Color varies by team
 
+## F10 Map Intel
+
+Any target a JTAC has eyes-on -- confirmed by line-of-sight, not just in range --
+is automatically fed into the coalition's intel picture and marked on the F10
+map, the same way a [Recon Pass](./recon.md) is. While the JTAC keeps watching it
+the mark stays fresh; once the JTAC loses it (killed, out of range, LOS blocked),
+the mark lingers for a long time (about an hour by default) before fading, so a
+target a JTAC spotted stays visible well after you've moved on. This works for
+every JTAC type -- ground, drone, and player -- and needs no extra setup.
+
 ## Common Issues
 
 ### "No JTAC available"

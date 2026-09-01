@@ -13,6 +13,12 @@ Detection is no longer a simple binary "in range = detected." Probability now de
 **ELINT/SIGINT Intel Database**
 Recon flights now build a persistent, decaying intel picture instead of a one-shot report: detected enemy ground units are classified, clustered, and tracked with a confidence score that fades over time (faster for older/lower-quality sources). Shown as F10 map markers and in a radio "intel picture" report.
 
+**Player Recon Pass**
+Recon-capable airframes (server-configured) get an **F10 → Recon** menu. Start a timed pass while within range of an enemy objective, hold station for the dwell time, and every enemy unit your aircraft has line-of-sight to — SAM and AAA sites included — is revealed on the coalition F10 map through the same decaying intel picture. See [Reconnaissance](../f10-menu/recon.md).
+
+**JTAC eyes-on also marks the map**
+Any target a JTAC (ground, drone, or player) has confirmed line-of-sight on now feeds the same intel picture automatically — no menu action needed. The mark stays fresh while the JTAC keeps watching and lingers for a long time (about an hour by default) after it loses the target, instead of vanishing the moment the JTAC looks away.
+
 **Mechanized Infantry**
 Infantry squads can board and dismount IFVs/APCs for overland transport, not just helicopters — troops embark near a friendly vehicle and can be dropped off anywhere it can drive.
 

@@ -60,8 +60,8 @@ const SIGMA_MAX: f64 = 95_000.0;
 /// A traced contour shorter than this (metres) is noise around a pocket.
 const MIN_FRONT_LEN: f64 = 30_000.0;
 /// Perpendicular offset (as a fraction of σ) of the blue-edge and red-edge
-/// lines either side of the centre line. Clamped to [10 km, 35 km].
-const EDGE_OFFSET_FRAC: f64 = 0.5;
+/// lines either side of the centre line. Clamped to [5 km, 14 km].
+const EDGE_OFFSET_FRAC: f64 = 0.22;
 
 /// Perpendicular distance from `p` to segment `a`–`b` (to `a` if degenerate).
 fn perp_dist(p: Vector2, a: Vector2, b: Vector2) -> f64 {
@@ -324,11 +324,43 @@ impl FrontLine {
                 }
             }
         }
+        let n_all_segs = segs.len();
+
+        // Keep only the *contested* stretches: a contour segment is a real
+        // front only if there's a red objective AND a blue objective close by.
+        // Where blue simply fades out against open sea (or empty desert) the
+        // nearest red objective is far away — drop those.
+        let keep_dist2 = (sigma * 2.3).powi(2);
+        segs.retain(|(e0, e1)| {
+            let mid = (pos_of[e0] + pos_of[e1]) * 0.5;
+            let mut near_blue = false;
+            let mut near_red = false;
+            for o in &objs {
+                if (o.pos - mid).norm_squared() <= keep_dist2 {
+                    if o.sign > 0.0 {
+                        near_blue = true;
+                    } else {
+                        near_red = true;
+                    }
+                    if near_blue && near_red {
+                        break;
+                    }
+                }
+            }
+            near_blue && near_red
+        });
+        // Crossings only referenced by dropped segments would leave dangling
+        // graph nodes; rebuild pos_of from what survived.
+        let kept_keys: FxHashSet<EdgeKey> =
+            segs.iter().flat_map(|(a, b)| [*a, *b]).collect();
+        pos_of.retain(|k, _| kept_keys.contains(k));
+
         info!(
-            "Frontline: σ {:.0} km, {}×{} grid, {} contour segments",
+            "Frontline: σ {:.0} km, {}×{} grid, {} contour segments ({} contested)",
             sigma / 1000.0,
             res,
             res,
+            n_all_segs,
             segs.len()
         );
         if segs.is_empty() {
@@ -400,7 +432,7 @@ impl FrontLine {
         // Light RDP just to drop marching-squares stair-step noise, then
         // Chaikin-smooth into a flowing curve.
         let epsilon = (dn.max(de) * 0.4).clamp(500.0, 2_500.0);
-        let gap = (sigma * EDGE_OFFSET_FRAC).clamp(10_000.0, 35_000.0);
+        let gap = (sigma * EDGE_OFFSET_FRAC).clamp(5_000.0, 14_000.0);
         let grad_h = dn.min(de) * 0.75;
         // Gradient of the field, pointing toward the blue side.
         let grad_toward_blue = |p: Vector2| -> Vector2 {

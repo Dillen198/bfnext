@@ -2092,6 +2092,7 @@ impl Jtacs {
             .collect();
 
         let mut to_remove: SmallVec<[EnId; 32]> = smallvec![];
+        let now = Utc::now();
 
         for unit in &units_snap {
             let id = EnId::Unit(unit.id);
@@ -2114,6 +2115,9 @@ impl Jtacs {
             if let Some(ct) = jtac.contacts.get(&id) {
                 if !jtac_moved && unit.moved == ct.last_move {
                     detected.detected = true;
+                    // Still under observation -- keep its intel confidence
+                    // pinned at 1.0 (see IntelSource::Jtac).
+                    db.note_jtac_contact(jtac.side, unit, now);
                     continue;
                 }
             };
@@ -2123,7 +2127,8 @@ impl Jtacs {
                     || landcache.is_visible(&land, dist.sqrt(), pos, unit.position.p.0)?)
             {
                 detected.detected = true;
-                jtac.add_unit_contact(unit)
+                jtac.add_unit_contact(unit);
+                db.note_jtac_contact(jtac.side, unit, now);
             } else {
                 to_remove.push(id);
             }

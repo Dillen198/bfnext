@@ -2496,6 +2496,11 @@ fn run_slow_timed_events(
         // ELINT/SIGINT: decay intel contacts and refresh/remove their F10 marks.
         ctx.db.ephemeral.tick_intel_decay(ts);
 
+        // Player recon passes: advance timers, run scans, reveal contacts.
+        if let Err(e) = ctx.db.tick_recon_sessions(lua, &mut ctx.landcache, ts) {
+            error!("could not tick recon sessions {e}")
+        }
+
         let ts = Utc::now();
         if let Err(e) = generate_ewr_reports(ctx, ts) {
             error!("could not generate ewr reports {e}")

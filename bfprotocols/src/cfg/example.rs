@@ -2263,6 +2263,7 @@ impl Default for Cfg {
             radar_physics: None,
             iadn: None,
             elint: None,
+            player_recon: None,
             ground_vehicle_cargo: FxHashMap::default(),
             smart_commander: Some(SmartCommanderCfg {
                 tick_period_secs: 60,

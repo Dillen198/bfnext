@@ -1666,6 +1666,7 @@ impl StatsDb {
             ("f10-menu/cargo", "Cargo Operations", "F10 Menu Systems", 3, include_str!("../seed_wiki/f10-menu/cargo.md")),
             ("f10-menu/troops", "Troop Transport", "F10 Menu Systems", 4, include_str!("../seed_wiki/f10-menu/troops.md")),
             ("f10-menu/ewr", "Early Warning Radar", "F10 Menu Systems", 5, include_str!("../seed_wiki/f10-menu/ewr.md")),
+            ("f10-menu/recon", "Reconnaissance", "F10 Menu Systems", 6, include_str!("../seed_wiki/f10-menu/recon.md")),
             ("advanced/artillery", "Artillery Missions", "Advanced Topics", 0, include_str!("../seed_wiki/advanced/artillery.md")),
             ("advanced/alcm", "Air-Launched Cruise Missiles", "Advanced Topics", 1, include_str!("../seed_wiki/advanced/alcm.md")),
             ("reference/chat-commands", "Chat Command List", "Reference", 0, include_str!("../seed_wiki/reference/chat-commands.md")),

@@ -914,8 +914,7 @@ impl Db {
         action: Action,
         args: WithPos<ReconCfg>,
     ) -> Result<Option<GroupId>> {
-        use crate::db::intel::{IntelSource, IntelUnitClass};
-        use bfprotocols::cfg::UnitTag;
+        use crate::db::intel::IntelSource;
         let target_pos = args.pos;
         let scan_radius = args.cfg.scan_radius_m;
         let ucid_for_report = ucid.clone();
@@ -935,83 +934,18 @@ impl Db {
             None,
             BitFlags::empty(),
             move |db, gid, spawn_pos| {
-                let enemy_side = match side {
-                    Side::Blue => Side::Red,
-                    Side::Red => Side::Blue,
-                    Side::Neutral => Side::Neutral,
-                };
                 let now = Utc::now();
-                // Collect enemy units within scan radius with their positions and tags.
-                let detected: Vec<(dcso3::Vector2, IntelUnitClass)> = db
-                    .objectives()
-                    .filter(|(_, obj)| obj.owner() == enemy_side)
-                    .flat_map(|(_, obj)| obj.groups.get(&enemy_side).into_iter().flat_map(|gs| gs.into_iter()))
-                    .filter_map(|gid| db.persisted.groups.get(gid))
-                    .flat_map(|g| g.units.into_iter())
-                    .filter_map(|uid| db.persisted.units.get(uid))
-                    .filter(|u| {
-                        !u.dead
-                            && na::distance_squared(&target_pos.into(), &u.pos.into())
-                                <= scan_radius.powi(2)
-                    })
-                    .map(|u| {
-                        let unit_class = db.ephemeral.cfg.unit_classification
-                            .get(&u.typ)
-                            .map(|tags| {
-                                if tags.0.contains(UnitTag::SAM) || tags.0.contains(UnitTag::AAA) {
-                                    IntelUnitClass::AirDefense
-                                } else if tags.0.contains(UnitTag::Armor) || tags.0.contains(UnitTag::APC) {
-                                    IntelUnitClass::Armor
-                                } else if tags.0.contains(UnitTag::Artillery) {
-                                    IntelUnitClass::Artillery
-                                } else if tags.0.contains(UnitTag::Infantry) {
-                                    IntelUnitClass::Infantry
-                                } else if tags.0.contains(UnitTag::Boat) {
-                                    IntelUnitClass::Naval
-                                } else {
-                                    IntelUnitClass::Unknown
-                                }
-                            })
-                            .unwrap_or(IntelUnitClass::Unknown);
-                        (dcso3::Vector2::new(u.pos.x, u.pos.y), unit_class)
-                    })
-                    .collect();
-
-                // Cluster detected units and insert into IntelDatabase.
-                if let Some(elint_cfg) = db.ephemeral.cfg.elint.as_ref() {
-                    let cluster_sq = elint_cfg.contact_cluster_radius_m.powi(2);
-                    // Group by class then cluster spatially.
-                    let mut clusters: Vec<(dcso3::Vector2, IntelUnitClass, u8)> = Vec::new();
-                    for (pos, class) in &detected {
-                        let existing = clusters.iter_mut().find(|(cpos, cclass, _)| {
-                            *cclass == *class
-                                && na::distance_squared(&(*cpos).into(), &(*pos).into()) <= cluster_sq
-                        });
-                        if let Some((cpos, _, count)) = existing {
-                            cpos.x = cpos.x * 0.7 + pos.x * 0.3;
-                            cpos.y = cpos.y * 0.7 + pos.y * 0.3;
-                            *count += 1;
-                        } else {
-                            clusters.push((*pos, *class, 1));
-                        }
-                    }
-                    let elint_cfg = elint_cfg.clone();
-                    for (pos, class, count) in clusters {
-                        db.ephemeral.intel_db.upsert(
-                            side,
-                            enemy_side,
-                            pos,
-                            class,
-                            count,
-                            IntelSource::ReconFlight,
-                            &elint_cfg,
-                            now,
-                        );
-                    }
-                }
-
-                // Legacy map layer report (count only, 120 s).
-                db.ephemeral.on_recon_result(target_pos, scan_radius, detected.len(), side, now);
+                // Scan + cluster + feed the intel database (no LOS gate for the
+                // AI recon flight -- it is assumed to have a working sensor).
+                db.apply_recon_scan(
+                    target_pos,
+                    scan_radius,
+                    side,
+                    IntelSource::ReconFlight,
+                    None,
+                    true,
+                    now,
+                );
                 db.drone_mission(
                     side,
                     ucid_for_report,
