@@ -1547,6 +1547,27 @@ impl WarehouseTemplate {
                     }
                 }
             }
+            // Remap the naval template's dynSpawn linkDynTempl group ids to
+            // the ids they were assigned when the templates were merged into
+            // the base mission -- the clone carries the --warehouse file's
+            // original ids, which don't exist in the output (dynamic slots
+            // on the carrier deck would otherwise get the wrong loadout).
+            if !id_map.is_empty() {
+                if let Ok(ac) = wh.raw_get::<_, Table>("aircrafts") {
+                    for cat in ["planes", "helicopters"] {
+                        if let Ok(cat_tbl) = ac.raw_get::<_, Table>(cat) {
+                            for p in cat_tbl.clone().pairs::<String, Table>() {
+                                let (_, e) = p?;
+                                if let Ok(old) = e.raw_get::<_, i64>("linkDynTempl") {
+                                    if let Some(&new) = id_map.get(&old) {
+                                        e.raw_set("linkDynTempl", new)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             info!("carrier ship warehouse {id} ({coa}) replaced with the naval inventory template");
             tbl.set(id, wh)?;
             Ok(true)
