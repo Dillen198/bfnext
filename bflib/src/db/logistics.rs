@@ -2723,6 +2723,17 @@ impl Db {
             for oid in logi.warehouse.destination.into_iter() {
                 if let Some(obj) = self.persisted.objectives.get(oid) {
                     if logi.owner == obj.owner && (obj.supply < 100 || obj.fuel < 100) {
+                        // LOGISTICS_DETACHED = the objective is cut off from
+                        // the automatic supply chain: no convoy, no air, no
+                        // instant. Players resupply it by hand (Base Supply
+                        // crates, C-130 airdrop). A CONNECTED objective gets a
+                        // convoy (interdictable), or a cargo plane if it's
+                        // very low and a convoy slot isn't free; instant
+                        // transfer only when the convoy system is disabled.
+                        if obj.logistics_detached {
+                            continue;
+                        }
+
                         let needed = Needed {
                             oid,
                             obj,
@@ -2730,14 +2741,11 @@ impl Db {
                             allocated: 0,
                         };
 
-                        // Route to appropriate transport mode
-                        if convoy_enabled && obj.logistics_detached {
+                        if convoy_enabled {
                             convoy_needed.push(needed);
                         } else if air_can_spawn && (obj.supply < air_supply_threshold || obj.fuel < air_supply_threshold) {
-                            // Air eligible: below threshold and slot available
                             air_needed.push(needed);
                         } else {
-                            // Instant transfer: air disabled, throttled, or above threshold
                             instant_needed.push(needed);
                         }
                     }
