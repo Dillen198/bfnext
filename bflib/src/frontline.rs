@@ -16,24 +16,24 @@ for more details.
 
 //! Dynamic frontline overlay.
 //!
-//! The front is the contour that separates blue-held ground from red-held
-//! ground. It is computed as the iso-line of the objective ownership field:
+//! The front is drawn as the zero contour of a smooth "who controls this
+//! ground" field:
 //!
-//! 1. Take every territory-defining objective (airbase, naval base, logistics
-//!    hub, FOB, FARP). SAM sites, command centres, factories and carriers are
-//!    left out — they sit inside friendly territory and are not a front.
-//! 2. Delaunay-triangulate the objective positions. That is the natural
-//!    "who borders whom" planar graph, with no arbitrary distance or k.
-//! 3. March the triangles: any triangle with both a blue and a red corner has
-//!    the front passing through it. It crosses the two edges that join a blue
-//!    corner to a red corner, at a point pushed toward whichever side is
-//!    weaker (lower objective health). Join those two crossings — one segment.
-//! 4. Segments from neighbouring triangles share a crossing point exactly, so
-//!    they chain into connected polylines. A map with an island and two land
-//!    borders yields several separate lines, each its own front.
-//! 5. Drop tiny fragments, simplify (Ramer–Douglas–Peucker), and draw each
-//!    line as a chain of dashed segments coloured by which side is winning
-//!    along it (white + dotted where the two are even).
+//! 1. Every owned, capturable objective on the ground votes for its side with
+//!    an influence that falls off with distance (a Gaussian). Blue is +1,
+//!    red is −1.
+//! 2. The field is `F(p) = Σ sᵢ · exp(−|p − objᵢ|² / 2σ²)`. Where blue
+//!    influence balances red influence, `F = 0` — that is the front.
+//! 3. `σ` (the blur radius) is a few times the spacing between objectives, so
+//!    the line ignores a single base sitting behind enemy lines and instead
+//!    follows the overall division of the theatre — the way a staff officer
+//!    would draw it.
+//! 4. `F` is sampled on a grid and the `F = 0` contour is traced with
+//!    marching squares, which produces smooth, connected lines. A theatre
+//!    with an island and two land borders comes out as several separate
+//!    fronts on its own.
+//! 5. Short fragments are dropped and each line is lightly simplified, then
+//!    drawn as a dashed line on the F10 map.
 
 use crate::{db::persisted::Persisted, msgq::MsgQ};
 use bfprotocols::cfg::FrontLineConfig;
@@ -43,12 +43,21 @@ use dcso3::{
     trigger::{LineSpec, LineType, MarkId, SideFilter},
     Color, LuaVec3, Vector2, Vector3,
 };
-use delaunator::{triangulate, Point};
 use fxhash::{FxHashMap, FxHashSet};
 use log::*;
 
-/// Perpendicular distance from `p` to the segment `a`–`b` (or to `a` when the
-/// segment is degenerate).
+const LINE_ALPHA: f32 = 0.9;
+const FRONT_LINE: LineType = LineType::Dashed;
+/// Bandwidth of the influence blur, as a multiple of the median spacing
+/// between neighbouring objectives. Bigger = smoother, more strategic.
+const SIGMA_MULT: f64 = 2.6;
+/// σ is clamped to this range (metres) regardless of objective density.
+const SIGMA_MIN: f64 = 22_000.0;
+const SIGMA_MAX: f64 = 95_000.0;
+/// A traced contour shorter than this (metres) is noise around a pocket.
+const MIN_FRONT_LEN: f64 = 30_000.0;
+
+/// Perpendicular distance from `p` to segment `a`–`b` (to `a` if degenerate).
 fn perp_dist(p: Vector2, a: Vector2, b: Vector2) -> f64 {
     let ab = b - a;
     let len = ab.norm();
@@ -86,38 +95,18 @@ fn rdp(points: &[Vector2], epsilon: f64, out: &mut Vec<Vector2>) {
     }
 }
 
-/// Undirected key for the objective pair `(a, b)`.
-fn ekey(a: usize, b: usize) -> (usize, usize) {
-    if a < b {
-        (a, b)
-    } else {
-        (b, a)
-    }
-}
-
-// Line styling is deliberately kept out of FrontLineConfig: `Cfg` is
-// snapshotted positionally (bincode) into bfdb's session tree, so adding
-// fields to it breaks decoding of older snapshots.
-const LINE_ALPHA: f32 = 0.9;
-/// Line style for a stretch of front one side is winning.
-const HELD_LINE: LineType = LineType::Dashed;
-/// Line style for an even stretch.
-const CONTESTED_LINE: LineType = LineType::Dotted;
-/// Summed objective-health difference (percentage points) between a triangle's
-/// blue and red corners below which that stretch is drawn as contested.
-const HEALTH_CONTESTED_DELTA: f64 = 25.0;
-/// A frontline shorter than this (metres) is noise around an isolated pocket.
-const MIN_FRONT_LEN: f64 = 25_000.0;
-/// Skip triangles whose longest edge exceeds this multiple of the median
-/// Delaunay edge — trans-water and convex-hull sliver triangles.
-const EDGE_CUTOFF_MULT: f64 = 3.0;
-
 #[derive(Debug, Clone, Copy)]
 struct Obj {
     pos: Vector2,
-    side: Side,
-    health: f64,
+    /// +1 blue, −1 red
+    sign: f64,
 }
+
+/// A grid-edge crossing, keyed so that the two cells sharing an edge land on
+/// the same key and their segments join. `h = true` → horizontal edge between
+/// corner (i, j) and (i, j+1); `h = false` → vertical edge between (i, j) and
+/// (i+1, j).
+type EdgeKey = (bool, usize, usize);
 
 /// Stores frontline drawing state.
 #[derive(Debug, Clone)]
@@ -142,7 +131,6 @@ impl FrontLine {
         }
     }
 
-    /// Hash of objective ownership, for skipping redraws when nothing changed.
     fn calculate_ownership_hash(persisted: &Persisted) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -157,15 +145,11 @@ impl FrontLine {
         hasher.finish()
     }
 
-    /// Compute the frontline(s): each is an ordered, simplified polyline plus
-    /// the per-triangle crossing points (with the winning side) that colour
-    /// its segments. Empty when there is no blue/red contact.
-    fn compute_frontlines(&self, persisted: &Persisted) -> Vec<(Vec<Vector2>, Vec<(Vector2, Side)>)> {
+    /// Trace the F = 0 contour(s) of the ownership field into simplified
+    /// polylines.
+    fn compute_frontlines(&self, persisted: &Persisted) -> Vec<Vec<Vector2>> {
         use bfprotocols::db::objective::ObjectiveKind as K;
 
-        // Every capturable, owned objective that sits on the ground defines
-        // held territory. Only carrier groups are excluded — they're mobile
-        // and out at sea.
         let objs: Vec<Obj> = persisted
             .objectives
             .into_iter()
@@ -173,132 +157,163 @@ impl FrontLine {
             .filter(|(_, o)| !matches!(o.kind(), K::CarrierGroup { .. }))
             .map(|(_, o)| Obj {
                 pos: o.pos(),
-                side: o.owner,
-                health: (o.health() as f64).max(1.0),
+                sign: if o.owner == Side::Blue { 1.0 } else { -1.0 },
             })
             .collect();
-        let blue = objs.iter().filter(|o| o.side == Side::Blue).count();
-        let red = objs.iter().filter(|o| o.side == Side::Red).count();
-        info!(
-            "Frontline: {} territory objectives ({} blue / {} red)",
-            objs.len(),
-            blue,
-            red
-        );
-        if objs.len() < 3 || blue == 0 || red == 0 {
+        let blue = objs.iter().filter(|o| o.sign > 0.0).count();
+        let red = objs.len() - blue;
+        info!("Frontline: {} objectives ({} blue / {} red)", objs.len(), blue, red);
+        if objs.len() < 4 || blue == 0 || red == 0 {
             return Vec::new();
         }
 
-        let pts: Vec<Point> = objs.iter().map(|o| Point { x: o.pos.x, y: o.pos.y }).collect();
-        let tri = triangulate(&pts);
-        if tri.triangles.len() < 3 {
-            info!("Frontline: degenerate triangulation, no front");
-            return Vec::new();
+        // Bounding box + padding.
+        let (mut mn, mut mx) = (objs[0].pos, objs[0].pos);
+        for o in &objs {
+            mn.x = mn.x.min(o.pos.x);
+            mn.y = mn.y.min(o.pos.y);
+            mx.x = mx.x.max(o.pos.x);
+            mx.y = mx.y.max(o.pos.y);
+        }
+        let pad = (mx - mn).norm() * 0.05;
+        mn -= Vector2::new(pad, pad);
+        mx += Vector2::new(pad, pad);
+
+        // σ from the median nearest-neighbour spacing.
+        let mut nn: Vec<f64> = Vec::with_capacity(objs.len());
+        for (i, a) in objs.iter().enumerate() {
+            let mut best = f64::INFINITY;
+            for (j, b) in objs.iter().enumerate() {
+                if i != j {
+                    best = best.min((a.pos - b.pos).norm());
+                }
+            }
+            if best.is_finite() {
+                nn.push(best);
+            }
+        }
+        nn.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let spacing = nn.get(nn.len() / 2).copied().unwrap_or(30_000.0).max(1.0);
+        let sigma = (spacing * SIGMA_MULT).clamp(SIGMA_MIN, SIGMA_MAX);
+        let inv_2s2 = 1.0 / (2.0 * sigma * sigma);
+        let cutoff2 = (3.0 * sigma).powi(2);
+
+        // Grid. i indexes north (Vector2.x), j indexes east (Vector2.y).
+        let res = (self.config.samples_per_boundary.clamp(60, 240)).max(60);
+        let (rows, cols) = (res, res);
+        let dn = (mx.x - mn.x) / rows as f64;
+        let de = (mx.y - mn.y) / cols as f64;
+        let field = |p: Vector2| -> f64 {
+            let mut s = 0.0;
+            for o in &objs {
+                let d2 = (o.pos - p).norm_squared();
+                if d2 <= cutoff2 {
+                    s += o.sign * (-d2 * inv_2s2).exp();
+                }
+            }
+            s
+        };
+        let mut f = vec![vec![0.0f64; cols + 1]; rows + 1];
+        for i in 0..=rows {
+            for j in 0..=cols {
+                f[i][j] = field(Vector2::new(mn.x + i as f64 * dn, mn.y + j as f64 * de));
+            }
         }
 
-        // Median Delaunay edge length → cutoff for spurious long triangles.
-        let mut elens: Vec<f64> = Vec::with_capacity(tri.triangles.len());
-        for t in tri.triangles.chunks_exact(3) {
-            for &(a, b) in &[(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
-                elens.push((objs[a].pos - objs[b].pos).norm());
-            }
-        }
-        elens.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let median_edge = elens[elens.len() / 2].max(1.0);
-        // Generous: 3× the median, but never below 60 km, so a sparse stretch
-        // of the front doesn't get cut.
-        let edge_cutoff = (median_edge * EDGE_CUTOFF_MULT).max(60_000.0);
+        // Position of a crossing on a grid edge (linear interpolation of F=0).
+        let hpos = |i: usize, j: usize| {
+            let (a, b) = (f[i][j], f[i][j + 1]);
+            let t = if (a - b).abs() < 1e-12 { 0.5 } else { a / (a - b) };
+            Vector2::new(mn.x + i as f64 * dn, mn.y + (j as f64 + t) * de)
+        };
+        let vpos = |i: usize, j: usize| {
+            let (a, b) = (f[i][j], f[i + 1][j]);
+            let t = if (a - b).abs() < 1e-12 { 0.5 } else { a / (a - b) };
+            Vector2::new(mn.x + (i as f64 + t) * dn, mn.y + j as f64 * de)
+        };
 
-        // March the triangles.
-        let ntri = tri.triangles.len() / 3;
-        let mut n_bichromatic = 0usize;
-        let mut n_skipped_long = 0usize;
-        let mut cross: FxHashMap<(usize, usize), Vector2> = FxHashMap::default();
-        let mut segs: Vec<((usize, usize), (usize, usize), Side)> = Vec::new();
-        for t in tri.triangles.chunks_exact(3) {
-            let corners = [t[0], t[1], t[2]];
-            let has_blue = corners.iter().any(|&c| objs[c].side == Side::Blue);
-            let has_red = corners.iter().any(|&c| objs[c].side == Side::Red);
-            if !(has_blue && has_red) {
-                continue;
-            }
-            n_bichromatic += 1;
-            let edges = [
-                (corners[0], corners[1]),
-                (corners[1], corners[2]),
-                (corners[2], corners[0]),
-            ];
-            if edges
-                .iter()
-                .any(|&(a, b)| (objs[a].pos - objs[b].pos).norm() > edge_cutoff)
-            {
-                n_skipped_long += 1;
-                continue;
-            }
-            let mut xs: Vec<(usize, usize)> = Vec::with_capacity(2);
-            for &(a, b) in &edges {
-                if objs[a].side == objs[b].side {
+        // Marching squares: collect segments between edge crossings.
+        let mut pos_of: FxHashMap<EdgeKey, Vector2> = FxHashMap::default();
+        let mut segs: Vec<(EdgeKey, EdgeKey)> = Vec::new();
+        let push = |segs: &mut Vec<(EdgeKey, EdgeKey)>,
+                    pos_of: &mut FxHashMap<EdgeKey, Vector2>,
+                    e0: EdgeKey,
+                    p0: Vector2,
+                    e1: EdgeKey,
+                    p1: Vector2| {
+            pos_of.entry(e0).or_insert(p0);
+            pos_of.entry(e1).or_insert(p1);
+            segs.push((e0, e1));
+        };
+        for i in 0..rows {
+            for j in 0..cols {
+                // Corners A(i,j) B(i,j+1) C(i+1,j+1) D(i+1,j)
+                let mut c = 0u8;
+                if f[i][j] > 0.0 {
+                    c |= 1;
+                }
+                if f[i][j + 1] > 0.0 {
+                    c |= 2;
+                }
+                if f[i + 1][j + 1] > 0.0 {
+                    c |= 4;
+                }
+                if f[i + 1][j] > 0.0 {
+                    c |= 8;
+                }
+                if c == 0 || c == 15 {
                     continue;
                 }
-                let k = ekey(a, b);
-                cross.entry(k).or_insert_with(|| {
-                    let (bc, rc) = if objs[a].side == Side::Blue { (a, b) } else { (b, a) };
-                    // push the crossing toward the weaker side
-                    let f = (objs[bc].health / (objs[bc].health + objs[rc].health)).clamp(0.25, 0.75);
-                    objs[bc].pos + (objs[rc].pos - objs[bc].pos) * f
-                });
-                xs.push(k);
-            }
-            if xs.len() == 2 {
-                let (mut bh, mut rh) = (0.0, 0.0);
-                for &c in &corners {
-                    match objs[c].side {
-                        Side::Blue => bh += objs[c].health,
-                        Side::Red => rh += objs[c].health,
-                        Side::Neutral => {}
+                let ab = ((true, i, j), hpos(i, j)); // top edge
+                let cd = ((true, i + 1, j), hpos(i + 1, j)); // bottom edge
+                let da = ((false, i, j), vpos(i, j)); // left edge
+                let bc = ((false, i, j + 1), vpos(i, j + 1)); // right edge
+                match c {
+                    1 | 14 => push(&mut segs, &mut pos_of, ab.0, ab.1, da.0, da.1),
+                    2 | 13 => push(&mut segs, &mut pos_of, ab.0, ab.1, bc.0, bc.1),
+                    3 | 12 => push(&mut segs, &mut pos_of, da.0, da.1, bc.0, bc.1),
+                    4 | 11 => push(&mut segs, &mut pos_of, bc.0, bc.1, cd.0, cd.1),
+                    6 | 9 => push(&mut segs, &mut pos_of, ab.0, ab.1, cd.0, cd.1),
+                    7 | 8 => push(&mut segs, &mut pos_of, cd.0, cd.1, da.0, da.1),
+                    5 => {
+                        // saddle — connect A-corner and C-corner pairs
+                        push(&mut segs, &mut pos_of, ab.0, ab.1, da.0, da.1);
+                        push(&mut segs, &mut pos_of, bc.0, bc.1, cd.0, cd.1);
                     }
+                    10 => {
+                        push(&mut segs, &mut pos_of, ab.0, ab.1, bc.0, bc.1);
+                        push(&mut segs, &mut pos_of, cd.0, cd.1, da.0, da.1);
+                    }
+                    _ => {}
                 }
-                let adv = if (bh - rh).abs() < HEALTH_CONTESTED_DELTA {
-                    Side::Neutral
-                } else if bh > rh {
-                    Side::Blue
-                } else {
-                    Side::Red
-                };
-                segs.push((xs[0], xs[1], adv));
             }
         }
         info!(
-            "Frontline: {} triangles, {} bichromatic ({} skipped as too long, cutoff {:.0} km), {} front segments",
-            ntri,
-            n_bichromatic,
-            n_skipped_long,
-            edge_cutoff / 1000.0,
+            "Frontline: σ {:.0} km, {}×{} grid, {} contour segments",
+            sigma / 1000.0,
+            res,
+            res,
             segs.len()
         );
         if segs.is_empty() {
             return Vec::new();
         }
 
-        // Index crossing points densely and build the segment graph.
-        let mut node_of: FxHashMap<(usize, usize), usize> = FxHashMap::default();
-        let mut positions: Vec<Vector2> = Vec::with_capacity(cross.len());
-        for (k, v) in &cross {
+        // Index crossings and chain the segments into polylines.
+        let mut node_of: FxHashMap<EdgeKey, usize> = FxHashMap::default();
+        let mut positions: Vec<Vector2> = Vec::with_capacity(pos_of.len());
+        for (k, v) in &pos_of {
             node_of.insert(*k, positions.len());
             positions.push(*v);
         }
         let n = positions.len();
         let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
-        let mut adv_nodes: Vec<(Vector2, Side)> = Vec::with_capacity(segs.len());
-        for (a, b, adv) in &segs {
+        for (a, b) in &segs {
             let (ia, ib) = (node_of[a], node_of[b]);
             adj[ia].push(ib);
             adj[ib].push(ia);
-            adv_nodes.push(((positions[ia] + positions[ib]) * 0.5, *adv));
         }
 
-        // Walk the graph into chains: start at endpoints / junctions, then
-        // mop up loops.
         let sidx = |a: usize, b: usize| if a < b { (a, b) } else { (b, a) };
         let mut used: FxHashSet<(usize, usize)> = FxHashSet::default();
         let walk = |start: usize, via: usize, used: &mut FxHashSet<(usize, usize)>| {
@@ -346,49 +361,38 @@ impl FrontLine {
             }
         }
 
-        // Filter tiny fragments, simplify, keep.
-        let budget = self.config.max_marks.max(8);
-        let epsilon = (median_edge * 0.2).clamp(2_000.0, 8_000.0);
-        let n_raw = raw.len();
-        let mut n_short = 0usize;
-        let mut lines: Vec<(Vec<Vector2>, Vec<(Vector2, Side)>)> = Vec::new();
+        let epsilon = (dn.max(de) * 1.5).clamp(1_500.0, 6_000.0);
+        let mut kept: Vec<Vec<Vector2>> = Vec::new();
+        let mut dropped = 0usize;
         for chain in raw {
             if chain.len() < 2 {
                 continue;
             }
             let len: f64 = chain.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
             if len < MIN_FRONT_LEN {
-                n_short += 1;
+                dropped += 1;
                 continue;
             }
-            let mut eps = epsilon;
             let mut simp = Vec::new();
-            rdp(&chain, eps, &mut simp);
+            rdp(&chain, epsilon, &mut simp);
             simp.dedup_by(|a, b| (*a - *b).norm() < 1.0);
-            while simp.len().saturating_sub(1) > budget && eps < len {
-                eps *= 2.0;
-                simp.clear();
-                rdp(&chain, eps, &mut simp);
-                simp.dedup_by(|a, b| (*a - *b).norm() < 1.0);
-            }
             if simp.len() >= 2 {
-                lines.push((simp, adv_nodes.clone()));
+                kept.push(simp);
             }
         }
-        lines.sort_by(|a, b| {
-            a.0[0]
-                .x
-                .partial_cmp(&b.0[0].x)
+        kept.sort_by(|a, b| {
+            a[0].x
+                .partial_cmp(&b[0].x)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         info!(
-            "Frontline: {} raw chain(s), {} dropped as <{:.0} km, {} line(s) kept",
-            n_raw,
-            n_short,
+            "Frontline: {} contour(s), {} dropped as <{:.0} km, {} kept",
+            kept.len() + dropped,
+            dropped,
             MIN_FRONT_LEN / 1000.0,
-            lines.len()
+            kept.len()
         );
-        lines
+        kept
     }
 
     fn draw_frontline(&mut self, persisted: &Persisted, msgq: &mut MsgQ) {
@@ -396,28 +400,12 @@ impl FrontLine {
         if lines.is_empty() {
             return;
         }
-        let total: usize = lines.iter().map(|(l, _)| l.len().saturating_sub(1)).sum();
+        let total: usize = lines.iter().map(|l| l.len().saturating_sub(1)).sum();
         info!("Frontline: drawing {} line(s), {} segment(s)", lines.len(), total);
-
-        for (line, adv_nodes) in &lines {
+        let color = Color::new(1.0, 1.0, 1.0, LINE_ALPHA);
+        for line in &lines {
             for w in line.windows(2) {
                 let (a, b) = (w[0], w[1]);
-                let mid = (a + b) * 0.5;
-                let side = adv_nodes
-                    .iter()
-                    .min_by(|x, y| {
-                        (x.0 - mid)
-                            .norm()
-                            .partial_cmp(&(y.0 - mid).norm())
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    })
-                    .map(|(_, s)| *s)
-                    .unwrap_or(Side::Neutral);
-                let (color, line_type) = match side {
-                    Side::Red => (Color::new(1.0, 0.0, 0.0, LINE_ALPHA), HELD_LINE),
-                    Side::Blue => (Color::new(0.0, 0.0, 1.0, LINE_ALPHA), HELD_LINE),
-                    Side::Neutral => (Color::new(1.0, 1.0, 1.0, LINE_ALPHA), CONTESTED_LINE),
-                };
                 let mark_id = MarkId::new();
                 msgq.line_to_all(
                     SideFilter::All,
@@ -426,7 +414,7 @@ impl FrontLine {
                         start: LuaVec3(Vector3::new(a.x, 0., a.y)),
                         end: LuaVec3(Vector3::new(b.x, 0., b.y)),
                         color,
-                        line_type,
+                        line_type: FRONT_LINE,
                         read_only: true,
                     },
                     None,

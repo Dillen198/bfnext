@@ -25,7 +25,6 @@ chrono = { version = "0.4.31", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 compact_str = { version = "0.8", features = ["serde"] }
 crossbeam = { version = "0.8" }
-delaunator = "1"
 enumflags2 = { version = "0.7.8", features = ["serde"] }
 env_logger = "0.11.0"
 fixedstr = { version = "0.5.5", features = ["serde"] }

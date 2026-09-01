@@ -705,20 +705,18 @@ root [README.md](../README.md) for setup.
 
 ### Frontline Drawing **[NEW]**
 A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
-- **It's the ownership iso-line.** Only territory-defining objectives count
-  (airbases, naval bases, logistics hubs, FOBs, FARPs — SAM sites, command
-  centres, factories and carriers are ignored). The engine Delaunay-
-  triangulates the objectives, then "marches" the triangles: any triangle
-  touching both a blue and a red objective has the front running through it,
-  crossing the blue↔red edges at a point pushed toward the weaker side (lower
-  objective health). Neighbouring triangles share those crossings exactly, so
-  the pieces chain into continuous lines. A map with an island and two land
-  borders comes out as **several separate fronts** on its own — no line is
-  ever strung across open water.
-- **Coloured by strength**: a segment is blue or red where that side's
-  objectives around it are healthier, **white / dotted** where they're within
-  ~25 health of each other (a fresh, unfought campaign shows all white — or
-  nothing at all if one side hasn't taken any ground yet).
+- **It's the zero line of a smooth "who controls this ground" field.** Every
+  owned, capturable ground objective votes for its side with an influence
+  that falls off with distance (blue +1, red −1). Where blue influence
+  balances red influence, that's the front. The blur radius is a few times
+  the spacing between objectives, so a lone base behind enemy lines doesn't
+  bend the line — it follows the overall division of the theatre, the way a
+  staff officer would draw it.
+- The field is sampled on a grid and its zero contour traced with marching
+  squares → smooth, connected lines. A theatre with an island and two land
+  borders comes out as **several separate fronts** on its own; nothing is
+  strung across open water.
+- Drawn as a single white dashed line per front.
 - **Nothing is drawn** until the two sides actually hold bordering territory.
 - **Automatic updates**: redrawn whenever an objective changes hands.
 - **Replaces** the older semi-transparent territory shading.
@@ -736,7 +734,7 @@ A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
 #### Parameters
 - **enabled**: `true` to draw the frontline
 - **update_on_objective_change_only**: only redraw when an objective changes owner (recommended for performance)
-- **samples_per_boundary**: *legacy* — was the ownership-grid resolution; unused now but still parsed.
+- **samples_per_boundary**: contour-grid resolution (60-240, higher = finer contour, slower). Default 100.
 - **max_marks**: cap on line segments per front (default 200). A line needing more is simplified harder.
 - **territory_zone_alpha**: *legacy* — was the shading opacity; ignored by the line renderer but still parsed.
 
@@ -978,15 +976,15 @@ All new features can be configured in the campaign config JSON:
 
 ### Version 2.8 (2026-09-01)
 **Changed: frontline is now a line; LOGISTICS_DETACHED means fully cut off**
-- **Frontline drawing**: the `frontline` overlay now draws the ownership
-  iso-line — Delaunay-triangulate the territory objectives, march the
-  triangles that touch both sides, chain the crossings into continuous
-  dashed lines. A map with an island and two land borders yields several
-  separate fronts; nothing is drawn until the sides actually hold bordering
-  territory. Segments coloured by objective health.
-  `frontline.samples_per_boundary` and `frontline.territory_zone_alpha` are
-  now legacy no-ops (still parsed). See
-  [Frontline Drawing](#frontline-drawing-new).
+- **Frontline drawing**: the `frontline` overlay now draws the zero line of
+  a smooth influence field — each owned objective votes for its side with a
+  distance-falloff Gaussian, and the front is where blue and red balance.
+  Traced with marching squares, so it's a smooth connected line; a theatre
+  with an island and two land borders shows up as several separate fronts.
+  Nothing is drawn until the sides hold bordering territory. One white
+  dashed line per front. `frontline.samples_per_boundary` is the contour
+  grid resolution again; `frontline.territory_zone_alpha` is a legacy
+  no-op. See [Frontline Drawing](#frontline-drawing-new).
 - **`LOGISTICS_DETACHED` semantics flipped**: `true` now cuts an objective
   off from *all* automatic resupply (no convoy, no air, no instant) —
   players fly supplies in by hand. `false` gets a convoy (or a cargo
