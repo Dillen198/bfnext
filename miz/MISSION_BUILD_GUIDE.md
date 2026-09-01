@@ -703,12 +703,15 @@ root [README.md](../README.md) for setup.
   to also draw two extra converging NW/NE arrows, which duplicated the
   threatened arrow and cluttered the map, so it's text-only now.
 
-### Territory Zone Visualization **[NEW]**
-Voronoi-based territory zones show areas of control on the F10 map:
-- **Semi-transparent shading**: Red and Blue zones show controlled territory
-- **Automatic updates**: Zones recalculate when objectives change ownership
-- **Performance optimized**: Configurable grid resolution and update frequency
-- **Neutral zones**: Neutral territory is not shaded
+### Frontline Drawing **[NEW]**
+A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
+- **Boundary trace**: the engine builds a Voronoi ownership grid from every
+  objective and traces the edge where Red territory meets Blue territory
+- **Coloured by local advantage**: each segment is blue where blue holds the
+  ground around it, red where red does, and **white / dotted** where the two
+  sides are roughly balanced (a genuinely contested stretch)
+- **Automatic updates**: redrawn whenever an objective changes hands
+- **Replaces** the older semi-transparent territory shading
 
 #### Configuration
 ```json
@@ -716,18 +719,17 @@ Voronoi-based territory zones show areas of control on the F10 map:
   "enabled": true,
   "update_on_objective_change_only": true,
   "samples_per_boundary": 100,
-  "max_marks": 200,
-  "territory_zone_alpha": 0.15
+  "max_marks": 200
 }
 ```
 
 #### Parameters
-- **enabled**: `true` to enable territory visualization
-- **update_on_objective_change_only**: Only recalculate when objectives change owner (recommended for performance)
-- **samples_per_boundary**: Grid resolution (50-200, higher = finer detail but slower)
-- **max_marks** **[NEW]**: Cap on F10 map marks drawn for territory zones (default: 200). Fewer marks = better
-  server/client performance; the draw step is derived automatically from this and the grid resolution.
-- **territory_zone_alpha**: Transparency (0.0-1.0, 0.1-0.3 recommended for subtle shading)
+- **enabled**: `true` to draw the frontline
+- **update_on_objective_change_only**: only redraw when an objective changes owner (recommended for performance)
+- **samples_per_boundary**: ownership-grid resolution (50-200, higher = finer, fewer stair-steps, slower)
+- **max_marks**: cap on the number of line segments drawn (default 200). Fewer = lighter on server/clients;
+  the segment list is thinned to fit.
+- **territory_zone_alpha**: *legacy* — was the shading opacity; ignored by the line renderer but still parsed.
 
 ### Supply Convoy System **[NEW]**
 
@@ -964,6 +966,26 @@ All new features can be configured in the campaign config JSON:
 ---
 
 ## Changelog
+
+### Version 2.8 (2026-09-01)
+**Changed: frontline is now a line; LOGISTICS_DETACHED means fully cut off**
+- **Frontline drawing**: the `frontline` overlay now draws a dashed line
+  along the Red/Blue territory boundary instead of semi-transparent
+  territory shading. Segments are coloured by local advantage — blue, red,
+  or white/dotted where contested. `frontline.territory_zone_alpha` is now
+  a legacy no-op (still parsed). See
+  [Frontline Drawing](#frontline-drawing-new).
+- **`LOGISTICS_DETACHED` semantics flipped**: `true` now cuts an objective
+  off from *all* automatic resupply (no convoy, no air, no instant) —
+  players fly supplies in by hand. `false` gets a convoy (or a cargo
+  plane when very low), falling back to instant only if the convoy system
+  is disabled. Front-line zones that previously relied on
+  `LOGISTICS_DETACHED = true` for convoy routing should be set to `false`.
+- **Carrier task forces are co-located**: each carrier objective holds
+  both sides' task forces in the `.miz` (`<S>CARRIER` / `<S>CARRIER2`);
+  the engine swaps live/reserve on capture. Every ship in a carrier group
+  gets the naval inventory template (`BINVENTORYNAVY` / `RINVENTORYNAVY`),
+  and carriers stock aircraft only from what is actually on their deck.
 
 ### Version 2.7 (2026-08-19)
 **Added: IADN point defense**

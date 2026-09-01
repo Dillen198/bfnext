@@ -1789,22 +1789,23 @@ fn default_frontline_max_marks() -> usize {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 // #[serde(deny_unknown_fields)]
 pub struct FrontLineConfig {
-    /// Enable territory zone drawing on F10 map
+    /// Draw the frontline on the F10 map: dashed coloured segments along the
+    /// Red/Blue territory boundary (blue where blue holds the adjacent ground,
+    /// red where red does, white and dotted where genuinely contested).
     pub enabled: bool,
-    /// Update only when objectives change ownership (recommended for best performance)
+    /// Redraw only when an objective changes hands (recommended for performance).
     #[serde(default = "default_frontline_on_change_only")]
     pub update_on_objective_change_only: bool,
-    /// Number of sample points for Voronoi grid calculation (higher = finer detail but slower)
-    /// Range: 50-200 recommended
+    /// Resolution of the ownership grid the boundary is traced from (higher =
+    /// finer, more stair-steps resolved, slower). Clamped to 50-200.
     #[serde(default = "default_frontline_samples")]
     pub samples_per_boundary: usize,
-    /// Maximum number of F10 map marks to draw for territory zones.
-    /// Fewer marks = better server and client performance. Default: 200.
-    /// The draw step is derived automatically: step = ceil(sqrt(grid² / max_marks)).
+    /// Upper bound on the number of line segments drawn. Fewer = lighter on the
+    /// server and clients. Default: 200. The segment list is thinned to fit.
     #[serde(default = "default_frontline_max_marks")]
     pub max_marks: usize,
-    /// Transparency for filled territory zones (0.0-1.0, where 1.0 is opaque)
-    /// Recommended: 0.1-0.3 for subtle shading
+    /// Legacy: transparency of the old filled-territory shading. No longer used
+    /// by the line renderer; kept so existing configs still parse.
     #[serde(default = "default_territory_zone_alpha")]
     pub territory_zone_alpha: f32,
 }

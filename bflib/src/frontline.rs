@@ -19,7 +19,7 @@ use bfprotocols::cfg::FrontLineConfig;
 use chrono::{DateTime, Utc};
 use dcso3::{
     coalition::Side,
-    trigger::{LineType, MarkId, QuadSpec, SideFilter},
+    trigger::{LineSpec, LineType, MarkId, SideFilter},
     Color, LuaVec3, Vector2, Vector3,
 };
 use log::*;
@@ -47,10 +47,24 @@ impl PointDistance for ObjectivePoint {
     }
 }
 
+// Line styling is deliberately kept out of FrontLineConfig: `Cfg` is
+// snapshotted positionally (bincode) into bfdb's session tree, so adding
+// fields to it breaks decoding of older snapshots. These constants give the
+// look from the reference drawing (thick coloured dashes, dotted where
+// contested) without touching the config layout.
+const LINE_ALPHA: f32 = 0.9;
+/// Line style for a segment where one side clearly holds the adjacent ground.
+const HELD_LINE: LineType = LineType::Dashed;
+/// Line style for a segment that is genuinely contested.
+const CONTESTED_LINE: LineType = LineType::Dotted;
+/// |red - blue| / (red + blue) within the sample window below which a
+/// boundary segment is treated as contested (drawn white / dotted).
+const CONTESTED_THRESHOLD: f64 = 0.22;
+
 /// Stores front line drawing state
 #[derive(Debug, Clone)]
 pub struct FrontLine {
-    /// Stored mark IDs for territory zone quads
+    /// Stored mark IDs for the drawn frontline segments
     marks: Vec<MarkId>,
     /// Configuration
     config: FrontLineConfig,
@@ -151,70 +165,105 @@ impl FrontLine {
         grid
     }
 
-    /// Extract territory zones as filled quads for visualization
-    /// Returns (side, list of quads) for each territory
-    fn extract_territory_zones(&self, grid: &[Vec<Side>], min: Vector2, max: Vector2) -> Vec<(Side, Vec<(Vector2, Vector2, Vector2, Vector2)>)> {
+    /// Locally dominant side around boundary cell `(i, j)`: sample a square
+    /// window of the ownership grid and see which side holds more of the
+    /// surrounding ground. A roughly even split is reported as `Neutral`
+    /// (genuinely contested → drawn white / dotted).
+    fn segment_side(grid: &[Vec<Side>], i: usize, j: usize, window: i64) -> Side {
+        let rows = grid.len() as i64;
+        let cols = grid[0].len() as i64;
+        let (mut red, mut blue) = (0i64, 0i64);
+        for di in -window..=window {
+            for dj in -window..=window {
+                let ii = i as i64 + di;
+                let jj = j as i64 + dj;
+                if ii < 0 || jj < 0 || ii >= rows || jj >= cols {
+                    continue;
+                }
+                match grid[ii as usize][jj as usize] {
+                    Side::Red => red += 1,
+                    Side::Blue => blue += 1,
+                    Side::Neutral => {}
+                }
+            }
+        }
+        let total = red + blue;
+        if total == 0 {
+            return Side::Neutral;
+        }
+        if (red - blue).abs() as f64 / total as f64 <= CONTESTED_THRESHOLD {
+            Side::Neutral
+        } else if red > blue {
+            Side::Red
+        } else {
+            Side::Blue
+        }
+    }
+
+    /// Walk the ownership grid and, for every cell edge where a Red cell
+    /// borders a Blue cell, emit that shared edge as a line segment tagged
+    /// with the locally dominant side. Honours `config.max_marks`.
+    fn extract_frontline_segments(
+        &self,
+        grid: &[Vec<Side>],
+        min: Vector2,
+        max: Vector2,
+    ) -> Vec<(Side, Vector2, Vector2)> {
         let rows = grid.len();
         if rows == 0 {
             return Vec::new();
         }
         let cols = grid[0].len();
+        let cw = (max.x - min.x) / cols as f64;
+        let ch = (max.y - min.y) / rows as f64;
+        // Sample window for local advantage: ~1/12 of the grid, clamped.
+        let window = ((rows.min(cols) / 12).max(2).min(8)) as i64;
 
-        let cell_width = (max.x - min.x) / cols as f64;
-        let cell_height = (max.y - min.y) / rows as f64;
+        let opposite = |a: Side, b: Side| {
+            matches!(
+                (a, b),
+                (Side::Red, Side::Blue) | (Side::Blue, Side::Red)
+            )
+        };
 
-        // Derive sample_step so total marks ≤ max_marks.
-        // step = ceil(sqrt(rows*cols / max_marks)), minimum 1.
-        let max_marks = self.config.max_marks.max(1);
-        let sample_step = (((rows * cols) as f64 / max_marks as f64).sqrt().ceil() as usize).max(1);
-
-        let mut red_quads = Vec::new();
-        let mut blue_quads = Vec::new();
-
-        for i in (0..rows).step_by(sample_step) {
-            for j in (0..cols).step_by(sample_step) {
-                let side = grid[i][j];
-
-                if side == Side::Neutral {
+        let mut segs: Vec<(Side, Vector2, Vector2)> = Vec::new();
+        for i in 0..rows {
+            for j in 0..cols {
+                let here = grid[i][j];
+                if here == Side::Neutral {
                     continue;
                 }
-
-                // Create a quad for this cell
-                let x1 = min.x + (j as f64) * cell_width;
-                let y1 = min.y + (i as f64) * cell_height;
-                let x2 = min.x + ((j + sample_step).min(cols) as f64) * cell_width;
-                let y2 = min.y + ((i + sample_step).min(rows) as f64) * cell_height;
-
-                let quad = (
-                    Vector2::new(x1, y1),
-                    Vector2::new(x2, y1),
-                    Vector2::new(x2, y2),
-                    Vector2::new(x1, y2),
-                );
-
-                match side {
-                    Side::Red => red_quads.push(quad),
-                    Side::Blue => blue_quads.push(quad),
-                    Side::Neutral => {},
+                // Eastern neighbour → vertical shared edge.
+                if j + 1 < cols && opposite(here, grid[i][j + 1]) {
+                    let x = min.x + (j + 1) as f64 * cw;
+                    let y0 = min.y + i as f64 * ch;
+                    let side = Self::segment_side(grid, i, j, window);
+                    segs.push((side, Vector2::new(x, y0), Vector2::new(x, y0 + ch)));
+                }
+                // Southern neighbour → horizontal shared edge.
+                if i + 1 < rows && opposite(here, grid[i + 1][j]) {
+                    let y = min.y + (i + 1) as f64 * ch;
+                    let x0 = min.x + j as f64 * cw;
+                    let side = Self::segment_side(grid, i, j, window);
+                    segs.push((side, Vector2::new(x0, y), Vector2::new(x0 + cw, y)));
                 }
             }
         }
 
-        let mut zones = Vec::new();
-        if !red_quads.is_empty() {
-            zones.push((Side::Red, red_quads));
+        // Respect the mark budget: thin the segment list to fit.
+        let budget = self.config.max_marks.max(1);
+        if segs.len() > budget {
+            let step = (segs.len() + budget - 1) / budget;
+            segs = segs.into_iter().step_by(step).collect();
         }
-        if !blue_quads.is_empty() {
-            zones.push((Side::Blue, blue_quads));
-        }
-
-        zones
+        segs
     }
 
-    /// Draw filled territory zones to show areas of control
-    fn draw_territory_zones(&mut self, persisted: &Persisted, msgq: &mut MsgQ) {
-        // Collect all objectives
-        let all_objectives: Vec<(Vector2, Side)> = persisted.objectives
+    /// Draw the frontline as coloured dashed segments along the Red/Blue
+    /// territory boundary.
+    fn draw_frontline(&mut self, persisted: &Persisted, msgq: &mut MsgQ) {
+        let all_objectives: Vec<(Vector2, Side)> = persisted
+            .objectives
             .into_iter()
             .map(|(_, obj)| (obj.pos(), obj.owner))
             .collect();
@@ -223,65 +272,47 @@ impl FrontLine {
             return;
         }
 
-        // Count objectives by side
-        let red_count = all_objectives.iter().filter(|(_, side)| *side == Side::Red).count();
-        let blue_count = all_objectives.iter().filter(|(_, side)| *side == Side::Blue).count();
-        let neutral_count = all_objectives.iter().filter(|(_, side)| *side == Side::Neutral).count();
+        let red_count = all_objectives.iter().filter(|(_, s)| *s == Side::Red).count();
+        let blue_count = all_objectives.iter().filter(|(_, s)| *s == Side::Blue).count();
+        if red_count == 0 || blue_count == 0 {
+            info!("Frontline: one side holds no objectives, nothing to draw");
+            return;
+        }
 
-        info!("Frontline: Calculating territory zones for {} objectives (Red: {}, Blue: {}, Neutral: {})",
-              all_objectives.len(), red_count, blue_count, neutral_count);
-
-        // Calculate bounds and build Voronoi grid
         let (min, max) = self.calculate_bounds(&all_objectives);
-        info!("Frontline: Map bounds: ({:.0}, {:.0}) to ({:.0}, {:.0})",
-              min.x, min.y, max.x, max.y);
-
         let grid = self.build_voronoi_grid(&all_objectives, min, max);
+        let segments = self.extract_frontline_segments(&grid, min, max);
 
-        // Extract territory zones
-        let zones = self.extract_territory_zones(&grid, min, max);
+        info!(
+            "Frontline: drawing {} boundary segment(s) (Red obj: {}, Blue obj: {})",
+            segments.len(), red_count, blue_count
+        );
 
-        info!("Frontline: Drawing {} territory zone(s)", zones.len());
-
-        // Draw quads for each territory
-        for (side, quads) in zones {
-            let (fill_r, fill_g, fill_b) = match side {
-                Side::Red => (1.0, 0.0, 0.0),
-                Side::Blue => (0.0, 0.0, 1.0),
-                Side::Neutral => continue,  // Don't draw neutral zones
+        for (side, a, b) in segments {
+            let (color, line_type) = match side {
+                Side::Red => (Color::new(1.0, 0.0, 0.0, LINE_ALPHA), HELD_LINE),
+                Side::Blue => (Color::new(0.0, 0.0, 1.0, LINE_ALPHA), HELD_LINE),
+                Side::Neutral => (Color::new(1.0, 1.0, 1.0, LINE_ALPHA), CONTESTED_LINE),
             };
-
-            let fill_color = Color::new(fill_r, fill_g, fill_b, self.config.territory_zone_alpha);
-            let border_color = Color::new(fill_r, fill_g, fill_b, 0.0);  // Invisible border
-
-            info!("Frontline: Drawing {} quads for {:?} territory", quads.len(), side);
-
-            for (p0, p1, p2, p3) in quads {
-                let mark_id = MarkId::new();
-
-                msgq.quad_to_all(
-                    SideFilter::All,
-                    mark_id,
-                    QuadSpec {
-                        p0: LuaVec3(Vector3::new(p0.x, 0., p0.y)),
-                        p1: LuaVec3(Vector3::new(p1.x, 0., p1.y)),
-                        p2: LuaVec3(Vector3::new(p2.x, 0., p2.y)),
-                        p3: LuaVec3(Vector3::new(p3.x, 0., p3.y)),
-                        color: border_color,
-                        fill_color,
-                        line_type: LineType::NoLine,
-                        read_only: true,
-                    },
-                    None,
-                );
-
-                self.marks.push(mark_id);
-            }
+            let mark_id = MarkId::new();
+            msgq.line_to_all(
+                SideFilter::All,
+                mark_id,
+                LineSpec {
+                    start: LuaVec3(Vector3::new(a.x, 0., a.y)),
+                    end: LuaVec3(Vector3::new(b.x, 0., b.y)),
+                    color,
+                    line_type,
+                    read_only: true,
+                },
+                None,
+            );
+            self.marks.push(mark_id);
         }
     }
 
-    /// Update territory zones based on current objective ownership
-    /// Returns true if the zones were updated
+    /// Redraw the frontline from current objective ownership.
+    /// Returns true if it was redrawn.
     pub fn update(&mut self, persisted: &Persisted, msgq: &mut MsgQ, _now: DateTime<Utc>) -> bool {
         if !self.config.enabled {
             // Clear marks if disabled
@@ -303,28 +334,27 @@ impl FrontLine {
         }
 
         if is_initial_calculation {
-            info!("Frontline: Performing initial territory zones calculation");
+            info!("Frontline: performing initial frontline draw");
         } else {
-            info!("Frontline: Objective ownership changed, recalculating territory zones");
+            info!("Frontline: objective ownership changed, redrawing frontline");
         }
 
         self.objective_ownership_hash = new_hash;
 
         // Clear old marks
         if !self.marks.is_empty() {
-            debug!("Frontline: Clearing {} old marks before redraw", self.marks.len());
+            debug!("Frontline: clearing {} old segments before redraw", self.marks.len());
         }
         self.clear_marks(msgq);
 
-        // Draw territory zones
-        self.draw_territory_zones(persisted, msgq);
+        self.draw_frontline(persisted, msgq);
 
-        // Safety check: Warn if we have an excessive number of marks
+        // Safety check: warn if we somehow drew an absurd number of segments.
         if self.marks.len() > 5000 {
-            warn!("Frontline: WARNING - Excessive mark count: {} marks created! This may indicate a bug.",
+            warn!("Frontline: WARNING - excessive segment count: {} created! This may indicate a bug.",
                   self.marks.len());
         } else {
-            info!("Frontline: Created {} territory zone marks", self.marks.len());
+            info!("Frontline: drew {} frontline segment(s)", self.marks.len());
         }
 
         true
@@ -335,7 +365,7 @@ impl FrontLine {
         // No-op: pressure system removed for polygon-only mode
     }
 
-    /// Remove all territory zone marks
+    /// Remove all frontline segments
     pub fn remove(mut self, msgq: &mut MsgQ) {
         self.clear_marks(msgq);
     }
