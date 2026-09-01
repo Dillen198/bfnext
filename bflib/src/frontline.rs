@@ -39,7 +39,7 @@ use dcso3::{
     trigger::{LineSpec, LineType, MarkId, SideFilter},
     Color, LuaVec3, Vector2, Vector3,
 };
-use fxhash::FxHashSet;
+use fxhash::{FxHashMap, FxHashSet};
 use log::*;
 use rstar::{PointDistance, RTree, RTreeObject, AABB};
 
@@ -104,6 +104,93 @@ fn principal_axis(sxx: f64, sxy: f64, syy: f64) -> Vector2 {
     } else {
         v / n
     }
+}
+
+/// Union-find root with path halving.
+fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+    }
+    x
+}
+
+/// Order one cluster of frontline nodes into a path (nearest-neighbour walk
+/// from the principal-axis extreme), trim outlier end-hops, and simplify with
+/// Ramer–Douglas–Peucker down to at most `budget` segments.
+fn order_and_simplify(cluster: &[(Vector2, Side)], budget: usize) -> Option<Vec<Vector2>> {
+    if cluster.len() < 2 {
+        return None;
+    }
+    let centroid = cluster
+        .iter()
+        .fold(Vector2::zeros(), |acc, (p, _)| acc + *p)
+        / cluster.len() as f64;
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for (p, _) in cluster {
+        let d = *p - centroid;
+        sxx += d.x * d.x;
+        sxy += d.x * d.y;
+        syy += d.y * d.y;
+    }
+    let axis = principal_axis(sxx, sxy, syy);
+
+    let start = (0..cluster.len())
+        .min_by(|&a, &b| {
+            let pa = (cluster[a].0 - centroid).dot(&axis);
+            let pb = (cluster[b].0 - centroid).dot(&axis);
+            pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap();
+    let mut visited = vec![false; cluster.len()];
+    let mut ordered: Vec<Vector2> = Vec::with_capacity(cluster.len());
+    let mut cur = start;
+    loop {
+        visited[cur] = true;
+        ordered.push(cluster[cur].0);
+        let next = (0..cluster.len()).filter(|&k| !visited[k]).min_by(|&a, &b| {
+            let da = (cluster[a].0 - cluster[cur].0).norm();
+            let db = (cluster[b].0 - cluster[cur].0).norm();
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        match next {
+            Some(n) => cur = n,
+            None => break,
+        }
+    }
+    ordered.dedup_by(|a, b| (*a - *b).norm() < 500.0);
+    if ordered.len() < 2 {
+        return None;
+    }
+
+    if ordered.len() > 3 {
+        let mut hops: Vec<f64> = ordered.windows(2).map(|w| (w[0] - w[1]).norm()).collect();
+        hops.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let hop_cutoff = hops[hops.len() / 2].max(1.0) * 3.0;
+        while ordered.len() > 3 {
+            let n = ordered.len();
+            if (ordered[n - 1] - ordered[n - 2]).norm() > hop_cutoff {
+                ordered.pop();
+            } else if (ordered[1] - ordered[0]).norm() > hop_cutoff {
+                ordered.remove(0);
+            } else {
+                break;
+            }
+        }
+    }
+
+    let span = (ordered[0] - ordered[ordered.len() - 1]).norm().max(1.0);
+    let mut epsilon = (span * 0.02).clamp(1_000.0, 15_000.0);
+    let mut simplified = Vec::new();
+    rdp(&ordered, epsilon, &mut simplified);
+    simplified.dedup_by(|a, b| (*a - *b).norm() < 1.0);
+    while simplified.len().saturating_sub(1) > budget && epsilon < span {
+        epsilon *= 2.0;
+        simplified.clear();
+        rdp(&ordered, epsilon, &mut simplified);
+        simplified.dedup_by(|a, b| (*a - *b).norm() < 1.0);
+    }
+    (simplified.len() >= 2).then_some(simplified)
 }
 
 /// R-tree node: an objective's position plus its index into the `objs` slice.
@@ -188,40 +275,46 @@ impl FrontLine {
         hasher.finish()
     }
 
-    /// Build the frontline: an ordered, simplified polyline plus the raw
-    /// contested-pair midpoints (with the locally stronger side) used to
-    /// colour each drawn segment. Returns `None` when there is no meaningful
-    /// front (one side holds nothing, too few contested pairs, …).
-    fn compute_frontline(
-        &self,
-        persisted: &Persisted,
-    ) -> Option<(Vec<Vector2>, Vec<(Vector2, Side)>)> {
-        // (position, side, health%) for every non-neutral objective.
+    /// Build the frontline(s): for a Syria-style map with an island and two
+    /// land borders this comes out as several separate lines (Cyprus, the
+    /// Turkey/Syria front, the Syria/Israel front). Each entry is an ordered,
+    /// simplified polyline plus the contested-pair midpoints (with the locally
+    /// stronger side) that colour its segments. Empty when there is no front.
+    fn compute_frontline(&self, persisted: &Persisted) -> Vec<(Vec<Vector2>, Vec<(Vector2, Side)>)> {
+        use bfprotocols::db::objective::ObjectiveKind as K;
+
+        // (position, side, health%) for every non-neutral objective that
+        // actually defines held ground. SAM sites, command centres, factories
+        // and carrier groups are excluded: they're scattered through friendly
+        // territory and would turn the front into salt-and-pepper noise.
         let objs: Vec<(Vector2, Side, f64)> = persisted
             .objectives
             .into_iter()
             .filter(|(_, o)| o.owner != Side::Neutral)
+            .filter(|(_, o)| {
+                matches!(
+                    o.kind(),
+                    K::Airbase | K::NavalBase | K::Logistics | K::Fob | K::Farp { .. }
+                )
+            })
             .map(|(_, o)| (o.pos(), o.owner, o.health() as f64))
             .collect();
         if objs.len() < 3 {
-            return None;
+            return Vec::new();
         }
         let red = objs.iter().filter(|(_, s, _)| *s == Side::Red).count();
         let blue = objs.iter().filter(|(_, s, _)| *s == Side::Blue).count();
         if red == 0 || blue == 0 {
             info!("Frontline: one side holds no objectives, nothing to draw");
-            return None;
+            return Vec::new();
         }
 
-        let nodes_for_tree: Vec<ObjIdx> = objs
-            .iter()
-            .enumerate()
-            .map(|(idx, (p, _, _))| ObjIdx {
-                pos: [p.x, p.y],
-                idx,
-            })
-            .collect();
-        let tree = RTree::bulk_load(nodes_for_tree);
+        let tree = RTree::bulk_load(
+            objs.iter()
+                .enumerate()
+                .map(|(idx, (p, _, _))| ObjIdx { pos: [p.x, p.y], idx })
+                .collect::<Vec<_>>(),
+        );
 
         // Contested pairs: an objective and a near neighbour on the other side.
         let mut pairs: Vec<(usize, usize, f64)> = Vec::new();
@@ -246,23 +339,22 @@ impl FrontLine {
             }
         }
         if pairs.len() < 2 {
-            return None;
+            return Vec::new();
         }
 
-        // Drop far-flung outlier pairs (isolated pockets) so they don't drag
-        // the line across the map: keep pairs no longer than 2.5× the median.
+        // Drop far-flung outlier pairs (an isolated pocket, or a pair reaching
+        // across open water): keep pairs no longer than 1.8× the median.
         let mut lens: Vec<f64> = pairs.iter().map(|(_, _, d)| *d).collect();
         lens.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let median = lens[lens.len() / 2].max(1.0);
-        let cutoff = median * 2.5;
-        pairs.retain(|(_, _, d)| *d <= cutoff);
+        let median_pair = lens[lens.len() / 2].max(1.0);
+        pairs.retain(|(_, _, d)| *d <= median_pair * 1.8);
         if pairs.len() < 2 {
-            return None;
+            return Vec::new();
         }
 
-        // Frontline nodes: the midpoint of each contested pair, tagged with the
-        // side whose objective is healthier there (able to push), or Neutral
-        // when they're within HEALTH_CONTESTED_DELTA of each other.
+        // Frontline nodes: midpoint of each contested pair, tagged with the
+        // side whose objective is healthier there, or Neutral when they're
+        // within HEALTH_CONTESTED_DELTA of each other.
         let nodes: Vec<(Vector2, Side)> = pairs
             .iter()
             .map(|&(a, b, _)| {
@@ -279,121 +371,113 @@ impl FrontLine {
             })
             .collect();
 
-        // Order the nodes into a path. Start from the end that is most extreme
-        // along the principal axis, then walk nearest-unvisited to nearest-
-        // unvisited — this follows a curved front, not just a straight one.
-        let centroid =
-            nodes.iter().fold(Vector2::zeros(), |acc, (p, _)| acc + *p) / nodes.len() as f64;
-        let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
-        for (p, _) in &nodes {
-            let d = *p - centroid;
-            sxx += d.x * d.x;
-            sxy += d.x * d.y;
-            syy += d.y * d.y;
-        }
-        let axis = principal_axis(sxx, sxy, syy);
-
-        let start = (0..nodes.len())
-            .min_by(|&a, &b| {
-                let pa = (nodes[a].0 - centroid).dot(&axis);
-                let pb = (nodes[b].0 - centroid).dot(&axis);
-                pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .unwrap();
-        let mut visited = vec![false; nodes.len()];
-        let mut ordered: Vec<(Vector2, Side)> = Vec::with_capacity(nodes.len());
-        let mut cur = start;
-        loop {
-            visited[cur] = true;
-            ordered.push(nodes[cur]);
-            let next = (0..nodes.len())
-                .filter(|&k| !visited[k])
-                .min_by(|&a, &b| {
-                    let da = (nodes[a].0 - nodes[cur].0).norm();
-                    let db = (nodes[b].0 - nodes[cur].0).norm();
-                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-                });
-            match next {
-                Some(n) => cur = n,
-                None => break,
+        // Cluster the nodes: sea gaps (Cyprus ↔ mainland) and front-free
+        // stretches of coast split the front into pieces. Single-linkage
+        // union-find, linking nodes within `link_dist` of each other.
+        let node_tree = RTree::bulk_load(
+            nodes
+                .iter()
+                .enumerate()
+                .map(|(idx, (p, _))| ObjIdx { pos: [p.x, p.y], idx })
+                .collect::<Vec<_>>(),
+        );
+        let mut nn: Vec<f64> = Vec::new();
+        for (i, (p, _)) in nodes.iter().enumerate() {
+            if let Some(o) = node_tree
+                .nearest_neighbor_iter(&[p.x, p.y])
+                .find(|o| o.idx != i)
+            {
+                nn.push((Vector2::new(o.pos[0], o.pos[1]) - *p).norm());
             }
         }
-        ordered.dedup_by(|(a, _), (b, _)| (*a - *b).norm() < 500.0);
-        if ordered.len() < 2 {
-            return None;
+        nn.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let spacing = nn.get(nn.len() / 2).copied().unwrap_or(20_000.0).max(1.0);
+        let link_dist = (spacing * 4.0).clamp(20_000.0, 90_000.0);
+
+        let mut parent: Vec<usize> = (0..nodes.len()).collect();
+        for (i, (p, _)) in nodes.iter().enumerate() {
+            for o in node_tree.locate_within_distance([p.x, p.y], link_dist * link_dist) {
+                if o.idx != i {
+                    let (ra, rb) = (uf_find(&mut parent, i), uf_find(&mut parent, o.idx));
+                    if ra != rb {
+                        parent[ra] = rb;
+                    }
+                }
+            }
+        }
+        let mut groups: FxHashMap<usize, Vec<(Vector2, Side)>> = FxHashMap::default();
+        for (i, node) in nodes.iter().enumerate() {
+            groups.entry(uf_find(&mut parent, i)).or_default().push(*node);
         }
 
-        // Simplify the ordered path.
-        let positions: Vec<Vector2> = ordered.iter().map(|(p, _)| *p).collect();
-        let span = (positions[0] - positions[positions.len() - 1]).norm().max(1.0);
-        let epsilon = (span * 0.02).clamp(1_000.0, 15_000.0);
-        let mut simplified = Vec::new();
-        rdp(&positions, epsilon, &mut simplified);
-        simplified.dedup_by(|a, b| (*a - *b).norm() < 1.0);
-        if simplified.len() < 2 {
-            return None;
-        }
-
-        // Cap total segments at max_marks by simplifying harder if needed.
         let budget = self.config.max_marks.max(8);
-        if simplified.len().saturating_sub(1) > budget {
-            let mut harder = Vec::new();
-            rdp(&positions, epsilon * 3.0, &mut harder);
-            harder.dedup_by(|a, b| (*a - *b).norm() < 1.0);
-            if harder.len() >= 2 {
-                simplified = harder;
+        let mut lines: Vec<(Vec<Vector2>, Vec<(Vector2, Side)>)> = Vec::new();
+        for (_, group) in groups {
+            if group.len() < 3 {
+                continue;
+            }
+            // Drop groups too small to be a real front (< 25 km across).
+            let (mut mn, mut mx) = (group[0].0, group[0].0);
+            for (p, _) in &group {
+                mn.x = mn.x.min(p.x);
+                mn.y = mn.y.min(p.y);
+                mx.x = mx.x.max(p.x);
+                mx.y = mx.y.max(p.y);
+            }
+            if (mx - mn).norm() < 25_000.0 {
+                continue;
+            }
+            if let Some(line) = order_and_simplify(&group, budget) {
+                lines.push((line, group));
             }
         }
-
-        Some((simplified, ordered))
+        lines
     }
 
-    /// Draw the frontline as one connected dashed line, each segment coloured
-    /// by which side is stronger along it.
+    /// Draw the frontline: one connected dashed line per front, each segment
+    /// coloured by which side is stronger along it.
     fn draw_frontline(&mut self, persisted: &Persisted, msgq: &mut MsgQ) {
-        let Some((line, nodes)) = self.compute_frontline(persisted) else {
+        let lines = self.compute_frontline(persisted);
+        if lines.is_empty() {
             return;
-        };
+        }
+        let pts: usize = lines.iter().map(|(l, _)| l.len()).sum();
+        info!("Frontline: drawing {} line(s), {} point(s) total", lines.len(), pts);
 
-        info!(
-            "Frontline: {} contested pair(s) → {}-point line",
-            nodes.len(),
-            line.len()
-        );
-
-        for w in line.windows(2) {
-            let (a, b) = (w[0], w[1]);
-            let mid = (a + b) * 0.5;
-            // Colour this segment by the nearest contested-pair node.
-            let side = nodes
-                .iter()
-                .min_by(|x, y| {
-                    (x.0 - mid)
-                        .norm()
-                        .partial_cmp(&(y.0 - mid).norm())
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .map(|(_, s)| *s)
-                .unwrap_or(Side::Neutral);
-            let (color, line_type) = match side {
-                Side::Red => (Color::new(1.0, 0.0, 0.0, LINE_ALPHA), HELD_LINE),
-                Side::Blue => (Color::new(0.0, 0.0, 1.0, LINE_ALPHA), HELD_LINE),
-                Side::Neutral => (Color::new(1.0, 1.0, 1.0, LINE_ALPHA), CONTESTED_LINE),
-            };
-            let mark_id = MarkId::new();
-            msgq.line_to_all(
-                SideFilter::All,
-                mark_id,
-                LineSpec {
-                    start: LuaVec3(Vector3::new(a.x, 0., a.y)),
-                    end: LuaVec3(Vector3::new(b.x, 0., b.y)),
-                    color,
-                    line_type,
-                    read_only: true,
-                },
-                None,
-            );
-            self.marks.push(mark_id);
+        for (line, nodes) in &lines {
+            for w in line.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                let mid = (a + b) * 0.5;
+                let side = nodes
+                    .iter()
+                    .min_by(|x, y| {
+                        (x.0 - mid)
+                            .norm()
+                            .partial_cmp(&(y.0 - mid).norm())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(_, s)| *s)
+                    .unwrap_or(Side::Neutral);
+                let (color, line_type) = match side {
+                    Side::Red => (Color::new(1.0, 0.0, 0.0, LINE_ALPHA), HELD_LINE),
+                    Side::Blue => (Color::new(0.0, 0.0, 1.0, LINE_ALPHA), HELD_LINE),
+                    Side::Neutral => (Color::new(1.0, 1.0, 1.0, LINE_ALPHA), CONTESTED_LINE),
+                };
+                let mark_id = MarkId::new();
+                msgq.line_to_all(
+                    SideFilter::All,
+                    mark_id,
+                    LineSpec {
+                        start: LuaVec3(Vector3::new(a.x, 0., a.y)),
+                        end: LuaVec3(Vector3::new(b.x, 0., b.y)),
+                        color,
+                        line_type,
+                        read_only: true,
+                    },
+                    None,
+                );
+                self.marks.push(mark_id);
+            }
         }
     }
 

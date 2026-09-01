@@ -705,11 +705,15 @@ root [README.md](../README.md) for setup.
 
 ### Frontline Drawing **[NEW]**
 A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
-- **Built from the objectives**: for every objective the engine looks at its
-  nearest neighbours; a neighbour on the other side is a *contested pair* and
-  the front crosses at the midpoint. Outlier pairs (an isolated pocket deep in
-  enemy land) are dropped, the midpoints are walked into a single path, and
-  the path is simplified to a handful of clean segments.
+- **Built from the objectives**: only territory-defining objectives count
+  (airbases, naval bases, logistics hubs, FOBs, FARPs — SAM sites, command
+  centres and factories are ignored). For each one, a nearest neighbour on the
+  other side is a *contested pair*; the front crosses at the midpoint. Outlier
+  pairs are dropped, the midpoints are clustered by proximity, and each cluster
+  becomes its own line — so a map like Syria comes out as **several fronts**
+  (Cyprus on its own, the Turkey/Syria border, the Syria/Israel border) rather
+  than one line strung across the sea. Each line is walked into order and
+  simplified to a few clean segments.
 - **Coloured by strength**: a segment is blue or red where that side's
   objectives along it are healthier, and **white / dotted** where the two
   sides are within ~15 health of each other (so a fresh campaign starts all
