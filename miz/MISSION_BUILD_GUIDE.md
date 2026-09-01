@@ -705,21 +705,23 @@ root [README.md](../README.md) for setup.
 
 ### Frontline Drawing **[NEW]**
 A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
-- **Built from the objectives**: only territory-defining objectives count
+- **It's the ownership iso-line.** Only territory-defining objectives count
   (airbases, naval bases, logistics hubs, FOBs, FARPs — SAM sites, command
-  centres and factories are ignored). For each one, a nearest neighbour on the
-  other side is a *contested pair*; the front crosses at the midpoint. Outlier
-  pairs are dropped, the midpoints are clustered by proximity, and each cluster
-  becomes its own line — so a map like Syria comes out as **several fronts**
-  (Cyprus on its own, the Turkey/Syria border, the Syria/Israel border) rather
-  than one line strung across the sea. Each line is walked into order and
-  simplified to a few clean segments.
+  centres, factories and carriers are ignored). The engine Delaunay-
+  triangulates the objectives, then "marches" the triangles: any triangle
+  touching both a blue and a red objective has the front running through it,
+  crossing the blue↔red edges at a point pushed toward the weaker side (lower
+  objective health). Neighbouring triangles share those crossings exactly, so
+  the pieces chain into continuous lines. A map with an island and two land
+  borders comes out as **several separate fronts** on its own — no line is
+  ever strung across open water.
 - **Coloured by strength**: a segment is blue or red where that side's
-  objectives along it are healthier, and **white / dotted** where the two
-  sides are within ~15 health of each other (so a fresh campaign starts all
-  white).
-- **Automatic updates**: redrawn whenever an objective changes hands
-- **Replaces** the older semi-transparent territory shading
+  objectives around it are healthier, **white / dotted** where they're within
+  ~25 health of each other (a fresh, unfought campaign shows all white — or
+  nothing at all if one side hasn't taken any ground yet).
+- **Nothing is drawn** until the two sides actually hold bordering territory.
+- **Automatic updates**: redrawn whenever an objective changes hands.
+- **Replaces** the older semi-transparent territory shading.
 
 #### Configuration
 ```json
@@ -734,10 +736,8 @@ A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
 #### Parameters
 - **enabled**: `true` to draw the frontline
 - **update_on_objective_change_only**: only redraw when an objective changes owner (recommended for performance)
-- **samples_per_boundary**: *legacy* — was the ownership-grid resolution; unused by the objective-pair
-  renderer but still parsed.
-- **max_marks**: cap on the number of line segments drawn (default 200). If the path needs more, it is
-  simplified harder until it fits.
+- **samples_per_boundary**: *legacy* — was the ownership-grid resolution; unused now but still parsed.
+- **max_marks**: cap on line segments per front (default 200). A line needing more is simplified harder.
 - **territory_zone_alpha**: *legacy* — was the shading opacity; ignored by the line renderer but still parsed.
 
 ### Supply Convoy System **[NEW]**
@@ -978,13 +978,15 @@ All new features can be configured in the campaign config JSON:
 
 ### Version 2.8 (2026-09-01)
 **Changed: frontline is now a line; LOGISTICS_DETACHED means fully cut off**
-- **Frontline drawing**: the `frontline` overlay now draws a single dashed
-  line between each side's objectives (built from contested
-  nearest-neighbour objective pairs) instead of semi-transparent territory
-  shading. Segments are coloured by objective health — blue, red, or
-  white/dotted when even. `frontline.samples_per_boundary` and
-  `frontline.territory_zone_alpha` are now legacy no-ops (still parsed).
-  See [Frontline Drawing](#frontline-drawing-new).
+- **Frontline drawing**: the `frontline` overlay now draws the ownership
+  iso-line — Delaunay-triangulate the territory objectives, march the
+  triangles that touch both sides, chain the crossings into continuous
+  dashed lines. A map with an island and two land borders yields several
+  separate fronts; nothing is drawn until the sides actually hold bordering
+  territory. Segments coloured by objective health.
+  `frontline.samples_per_boundary` and `frontline.territory_zone_alpha` are
+  now legacy no-ops (still parsed). See
+  [Frontline Drawing](#frontline-drawing-new).
 - **`LOGISTICS_DETACHED` semantics flipped**: `true` now cuts an objective
   off from *all* automatic resupply (no convoy, no air, no instant) —
   players fly supplies in by hand. `false` gets a convoy (or a cargo
