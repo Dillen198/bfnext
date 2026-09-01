@@ -706,7 +706,9 @@ root [README.md](../README.md) for setup.
 ### Frontline Drawing **[NEW]**
 A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
 - **Boundary trace**: the engine builds a Voronoi ownership grid from every
-  objective and traces the edge where Red territory meets Blue territory
+  objective, traces the edge where Red territory meets Blue territory, chains
+  those edges into connected polylines, simplifies each one, and stitches
+  fragments split by neutral ground back together so the map shows one line
 - **Coloured by local advantage**: each segment is blue where blue holds the
   ground around it, red where red does, and **white / dotted** where the two
   sides are roughly balanced (a genuinely contested stretch)

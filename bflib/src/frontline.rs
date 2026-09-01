@@ -25,6 +25,46 @@ use dcso3::{
 use log::*;
 use rstar::{RTree, RTreeObject, AABB, PointDistance};
 
+/// Perpendicular distance from `p` to the segment `a`–`b` (or to `a` when the
+/// segment is degenerate).
+fn perp_dist(p: Vector2, a: Vector2, b: Vector2) -> f64 {
+    let ab = b - a;
+    let len = ab.norm();
+    if len < 1e-6 {
+        return (p - a).norm();
+    }
+    ((ab.x * (p.y - a.y) - ab.y * (p.x - a.x)) / len).abs()
+}
+
+/// Ramer–Douglas–Peucker polyline simplification. Appends the simplified point
+/// list to `out`.
+fn rdp(points: &[Vector2], epsilon: f64, out: &mut Vec<Vector2>) {
+    if points.len() < 3 {
+        out.extend_from_slice(points);
+        return;
+    }
+    let (a, b) = (points[0], points[points.len() - 1]);
+    let mut idx = 0;
+    let mut dmax = 0.0;
+    for (k, p) in points.iter().enumerate().take(points.len() - 1).skip(1) {
+        let d = perp_dist(*p, a, b);
+        if d > dmax {
+            dmax = d;
+            idx = k;
+        }
+    }
+    if dmax > epsilon {
+        let mut left = Vec::new();
+        rdp(&points[..=idx], epsilon, &mut left);
+        left.pop(); // drop the shared vertex so it isn't duplicated
+        out.extend(left);
+        rdp(&points[idx..], epsilon, out);
+    } else {
+        out.push(a);
+        out.push(b);
+    }
+}
+
 /// Point wrapper for R-tree spatial indexing of objectives
 #[derive(Debug, Clone, Copy)]
 struct ObjectivePoint {
@@ -200,15 +240,35 @@ impl FrontLine {
         }
     }
 
-    /// Walk the ownership grid and, for every cell edge where a Red cell
-    /// borders a Blue cell, emit that shared edge as a line segment tagged
-    /// with the locally dominant side. Honours `config.max_marks`.
-    fn extract_frontline_segments(
+    /// Locally dominant side at a world position (maps the point back to a
+    /// grid cell, then reuses `segment_side`).
+    fn side_at_world(
+        grid: &[Vec<Side>],
+        min: Vector2,
+        cw: f64,
+        ch: f64,
+        p: Vector2,
+        window: i64,
+    ) -> Side {
+        let rows = grid.len() as i64;
+        let cols = grid[0].len() as i64;
+        let j = (((p.x - min.x) / cw).floor() as i64).clamp(0, cols - 1);
+        let i = (((p.y - min.y) / ch).floor() as i64).clamp(0, rows - 1);
+        Self::segment_side(grid, i as usize, j as usize, window)
+    }
+
+    /// Trace the Red/Blue territory boundary of the ownership grid into a
+    /// small number of **connected** polylines: collect the lattice edges
+    /// that separate a Red cell from a Blue cell, chain them end to end
+    /// through the grid vertices, then simplify each chain (Ramer–Douglas–
+    /// Peucker) so a clean multi-segment line is left instead of a stair-
+    /// stepped mess. Short fragments around isolated pockets are dropped.
+    fn trace_frontline(
         &self,
         grid: &[Vec<Side>],
         min: Vector2,
         max: Vector2,
-    ) -> Vec<(Side, Vector2, Vector2)> {
+    ) -> Vec<Vec<Vector2>> {
         let rows = grid.len();
         if rows == 0 {
             return Vec::new();
@@ -216,51 +276,181 @@ impl FrontLine {
         let cols = grid[0].len();
         let cw = (max.x - min.x) / cols as f64;
         let ch = (max.y - min.y) / rows as f64;
-        // Sample window for local advantage: ~1/12 of the grid, clamped.
-        let window = ((rows.min(cols) / 12).max(2).min(8)) as i64;
-
+        let vcols = cols + 1;
+        let nverts = (rows + 1) * vcols;
+        let vid = |vi: usize, vj: usize| (vi * vcols + vj) as u32;
+        let vpos = |v: u32| {
+            let v = v as usize;
+            Vector2::new(min.x + (v % vcols) as f64 * cw, min.y + (v / vcols) as f64 * ch)
+        };
         let opposite = |a: Side, b: Side| {
-            matches!(
-                (a, b),
-                (Side::Red, Side::Blue) | (Side::Blue, Side::Red)
-            )
+            matches!((a, b), (Side::Red, Side::Blue) | (Side::Blue, Side::Red))
         };
 
-        let mut segs: Vec<(Side, Vector2, Vector2)> = Vec::new();
+        // Boundary lattice edges, plus vertex -> incident edge-index adjacency.
+        let mut edges: Vec<(u32, u32)> = Vec::new();
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nverts];
+        let push_edge = |edges: &mut Vec<(u32, u32)>, adj: &mut Vec<Vec<usize>>, a: u32, b: u32| {
+            let idx = edges.len();
+            edges.push((a, b));
+            adj[a as usize].push(idx);
+            adj[b as usize].push(idx);
+        };
         for i in 0..rows {
             for j in 0..cols {
                 let here = grid[i][j];
                 if here == Side::Neutral {
                     continue;
                 }
-                // Eastern neighbour → vertical shared edge.
                 if j + 1 < cols && opposite(here, grid[i][j + 1]) {
-                    let x = min.x + (j + 1) as f64 * cw;
-                    let y0 = min.y + i as f64 * ch;
-                    let side = Self::segment_side(grid, i, j, window);
-                    segs.push((side, Vector2::new(x, y0), Vector2::new(x, y0 + ch)));
+                    push_edge(&mut edges, &mut adj, vid(i, j + 1), vid(i + 1, j + 1));
                 }
-                // Southern neighbour → horizontal shared edge.
                 if i + 1 < rows && opposite(here, grid[i + 1][j]) {
-                    let y = min.y + (i + 1) as f64 * ch;
-                    let x0 = min.x + j as f64 * cw;
-                    let side = Self::segment_side(grid, i, j, window);
-                    segs.push((side, Vector2::new(x0, y), Vector2::new(x0 + cw, y)));
+                    push_edge(&mut edges, &mut adj, vid(i + 1, j), vid(i + 1, j + 1));
                 }
             }
         }
-
-        // Respect the mark budget: thin the segment list to fit.
-        let budget = self.config.max_marks.max(1);
-        if segs.len() > budget {
-            let step = (segs.len() + budget - 1) / budget;
-            segs = segs.into_iter().step_by(step).collect();
+        if edges.is_empty() {
+            return Vec::new();
         }
-        segs
+
+        // Walk chains: start at every vertex that is an endpoint or a junction
+        // (degree != 2), following unused edges; then mop up any pure loops.
+        let mut used = vec![false; edges.len()];
+        let other = |e: usize, v: u32| {
+            let (a, b) = edges[e];
+            if a == v { b } else { a }
+        };
+        let mut raw_chains: Vec<Vec<u32>> = Vec::new();
+        let walk = |start: u32, first_edge: usize, used: &mut Vec<bool>| {
+            let mut chain = vec![start];
+            let mut v = start;
+            let mut e = first_edge;
+            loop {
+                used[e] = true;
+                let n = other(e, v);
+                chain.push(n);
+                if adj[n as usize].len() != 2 {
+                    break;
+                }
+                match adj[n as usize].iter().copied().find(|&ne| !used[ne]) {
+                    Some(ne) => {
+                        v = n;
+                        e = ne;
+                    }
+                    None => break,
+                }
+            }
+            chain
+        };
+        for v in 0..nverts as u32 {
+            if adj[v as usize].len() == 2 {
+                continue;
+            }
+            for k in 0..adj[v as usize].len() {
+                let e = adj[v as usize][k];
+                if !used[e] {
+                    raw_chains.push(walk(v, e, &mut used));
+                }
+            }
+        }
+        for e in 0..edges.len() {
+            if !used[e] {
+                raw_chains.push(walk(edges[e].0, e, &mut used));
+            }
+        }
+
+        // Simplify + length-filter.
+        let diag = (max - min).norm();
+        let epsilon = (cw.max(ch) * 2.5).max(diag * 0.006);
+        let min_len = diag * 0.05;
+        let mut chains: Vec<Vec<Vector2>> = Vec::new();
+        for rc in raw_chains {
+            if rc.len() < 3 {
+                continue;
+            }
+            let pts: Vec<Vector2> = rc.iter().map(|&v| vpos(v)).collect();
+            let total: f64 = pts.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+            if total < min_len {
+                continue;
+            }
+            let mut simp = Vec::new();
+            rdp(&pts, epsilon, &mut simp);
+            simp.dedup_by(|a, b| (*a - *b).norm() < 1.0);
+            if simp.len() >= 2 {
+                chains.push(simp);
+            }
+        }
+
+        // Stitch fragments: neutral territory between the two sides breaks the
+        // Red|Blue adjacency, so one real front often comes out as several
+        // aligned pieces. Repeatedly join the closest pair of chain endpoints
+        // while the gap is under `stitch_gap`, so the map shows one line.
+        let stitch_gap = diag * 0.14;
+        loop {
+            let mut best: Option<(usize, bool, usize, bool, f64)> = None;
+            for a in 0..chains.len() {
+                for b in (a + 1)..chains.len() {
+                    let ends_a = [
+                        (*chains[a].first().unwrap(), false),
+                        (*chains[a].last().unwrap(), true),
+                    ];
+                    let ends_b = [
+                        (*chains[b].first().unwrap(), false),
+                        (*chains[b].last().unwrap(), true),
+                    ];
+                    for (pa, a_tail) in ends_a {
+                        for (pb, b_tail) in ends_b {
+                            let d = (pa - pb).norm();
+                            if d < stitch_gap && best.map_or(true, |(_, _, _, _, bd)| d < bd) {
+                                best = Some((a, a_tail, b, b_tail, d));
+                            }
+                        }
+                    }
+                }
+            }
+            let Some((a, a_tail, b, b_tail, _)) = best else { break };
+            let mut ca = std::mem::take(&mut chains[a]);
+            let mut cb = std::mem::take(&mut chains[b]);
+            // Orient so ca's tail meets cb's head.
+            if !a_tail {
+                ca.reverse();
+            }
+            if b_tail {
+                cb.reverse();
+            }
+            ca.extend(cb);
+            chains[a] = ca;
+            chains.remove(b);
+        }
+
+        // Budget: if the simplified lines still hold more segments than
+        // max_marks, drop the shortest chains until they fit.
+        let budget = self.config.max_marks.max(8);
+        let seg_count =
+            |cs: &[Vec<Vector2>]| cs.iter().map(|c| c.len().saturating_sub(1)).sum::<usize>();
+        if seg_count(&chains) > budget {
+            chains.sort_by(|a, b| {
+                let la: f64 = a.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+                let lb: f64 = b.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+                lb.partial_cmp(&la).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            while chains.len() > 1 && seg_count(&chains) > budget {
+                chains.pop();
+            }
+        }
+
+        // Keep a stable, readable draw order.
+        chains.sort_by(|a, b| {
+            a[0].x
+                .partial_cmp(&b[0].x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        chains
     }
 
-    /// Draw the frontline as coloured dashed segments along the Red/Blue
-    /// territory boundary.
+    /// Draw the frontline: one connected dashed line per traced boundary
+    /// chain, each segment coloured by local advantage.
     fn draw_frontline(&mut self, persisted: &Persisted, msgq: &mut MsgQ) {
         let all_objectives: Vec<(Vector2, Side)> = persisted
             .objectives
@@ -281,33 +471,45 @@ impl FrontLine {
 
         let (min, max) = self.calculate_bounds(&all_objectives);
         let grid = self.build_voronoi_grid(&all_objectives, min, max);
-        let segments = self.extract_frontline_segments(&grid, min, max);
+        let cols = grid[0].len();
+        let rows = grid.len();
+        let cw = (max.x - min.x) / cols as f64;
+        let ch = (max.y - min.y) / rows as f64;
+        let window = ((rows.min(cols) / 12).max(2).min(8)) as i64;
+
+        let chains = self.trace_frontline(&grid, min, max);
+        let seg_total: usize = chains.iter().map(|c| c.len().saturating_sub(1)).sum();
 
         info!(
-            "Frontline: drawing {} boundary segment(s) (Red obj: {}, Blue obj: {})",
-            segments.len(), red_count, blue_count
+            "Frontline: drawing {} line(s), {} segment(s) (Red obj: {}, Blue obj: {})",
+            chains.len(), seg_total, red_count, blue_count
         );
 
-        for (side, a, b) in segments {
-            let (color, line_type) = match side {
-                Side::Red => (Color::new(1.0, 0.0, 0.0, LINE_ALPHA), HELD_LINE),
-                Side::Blue => (Color::new(0.0, 0.0, 1.0, LINE_ALPHA), HELD_LINE),
-                Side::Neutral => (Color::new(1.0, 1.0, 1.0, LINE_ALPHA), CONTESTED_LINE),
-            };
-            let mark_id = MarkId::new();
-            msgq.line_to_all(
-                SideFilter::All,
-                mark_id,
-                LineSpec {
-                    start: LuaVec3(Vector3::new(a.x, 0., a.y)),
-                    end: LuaVec3(Vector3::new(b.x, 0., b.y)),
-                    color,
-                    line_type,
-                    read_only: true,
-                },
-                None,
-            );
-            self.marks.push(mark_id);
+        for chain in &chains {
+            for w in chain.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                let mid = (a + b) * 0.5;
+                let side = Self::side_at_world(&grid, min, cw, ch, mid, window);
+                let (color, line_type) = match side {
+                    Side::Red => (Color::new(1.0, 0.0, 0.0, LINE_ALPHA), HELD_LINE),
+                    Side::Blue => (Color::new(0.0, 0.0, 1.0, LINE_ALPHA), HELD_LINE),
+                    Side::Neutral => (Color::new(1.0, 1.0, 1.0, LINE_ALPHA), CONTESTED_LINE),
+                };
+                let mark_id = MarkId::new();
+                msgq.line_to_all(
+                    SideFilter::All,
+                    mark_id,
+                    LineSpec {
+                        start: LuaVec3(Vector3::new(a.x, 0., a.y)),
+                        end: LuaVec3(Vector3::new(b.x, 0., b.y)),
+                        color,
+                        line_type,
+                        read_only: true,
+                    },
+                    None,
+                );
+                self.marks.push(mark_id);
+            }
         }
     }
 
