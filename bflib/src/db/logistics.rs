@@ -861,8 +861,9 @@ impl Db {
                         inv.capacity = capacity;
                         inv.stored = capacity;
                         if is_carrier {
-                            info!("[WAREHOUSE] Initialized carrier {} with equipment {} (capacity: {}, hub: {})",
-                                  obj.name, name, capacity, hub);
+                            initialized_count += 1;
+                            debug!("[WAREHOUSE] Initialized carrier {} with equipment {} (capacity: {}, hub: {})",
+                                   obj.name, name, capacity, hub);
                         }
                     }
                 }
@@ -882,7 +883,7 @@ impl Db {
                     }
                 }
             }
-            info!("[WAREHOUSE] Initialized {} carrier warehouses for side {:?}", initialized_count, side);
+            info!("[WAREHOUSE] Initialized {} carrier warehouse stock entries for side {:?}", initialized_count, side);
         }
         self.ephemeral.dirty();
         Ok(())

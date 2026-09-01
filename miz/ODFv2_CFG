@@ -831,7 +831,7 @@
           "Drone": {
             "jtac": {
               "range": 90000,
-              "nolos": true,
+              "nolos": false,
               "default_laser_code": 1688,
               "name": null
             },
@@ -1014,7 +1014,7 @@
           "Drone": {
             "jtac": {
               "range": 90000,
-              "nolos": true,
+              "nolos": false,
               "default_laser_code": 1688,
               "name": null
             },
@@ -2061,9 +2061,9 @@
         "ewr": null,
         "jtac": {
           "range": 8000,
-          "nolos": true,
+          "nolos": false,
           "default_laser_code": 1688,
-          "name": "Playboy 11"
+          "name": null
         },
         "gci": null
       },
@@ -3036,9 +3036,9 @@
         "ewr": null,
         "jtac": {
           "range": 5000,
-          "nolos": true,
+          "nolos": false,
           "default_laser_code": 1688,
-          "name": "Axman 11"
+          "name": null
         },
         "gci": null
       },
@@ -3637,40 +3637,10 @@
     "USS_Arleigh_Burke_IIa": [
       "Boat"
     ],
-    "CVN_73": [
-      "Boat"
-    ],
-    "CVN_71": [
-      "Boat"
-    ],
-    "CVN_72": [
-      "Boat"
-    ],
-    "Stennis": [
-      "Boat"
-    ],
-    "Forrestal": [
-      "Boat"
-    ],
     "LHA_Tarawa": [
       "Boat"
     ],
-    "KUZNECOW": [
-      "Boat"
-    ],
-    "Type_052C": [
-      "Boat"
-    ],
-    "Type_052B": [
-      "Boat"
-    ],
-    "Type_054A": [
-      "Boat"
-    ],
-    "BDK-775": [
-      "Boat"
-    ],
-    "atconveyor": [
+    "CVN_73": [
       "Boat"
     ],
     "PERRY": [
@@ -3689,6 +3659,24 @@
       "Boat"
     ],
     "Ship_Tilde_Supply": [
+      "Boat"
+    ],
+    "KUZNECOW": [
+      "Boat"
+    ],
+    "atconveyor": [
+      "Boat"
+    ],
+    "BDK-775": [
+      "Boat"
+    ],
+    "CVN_72": [
+      "Boat"
+    ],
+    "Stennis": [
+      "Boat"
+    ],
+    "Type_052C": [
       "Boat"
     ],
     "APFC fuel": [
@@ -4898,15 +4886,15 @@
   "airborne_jtacs": {
     "MB-339A": {
       "range": 16000,
-      "nolos": true
+      "nolos": false
     },
     "C-101CC": {
       "range": 16000,
-      "nolos": true
+      "nolos": false
     },
     "L-39ZA": {
       "range": 16000,
-      "nolos": true
+      "nolos": false
     }
   },
   "airborne_ewrs": {

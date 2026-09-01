@@ -2198,8 +2198,8 @@ impl Db {
             {
                 // Clone the carrier's group set so we can look up units by group membership
                 let groups = obj.groups.get(&obj.owner).cloned().unwrap_or_default();
-                info!("[CARRIER_POS] Carrier objective {:?} '{}' owner={:?}, groups len={}, all_groups={:?}",
-                      id, obj.name, obj.owner, groups.len(), obj.groups);
+                debug!("[CARRIER_POS] Carrier objective {:?} '{}' owner={:?}, groups len={}, all_groups={:?}",
+                       id, obj.name, obj.owner, groups.len(), obj.groups);
                 if groups.len() > 0 {
                     pos_update.push((*id, PosLookup::ByGroup(groups)))
                 }
