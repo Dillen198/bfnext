@@ -59,9 +59,9 @@ impl Default for Params {
             sigma_max: 95_000.0,
             min_front_len: 30_000.0,
             contested_mult: 2.3,
-            edge_offset_frac: 0.22,
-            edge_offset_min: 5_000.0,
-            edge_offset_max: 14_000.0,
+            edge_offset_frac: 0.012,
+            edge_offset_min: 300.0,
+            edge_offset_max: 800.0,
             chaikin_iters: 3,
             pad_frac: 0.12,
         }
@@ -285,41 +285,38 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
             }
         }
     }
-    let n_all_segs = segs.len();
-
-    // Keep only contested stretches.
-    let keep_dist2 = (sigma * p.contested_mult).powi(2);
-    segs.retain(|(e0, e1)| {
-        let mid = (pos_of[e0] + pos_of[e1]) * 0.5;
-        let (mut near_blue, mut near_red) = (false, false);
-        for o in &objs {
-            if (o.pos - mid).norm_squared() <= keep_dist2 {
-                if o.sign > 0.0 {
-                    near_blue = true;
-                } else {
-                    near_red = true;
-                }
-                if near_blue && near_red {
-                    break;
-                }
-            }
-        }
-        near_blue && near_red
-    });
-    let kept_keys: FxHashSet<EdgeKey> = segs.iter().flat_map(|(a, b)| [*a, *b]).collect();
-    pos_of.retain(|k, _| kept_keys.contains(k));
-
     info!(
-        "Frontline: σ {:.0} km, {}×{} grid, {} contour segments ({} contested)",
+        "Frontline: σ {:.0} km, {}×{} grid, {} contour segments",
         sigma / 1000.0,
         res,
         res,
-        n_all_segs,
         segs.len()
     );
     if segs.is_empty() {
         return Vec::new();
     }
+
+    // "Contested" = a blue AND a red objective within `contested_mult · σ`.
+    // Used to keep the real front and drop the blue-vs-open-sea contour,
+    // but applied per *chain* (not per segment) so a kept front stays
+    // continuous — only its non-contested tails are trimmed.
+    let keep_dist2 = (sigma * p.contested_mult).powi(2);
+    let contested_at = |q: Vector2| -> bool {
+        let (mut b, mut r) = (false, false);
+        for o in &objs {
+            if (o.pos - q).norm_squared() <= keep_dist2 {
+                if o.sign > 0.0 {
+                    b = true;
+                } else {
+                    r = true;
+                }
+                if b && r {
+                    return true;
+                }
+            }
+        }
+        false
+    };
 
     // Chain the segments into polylines.
     let mut node_of: FxHashMap<EdgeKey, usize> = FxHashMap::default();
@@ -402,6 +399,27 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
     let mut dropped = 0usize;
     let n_raw = raw.len();
     for chain in raw {
+        if chain.len() < 2 {
+            continue;
+        }
+        // Trim the chain to its contested span: find the first and last
+        // vertex that sits between blue and red, keep everything in between
+        // (so the front stays one continuous line), drop the rest.
+        let flags: Vec<bool> = chain.iter().map(|&q| contested_at(q)).collect();
+        let first = flags.iter().position(|&c| c);
+        let last = flags.iter().rposition(|&c| c);
+        let (Some(first), Some(last)) = (first, last) else {
+            dropped += 1;
+            continue;
+        };
+        let n_contested = flags[first..=last].iter().filter(|&&c| c).count();
+        // Mostly-uncontested chains (a coastline loop that only grazes the
+        // front) are noise.
+        if (n_contested as f64) < 0.35 * (last - first + 1) as f64 {
+            dropped += 1;
+            continue;
+        }
+        let chain: Vec<Vector2> = chain[first..=last].to_vec();
         if chain.len() < 2 {
             continue;
         }

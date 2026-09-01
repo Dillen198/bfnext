@@ -715,11 +715,13 @@ A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
 - The field is sampled on a grid, its zero contour traced with marching
   squares and Chaikin-smoothed into a flowing curve. A theatre with an
   island and two land borders comes out as **several separate fronts** on
-  its own; nothing is strung across open water.
-- **Each front is drawn as three lines** with a gap between them: a **blue
-  dashed** line on the blue side, a **white dotted** line down the centre
-  (no man's land), a **red dashed** line on the red side. The gap is about
-  half the blur radius (10–35 km).
+  its own; nothing is strung across open water. Each contour is trimmed to
+  its contested span — the stretch that actually runs between blue and red
+  objectives — and kept as one continuous line, so it doesn't break into
+  pieces where it briefly pulls away from either side.
+- **Each front is drawn as three closely-spaced lines**: a **blue dashed**
+  line just on the blue side, a **white dotted** line on the exact contour,
+  a **red dashed** line just on the red side (~0.5 km either side).
 - **Nothing is drawn** until the two sides actually hold bordering territory.
 - **Automatic updates**: redrawn whenever an objective changes hands.
 - **Replaces** the older semi-transparent territory shading.
