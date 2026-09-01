@@ -47,15 +47,21 @@ use fxhash::{FxHashMap, FxHashSet};
 use log::*;
 
 const LINE_ALPHA: f32 = 0.9;
-const FRONT_LINE: LineType = LineType::Dashed;
+/// Centre line ("no man's land") style.
+const MID_LINE: LineType = LineType::Dotted;
+/// Blue-edge and red-edge line style.
+const EDGE_LINE: LineType = LineType::Dashed;
 /// Bandwidth of the influence blur, as a multiple of the median spacing
 /// between neighbouring objectives. Bigger = smoother, more strategic.
-const SIGMA_MULT: f64 = 2.6;
+const SIGMA_MULT: f64 = 2.4;
 /// σ is clamped to this range (metres) regardless of objective density.
-const SIGMA_MIN: f64 = 22_000.0;
+const SIGMA_MIN: f64 = 20_000.0;
 const SIGMA_MAX: f64 = 95_000.0;
 /// A traced contour shorter than this (metres) is noise around a pocket.
 const MIN_FRONT_LEN: f64 = 30_000.0;
+/// Perpendicular offset (as a fraction of σ) of the blue-edge and red-edge
+/// lines either side of the centre line. Clamped to [10 km, 35 km].
+const EDGE_OFFSET_FRAC: f64 = 0.5;
 
 /// Perpendicular distance from `p` to segment `a`–`b` (to `a` if degenerate).
 fn perp_dist(p: Vector2, a: Vector2, b: Vector2) -> f64 {
@@ -95,11 +101,41 @@ fn rdp(points: &[Vector2], epsilon: f64, out: &mut Vec<Vector2>) {
     }
 }
 
+/// Chaikin corner-cutting: turns a coarse polyline into a smooth curve while
+/// keeping the endpoints. Each pass roughly doubles the point count.
+fn chaikin(pts: &[Vector2], iters: usize) -> Vec<Vector2> {
+    let mut cur = pts.to_vec();
+    for _ in 0..iters {
+        if cur.len() < 3 {
+            break;
+        }
+        let mut next = Vec::with_capacity(cur.len() * 2);
+        next.push(cur[0]);
+        for w in cur.windows(2) {
+            let (p, q) = (w[0], w[1]);
+            next.push(p + (q - p) * 0.25);
+            next.push(p + (q - p) * 0.75);
+        }
+        next.push(*cur.last().unwrap());
+        cur = next;
+    }
+    cur
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Obj {
     pos: Vector2,
     /// +1 blue, −1 red
     sign: f64,
+}
+
+/// One front: the centre ("no man's land") line and the offset lines on the
+/// blue and red sides.
+#[derive(Debug, Clone, Default)]
+struct FrontDraw {
+    mid: Vec<Vector2>,
+    blue: Vec<Vector2>,
+    red: Vec<Vector2>,
 }
 
 /// A grid-edge crossing, keyed so that the two cells sharing an edge land on
@@ -145,9 +181,9 @@ impl FrontLine {
         hasher.finish()
     }
 
-    /// Trace the F = 0 contour(s) of the ownership field into simplified
-    /// polylines.
-    fn compute_frontlines(&self, persisted: &Persisted) -> Vec<Vec<Vector2>> {
+    /// Trace the F = 0 contour(s) of the ownership field, smooth them, and
+    /// build the blue-side / red-side offset lines.
+    fn compute_frontlines(&self, persisted: &Persisted) -> Vec<FrontDraw> {
         use bfprotocols::db::objective::ObjectiveKind as K;
 
         let objs: Vec<Obj> = persisted
@@ -175,7 +211,7 @@ impl FrontLine {
             mx.x = mx.x.max(o.pos.x);
             mx.y = mx.y.max(o.pos.y);
         }
-        let pad = (mx - mn).norm() * 0.05;
+        let pad = (mx - mn).norm() * 0.12;
         mn -= Vector2::new(pad, pad);
         mx += Vector2::new(pad, pad);
 
@@ -199,7 +235,7 @@ impl FrontLine {
         let cutoff2 = (3.0 * sigma).powi(2);
 
         // Grid. i indexes north (Vector2.x), j indexes east (Vector2.y).
-        let res = (self.config.samples_per_boundary.clamp(60, 240)).max(60);
+        let res = self.config.samples_per_boundary.clamp(80, 400);
         let (rows, cols) = (res, res);
         let dn = (mx.x - mn.x) / rows as f64;
         let de = (mx.y - mn.y) / cols as f64;
@@ -361,9 +397,26 @@ impl FrontLine {
             }
         }
 
-        let epsilon = (dn.max(de) * 1.5).clamp(1_500.0, 6_000.0);
-        let mut kept: Vec<Vec<Vector2>> = Vec::new();
+        // Light RDP just to drop marching-squares stair-step noise, then
+        // Chaikin-smooth into a flowing curve.
+        let epsilon = (dn.max(de) * 0.4).clamp(500.0, 2_500.0);
+        let gap = (sigma * EDGE_OFFSET_FRAC).clamp(10_000.0, 35_000.0);
+        let grad_h = dn.min(de) * 0.75;
+        // Gradient of the field, pointing toward the blue side.
+        let grad_toward_blue = |p: Vector2| -> Vector2 {
+            let gx = field(p + Vector2::new(grad_h, 0.0)) - field(p - Vector2::new(grad_h, 0.0));
+            let gy = field(p + Vector2::new(0.0, grad_h)) - field(p - Vector2::new(0.0, grad_h));
+            let g = Vector2::new(gx, gy);
+            if g.norm() > 1e-9 {
+                g.normalize()
+            } else {
+                Vector2::new(0.0, 0.0)
+            }
+        };
+
+        let mut fronts: Vec<FrontDraw> = Vec::new();
         let mut dropped = 0usize;
+        let n_raw = raw.len();
         for chain in raw {
             if chain.len() < 2 {
                 continue;
@@ -376,34 +429,66 @@ impl FrontLine {
             let mut simp = Vec::new();
             rdp(&chain, epsilon, &mut simp);
             simp.dedup_by(|a, b| (*a - *b).norm() < 1.0);
-            if simp.len() >= 2 {
-                kept.push(simp);
+            if simp.len() < 2 {
+                continue;
             }
+            let mid = chaikin(&simp, 3);
+
+            // Offset the smoothed centre line along the field gradient to get
+            // the blue-side and red-side lines. Fall back to the segment
+            // normal where the gradient is flat.
+            let mut blue = Vec::with_capacity(mid.len());
+            let mut red = Vec::with_capacity(mid.len());
+            for (k, &p) in mid.iter().enumerate() {
+                let mut nrm = grad_toward_blue(p);
+                if nrm.norm() < 0.5 {
+                    let a = mid[k.saturating_sub(1)];
+                    let b = mid[(k + 1).min(mid.len() - 1)];
+                    let t = b - a;
+                    nrm = if t.norm() > 1e-6 {
+                        Vector2::new(-t.y, t.x).normalize()
+                    } else {
+                        Vector2::new(1.0, 0.0)
+                    };
+                }
+                blue.push(p + nrm * gap);
+                red.push(p - nrm * gap);
+            }
+            fronts.push(FrontDraw { mid, blue, red });
         }
-        kept.sort_by(|a, b| {
-            a[0].x
-                .partial_cmp(&b[0].x)
+        fronts.sort_by(|a, b| {
+            a.mid[0]
+                .x
+                .partial_cmp(&b.mid[0].x)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         info!(
-            "Frontline: {} contour(s), {} dropped as <{:.0} km, {} kept",
-            kept.len() + dropped,
+            "Frontline: {} contour(s), {} dropped as <{:.0} km, {} front(s), gap {:.0} km",
+            n_raw,
             dropped,
             MIN_FRONT_LEN / 1000.0,
-            kept.len()
+            fronts.len(),
+            gap / 1000.0
         );
-        kept
+        fronts
     }
 
     fn draw_frontline(&mut self, persisted: &Persisted, msgq: &mut MsgQ) {
-        let lines = self.compute_frontlines(persisted);
-        if lines.is_empty() {
+        let fronts = self.compute_frontlines(persisted);
+        if fronts.is_empty() {
             return;
         }
-        let total: usize = lines.iter().map(|l| l.len().saturating_sub(1)).sum();
-        info!("Frontline: drawing {} line(s), {} segment(s)", lines.len(), total);
-        let color = Color::new(1.0, 1.0, 1.0, LINE_ALPHA);
-        for line in &lines {
+        let segs: usize = fronts
+            .iter()
+            .map(|f| {
+                f.mid.len().saturating_sub(1)
+                    + f.blue.len().saturating_sub(1)
+                    + f.red.len().saturating_sub(1)
+            })
+            .sum();
+        info!("Frontline: drawing {} front(s), {} segment(s)", fronts.len(), segs);
+
+        let draw = |line: &[Vector2], color: Color, lt: LineType, marks: &mut Vec<MarkId>, msgq: &mut MsgQ| {
             for w in line.windows(2) {
                 let (a, b) = (w[0], w[1]);
                 let mark_id = MarkId::new();
@@ -414,13 +499,19 @@ impl FrontLine {
                         start: LuaVec3(Vector3::new(a.x, 0., a.y)),
                         end: LuaVec3(Vector3::new(b.x, 0., b.y)),
                         color,
-                        line_type: FRONT_LINE,
+                        line_type: lt,
                         read_only: true,
                     },
                     None,
                 );
-                self.marks.push(mark_id);
+                marks.push(mark_id);
             }
+        };
+
+        for f in &fronts {
+            draw(&f.blue, Color::new(0.0, 0.4, 1.0, LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
+            draw(&f.red, Color::new(1.0, 0.2, 0.2, LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
+            draw(&f.mid, Color::new(1.0, 1.0, 1.0, LINE_ALPHA), MID_LINE, &mut self.marks, msgq);
         }
     }
 

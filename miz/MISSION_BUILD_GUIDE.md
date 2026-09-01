@@ -712,11 +712,14 @@ A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
   the spacing between objectives, so a lone base behind enemy lines doesn't
   bend the line — it follows the overall division of the theatre, the way a
   staff officer would draw it.
-- The field is sampled on a grid and its zero contour traced with marching
-  squares → smooth, connected lines. A theatre with an island and two land
-  borders comes out as **several separate fronts** on its own; nothing is
-  strung across open water.
-- Drawn as a single white dashed line per front.
+- The field is sampled on a grid, its zero contour traced with marching
+  squares and Chaikin-smoothed into a flowing curve. A theatre with an
+  island and two land borders comes out as **several separate fronts** on
+  its own; nothing is strung across open water.
+- **Each front is drawn as three lines** with a gap between them: a **blue
+  dashed** line on the blue side, a **white dotted** line down the centre
+  (no man's land), a **red dashed** line on the red side. The gap is about
+  half the blur radius (10–35 km).
 - **Nothing is drawn** until the two sides actually hold bordering territory.
 - **Automatic updates**: redrawn whenever an objective changes hands.
 - **Replaces** the older semi-transparent territory shading.
@@ -734,7 +737,7 @@ A dashed line is drawn along the Red/Blue territory boundary on the F10 map:
 #### Parameters
 - **enabled**: `true` to draw the frontline
 - **update_on_objective_change_only**: only redraw when an objective changes owner (recommended for performance)
-- **samples_per_boundary**: contour-grid resolution (60-240, higher = finer contour, slower). Default 100.
+- **samples_per_boundary**: contour-grid resolution (80-400, higher = finer, more curved, slower). Default 100; try 160-200 for a smoother line.
 - **max_marks**: cap on line segments per front (default 200). A line needing more is simplified harder.
 - **territory_zone_alpha**: *legacy* — was the shading opacity; ignored by the line renderer but still parsed.
 
@@ -979,12 +982,14 @@ All new features can be configured in the campaign config JSON:
 - **Frontline drawing**: the `frontline` overlay now draws the zero line of
   a smooth influence field — each owned objective votes for its side with a
   distance-falloff Gaussian, and the front is where blue and red balance.
-  Traced with marching squares, so it's a smooth connected line; a theatre
-  with an island and two land borders shows up as several separate fronts.
-  Nothing is drawn until the sides hold bordering territory. One white
-  dashed line per front. `frontline.samples_per_boundary` is the contour
-  grid resolution again; `frontline.territory_zone_alpha` is a legacy
-  no-op. See [Frontline Drawing](#frontline-drawing-new).
+  Traced with marching squares, Chaikin-smoothed, and drawn as **three
+  lines** per front (blue dashed on the blue side, white dotted centre, red
+  dashed on the red side) with a gap between them. A theatre with an island
+  and two land borders shows up as several separate fronts; nothing is drawn
+  until the sides hold bordering territory. `frontline.samples_per_boundary`
+  is the contour grid resolution again (raise it for a smoother line);
+  `frontline.territory_zone_alpha` is a legacy no-op. See
+  [Frontline Drawing](#frontline-drawing-new).
 - **`LOGISTICS_DETACHED` semantics flipped**: `true` now cuts an objective
   off from *all* automatic resupply (no convoy, no air, no instant) —
   players fly supplies in by hand. `false` gets a convoy (or a cargo
