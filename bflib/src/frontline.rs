@@ -110,7 +110,7 @@ const HEALTH_CONTESTED_DELTA: f64 = 25.0;
 const MIN_FRONT_LEN: f64 = 25_000.0;
 /// Skip triangles whose longest edge exceeds this multiple of the median
 /// Delaunay edge — trans-water and convex-hull sliver triangles.
-const EDGE_CUTOFF_MULT: f64 = 2.5;
+const EDGE_CUTOFF_MULT: f64 = 3.0;
 
 #[derive(Debug, Clone, Copy)]
 struct Obj {
@@ -163,35 +163,36 @@ impl FrontLine {
     fn compute_frontlines(&self, persisted: &Persisted) -> Vec<(Vec<Vector2>, Vec<(Vector2, Side)>)> {
         use bfprotocols::db::objective::ObjectiveKind as K;
 
+        // Every capturable, owned objective that sits on the ground defines
+        // held territory. Only carrier groups are excluded — they're mobile
+        // and out at sea.
         let objs: Vec<Obj> = persisted
             .objectives
             .into_iter()
             .filter(|(_, o)| matches!(o.owner, Side::Blue | Side::Red))
-            .filter(|(_, o)| {
-                matches!(
-                    o.kind(),
-                    K::Airbase | K::NavalBase | K::Logistics | K::Fob | K::Farp { .. }
-                )
-            })
+            .filter(|(_, o)| !matches!(o.kind(), K::CarrierGroup { .. }))
             .map(|(_, o)| Obj {
                 pos: o.pos(),
                 side: o.owner,
                 health: (o.health() as f64).max(1.0),
             })
             .collect();
-        if objs.len() < 3 {
-            return Vec::new();
-        }
         let blue = objs.iter().filter(|o| o.side == Side::Blue).count();
         let red = objs.iter().filter(|o| o.side == Side::Red).count();
-        if blue == 0 || red == 0 {
-            info!("Frontline: {} blue / {} red territory objectives — no front", blue, red);
+        info!(
+            "Frontline: {} territory objectives ({} blue / {} red)",
+            objs.len(),
+            blue,
+            red
+        );
+        if objs.len() < 3 || blue == 0 || red == 0 {
             return Vec::new();
         }
 
         let pts: Vec<Point> = objs.iter().map(|o| Point { x: o.pos.x, y: o.pos.y }).collect();
         let tri = triangulate(&pts);
         if tri.triangles.len() < 3 {
+            info!("Frontline: degenerate triangulation, no front");
             return Vec::new();
         }
 
@@ -204,9 +205,14 @@ impl FrontLine {
         }
         elens.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let median_edge = elens[elens.len() / 2].max(1.0);
-        let edge_cutoff = median_edge * EDGE_CUTOFF_MULT;
+        // Generous: 3× the median, but never below 60 km, so a sparse stretch
+        // of the front doesn't get cut.
+        let edge_cutoff = (median_edge * EDGE_CUTOFF_MULT).max(60_000.0);
 
         // March the triangles.
+        let ntri = tri.triangles.len() / 3;
+        let mut n_bichromatic = 0usize;
+        let mut n_skipped_long = 0usize;
         let mut cross: FxHashMap<(usize, usize), Vector2> = FxHashMap::default();
         let mut segs: Vec<((usize, usize), (usize, usize), Side)> = Vec::new();
         for t in tri.triangles.chunks_exact(3) {
@@ -216,6 +222,7 @@ impl FrontLine {
             if !(has_blue && has_red) {
                 continue;
             }
+            n_bichromatic += 1;
             let edges = [
                 (corners[0], corners[1]),
                 (corners[1], corners[2]),
@@ -225,6 +232,7 @@ impl FrontLine {
                 .iter()
                 .any(|&(a, b)| (objs[a].pos - objs[b].pos).norm() > edge_cutoff)
             {
+                n_skipped_long += 1;
                 continue;
             }
             let mut xs: Vec<(usize, usize)> = Vec::with_capacity(2);
@@ -260,6 +268,14 @@ impl FrontLine {
                 segs.push((xs[0], xs[1], adv));
             }
         }
+        info!(
+            "Frontline: {} triangles, {} bichromatic ({} skipped as too long, cutoff {:.0} km), {} front segments",
+            ntri,
+            n_bichromatic,
+            n_skipped_long,
+            edge_cutoff / 1000.0,
+            segs.len()
+        );
         if segs.is_empty() {
             return Vec::new();
         }
@@ -333,6 +349,8 @@ impl FrontLine {
         // Filter tiny fragments, simplify, keep.
         let budget = self.config.max_marks.max(8);
         let epsilon = (median_edge * 0.2).clamp(2_000.0, 8_000.0);
+        let n_raw = raw.len();
+        let mut n_short = 0usize;
         let mut lines: Vec<(Vec<Vector2>, Vec<(Vector2, Side)>)> = Vec::new();
         for chain in raw {
             if chain.len() < 2 {
@@ -340,6 +358,7 @@ impl FrontLine {
             }
             let len: f64 = chain.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
             if len < MIN_FRONT_LEN {
+                n_short += 1;
                 continue;
             }
             let mut eps = epsilon;
@@ -362,6 +381,13 @@ impl FrontLine {
                 .partial_cmp(&b.0[0].x)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        info!(
+            "Frontline: {} raw chain(s), {} dropped as <{:.0} km, {} line(s) kept",
+            n_raw,
+            n_short,
+            MIN_FRONT_LEN / 1000.0,
+            lines.len()
+        );
         lines
     }
 
