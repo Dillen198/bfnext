@@ -59,9 +59,9 @@ impl Default for Params {
             sigma_max: 95_000.0,
             min_front_len: 30_000.0,
             contested_mult: 2.3,
-            edge_offset_frac: 0.012,
-            edge_offset_min: 300.0,
-            edge_offset_max: 800.0,
+            edge_offset_frac: 0.035,
+            edge_offset_min: 900.0,
+            edge_offset_max: 2_200.0,
             chaikin_iters: 3,
             pad_frac: 0.12,
         }
