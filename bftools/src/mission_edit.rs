@@ -1213,16 +1213,14 @@ impl WarehouseTemplate {
                         if !gname.contains("CARRIER") {
                             continue;
                         }
-                        // Unit [1] of the group is the carrier (its deck is
-                        // the airbase bflib registers); the rest are escorts
-                        // whose warehouses are never used. Applying the naval
-                        // roster only to the flagship keeps the six ships from
-                        // showing six different warehouses. (`.pairs().next()`
-                        // does NOT reliably give index 1 for an array table.)
-                        if let Ok(first) =
-                            group.raw_get::<_, Table>("units")?.raw_get::<_, Table>(1)
-                        {
-                            if let Ok(id) = first.raw_get::<_, i64>("unitId") {
+                        // Every ship in a CARRIER group gets the naval
+                        // warehouse: a task force can hold several deck-capable
+                        // hulls (super-carrier + Tarawa, etc.) a player can
+                        // slot on, and giving them all one identical warehouse
+                        // is simpler than guessing which are decks.
+                        for unit in group.raw_get::<_, Table>("units")?.pairs::<Value, Table>() {
+                            let unit = unit?.1;
+                            if let Ok(id) = unit.raw_get::<_, i64>("unitId") {
                                 if let Some(c) = &coa_name {
                                     carrier_coalition.insert(id, c.clone());
                                 }
@@ -1522,9 +1520,9 @@ impl WarehouseTemplate {
         };
         let mut navy_applied = 0u32;
         let mut carriers_seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
-        // Replace a carrier flagship's warehouse with a full deep_clone of
-        // that coalition's naval template (exactly how land airbases become
-        // a clone of BINVENTORY / RINVENTORY), keeping the ship's own
+        // Replace a carrier ship's warehouse with a full deep_clone of that
+        // coalition's naval template (exactly how land airbases become a
+        // clone of BINVENTORY / RINVENTORY), keeping the ship's own
         // speed/size/periodicity and forcing weapons/fuel/aircraft limited.
         // Returns true if it did the replace.
         let set_carrier_wh = |tbl: &Table, id: i64, coa: &str| -> Result<bool> {
@@ -1549,7 +1547,7 @@ impl WarehouseTemplate {
                     }
                 }
             }
-            info!("carrier flagship warehouse {id} ({coa}) replaced with the naval inventory template");
+            info!("carrier ship warehouse {id} ({coa}) replaced with the naval inventory template");
             tbl.set(id, wh)?;
             Ok(true)
         };
