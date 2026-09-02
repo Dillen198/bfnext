@@ -428,6 +428,10 @@ impl Objective {
         self.zone.pos()
     }
 
+    pub fn radius(&self) -> f64 {
+        self.zone.radius()
+    }
+
     pub fn groups(&self) -> &MapS<Side, Set<GroupId>> {
         &self.groups
     }
@@ -442,6 +446,22 @@ impl Objective {
 
     pub fn threatened(&self) -> bool {
         self.threatened
+    }
+
+    pub fn infantry(&self) -> u8 {
+        self.infantry
+    }
+
+    pub fn unlimited_supply(&self) -> bool {
+        self.unlimited_supply
+    }
+
+    pub fn logistics_detached(&self) -> bool {
+        self.logistics_detached
+    }
+
+    pub fn last_threatened(&self) -> DateTime<Utc> {
+        self.last_threatened_ts
     }
 
     pub fn warehouse(&self) -> &Warehouse {
@@ -859,6 +879,7 @@ impl Db {
                 *stage = LogiStage::ExecuteTransfers { transfers: trs };
             }
         }
+        crate::navaids::reallocate(&mut self.persisted, &self.ephemeral.cfg.navaids);
         self.ephemeral
             .create_objective_markup(&self.persisted, objective!(self, oid)?);
         self.ephemeral.dirty();

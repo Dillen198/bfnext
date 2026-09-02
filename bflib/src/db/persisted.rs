@@ -20,6 +20,7 @@ use super::{
     player::Player,
     Map, MapM, MapS, Set, SetM, SetS,
 };
+use crate::navaids::Navaid;
 use bfprotocols::db::{
     group::{GroupId, UnitId},
     objective::ObjectiveId,
@@ -90,6 +91,11 @@ pub struct Persisted {
     pub blue_treasury: i64,
     #[serde(default)]
     pub red_treasury: i64,
+    /// Auto-generated navaids per objective (see `crate::navaids`). Rebuilt
+    /// deterministically whenever the objective set changes, so it's safe if
+    /// this loads empty from an older save.
+    #[serde(default)]
+    pub navaids: MapS<ObjectiveId, Navaid>,
 }
 
 impl Persisted {

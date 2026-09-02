@@ -28,6 +28,7 @@ mod jtac;
 mod landcache;
 mod menu;
 mod msgq;
+mod navaids;
 mod shots;
 mod spawnctx;
 
@@ -176,6 +177,22 @@ struct AutoShutdown {
     one_minute_warning: bool,
 }
 
+/// Surface weather pushed in from bfdb (which reads it from DCSServerBot's
+/// RestAPI). Used by the F10 "Weather" menu when present, so it agrees with
+/// the dashboard instead of reporting whatever `atmosphere.getWind` returns
+/// for a mission whose live-weather sync isn't running.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct BotWeather {
+    pub(crate) temp_c: f64,
+    pub(crate) wind_speed_kts: f64,
+    pub(crate) wind_from_deg: f64,
+    pub(crate) qnh_hpa: f64,
+    pub(crate) cloud_base_m: f64,
+    pub(crate) visibility_m: f64,
+    /// Cloud cover, 0-10.
+    pub(crate) cloud_density: f64,
+}
+
 impl AutoShutdown {
     fn new(ts: DateTime<Utc>) -> Self {
         let mut t = Self::default();
@@ -265,6 +282,17 @@ struct Context {
     menu_init_queue: IndexSet<SlotId, FxBuildHasher>,
     last_frame: Option<DateTime<Utc>>,
     last_slow_timed_events: DateTime<Utc>,
+    /// Fingerprint of the objective set (id+owner+kind) at the last navaid
+    /// reallocation. When it changes, `crate::navaids::reallocate` reruns.
+    navaid_sig: Option<u64>,
+    /// Carrier-group objectives whose deck navaids are currently lit. Cleared
+    /// when the objective set changes (a capture may have flipped the deck),
+    /// so the sweep re-lights them; retried each tick until the deck's
+    /// airbase resolves.
+    navaid_carriers_lit: FxHashSet<ObjectiveId>,
+    /// Surface weather from DCSServerBot, pushed in by bfdb via the
+    /// `set-server-info` RPC. `None` until the first push.
+    bot_weather: Option<BotWeather>,
     last_periodic_points: DateTime<Utc>,
     last_commander_tick: DateTime<Utc>,
     last_unit_position: usize,
@@ -968,7 +996,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
     Ok(())
 }
 
-fn lives(db: &mut Db, ucid: &Ucid, typfilter: Option<LifeType>) -> Result<CompactString> {
+pub(crate) fn lives(db: &mut Db, ucid: &Ucid, typfilter: Option<LifeType>) -> Result<CompactString> {
     db.maybe_reset_lives(ucid, Utc::now())?;
     let player = db.player(ucid).ok_or_else(|| anyhow!("no such player {:?}", ucid))?;
     let cfg = &db.ephemeral.cfg;
@@ -2388,6 +2416,104 @@ fn remove_junk_periodic(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     }
 }
 
+/// Rebuild the navaid table when the objective set has changed since last time,
+/// then (re)broadcast the beacons for any objective whose assignment moved and
+/// whose host group is currently spawned. Carrier navaids are lit from the
+/// carrier spawn path instead, so they're skipped here. Entirely best-effort --
+/// a DCS command failure is logged, never propagated.
+fn maybe_reallocate_navaids(lua: MizLua, ctx: &mut Context) {
+    if !ctx.db.ephemeral.cfg.navaids.enabled {
+        return;
+    }
+    use std::hash::{Hash, Hasher};
+    let mut sig: u64 = 0;
+    for (oid, obj) in ctx.db.objectives() {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        oid.hash(&mut h);
+        format!("{:?}", obj.owner()).hash(&mut h);
+        format!("{:?}", std::mem::discriminant(obj.kind())).hash(&mut h);
+        sig ^= h.finish();
+    }
+    let first_run = ctx.navaid_sig.is_none();
+    if ctx.navaid_sig != Some(sig) {
+        ctx.navaid_sig = Some(sig);
+        // A capture may have flipped a carrier deck -- re-light carriers.
+        ctx.navaid_carriers_lit.clear();
+
+        let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
+        let changed = navaids::reallocate(&mut ctx.db.persisted, &cfg.navaids);
+        // On the first tick of a session the spawn hooks have usually already
+        // lit the beacons, but a group that spawned before allocation (or a
+        // reload) would be dark -- so sweep every live host once.
+        let targets: Vec<_> = if first_run {
+            ctx.db
+                .persisted
+                .navaids
+                .into_iter()
+                .map(|(oid, _)| *oid)
+                .collect()
+        } else {
+            changed
+        };
+        if !targets.is_empty() {
+            info!("navaids: refreshing {} objective(s)", targets.len());
+            for oid in targets {
+                let Some(nav) = ctx.db.persisted.navaids.get(&oid).cloned() else { continue };
+                let Some(host) = nav.host_gid else { continue };
+                let Ok(group) = ctx.db.group(&host).map(|g| g.name.clone()) else { continue };
+                match dcso3::group::Group::get_by_name(lua, group.as_str()) {
+                    Ok(g) => {
+                        if let Err(e) = navaids::activate_on_group(&g, &nav) {
+                            warn!("navaids: activate {oid:?} on {group} failed: {e:?}");
+                        }
+                    }
+                    Err(_) => { /* culled -- will light on next spawn */ }
+                }
+            }
+        }
+    }
+
+    // Carrier decks are registered as airbases a beat after their group
+    // spawns, so light them from here and keep retrying each tick until the
+    // deck resolves (or the carrier is culled / captured).
+    let jobs: Vec<(ObjectiveId, navaids::Navaid, dcso3::String)> = ctx
+        .db
+        .persisted
+        .carrier_groups
+        .into_iter()
+        .copied()
+        .filter(|oid| !ctx.navaid_carriers_lit.contains(oid))
+        .filter_map(|oid| {
+            let nav = ctx.db.persisted.navaids.get(&oid)?.clone();
+            let obj = ctx.db.persisted.objectives.get(&oid)?;
+            let gid = obj.groups().get(&obj.owner)?.into_iter().next().copied()?;
+            let gname = ctx.db.group(&gid).ok()?.name.clone();
+            Some((oid, nav, gname))
+        })
+        .collect();
+    for (oid, nav, gname) in jobs {
+        let Ok(g) = dcso3::group::Group::get_by_name(lua, gname.as_str()) else { continue };
+        let deck = g.get_units().ok().and_then(|units| {
+            units.into_iter().filter_map(|u| u.ok()).find_map(|u| {
+                let name = u.get_name().ok()?;
+                if dcso3::airbase::Airbase::get_by_name(lua, name).is_ok() {
+                    u.id().ok()
+                } else {
+                    None
+                }
+            })
+        });
+        let Some(deck) = deck else { continue }; // deck not an airbase yet -- retry
+        match navaids::activate_carrier(&g, deck, &nav) {
+            Ok(()) => {
+                ctx.navaid_carriers_lit.insert(oid);
+                info!("navaids: lit carrier deck for {oid:?}");
+            }
+            Err(e) => warn!("navaids: carrier {oid:?} activate failed: {e:?}"),
+        }
+    }
+}
+
 fn run_slow_timed_events(
     lua: MizLua,
     ctx: &mut Context,
@@ -2464,6 +2590,8 @@ fn run_slow_timed_events(
             error!("error doing repairs {:?}", e)
         }
         record_perf(&mut perf.do_repairs, start_ts);
+
+        maybe_reallocate_navaids(lua, ctx);
 
         // Process C-130 physical cargo spawn queue (one shared queue for all
         // players, not per-slot -- each queued crate carries its own frozen

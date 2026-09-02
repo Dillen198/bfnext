@@ -364,6 +364,9 @@ pub(super) struct ObjectiveMarkup {
     /// (percent complete, seconds remaining)
     repair_pct: Option<(u8, i64)>,
     name: String,
+    /// Cached navaid summary (see `crate::navaids`), so the label only rebuilds
+    /// when it actually changes.
+    navaid: CompactString,
     owner_ring: MarkId,
     capturable_ring: MarkId,
     threatened_ring: MarkId,
@@ -399,6 +402,7 @@ fn fmt_eta(secs: i64) -> CompactString {
 fn objective_label(
     name: &str,
     obj: &Objective,
+    navaid: &str,
     capture_pct: Option<u8>,
     repair_pct: Option<(u8, i64)>,
 ) -> CompactString {
@@ -449,6 +453,9 @@ fn objective_label(
     if let Some((pct, remaining)) = repair_pct {
         let _ = write!(s, "\nRepairing: {pct}% (ETA {})", fmt_eta(remaining));
     }
+    if !navaid.is_empty() {
+        let _ = write!(s, "\n{navaid}");
+    }
     s
 }
 
@@ -476,6 +483,7 @@ impl ObjectiveMarkup {
             capture_pct: _,
             repair_pct: _,
             name: _,
+            navaid: _,
             pos: _,
             owner_ring,
             capturable_ring,
@@ -535,6 +543,11 @@ impl ObjectiveMarkup {
                 Color::white(if self.capturable { 0.75 } else { 0. }),
             );
         }
+        let navaid = persisted
+            .navaids
+            .get(&obj.id)
+            .map(|n| n.summary())
+            .unwrap_or_default();
         if self.health != obj.health
             || self.logi != obj.logi
             || self.supply != obj.supply
@@ -542,6 +555,7 @@ impl ObjectiveMarkup {
             || self.points != obj.points
             || self.capture_pct != capture_pct
             || self.repair_pct != repair_pct
+            || self.navaid != navaid
         {
             // Non-SAM capturable ring is handled by the captureable() check
             // above; here only the SAM-site ring (owner colour / white when
@@ -562,7 +576,11 @@ impl ObjectiveMarkup {
             self.points = obj.points;
             self.capture_pct = capture_pct;
             self.repair_pct = repair_pct;
-            msgq.set_markup_text(self.label, objective_label(&self.name, obj, capture_pct, repair_pct).into());
+            self.navaid = navaid;
+            msgq.set_markup_text(
+                self.label,
+                objective_label(&self.name, obj, &self.navaid, capture_pct, repair_pct).into(),
+            );
         }
         if let Zone::Circle { pos, .. } = obj.zone
             && self.pos != pos
@@ -614,6 +632,11 @@ impl ObjectiveMarkup {
         t.fuel = obj.fuel;
         t.capture_pct = capture_pct;
         t.repair_pct = repair_pct;
+        t.navaid = persisted
+            .navaids
+            .get(&obj.id)
+            .map(|n| n.summary())
+            .unwrap_or_default();
         t.name = match obj.kind {
             ObjectiveKind::SpecialSamSite => format_compact!("{}", obj.name).into(),
             _ => format_compact!("{} {}", obj.name, obj.kind.name()).into(),
@@ -743,7 +766,7 @@ impl ObjectiveMarkup {
                 fill_color: Color::black(0.),
                 font_size: 10,
                 read_only: true,
-                text: objective_label(&t.name, obj, capture_pct, repair_pct).into(),
+                text: objective_label(&t.name, obj, &t.navaid, capture_pct, repair_pct).into(),
             },
         );
         // Draw kind-specific icon symbol inside the objective zone

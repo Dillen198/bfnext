@@ -682,6 +682,28 @@ async fn api_frontline(
     Ok(json_response(data))
 }
 
+/// GET /api/briefing?side=blue — the per-side kneeboard briefing (navaids,
+/// radios, artillery, deployables, threats). Proxied live from the engine;
+/// only meaningful for the active round.
+async fn api_briefing(
+    db: StatsDb,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use netidx::publisher::Value;
+    let side = match query.get("side").map(|s| s.to_ascii_lowercase()) {
+        Some(s) if s.starts_with('r') => "Red",
+        Some(s) if s.starts_with('n') => "Neutral",
+        _ => "Blue",
+    };
+    let data = call_engine_rpc_str(
+        &db,
+        "query-briefing",
+        vec![("side", Value::from(side.to_string()))],
+    )
+    .await?;
+    Ok(json_response(data))
+}
+
 async fn api_kills(
     db: StatsDb,
     round_id: Option<u64>,
@@ -2939,6 +2961,11 @@ async fn main() -> Result<()> {
             api_frontline(db, round_id)
         });
 
+    let briefing = warp::path!("api" / "briefing")
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .then(|db, q: std::collections::HashMap<String, String>| api_briefing(db, q));
+
     let kills = warp::path!("api" / "kills")
         .and(with_db(db.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
@@ -3340,6 +3367,7 @@ async fn main() -> Result<()> {
         .or(leaderboard)
         .or(objectives)
         .or(frontline)
+        .or(briefing)
         .or(kills)
         .or(capture_events)
         .or(pilot_sorties)

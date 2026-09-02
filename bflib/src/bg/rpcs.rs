@@ -58,6 +58,7 @@ pub struct Rpcs {
     _query_logistics: Proc,
     _query_campaign_state: Proc,
     _query_perf: Proc,
+    _query_briefing: Proc,
     // Action API
     _spawn_deployable: Proc,
     _spawn_troop: Proc,
@@ -73,6 +74,32 @@ pub struct Rpcs {
     _carp_solve: Proc,
     _carp_solve_latlon: Proc,
     _cargo_spawn_crate: Proc,
+    _set_server_info: Proc,
+}
+
+/// Parse the JSON bfdb pushes on `set-server-info` into an `AdminCommand`.
+/// Shape: `{"restart_at": "<rfc3339>"|null, "weather": {"temp_c", "wind_speed_kts",
+/// "wind_from_deg", "qnh_hpa", "cloud_base_m"}|null}`.
+fn parse_server_info(s: &str) -> Result<AdminCommand> {
+    let v: serde_json::Value = serde_json::from_str(s)?;
+    let restart_at = v
+        .get("restart_at")
+        .and_then(|r| r.as_str())
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&Utc));
+    let weather = v.get("weather").filter(|w| !w.is_null()).map(|w| {
+        let f = |k: &str| w.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+        crate::BotWeather {
+            temp_c: f("temp_c"),
+            wind_speed_kts: f("wind_speed_kts"),
+            wind_from_deg: f("wind_from_deg"),
+            qnh_hpa: f("qnh_hpa"),
+            cloud_base_m: f("cloud_base_m"),
+            visibility_m: f("visibility_m"),
+            cloud_density: f("cloud_density"),
+        }
+    });
+    Ok(AdminCommand::SetServerInfo { restart_at, weather })
 }
 
 async fn wait_task(mut ch: mpsc::Receiver<(RpcCall, oneshot::Receiver<Value>)>) {
@@ -632,6 +659,26 @@ impl Rpcs {
             Some(wait.clone()),
             arg: Value = Value::Null; ""
         )?;
+        let _q = Arc::clone(&q);
+        let query_briefing = define_rpc!(
+            publisher,
+            base.append("query-briefing"),
+            "Query the per-side kneeboard briefing: navaids, radios, artillery, deployables, threats (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryBriefing { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (Blue, Red, Neutral)"
+        )?;
         // ==================== Action API ====================
         let _q = Arc::clone(&q);
         let spawn_deployable = define_rpc!(
@@ -923,6 +970,26 @@ impl Rpcs {
             qty: i64 = 1; "How many copies to queue",
             c130: bool = true; "Use C-130 cargo rules (true) or helo cargo rules (false)"
         )?;
+        let _q = Arc::clone(&q);
+        let set_server_info = define_rpc!(
+            publisher,
+            base.append("set-server-info"),
+            "Push DCSServerBot-derived restart time + surface weather into the F10 Info menu",
+            |mut c: RpcCall, info: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let cmd = match parse_server_info(info.as_ref()) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad server-info json: {e:?}").into()));
+                        return None;
+                    }
+                };
+                _q.push((cmd, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            info: Chars = Value::Null; "JSON {restart_at, weather:{temp_c,wind_speed_kts,wind_from_deg,qnh_hpa,cloud_base_m}}"
+        )?;
         Ok(Self {
             _reduce_inventory: reduce_inventory,
             _transfer_supply: transfer_supply,
@@ -961,6 +1028,7 @@ impl Rpcs {
             _query_logistics: query_logistics,
             _query_campaign_state: query_campaign_state,
             _query_perf: query_perf,
+            _query_briefing: query_briefing,
             // Action API
             _spawn_deployable: spawn_deployable,
             _spawn_troop: spawn_troop,
@@ -975,6 +1043,7 @@ impl Rpcs {
             _carp_solve: carp_solve,
             _carp_solve_latlon: carp_solve_latlon,
             _cargo_spawn_crate: cargo_spawn_crate,
+            _set_server_info: set_server_info,
         })
     }
 }

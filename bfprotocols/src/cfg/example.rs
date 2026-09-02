@@ -2280,6 +2280,8 @@ impl Default for Cfg {
                 cap_min_friendly_pilots: 1,
                 cap_cooldown_secs: 300,
             }),
+            navaids: crate::cfg::NavaidsCfg::default(),
+            harm_codes: fxhash::FxHashMap::default(),
         }
     }
 }

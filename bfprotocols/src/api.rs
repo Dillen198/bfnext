@@ -163,6 +163,85 @@ pub struct SpawnResult {
     pub message: String,
 }
 
+// ── Briefing (kneeboard / dashboard) ────────────────────────────────────────
+
+/// Everything a pilot needs on their kneeboard, assembled per side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Briefing {
+    pub side: Side,
+    /// rfc3339 timestamp the briefing was generated.
+    pub generated: String,
+    pub navaids: Vec<NavaidEntry>,
+    pub radios: Vec<RadioEntry>,
+    pub artillery: Vec<ArtilleryEntry>,
+    pub deployables: Vec<DeployableEntry>,
+    pub threats: Vec<ThreatEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NavaidEntry {
+    pub objective: String,
+    pub kind: String,
+    pub lat: f64,
+    pub lon: f64,
+    /// e.g. "74Y KUT"
+    pub tacan: Option<String>,
+    pub ndb_khz: Option<u16>,
+    pub icls: Option<u8>,
+    pub link4_mhz: Option<f64>,
+    pub acls: bool,
+    /// Carrier base recovery course (degrees), carriers only.
+    pub brc: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RadioEntry {
+    /// "AWACS Magic", "Tanker Texaco", "JTAC 12"
+    pub label: String,
+    /// "AWACS" | "TANKER" | "JTAC"
+    pub kind: String,
+    pub freq_mhz: Option<f64>,
+    pub tacan: Option<String>,
+    /// laser code, orbit note, etc.
+    pub extra: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtilleryEntry {
+    pub group: String,
+    pub typ: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub min_range_m: f64,
+    pub max_range_m: f64,
+    pub alive: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployableEntry {
+    /// Full menu path joined with " / ".
+    pub name: String,
+    pub cost: u32,
+    pub crates_required: usize,
+    pub limit: u32,
+    pub deployed: u32,
+    /// "EWR", "JTAC", "GCI" tags where set.
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreatEntry {
+    /// DCS unit type name.
+    pub typ: String,
+    /// How many are currently fielded by the enemy.
+    pub count: usize,
+    /// Radar band, when classified.
+    pub band: Option<String>,
+    /// AGM-88 ALIC / threat code, from `cfg.harm_codes`.
+    pub harm_code: Option<String>,
+    pub max_range_km: Option<f64>,
+}
+
 /// Campaign state summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CampaignState {

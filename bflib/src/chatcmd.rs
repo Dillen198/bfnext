@@ -186,6 +186,19 @@ fn time_command(ctx: &mut Context, id: PlayerId, now: DateTime<Utc>) {
 }
 
 fn weather_command(ctx: &mut Context, lua: HooksLua, id: PlayerId) {
+    if let Some(bw) = ctx.bot_weather {
+        let cover = if bw.cloud_density > 0.0 { format!("{:.0}/10", bw.cloud_density) } else { "clear".to_string() };
+        let msg = format!(
+            "SERVER WEATHER\nTemp: {:.0}\u{b0}C / {:.0}\u{b0}F\nSurface wind: {:03}\u{b0} at {:.0} kt\nVisibility: {:.0} km / {:.0} SM\nClouds: base {:.0} ft AGL, {}\nQNH: {:.0} hPa / {:.2} inHg",
+            bw.temp_c, bw.temp_c * 1.8 + 32.0,
+            bw.wind_from_deg as u32, bw.wind_speed_kts,
+            bw.visibility_m / 1000.0, bw.visibility_m / 1609.34,
+            bw.cloud_base_m * 3.281, cover,
+            bw.qnh_hpa, bw.qnh_hpa / 33.8639,
+        );
+        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
+        return;
+    }
     let Some(ifo) = ctx.connected.get(&id) else { return };
     let Some(player) = ctx.db.player(&ifo.ucid) else { return };
     let Some(slot) = player.current_slot.as_ref().map(|(slot, _)| *slot) else {

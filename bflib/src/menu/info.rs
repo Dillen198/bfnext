@@ -1,139 +1,374 @@
-use super::{ArgTriple, ArgTuple};
-use crate::{atis, Context, db::{group::DeployKind, Db}};
+use super::{brg_rng, player_world_pos, slot_for_group, ArgTriple, ArgTuple};
+use crate::{
+    atis,
+    db::{group::DeployKind, logistics::ConvoyState, Db},
+    Context,
+};
 use anyhow::{Context as ErrContext, Result};
-use bfprotocols::cfg::{ActionKind, AwacsCfg};
-use compact_str::format_compact;
+use bfprotocols::{
+    cfg::{ActionKind, AwacsCfg},
+    db::objective::ObjectiveId,
+};
+use compact_str::{format_compact, CompactString};
 use dcso3::{
     coalition::Side,
     env::miz::GroupId,
     mission_commands::{GroupSubMenu, MissionCommands},
     net::SlotId,
-    MizLua,
+    MizLua, Vector2,
 };
 use log::error;
 use std::fmt::Write;
 
-fn build_sitrep(db: &Db, side: Side) -> compact_str::CompactString {
-    let enemy_side = side.opposite();
-    let friendly_primary = db
-        .objectives()
-        .filter(|(_, o)| {
-            o.owner() == side
-                && matches!(
-                    o.kind(),
-                    bfprotocols::db::objective::ObjectiveKind::Airbase
-                        | bfprotocols::db::objective::ObjectiveKind::NavalBase
-                        | bfprotocols::db::objective::ObjectiveKind::Farp { .. }
-                )
-        })
-        .count();
-    let enemy_primary = db
-        .objectives()
-        .filter(|(_, o)| {
-            o.owner() == enemy_side
-                && matches!(
-                    o.kind(),
-                    bfprotocols::db::objective::ObjectiveKind::Airbase
-                        | bfprotocols::db::objective::ObjectiveKind::NavalBase
-                        | bfprotocols::db::objective::ObjectiveKind::Farp { .. }
-                )
-        })
-        .count();
-    let total_friendly = db.objectives().filter(|(_, o)| o.owner() == side).count();
-    let total_enemy = db.objectives().filter(|(_, o)| o.owner() == enemy_side).count();
+fn from_pos(ctx: &Context, lua: MizLua, gid: &GroupId) -> Option<Vector2> {
+    let (_, slot) = slot_for_group(lua, ctx, gid).ok()?;
+    player_world_pos(ctx, &slot)
+}
 
-    let mut report = format_compact!("=== Situation Report ===\n");
-    let _ = write!(
-        report,
-        "{side:?}: {total_friendly} objectives ({friendly_primary} primary)\n\
-         {enemy_side:?}: {total_enemy} objectives ({enemy_primary} primary)\n"
-    );
+fn obj_name(db: &Db, oid: &ObjectiveId) -> CompactString {
+    db.persisted
+        .objectives
+        .get(oid)
+        .map(|o| CompactString::from(o.name()))
+        .unwrap_or_else(|| CompactString::from("?"))
+}
 
-    // Last stand timer status
-    if let Some((arm_time, losing_side)) = db.ephemeral.last_stand_state {
-        if let Some(cfg) = &db.ephemeral.cfg.last_stand {
-            let elapsed = chrono::Utc::now() - arm_time;
-            let remaining = chrono::Duration::seconds(cfg.countdown_secs as i64) - elapsed;
-            let remaining_secs = remaining.num_seconds().max(0);
-            let _ = write!(
-                report,
-                "LAST STAND: {losing_side:?} — {remaining_secs}s remaining\n"
-            );
+fn brg_rng_str(from: Option<Vector2>, to: Vector2) -> CompactString {
+    match from {
+        Some(p) => {
+            let (b, r) = brg_rng(p, to);
+            format_compact!(" ({b:03}\u{b0}/{r:.0}nm)")
+        }
+        None => CompactString::from(""),
+    }
+}
+
+// ── Situation report ────────────────────────────────────────────────────────
+
+fn build_sitrep(db: &Db, side: Side) -> CompactString {
+    use bfprotocols::db::objective::ObjectiveKind as K;
+    let enemy = side.opposite();
+    let is_primary = |k: &K| matches!(k, K::Airbase | K::NavalBase | K::Farp { .. });
+
+    let mut f_total = 0u32;
+    let mut f_primary = 0u32;
+    let mut e_total = 0u32;
+    let mut e_primary = 0u32;
+    let mut f_capturable = 0u32;
+    let mut f_threatened = 0u32;
+    for (_, o) in db.objectives() {
+        if o.owner() == side {
+            f_total += 1;
+            f_primary += is_primary(o.kind()) as u32;
+            f_capturable += o.captureable() as u32;
+            f_threatened += o.threatened() as u32;
+        } else if o.owner() == enemy {
+            e_total += 1;
+            e_primary += is_primary(o.kind()) as u32;
         }
     }
 
-    // Supply-critical objectives (lowest 5)
-    let mut low_supply: Vec<_> = db
+    let mut report = CompactString::from("=== Situation Report ===\n");
+    let _ = write!(
+        report,
+        "{side:?}: {f_total} objectives ({f_primary} primary)\n\
+         {enemy:?}: {e_total} objectives ({e_primary} primary)\n\
+         Treasury: {} pts\n\
+         Your bases: {f_threatened} under threat, {f_capturable} at risk of capture\n",
+        db.persisted.treasury(side),
+    );
+
+    if let Some((arm_time, losing_side)) = db.ephemeral.last_stand_state {
+        if let Some(cfg) = &db.ephemeral.cfg.last_stand {
+            let elapsed = chrono::Utc::now() - arm_time;
+            let remaining =
+                (chrono::Duration::seconds(cfg.countdown_secs as i64) - elapsed).num_seconds().max(0);
+            let _ = write!(report, "LAST STAND: {losing_side:?} -- {remaining}s remaining\n");
+        }
+    }
+
+    let mut low: Vec<(CompactString, u8)> = db
         .objectives()
         .filter(|(_, o)| o.owner() == side)
-        .map(|(_, o)| (o.name().to_string(), o.supply()))
+        .map(|(_, o)| (CompactString::from(o.name()), o.supply()))
         .collect();
-    low_supply.sort_by_key(|(_, s)| *s);
-    low_supply.truncate(5);
-    if !low_supply.is_empty() {
+    low.sort_by_key(|(_, s)| *s);
+    low.truncate(5);
+    if !low.is_empty() {
         let _ = write!(report, "\nLowest supply:\n");
-        for (name, supply) in &low_supply {
+        for (name, supply) in &low {
             let _ = write!(report, "  {name}: {supply}%\n");
         }
     }
     report
 }
 
-fn build_frequencies(db: &Db, side: Side) -> compact_str::CompactString {
-    let mut report = format_compact!("=== Frequencies ===\n");
-    let mut found_any = false;
+// ── My status ──────────────────────────────────────────────────────────────
+
+fn build_my_status(ctx: &mut Context, slot: &SlotId) -> CompactString {
+    let ucid = match ctx.db.ephemeral.player_in_slot(slot).copied() {
+        Some(u) => u,
+        None => return CompactString::from("You are not registered in this slot."),
+    };
+    let (name, side, points, streak, kills) = match ctx.db.player(&ucid) {
+        Some(p) => (p.name.clone(), p.side, p.points, p.kill_streak, p.total_kills),
+        None => return CompactString::from("No player record found."),
+    };
+    let mut s = format_compact!("=== {name} ===\n");
+    let _ = write!(
+        s,
+        "Side: {side:?}\nPoints: {points}\nKill streak: {streak}\nCareer kills: {kills}\n"
+    );
+    let cfg = &ctx.db.ephemeral.cfg;
+    if cfg.lock_sides {
+        let _ = write!(s, "Sides are LOCKED this round\n");
+    } else if let Some(n) = cfg.side_switches {
+        let _ = write!(s, "Side switches allowed: {n}/round\n");
+    }
+    if ctx.db.ephemeral.cfg.limited_lives {
+        let _ = write!(s, "\nLives:\n");
+        match crate::lives(&mut ctx.db, &ucid, None) {
+            Ok(l) => s.push_str(&l),
+            Err(_) => s.push_str("(unavailable)\n"),
+        }
+    }
+    s
+}
+
+// ── Support & radios ───────────────────────────────────────────────────────
+
+fn build_support(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactString {
+    let db = &ctx.db;
+    let mut report = CompactString::from("=== Support & Radios ===\n");
+    let mut found = false;
     for (_, group) in &db.persisted.groups {
         if group.side != side {
             continue;
         }
-        if let DeployKind::Action { spec, .. } = &group.origin {
-            match &spec.kind {
-                ActionKind::Awacs(AwacsCfg { plane, .. }) => {
-                    if let Some(freq) = plane.freq {
-                        let mhz = freq as f64 / 1_000_000.0;
-                        let _ = write!(report, "AWACS [{name}]: {mhz:.3} MHz\n", name = group.name);
-                        found_any = true;
-                    }
-                }
-                ActionKind::Tanker(plane) => {
-                    if let Some(freq) = plane.freq {
-                        let mhz = freq as f64 / 1_000_000.0;
-                        let _ = write!(report, "TANKER [{name}]: {mhz:.3} MHz\n", name = group.name);
-                        found_any = true;
-                    }
-                }
-                _ => {}
-            }
+        let DeployKind::Action { spec, .. } = &group.origin else { continue };
+        let plane = match &spec.kind {
+            ActionKind::Awacs(AwacsCfg { plane, .. }) => plane,
+            ActionKind::Tanker(plane) => plane,
+            _ => continue,
+        };
+        let kind = if matches!(&spec.kind, ActionKind::Tanker(_)) { "TANKER" } else { "AWACS" };
+        let mut line = format_compact!("{kind} [{}]", group.name);
+        if let Some(freq) = plane.freq {
+            let _ = write!(line, "  {:.3} MHz", freq as f64 / 1_000_000.0);
+        }
+        if let Some(ch) = plane.tacan_channel {
+            let band = plane
+                .tacan_band
+                .as_ref()
+                .map(|b| format_compact!("{b:?}"))
+                .unwrap_or_else(|| CompactString::from("X"));
+            let cs = plane
+                .tacan_callsign
+                .as_ref()
+                .map(|c| format_compact!(" {c}"))
+                .unwrap_or_default();
+            let _ = write!(line, "  TACAN {ch}{band}{cs}");
+        }
+        report.push_str(&line);
+        report.push('\n');
+        found = true;
+    }
+
+    let jtacs: Vec<_> = ctx.jtac.jtacs().filter(|j| j.side() == side).collect();
+    if !jtacs.is_empty() {
+        report.push_str("\nJTACs:\n");
+        for j in jtacs {
+            let loc = j.location();
+            let near = obj_name(db, &loc.oid);
+            let br = brg_rng_str(from, loc.pos);
+            let tgt = if j.target().is_some() { " [lasing]" } else { "" };
+            let _ = write!(
+                report,
+                "  {:?} code {} near {near}{br}{tgt}\n",
+                j.gid(),
+                j.code()
+            );
+            found = true;
         }
     }
-    if !found_any {
-        let _ = write!(report, "No active AWACS or tankers.\n");
+
+    if !found {
+        report.push_str("No active AWACS, tankers, or JTACs.\n");
     }
     report
+}
+
+// ── Supply convoys ─────────────────────────────────────────────────────────
+
+fn build_convoys(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactString {
+    let db = &ctx.db;
+    let now = chrono::Utc::now();
+    let mut report = CompactString::from("=== Supply Convoys ===\n");
+    let mut any = false;
+    for c in db.convoys_for_side(side) {
+        if c.state != ConvoyState::InTransit {
+            continue;
+        }
+        any = true;
+        let age = (now - c.spawn_time).num_minutes().max(0);
+        let br = brg_rng_str(from, c.last_pos);
+        let _ = write!(
+            report,
+            "{} -> {}  ({}){br}  {}m en route\n",
+            obj_name(db, &c.origin),
+            obj_name(db, &c.destination),
+            c.cargo_type.as_str(),
+            age,
+        );
+    }
+    if !any {
+        report.push_str("No friendly supply convoys are moving right now.\n");
+    }
+    report
+}
+
+// ── Navaids directory ──────────────────────────────────────────────────────
+
+fn build_navaids(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactString {
+    let db = &ctx.db;
+    if !db.ephemeral.cfg.navaids.enabled {
+        return CompactString::from("Auto-navaids are disabled on this server.");
+    }
+    let mut rows: Vec<(f64, CompactString)> = vec![];
+    for (oid, obj) in db.objectives() {
+        if obj.owner() != side {
+            continue;
+        }
+        let Some(nav) = db.persisted.navaids.get(oid) else { continue };
+        let r = from.map(|p| brg_rng(p, obj.pos()).1).unwrap_or(f64::MAX);
+        rows.push((
+            r,
+            format_compact!("{}{}: {}\n", obj.name(), brg_rng_str(from, obj.pos()), nav.summary()),
+        ));
+    }
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut report = CompactString::from("=== Friendly Navaids ===\n");
+    for (_, l) in &rows {
+        report.push_str(l);
+    }
+    if rows.is_empty() {
+        report.push_str("No generated navaids yet.\n");
+    }
+    report
+}
+
+// ── callbacks ──────────────────────────────────────────────────────────────
+
+fn my_status(_lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let report = build_my_status(ctx, &arg.snd);
+    ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
+    Ok(())
 }
 
 fn sitrep(_lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let report = build_sitrep(&ctx.db, arg.snd);
-    ctx.db.ephemeral.msgs().panel_to_group(20, false, arg.fst, report);
+    ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
     Ok(())
 }
 
-fn frequencies(_lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+fn support(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
-    let report = build_frequencies(&ctx.db, arg.snd);
-    ctx.db.ephemeral.msgs().panel_to_group(20, false, arg.fst, report);
+    let from = from_pos(ctx, lua, &arg.fst);
+    let report = build_support(ctx, arg.snd, from);
+    ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
+    Ok(())
+}
+
+fn convoys(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let from = from_pos(ctx, lua, &arg.fst);
+    let report = build_convoys(ctx, arg.snd, from);
+    ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
+    Ok(())
+}
+
+fn navaids_directory(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let from = from_pos(ctx, lua, &arg.fst);
+    let report = build_navaids(ctx, arg.snd, from);
+    ctx.db.ephemeral.msgs().panel_to_group(45, false, arg.fst, report);
+    Ok(())
+}
+
+fn time_and_server(_lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let now = chrono::Utc::now();
+    let msg = match ctx.shutdown.as_ref() {
+        None => CompactString::from("Server restart: not scheduled automatically."),
+        Some(asd) => {
+            let d = asd.when - now;
+            let secs = d.num_seconds().max(0);
+            format_compact!(
+                "Server restarts in {:02}:{:02}:{:02}",
+                secs / 3600,
+                (secs % 3600) / 60,
+                secs % 60
+            )
+        }
+    };
+    ctx.db.ephemeral.msgs().panel_to_group(20, false, gid, msg);
     Ok(())
 }
 
 fn weather(lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
-    if let Err(e) = atis::send_full_weather(lua, arg.snd) {
-        error!("full weather report failed for slot {:?}: {:?}", arg.snd, e);
+    let ctx = unsafe { Context::get_mut() };
+
+    // Server weather from DCSServerBot (pushed in by bfdb) is the source of
+    // truth when we have it -- it agrees with the dashboard and doesn't
+    // depend on the mission's live-weather sync.
+    if let Some(bw) = ctx.bot_weather {
+        let vis_km = bw.visibility_m / 1000.0;
+        let vis_sm = bw.visibility_m / 1609.34;
+        let cover = if bw.cloud_density > 0.0 {
+            format_compact!("{:.0}/10", bw.cloud_density)
+        } else {
+            CompactString::from("clear")
+        };
+        let msg = format_compact!(
+            "SERVER WEATHER\n\
+             Temp: {c:.0}°C / {f:.0}°F\n\
+             Surface wind: {wdir:03}° at {wkt:.0} kt\n\
+             Visibility: {vk:.0} km / {vs:.0} SM\n\
+             Clouds: base {ft:.0} ft AGL, {cover}\n\
+             QNH: {hpa:.0} hPa / {inhg:.2} inHg",
+            c = bw.temp_c,
+            f = bw.temp_c * 1.8 + 32.0,
+            wdir = bw.wind_from_deg as u32,
+            wkt = bw.wind_speed_kts,
+            vk = vis_km,
+            vs = vis_sm,
+            ft = bw.cloud_base_m * 3.281,
+            cover = cover,
+            hpa = bw.qnh_hpa,
+            inhg = bw.qnh_hpa / 33.8639,
+        );
+        ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, msg);
+        return Ok(());
+    }
+
+    // Otherwise: full field ATIS + winds aloft when the player is in a slot.
+    match atis::send_full_weather(lua, arg.snd) {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(e) => error!("full weather report failed for slot {:?}: {:?}", arg.snd, e),
+    }
+    // No slot context (F10 map, spectator, ground unit) -- a general brief at
+    // wherever the player is, falling back to the map origin.
+    let pos = from_pos(ctx, lua, &arg.fst).unwrap_or_else(|| dcso3::Vector2::new(0.0, 0.0));
+    if let Err(e) = atis::send_weather_brief(lua, arg.fst, pos) {
+        error!("weather brief failed for group {:?}: {:?}", arg.fst, e);
     }
     Ok(())
 }
 
-// ── Help ─────────────────────────────────────────────────────────────────
+// ── Help ───────────────────────────────────────────────────────────────────
 // Static reference text, split into topics so each panel message stays
 // readable instead of one huge wall of text. Content here should only state
 // things confirmed against the actual campaign code/config -- if a mechanic
@@ -148,8 +383,8 @@ Your F10 radio menu is the main toolkit:
  - Troops: load and deploy ground troops
  - Actions: call in AI support, artillery fires, and special missions
  - JTAC: request 9-lines and target info from ground controllers
- - Objectives: check nearby base status
- - Info: this Help menu, Situation Report, Frequencies, Weather
+ - Objectives: base status, nearest-base detail, capture/threat lists
+ - Info: My Status, Situation Report, Support & Radios, Convoys, Weather, Help
  - EWR: early warning radar contact reports
 
 You earn points for kills, captures, repairs, and deployments -- spend them
@@ -186,7 +421,7 @@ group is alive, not how much fuel is sitting in the warehouse.
 
 Secure rear bases resupply automatically. Forward/contested bases are
 resupplied by physical truck convoys instead -- protect your own, or hunt
-the enemy's on the map.
+the enemy's on the map. The Info > Supply Convoys menu lists yours.
 
 Crates (Cargo / C-130 Cargo menu): spawn one, carry it to the target base,
 then Unpack it there.
@@ -201,6 +436,8 @@ const HELP_OBJECTIVES: &str = "\
 Each base's F10 map label shows Health, Logistics(Logi), Supply, and Fuel,
 plus a live \"Repairing: X% (ETA ...)\" line while it's actively healing.
 The inner ring on the map marker turns white once a base is capturable.
+Objectives > Base Detail gives the full card for any friendly base, incl.
+LL/MGRS, bearing/range from you, repair state, and capture requirements.
 
 HOW TO CAPTURE A BASE:
 1. Reduce it to capturable: Health at or below 20% AND zero infantry
@@ -245,7 +482,8 @@ const HELP_COMBAT_JTAC: &str = "\
 === Combat & JTAC ===
 JTAC ground controllers: use the JTAC menu or chat commands to request a
 9-line (status), have the target smoked (smoke), or shift to the next
-target manually or automatically (shift / autoshift).
+target manually or automatically (shift / autoshift). Info > Support &
+Radios lists every active JTAC with its laser code and rough location.
 
 EWR: check the EWR menu for early warning radar contact reports on
 approaching enemy aircraft.
@@ -253,53 +491,17 @@ approaching enemy aircraft.
 Artillery: if your side has active batteries, \"Request Fires\" appears
 automatically in your Actions menu -- no separate setup needed.";
 
-fn help_getting_started(_lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
-    ctx.db.ephemeral.msgs().panel_to_group(60, false, gid, HELP_GETTING_STARTED);
-    Ok(())
+fn help_topic(text: &'static str) -> impl Fn(MizLua, GroupId) -> Result<()> {
+    move |_lua, gid| {
+        let ctx = unsafe { Context::get_mut() };
+        ctx.db.ephemeral.msgs().panel_to_group(60, false, gid, text);
+        Ok(())
+    }
 }
 
-fn help_chat_commands(_lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
-    ctx.db.ephemeral.msgs().panel_to_group(60, false, gid, HELP_CHAT_COMMANDS);
-    Ok(())
-}
-
-fn help_cargo_logistics(_lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
-    ctx.db.ephemeral.msgs().panel_to_group(60, false, gid, HELP_CARGO_LOGISTICS);
-    Ok(())
-}
-
-fn help_objectives(_lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
-    ctx.db.ephemeral.msgs().panel_to_group(60, false, gid, HELP_OBJECTIVES);
-    Ok(())
-}
-
-fn help_carrier_groups(_lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
-    ctx.db.ephemeral.msgs().panel_to_group(60, false, gid, HELP_CARRIER_GROUPS);
-    Ok(())
-}
-
-fn help_combat_jtac(_lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
-    ctx.db.ephemeral.msgs().panel_to_group(60, false, gid, HELP_COMBAT_JTAC);
-    Ok(())
-}
-
-pub(super) fn init_info_menu_for_slot(
-    ctx: &mut Context,
-    lua: MizLua,
-    slot: &SlotId,
-) -> Result<()> {
+pub(super) fn init_info_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Result<()> {
     let mc = MissionCommands::singleton(lua)?;
-    let si = ctx
-        .db
-        .ephemeral
-        .get_slot_info(slot)
-        .context("getting slot info")?;
+    let si = ctx.db.ephemeral.get_slot_info(slot).context("getting slot info")?;
     let miz_gid = si.miz_gid;
     let side = si.side;
 
@@ -308,20 +510,46 @@ pub(super) fn init_info_menu_for_slot(
 
     mc.add_command_for_group(
         miz_gid,
+        "My Status".into(),
+        Some(root.clone()),
+        my_status,
+        ArgTuple { fst: miz_gid, snd: *slot },
+    )?;
+    mc.add_command_for_group(
+        miz_gid,
         "Situation Report".into(),
         Some(root.clone()),
         sitrep,
         ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
     )?;
-
     mc.add_command_for_group(
         miz_gid,
-        "Frequencies".into(),
+        "Support & Radios".into(),
         Some(root.clone()),
-        frequencies,
+        support,
         ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
     )?;
-
+    mc.add_command_for_group(
+        miz_gid,
+        "Supply Convoys".into(),
+        Some(root.clone()),
+        convoys,
+        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
+    )?;
+    mc.add_command_for_group(
+        miz_gid,
+        "Navaids Directory".into(),
+        Some(root.clone()),
+        navaids_directory,
+        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
+    )?;
+    mc.add_command_for_group(
+        miz_gid,
+        "Time & Server".into(),
+        Some(root.clone()),
+        time_and_server,
+        miz_gid,
+    )?;
     mc.add_command_for_group(
         miz_gid,
         "Weather".into(),
@@ -331,48 +559,22 @@ pub(super) fn init_info_menu_for_slot(
     )?;
 
     let help_root = mc.add_submenu_for_group(miz_gid, "Help".into(), Some(root.clone()))?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Getting Started".into(),
-        Some(help_root.clone()),
-        help_getting_started,
-        miz_gid,
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Chat Commands".into(),
-        Some(help_root.clone()),
-        help_chat_commands,
-        miz_gid,
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Cargo & Logistics".into(),
-        Some(help_root.clone()),
-        help_cargo_logistics,
-        miz_gid,
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Objectives & Capturing".into(),
-        Some(help_root.clone()),
-        help_objectives,
-        miz_gid,
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Carrier Groups".into(),
-        Some(help_root.clone()),
-        help_carrier_groups,
-        miz_gid,
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Combat & JTAC".into(),
-        Some(help_root.clone()),
-        help_combat_jtac,
-        miz_gid,
-    )?;
+    for (label, text) in [
+        ("Getting Started", HELP_GETTING_STARTED),
+        ("Chat Commands", HELP_CHAT_COMMANDS),
+        ("Cargo & Logistics", HELP_CARGO_LOGISTICS),
+        ("Objectives & Capturing", HELP_OBJECTIVES),
+        ("Carrier Groups", HELP_CARRIER_GROUPS),
+        ("Combat & JTAC", HELP_COMBAT_JTAC),
+    ] {
+        mc.add_command_for_group(
+            miz_gid,
+            label.into(),
+            Some(help_root.clone()),
+            help_topic(text),
+            miz_gid,
+        )?;
+    }
 
     Ok(())
 }

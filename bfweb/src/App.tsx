@@ -6,6 +6,7 @@ import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import MapPage from './pages/MapPage'
 import Objectives from './pages/Objectives'
+import BriefingPage from './pages/BriefingPage'
 import Leaderboard from './pages/Leaderboard'
 import Pilots from './pages/Pilots'
 import KillFeed from './pages/KillFeed'
@@ -33,6 +34,7 @@ export default function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="map" element={<MapPage />} />
                 <Route path="objectives" element={<Objectives />} />
+                <Route path="briefing" element={<BriefingPage />} />
                 <Route path="leaderboard" element={<Leaderboard />} />
                 <Route path="pilots" element={<Pilots />} />
                 <Route path="kills" element={<KillFeed />} />

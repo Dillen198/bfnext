@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
-import { api } from '../api'
+import { api, type NavaidEntry } from '../api'
 import HealthBar from '../components/HealthBar'
 import SideBadge from '../components/SideBadge'
 import PageHeader from '../components/PageHeader'
@@ -25,8 +25,21 @@ const COLS: { label: string; key?: SortKey }[] = [
   { label: 'Logistics', key: 'logi' },
   { label: 'Supply', key: 'supply' },
   { label: 'Fuel', key: 'fuel' },
+  { label: 'Navaids' },
   { label: 'Last Change', key: 'last_change' },
 ]
+
+/** Compact navaid string for a table cell, e.g. "74Y KUT · NDB 375 · ICLS 3". */
+function navaidSummary(n: NavaidEntry): string {
+  const parts: string[] = []
+  if (n.tacan) parts.push(n.tacan)
+  if (n.ndb_khz) parts.push(`NDB ${n.ndb_khz}`)
+  if (n.icls) parts.push(`ICLS ${n.icls}`)
+  if (n.link4_mhz) parts.push(`L4 ${n.link4_mhz.toFixed(1)}`)
+  if (n.acls) parts.push('ACLS')
+  if (n.brc != null) parts.push(`BRC ${String(n.brc).padStart(3, '0')}`)
+  return parts.join(' · ')
+}
 
 const OBJ_KINDS = ['Airbase', 'FARP', 'FOB', 'Factory', 'Logistics Hub', 'Naval Base', 'Carrier Group', 'Command Center']
 const KIND_ICONS: Record<string, string> = {
@@ -79,6 +92,23 @@ export default function Objectives() {
     queryFn: () => api.objectives(selectedRound),
     refetchInterval: 30_000,
   })
+  // Navaids come from the per-side briefing; fetch both so every owned
+  // objective gets its entry regardless of side. Only on the active round.
+  const isActiveRound = selectedRound == null
+  const { data: blueBrief } = useQuery({
+    queryKey: ['briefing', 'Blue'], queryFn: () => api.briefing('Blue'),
+    refetchInterval: 60_000, enabled: isActiveRound, retry: false,
+  })
+  const { data: redBrief } = useQuery({
+    queryKey: ['briefing', 'Red'], queryFn: () => api.briefing('Red'),
+    refetchInterval: 60_000, enabled: isActiveRound, retry: false,
+  })
+  const navaidByName = useMemo(() => {
+    const m = new Map<string, NavaidEntry>()
+    for (const n of [...(blueBrief?.navaids ?? []), ...(redBrief?.navaids ?? [])]) m.set(n.objective, n)
+    return m
+  }, [blueBrief, redBrief])
+
   const [filter, setFilter] = useState<Filter>('All')
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState<SortKey>('health')
@@ -364,7 +394,7 @@ export default function Objectives() {
               </thead>
               <tbody>
                 {isLoading && (
-                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>Loading…</td></tr>
+                  <tr><td colSpan={9} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>Loading…</td></tr>
                 )}
                 {filtered.map(obj => {
                   const isCrit = obj.health < 40
@@ -383,6 +413,9 @@ export default function Objectives() {
                       <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.logi} /></td>
                       <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.supply} /></td>
                       <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.fuel} /></td>
+                      <td className="font-mono-vs" style={{ padding: '9px 14px', fontSize: '0.62rem', color: '#facc15', whiteSpace: 'nowrap' }}>
+                        {navaidByName.has(obj.name) ? navaidSummary(navaidByName.get(obj.name)!) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
+                      </td>
                       <td className="font-mono-vs" style={{ padding: '9px 14px', fontSize: '0.62rem', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
                         {new Date(obj.last_change).toLocaleString()}
                       </td>
@@ -390,7 +423,7 @@ export default function Objectives() {
                   )
                 })}
                 {!isLoading && filtered.length === 0 && (
-                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No objectives match</td></tr>
+                  <tr><td colSpan={9} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No objectives match</td></tr>
                 )}
               </tbody>
             </table>

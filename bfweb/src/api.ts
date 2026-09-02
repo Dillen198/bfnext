@@ -95,6 +95,60 @@ export interface Kill {
   target_type: string | null
 }
 
+// ── Briefing (navaids / radios / artillery / deployables / threats) ──
+export interface NavaidEntry {
+  objective: string
+  kind: string
+  lat: number
+  lon: number
+  tacan: string | null
+  ndb_khz: number | null
+  icls: number | null
+  link4_mhz: number | null
+  acls: boolean
+  brc: number | null
+}
+export interface RadioEntry {
+  label: string
+  kind: string
+  freq_mhz: number | null
+  tacan: string | null
+  extra: string | null
+}
+export interface ArtilleryEntry {
+  group: string
+  typ: string
+  lat: number
+  lon: number
+  min_range_m: number
+  max_range_m: number
+  alive: number
+}
+export interface DeployableEntry {
+  name: string
+  cost: number
+  crates_required: number
+  limit: number
+  deployed: number
+  tags: string[]
+}
+export interface ThreatEntry {
+  typ: string
+  count: number
+  band: string | null
+  harm_code: string | null
+  max_range_km: number | null
+}
+export interface Briefing {
+  side: 'Blue' | 'Red' | 'Neutral'
+  generated: string
+  navaids: NavaidEntry[]
+  radios: RadioEntry[]
+  artillery: ArtilleryEntry[]
+  deployables: DeployableEntry[]
+  threats: ThreatEntry[]
+}
+
 export interface Weather {
   temp_c: number
   wind_speed_kts: number
@@ -455,6 +509,8 @@ export const api = {
     get<Objective[]>(roundId ? `/objectives?round=${roundId}` : '/objectives'),
   frontline: (roundId?: number) =>
     get<Front[]>(roundId ? `/frontline?round=${roundId}` : '/frontline'),
+  briefing: (side: 'Blue' | 'Red' | 'Neutral' = 'Blue') =>
+    get<Briefing>(`/briefing?side=${side}`),
   kills: (roundId?: number, limit = 50) =>
     get<Kill[]>(`/kills?limit=${limit}${roundId ? `&round=${roundId}` : ''}`),
   pilot: (ucid: string) => get<Pilot>(`/pilot/${ucid}`),

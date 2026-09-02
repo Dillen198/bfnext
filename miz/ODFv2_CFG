@@ -3490,7 +3490,8 @@
       "Aircraft"
     ],
     "C-130J-30": [
-      "Aircraft"
+      "Aircraft",
+      "Recon"
     ],
     "BRDM-2": [
       "APC",
@@ -3779,7 +3780,8 @@
       "Unarmed"
     ],
     "MosquitoFBMkVI": [
-      "Aircraft"
+      "Aircraft",
+      "Recon"
     ],
     "ATZ-5": [
       "Logistics",
@@ -3810,7 +3812,8 @@
       "Unarmed"
     ],
     "F-100D": [
-      "Aircraft"
+      "Aircraft",
+      "Recon"
     ],
     "J-11A": [
       "Aircraft"
@@ -3828,13 +3831,15 @@
       "Unarmed"
     ],
     "C-101CC": [
-      "Aircraft"
+      "Aircraft",
+      "Recon"
     ],
     "AV8BNA": [
       "Aircraft"
     ],
     "L-39C": [
-      "Aircraft"
+      "Aircraft",
+      "Recon"
     ],
     "An-30M": [
       "Aircraft"
@@ -3946,7 +3951,8 @@
     ],
     "OH58D": [
       "Aircraft",
-      "Helicopter"
+      "Helicopter",
+      "Recon"
     ],
     "FARP Ammo Dump Coating": [
       "Logistics",
@@ -4618,7 +4624,8 @@
     ],
     "SA342M": [
       "Aircraft",
-      "Helicopter"
+      "Helicopter",
+      "Recon"
     ],
     "Su-27": [
       "Aircraft"
@@ -5621,7 +5628,7 @@
     "show_unit_class": true,
     "show_confidence_on_map": true
   },
-  "player_recon": {
+    "player_recon": {
     "range_m": 25000,
     "dwell_secs": 120,
     "scan_radius_m": 12000,
@@ -5713,7 +5720,7 @@
   "ewr_mode": "Delayed",
   "ewr_delay": 60,
   "frontline": {
-    "enabled": false,
+    "enabled": true,
     "update_on_objective_change_only": true,
     "samples_per_boundary": 100,
     "territory_zone_alpha": 0.15,

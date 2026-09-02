@@ -18,6 +18,7 @@ const NAV = [
   { to: '/',            icon: LayoutDashboard, label: 'SITREP'     },
   { to: '/map',         icon: Map,             label: 'TACMAP'     },
   { to: '/objectives',  icon: Target,          label: 'OBJECTIVES' },
+  { to: '/briefing',    icon: Radio,           label: 'BRIEFING'   },
   { to: '/leaderboard', icon: BarChart3,        label: 'RANKINGS'   },
   { to: '/pilots',      icon: Users,           label: 'PILOTS'     },
   { to: '/kills',       icon: Crosshair,       label: 'KILL FEED'  },

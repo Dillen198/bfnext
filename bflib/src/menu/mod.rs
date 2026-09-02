@@ -230,6 +230,24 @@ fn player_name(db: &Db, slot: &SlotId) -> String {
         .unwrap_or_default()
 }
 
+/// The requesting player's current world position (north, east), if they are
+/// sitting in an instanced aircraft. Used by the Objectives/Info menus to add
+/// bearing/range annotations to their reports.
+pub(super) fn player_world_pos(ctx: &Context, slot: &SlotId) -> Option<dcso3::Vector2> {
+    let ucid = ctx.db.ephemeral.player_in_slot(slot)?;
+    let player = ctx.db.player(ucid)?;
+    let (_, inst) = player.current_slot.as_ref()?;
+    let inst = inst.as_ref()?;
+    Some(dcso3::Vector2::new(inst.position.p.x, inst.position.p.z))
+}
+
+/// True-north bearing (deg) and range (nm) from `from` to `to`.
+pub(super) fn brg_rng(from: dcso3::Vector2, to: dcso3::Vector2) -> (u32, f64) {
+    let d = to - from;
+    let brg = d.y.atan2(d.x).to_degrees().rem_euclid(360.0).round() as u32;
+    (brg % 360, d.norm() / 1852.0)
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct CarryCap {
     troops: bool,

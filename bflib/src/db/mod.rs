@@ -308,6 +308,17 @@ impl Db {
         self.ephemeral.active_convoys.values().filter(|c| c.side == side).count()
     }
 
+    /// Iterate the active supply convoys belonging to a side (for F10 reports).
+    pub fn convoys_for_side(
+        &self,
+        side: dcso3::coalition::Side,
+    ) -> impl Iterator<Item = &crate::db::logistics::SupplyConvoy> {
+        self.ephemeral
+            .active_convoys
+            .values()
+            .filter(move |c| c.side == side)
+    }
+
     /// True if there is an active supply convoy currently headed to the given objective.
     #[allow(dead_code)]
     pub fn convoy_inbound_to(&self, oid: ObjectiveId) -> bool {
@@ -315,6 +326,11 @@ impl Db {
             .active_convoys
             .values()
             .any(|c| c.destination == oid)
+    }
+
+    /// True if a capture timer is currently running against this objective.
+    pub fn capture_in_progress(&self, oid: &ObjectiveId) -> bool {
+        self.ephemeral.capture_progress.contains_key(oid)
     }
 
     /// Objectives of `side` that enemy troops are actively attempting to capture.

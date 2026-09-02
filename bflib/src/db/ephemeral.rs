@@ -1526,6 +1526,11 @@ impl Ephemeral {
                       group.template_name);
             }
 
+            // Carrier auto-navaids (TACAN / ICLS / ACLS / Link-4) are lit by
+            // the periodic sweep in `maybe_reallocate_navaids`, not here: DCS
+            // only registers the carrier deck as an airbase a beat after the
+            // group spawns, so this path can't reliably resolve it.
+
             record_perf(&mut perf.spawn, ts);
             return Ok(Some(Spawned::Group(dcs_group)));
         }
@@ -1824,6 +1829,21 @@ impl Ephemeral {
                                     radius: gci.radius,
                                 })
                                 .context("activating GCI station")?;
+                        }
+                    }
+                    // (Re)light this objective's auto-navaid if this group is its
+                    // designated beacon host. Best effort -- never abort a spawn.
+                    if self.cfg.navaids.enabled {
+                        if let DeployKind::Objective { origin } = &group.origin {
+                            if let Some(nav) = persisted.navaids.get(origin) {
+                                if nav.host_gid == Some(group.id) {
+                                    if let Err(e) = crate::navaids::activate_on_group(g, nav) {
+                                        warn!(
+                                            "navaid activation failed for objective {origin:?}: {e:?}"
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                 }

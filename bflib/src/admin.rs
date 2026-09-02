@@ -25,10 +25,11 @@ use crate::{
 use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
 use bfprotocols::{
     api::{
-        CampaignState, GroupInfo, LogisticsInfo, ObjectiveDetails, ObjectiveInfo,
-        PlayerInfo, UnitInfo, WarehouseInfo,
+        ArtilleryEntry, Briefing, CampaignState, DeployableEntry, GroupInfo, LogisticsInfo,
+        NavaidEntry, ObjectiveDetails, ObjectiveInfo, PlayerInfo, RadioEntry, ThreatEntry,
+        UnitInfo, WarehouseInfo,
     },
-    cfg::{Cfg, DeployableKind, Rule},
+    cfg::{ActionKind, AwacsCfg, Cfg, DeployableKind, Rule, UnitTag},
     db::{group::GroupId, objective::ObjectiveId},
     perf::Perf,
     stats::Stat,
@@ -193,6 +194,9 @@ pub enum AdminCommand {
     QueryLogistics,
     QueryCampaignState,
     QueryPerf,
+    QueryBriefing {
+        side: Side,
+    },
     // Action API commands
     SpawnDeployable {
         side: Side,
@@ -270,6 +274,12 @@ pub enum AdminCommand {
         crate_name: String,
         qty: u32,
         c130: bool,
+    },
+    /// DCSServerBot-derived server state, pushed in from bfdb: the scheduled
+    /// restart time and the current surface weather, for the F10 Info menu.
+    SetServerInfo {
+        restart_at: Option<DateTime<Utc>>,
+        weather: Option<crate::BotWeather>,
     },
 }
 
@@ -1307,6 +1317,234 @@ pub(crate) fn query_campaign_state(ctx: &Context) -> CampaignState {
     }
 }
 
+/// Assemble the per-side kneeboard briefing (navaids, radios, artillery,
+/// deployables, threats). Positions are converted to lat/lon here since bfdb
+/// has no DCS coord library of its own.
+pub(crate) fn query_briefing(ctx: &Context, lua: MizLua, side: Side) -> Briefing {
+    let db = &ctx.db;
+    let cfg = &db.ephemeral.cfg;
+    let coord = dcso3::coord::Coord::singleton(lua).ok();
+    let to_ll = |p: Vector2| -> (f64, f64) {
+        coord
+            .as_ref()
+            .and_then(|c| {
+                c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(p.x, 0.0, p.y)))
+                    .ok()
+            })
+            .map(|ll| (ll.latitude, ll.longitude))
+            .unwrap_or((0.0, 0.0))
+    };
+
+    // ── navaids ──
+    let mut navaids = vec![];
+    for (oid, nav) in &db.persisted.navaids {
+        let Some(obj) = db.persisted.objectives.get(oid) else { continue };
+        if obj.owner() != side {
+            continue;
+        }
+        let (lat, lon) = to_ll(obj.pos());
+        let tacan = nav.tacan_channel.map(|ch| {
+            format!("{ch}{} {}", nav.tacan_band, nav.morse)
+        });
+        let brc = if obj.kind().is_carrier_group() {
+            Some(crate::atis::carrier_brc(db, obj.kind()))
+        } else {
+            None
+        };
+        navaids.push(NavaidEntry {
+            objective: obj.name().to_string(),
+            kind: obj.kind().name().to_string(),
+            lat,
+            lon,
+            tacan,
+            ndb_khz: nav.ndb_khz,
+            icls: nav.icls_channel,
+            link4_mhz: nav.link4_mhz,
+            acls: nav.acls,
+            brc,
+        });
+    }
+    navaids.sort_by(|a, b| a.objective.cmp(&b.objective));
+
+    // ── radios (AWACS / tankers / JTACs) ──
+    let mut radios = vec![];
+    for (_, group) in &db.persisted.groups {
+        if group.side != side {
+            continue;
+        }
+        let DeployKind::Action { spec, name, .. } = &group.origin else { continue };
+        let (kind, plane) = match &spec.kind {
+            ActionKind::Awacs(AwacsCfg { plane, .. }) => ("AWACS", plane),
+            ActionKind::Tanker(plane) => ("TANKER", plane),
+            _ => continue,
+        };
+        let tacan = plane.tacan_channel.map(|ch| {
+            let band = plane
+                .tacan_band
+                .as_ref()
+                .map(|b| format!("{b:?}"))
+                .unwrap_or_else(|| "X".to_string());
+            let cs = plane
+                .tacan_callsign
+                .as_ref()
+                .map(|c| format!(" {c}"))
+                .unwrap_or_default();
+            format!("{ch}{band}{cs}")
+        });
+        radios.push(RadioEntry {
+            label: format!("{kind} {name}"),
+            kind: kind.to_string(),
+            freq_mhz: plane.freq.map(|f| f as f64 / 1_000_000.0),
+            tacan,
+            extra: None,
+        });
+    }
+    for j in ctx.jtac.jtacs().filter(|j| j.side() == side) {
+        let loc = j.location();
+        let near = db
+            .persisted
+            .objectives
+            .get(&loc.oid)
+            .map(|o| o.name().to_string())
+            .unwrap_or_default();
+        radios.push(RadioEntry {
+            label: format!("JTAC {:?}", j.gid()),
+            kind: "JTAC".to_string(),
+            freq_mhz: None,
+            tacan: None,
+            extra: Some(format!("laser {} near {near}", j.code())),
+        });
+    }
+
+    // ── artillery ──
+    let mut artillery = vec![];
+    let art_cfg = cfg.artillery.as_ref();
+    for (gid, group) in &db.persisted.groups {
+        if group.side != side {
+            continue;
+        }
+        let live: Vec<_> = group
+            .units
+            .into_iter()
+            .filter_map(|uid| db.persisted.units.get(uid))
+            .filter(|u| !u.dead)
+            .collect();
+        let Some(arty_unit) = live
+            .iter()
+            .find(|u| u.tags.contains(UnitTag::Artillery))
+        else {
+            continue
+        };
+        let typ = arty_unit.typ.0.to_string();
+        let (min_r, max_r) = art_cfg
+            .and_then(|a| a.units.get(typ.as_str()).map(|u| (u.min_range_m, u.max_range_m)))
+            .or_else(|| art_cfg.map(|a| (a.default_min_range_m, a.default_max_range_m)))
+            .unwrap_or((4000.0, 30000.0));
+        let center = db.group_center(gid).unwrap_or(arty_unit.pos);
+        let (lat, lon) = to_ll(center);
+        artillery.push(ArtilleryEntry {
+            group: group.name.to_string(),
+            typ,
+            lat,
+            lon,
+            min_range_m: min_r,
+            max_range_m: max_r,
+            alive: live.len(),
+        });
+    }
+    artillery.sort_by(|a, b| a.group.cmp(&b.group));
+
+    // ── deployables ──
+    let mut deployables = vec![];
+    if let Some(list) = cfg.deployables.get(&side) {
+        for d in list {
+            let full = d.path.join(" / ");
+            let deployed = db
+                .persisted
+                .deployed
+                .into_iter()
+                .filter(|gid| {
+                    db.persisted.groups.get(gid).map_or(false, |g| {
+                        matches!(&g.origin, DeployKind::Deployed { spec, .. } if spec.path == d.path)
+                    })
+                })
+                .count() as u32;
+            let mut tags = vec![];
+            if d.ewr.is_some() {
+                tags.push("EWR".to_string());
+            }
+            if d.jtac.is_some() {
+                tags.push("JTAC".to_string());
+            }
+            if d.gci.is_some() {
+                tags.push("GCI".to_string());
+            }
+            deployables.push(DeployableEntry {
+                name: full,
+                cost: d.cost,
+                crates_required: d.crates.len(),
+                limit: d.limit,
+                deployed,
+                tags,
+            });
+        }
+    }
+
+    // ── threats (enemy SAM / radar types in play) ──
+    let enemy = side.opposite();
+    let mut threat_counts: HashMap<std::string::String, usize> = HashMap::new();
+    for (_, group) in &db.persisted.groups {
+        if group.side != enemy {
+            continue;
+        }
+        if !matches!(
+            group.class,
+            crate::db::objective::ObjGroupClass::Lr
+                | crate::db::objective::ObjGroupClass::Mr
+                | crate::db::objective::ObjGroupClass::Sr
+                | crate::db::objective::ObjGroupClass::Aaa
+        ) {
+            continue;
+        }
+        for uid in group.units.into_iter() {
+            if let Some(u) = db.persisted.units.get(uid) {
+                if u.dead {
+                    continue;
+                }
+                let is_radar = u.tags.contains(UnitTag::SearchRadar)
+                    || u.tags.contains(UnitTag::TrackRadar);
+                if is_radar {
+                    *threat_counts.entry(u.typ.0.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    let mut threats: Vec<ThreatEntry> = threat_counts
+        .into_iter()
+        .map(|(typ, count)| {
+            let ewr = cfg.ground_radar_ewrs.get(typ.as_str());
+            ThreatEntry {
+                harm_code: cfg.harm_codes.get(typ.as_str()).map(|s| s.to_string()),
+                band: ewr.map(|e| format!("{:?}", e.frequency_band)),
+                max_range_km: ewr.map(|e| e.range as f64 / 1000.0),
+                typ,
+                count,
+            }
+        })
+        .collect();
+    threats.sort_by(|a, b| b.count.cmp(&a.count).then(a.typ.cmp(&b.typ)));
+
+    Briefing {
+        side,
+        generated: Utc::now().to_rfc3339(),
+        navaids,
+        radios,
+        artillery,
+        deployables,
+        threats,
+    }
+}
+
 /// Snapshots the engine/API perf counters accumulated so far *this session*
 /// (the same globals admin_shutdown reads to build Stat::SessionEnd), so
 /// bfdb's perf endpoint can show live numbers throughout an active round
@@ -1800,6 +2038,13 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     Err(e) => reply_err!("failed to serialize perf: {e:?}"),
                 }
             }
+            AdminCommand::QueryBriefing { side } => {
+                let briefing = query_briefing(ctx, lua, side);
+                match serde_json::to_string(&briefing) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize briefing: {e:?}"),
+                }
+            }
             // Action API commands
             AdminCommand::SpawnDeployable { side, name, pos, heading } => {
                 match api_spawn_deployable(ctx, lua, side, &name, pos, heading) {
@@ -1940,6 +2185,11 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     Ok(msg) => reply_ok!("{msg}"),
                     Err(e) => reply_err!("{e:?}"),
                 }
+            }
+            AdminCommand::SetServerInfo { restart_at, weather } => {
+                ctx.shutdown = restart_at.map(crate::AutoShutdown::new);
+                ctx.bot_weather = weather;
+                reply_ok!("server info updated");
             }
         }
         match caller {

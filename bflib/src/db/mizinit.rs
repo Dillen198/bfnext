@@ -1588,6 +1588,7 @@ impl Db {
             }
         }
         t.init_warehouses(lua).context("initializing warehouses")?;
+        crate::navaids::reallocate(&mut t.persisted, &t.ephemeral.cfg.navaids);
         t.ephemeral.dirty();
         Ok(t)
     }
@@ -1626,6 +1627,9 @@ impl Db {
                 }
             }
         }
+        // Allocate navaids before any group spawns so the spawn hooks can light
+        // the beacons on the first spawn rather than waiting for the slow tick.
+        crate::navaids::reallocate(&mut self.persisted, &self.ephemeral.cfg.navaids);
         for side in Side::ALL {
             let coa = miz.coalition(side)?;
             for country in coa.countries()? {

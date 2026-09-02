@@ -8,11 +8,13 @@ use bfprotocols::{
 use compact_str::format_compact;
 use dcso3::{
     airbase::{Airbase, ClassAirbase},
+    env::miz::GroupId,
     net::SlotId,
     object::{DcsObject as _, DcsOid},
     timer::Timer,
     LuaEnv,
     MizLua,
+    Vector2,
 };
 use log::error;
 use mlua::prelude::*;
@@ -356,7 +358,7 @@ fn is_aircraft_slot(db: &Db, slot: &SlotId) -> bool {
     }
 }
 
-fn carrier_brc(db: &Db, kind: &ObjectiveKind) -> u32 {
+pub(crate) fn carrier_brc(db: &Db, kind: &ObjectiveKind) -> u32 {
     let carrier_template = match kind {
         ObjectiveKind::CarrierGroup { carrier_template, .. } => carrier_template,
         _ => return 0,
@@ -381,17 +383,19 @@ fn carrier_brc(db: &Db, kind: &ObjectiveKind) -> u32 {
     0
 }
 
-fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<()> {
+/// Returns `Ok(true)` if a report was sent, `Ok(false)` if there was no slot
+/// context to build one from (caller can fall back to a general brief).
+fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
     let ctx = unsafe { Context::get_mut() };
 
     let (oid, miz_gid) = match ctx.db.ephemeral.get_slot_info(&slot) {
         Some(s) => (s.objective, s.miz_gid),
-        None => return Ok(()),
+        None => return Ok(false),
     };
 
     let obj = match ctx.db.persisted.objectives.get(&oid) {
         Some(o) => o,
-        None => return Ok(()),
+        None => return Ok(false),
     };
 
     let pos = obj.pos();
@@ -468,17 +472,40 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<()> {
             rwy = rwy_str,
         )
     } else {
-        return Ok(());
+        return Ok(false);
     };
     msg.push_str(&aloft_str);
 
     ctx.db.ephemeral.msgs().panel_to_group(30, false, miz_gid, msg);
+    Ok(true)
+}
+
+/// A general surface-weather brief at `pos`, for when there's no slot/field
+/// context (e.g. the F10 "Weather" item used from the map or a ground slot).
+pub fn send_weather_brief(lua: MizLua, gid: GroupId, pos: Vector2) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let wx = fetch_weather(lua, pos.x as f64, pos.y as f64)?;
+    let msg = format_compact!(
+        "WEATHER (general)\nWind: {wdir:03}° at {wind}\n\
+         QNH: {inhg:.2} inHg / {hpa:.0} hPa / {mmhg:.0} mmHg\nTemp: {temp}{clouds}{vis}{precip}",
+        wdir = wx.wind_from_deg as u32,
+        wind = wind_speed_both(wx.wind_speed_kts),
+        inhg = wx.qnh_inhg,
+        hpa = wx.qnh_hpa,
+        mmhg = wx.qnh_hpa / 1.33322,
+        temp = temp_both(wx.temp_c),
+        clouds = clouds_line(&wx),
+        vis = visibility_line(wx.visibility_m),
+        precip = if wx.precip { "\nPrecipitation: yes" } else { "" },
+    );
+    ctx.db.ephemeral.msgs().panel_to_group(30, false, gid, msg);
     Ok(())
 }
 
 /// On-demand full weather report (surface + winds/temp aloft) for the
 /// player's current slot, triggered via the `-weather` chat command.
-pub fn send_full_weather(lua: MizLua, slot: SlotId) -> Result<()> {
+/// `Ok(false)` when the player isn't in a slot at a known field.
+pub fn send_full_weather(lua: MizLua, slot: SlotId) -> Result<bool> {
     send_atis(lua, slot, true)
 }
 
