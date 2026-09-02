@@ -963,9 +963,10 @@ async fn api_stats(
     // back to whatever bflib published only when the bot has nothing.
     // See BotWeather for the unit conversions this needs (feet->meters,
     // mmHg->hPa).
+    let mut bot_weather_json: Option<serde_json::Value> = None;
     if let Some(w) = bot_info.as_ref().and_then(|s| s.weather.as_ref()) {
         if w.wind_speed.is_some() || w.temperature.is_some() || w.pressure.is_some() {
-            value["weather"] = serde_json::json!({
+            let wx = serde_json::json!({
                 "temp_c": w.temperature,
                 "wind_speed_kts": w.wind_speed,
                 "wind_from_deg": w.wind_direction,
@@ -974,7 +975,31 @@ async fn api_stats(
                 "cloud_density": w.clouds_density,
                 "visibility_m": w.visibility,
             });
+            value["weather"] = wx.clone();
+            bot_weather_json = Some(wx);
         }
+    }
+
+    // Push the bot-derived restart time + weather into the running engine so
+    // the in-game F10 Info menu matches the dashboard. Fire-and-forget with a
+    // short timeout -- a missing/slow engine must not hold up /api/stats. Only
+    // the bot's own weather is pushed (never bflib's calm-mission reading
+    // echoed back).
+    if bot_info.is_some() {
+        let payload = serde_json::json!({
+            "restart_at": value["restart_at"].as_str(),
+            "weather": bot_weather_json,
+        })
+        .to_string();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            call_engine_rpc_str(
+                &db,
+                "set-server-info",
+                vec![("info", netidx::publisher::Value::from(payload))],
+            ),
+        )
+        .await;
     }
 
     Ok(json_response(serde_json::to_string(&value).map_err(anyhow::Error::from)?))
