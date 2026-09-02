@@ -666,7 +666,7 @@ impl Rpcs {
             "Query the per-side kneeboard briefing: navaids, radios, artillery, deployables, threats (returns JSON)",
             |mut c: RpcCall, side: Chars| {
                 let (tx, rx) = oneshot::channel();
-                let side = match Side::from_str(&side) {
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
                     Ok(side) => side,
                     Err(e) => {
                         c.reply.send(Value::Error(format!("{e:?}").into()));
@@ -677,7 +677,7 @@ impl Rpcs {
                 Some((c, rx))
             },
             Some(wait.clone()),
-            side: Chars = Value::Null; "The side (Blue, Red, Neutral)"
+            side: Chars = Value::Null; "The side (blue, red, neutral)"
         )?;
         // ==================== Action API ====================
         let _q = Arc::clone(&q);

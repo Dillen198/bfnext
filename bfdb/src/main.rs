@@ -690,10 +690,11 @@ async fn api_briefing(
     query: std::collections::HashMap<std::string::String, std::string::String>,
 ) -> std::result::Result<impl warp::Reply, Error> {
     use netidx::publisher::Value;
+    // dcso3's Side::from_str only accepts lowercase.
     let side = match query.get("side").map(|s| s.to_ascii_lowercase()) {
-        Some(s) if s.starts_with('r') => "Red",
-        Some(s) if s.starts_with('n') => "Neutral",
-        _ => "Blue",
+        Some(s) if s.starts_with('r') => "red",
+        Some(s) if s.starts_with('n') => "neutral",
+        _ => "blue",
     };
     match tokio::time::timeout(
         std::time::Duration::from_secs(5),
