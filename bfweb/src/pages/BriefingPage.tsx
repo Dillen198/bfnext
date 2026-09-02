@@ -36,12 +36,12 @@ interface Column<T> {
   key: string
   label: string
   align?: Align
-  /** value used for sorting + filtering (defaults to render output when a string) */
+  /** value used for sorting + filtering */
   value: (row: T) => string | number
   render?: (row: T) => React.ReactNode
   color?: string
-  /** column may wrap onto multiple lines (long free text) */
-  wrap?: boolean
+  /** relative column width (flex-grow-like). default 1 */
+  w?: number
 }
 
 function DataTable<T>({
@@ -83,13 +83,14 @@ function DataTable<T>({
   const th: React.CSSProperties = {
     padding: '7px 10px', fontSize: '0.6rem', letterSpacing: '0.09em', textTransform: 'uppercase',
     fontWeight: 700, color: 'var(--text-dim)', borderBottom: '1px solid var(--border)',
-    userSelect: 'none', cursor: 'pointer', whiteSpace: 'nowrap', position: 'sticky', top: 0,
-    background: 'var(--bg-card)',
+    userSelect: 'none', cursor: 'pointer',
   }
   const td: React.CSSProperties = {
     padding: '6px 10px', fontSize: '0.72rem', fontFamily: 'var(--font-mono)',
     color: 'var(--text)', borderBottom: '1px solid var(--border)', verticalAlign: 'top',
+    overflowWrap: 'anywhere', wordBreak: 'break-word',
   }
+  const totalW = columns.reduce((s, c) => s + (c.w ?? 1), 0)
 
   return (
     <div>
@@ -102,58 +103,52 @@ function DataTable<T>({
           style={{ fontSize: '0.7rem', padding: '3px 8px', width: 200 }}
         />
       </div>
-      <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-          <thead>
-            <tr>
-              {columns.map(c => {
-                const active = c.key === sortKey
-                return (
-                  <th
-                    key={c.key}
-                    onClick={() => toggle(c.key)}
-                    style={{ ...th, textAlign: c.align ?? 'left', color: active ? 'var(--accent)' : th.color }}
-                  >
-                    {c.label}
-                    <span style={{ marginLeft: 4, display: 'inline-flex', verticalAlign: 'middle', opacity: active ? 1 : 0.3 }}>
-                      {active
-                        ? (sortDir === 'asc' ? <ArrowUp size={10} /> : <ArrowDown size={10} />)
-                        : <ArrowUp size={10} />}
-                    </span>
-                  </th>
-                )
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {view.map((row, i) => (
-              <tr key={i} className="kill-row">
-                {columns.map(c => (
-                  <td
-                    key={c.key}
-                    style={{
-                      ...td,
-                      textAlign: c.align ?? 'left',
-                      color: c.color ?? td.color,
-                      whiteSpace: c.wrap ? 'normal' : 'nowrap',
-                      minWidth: c.wrap ? 160 : undefined,
-                    }}
-                  >
-                    {c.render ? c.render(row) : String(c.value(row))}
-                  </td>
-                ))}
-              </tr>
-            ))}
-            {view.length === 0 && (
-              <tr>
-                <td colSpan={columns.length} style={{ ...td, color: 'var(--text-dim)', textAlign: 'center', padding: '20px' }}>
-                  {rows.length === 0 ? empty : 'No rows match the filter.'}
+      <table style={{ borderCollapse: 'collapse', width: '100%', tableLayout: 'fixed' }}>
+        <colgroup>
+          {columns.map(c => (
+            <col key={c.key} style={{ width: `${((c.w ?? 1) / totalW) * 100}%` }} />
+          ))}
+        </colgroup>
+        <thead>
+          <tr>
+            {columns.map(c => {
+              const active = c.key === sortKey
+              return (
+                <th
+                  key={c.key}
+                  onClick={() => toggle(c.key)}
+                  style={{ ...th, textAlign: c.align ?? 'left', color: active ? 'var(--accent)' : th.color }}
+                >
+                  {c.label}
+                  <span style={{ marginLeft: 4, display: 'inline-flex', verticalAlign: 'middle', opacity: active ? 1 : 0.3 }}>
+                    {active
+                      ? (sortDir === 'asc' ? <ArrowUp size={10} /> : <ArrowDown size={10} />)
+                      : <ArrowUp size={10} />}
+                  </span>
+                </th>
+              )
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {view.map((row, i) => (
+            <tr key={i} className="kill-row">
+              {columns.map(c => (
+                <td key={c.key} style={{ ...td, textAlign: c.align ?? 'left', color: c.color ?? td.color }}>
+                  {c.render ? c.render(row) : String(c.value(row))}
                 </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              ))}
+            </tr>
+          ))}
+          {view.length === 0 && (
+            <tr>
+              <td colSpan={columns.length} style={{ ...td, color: 'var(--text-dim)', textAlign: 'center', padding: '20px' }}>
+                {rows.length === 0 ? empty : 'No rows match the filter.'}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -162,7 +157,7 @@ function Section({
   title, icon: Icon, count, children,
 }: { title: string; icon: typeof Radio; count: number; children: React.ReactNode }) {
   return (
-    <div className="vs-card" style={{ overflow: 'hidden' }}>
+    <div className="vs-card" style={{ overflow: 'hidden', flexShrink: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
         <Icon size={13} style={{ color: 'var(--accent)' }} />
         <span style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{title}</span>
@@ -278,6 +273,13 @@ function mockBriefing(side: Side): Briefing {
       { objective: 'Incirlik', kind: 'Airbase', lat: 37.002, lon: 35.42, tacan: '21X INC', ndb_khz: 350, icls: null, link4_mhz: null, acls: false, brc: null },
       { objective: 'Blue Strike Group', kind: 'Carrier Group', lat: 35.1, lon: 34.9, tacan: '74Y CVN', ndb_khz: null, icls: 11, link4_mhz: 336, acls: true, brc: 82 },
       { objective: 'Kingsfield Logistics Hub Alpha', kind: 'Logistics Hub', lat: 34.98, lon: 33.0, tacan: '2Y KIN', ndb_khz: 375, icls: null, link4_mhz: null, acls: false, brc: null },
+      ...Array.from({ length: 10 }, (_, i) => ({
+        objective: `Forward Operating Base ${String.fromCharCode(65 + i)}`,
+        kind: i % 3 === 0 ? 'FARP' : i % 3 === 1 ? 'FOB' : 'Naval Base',
+        lat: 36.5 - i * 0.12, lon: 34.1 + i * 0.09,
+        tacan: i % 3 === 1 ? null : `${3 + i}Y FB${i}`,
+        ndb_khz: 200 + i * 5, icls: null, link4_mhz: null, acls: false, brc: null,
+      })),
     ],
     radios: [
       { label: 'AWACS Magic', kind: 'AWACS', freq_mhz: 251.0, tacan: '52Y MAG', extra: null },
@@ -313,7 +315,7 @@ export default function BriefingPage() {
   const b = MOCK ? mockBriefing(side) : fetched
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden" style={{ minWidth: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
       <PageHeader
         title="BRIEFING"
         sub={b ? `${b.navaids.length} navaids · ${b.radios.length} stations · ${b.threats.length} threat types` : 'kneeboard data'}
@@ -345,7 +347,10 @@ export default function BriefingPage() {
         }
       />
 
-      <div className="flex-1 overflow-auto vs-page" style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+      <div style={{
+        flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overflowX: 'hidden',
+        padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: 12,
+      }}>
         {isLoading && <div className="vs-card" style={{ padding: 20, color: 'var(--text-dim)' }}>Loading briefing…</div>}
         {error && (
           <div className="vs-card" style={{ padding: 20, color: '#f87171' }}>
@@ -360,10 +365,10 @@ export default function BriefingPage() {
                 initialSortKey="objective"
                 empty="No generated navaids."
                 columns={[
-                  { key: 'objective', label: 'Objective', value: n => n.objective },
-                  { key: 'kind', label: 'Type', value: n => n.kind },
-                  { key: 'aids', label: 'Aids', value: n => navaidCells(n), color: '#facc15', wrap: true },
-                  { key: 'pos', label: 'Position', value: n => n.lat, render: n => fmtCoord(n.lat, n.lon), color: 'var(--text-muted)' },
+                  { key: 'objective', label: 'Objective', value: n => n.objective, w: 3 },
+                  { key: 'kind', label: 'Type', value: n => n.kind, w: 2 },
+                  { key: 'aids', label: 'Aids', value: n => navaidCells(n), color: '#facc15', w: 5 },
+                  { key: 'pos', label: 'Position', value: n => n.lat, render: n => fmtCoord(n.lat, n.lon), color: 'var(--text-muted)', w: 3 },
                 ]}
               />
             </Section>
@@ -374,10 +379,10 @@ export default function BriefingPage() {
                 initialSortKey="kind"
                 empty="No active AWACS, tankers, or JTACs."
                 columns={[
-                  { key: 'label', label: 'Station', value: r => r.label },
-                  { key: 'kind', label: 'Type', value: r => r.kind },
-                  { key: 'freq', label: 'Freq MHz', align: 'right', value: r => r.freq_mhz ?? 0, render: r => r.freq_mhz != null ? r.freq_mhz.toFixed(3) : '—', color: '#facc15' },
-                  { key: 'note', label: 'TACAN / Note', value: r => r.tacan ?? r.extra ?? '', render: r => r.tacan ?? r.extra ?? '—', color: 'var(--text-muted)', wrap: true },
+                  { key: 'label', label: 'Station', value: r => r.label, w: 4 },
+                  { key: 'kind', label: 'Type', value: r => r.kind, w: 2 },
+                  { key: 'freq', label: 'Freq MHz', align: 'right', value: r => r.freq_mhz ?? 0, render: r => r.freq_mhz != null ? r.freq_mhz.toFixed(3) : '—', color: '#facc15', w: 2 },
+                  { key: 'note', label: 'TACAN / Note', value: r => r.tacan ?? r.extra ?? '', render: r => r.tacan ?? r.extra ?? '—', color: 'var(--text-muted)', w: 5 },
                 ]}
               />
             </Section>
@@ -388,12 +393,12 @@ export default function BriefingPage() {
                 initialSortKey="group"
                 empty="No friendly artillery batteries."
                 columns={[
-                  { key: 'group', label: 'Battery', value: a => a.group },
-                  { key: 'typ', label: 'Type', value: a => a.typ, wrap: true },
-                  { key: 'min', label: 'Min', align: 'right', value: a => a.min_range_m, render: a => `${(a.min_range_m / 1000).toFixed(1)}km` },
-                  { key: 'max', label: 'Max', align: 'right', value: a => a.max_range_m, render: a => `${(a.max_range_m / 1000).toFixed(1)}km`, color: '#facc15' },
-                  { key: 'guns', label: 'Guns', align: 'right', value: a => a.alive },
-                  { key: 'pos', label: 'Position', value: a => a.lat, render: a => fmtCoord(a.lat, a.lon), color: 'var(--text-muted)' },
+                  { key: 'group', label: 'Battery', value: a => a.group, w: 3 },
+                  { key: 'typ', label: 'Type', value: a => a.typ, w: 4 },
+                  { key: 'min', label: 'Min', align: 'right', value: a => a.min_range_m, render: a => `${(a.min_range_m / 1000).toFixed(1)}km`, w: 1.4 },
+                  { key: 'max', label: 'Max', align: 'right', value: a => a.max_range_m, render: a => `${(a.max_range_m / 1000).toFixed(1)}km`, color: '#facc15', w: 1.4 },
+                  { key: 'guns', label: 'Guns', align: 'right', value: a => a.alive, w: 1 },
+                  { key: 'pos', label: 'Position', value: a => a.lat, render: a => fmtCoord(a.lat, a.lon), color: 'var(--text-muted)', w: 3 },
                 ]}
               />
             </Section>
@@ -404,12 +409,12 @@ export default function BriefingPage() {
                 initialSortKey="name"
                 empty="No deployables configured for this side."
                 columns={[
-                  { key: 'name', label: 'Item', value: d => d.name, wrap: true },
-                  { key: 'cost', label: 'Cost', align: 'right', value: d => d.cost },
-                  { key: 'crates', label: 'Crates', align: 'right', value: d => d.crates_required },
-                  { key: 'limit', label: 'Limit', align: 'right', value: d => d.limit },
-                  { key: 'out', label: 'Out', align: 'right', value: d => d.deployed, render: d => <span style={{ color: d.deployed >= d.limit ? '#f87171' : '#facc15' }}>{d.deployed}</span> },
-                  { key: 'tags', label: 'Tags', value: d => d.tags.join(' '), render: d => d.tags.join(' ') || '—', color: 'var(--text-muted)' },
+                  { key: 'name', label: 'Item', value: d => d.name, w: 5 },
+                  { key: 'cost', label: 'Cost', align: 'right', value: d => d.cost, w: 1.3 },
+                  { key: 'crates', label: 'Crates', align: 'right', value: d => d.crates_required, w: 1.3 },
+                  { key: 'limit', label: 'Limit', align: 'right', value: d => d.limit, w: 1.3 },
+                  { key: 'out', label: 'Out', align: 'right', value: d => d.deployed, render: d => <span style={{ color: d.deployed >= d.limit ? '#f87171' : '#facc15' }}>{d.deployed}</span>, w: 1 },
+                  { key: 'tags', label: 'Tags', value: d => d.tags.join(' '), render: d => d.tags.join(' ') || '—', color: 'var(--text-muted)', w: 2.5 },
                 ]}
               />
             </Section>
@@ -421,11 +426,11 @@ export default function BriefingPage() {
                 initialSortDir="desc"
                 empty="No enemy SAM radars detected in play."
                 columns={[
-                  { key: 'typ', label: 'SAM / Radar Type', value: t => t.typ, wrap: true },
-                  { key: 'harm', label: 'HARM', value: t => t.harm_code ?? '', render: t => <span style={{ fontWeight: 700, color: t.harm_code ? '#f87171' : 'var(--text-dim)' }}>{t.harm_code ?? '—'}</span> },
-                  { key: 'band', label: 'Band', value: t => t.band ?? '', render: t => t.band ?? '—' },
-                  { key: 'range', label: 'Range', align: 'right', value: t => t.max_range_km ?? 0, render: t => t.max_range_km != null ? `${t.max_range_km.toFixed(0)}km` : '—' },
-                  { key: 'count', label: 'Seen', align: 'right', value: t => t.count },
+                  { key: 'typ', label: 'SAM / Radar Type', value: t => t.typ, w: 5 },
+                  { key: 'harm', label: 'HARM', value: t => t.harm_code ?? '', render: t => <span style={{ fontWeight: 700, color: t.harm_code ? '#f87171' : 'var(--text-dim)' }}>{t.harm_code ?? '—'}</span>, w: 1.4 },
+                  { key: 'band', label: 'Band', value: t => t.band ?? '', render: t => t.band ?? '—', w: 1.4 },
+                  { key: 'range', label: 'Range', align: 'right', value: t => t.max_range_km ?? 0, render: t => t.max_range_km != null ? `${t.max_range_km.toFixed(0)}km` : '—', w: 1.5 },
+                  { key: 'count', label: 'Seen', align: 'right', value: t => t.count, w: 1 },
                 ]}
               />
               {b.threats.some(t => !t.harm_code) && (
