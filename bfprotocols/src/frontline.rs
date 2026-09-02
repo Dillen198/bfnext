@@ -57,7 +57,7 @@ impl Default for Params {
             sigma_mult: 2.4,
             sigma_min: 20_000.0,
             sigma_max: 95_000.0,
-            min_front_len: 30_000.0,
+            min_front_len: 18_000.0,
             contested_mult: 2.3,
             edge_offset_frac: 0.035,
             edge_offset_min: 900.0,
@@ -395,47 +395,24 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
     };
 
     let v2a = |v: Vector2| [v.x, v.y];
-    let mut fronts: Vec<Front> = Vec::new();
-    let mut dropped = 0usize;
-    let n_raw = raw.len();
-    for chain in raw {
-        if chain.len() < 2 {
-            continue;
-        }
-        // Trim the chain to its contested span: find the first and last
-        // vertex that sits between blue and red, keep everything in between
-        // (so the front stays one continuous line), drop the rest.
-        let flags: Vec<bool> = chain.iter().map(|&q| contested_at(q)).collect();
-        let first = flags.iter().position(|&c| c);
-        let last = flags.iter().rposition(|&c| c);
-        let (Some(first), Some(last)) = (first, last) else {
-            dropped += 1;
-            continue;
-        };
-        let n_contested = flags[first..=last].iter().filter(|&&c| c).count();
-        // Mostly-uncontested chains (a coastline loop that only grazes the
-        // front) are noise.
-        if (n_contested as f64) < 0.35 * (last - first + 1) as f64 {
-            dropped += 1;
-            continue;
-        }
-        let chain: Vec<Vector2> = chain[first..=last].to_vec();
-        if chain.len() < 2 {
-            continue;
-        }
-        let len: f64 = chain.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+    let cell = dx.max(dy);
+    // Non-contested vertices to bridge across within one run, so a brief dip
+    // away from the front doesn't chop it — about σ worth.
+    let max_bridge = ((sigma * 0.9) / cell).ceil().max(2.0) as usize;
+
+    // Build a Front (mid + offset blue/red lines) from one contested run.
+    let make_front = |run: &[Vector2]| -> Option<Front> {
+        let len: f64 = run.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
         if len < p.min_front_len {
-            dropped += 1;
-            continue;
+            return None;
         }
         let mut simp = Vec::new();
-        rdp(&chain, epsilon, &mut simp);
+        rdp(run, epsilon, &mut simp);
         simp.dedup_by(|a, b| (*a - *b).norm() < 1.0);
         if simp.len() < 2 {
-            continue;
+            return None;
         }
         let mid = chaikin(&simp, p.chaikin_iters);
-
         let mut blue = Vec::with_capacity(mid.len());
         let mut red = Vec::with_capacity(mid.len());
         for (k, &q) in mid.iter().enumerate() {
@@ -453,11 +430,75 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
             blue.push(v2a(q + nrm * gap));
             red.push(v2a(q - nrm * gap));
         }
-        fronts.push(Front {
+        Some(Front {
             mid: mid.iter().map(|&v| v2a(v)).collect(),
             blue,
             red,
-        });
+        })
+    };
+
+    let mut fronts: Vec<Front> = Vec::new();
+    let mut dropped = 0usize;
+    let n_raw = raw.len();
+    for mut chain in raw {
+        if chain.len() < 3 {
+            dropped += 1;
+            continue;
+        }
+        // A closed contour (a front that wraps around an enclosed pocket of
+        // territory) — rotate so vertex 0 is NOT contested, so a run that
+        // straddles the seam isn't split in two.
+        let closed = (chain[0] - chain[chain.len() - 1]).norm() < cell * 2.0;
+        if closed {
+            chain.pop();
+            let cflags: Vec<bool> = chain.iter().map(|&q| contested_at(q)).collect();
+            if let Some(rot) = cflags.iter().position(|&c| !c) {
+                chain.rotate_left(rot);
+            }
+        }
+
+        // Cut the chain into maximal contested runs (bridging short gaps).
+        let flags: Vec<bool> = chain.iter().map(|&q| contested_at(q)).collect();
+        if !flags.iter().any(|&c| c) {
+            dropped += 1;
+            continue;
+        }
+        let mut i = 0;
+        while i < chain.len() {
+            if !flags[i] {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            let mut end = i;
+            let mut j = i + 1;
+            let mut gap_run = 0usize;
+            while j < chain.len() {
+                if flags[j] {
+                    end = j;
+                    gap_run = 0;
+                } else {
+                    gap_run += 1;
+                    if gap_run > max_bridge {
+                        break;
+                    }
+                }
+                j += 1;
+            }
+            let run = &chain[start..=end];
+            let rlen: f64 = run.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+            match make_front(run) {
+                Some(f) => {
+                    info!("Frontline: kept run {:.0} km ({} pts)", rlen / 1000.0, run.len());
+                    fronts.push(f);
+                }
+                None => {
+                    info!("Frontline: dropped run {:.0} km (< {:.0} km)", rlen / 1000.0, p.min_front_len / 1000.0);
+                    dropped += 1;
+                }
+            }
+            i = end + 1;
+        }
     }
     fronts.sort_by(|a, b| {
         a.mid[0][0]
@@ -465,11 +506,11 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     info!(
-        "Frontline: {} contour(s), {} dropped as <{:.0} km, {} front(s), gap {:.0} km",
+        "Frontline: {} contour(s) -> {} front(s) ({} runs dropped as <{:.0} km), gap {:.0} km",
         n_raw,
+        fronts.len(),
         dropped,
         p.min_front_len / 1000.0,
-        fronts.len(),
         gap / 1000.0
     );
     fronts
