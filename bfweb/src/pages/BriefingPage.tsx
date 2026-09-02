@@ -63,94 +63,126 @@ function navaidCells(n: Briefing['navaids'][number]): string {
 }
 
 // ── PDF ────────────────────────────────────────────────────────────────────
+type Col = { h: string; w: number }
+
 function buildPdf(b: Briefing) {
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+  const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'landscape' })
   const W = doc.internal.pageSize.getWidth()
   const H = doc.internal.pageSize.getHeight()
-  const M = 40
+  const M = 32
+  const ROW = 13
   let first = true
 
-  const page = (title: string, rows: string[][], colX: number[]) => {
+  const bg = () => { doc.setFillColor(15, 18, 20); doc.rect(0, 0, W, H, 'F') }
+
+  // Truncate a string to fit `w` pt at the current font.
+  const fit = (s: string, w: number): string => {
+    if (doc.getTextWidth(s) <= w) return s
+    let lo = 0, hi = s.length
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (doc.getTextWidth(s.slice(0, mid) + '…') <= w) lo = mid
+      else hi = mid - 1
+    }
+    return s.slice(0, lo) + '…'
+  }
+
+  const page = (title: string, cols: Col[], rows: string[][]) => {
     if (!first) doc.addPage()
     first = false
-    doc.setFillColor(15, 18, 20)
-    doc.rect(0, 0, W, H, 'F')
+    bg()
+    // header band
     doc.setTextColor(142, 200, 63)
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(16)
-    doc.text(title, M, M + 6)
+    doc.setFontSize(15)
+    doc.text(title, M, M + 4)
     doc.setFont('courier', 'normal')
     doc.setFontSize(8)
     doc.setTextColor(120, 140, 110)
-    doc.text(`${b.side.toUpperCase()}  ·  ${new Date(b.generated).toISOString().slice(0, 16).replace('T', ' ')}Z`, W - M, M + 6, { align: 'right' })
+    doc.text(
+      `${b.side.toUpperCase()}   ${new Date(b.generated).toISOString().slice(0, 16).replace('T', ' ')}Z`,
+      W - M, M + 4, { align: 'right' },
+    )
     doc.setDrawColor(60, 80, 40)
-    doc.line(M, M + 16, W - M, M + 16)
+    doc.line(M, M + 12, W - M, M + 12)
 
-    let y = M + 40
-    doc.setFontSize(9)
+    // column x offsets
+    const x: number[] = []
+    let acc = M
+    for (const c of cols) { x.push(acc); acc += c.w }
+
+    let y = M + 30
+    const drawHeader = () => {
+      doc.setFont('courier', 'bold')
+      doc.setFontSize(8)
+      doc.setTextColor(200, 200, 130)
+      cols.forEach((c, i) => doc.text(c.h, x[i], y))
+      y += 4
+      doc.setDrawColor(50, 60, 40)
+      doc.line(M, y, W - M, y)
+      y += 12
+      doc.setFont('courier', 'normal')
+      doc.setTextColor(200, 230, 160)
+    }
+    drawHeader()
+
     if (rows.length === 0) {
       doc.setTextColor(120, 120, 120)
       doc.text('— none —', M, y)
       return
     }
-    // header row
-    doc.setTextColor(200, 200, 130)
-    rows[0].forEach((c, i) => doc.text(c, colX[i], y))
-    y += 6
-    doc.setDrawColor(50, 60, 40)
-    doc.line(M, y, W - M, y)
-    y += 14
-    doc.setTextColor(200, 230, 160)
-    for (const row of rows.slice(1)) {
-      if (y > H - M) { doc.addPage(); doc.setFillColor(15, 18, 20); doc.rect(0, 0, W, H, 'F'); y = M }
-      row.forEach((c, i) => {
-        const text = doc.splitTextToSize(c, (colX[i + 1] ?? W - M) - colX[i] - 6)
-        doc.text(text, colX[i], y)
-      })
-      y += 15
+    for (const row of rows) {
+      if (y > H - M) { doc.addPage(); bg(); y = M + 20; drawHeader() }
+      row.forEach((cell, i) => doc.text(fit(cell, cols[i].w - 8), x[i], y))
+      y += ROW
     }
   }
 
-  page('NAVAIDS', [
-    ['OBJECTIVE', 'TYPE', 'AIDS', 'POSITION'],
-    ...b.navaids.map(n => [n.objective, n.kind, navaidCells(n), fmtCoord(n.lat, n.lon)]),
-  ], [M, M + 130, M + 200, M + 430])
+  page(
+    'NAVAIDS',
+    [{ h: 'OBJECTIVE', w: 150 }, { h: 'TYPE', w: 95 }, { h: 'AIDS', w: 315 }, { h: 'POSITION', w: 195 }],
+    b.navaids.map(n => [n.objective, n.kind, navaidCells(n), fmtCoord(n.lat, n.lon)]),
+  )
 
-  page('RADIOS & SUPPORT', [
-    ['STATION', 'TYPE', 'FREQ', 'TACAN / NOTE'],
-    ...b.radios.map(r => [
+  page(
+    'RADIOS & SUPPORT',
+    [{ h: 'STATION', w: 220 }, { h: 'TYPE', w: 80 }, { h: 'FREQ MHz', w: 90 }, { h: 'TACAN / NOTE', w: 365 }],
+    b.radios.map(r => [
       r.label, r.kind,
-      r.freq_mhz != null ? `${r.freq_mhz.toFixed(3)}` : '—',
+      r.freq_mhz != null ? r.freq_mhz.toFixed(3) : '—',
       r.tacan ?? r.extra ?? '—',
     ]),
-  ], [M, M + 170, M + 250, M + 330])
+  )
 
-  page('ARTILLERY', [
-    ['BATTERY', 'TYPE', 'MIN', 'MAX', 'GUNS', 'POSITION'],
-    ...b.artillery.map(a => [
+  page(
+    'ARTILLERY',
+    [{ h: 'BATTERY', w: 165 }, { h: 'TYPE', w: 200 }, { h: 'MIN', w: 65 }, { h: 'MAX', w: 65 }, { h: 'GUNS', w: 55 }, { h: 'POSITION', w: 185 }],
+    b.artillery.map(a => [
       a.group, a.typ,
       `${(a.min_range_m / 1000).toFixed(1)}km`,
       `${(a.max_range_m / 1000).toFixed(1)}km`,
       String(a.alive), fmtCoord(a.lat, a.lon),
     ]),
-  ], [M, M + 130, M + 240, M + 290, M + 340, M + 390])
+  )
 
-  page('DEPLOYABLES', [
-    ['ITEM', 'COST', 'CRATES', 'LIMIT', 'OUT', 'TAGS'],
-    ...b.deployables.map(d => [
+  page(
+    'DEPLOYABLES',
+    [{ h: 'ITEM', w: 330 }, { h: 'COST', w: 70 }, { h: 'CRATES', w: 70 }, { h: 'LIMIT', w: 70 }, { h: 'OUT', w: 60 }, { h: 'TAGS', w: 155 }],
+    b.deployables.map(d => [
       d.name, String(d.cost), String(d.crates_required),
       String(d.limit), String(d.deployed), d.tags.join(' '),
     ]),
-  ], [M, M + 230, M + 285, M + 345, M + 400, M + 450])
+  )
 
-  page('RWR THREATS / HARM CODES', [
-    ['SAM / RADAR TYPE', 'CODE', 'BAND', 'RANGE', 'SEEN'],
-    ...b.threats.map(t => [
+  page(
+    'RWR THREATS / HARM CODES',
+    [{ h: 'SAM / RADAR TYPE', w: 320 }, { h: 'HARM', w: 90 }, { h: 'BAND', w: 90 }, { h: 'RANGE', w: 90 }, { h: 'SEEN', w: 70 }],
+    b.threats.map(t => [
       t.typ, t.harm_code ?? '—', t.band ?? '—',
       t.max_range_km != null ? `${t.max_range_km.toFixed(0)}km` : '—',
       String(t.count),
     ]),
-  ], [M, M + 250, M + 320, M + 390, M + 460])
+  )
 
   doc.save(`briefing-${b.side.toLowerCase()}-${Date.now()}.pdf`)
 }
