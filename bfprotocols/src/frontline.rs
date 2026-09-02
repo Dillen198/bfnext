@@ -437,12 +437,11 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
         })
     };
 
-    let mut fronts: Vec<Front> = Vec::new();
-    let mut dropped = 0usize;
+    // Pass 1: cut every contour into its maximal contested runs.
     let n_raw = raw.len();
+    let mut runs: Vec<Vec<Vector2>> = Vec::new();
     for mut chain in raw {
         if chain.len() < 3 {
-            dropped += 1;
             continue;
         }
         // A closed contour (a front that wraps around an enclosed pocket of
@@ -456,11 +455,8 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
                 chain.rotate_left(rot);
             }
         }
-
-        // Cut the chain into maximal contested runs (bridging short gaps).
         let flags: Vec<bool> = chain.iter().map(|&q| contested_at(q)).collect();
         if !flags.iter().any(|&c| c) {
-            dropped += 1;
             continue;
         }
         let mut i = 0;
@@ -485,19 +481,60 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
                 }
                 j += 1;
             }
-            let run = &chain[start..=end];
-            let rlen: f64 = run.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
-            match make_front(run) {
-                Some(f) => {
-                    info!("Frontline: kept run {:.0} km ({} pts)", rlen / 1000.0, run.len());
-                    fronts.push(f);
-                }
-                None => {
-                    info!("Frontline: dropped run {:.0} km (< {:.0} km)", rlen / 1000.0, p.min_front_len / 1000.0);
-                    dropped += 1;
+            runs.push(chain[start..=end].to_vec());
+            i = end + 1;
+        }
+    }
+
+    // Pass 2: stitch runs whose endpoints nearly touch. Marching squares
+    // breaks one boundary at grid edges and saddle points; a real front that
+    // wraps around a pocket of enemy territory arrives here as several legs
+    // meeting at the corners. Join the closest pair repeatedly.
+    let stitch_gap = (sigma * 1.6).max(cell * 4.0);
+    loop {
+        let mut best: Option<(usize, bool, usize, bool, f64)> = None;
+        for a in 0..runs.len() {
+            for b in (a + 1)..runs.len() {
+                let ends_a = [(false, runs[a][0]), (true, *runs[a].last().unwrap())];
+                let ends_b = [(false, runs[b][0]), (true, *runs[b].last().unwrap())];
+                for (a_tail, pa) in ends_a {
+                    for (b_tail, pb) in ends_b {
+                        let d = (pa - pb).norm();
+                        if d < stitch_gap && best.map_or(true, |x| d < x.4) {
+                            best = Some((a, a_tail, b, b_tail, d));
+                        }
+                    }
                 }
             }
-            i = end + 1;
+        }
+        let Some((a, a_tail, b, b_tail, _)) = best else { break };
+        let mut ca = std::mem::take(&mut runs[a]);
+        let mut cb = std::mem::take(&mut runs[b]);
+        if !a_tail {
+            ca.reverse();
+        }
+        if b_tail {
+            cb.reverse();
+        }
+        ca.extend(cb);
+        runs[a] = ca;
+        runs.remove(b);
+    }
+
+    // Pass 3: each stitched run over the length floor becomes a front.
+    let mut fronts: Vec<Front> = Vec::new();
+    let mut dropped = 0usize;
+    for run in &runs {
+        let rlen: f64 = run.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+        match make_front(run) {
+            Some(f) => {
+                info!("Frontline: kept run {:.0} km ({} pts)", rlen / 1000.0, run.len());
+                fronts.push(f);
+            }
+            None => {
+                info!("Frontline: dropped run {:.0} km (< {:.0} km)", rlen / 1000.0, p.min_front_len / 1000.0);
+                dropped += 1;
+            }
         }
     }
     fronts.sort_by(|a, b| {
