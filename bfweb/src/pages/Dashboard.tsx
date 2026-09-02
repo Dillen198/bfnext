@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -13,7 +13,7 @@ import {
   Hexagon, Tent, Factory as FactoryIcon, Warehouse, Anchor, Ship, RadioTower,
   type LucideIcon,
 } from 'lucide-react'
-import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type SrsClient, type SrsStatus } from '../api'
+import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type SrsClient, type SrsStatus, type Front } from '../api'
 import { campaign } from '../config/campaign'
 import { useTheme } from '../context/ThemeContext'
 import { useRound } from '../context/RoundContext'
@@ -98,7 +98,7 @@ function FitBounds({ objectives }: { objectives: Objective[] }) {
   return null
 }
 
-function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenTacmap: () => void }) {
+function TacMap({ objectives, fronts, onOpenTacmap }: { objectives: Objective[]; fronts: Front[]; onOpenTacmap: () => void }) {
   const valid = objectives.filter(o => o.lat !== 0 || o.lon !== 0)
   const ownerColor = (owner: string) =>
     owner === 'Blue' ? campaign.blueColor :
@@ -141,6 +141,20 @@ function TacMap({ objectives, onOpenTacmap }: { objectives: Objective[]; onOpenT
         style={{ position: 'absolute', inset: 0 }} zoomControl={false} attributionControl={false}>
         <TileLayer key={theme} url={canvasBase} maxZoom={19} opacity={0.5} />
         {valid.length > 0 && <FitBounds objectives={valid} />}
+        {fronts.flatMap((f, i) => [
+          f.blue.length > 1 && (
+            <Polyline key={`fb-${i}`} positions={f.blue}
+              pathOptions={{ color: '#2f7dff', weight: 1.5, opacity: 0.8, dashArray: '6 5' }} />
+          ),
+          f.red.length > 1 && (
+            <Polyline key={`fr-${i}`} positions={f.red}
+              pathOptions={{ color: '#ff3b3b', weight: 1.5, opacity: 0.8, dashArray: '6 5' }} />
+          ),
+          f.mid.length > 1 && (
+            <Polyline key={`fm-${i}`} positions={f.mid}
+              pathOptions={{ color: '#ffffff', weight: 1.25, opacity: 0.9, dashArray: '2 4' }} />
+          ),
+        ])}
         {valid.map(obj => (
           <Marker key={obj.id} position={[obj.lat, obj.lon]} icon={markerIcon(obj)} />
         ))}
@@ -695,6 +709,7 @@ export default function Dashboard() {
   const { data: pilots     = [] } = useQuery({ queryKey: ['leaderboard'],               queryFn: api.leaderboard,                                                      refetchInterval: 60_000 })
   const { data: allPilots  = [] } = useQuery({ queryKey: ['all-pilots'],                queryFn: api.allPilots,                                                        refetchInterval: 120_000 })
   const { data: objectives = [] } = useQuery({ queryKey: ['objectives', selectedRound], queryFn: () => api.objectives(selectedRound),                                  refetchInterval: 30_000 })
+  const { data: fronts     = [] } = useQuery<Front[]>({ queryKey: ['frontline', selectedRound], queryFn: () => api.frontline(selectedRound),                            refetchInterval: 30_000 })
   const { data: kills      = [] } = useQuery({ queryKey: ['kills-dash', selectedRound], queryFn: () => api.kills(selectedRound, campaign.dashboardKillFeedCount + 20), refetchInterval: 15_000 })
   const { data: stats            } = useQuery({ queryKey: ['stats'],                    queryFn: api.stats,                                                            refetchInterval: 60_000 })
   const { data: srs              } = useQuery({ queryKey: ['srs'],                      queryFn: api.srs,                                                              refetchInterval: 5_000  })
@@ -769,7 +784,7 @@ export default function Dashboard() {
           </div>
           {/* Map */}
           <div style={isMobile ? { flex: '0 0 260px', overflow: 'hidden' } : { flex: '0 0 55%', overflow: 'hidden', minHeight: 0 }}>
-            <TacMap objectives={objectives} onOpenTacmap={() => navigate('/map')} />
+            <TacMap objectives={objectives} fronts={fronts} onOpenTacmap={() => navigate('/map')} />
           </div>
 
           {/* SRS radio panel */}
