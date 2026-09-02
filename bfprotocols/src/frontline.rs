@@ -2,18 +2,20 @@
 Copyright 2024 Eric Stokes.
 
 Shared frontline geometry — used by bflib to draw the F10 map overlay and by
-bfdb to serve the same line to the web dashboard, so the two never disagree.
+bfdb to serve the same lines to the web dashboard, so the two never disagree.
 
-The front is the zero contour of a smooth "who controls this ground" field:
-every owned objective votes for its side with a Gaussian influence that falls
-off with distance (blue +1, red −1). Where the votes balance, `F = 0` — that
-is the front. `F` is sampled on a grid, its zero contour traced with marching
-squares, the contested stretches kept, smoothed (Chaikin), and offset to
-either side to give the blue-edge / centre / red-edge lines.
+Every owned objective votes for its side with a Gaussian influence that falls
+off with distance (blue +1, red −1); `F` is that field. The **white** centre
+line is `F = 0`. The **blue** and **red** lines are the `F = ±edge_level`
+iso-contours — the boundary of each side's dominance. Where the two sides'
+objectives sit close, the three lines bunch together (a sharp front); where
+there's a wide contested band, they spread. Only stretches that actually run
+between a blue and a red objective are kept (no coastline loops), and each is
+chained, stitched, and Chaikin-smoothed.
 
 Coordinates are an opaque planar system: pass metres (DCS world x/y, or a
-local ENU projection of lat/lon) so the metre-denominated clamps in `Params`
-mean something. Output points are in the same system.
+local ENU projection of lat/lon) so the metre clamps in `Params` mean
+something. Output points are in the same system.
 */
 
 use dcso3::Vector2;
@@ -38,13 +40,11 @@ pub struct Params {
     /// A contour segment counts as a real front only if a blue AND a red
     /// objective sit within `contested_mult · σ` of it.
     pub contested_mult: f64,
-    /// Perpendicular offset of the blue-edge / red-edge lines from the
-    /// centre line, as a fraction of σ.
-    pub edge_offset_frac: f64,
-    /// Offset clamp (metres).
-    pub edge_offset_min: f64,
-    pub edge_offset_max: f64,
-    /// Chaikin smoothing passes applied to each centre line.
+    /// The blue and red lines are the `F = ±edge_level` iso-contours of the
+    /// influence field (the white line is `F = 0`). Bigger = the coloured
+    /// lines pull back further onto each side's own ground.
+    pub edge_level: f64,
+    /// Chaikin smoothing passes applied to each line.
     pub chaikin_iters: usize,
     /// Bounding-box padding as a fraction of the box diagonal.
     pub pad_frac: f64,
@@ -59,22 +59,22 @@ impl Default for Params {
             sigma_max: 95_000.0,
             min_front_len: 18_000.0,
             contested_mult: 2.3,
-            edge_offset_frac: 0.035,
-            edge_offset_min: 900.0,
-            edge_offset_max: 2_200.0,
+            edge_level: 0.13,
             chaikin_iters: 3,
             pad_frac: 0.12,
         }
     }
 }
 
-/// One front: the centre ("no man's land") line and the offset lines on the
-/// blue and red sides. Points are `[x, y]` in the input coordinate system.
+/// The frontline as three independent sets of polylines: the white centre
+/// ("no man's land", `F = 0`), the blue-dominance edge (`F = +edge_level`)
+/// and the red-dominance edge (`F = -edge_level`). Points are `[x, y]` in the
+/// input coordinate system.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Front {
-    pub mid: Vec<[f64; 2]>,
-    pub blue: Vec<[f64; 2]>,
-    pub red: Vec<[f64; 2]>,
+pub struct Frontlines {
+    pub mid: Vec<Vec<[f64; 2]>>,
+    pub blue: Vec<Vec<[f64; 2]>>,
+    pub red: Vec<Vec<[f64; 2]>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -148,10 +148,9 @@ fn chaikin(pts: &[Vector2], iters: usize) -> Vec<Vector2> {
     cur
 }
 
-/// Trace the F = 0 contour(s) of the ownership field over `objs`
-/// (`(x, y, sign)`, sign > 0 blue / < 0 red), smooth them, and build the
-/// blue-side / red-side offset lines. Empty when there is no blue/red contact.
-pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
+/// Trace the F = 0 / F = ±edge_level contours of the ownership field over
+/// `objs` (`(x, y, sign)`, sign > 0 blue / < 0 red).
+pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Frontlines {
     let objs: Vec<Obj> = objs
         .iter()
         .filter(|(_, _, s)| *s != 0.0)
@@ -160,11 +159,11 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
             sign: s,
         })
         .collect();
-    let blue = objs.iter().filter(|o| o.sign > 0.0).count();
-    let red = objs.len() - blue;
-    info!("Frontline: {} objectives ({} blue / {} red)", objs.len(), blue, red);
-    if objs.len() < 4 || blue == 0 || red == 0 {
-        return Vec::new();
+    let blue_n = objs.iter().filter(|o| o.sign > 0.0).count();
+    let red_n = objs.len() - blue_n;
+    info!("Frontline: {} objectives ({} blue / {} red)", objs.len(), blue_n, red_n);
+    if objs.len() < 4 || blue_n == 0 || red_n == 0 {
+        return Frontlines::default();
     }
 
     // Bounding box + padding.
@@ -220,86 +219,13 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
         }
     }
 
-    let hpos = |i: usize, j: usize| {
-        let (a, b) = (f[i][j], f[i][j + 1]);
-        let t = if (a - b).abs() < 1e-12 { 0.5 } else { a / (a - b) };
-        Vector2::new(mn.x + i as f64 * dx, mn.y + (j as f64 + t) * dy)
-    };
-    let vpos = |i: usize, j: usize| {
-        let (a, b) = (f[i][j], f[i + 1][j]);
-        let t = if (a - b).abs() < 1e-12 { 0.5 } else { a / (a - b) };
-        Vector2::new(mn.x + (i as f64 + t) * dx, mn.y + j as f64 * dy)
-    };
+    let cell = dx.max(dy);
+    let epsilon = (cell * 0.4).clamp(500.0, 2_500.0);
+    // Non-contested vertices to bridge across within one run (~σ worth).
+    let max_bridge = ((sigma * 0.9) / cell).ceil().max(2.0) as usize;
+    let stitch_gap = (sigma * 1.6).max(cell * 4.0);
 
-    // Marching squares.
-    let mut pos_of: FxHashMap<EdgeKey, Vector2> = FxHashMap::default();
-    let mut segs: Vec<(EdgeKey, EdgeKey)> = Vec::new();
-    let push = |segs: &mut Vec<(EdgeKey, EdgeKey)>,
-                pos_of: &mut FxHashMap<EdgeKey, Vector2>,
-                e0: EdgeKey,
-                p0: Vector2,
-                e1: EdgeKey,
-                p1: Vector2| {
-        pos_of.entry(e0).or_insert(p0);
-        pos_of.entry(e1).or_insert(p1);
-        segs.push((e0, e1));
-    };
-    for i in 0..rows {
-        for j in 0..cols {
-            let mut c = 0u8;
-            if f[i][j] > 0.0 {
-                c |= 1;
-            }
-            if f[i][j + 1] > 0.0 {
-                c |= 2;
-            }
-            if f[i + 1][j + 1] > 0.0 {
-                c |= 4;
-            }
-            if f[i + 1][j] > 0.0 {
-                c |= 8;
-            }
-            if c == 0 || c == 15 {
-                continue;
-            }
-            let ab = ((true, i, j), hpos(i, j));
-            let cd = ((true, i + 1, j), hpos(i + 1, j));
-            let da = ((false, i, j), vpos(i, j));
-            let bc = ((false, i, j + 1), vpos(i, j + 1));
-            match c {
-                1 | 14 => push(&mut segs, &mut pos_of, ab.0, ab.1, da.0, da.1),
-                2 | 13 => push(&mut segs, &mut pos_of, ab.0, ab.1, bc.0, bc.1),
-                3 | 12 => push(&mut segs, &mut pos_of, da.0, da.1, bc.0, bc.1),
-                4 | 11 => push(&mut segs, &mut pos_of, bc.0, bc.1, cd.0, cd.1),
-                6 | 9 => push(&mut segs, &mut pos_of, ab.0, ab.1, cd.0, cd.1),
-                7 | 8 => push(&mut segs, &mut pos_of, cd.0, cd.1, da.0, da.1),
-                5 => {
-                    push(&mut segs, &mut pos_of, ab.0, ab.1, da.0, da.1);
-                    push(&mut segs, &mut pos_of, bc.0, bc.1, cd.0, cd.1);
-                }
-                10 => {
-                    push(&mut segs, &mut pos_of, ab.0, ab.1, bc.0, bc.1);
-                    push(&mut segs, &mut pos_of, cd.0, cd.1, da.0, da.1);
-                }
-                _ => {}
-            }
-        }
-    }
-    info!(
-        "Frontline: σ {:.0} km, {}×{} grid, {} contour segments",
-        sigma / 1000.0,
-        res,
-        res,
-        segs.len()
-    );
-    if segs.is_empty() {
-        return Vec::new();
-    }
-
-    // "Contested" = a blue AND a red objective within `contested_mult · σ`.
-    // Used to keep the real front and drop the blue-vs-open-sea contour,
-    // but applied per *chain* (not per segment) so a kept front stays
-    // continuous — only its non-contested tails are trimmed.
+    // "Contested" = a blue AND a red objective within contested_mult·σ.
     let keep_dist2 = (sigma * p.contested_mult).powi(2);
     let contested_at = |q: Vector2| -> bool {
         let (mut b, mut r) = (false, false);
@@ -318,237 +244,250 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Vec<Front> {
         false
     };
 
-    // Chain the segments into polylines.
-    let mut node_of: FxHashMap<EdgeKey, usize> = FxHashMap::default();
-    let mut positions: Vec<Vector2> = Vec::with_capacity(pos_of.len());
-    for (k, v) in &pos_of {
-        node_of.insert(*k, positions.len());
-        positions.push(*v);
-    }
-    let n = positions.len();
-    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for (a, b) in &segs {
-        let (ia, ib) = (node_of[a], node_of[b]);
-        adj[ia].push(ib);
-        adj[ib].push(ia);
-    }
-
     let sidx = |a: usize, b: usize| if a < b { (a, b) } else { (b, a) };
-    let mut used: FxHashSet<(usize, usize)> = FxHashSet::default();
-    let walk = |start: usize, via: usize, used: &mut FxHashSet<(usize, usize)>| {
-        let mut chain = vec![positions[start]];
-        let (mut prev, mut cur) = (start, via);
-        loop {
-            used.insert(sidx(prev, cur));
-            chain.push(positions[cur]);
-            if adj[cur].len() != 2 {
-                break;
-            }
-            match adj[cur]
-                .iter()
-                .copied()
-                .find(|&m| m != prev && !used.contains(&sidx(cur, m)))
-            {
-                Some(m) => {
-                    prev = cur;
-                    cur = m;
+
+    // Trace the F = `level` contour, keep its contested stretches, chain,
+    // stitch, and smooth. Returns a handful of polylines.
+    let trace = |level: f64| -> Vec<Vec<Vector2>> {
+        let hpos = |i: usize, j: usize| {
+            let (a, b) = (f[i][j] - level, f[i][j + 1] - level);
+            let t = if (a - b).abs() < 1e-12 { 0.5 } else { a / (a - b) };
+            Vector2::new(mn.x + i as f64 * dx, mn.y + (j as f64 + t) * dy)
+        };
+        let vpos = |i: usize, j: usize| {
+            let (a, b) = (f[i][j] - level, f[i + 1][j] - level);
+            let t = if (a - b).abs() < 1e-12 { 0.5 } else { a / (a - b) };
+            Vector2::new(mn.x + (i as f64 + t) * dx, mn.y + j as f64 * dy)
+        };
+
+        let mut pos_of: FxHashMap<EdgeKey, Vector2> = FxHashMap::default();
+        let mut segs: Vec<(EdgeKey, EdgeKey)> = Vec::new();
+        let push = |segs: &mut Vec<(EdgeKey, EdgeKey)>,
+                    pos_of: &mut FxHashMap<EdgeKey, Vector2>,
+                    e0: EdgeKey,
+                    p0: Vector2,
+                    e1: EdgeKey,
+                    p1: Vector2| {
+            pos_of.entry(e0).or_insert(p0);
+            pos_of.entry(e1).or_insert(p1);
+            segs.push((e0, e1));
+        };
+        for i in 0..rows {
+            for j in 0..cols {
+                let mut c = 0u8;
+                if f[i][j] > level {
+                    c |= 1;
                 }
-                None => break,
+                if f[i][j + 1] > level {
+                    c |= 2;
+                }
+                if f[i + 1][j + 1] > level {
+                    c |= 4;
+                }
+                if f[i + 1][j] > level {
+                    c |= 8;
+                }
+                if c == 0 || c == 15 {
+                    continue;
+                }
+                let ab = ((true, i, j), hpos(i, j));
+                let cd = ((true, i + 1, j), hpos(i + 1, j));
+                let da = ((false, i, j), vpos(i, j));
+                let bc = ((false, i, j + 1), vpos(i, j + 1));
+                match c {
+                    1 | 14 => push(&mut segs, &mut pos_of, ab.0, ab.1, da.0, da.1),
+                    2 | 13 => push(&mut segs, &mut pos_of, ab.0, ab.1, bc.0, bc.1),
+                    3 | 12 => push(&mut segs, &mut pos_of, da.0, da.1, bc.0, bc.1),
+                    4 | 11 => push(&mut segs, &mut pos_of, bc.0, bc.1, cd.0, cd.1),
+                    6 | 9 => push(&mut segs, &mut pos_of, ab.0, ab.1, cd.0, cd.1),
+                    7 | 8 => push(&mut segs, &mut pos_of, cd.0, cd.1, da.0, da.1),
+                    5 => {
+                        push(&mut segs, &mut pos_of, ab.0, ab.1, da.0, da.1);
+                        push(&mut segs, &mut pos_of, bc.0, bc.1, cd.0, cd.1);
+                    }
+                    10 => {
+                        push(&mut segs, &mut pos_of, ab.0, ab.1, bc.0, bc.1);
+                        push(&mut segs, &mut pos_of, cd.0, cd.1, da.0, da.1);
+                    }
+                    _ => {}
+                }
             }
         }
-        chain
-    };
-
-    let mut raw: Vec<Vec<Vector2>> = Vec::new();
-    for v in 0..n {
-        if adj[v].len() == 2 {
-            continue;
+        if segs.is_empty() {
+            return Vec::new();
         }
-        for k in 0..adj[v].len() {
-            let m = adj[v][k];
-            if !used.contains(&sidx(v, m)) {
-                raw.push(walk(v, m, &mut used));
+
+        // Chain the segments into polylines.
+        let mut node_of: FxHashMap<EdgeKey, usize> = FxHashMap::default();
+        let mut positions: Vec<Vector2> = Vec::with_capacity(pos_of.len());
+        for (k, v) in &pos_of {
+            node_of.insert(*k, positions.len());
+            positions.push(*v);
+        }
+        let n = positions.len();
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (a, b) in &segs {
+            let (ia, ib) = (node_of[a], node_of[b]);
+            adj[ia].push(ib);
+            adj[ib].push(ia);
+        }
+        let mut used: FxHashSet<(usize, usize)> = FxHashSet::default();
+        let walk = |start: usize, via: usize, used: &mut FxHashSet<(usize, usize)>| {
+            let mut chain = vec![positions[start]];
+            let (mut prev, mut cur) = (start, via);
+            loop {
+                used.insert(sidx(prev, cur));
+                chain.push(positions[cur]);
+                if adj[cur].len() != 2 {
+                    break;
+                }
+                match adj[cur]
+                    .iter()
+                    .copied()
+                    .find(|&m| m != prev && !used.contains(&sidx(cur, m)))
+                {
+                    Some(m) => {
+                        prev = cur;
+                        cur = m;
+                    }
+                    None => break,
+                }
             }
-        }
-    }
-    for v in 0..n {
-        for k in 0..adj[v].len() {
-            let m = adj[v][k];
-            if !used.contains(&sidx(v, m)) {
-                raw.push(walk(v, m, &mut used));
-            }
-        }
-    }
-
-    let epsilon = (dx.max(dy) * 0.4).clamp(500.0, 2_500.0);
-    let gap = (sigma * p.edge_offset_frac).clamp(p.edge_offset_min, p.edge_offset_max);
-    let grad_h = dx.min(dy) * 0.75;
-    let grad_toward_blue = |q: Vector2| -> Vector2 {
-        let gx = field(q + Vector2::new(grad_h, 0.0)) - field(q - Vector2::new(grad_h, 0.0));
-        let gy = field(q + Vector2::new(0.0, grad_h)) - field(q - Vector2::new(0.0, grad_h));
-        let g = Vector2::new(gx, gy);
-        if g.norm() > 1e-9 {
-            g.normalize()
-        } else {
-            Vector2::new(0.0, 0.0)
-        }
-    };
-
-    let v2a = |v: Vector2| [v.x, v.y];
-    let cell = dx.max(dy);
-    // Non-contested vertices to bridge across within one run, so a brief dip
-    // away from the front doesn't chop it — about σ worth.
-    let max_bridge = ((sigma * 0.9) / cell).ceil().max(2.0) as usize;
-
-    // Build a Front (mid + offset blue/red lines) from one contested run.
-    let make_front = |run: &[Vector2]| -> Option<Front> {
-        let len: f64 = run.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
-        if len < p.min_front_len {
-            return None;
-        }
-        let mut simp = Vec::new();
-        rdp(run, epsilon, &mut simp);
-        simp.dedup_by(|a, b| (*a - *b).norm() < 1.0);
-        if simp.len() < 2 {
-            return None;
-        }
-        let mid = chaikin(&simp, p.chaikin_iters);
-        let mut blue = Vec::with_capacity(mid.len());
-        let mut red = Vec::with_capacity(mid.len());
-        for (k, &q) in mid.iter().enumerate() {
-            let mut nrm = grad_toward_blue(q);
-            if nrm.norm() < 0.5 {
-                let a = mid[k.saturating_sub(1)];
-                let b = mid[(k + 1).min(mid.len() - 1)];
-                let t = b - a;
-                nrm = if t.norm() > 1e-6 {
-                    Vector2::new(-t.y, t.x).normalize()
-                } else {
-                    Vector2::new(1.0, 0.0)
-                };
-            }
-            blue.push(v2a(q + nrm * gap));
-            red.push(v2a(q - nrm * gap));
-        }
-        Some(Front {
-            mid: mid.iter().map(|&v| v2a(v)).collect(),
-            blue,
-            red,
-        })
-    };
-
-    // Pass 1: cut every contour into its maximal contested runs.
-    let n_raw = raw.len();
-    let mut runs: Vec<Vec<Vector2>> = Vec::new();
-    for mut chain in raw {
-        if chain.len() < 3 {
-            continue;
-        }
-        // A closed contour (a front that wraps around an enclosed pocket of
-        // territory) — rotate so vertex 0 is NOT contested, so a run that
-        // straddles the seam isn't split in two.
-        let closed = (chain[0] - chain[chain.len() - 1]).norm() < cell * 2.0;
-        if closed {
-            chain.pop();
-            let cflags: Vec<bool> = chain.iter().map(|&q| contested_at(q)).collect();
-            if let Some(rot) = cflags.iter().position(|&c| !c) {
-                chain.rotate_left(rot);
-            }
-        }
-        let flags: Vec<bool> = chain.iter().map(|&q| contested_at(q)).collect();
-        if !flags.iter().any(|&c| c) {
-            continue;
-        }
-        let mut i = 0;
-        while i < chain.len() {
-            if !flags[i] {
-                i += 1;
+            chain
+        };
+        let mut raw: Vec<Vec<Vector2>> = Vec::new();
+        for v in 0..n {
+            if adj[v].len() == 2 {
                 continue;
             }
-            let start = i;
-            let mut end = i;
-            let mut j = i + 1;
-            let mut gap_run = 0usize;
-            while j < chain.len() {
-                if flags[j] {
-                    end = j;
-                    gap_run = 0;
-                } else {
-                    gap_run += 1;
-                    if gap_run > max_bridge {
-                        break;
-                    }
+            for k in 0..adj[v].len() {
+                let m = adj[v][k];
+                if !used.contains(&sidx(v, m)) {
+                    raw.push(walk(v, m, &mut used));
                 }
-                j += 1;
             }
-            runs.push(chain[start..=end].to_vec());
-            i = end + 1;
         }
-    }
+        for v in 0..n {
+            for k in 0..adj[v].len() {
+                let m = adj[v][k];
+                if !used.contains(&sidx(v, m)) {
+                    raw.push(walk(v, m, &mut used));
+                }
+            }
+        }
 
-    // Pass 2: stitch runs whose endpoints nearly touch. Marching squares
-    // breaks one boundary at grid edges and saddle points; a real front that
-    // wraps around a pocket of enemy territory arrives here as several legs
-    // meeting at the corners. Join the closest pair repeatedly.
-    let stitch_gap = (sigma * 1.6).max(cell * 4.0);
-    loop {
-        let mut best: Option<(usize, bool, usize, bool, f64)> = None;
-        for a in 0..runs.len() {
-            for b in (a + 1)..runs.len() {
-                let ends_a = [(false, runs[a][0]), (true, *runs[a].last().unwrap())];
-                let ends_b = [(false, runs[b][0]), (true, *runs[b].last().unwrap())];
-                for (a_tail, pa) in ends_a {
-                    for (b_tail, pb) in ends_b {
-                        let d = (pa - pb).norm();
-                        if d < stitch_gap && best.map_or(true, |x| d < x.4) {
-                            best = Some((a, a_tail, b, b_tail, d));
+        // Cut every contour into its maximal contested runs.
+        let mut runs: Vec<Vec<Vector2>> = Vec::new();
+        for mut chain in raw {
+            if chain.len() < 3 {
+                continue;
+            }
+            let closed = (chain[0] - chain[chain.len() - 1]).norm() < cell * 2.0;
+            if closed {
+                chain.pop();
+                let cflags: Vec<bool> = chain.iter().map(|&q| contested_at(q)).collect();
+                if let Some(rot) = cflags.iter().position(|&c| !c) {
+                    chain.rotate_left(rot);
+                }
+            }
+            let flags: Vec<bool> = chain.iter().map(|&q| contested_at(q)).collect();
+            if !flags.iter().any(|&c| c) {
+                continue;
+            }
+            let mut i = 0;
+            while i < chain.len() {
+                if !flags[i] {
+                    i += 1;
+                    continue;
+                }
+                let start = i;
+                let mut end = i;
+                let mut j = i + 1;
+                let mut g = 0usize;
+                while j < chain.len() {
+                    if flags[j] {
+                        end = j;
+                        g = 0;
+                    } else {
+                        g += 1;
+                        if g > max_bridge {
+                            break;
+                        }
+                    }
+                    j += 1;
+                }
+                runs.push(chain[start..=end].to_vec());
+                i = end + 1;
+            }
+        }
+
+        // Stitch runs whose endpoints nearly touch.
+        loop {
+            let mut best: Option<(usize, bool, usize, bool, f64)> = None;
+            for a in 0..runs.len() {
+                for b in (a + 1)..runs.len() {
+                    let ea = [(false, runs[a][0]), (true, *runs[a].last().unwrap())];
+                    let eb = [(false, runs[b][0]), (true, *runs[b].last().unwrap())];
+                    for (at, pa) in ea {
+                        for (bt, pb) in eb {
+                            let d = (pa - pb).norm();
+                            if d < stitch_gap && best.map_or(true, |x| d < x.4) {
+                                best = Some((a, at, b, bt, d));
+                            }
                         }
                     }
                 }
             }
+            let Some((a, at, b, bt, _)) = best else { break };
+            let mut ca = std::mem::take(&mut runs[a]);
+            let mut cb = std::mem::take(&mut runs[b]);
+            if !at {
+                ca.reverse();
+            }
+            if bt {
+                cb.reverse();
+            }
+            ca.extend(cb);
+            runs[a] = ca;
+            runs.remove(b);
         }
-        let Some((a, a_tail, b, b_tail, _)) = best else { break };
-        let mut ca = std::mem::take(&mut runs[a]);
-        let mut cb = std::mem::take(&mut runs[b]);
-        if !a_tail {
-            ca.reverse();
-        }
-        if b_tail {
-            cb.reverse();
-        }
-        ca.extend(cb);
-        runs[a] = ca;
-        runs.remove(b);
-    }
 
-    // Pass 3: each stitched run over the length floor becomes a front.
-    let mut fronts: Vec<Front> = Vec::new();
-    let mut dropped = 0usize;
-    for run in &runs {
-        let rlen: f64 = run.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
-        match make_front(run) {
-            Some(f) => {
-                info!("Frontline: kept run {:.0} km ({} pts)", rlen / 1000.0, run.len());
-                fronts.push(f);
+        // Length-filter + smooth.
+        let mut out: Vec<Vec<Vector2>> = Vec::new();
+        for run in &runs {
+            let len: f64 = run.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+            if len < p.min_front_len {
+                continue;
             }
-            None => {
-                info!("Frontline: dropped run {:.0} km (< {:.0} km)", rlen / 1000.0, p.min_front_len / 1000.0);
-                dropped += 1;
+            let mut simp = Vec::new();
+            rdp(run, epsilon, &mut simp);
+            simp.dedup_by(|a, b| (*a - *b).norm() < 1.0);
+            if simp.len() >= 2 {
+                out.push(chaikin(&simp, p.chaikin_iters));
             }
         }
-    }
-    fronts.sort_by(|a, b| {
-        a.mid[0][0]
-            .partial_cmp(&b.mid[0][0])
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+        out
+    };
+
+    let to_ll = |lines: Vec<Vec<Vector2>>| -> Vec<Vec<[f64; 2]>> {
+        lines
+            .iter()
+            .map(|l| l.iter().map(|&v| [v.x, v.y]).collect())
+            .collect()
+    };
+    let lvl = p.edge_level.abs().max(0.01);
+    let mid = to_ll(trace(0.0));
+    let blue = to_ll(trace(lvl));
+    let red = to_ll(trace(-lvl));
     info!(
-        "Frontline: {} contour(s) -> {} front(s) ({} runs dropped as <{:.0} km), gap {:.0} km",
-        n_raw,
-        fronts.len(),
-        dropped,
-        p.min_front_len / 1000.0,
-        gap / 1000.0
+        "Frontline: σ {:.0} km, {}×{} grid, level ±{:.2} -> {} white / {} blue / {} red line(s)",
+        sigma / 1000.0,
+        res,
+        res,
+        lvl,
+        mid.len(),
+        blue.len(),
+        red.len()
     );
-    fronts
+    Frontlines { mid, blue, red }
 }

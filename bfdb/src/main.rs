@@ -663,20 +663,18 @@ async fn api_frontline(
             })
             .collect();
 
-        let fronts = bfprotocols::frontline::compute(&pts, &bfprotocols::frontline::Params::default());
-        let out: Vec<serde_json::Value> = fronts
-            .iter()
-            .map(|f| {
-                let cvt = |line: &[[f64; 2]]| -> Vec<[f64; 2]> {
-                    line.iter().map(|p| to_ll(p[0], p[1])).collect()
-                };
-                serde_json::json!({
-                    "mid": cvt(&f.mid),
-                    "blue": cvt(&f.blue),
-                    "red": cvt(&f.red),
-                })
-            })
-            .collect();
+        let fl = bfprotocols::frontline::compute(&pts, &bfprotocols::frontline::Params::default());
+        let cvt = |lines: &[Vec<[f64; 2]>]| -> Vec<Vec<[f64; 2]>> {
+            lines
+                .iter()
+                .map(|l| l.iter().map(|q| to_ll(q[0], q[1])).collect())
+                .collect()
+        };
+        let out = serde_json::json!({
+            "mid": cvt(&fl.mid),
+            "blue": cvt(&fl.blue),
+            "red": cvt(&fl.red),
+        });
         Ok(serde_json::to_string(&out)?)
     })?;
     Ok(json_response(data))

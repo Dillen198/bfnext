@@ -20,7 +20,7 @@ import 'leaflet.heat'
 import ms from 'milsymbol'
 import {
   api, connectLiveUnits,
-  type Objective, type MapUnit, type LiveUnit, type WsUnitsMsg, type Bullseye, type Front,
+  type Objective, type MapUnit, type LiveUnit, type WsUnitsMsg, type Bullseye, type Frontlines,
 } from '../api'
 import { createMapIcon, spriteIconUrl, radarGlyphSvg, type IconStyle, type Side } from '../lib/mapIcons'
 import { useRound } from '../context/RoundContext'
@@ -537,7 +537,7 @@ export default function MapPage() {
     queryFn: () => api.objectives(selectedRound),
     refetchInterval: OBJ_INT,
   })
-  const { data: fronts = [] } = useQuery<Front[]>({
+  const { data: fronts = { mid: [], blue: [], red: [] } } = useQuery<Frontlines>({
     queryKey: ['frontline', selectedRound],
     queryFn: () => api.frontline(selectedRound),
     refetchInterval: OBJ_INT,
@@ -1100,21 +1100,19 @@ export default function MapPage() {
               interactive={false} />
           ))}
 
-          {/* ── Frontline (blue-side / no-man's-land / red-side) ──── */}
-          {fronts.flatMap((f, i) => [
-            f.blue.length > 1 && (
-              <Polyline key={`front-b-${i}`} positions={f.blue as LatLngExpression[]}
-                pathOptions={{ color: '#2f7dff', weight: 2, opacity: 0.85, dashArray: '8 6' }} />
-            ),
-            f.red.length > 1 && (
-              <Polyline key={`front-r-${i}`} positions={f.red as LatLngExpression[]}
-                pathOptions={{ color: '#ff3b3b', weight: 2, opacity: 0.85, dashArray: '8 6' }} />
-            ),
-            f.mid.length > 1 && (
-              <Polyline key={`front-m-${i}`} positions={f.mid as LatLngExpression[]}
-                pathOptions={{ color: '#ffffff', weight: 1.5, opacity: 0.9, dashArray: '2 5' }} />
-            ),
-          ])}
+          {/* ── Frontline: blue-dominance / no-man's-land / red-dominance ── */}
+          {fronts.blue.map((l, i) => l.length > 1 && (
+            <Polyline key={`front-b-${i}`} positions={l as LatLngExpression[]}
+              pathOptions={{ color: '#2f7dff', weight: 2, opacity: 0.85, dashArray: '8 6' }} />
+          ))}
+          {fronts.red.map((l, i) => l.length > 1 && (
+            <Polyline key={`front-r-${i}`} positions={l as LatLngExpression[]}
+              pathOptions={{ color: '#ff3b3b', weight: 2, opacity: 0.85, dashArray: '8 6' }} />
+          ))}
+          {fronts.mid.map((l, i) => l.length > 1 && (
+            <Polyline key={`front-m-${i}`} positions={l as LatLngExpression[]}
+              pathOptions={{ color: '#ffffff', weight: 1.5, opacity: 0.9, dashArray: '2 5' }} />
+          ))}
 
           {/* ── Objectives ────────────────────────────────────────── */}
           {shownObjs.map(obj => {

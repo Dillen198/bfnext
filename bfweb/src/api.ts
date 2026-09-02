@@ -63,12 +63,13 @@ export interface Objective {
   captureable?: boolean
 }
 
-/** One front: three [lat, lon] polylines — blue side, no-man's-land centre,
- *  red side. Same geometry the engine draws on the F10 map. */
-export interface Front {
-  mid: [number, number][]
-  blue: [number, number][]
-  red: [number, number][]
+/** The frontline as three independent sets of [lat, lon] polylines: the
+ *  white centre (no man's land), the blue-dominance edge and the
+ *  red-dominance edge. Same geometry the engine draws on the F10 map. */
+export interface Frontlines {
+  mid: [number, number][][]
+  blue: [number, number][][]
+  red: [number, number][][]
 }
 
 export interface Pilot {
@@ -508,7 +509,7 @@ export const api = {
   objectives: (roundId?: number) =>
     get<Objective[]>(roundId ? `/objectives?round=${roundId}` : '/objectives'),
   frontline: (roundId?: number) =>
-    get<Front[]>(roundId ? `/frontline?round=${roundId}` : '/frontline'),
+    get<Frontlines>(roundId ? `/frontline?round=${roundId}` : '/frontline'),
   briefing: (side: 'Blue' | 'Red' | 'Neutral' = 'Blue') =>
     get<Briefing>(`/briefing?side=${side}`),
   kills: (roundId?: number, limit = 50) =>
