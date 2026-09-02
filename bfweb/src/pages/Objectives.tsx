@@ -14,7 +14,7 @@ const TT = {
 }
 
 type Filter = 'All' | 'Red' | 'Blue' | 'Neutral'
-type SortKey = 'name' | 'kind' | 'owner' | 'health' | 'logi' | 'supply' | 'fuel' | 'last_change'
+type SortKey = 'name' | 'kind' | 'owner' | 'health' | 'logi' | 'supply' | 'fuel' | 'navaid' | 'last_change'
 
 // Table columns, in order. `key` set = header is a clickable sort control.
 const COLS: { label: string; key?: SortKey }[] = [
@@ -25,7 +25,7 @@ const COLS: { label: string; key?: SortKey }[] = [
   { label: 'Logistics', key: 'logi' },
   { label: 'Supply', key: 'supply' },
   { label: 'Fuel', key: 'fuel' },
-  { label: 'Navaids' },
+  { label: 'Navaids', key: 'navaid' },
   { label: 'Last Change', key: 'last_change' },
 ]
 
@@ -163,13 +163,18 @@ export default function Objectives() {
         case 'name':  return dir * a.name.localeCompare(b.name)
         case 'kind':  return dir * a.kind.localeCompare(b.kind)
         case 'owner': return dir * a.owner.localeCompare(b.owner)
+        case 'navaid': {
+          const na = navaidByName.get(a.name) ? navaidSummary(navaidByName.get(a.name)!) : ''
+          const nb = navaidByName.get(b.name) ? navaidSummary(navaidByName.get(b.name)!) : ''
+          return dir * na.localeCompare(nb)
+        }
         case 'last_change':
           return dir * (new Date(a.last_change).getTime() - new Date(b.last_change).getTime())
         default:
           return dir * ((a[sortBy] as number) - (b[sortBy] as number))
       }
     }),
-    [objectives, filter, search, sortBy, sortDir]
+    [objectives, filter, search, sortBy, sortDir, navaidByName]
   )
 
   const bluePct    = total > 0 ? counts.Blue    / total * 100 : 0
