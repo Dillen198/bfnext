@@ -695,13 +695,22 @@ async fn api_briefing(
         Some(s) if s.starts_with('n') => "Neutral",
         _ => "Blue",
     };
-    let data = call_engine_rpc_str(
-        &db,
-        "query-briefing",
-        vec![("side", Value::from(side.to_string()))],
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        call_engine_rpc_str(&db, "query-briefing", vec![("side", Value::from(side.to_string()))]),
     )
-    .await?;
-    Ok(json_response(data))
+    .await
+    {
+        Ok(Ok(data)) => Ok(json_response(data)),
+        Ok(Err(e)) => {
+            log::warn!("api_briefing: query-briefing RPC failed ({side}): {}", e.0);
+            Err(e)
+        }
+        Err(_) => {
+            log::warn!("api_briefing: query-briefing RPC timed out after 5s ({side}) -- engine unreachable or old bflib.dll");
+            Err(Error(anyhow::anyhow!("engine did not answer query-briefing (unreachable, or bflib.dll predates this feature)")))
+        }
+    }
 }
 
 async fn api_kills(
