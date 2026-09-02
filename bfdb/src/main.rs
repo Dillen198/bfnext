@@ -955,17 +955,16 @@ async fn api_stats(
         }
     }
 
-    // Fallback only -- this project has a purpose-built weather pipeline
-    // (bftools --live-weather syncs real weather into the mission file,
-    // bflib reads it via atmosphere.getWind and publishes Stat::Weather),
-    // which is the real source of truth once it's working. Only reach for
-    // the bot's generic /servers weather reading (same response as
-    // restart_time above, no extra request) when bflib hasn't published
-    // anything at all, e.g. before that pipeline's fix has been deployed.
+    // Prefer DCSServerBot's live weather reading (same /servers response as
+    // restart_time above -- no extra request). bflib's own pipeline
+    // (bftools --live-weather -> mission file -> atmosphere.getWind ->
+    // Stat::Weather) reports dead calm (0 kt) whenever the live-weather sync
+    // isn't running, and the bot has the real METAR-derived values. Fall
+    // back to whatever bflib published only when the bot has nothing.
     // See BotWeather for the unit conversions this needs (feet->meters,
     // mmHg->hPa).
-    if value["weather"].is_null() {
-        if let Some(w) = bot_info.as_ref().and_then(|s| s.weather.as_ref()) {
+    if let Some(w) = bot_info.as_ref().and_then(|s| s.weather.as_ref()) {
+        if w.wind_speed.is_some() || w.temperature.is_some() || w.pressure.is_some() {
             value["weather"] = serde_json::json!({
                 "temp_c": w.temperature,
                 "wind_speed_kts": w.wind_speed,
