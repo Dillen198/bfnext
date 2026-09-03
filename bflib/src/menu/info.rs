@@ -239,12 +239,21 @@ fn build_navaids(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactStr
         if obj.owner() != side {
             continue;
         }
-        let Some(nav) = db.persisted.navaids.get(oid) else { continue };
+        let Some(navs) = db.persisted.navaids.get(oid) else { continue };
+        if navs.is_empty() {
+            continue;
+        }
         let r = from.map(|p| brg_rng(p, obj.pos()).1).unwrap_or(f64::MAX);
-        rows.push((
-            r,
-            format_compact!("{}{}: {}\n", obj.name(), brg_rng_str(from, obj.pos()), nav.summary()),
-        ));
+        for nav in navs {
+            let who = match &nav.label {
+                Some(l) => format_compact!("{} [{}]", obj.name(), l),
+                None => CompactString::from(obj.name()),
+            };
+            rows.push((
+                r,
+                format_compact!("{who}{}: {}\n", brg_rng_str(from, obj.pos()), nav.summary()),
+            ));
+        }
     }
     rows.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut report = CompactString::from("=== Friendly Navaids ===\n");

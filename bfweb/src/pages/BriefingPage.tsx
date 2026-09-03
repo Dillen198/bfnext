@@ -253,8 +253,8 @@ function buildPdf(b: Briefing) {
   }
 
   page('NAVAIDS',
-    [{ h: 'OBJECTIVE', w: 150 }, { h: 'TYPE', w: 95 }, { h: 'AIDS', w: 315 }, { h: 'POSITION', w: 195 }],
-    b.navaids.map(n => [n.objective, n.kind, navaidCells(n), fmtCoord(n.lat, n.lon)]))
+    [{ h: 'OBJECTIVE', w: 175 }, { h: 'TYPE', w: 90 }, { h: 'AIDS', w: 315 }, { h: 'POSITION', w: 175 }],
+    b.navaids.map(n => [n.deck ? `${n.objective} · ${n.deck}` : n.objective, n.kind, navaidCells(n), fmtCoord(n.lat, n.lon)]))
 
   page('RADIOS & SUPPORT',
     [{ h: 'STATION', w: 220 }, { h: 'TYPE', w: 80 }, { h: 'FREQ MHz', w: 90 }, { h: 'TACAN / NOTE', w: 365 }],
@@ -281,12 +281,15 @@ function mockBriefing(side: Side): Briefing {
   return {
     side, generated: new Date().toISOString(),
     navaids: [
-      { objective: 'Incirlik', kind: 'Airbase', lat: 37.002, lon: 35.42, tacan: '21X INC', ndb_khz: 350, icls: null, link4_mhz: null, acls: false, brc: null },
-      { objective: 'Blue Strike Group', kind: 'Carrier Group', lat: 35.1, lon: 34.9, tacan: '74Y CVN', ndb_khz: null, icls: 11, link4_mhz: 336, acls: true, brc: 82 },
-      { objective: 'Kingsfield Logistics Hub Alpha', kind: 'Logistics Hub', lat: 34.98, lon: 33.0, tacan: '2Y KIN', ndb_khz: 375, icls: null, link4_mhz: null, acls: false, brc: null },
+      { objective: 'Incirlik', kind: 'Airbase', deck: null, lat: 37.002, lon: 35.42, tacan: '21X INC', ndb_khz: 350, icls: null, link4_mhz: null, acls: false, brc: null },
+      { objective: 'Blue Strike Group', kind: 'Carrier Group', deck: 'CVN74', lat: 35.1, lon: 34.9, tacan: '5Y CVN', ndb_khz: null, icls: 1, link4_mhz: 336, acls: true, brc: 131 },
+      { objective: 'Blue Strike Group', kind: 'Carrier Group', deck: 'CV72', lat: 35.1, lon: 34.9, tacan: '6Y CV7', ndb_khz: null, icls: 2, link4_mhz: 337, acls: true, brc: 131 },
+      { objective: 'Blue Strike Group', kind: 'Carrier Group', deck: 'LHA-1', lat: 35.1, lon: 34.9, tacan: '7Y LHA', ndb_khz: null, icls: 3, link4_mhz: null, acls: false, brc: 131 },
+      { objective: 'Kingsfield Logistics Hub Alpha', kind: 'Logistics Hub', deck: null, lat: 34.98, lon: 33.0, tacan: '2Y KIN', ndb_khz: 375, icls: null, link4_mhz: null, acls: false, brc: null },
       ...Array.from({ length: 10 }, (_, i) => ({
         objective: `Forward Operating Base ${String.fromCharCode(65 + i)}`,
         kind: i % 3 === 0 ? 'FARP' : i % 3 === 1 ? 'FOB' : 'Naval Base',
+        deck: null,
         lat: 36.5 - i * 0.12, lon: 34.1 + i * 0.09,
         tacan: i % 3 === 1 ? null : `${3 + i}Y FB${i}`,
         ndb_khz: 200 + i * 5, icls: null, link4_mhz: null, acls: false, brc: null,
@@ -376,7 +379,13 @@ export default function BriefingPage() {
                 initialSortKey="objective"
                 empty="No generated navaids."
                 columns={[
-                  { key: 'objective', label: 'Objective', value: n => n.objective, w: 3 },
+                  {
+                    key: 'objective', label: 'Objective', w: 3,
+                    value: n => n.objective + (n.deck ? ` ${n.deck}` : ''),
+                    render: n => n.deck
+                      ? <div>{n.objective}<div style={{ color: 'var(--text-dim)', fontSize: '0.66rem' }}>{n.deck}</div></div>
+                      : n.objective,
+                  },
                   { key: 'kind', label: 'Type', value: n => n.kind, w: 2 },
                   { key: 'aids', label: 'Aids', value: n => navaidCells(n), color: '#facc15', w: 5 },
                   { key: 'pos', label: 'Position', value: n => n.lat, render: n => fmtCoord(n.lat, n.lon), color: 'var(--text-muted)', w: 3 },

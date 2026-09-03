@@ -91,11 +91,13 @@ pub struct Persisted {
     pub blue_treasury: i64,
     #[serde(default)]
     pub red_treasury: i64,
-    /// Auto-generated navaids per objective (see `crate::navaids`). Rebuilt
-    /// deterministically whenever the objective set changes, so it's safe if
-    /// this loads empty from an older save.
+    /// Auto-generated navaids per objective (see `crate::navaids`). One entry
+    /// for a ground objective; one per aircraft-carrying ship for a carrier
+    /// task force. Rebuilt deterministically whenever the objective set
+    /// changes, so it's safe if this loads empty (or single-valued) from an
+    /// older save.
     #[serde(default)]
-    pub navaids: MapS<ObjectiveId, Navaid>,
+    pub navaids: MapS<ObjectiveId, Vec<Navaid>>,
 }
 
 impl Persisted {

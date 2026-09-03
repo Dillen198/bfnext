@@ -546,7 +546,7 @@ impl ObjectiveMarkup {
         let navaid = persisted
             .navaids
             .get(&obj.id)
-            .map(|n| n.summary())
+            .map(|navs| crate::navaids::summarize(navs))
             .unwrap_or_default();
         if self.health != obj.health
             || self.logi != obj.logi
@@ -635,7 +635,7 @@ impl ObjectiveMarkup {
         t.navaid = persisted
             .navaids
             .get(&obj.id)
-            .map(|n| n.summary())
+            .map(|navs| crate::navaids::summarize(navs))
             .unwrap_or_default();
         t.name = match obj.kind {
             ObjectiveKind::SpecialSamSite => format_compact!("{}", obj.name).into(),

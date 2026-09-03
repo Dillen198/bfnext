@@ -2458,25 +2458,27 @@ fn maybe_reallocate_navaids(lua: MizLua, ctx: &mut Context) {
         if !targets.is_empty() {
             info!("navaids: refreshing {} objective(s)", targets.len());
             for oid in targets {
-                let Some(nav) = ctx.db.persisted.navaids.get(&oid).cloned() else { continue };
-                let Some(host) = nav.host_gid else { continue };
-                let Ok(group) = ctx.db.group(&host).map(|g| g.name.clone()) else { continue };
-                match dcso3::group::Group::get_by_name(lua, group.as_str()) {
-                    Ok(g) => {
-                        if let Err(e) = navaids::activate_on_group(&g, &nav) {
-                            warn!("navaids: activate {oid:?} on {group} failed: {e:?}");
+                let Some(navs) = ctx.db.persisted.navaids.get(&oid).cloned() else { continue };
+                for nav in &navs {
+                    let Some(host) = nav.host_gid else { continue };
+                    let Ok(group) = ctx.db.group(&host).map(|g| g.name.clone()) else { continue };
+                    match dcso3::group::Group::get_by_name(lua, group.as_str()) {
+                        Ok(g) => {
+                            if let Err(e) = navaids::activate_on_group(&g, nav) {
+                                warn!("navaids: activate {oid:?} on {group} failed: {e:?}");
+                            }
                         }
+                        Err(_) => { /* culled -- will light on next spawn */ }
                     }
-                    Err(_) => { /* culled -- will light on next spawn */ }
                 }
             }
         }
     }
 
-    // Carrier decks are registered as airbases a beat after their group
-    // spawns, so light them from here and keep retrying each tick until the
-    // deck resolves (or the carrier is culled / captured).
-    let jobs: Vec<(ObjectiveId, navaids::Navaid, dcso3::String)> = ctx
+    // Carrier decks are registered as airbases a beat after their group spawns,
+    // so light them from here and keep retrying each tick until every ship in
+    // the task force resolves (or the group is culled / captured).
+    let jobs: Vec<(ObjectiveId, Vec<navaids::Navaid>, dcso3::String)> = ctx
         .db
         .persisted
         .carrier_groups
@@ -2484,32 +2486,43 @@ fn maybe_reallocate_navaids(lua: MizLua, ctx: &mut Context) {
         .copied()
         .filter(|oid| !ctx.navaid_carriers_lit.contains(oid))
         .filter_map(|oid| {
-            let nav = ctx.db.persisted.navaids.get(&oid)?.clone();
+            let navs = ctx.db.persisted.navaids.get(&oid)?.clone();
+            if navs.is_empty() {
+                return None;
+            }
             let obj = ctx.db.persisted.objectives.get(&oid)?;
             let gid = obj.groups().get(&obj.owner)?.into_iter().next().copied()?;
             let gname = ctx.db.group(&gid).ok()?.name.clone();
-            Some((oid, nav, gname))
+            Some((oid, navs, gname))
         })
         .collect();
-    for (oid, nav, gname) in jobs {
+    for (oid, navs, gname) in jobs {
         let Ok(g) = dcso3::group::Group::get_by_name(lua, gname.as_str()) else { continue };
-        let deck = g.get_units().ok().and_then(|units| {
-            units.into_iter().filter_map(|u| u.ok()).find_map(|u| {
-                let name = u.get_name().ok()?;
-                if dcso3::airbase::Airbase::get_by_name(lua, name).is_ok() {
-                    u.id().ok()
-                } else {
-                    None
-                }
-            })
-        });
-        let Some(deck) = deck else { continue }; // deck not an airbase yet -- retry
-        match navaids::activate_carrier(&g, deck, &nav) {
-            Ok(()) => {
-                ctx.navaid_carriers_lit.insert(oid);
-                info!("navaids: lit carrier deck for {oid:?}");
+        let Ok(units) = g.get_units() else { continue };
+        let live: Vec<_> = units.into_iter().filter_map(|u| u.ok()).collect();
+        let mut all_lit = true;
+        for nav in &navs {
+            // Match this deck-navaid to its ship by unit name.
+            let want = nav.deck_unit.as_deref();
+            let deck = live.iter().find(|u| match (u.get_name(), want) {
+                (Ok(n), Some(w)) => n.as_str() == w,
+                _ => false,
+            });
+            let Some(deck) = deck else { all_lit = false; continue };
+            if dcso3::airbase::Airbase::get_by_name(lua, deck.get_name().unwrap_or_default()).is_err() {
+                all_lit = false; // deck not registered as an airbase yet -- retry
+                continue;
             }
-            Err(e) => warn!("navaids: carrier {oid:?} activate failed: {e:?}"),
+            match navaids::activate_carrier(deck, nav) {
+                Ok(()) => info!("navaids: lit carrier deck {:?} for {oid:?}", nav.deck_unit),
+                Err(e) => {
+                    warn!("navaids: carrier {oid:?} deck {:?} activate failed: {e:?}", nav.deck_unit);
+                    all_lit = false;
+                }
+            }
+        }
+        if all_lit {
+            ctx.navaid_carriers_lit.insert(oid);
         }
     }
 }

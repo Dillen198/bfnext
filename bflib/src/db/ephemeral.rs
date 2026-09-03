@@ -1835,12 +1835,14 @@ impl Ephemeral {
                     // designated beacon host. Best effort -- never abort a spawn.
                     if self.cfg.navaids.enabled {
                         if let DeployKind::Objective { origin } = &group.origin {
-                            if let Some(nav) = persisted.navaids.get(origin) {
-                                if nav.host_gid == Some(group.id) {
-                                    if let Err(e) = crate::navaids::activate_on_group(g, nav) {
-                                        warn!(
-                                            "navaid activation failed for objective {origin:?}: {e:?}"
-                                        );
+                            if let Some(navs) = persisted.navaids.get(origin) {
+                                for nav in navs {
+                                    if nav.host_gid == Some(group.id) {
+                                        if let Err(e) = crate::navaids::activate_on_group(g, nav) {
+                                            warn!(
+                                                "navaid activation failed for objective {origin:?}: {e:?}"
+                                            );
+                                        }
                                     }
                                 }
                             }

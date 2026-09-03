@@ -1977,13 +1977,16 @@ pub struct NavaidsCfg {
     /// Default true.
     #[serde(default = "default_true")]
     pub red_ground_ndb_only: bool,
-    /// A carrier gets the full Western suite (TACAN/ICLS/ACLS/Link-4) iff one
-    /// of its group's unit type names contains one of these substrings -- and
-    /// keeps it regardless of which coalition currently owns the task force
-    /// (so a captured US carrier stays lit, a captured Kuznetsov stays dark).
-    /// Default: the DCS US carrier decks.
+    /// A ship gets the full CATOBAR suite (TACAN + ICLS + ACLS + Link-4) iff its
+    /// unit type name contains one of these substrings -- keyed to the ship, not
+    /// the owning coalition, and applied per ship, so a task force with several
+    /// carriers gets an independent set on each. Default: the DCS US CVN decks.
     #[serde(default = "default_western_carriers")]
     pub western_carrier_types: Vec<String>,
+    /// Ships that carry aircraft but have no cats/traps: TACAN + ICLS only, no
+    /// ACLS/Link-4 (LHA/LHD amphibs). Applied per ship, same as above.
+    #[serde(default = "default_helo_carriers")]
+    pub helo_carrier_types: Vec<String>,
     /// Generate NDB homers as well as TACAN. Default true.
     #[serde(default = "default_true")]
     pub ndb_enabled: bool,
@@ -2029,7 +2032,14 @@ fn default_carrier_link4_mhz() -> f64 {
 }
 
 fn default_western_carriers() -> Vec<String> {
-    ["CVN_", "Stennis", "Forrestal", "Tarawa"]
+    ["CVN_", "Stennis", "Forrestal"]
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+
+fn default_helo_carriers() -> Vec<String> {
+    ["LHA_Tarawa", "Tarawa", "LHA", "LHD"]
         .into_iter()
         .map(String::from)
         .collect()
@@ -2045,6 +2055,7 @@ impl Default for NavaidsCfg {
             tacan_band: default_navaid_band(),
             red_ground_ndb_only: true,
             western_carrier_types: default_western_carriers(),
+            helo_carrier_types: default_helo_carriers(),
             ndb_enabled: true,
             ndb_khz: default_ndb_khz(),
             ndb_on_fob: false,

@@ -46,8 +46,8 @@ use compact_str::{format_compact, CompactString};
 use dcso3::{
     coalition::Side,
     controller::{BeaconSystem, BeaconType, Command},
-    env::miz::UnitId,
     group::Group,
+    unit::Unit,
     String as LuaString, Vector2,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -62,6 +62,13 @@ fn default_band() -> String {
 /// a plain "X"/"Y" string to keep the persisted shape trivial.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Navaid {
+    /// Ground objective: `None`. Carrier task force: the ship this set is for
+    /// (a task force may hold several carriers, one `Navaid` each).
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Carrier decks: the DCS unit name to resolve for ICLS/ACLS/Link-4.
+    #[serde(default)]
+    pub deck_unit: Option<String>,
     /// The objective group whose controller broadcasts the ground beacon.
     /// `None` for carriers (the carrier unit hosts its own).
     #[serde(default)]
@@ -87,6 +94,8 @@ pub struct Navaid {
 impl Navaid {
     fn empty() -> Self {
         Navaid {
+            label: None,
+            deck_unit: None,
             host_gid: None,
             tacan_channel: None,
             tacan_band: default_band(),
@@ -136,6 +145,29 @@ impl Navaid {
             CompactString::from(t)
         }
     }
+}
+
+/// One-line-per-entry summary for a whole objective's navaid set. A ground
+/// objective has one entry; a carrier task force has one per ship (prefixed
+/// with the ship label).
+pub fn summarize(navs: &[Navaid]) -> CompactString {
+    if navs.is_empty() {
+        return CompactString::from("none");
+    }
+    if navs.len() == 1 && navs[0].label.is_none() {
+        return navs[0].summary();
+    }
+    let mut out = CompactString::from("");
+    for n in navs {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        match &n.label {
+            Some(l) => out.push_str(&format_compact!("{l}: {}", n.summary())),
+            None => out.push_str(&n.summary()),
+        }
+    }
+    out
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -239,24 +271,48 @@ fn host_priority(class: ObjGroupClass) -> Option<u8> {
     }
 }
 
-/// True if this carrier task force is a Western (US-pattern) carrier -- checked
-/// by unit type, not coalition, so the answer survives a capture.
-fn is_western_carrier(persisted: &Persisted, oid: &ObjectiveId, cfg: &NavaidsCfg) -> bool {
-    let Some(obj) = persisted.objectives.get(oid) else { return false };
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum DeckClass {
+    /// cats & traps: TACAN + ICLS + ACLS + Link-4
+    Catobar,
+    /// amphib flat-top: TACAN + ICLS only
+    Helo,
+}
+
+fn deck_class(typ: &str, cfg: &NavaidsCfg) -> Option<DeckClass> {
+    if cfg.western_carrier_types.iter().any(|w| typ.contains(w.as_str())) {
+        Some(DeckClass::Catobar)
+    } else if cfg.helo_carrier_types.iter().any(|w| typ.contains(w.as_str())) {
+        Some(DeckClass::Helo)
+    } else {
+        None
+    }
+}
+
+/// Every aircraft-carrying ship in a task force, as `(unit name, class)`. A
+/// task force can hold several (e.g. two CVNs + an LHA) -- each gets its own
+/// navaid set. Keyed by ship type, not coalition, so it survives a capture.
+fn carrier_decks(
+    persisted: &Persisted,
+    oid: &ObjectiveId,
+    cfg: &NavaidsCfg,
+) -> Vec<(std::string::String, DeckClass)> {
+    let mut decks = vec![];
+    let Some(obj) = persisted.objectives.get(oid) else { return decks };
     for (_, gids) in obj.groups() {
         for gid in gids {
             let Some(g) = persisted.groups.get(gid) else { continue };
             for uid in g.units.into_iter() {
-                if let Some(u) = persisted.units.get(uid) {
-                    let t = u.typ.0.as_str();
-                    if cfg.western_carrier_types.iter().any(|w| t.contains(w.as_str())) {
-                        return true;
-                    }
+                let Some(u) = persisted.units.get(uid) else { continue };
+                if let Some(class) = deck_class(u.typ.0.as_str(), cfg) {
+                    decks.push((u.template_name.to_string(), class));
                 }
             }
         }
     }
-    false
+    decks.sort();
+    decks.dedup();
+    decks
 }
 
 fn pick_host(persisted: &Persisted, obj: &Objective) -> Option<GroupId> {
@@ -272,15 +328,18 @@ fn pick_host(persisted: &Persisted, obj: &Objective) -> Option<GroupId> {
     cands.first().map(|(_, g)| *g)
 }
 
-/// Deterministically (re)assign navaids for every eligible objective. Returns
-/// the objectives whose assignment changed (so the caller can re-broadcast).
+/// Deterministically (re)assign navaids for every eligible objective. A ground
+/// objective gets one entry; a carrier task force gets one per aircraft-carrying
+/// ship. Returns the objectives whose assignment changed.
 pub fn reallocate(persisted: &mut Persisted, cfg: &NavaidsCfg) -> Vec<ObjectiveId> {
-    let old: MapS<ObjectiveId, Navaid> = persisted.navaids.clone();
+    let old: MapS<ObjectiveId, Vec<Navaid>> = persisted.navaids.clone();
 
     if !cfg.enabled {
         persisted.navaids = MapS::new();
         return old.into_iter().map(|(k, _)| *k).collect();
     }
+
+    let band = if cfg.tacan_band == dcso3::controller::TacanBand::X { "X" } else { "Y" };
 
     // Eligible objectives, sorted by id for a stable assignment order.
     let mut elig: Vec<(ObjectiveId, Side, Vector2, CompactString, Want)> = persisted
@@ -294,72 +353,75 @@ pub fn reallocate(persisted: &mut Persisted, cfg: &NavaidsCfg) -> Vec<ObjectiveI
     elig.sort_by_key(|e| e.0);
 
     let mut done: Vec<Assigned> = Vec::with_capacity(elig.len());
-    let mut out: Vec<(ObjectiveId, Navaid)> = Vec::with_capacity(elig.len());
+    let mut out: Vec<(ObjectiveId, Vec<Navaid>)> = Vec::with_capacity(elig.len());
 
     for (oid, side, pos, name, want) in &elig {
-        let mut nav = Navaid::empty();
-        nav.tacan_band = if cfg.tacan_band == dcso3::controller::TacanBand::X {
-            "X".to_string()
-        } else {
-            "Y".to_string()
-        };
-        // Russian-pattern aircraft home on ADF/ARK, not TACAN -- so a red-owned
-        // ground objective gets an NDB only. Follows current ownership.
-        let ground_tacan = !(cfg.red_ground_ndb_only && *side == Side::Red);
+        let mut set: Vec<Navaid> = vec![];
         match want {
-            Want::TacanNdb => {
+            Want::TacanNdb | Want::NdbOnly => {
+                let mut nav = Navaid::empty();
+                nav.tacan_band = band.to_string();
+                // Russian-pattern aircraft home on ADF/ARK, not TACAN -- a
+                // red-owned ground objective gets an NDB only. Follows the
+                // current owner, so a captured base flips.
+                let ground_tacan = *want == Want::TacanNdb
+                    && !(cfg.red_ground_ndb_only && *side == Side::Red);
                 if ground_tacan {
                     nav.tacan_channel = pick_tacan(*side, *pos, cfg, &done);
                 }
                 if cfg.ndb_enabled {
                     nav.ndb_khz = pick_ndb(*pos, cfg, &done);
                 }
-            }
-            Want::NdbOnly => {
-                if cfg.ndb_enabled {
-                    nav.ndb_khz = pick_ndb(*pos, cfg, &done);
+                if !nav.is_empty() {
+                    nav.morse = dedupe_morse(morse_of(name), *pos, cfg, &done);
+                    nav.host_gid = persisted
+                        .objectives
+                        .get(oid)
+                        .and_then(|o| pick_host(persisted, o));
+                    done.push(Assigned { pos: *pos, nav: nav.clone() });
+                    set.push(nav);
                 }
             }
             Want::Carrier => {
-                // TACAN / ICLS / ACLS / Link-4 are Western systems, keyed to the
-                // ship type (not the owner): a captured US carrier keeps them, a
-                // captured Kuznetsov never gets them (DCS can't script its aids).
-                if is_western_carrier(persisted, oid, cfg) {
+                for (deck_name, class) in carrier_decks(persisted, oid, cfg) {
+                    let mut nav = Navaid::empty();
+                    nav.tacan_band = band.to_string();
+                    nav.label = Some(deck_name.clone());
+                    nav.deck_unit = Some(deck_name.clone());
                     nav.tacan_channel = pick_tacan(*side, *pos, cfg, &done);
                     if cfg.carrier_icls {
                         nav.icls_channel = pick_icls(&done);
                     }
-                    nav.acls = cfg.carrier_acls;
-                    if cfg.carrier_link4_mhz > 0.0 {
-                        nav.link4_mhz = Some(cfg.carrier_link4_mhz);
+                    if class == DeckClass::Catobar {
+                        nav.acls = cfg.carrier_acls;
+                        if cfg.carrier_link4_mhz > 0.0 {
+                            nav.link4_mhz = Some(cfg.carrier_link4_mhz);
+                        }
                     }
+                    if nav.is_empty() {
+                        continue;
+                    }
+                    nav.morse = dedupe_morse(morse_of(&deck_name), *pos, cfg, &done);
+                    done.push(Assigned { pos: *pos, nav: nav.clone() });
+                    set.push(nav);
                 }
             }
             Want::None => {}
         }
-        if nav.is_empty() {
-            continue;
+        if !set.is_empty() {
+            out.push((*oid, set));
         }
-        nav.morse = dedupe_morse(morse_of(name), *pos, cfg, &done);
-        if *want != Want::Carrier {
-            nav.host_gid = persisted
-                .objectives
-                .get(oid)
-                .and_then(|o| pick_host(persisted, o));
-        }
-        done.push(Assigned { pos: *pos, nav: nav.clone() });
-        out.push((*oid, nav));
     }
 
     let mut new = MapS::new();
-    for (oid, nav) in out {
-        new.insert_cow(oid, nav);
+    for (oid, set) in out {
+        new.insert_cow(oid, set);
     }
 
-    // changed set = symmetric difference by a cheap fingerprint
+    // changed set = symmetric difference by a cheap fingerprint of the whole set
     let mut changed: Vec<ObjectiveId> = vec![];
-    for (oid, nav) in &new {
-        if old.get(oid).map(fingerprint) != Some(fingerprint(nav)) {
+    for (oid, set) in &new {
+        if old.get(oid).map(|s| fingerprint(s)) != Some(fingerprint(set)) {
             changed.push(*oid);
         }
     }
@@ -373,14 +435,18 @@ pub fn reallocate(persisted: &mut Persisted, cfg: &NavaidsCfg) -> Vec<ObjectiveI
     changed
 }
 
-fn fingerprint(n: &Navaid) -> (Option<u16>, Option<u16>, Option<u8>, bool, Option<u64>) {
-    (
-        n.tacan_channel,
-        n.ndb_khz,
-        n.icls_channel,
-        n.acls,
-        n.link4_mhz.map(|f| f.to_bits()),
-    )
+fn fingerprint(navs: &[Navaid]) -> Vec<(Option<u16>, Option<u16>, Option<u8>, bool, Option<u64>)> {
+    navs.iter()
+        .map(|n| {
+            (
+                n.tacan_channel,
+                n.ndb_khz,
+                n.icls_channel,
+                n.acls,
+                n.link4_mhz.map(|f| f.to_bits()),
+            )
+        })
+        .collect()
 }
 
 // ── broadcasting ───────────────────────────────────────────────────────────
@@ -430,22 +496,24 @@ pub fn activate_on_group(group: &Group, nav: &Navaid) -> Result<()> {
     Ok(())
 }
 
-/// Broadcast a carrier group's navaids. `deck` is the carrier deck unit (the
-/// one DCS also exposes as an airbase).
-pub fn activate_carrier(group: &Group, deck: UnitId, nav: &Navaid) -> Result<()> {
-    let con = group.get_controller()?;
+/// Broadcast one carrier deck's navaids. Each ship in a task force is lit
+/// individually on its own unit controller (TACAN/ICLS/ACLS/Link-4 are all
+/// per-ship in DCS), so a multi-carrier group gets independent sets.
+pub fn activate_carrier(deck: &Unit, nav: &Navaid) -> Result<()> {
+    let id = deck.id()?;
+    let con = deck.get_controller()?;
     if let Some(cmd) = tacan_command(nav) {
         con.set_command(cmd)?;
     }
     if let Some(ch) = nav.icls_channel {
-        con.set_command(Command::ActivateICLS { channel: ch as i64, unit: deck, name: None })?;
+        con.set_command(Command::ActivateICLS { channel: ch as i64, unit: id, name: None })?;
     }
     if nav.acls {
-        con.set_command(Command::ActivateACLS { unit: deck, name: None })?;
+        con.set_command(Command::ActivateACLS { unit: id, name: None })?;
     }
     if let Some(mhz) = nav.link4_mhz {
         con.set_command(Command::ActivateLink4 {
-            unit: deck,
+            unit: id,
             frequency: (mhz * 1_000_000.0) as i64,
             name: None,
         })?;

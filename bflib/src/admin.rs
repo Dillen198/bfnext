@@ -1386,36 +1386,40 @@ pub(crate) fn query_briefing(ctx: &Context, lua: MizLua, side: Side) -> Briefing
             .unwrap_or((0.0, 0.0))
     };
 
-    // ── navaids ──
+    // ── navaids (one row per entry -- one per ground objective, one per ship
+    //    for a carrier task force) ──
     let mut navaids = vec![];
-    for (oid, nav) in &db.persisted.navaids {
+    for (oid, navs) in &db.persisted.navaids {
         let Some(obj) = db.persisted.objectives.get(oid) else { continue };
         if obj.owner() != side {
             continue;
         }
         let (lat, lon) = to_ll(obj.pos());
-        let tacan = nav.tacan_channel.map(|ch| {
-            format!("{ch}{} {}", nav.tacan_band, nav.morse)
-        });
         let brc = if obj.kind().is_carrier_group() {
             Some(crate::atis::carrier_brc(db, obj.kind()))
         } else {
             None
         };
-        navaids.push(NavaidEntry {
-            objective: obj.name().to_string(),
-            kind: obj.kind().name().to_string(),
-            lat,
-            lon,
-            tacan,
-            ndb_khz: nav.ndb_khz,
-            icls: nav.icls_channel,
-            link4_mhz: nav.link4_mhz,
-            acls: nav.acls,
-            brc,
-        });
+        for nav in navs {
+            let tacan = nav
+                .tacan_channel
+                .map(|ch| format!("{ch}{} {}", nav.tacan_band, nav.morse));
+            navaids.push(NavaidEntry {
+                objective: obj.name().to_string(),
+                kind: obj.kind().name().to_string(),
+                deck: nav.label.as_ref().map(|s| s.to_string()),
+                lat,
+                lon,
+                tacan,
+                ndb_khz: nav.ndb_khz,
+                icls: nav.icls_channel,
+                link4_mhz: nav.link4_mhz,
+                acls: nav.acls,
+                brc,
+            });
+        }
     }
-    navaids.sort_by(|a, b| a.objective.cmp(&b.objective));
+    navaids.sort_by(|a, b| (a.objective.as_str(), a.deck.as_deref()).cmp(&(b.objective.as_str(), b.deck.as_deref())));
 
     // ── radios (AWACS / tankers / JTACs) ──
     let mut radios = vec![];
@@ -1530,10 +1534,12 @@ pub(crate) fn query_briefing(ctx: &Context, lua: MizLua, side: Side) -> Briefing
             if d.gci.is_some() {
                 tags.push("GCI".to_string());
             }
+            // Total physical crates to build it = sum of each crate type's
+            // `required` count (a deployable may need several of several types).
             deployables.push(DeployableEntry {
                 name: full,
                 cost: d.cost,
-                crates_required: d.crates.len(),
+                crates_required: d.crates.iter().map(|c| c.required.max(1) as usize).sum(),
                 limit: d.limit,
                 deployed,
                 tags,

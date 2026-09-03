@@ -29,7 +29,7 @@ const COLS: { label: string; key?: SortKey }[] = [
   { label: 'Last Change', key: 'last_change' },
 ]
 
-/** Compact navaid string for a table cell, e.g. "74Y KUT · NDB 375 · ICLS 3". */
+/** Compact navaid string for one entry, e.g. "74Y KUT · NDB 375 · ICLS 3". */
 function navaidSummary(n: NavaidEntry): string {
   const parts: string[] = []
   if (n.tacan) parts.push(n.tacan)
@@ -39,6 +39,13 @@ function navaidSummary(n: NavaidEntry): string {
   if (n.acls) parts.push('ACLS')
   if (n.brc != null) parts.push(`BRC ${String(n.brc).padStart(3, '0')}`)
   return parts.join(' · ')
+}
+
+/** Summary for an objective's whole navaid set (carriers have one per ship). */
+function navaidCell(entries: NavaidEntry[]): string {
+  return entries
+    .map(n => (n.deck ? `${n.deck}: ${navaidSummary(n)}` : navaidSummary(n)))
+    .join('   |   ')
 }
 
 const OBJ_KINDS = ['Airbase', 'FARP', 'FOB', 'Factory', 'Logistics Hub', 'Naval Base', 'Carrier Group', 'Command Center']
@@ -103,9 +110,14 @@ export default function Objectives() {
     queryKey: ['briefing', 'Red'], queryFn: () => api.briefing('Red'),
     refetchInterval: 60_000, enabled: isActiveRound, retry: false,
   })
+  // A carrier task force yields several entries (one per ship); ground bases one.
   const navaidByName = useMemo(() => {
-    const m = new Map<string, NavaidEntry>()
-    for (const n of [...(blueBrief?.navaids ?? []), ...(redBrief?.navaids ?? [])]) m.set(n.objective, n)
+    const m = new Map<string, NavaidEntry[]>()
+    for (const n of [...(blueBrief?.navaids ?? []), ...(redBrief?.navaids ?? [])]) {
+      const arr = m.get(n.objective) ?? []
+      arr.push(n)
+      m.set(n.objective, arr)
+    }
     return m
   }, [blueBrief, redBrief])
 
@@ -164,8 +176,8 @@ export default function Objectives() {
         case 'kind':  return dir * a.kind.localeCompare(b.kind)
         case 'owner': return dir * a.owner.localeCompare(b.owner)
         case 'navaid': {
-          const na = navaidByName.get(a.name) ? navaidSummary(navaidByName.get(a.name)!) : ''
-          const nb = navaidByName.get(b.name) ? navaidSummary(navaidByName.get(b.name)!) : ''
+          const na = navaidByName.get(a.name) ? navaidCell(navaidByName.get(a.name)!) : ''
+          const nb = navaidByName.get(b.name) ? navaidCell(navaidByName.get(b.name)!) : ''
           return dir * na.localeCompare(nb)
         }
         case 'last_change':
@@ -419,7 +431,7 @@ export default function Objectives() {
                       <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.supply} /></td>
                       <td style={{ padding: '9px 14px', width: 120 }}><HealthBar value={obj.fuel} /></td>
                       <td className="font-mono-vs" style={{ padding: '9px 14px', fontSize: '0.62rem', color: '#facc15', whiteSpace: 'nowrap' }}>
-                        {navaidByName.has(obj.name) ? navaidSummary(navaidByName.get(obj.name)!) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
+                        {navaidByName.has(obj.name) ? navaidCell(navaidByName.get(obj.name)!) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
                       </td>
                       <td className="font-mono-vs" style={{ padding: '9px 14px', fontSize: '0.62rem', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
                         {new Date(obj.last_change).toLocaleString()}

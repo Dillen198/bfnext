@@ -100,6 +100,7 @@ export interface Kill {
 export interface NavaidEntry {
   objective: string
   kind: string
+  deck: string | null
   lat: number
   lon: number
   tacan: string | null

@@ -294,10 +294,10 @@ fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side
         let _ = write!(s, "THREAT: enemy units within sight of the base\n");
     }
     match db.persisted.navaids.get(oid) {
-        Some(nav) => {
-            let _ = write!(s, "Navaids: {}\n", nav.summary());
+        Some(navs) if !navs.is_empty() => {
+            let _ = write!(s, "Navaids:\n{}\n", crate::navaids::summarize(navs));
         }
-        None => {
+        _ => {
             let _ = write!(s, "Navaids: none assigned\n");
         }
     }

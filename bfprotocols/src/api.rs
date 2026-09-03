@@ -182,6 +182,9 @@ pub struct Briefing {
 pub struct NavaidEntry {
     pub objective: String,
     pub kind: String,
+    /// For a multi-carrier task force: the individual ship this entry is for.
+    #[serde(default)]
+    pub deck: Option<String>,
     pub lat: f64,
     pub lon: f64,
     /// e.g. "74Y KUT"
