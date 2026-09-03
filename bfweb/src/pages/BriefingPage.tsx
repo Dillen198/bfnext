@@ -183,7 +183,7 @@ function Section({
 type PdfCol = { h: string; w: number }
 
 function buildPdf(b: Briefing) {
-  const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'landscape' })
+  const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' })
   const W = doc.internal.pageSize.getWidth()
   const H = doc.internal.pageSize.getHeight()
   const M = 32
@@ -253,23 +253,23 @@ function buildPdf(b: Briefing) {
   }
 
   page('NAVAIDS',
-    [{ h: 'OBJECTIVE', w: 175 }, { h: 'TYPE', w: 90 }, { h: 'AIDS', w: 315 }, { h: 'POSITION', w: 175 }],
+    [{ h: 'OBJECTIVE', w: 150 }, { h: 'TYPE', w: 60 }, { h: 'AIDS', w: 205 }, { h: 'POSITION', w: 105 }],
     b.navaids.map(n => [n.deck ? `${n.objective} · ${n.deck}` : n.objective, n.kind, navaidCells(n), fmtCoord(n.lat, n.lon)]))
 
   page('RADIOS & SUPPORT',
-    [{ h: 'STATION', w: 220 }, { h: 'TYPE', w: 80 }, { h: 'FREQ MHz', w: 90 }, { h: 'TACAN / NOTE', w: 365 }],
+    [{ h: 'STATION', w: 165 }, { h: 'TYPE', w: 55 }, { h: 'FREQ MHz', w: 65 }, { h: 'TACAN / NOTE', w: 235 }],
     b.radios.map(r => [r.label, r.kind, r.freq_mhz != null ? r.freq_mhz.toFixed(3) : '—', r.tacan ?? r.extra ?? '—']))
 
   page('ARTILLERY',
-    [{ h: 'BATTERY', w: 165 }, { h: 'TYPE', w: 200 }, { h: 'MIN', w: 65 }, { h: 'MAX', w: 65 }, { h: 'GUNS', w: 55 }, { h: 'POSITION', w: 185 }],
+    [{ h: 'BATTERY', w: 110 }, { h: 'TYPE', w: 150 }, { h: 'MIN', w: 48 }, { h: 'MAX', w: 48 }, { h: 'GUNS', w: 40 }, { h: 'POSITION', w: 124 }],
     b.artillery.map(a => [a.group, a.typ, `${(a.min_range_m / 1000).toFixed(1)}km`, `${(a.max_range_m / 1000).toFixed(1)}km`, String(a.alive), fmtCoord(a.lat, a.lon)]))
 
   page('DEPLOYABLES',
-    [{ h: 'ITEM', w: 330 }, { h: 'COST', w: 70 }, { h: 'CRATES', w: 70 }, { h: 'LIMIT', w: 70 }, { h: 'OUT', w: 60 }, { h: 'TAGS', w: 155 }],
+    [{ h: 'ITEM', w: 200 }, { h: 'COST', w: 50 }, { h: 'CRATES', w: 55 }, { h: 'LIMIT', w: 50 }, { h: 'OUT', w: 45 }, { h: 'TAGS', w: 120 }],
     b.deployables.map(d => [d.name, String(d.cost), String(d.crates_required), String(d.limit), String(d.deployed), d.tags.join(' ')]))
 
   page('RWR THREATS / HARM CODES',
-    [{ h: 'SAM / RADAR TYPE', w: 320 }, { h: 'HARM', w: 90 }, { h: 'BAND', w: 90 }, { h: 'RANGE', w: 90 }, { h: 'SEEN', w: 70 }],
+    [{ h: 'SAM / RADAR TYPE', w: 225 }, { h: 'HARM', w: 70 }, { h: 'BAND', w: 70 }, { h: 'RANGE', w: 70 }, { h: 'SEEN', w: 55 }],
     b.threats.map(t => [t.typ, t.harm_code ?? '—', t.band ?? '—', t.max_range_km != null ? `${t.max_range_km.toFixed(0)}km` : '—', String(t.count)]))
 
   doc.save(`briefing-${b.side.toLowerCase()}-${Date.now()}.pdf`)
