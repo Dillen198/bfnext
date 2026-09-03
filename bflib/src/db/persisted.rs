@@ -101,27 +101,38 @@ pub struct Persisted {
 }
 
 /// Backward compatibility: saves written before the per-ship rework stored
-/// `navaids` as `MapS<ObjectiveId, Navaid>` (one navaid per objective).
-/// `MapS` (immutable-chunkmap) serialises as a JSON object, so read it as a
-/// map and accept either the old single-value shape or the new list shape.
+/// `navaids` as `MapS<ObjectiveId, Navaid>` (one navaid per objective), and
+/// the `Navaid` struct itself has changed shape a few times. Read the field
+/// as raw JSON and convert best-effort — anything that doesn't parse is
+/// dropped, which is safe because `navaids::reallocate` regenerates the
+/// whole table on the next objective-set change anyway.
 fn de_navaids_compat<'de, D>(d: D) -> std::result::Result<MapS<ObjectiveId, Vec<Navaid>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum OneOrMany {
-        Many(Vec<Navaid>),
-        One(Navaid),
+    let raw: serde_json::Value = serde::Deserialize::deserialize(d)?;
+    let Some(obj) = raw.as_object() else {
+        return Ok(MapS::default());
+    };
+    let mut out: Vec<(ObjectiveId, Vec<Navaid>)> = Vec::new();
+    for (k, v) in obj {
+        let Ok(id) = k.parse::<i64>() else { continue };
+        let oid = ObjectiveId::from(id);
+        let navs: Vec<Navaid> = if v.is_array() {
+            serde_json::from_value(v.clone()).unwrap_or_default()
+        } else if v.is_object() {
+            match serde_json::from_value::<Navaid>(v.clone()) {
+                Ok(n) => vec![n],
+                Err(_) => continue,
+            }
+        } else {
+            continue;
+        };
+        if !navs.is_empty() {
+            out.push((oid, navs));
+        }
     }
-    let m: std::collections::BTreeMap<ObjectiveId, OneOrMany> =
-        serde::Deserialize::deserialize(d)?;
-    Ok(m.into_iter()
-        .map(|(k, v)| match v {
-            OneOrMany::Many(vs) => (k, vs),
-            OneOrMany::One(n) => (k, vec![n]),
-        })
-        .collect())
+    Ok(out.into_iter().collect())
 }
 
 impl Persisted {
