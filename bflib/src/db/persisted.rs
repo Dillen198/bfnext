@@ -96,8 +96,31 @@ pub struct Persisted {
     /// task force. Rebuilt deterministically whenever the objective set
     /// changes, so it's safe if this loads empty (or single-valued) from an
     /// older save.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_navaids_compat")]
     pub navaids: MapS<ObjectiveId, Vec<Navaid>>,
+}
+
+/// Backward compatibility: saves written before the per-ship rework stored
+/// `navaids` as `MapS<ObjectiveId, Navaid>` (one navaid per objective). Accept
+/// both the old single-value shape and the new list shape.
+fn de_navaids_compat<'de, D>(d: D) -> std::result::Result<MapS<ObjectiveId, Vec<Navaid>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        Many(Vec<Navaid>),
+        One(Navaid),
+    }
+    let pairs: Vec<(ObjectiveId, OneOrMany)> = serde::Deserialize::deserialize(d)?;
+    Ok(pairs
+        .into_iter()
+        .map(|(k, v)| match v {
+            OneOrMany::Many(vs) => (k, vs),
+            OneOrMany::One(n) => (k, vec![n]),
+        })
+        .collect())
 }
 
 impl Persisted {
