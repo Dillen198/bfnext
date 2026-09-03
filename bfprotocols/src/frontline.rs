@@ -57,8 +57,8 @@ impl Default for Params {
             sigma_mult: 2.4,
             sigma_min: 20_000.0,
             sigma_max: 95_000.0,
-            min_front_len: 18_000.0,
-            contested_mult: 2.3,
+            min_front_len: 10_000.0,
+            contested_mult: 3.2,
             edge_level: 0.13,
             chaikin_iters: 3,
             pad_frac: 0.12,
@@ -221,9 +221,14 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Frontlines {
 
     let cell = dx.max(dy);
     let epsilon = (cell * 0.4).clamp(500.0, 2_500.0);
-    // Non-contested vertices to bridge across within one run (~σ worth).
-    let max_bridge = ((sigma * 0.9) / cell).ceil().max(2.0) as usize;
-    let stitch_gap = (sigma * 1.6).max(cell * 4.0);
+    // A contested run tolerates this much non-contested contour before it
+    // breaks -- kept generous (~2.5σ) so a thin spot in the front where one
+    // side's bases briefly drop away doesn't chop the line into pieces.
+    let max_bridge = ((sigma * 2.5) / cell).ceil().max(3.0) as usize;
+    // And whatever still comes out in pieces gets stitched back if the ends
+    // are within ~4σ -- the boundary around one blob of enemy territory is
+    // one line, just broken by the grid.
+    let stitch_gap = (sigma * 4.0).max(cell * 8.0);
 
     // "Contested" = a blue AND a red objective within contested_mult·σ.
     let keep_dist2 = (sigma * p.contested_mult).powi(2);
@@ -416,7 +421,13 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Frontlines {
                     }
                     j += 1;
                 }
-                runs.push(chain[start..=end].to_vec());
+                // Keep the run only if it's mostly real front, not a coastline
+                // that merely grazes the enemy at a couple of points.
+                let contested_frac = flags[start..=end].iter().filter(|&&c| c).count() as f64
+                    / (end - start + 1) as f64;
+                if contested_frac >= 0.3 {
+                    runs.push(chain[start..=end].to_vec());
+                }
                 i = end + 1;
             }
         }
