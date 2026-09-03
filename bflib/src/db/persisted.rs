@@ -101,8 +101,9 @@ pub struct Persisted {
 }
 
 /// Backward compatibility: saves written before the per-ship rework stored
-/// `navaids` as `MapS<ObjectiveId, Navaid>` (one navaid per objective). Accept
-/// both the old single-value shape and the new list shape.
+/// `navaids` as `MapS<ObjectiveId, Navaid>` (one navaid per objective).
+/// `MapS` (immutable-chunkmap) serialises as a JSON object, so read it as a
+/// map and accept either the old single-value shape or the new list shape.
 fn de_navaids_compat<'de, D>(d: D) -> std::result::Result<MapS<ObjectiveId, Vec<Navaid>>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -113,9 +114,9 @@ where
         Many(Vec<Navaid>),
         One(Navaid),
     }
-    let pairs: Vec<(ObjectiveId, OneOrMany)> = serde::Deserialize::deserialize(d)?;
-    Ok(pairs
-        .into_iter()
+    let m: std::collections::BTreeMap<ObjectiveId, OneOrMany> =
+        serde::Deserialize::deserialize(d)?;
+    Ok(m.into_iter()
         .map(|(k, v)| match v {
             OneOrMany::Many(vs) => (k, vs),
             OneOrMany::One(n) => (k, vec![n]),
