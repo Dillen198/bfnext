@@ -239,6 +239,26 @@ fn host_priority(class: ObjGroupClass) -> Option<u8> {
     }
 }
 
+/// True if this carrier task force is a Western (US-pattern) carrier -- checked
+/// by unit type, not coalition, so the answer survives a capture.
+fn is_western_carrier(persisted: &Persisted, oid: &ObjectiveId, cfg: &NavaidsCfg) -> bool {
+    let Some(obj) = persisted.objectives.get(oid) else { return false };
+    for (_, gids) in obj.groups() {
+        for gid in gids {
+            let Some(g) = persisted.groups.get(gid) else { continue };
+            for uid in g.units.into_iter() {
+                if let Some(u) = persisted.units.get(uid) {
+                    let t = u.typ.0.as_str();
+                    if cfg.western_carrier_types.iter().any(|w| t.contains(w.as_str())) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn pick_host(persisted: &Persisted, obj: &Objective) -> Option<GroupId> {
     let groups = obj.groups().get(&obj.owner())?;
     let mut cands: Vec<(u8, GroupId)> = groups
@@ -283,9 +303,14 @@ pub fn reallocate(persisted: &mut Persisted, cfg: &NavaidsCfg) -> Vec<ObjectiveI
         } else {
             "Y".to_string()
         };
+        // Russian-pattern aircraft home on ADF/ARK, not TACAN -- so a red-owned
+        // ground objective gets an NDB only. Follows current ownership.
+        let ground_tacan = !(cfg.red_ground_ndb_only && *side == Side::Red);
         match want {
             Want::TacanNdb => {
-                nav.tacan_channel = pick_tacan(*side, *pos, cfg, &done);
+                if ground_tacan {
+                    nav.tacan_channel = pick_tacan(*side, *pos, cfg, &done);
+                }
                 if cfg.ndb_enabled {
                     nav.ndb_khz = pick_ndb(*pos, cfg, &done);
                 }
@@ -296,11 +321,10 @@ pub fn reallocate(persisted: &mut Persisted, cfg: &NavaidsCfg) -> Vec<ObjectiveI
                 }
             }
             Want::Carrier => {
-                // TACAN / ICLS / ACLS / Link-4 are Western systems. A Russian or
-                // Chinese carrier (Kuznetsov, Liaoning) can't emit any of them and
-                // DCS scripting can't drive its built-in aids, so a red-owned
-                // carrier is left alone -- same principle as real airbases.
-                if *side != Side::Red {
+                // TACAN / ICLS / ACLS / Link-4 are Western systems, keyed to the
+                // ship type (not the owner): a captured US carrier keeps them, a
+                // captured Kuznetsov never gets them (DCS can't script its aids).
+                if is_western_carrier(persisted, oid, cfg) {
                     nav.tacan_channel = pick_tacan(*side, *pos, cfg, &done);
                     if cfg.carrier_icls {
                         nav.icls_channel = pick_icls(&done);

@@ -1970,6 +1970,20 @@ pub struct NavaidsCfg {
     /// Band (X or Y) for generated ground TACAN beacons. Default Y.
     #[serde(default = "default_navaid_band")]
     pub tacan_band: TacanBand,
+    /// Red-owned ground objectives (FARP/Logistics/Naval Base) get an NDB
+    /// homer only -- no TACAN, since Russian-pattern aircraft home on ADB/ARK,
+    /// not TACAN. Blue-owned objectives get TACAN + NDB. Follows current
+    /// ownership, so a captured objective switches to its captor's set.
+    /// Default true.
+    #[serde(default = "default_true")]
+    pub red_ground_ndb_only: bool,
+    /// A carrier gets the full Western suite (TACAN/ICLS/ACLS/Link-4) iff one
+    /// of its group's unit type names contains one of these substrings -- and
+    /// keeps it regardless of which coalition currently owns the task force
+    /// (so a captured US carrier stays lit, a captured Kuznetsov stays dark).
+    /// Default: the DCS US carrier decks.
+    #[serde(default = "default_western_carriers")]
+    pub western_carrier_types: Vec<String>,
     /// Generate NDB homers as well as TACAN. Default true.
     #[serde(default = "default_true")]
     pub ndb_enabled: bool,
@@ -2014,6 +2028,13 @@ fn default_carrier_link4_mhz() -> f64 {
     336.0
 }
 
+fn default_western_carriers() -> Vec<String> {
+    ["CVN_", "Stennis", "Forrestal", "Tarawa"]
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+
 impl Default for NavaidsCfg {
     fn default() -> Self {
         Self {
@@ -2022,6 +2043,8 @@ impl Default for NavaidsCfg {
             blue_tacan: default_blue_tacan(),
             red_tacan: default_red_tacan(),
             tacan_band: default_navaid_band(),
+            red_ground_ndb_only: true,
+            western_carrier_types: default_western_carriers(),
             ndb_enabled: true,
             ndb_khz: default_ndb_khz(),
             ndb_on_fob: false,
