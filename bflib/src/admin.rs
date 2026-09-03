@@ -1317,6 +1317,57 @@ pub(crate) fn query_campaign_state(ctx: &Context) -> CampaignState {
     }
 }
 
+/// Built-in AGM-88 ALIC / threat codes by DCS emitter type. `cfg.harm_codes`
+/// (exact key match) overrides these; entries here are tried exact-first then
+/// as a substring so a family key ("S-300PS", "Pantsir") still resolves.
+/// Ordered most-specific first. Source: DimOn F/A-18C RWR/HARM reference.
+const DEFAULT_HARM_CODES: &[(&str, &str)] = &[
+    ("SNR_75V", "126"),                 // SA-2 Fan Song
+    ("snr s-125 tr", "123"),            // SA-3 Low Blow
+    ("p-19 s-125 sr", "123"),           // SA-3 / P-19 flat face
+    ("RPC_5N62V", "129"),               // SA-5 Square Pair
+    ("RLS_19J6", "129"),                // SA-5 Tall King
+    ("Kub 1S91 str", "108"),            // SA-6 Straight Flush
+    ("1S91", "108"),
+    ("Osa 9A33 ln", "117"),             // SA-8 Gecko
+    ("S-300PS 40B6MD sr", "103"),       // SA-10 Clam Shell  (before 40B6M!)
+    ("S-300PS 64H6E sr", "104"),        // SA-10 Big Bird
+    ("S-300PS 40B6M tr", "110"),        // SA-10 Flap Lid
+    ("S-300PS", "110"),
+    ("SA-11 Buk LN 9A310M1", "115"),    // SA-11 Fire Dome
+    ("SA-11 Buk SR 9S18M1", "107"),     // SA-11 Snow Drift
+    ("Strela-10M3", "118"),             // SA-13 Gopher
+    ("Tor 9A331", "119"),               // SA-15 Gauntlet
+    ("2S6 Tunguska", "120"),            // SA-19 Grison
+    ("Pantsir", "134"),                 // SA-22 Greyhound
+    ("HQ-7_STR_SP", "128"),
+    ("HQ-7_LN_SP", "127"),
+    ("Gepard", "207"),
+    ("Vulcan", "208"),
+    ("ZSU-23-4 Shilka", "121"),
+    ("Roland ADS", "201"),
+    ("Roland Radar", "205"),
+    ("rapier_fsa_blindfire_radar", "124"),
+    ("rapier_fsa_launcher", "125"),
+    ("Hawk cwar", "206"),
+    ("Hawk sr", "203"),
+    ("Hawk tr", "204"),
+    ("Patriot str", "202"),
+    ("NASAMS_Radar_MPQ64F1", "209"),
+    ("NASAMS", "209"),
+    ("IRIS-T", "135"),
+];
+
+fn harm_code_for(typ: &str, cfg: &Cfg) -> Option<std::string::String> {
+    if let Some(c) = cfg.harm_codes.get(typ) {
+        return Some(c.to_string());
+    }
+    DEFAULT_HARM_CODES
+        .iter()
+        .find(|(needle, _)| typ == *needle || typ.contains(needle))
+        .map(|(_, code)| code.to_string())
+}
+
 /// Assemble the per-side kneeboard briefing (navaids, radios, artillery,
 /// deployables, threats). Positions are converted to lat/lon here since bfdb
 /// has no DCS coord library of its own.
@@ -1524,7 +1575,7 @@ pub(crate) fn query_briefing(ctx: &Context, lua: MizLua, side: Side) -> Briefing
         .map(|(typ, count)| {
             let ewr = cfg.ground_radar_ewrs.get(typ.as_str());
             ThreatEntry {
-                harm_code: cfg.harm_codes.get(typ.as_str()).map(|s| s.to_string()),
+                harm_code: harm_code_for(&typ, cfg),
                 band: ewr.map(|e| format!("{:?}", e.frequency_band)),
                 max_range_km: ewr.map(|e| e.range as f64 / 1000.0),
                 typ,

@@ -446,7 +446,7 @@ export default function BriefingPage() {
               />
               {b.threats.some(t => !t.harm_code) && (
                 <div style={{ padding: '8px 12px', fontSize: '0.62rem', color: 'var(--text-dim)' }}>
-                  HARM codes come from the server's <code>harm_codes</code> config (DCS type → ALIC code). Types without a code aren't mapped yet.
+                  HARM codes: built-in table for the common DCS emitters, overridable per type via the server's <code>harm_codes</code> config. A “—” means that exact emitter type isn't in either.
                 </div>
               )}
             </Section>
