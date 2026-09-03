@@ -45,13 +45,17 @@ interface Column<T> {
 }
 
 function DataTable<T>({
-  columns, rows, initialSortKey, initialSortDir = 'asc', empty,
+  columns, rows, initialSortKey, initialSortDir = 'asc', empty, maxHeight = 300, minWidth = 620,
 }: {
   columns: Column<T>[]
   rows: T[]
   initialSortKey?: string
   initialSortDir?: 'asc' | 'desc'
   empty: string
+  /** height (px) of the scrollable body before an inner vertical scrollbar appears */
+  maxHeight?: number
+  /** table min width (px); below this the body scrolls horizontally (mobile) */
+  minWidth?: number
 }) {
   const [sortKey, setSortKey] = useState(initialSortKey ?? columns[0].key)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(initialSortDir)
@@ -82,8 +86,9 @@ function DataTable<T>({
 
   const th: React.CSSProperties = {
     padding: '7px 10px', fontSize: '0.6rem', letterSpacing: '0.09em', textTransform: 'uppercase',
-    fontWeight: 700, color: 'var(--text-dim)', borderBottom: '1px solid var(--border)',
-    userSelect: 'none', cursor: 'pointer',
+    fontWeight: 700, color: 'var(--text-dim)', userSelect: 'none', cursor: 'pointer',
+    position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-card)',
+    boxShadow: 'inset 0 -1px 0 var(--border)',
   }
   const td: React.CSSProperties = {
     padding: '6px 10px', fontSize: '0.72rem', fontFamily: 'var(--font-mono)',
@@ -94,7 +99,7 @@ function DataTable<T>({
 
   return (
     <div>
-      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
         <input
           value={q}
           onChange={e => setQ(e.target.value)}
@@ -102,53 +107,59 @@ function DataTable<T>({
           className="vs-input"
           style={{ fontSize: '0.7rem', padding: '3px 8px', width: 200 }}
         />
+        <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+          {view.length}{view.length !== rows.length ? ` / ${rows.length}` : ''}
+        </span>
       </div>
-      <table style={{ borderCollapse: 'collapse', width: '100%', tableLayout: 'fixed' }}>
-        <colgroup>
-          {columns.map(c => (
-            <col key={c.key} style={{ width: `${((c.w ?? 1) / totalW) * 100}%` }} />
-          ))}
-        </colgroup>
-        <thead>
-          <tr>
-            {columns.map(c => {
-              const active = c.key === sortKey
-              return (
-                <th
-                  key={c.key}
-                  onClick={() => toggle(c.key)}
-                  style={{ ...th, textAlign: c.align ?? 'left', color: active ? 'var(--accent)' : th.color }}
-                >
-                  {c.label}
-                  <span style={{ marginLeft: 4, display: 'inline-flex', verticalAlign: 'middle', opacity: active ? 1 : 0.3 }}>
-                    {active
-                      ? (sortDir === 'asc' ? <ArrowUp size={10} /> : <ArrowDown size={10} />)
-                      : <ArrowUp size={10} />}
-                  </span>
-                </th>
-              )
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {view.map((row, i) => (
-            <tr key={i} className="kill-row">
-              {columns.map(c => (
-                <td key={c.key} style={{ ...td, textAlign: c.align ?? 'left', color: c.color ?? td.color }}>
-                  {c.render ? c.render(row) : String(c.value(row))}
-                </td>
-              ))}
-            </tr>
-          ))}
-          {view.length === 0 && (
+      {/* Table body scrolls on its own: vertical past maxHeight, horizontal below minWidth (mobile). */}
+      <div style={{ maxHeight, overflow: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth, tableLayout: 'fixed' }}>
+          <colgroup>
+            {columns.map(c => (
+              <col key={c.key} style={{ width: `${((c.w ?? 1) / totalW) * 100}%` }} />
+            ))}
+          </colgroup>
+          <thead>
             <tr>
-              <td colSpan={columns.length} style={{ ...td, color: 'var(--text-dim)', textAlign: 'center', padding: '20px' }}>
-                {rows.length === 0 ? empty : 'No rows match the filter.'}
-              </td>
+              {columns.map(c => {
+                const active = c.key === sortKey
+                return (
+                  <th
+                    key={c.key}
+                    onClick={() => toggle(c.key)}
+                    style={{ ...th, textAlign: c.align ?? 'left', color: active ? 'var(--accent)' : th.color }}
+                  >
+                    {c.label}
+                    <span style={{ marginLeft: 4, display: 'inline-flex', verticalAlign: 'middle', opacity: active ? 1 : 0.3 }}>
+                      {active
+                        ? (sortDir === 'asc' ? <ArrowUp size={10} /> : <ArrowDown size={10} />)
+                        : <ArrowUp size={10} />}
+                    </span>
+                  </th>
+                )
+              })}
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {view.map((row, i) => (
+              <tr key={i} className="kill-row">
+                {columns.map(c => (
+                  <td key={c.key} style={{ ...td, textAlign: c.align ?? 'left', color: c.color ?? td.color }}>
+                    {c.render ? c.render(row) : String(c.value(row))}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {view.length === 0 && (
+              <tr>
+                <td colSpan={columns.length} style={{ ...td, color: 'var(--text-dim)', textAlign: 'center', padding: '20px' }}>
+                  {rows.length === 0 ? empty : 'No rows match the filter.'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
