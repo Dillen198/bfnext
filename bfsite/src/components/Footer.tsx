@@ -1,5 +1,6 @@
 import { campaign } from '../config/campaign'
 import { Zap, ExternalLink } from 'lucide-react'
+import LogoMark from './LogoMark'
 
 export default function Footer() {
   const year = new Date().getFullYear()
@@ -14,24 +15,7 @@ export default function Footer() {
           {/* Brand */}
           <div className="max-w-sm">
             <div className="flex items-center gap-3 mb-4">
-              <div
-                style={{
-                  background: 'var(--accent)',
-                  borderRadius: '2px',
-                  width: '36px',
-                  height: '36px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontFamily: "'Bebas Neue', sans-serif",
-                  fontSize: '0.95rem',
-                  color: 'var(--accent-fg)',
-                  letterSpacing: '0.05em',
-                  flexShrink: 0,
-                }}
-              >
-                VS
-              </div>
+              <LogoMark size={64} alt={campaign.name} />
               <div>
                 <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1rem', letterSpacing: '0.2em', color: 'var(--text)', lineHeight: 1 }}>
                   {campaign.name}

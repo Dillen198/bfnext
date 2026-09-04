@@ -5,6 +5,7 @@ import { LogOut, Shield, Plus, Search, Menu, X } from 'lucide-react'
 import { api, type WikiPageMeta } from '../api'
 import { useAuth } from '../context/AuthContext'
 import ThemeToggle from './ThemeToggle'
+import LogoMark from './LogoMark'
 
 function groupBySection(pages: WikiPageMeta[]) {
   const groups = new Map<string, WikiPageMeta[]>()
@@ -46,12 +47,7 @@ export default function Layout() {
         </button>
 
         <NavLink to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
-          <div style={{
-            width: 28, height: 28, borderRadius: 4, flexShrink: 0,
-            background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.7rem', color: 'var(--accent-fg)',
-          }}>FE</div>
+          <LogoMark size={46} alt="Fowl Engine Wiki" />
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.05rem', letterSpacing: '0.18em', color: 'var(--text)' }}>
             FOWL ENGINE WIKI
           </div>

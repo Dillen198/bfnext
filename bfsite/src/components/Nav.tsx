@@ -2,6 +2,7 @@ import React from 'react'
 import { campaign } from '../config/campaign'
 import { Zap, Menu, X, BookOpen } from 'lucide-react'
 import ThemeToggle from './ThemeToggle'
+import LogoMark from './LogoMark'
 
 const links = [
   { href: '#about',    label: 'ABOUT' },
@@ -23,7 +24,11 @@ export default function Nav() {
 
   return (
     <header
-      className="fixed top-0 inset-x-0 z-50 transition-all duration-300"
+      // Until it's scrolled, the bar is transparent over the always-dark hero,
+      // so pin it to the dark palette (theme-locked-dark) even in light theme —
+      // otherwise the links, buttons and logo wash out. Once scrolled it gets a
+      // solid themed background and follows the site theme normally.
+      className={`fixed top-0 inset-x-0 z-50 transition-all duration-300${scrolled ? '' : ' theme-locked-dark'}`}
       style={{
         background: scrolled ? 'var(--nav-bg)' : 'transparent',
         backdropFilter: scrolled ? 'blur(12px)' : 'none',
@@ -33,25 +38,13 @@ export default function Nav() {
       <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-16">
 
         {/* Logo */}
-        <a href="#" className="flex items-center gap-3 no-underline">
-          <div
-            className="flex items-center justify-center w-9 h-9 flex-shrink-0"
-            style={{
-              background: 'var(--accent)',
-              borderRadius: '2px',
-              fontFamily: "'Bebas Neue', sans-serif",
-              fontSize: '1rem',
-              color: 'var(--accent-fg)',
-              letterSpacing: '0.05em',
-            }}
-          >
-            VS
-          </div>
+        <a href="#" className="flex items-center gap-3 no-underline" style={{ textShadow: scrolled ? 'none' : '0 1px 4px rgba(0,0,0,0.7)' }}>
+          <LogoMark size={52} alt={campaign.name} />
           <div>
             <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1rem', letterSpacing: '0.2em', color: 'var(--text)', lineHeight: 1 }}>
               {campaign.name}
             </div>
-            <div style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.18em', textTransform: 'uppercase', marginTop: '1px' }}>
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.18em', textTransform: 'uppercase', marginTop: '2px' }}>
               Dynamic DCS Campaign
             </div>
           </div>

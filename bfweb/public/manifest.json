@@ -3,6 +3,12 @@
   "name": "Vector Strike Ops Dashboard",
   "icons": [
     {
+      "src": "vs-vectorstrike_hd-white.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
       "src": "favicon.svg",
       "type": "image/svg+xml",
       "sizes": "512x512"

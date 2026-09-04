@@ -264,3 +264,16 @@ body {
 }
 .vs-brackets::before { top: -2px; left: -2px; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); }
 .vs-brackets::after  { bottom: -2px; right: -2px; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+
+/* ── Brand logo mark (theme-swapped) ─────────────────────────────
+   LogoMark renders both variants; CSS shows the one that fits the
+   active theme. Files: /public/logo.png (light-on-dark, default)
+   and /public/logo-dark.png (dark-on-light). */
+.logo-mark--dark { display: none !important; }
+:root[data-theme="light"] .logo-mark--light { display: none !important; }
+:root[data-theme="light"] .logo-mark--dark { display: block !important; }
+
+/* Inside an always-dark region (e.g. the hero, or the nav while it overlays it)
+   the white-on-dark logo is always the right one, regardless of site theme. */
+.theme-locked-dark .logo-mark--light { display: block !important; }
+.theme-locked-dark .logo-mark--dark  { display: none  !important; }

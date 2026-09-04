@@ -11,6 +11,7 @@ import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
 import ThemeToggle from './ThemeToggle'
+import LogoMark from './LogoMark'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 
@@ -175,14 +176,7 @@ export default function Layout() {
             <img src={campaign.logoUrl} alt={campaign.shortName}
               style={{ width: 28, height: 28, objectFit: 'contain', borderRadius: 4, flexShrink: 0 }} />
           ) : (
-            <div style={{
-              width: 28, height: 28, borderRadius: 4, flexShrink: 0,
-              background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.7rem', color: '#000', letterSpacing: '0.04em',
-            }}>
-              {campaign.shortName.slice(0, 2)}
-            </div>
+            <LogoMark size={46} alt={campaign.name} />
           )}
           <div>
             <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.9rem', letterSpacing: '0.2em', color: 'var(--text)', lineHeight: 1 }}>

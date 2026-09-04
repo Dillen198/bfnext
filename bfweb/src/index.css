@@ -795,3 +795,11 @@ body::after {
   font-weight: 700;
   flex-shrink: 0;
 }
+
+/* ── Brand logo mark (theme-swapped) ─────────────────────────────
+   LogoMark renders both variants; CSS shows the one that fits the
+   active theme. Files: /public/logo.png (light-on-dark, default)
+   and /public/logo-dark.png (dark-on-light). */
+.logo-mark--dark { display: none !important; }
+:root[data-theme="light"] .logo-mark--light { display: none !important; }
+:root[data-theme="light"] .logo-mark--dark { display: block !important; }

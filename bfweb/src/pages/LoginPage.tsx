@@ -5,6 +5,7 @@ import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
 import ThemeToggle from '../components/ThemeToggle'
+import LogoMark from '../components/LogoMark'
 
 export default function LoginPage() {
   const { refresh } = useAuth()
@@ -64,12 +65,14 @@ export default function LoginPage() {
       }}>
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
-          {campaign.logoUrl && (
+          {campaign.logoUrl ? (
             <img
               src={campaign.logoUrl}
               alt={campaign.name}
               style={{ width: 64, height: 64, objectFit: 'contain', margin: '0 auto 0.75rem', display: 'block' }}
             />
+          ) : (
+            <LogoMark size={110} alt={campaign.name} style={{ margin: '0 auto 0.75rem', display: 'block' }} />
           )}
           <div style={{
             fontFamily: "'Bebas Neue', sans-serif",
