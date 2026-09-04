@@ -47,9 +47,9 @@ export default function Layout() {
         </button>
 
         <NavLink to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
-          <LogoMark size={46} alt="Fowl Engine Wiki" />
+          <LogoMark size={46} alt="Vector Strike Wiki" />
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.05rem', letterSpacing: '0.18em', color: 'var(--text)' }}>
-            FOWL ENGINE WIKI
+            VECTOR STRIKE WIKI
           </div>
         </NavLink>
 

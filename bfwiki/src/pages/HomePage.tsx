@@ -33,7 +33,7 @@ export default function HomePage() {
     <div style={{ maxWidth: 900 }}>
       <div style={{ marginBottom: '2.5rem' }}>
         <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '2.6rem', letterSpacing: '0.06em', color: 'var(--text)', lineHeight: 1.1 }}>
-          FOWL ENGINE WIKI
+          VECTOR STRIKE WIKI
         </div>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', marginTop: '0.75rem', maxWidth: 560, lineHeight: 1.6 }}>
           Everything you need to fly, fight, and win the persistent campaign — objectives, logistics, JTAC, and the full F10 menu system.

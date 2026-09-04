@@ -4,6 +4,7 @@ import { Eye, EyeOff, KeyRound, User } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import ThemeToggle from '../components/ThemeToggle'
+import LogoMark from '../components/LogoMark'
 
 export default function LoginPage() {
   const { refresh } = useAuth()
@@ -53,16 +54,9 @@ export default function LoginPage() {
       <ThemeToggle style={{ position: 'absolute', top: '1.25rem', right: '1.25rem' }} />
       <div style={{ padding: '2rem', width: '100%', maxWidth: '340px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--bg-card)' }}>
         <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
-          <div style={{
-            width: 48, height: 48, borderRadius: 6, margin: '0 auto 0.75rem',
-            background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.1rem', color: 'var(--accent-fg)',
-          }}>
-            FE
-          </div>
+          <LogoMark size={96} alt="Vector Strike Wiki" style={{ margin: '0 auto 0.75rem', display: 'block' }} />
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.8rem', letterSpacing: '0.15em', color: 'var(--text)' }}>
-            FOWL ENGINE
+            VECTOR STRIKE
           </div>
           <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.14em', marginTop: '0.25rem' }}>
             WIKI ADMIN LOGIN
