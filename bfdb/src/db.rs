@@ -2098,6 +2098,24 @@ impl StatsDb {
                         end: None,
                     },
                 )?;
+                // A fresh engine session means no DCS client can possibly be
+                // connected yet (they haven't done onPlayerTryConnect this
+                // process). Clear any "connected" left over from a previous
+                // run that ended without a clean Disconnect for every pilot
+                // (crash, kill -9, abrupt DCS server shutdown) -- otherwise
+                // the dashboard shows players online forever after a restart.
+                let stale: Vec<Ucid> = self
+                    .pilots
+                    .round_info
+                    .iter()
+                    .filter_map(|r| r.ok())
+                    .filter(|((_, rid), ri)| *rid == ctx.round && ri.connected.is_some())
+                    .map(|((ucid, _), _)| ucid)
+                    .collect();
+                for ucid in stale {
+                    self.pilots
+                        .with_pilot_round_info(ucid, ctx.round, |ri| ri.connected = None)?;
+                }
             }
             Stat::SessionEnd {
                 api_perf,
