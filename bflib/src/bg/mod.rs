@@ -33,7 +33,7 @@ use compact_str::{CompactString, format_compact};
 use crossbeam::queue::SegQueue;
 use dcso3::perf::{Perf as ApiPerf, PerfStat as ApiPerfStat};
 use fxhash::FxHashMap;
-use log::error;
+use log::{error, info};
 use logpub::LogPublisher;
 use netidx::{
     chars::Chars,
@@ -319,11 +319,11 @@ impl Logs {
             .open(&jsonl_path)
         {
             Ok(f) => {
-                eprintln!("stats JSONL file opened at {jsonl_path:?}");
+                info!("stats JSONL file opened at {jsonl_path:?}");
                 Some(f)
             }
             Err(e) => {
-                eprintln!("could not open stats JSONL file at {jsonl_path:?}: {e:?}");
+                error!("could not open stats JSONL file at {jsonl_path:?}: {e:?}");
                 None
             }
         };
@@ -359,7 +359,7 @@ impl Logs {
             let ts = Utc::now();
             let line = serde_json::json!({"ts": ts.to_rfc3339(), "stat": stat});
             if let Err(e) = writeln!(f, "{}", line) {
-                eprintln!("failed to write stat to JSONL: {e:?}");
+                error!("failed to write stat to JSONL: {e:?}");
             }
         }
         // Also write to netidx archive if in Netidx mode
@@ -439,7 +439,7 @@ impl Logs {
                     Err(e) => {
                         *stats_jsonl = taken_jsonl;
                         if let Err(e) = self.open_files().await {
-                            eprintln!("netidx init failed and reopening files also failed {e:?}")
+                            error!("netidx init failed and reopening files also failed {e:?}")
                         }
                         return Err(e);
                     }
@@ -512,7 +512,7 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
                         .switch_to_netidx(publisher.clone(), &cfg, base.clone(), sortie.clone(), fresh)
                         .await
                     {
-                        eprintln!("failed to initialize netidx logs {e:?}")
+                        error!("failed to initialize netidx logs {e:?}")
                     }
                 }
                 match &logs {
@@ -580,7 +580,7 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
             }
             Task::Stat(st) => {
                 if let Err(e) = logs.write_stat(&st) {
-                    eprintln!("could not write stat {st:?} {e:?}")
+                    error!("could not write stat {st:?} {e:?}")
                 }
             }
         }
