@@ -2538,7 +2538,44 @@ fn run_slow_timed_events(
     if ts - ctx.last_slow_timed_events >= freq {
         let start_ts = Utc::now();
         ctx.last_slow_timed_events = start_ts;
-        
+
+        // DCS doesn't reliably fire onPlayerDisconnect for abrupt
+        // disconnects (client crash, network drop), which would otherwise
+        // leave a player stuck "connected" forever in the persisted db.
+        // Reconcile against the live player list and force-disconnect
+        // anyone we think is connected that DCS no longer reports.
+        match Net::singleton(lua).and_then(|net| net.get_player_list()) {
+            Ok(live) => {
+                let mut live_ids: FxHashSet<PlayerId> = FxHashSet::default();
+                for id in live {
+                    match id {
+                        Ok(id) => {
+                            live_ids.insert(id);
+                        }
+                        Err(e) => warn!("bad player id in live player list {e:?}"),
+                    }
+                }
+                let stale: SmallVec<[PlayerId; 4]> = ctx
+                    .connected
+                    .info_by_player_id
+                    .keys()
+                    .copied()
+                    .filter(|id| !live_ids.contains(id))
+                    .collect();
+                for id in stale {
+                    if let Some(ifo) = ctx.connected.player_disconnected(id) {
+                        warn!(
+                            "player {} ({}) missing from live player list, forcing disconnect \
+                             (DCS likely missed onPlayerDisconnect)",
+                            ifo.name, ifo.ucid
+                        );
+                        ctx.db.player_disconnected(&ifo.ucid)
+                    }
+                }
+            }
+            Err(e) => warn!("failed to get live player list for connection reconciliation {e:?}"),
+        }
+
         // Dispatch pending achievements
         let achievements = std::mem::take(&mut ctx.db.ephemeral.pending_achievements);
         for achievement in achievements {
