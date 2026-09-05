@@ -93,7 +93,11 @@ struct Args {
     /// Local admin password for password-based login
     #[arg(long)]
     admin_password: Option<String>,
-    /// SRS server URL to proxy for the dashboard radio panel (e.g. http://localhost:5002)
+    /// SRS client list for the dashboard radio panel: either an http(s) URL
+    /// to proxy (SRS's own HTTP_SERVER_ENABLED feature, which needs admin
+    /// elevation to work reliably) or a local path to the JSON file SRS
+    /// writes when CLIENT_EXPORT_ENABLED=True (CLIENT_EXPORT_FILE_PATH in
+    /// SRS.cfg) -- the latter is simpler and needs no extra SRS config.
     #[arg(long)]
     srs_url: Option<String>,
     /// Path to the campaign engine config JSON that bflib loads (e.g. ODFv2_CFG).
@@ -2690,12 +2694,50 @@ async fn ws_units(ws: WebSocket, state: LiveState, mut rx: broadcast::Receiver<S
 
 // ── SRS proxy ───────────────────────────────────────────────────────
 
+/// SRS's own export (whether read from CLIENT_EXPORT_FILE_PATH or served by
+/// its optional HTTP_SERVER feature) uses PascalCase keys at the top level
+/// ("Clients", "ServerVersion") -- normalize to what the dashboard expects
+/// ("clients"/"version", lowercase) regardless of source.
+fn normalize_srs_json(raw: serde_json::Value) -> serde_json::Value {
+    let clients = raw
+        .get("clients")
+        .or_else(|| raw.get("Clients"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]));
+    let version = raw
+        .get("version")
+        .or_else(|| raw.get("Version"))
+        .or_else(|| raw.get("ServerVersion"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::json!({"version": version, "clients": clients})
+}
+
 async fn api_srs(srs_url: Arc<Option<String>>) -> Response {
     let empty = warp::reply::json(&serde_json::json!({"version": null, "clients": []}));
-    let url = match srs_url.as_deref() {
-        Some(u) => u.to_string(),
+    let src = match srs_url.as_deref() {
+        Some(u) => u,
         None => return empty.into_response(),
     };
+    // Simplest and most reliable path: SRS writes its client list straight
+    // to a JSON file when CLIENT_EXPORT_ENABLED=True (CLIENT_EXPORT_FILE_PATH
+    // in SRS.cfg). No port, no auth, no dependency on SRS's own optional
+    // HTTP_SERVER feature (which needs admin elevation to work reliably).
+    if !src.starts_with("http://") && !src.starts_with("https://") {
+        return match task::block_in_place(|| std::fs::read_to_string(src)) {
+            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(json) => warp::reply::json(&normalize_srs_json(json)).into_response(),
+                Err(e) => {
+                    log::warn!("api_srs: {src:?} is not valid JSON: {e}");
+                    empty.into_response()
+                }
+            },
+            Err(e) => {
+                log::warn!("api_srs: could not read {src:?}: {e}");
+                empty.into_response()
+            }
+        };
+    }
     // reqwest::get() uses a default client with no timeout -- if the local
     // SRS server is down or hanging (not just refusing the connection
     // outright), this would otherwise block the request indefinitely,
@@ -2705,9 +2747,9 @@ async fn api_srs(srs_url: Arc<Option<String>>) -> Response {
         .timeout(std::time::Duration::from_secs(3))
         .build();
     let Ok(client) = client else { return empty.into_response() };
-    match client.get(&url).send().await {
+    match client.get(src).send().await {
         Ok(resp) => match resp.json::<serde_json::Value>().await {
-            Ok(json) => warp::reply::json(&json).into_response(),
+            Ok(json) => warp::reply::json(&normalize_srs_json(json)).into_response(),
             Err(_)   => empty.into_response(),
         },
         Err(_) => empty.into_response(),
@@ -2917,7 +2959,8 @@ async fn main() -> Result<()> {
     // CLI --srs-url takes precedence over campaign.json srsUrl
     let effective_srs_url = args.srs_url.clone().or(srs_url_from_cfg);
     if let Some(ref u) = effective_srs_url {
-        log::info!("SRS proxy enabled → {u}");
+        let kind = if u.starts_with("http://") || u.starts_with("https://") { "proxying" } else { "reading" };
+        log::info!("SRS client list enabled, {kind} {u}");
     }
 
     let engine_config_path: Arc<Option<PathBuf>> = Arc::new(args.engine_config.clone());
