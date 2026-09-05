@@ -1567,9 +1567,18 @@ impl StatsDb {
 
     /// Bans recorded by bflib in the latest session's Cfg (read-only mirror)
     pub(crate) fn session_bans_from_cfg(&self) -> Result<Vec<(Ucid, std::string::String, Option<DateTime<Utc>>)>> {
+        // Skip records that fail to deserialize (e.g. written by an older/
+        // incompatible build) instead of letting one bad entry break this
+        // for every session that comes after it -- see latest_session_end.
         let mut latest_cfg: Option<Cfg> = None;
         for r in self.session.iter() {
-            let (_, s) = r?;
+            let (_, s) = match r {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("session_bans_from_cfg: skipping unreadable session record: {e:?}");
+                    continue;
+                }
+            };
             latest_cfg = Some(s.cfg);
         }
         let mut out = Vec::new();
@@ -1758,9 +1767,18 @@ impl StatsDb {
     // ── Perf history ─────────────────────────────────────────────────────────
 
     pub(crate) fn session_perf_history(&self, limit: usize) -> Result<Vec<SessionEnd>> {
+        // Skip records that fail to deserialize (e.g. written by an older/
+        // incompatible build) instead of letting one bad entry break this
+        // for every session that comes after it -- see latest_session_end.
         let mut ends: Vec<SessionEnd> = Vec::new();
         for r in self.session.iter() {
-            let (_, s) = r?;
+            let (_, s) = match r {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("session_perf_history: skipping unreadable session record: {e:?}");
+                    continue;
+                }
+            };
             if let Some(end) = s.end {
                 ends.push(end);
             }
