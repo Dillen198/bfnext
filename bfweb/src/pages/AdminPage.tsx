@@ -62,7 +62,7 @@ const CHART_GROUPS: { label: string; keys: MetricKey[] }[] = [
 
 function PerfChart({ data, group }: { data: PerfTimelinePoint[]; group: typeof CHART_GROUPS[0] }) {
   const chartData = data.map(d => {
-    const row: Record<string, unknown> = { time: new Date(d.time).toLocaleDateString() }
+    const row: Record<string, unknown> = { time: new Date(d.time).getTime() }
     for (const k of group.keys) {
       const v = d[k] as { mean: number; p99: number }
       row[`${k}_p99`] = v.p99
@@ -76,10 +76,18 @@ function PerfChart({ data, group }: { data: PerfTimelinePoint[]; group: typeof C
       <ResponsiveContainer width="100%" height={160}>
         <LineChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="2 4" stroke="rgba(255,255,255,0.05)" />
-          <XAxis dataKey="time" tick={{ fontSize: 9, fill: 'var(--text-dim)' }} />
+          <XAxis
+            dataKey="time"
+            type="number"
+            domain={['dataMin', 'dataMax']}
+            scale="time"
+            tickFormatter={(t: number) => new Date(t).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            tick={{ fontSize: 9, fill: 'var(--text-dim)' }}
+          />
           <YAxis tick={{ fontSize: 9, fill: 'var(--text-dim)' }} width={48} unit="μs" />
           <Tooltip
             contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', fontSize: 11 }}
+            labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
             formatter={(v, name) => [`${Number(v).toLocaleString()} μs`, String(name).replace('_p99', '')]}
           />
           <Legend iconSize={8} wrapperStyle={{ fontSize: 10, color: 'var(--text-dim)' }} formatter={n => n.replace('_p99', '')} />
