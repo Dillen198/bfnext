@@ -1661,15 +1661,20 @@ export default function MapPage() {
         )}
 
         {/* ── Console toggle button (top-left) ─────────────────────── */}
-        <button onClick={() => setShowConsole(v => !v)} style={{
-          position: 'absolute', top: 10, left: 10, zIndex: 1000,
-          fontFamily: FONT_HEAD, fontSize: '0.7rem', letterSpacing: '0.15em',
-          padding: '0.35rem 0.8rem', borderRadius: '2px',
-          border: `1px solid ${HUD_BORDER}`,
-          background: showConsole ? `${GREEN}15` : HUD_BG,
-          color: showConsole ? GREEN : HUD_DIM,
-          cursor: 'pointer', backdropFilter: 'blur(6px)',
-        }}>
+        <button
+          onClick={() => setShowConsole(v => !v)}
+          disabled={kneeboardMode}
+          title={kneeboardMode ? 'Turn off KNEEBOARD mode to use the console panel' : undefined}
+          style={{
+            position: 'absolute', top: 10, left: 10, zIndex: 1000,
+            fontFamily: FONT_HEAD, fontSize: '0.7rem', letterSpacing: '0.15em',
+            padding: '0.35rem 0.8rem', borderRadius: '2px',
+            border: `1px solid ${HUD_BORDER}`,
+            background: showConsole ? `${GREEN}15` : HUD_BG,
+            color: kneeboardMode ? HUD_BORDER : (showConsole ? GREEN : HUD_DIM),
+            cursor: kneeboardMode ? 'not-allowed' : 'pointer', backdropFilter: 'blur(6px)',
+            opacity: kneeboardMode ? 0.5 : 1,
+          }}>
           {showConsole ? '◂ GCI' : '▸ GCI'}
         </button>
 
