@@ -7,7 +7,7 @@ import {
 import L from 'leaflet'
 import {
   Camera, Trash2, Crosshair, X, Upload, MapPin, Move3d, Eye, EyeOff,
-  Grid3x3, Navigation, Play, Pause, SendToBack,
+  Grid3x3, Navigation, Play, Pause, SendToBack, ChevronRight,
 } from 'lucide-react'
 import { api, type IntelCapture, type Objective, type Frontlines } from '../api'
 import { useAuth } from '../context/AuthContext'
@@ -155,6 +155,10 @@ export default function IntelPage() {
   // Per-capture display state (client-local): stacking order (back → front) and opacity override.
   const [backList, setBackList] = useState<string[]>([])   // ids pushed to the back, oldest-first
   const [opa, setOpa] = useState<Record<string, number>>({})
+  // Capture list is grouped by uploader; these track which groups are
+  // collapsed and which uploaders are hidden from the map.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [hiddenBy, setHiddenBy] = useState<Set<string>>(new Set())
 
   // Timeline
   const [cutoff, setCutoff] = useState(1)                   // 0..1, show captures up to this point in the run
@@ -224,9 +228,28 @@ export default function IntelPage() {
   }, [playing, hasTimeline])
 
   const visible = useMemo(() => placed.filter(c => {
+    if (hiddenBy.has(c.uploaded_by_name)) return false
     if (!hasTimeline || !c.captured_at) return true
     return Date.parse(c.captured_at) <= cutoffMs + 1
-  }), [placed, hasTimeline, cutoffMs])
+  }), [placed, hasTimeline, cutoffMs, hiddenBy])
+
+  // Group the on-map list by uploader, newest contributor first.
+  const groups = useMemo(() => {
+    const by = new Map<string, IntelCapture[]>()
+    for (const c of placed) {
+      const arr = by.get(c.uploaded_by_name) ?? []
+      arr.push(c)
+      by.set(c.uploaded_by_name, arr)
+    }
+    const keyTime = (c: IntelCapture) => (c.captured_at ? Date.parse(c.captured_at) : Date.parse(c.uploaded_at))
+    return [...by.entries()]
+      .map(([name, caps]) => ({
+        name,
+        caps: [...caps].sort((a, b) => keyTime(a) - keyTime(b)),
+        latest: Math.max(...caps.map(c => Date.parse(c.uploaded_at))),
+      }))
+      .sort((a, b) => b.latest - a.latest)
+  }, [placed])
 
   // Stacking: a capture in backList renders behind; earlier in the list = further back.
   const zOf = useCallback((id: string) => {
@@ -383,57 +406,88 @@ export default function IntelPage() {
           </div>
         )}
 
-        {/* Capture list */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px' }}>
-          <div style={{ fontSize: '0.6rem', letterSpacing: '0.12em', color: 'var(--text-dim)', marginBottom: 6 }}>
+        {/* Capture list — grouped by uploader */}
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          <div style={{ fontSize: '0.6rem', letterSpacing: '0.12em', color: 'var(--text-dim)', padding: '10px 14px 6px' }}>
             ON MAP ({visible.length}{visible.length !== placed.length ? ` / ${placed.length}` : ''})
           </div>
           {placed.length === 0 && (
-            <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', lineHeight: 1.6 }}>
+            <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', lineHeight: 1.6, padding: '0 14px' }}>
               No recon captures yet. Upload TARPS photos to build the picture.
             </div>
           )}
-          {placed.map(c => {
-            const dim = !visible.includes(c)
+          {groups.map(g => {
+            const isOpen = !collapsed.has(g.name)
+            const hidden = hiddenBy.has(g.name)
+            const last = new Date(g.latest)
             return (
-              <div key={c.id} style={{
-                padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: '0.66rem',
-                display: 'flex', flexDirection: 'column', gap: 3, opacity: dim ? 0.4 : 1,
-                background: aligning?.id === c.id ? 'var(--bg-elevated)' : undefined,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{
-                    flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    color: 'var(--text)', cursor: 'pointer',
-                  }} onClick={() => setLightbox(c)}>{c.filename || 'capture'}</span>
-                  <button onClick={() => sendBack(c.id)} title="Send behind other photos"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}>
-                    <SendToBack size={12} />
+              <div key={g.name}>
+                {/* group header */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px',
+                  background: 'var(--bg-elevated)', borderTop: '1px solid var(--border)',
+                  borderBottom: isOpen ? '1px solid var(--border)' : 'none', cursor: 'pointer', fontSize: '0.68rem',
+                }} onClick={() => setCollapsed(s => { const n = new Set(s); if (n.has(g.name)) n.delete(g.name); else n.add(g.name); return n })}>
+                  <span style={{ color: 'var(--text-dim)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.12s' }}>
+                    <ChevronRight size={12} />
+                  </span>
+                  <span style={{ flex: 1, color: 'var(--text)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {g.name}
+                  </span>
+                  <span style={{ color: 'var(--text-dim)', fontFamily: FONT_MONO, fontSize: '0.6rem' }}>
+                    {g.caps.length} · {last.toLocaleDateString([], { month: 'short', day: 'numeric' })} {last.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                  <button
+                    onClick={e => { e.stopPropagation(); setHiddenBy(s => { const n = new Set(s); if (n.has(g.name)) n.delete(g.name); else n.add(g.name); return n }) }}
+                    title={hidden ? 'Show on map' : 'Hide from map'}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: hidden ? 'var(--text-dim)' : 'var(--accent)' }}>
+                    {hidden ? <EyeOff size={12} /> : <Eye size={12} />}
                   </button>
-                  {c.mine && (
-                    <button onClick={() => (aligning?.id === c.id ? cancelAlign() : startAlign(c))}
-                      title="Align photo to the map"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: aligning?.id === c.id ? 'var(--accent)' : 'var(--text-dim)' }}>
-                      <Move3d size={13} />
-                    </button>
-                  )}
-                  {c.mine && (
-                    <button onClick={() => doDelete(c)} title="Delete" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}>
-                      <Trash2 size={12} />
-                    </button>
-                  )}
                 </div>
-                <div style={{ color: 'var(--text-dim)', fontFamily: FONT_MONO }}>{fmtLatLon(c.lat, c.lon)}</div>
-                <div style={{ color: 'var(--text-dim)' }}>
-                  {c.uploaded_by_name}
-                  {c.captured_at && ` · ${new Date(c.captured_at).toLocaleTimeString()}`}
-                  {c.adjust?.corners && ' · aligned'}
-                </div>
-                {/* per-photo opacity */}
-                <input type="range" min={0.15} max={1} step={0.05}
-                  value={opa[c.id] ?? c.adjust?.opacity ?? DEFAULT_OPACITY}
-                  onChange={e => setOpa(o => ({ ...o, [c.id]: Number(e.target.value) }))}
-                  style={{ width: '100%', height: 3 }} />
+
+                {/* group rows */}
+                {isOpen && g.caps.map(c => {
+                  const dim = !visible.includes(c)
+                  return (
+                    <div key={c.id} style={{
+                      padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: '0.66rem',
+                      display: 'flex', flexDirection: 'column', gap: 3, opacity: dim ? 0.4 : 1,
+                      background: aligning?.id === c.id ? 'var(--bg-elevated)' : undefined,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{
+                          flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          color: 'var(--text)', cursor: 'pointer',
+                        }} onClick={() => setLightbox(c)}>{c.filename || 'capture'}</span>
+                        <button onClick={() => sendBack(c.id)} title="Send behind other photos"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}>
+                          <SendToBack size={12} />
+                        </button>
+                        {c.mine && (
+                          <button onClick={() => (aligning?.id === c.id ? cancelAlign() : startAlign(c))}
+                            title="Align photo to the map"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: aligning?.id === c.id ? 'var(--accent)' : 'var(--text-dim)' }}>
+                            <Move3d size={13} />
+                          </button>
+                        )}
+                        {c.mine && (
+                          <button onClick={() => doDelete(c)} title="Delete" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}>
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ color: 'var(--text-dim)', fontFamily: FONT_MONO }}>
+                        {fmtLatLon(c.lat, c.lon)}
+                        {c.captured_at && ` · shot ${new Date(c.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`}
+                        {c.adjust?.corners && ' · aligned'}
+                      </div>
+                      <input type="range" min={0.15} max={1} step={0.05}
+                        value={opa[c.id] ?? c.adjust?.opacity ?? DEFAULT_OPACITY}
+                        onChange={e => setOpa(o => ({ ...o, [c.id]: Number(e.target.value) }))}
+                        style={{ width: '100%', height: 3 }} />
+                    </div>
+                  )
+                })}
               </div>
             )
           })}
