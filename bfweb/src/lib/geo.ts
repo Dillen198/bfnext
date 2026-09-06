@@ -77,3 +77,21 @@ export const INTEL_TILE_LAYERS = {
   },
 } as const
 export type IntelTileKey = keyof typeof INTEL_TILE_LAYERS
+
+/** A "nice" grid step (deg) so that a span shows ~`target` lines. */
+export function niceGridStep(spanDeg: number, target = 8): number {
+  const raw = spanDeg / target
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)))
+  const n = raw / pow
+  const step = n >= 5 ? 5 : n >= 2 ? 2 : n >= 1 ? 1 : 0.5
+  return step * pow
+}
+
+/** Format a grid-line label, e.g. 32.5 → "32°30'E". */
+export function fmtGridLabel(v: number, axis: 'lat' | 'lon'): string {
+  const hemi = axis === 'lat' ? (v >= 0 ? 'N' : 'S') : (v >= 0 ? 'E' : 'W')
+  const a = Math.abs(v)
+  const d = Math.floor(a)
+  const m = Math.round((a - d) * 60)
+  return m ? `${d}°${String(m).padStart(2, '0')}'${hemi}` : `${d}°${hemi}`
+}

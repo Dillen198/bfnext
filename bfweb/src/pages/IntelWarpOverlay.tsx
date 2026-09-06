@@ -9,7 +9,7 @@ import type { LatLon } from '../lib/geo'
  *  corners are [TL, TR, BR, BL]; the image is hidden while its quad is
  *  degenerate (e.g. edge-on to the camera). */
 export default function IntelWarpOverlay({
-  url, corners, naturalW, naturalH, opacity, interactive, onClick,
+  url, corners, naturalW, naturalH, opacity, interactive, zIndex, onClick, onContextMenu,
 }: {
   url: string
   corners: LatLon[]
@@ -17,18 +17,25 @@ export default function IntelWarpOverlay({
   naturalH: number
   opacity: number
   interactive: boolean
+  zIndex?: number
   onClick?: () => void
+  onContextMenu?: () => void
 }) {
   const map = useMap()
   const imgRef = useRef<HTMLImageElement | null>(null)
   const clickRef = useRef<(() => void) | undefined>(onClick)
+  const ctxRef = useRef<(() => void) | undefined>(onContextMenu)
   useEffect(() => { clickRef.current = onClick }, [onClick])
+  useEffect(() => { ctxRef.current = onContextMenu }, [onContextMenu])
 
   // Create / destroy the <img> element.
   useEffect(() => {
     const pane = map.getPane('overlayPane')
     if (!pane) return
     const img = L.DomUtil.create('img', 'leaflet-zoom-hide') as HTMLImageElement
+    // Photos are served cross-origin from bfdb and gated on the session
+    // cookie, so the request has to carry credentials.
+    img.crossOrigin = 'use-credentials'
     img.src = url
     img.alt = ''
     img.decoding = 'async'
@@ -36,13 +43,20 @@ export default function IntelWarpOverlay({
     Object.assign(img.style, {
       position: 'absolute', left: '0', top: '0', transformOrigin: '0 0',
       width: `${naturalW}px`, height: `${naturalH}px`,
+      // Tailwind's preflight (`img{max-width:100%;height:auto}`) otherwise
+      // clamps the image to the (near-zero-width) overlay pane and collapses
+      // the warp — same fix MapPage uses for its sprite icons.
+      maxWidth: 'none', maxHeight: 'none',
     })
     const onImgClick = (e: MouseEvent) => { L.DomEvent.stop(e); clickRef.current?.() }
+    const onImgCtx = (e: MouseEvent) => { L.DomEvent.stop(e); e.preventDefault(); ctxRef.current?.() }
     img.addEventListener('click', onImgClick)
+    img.addEventListener('contextmenu', onImgCtx)
     pane.appendChild(img)
     imgRef.current = img
     return () => {
       img.removeEventListener('click', onImgClick)
+      img.removeEventListener('contextmenu', onImgCtx)
       img.remove()
       imgRef.current = null
     }
@@ -55,7 +69,8 @@ export default function IntelWarpOverlay({
     img.style.opacity = String(opacity)
     img.style.pointerEvents = interactive ? 'auto' : 'none'
     img.style.cursor = interactive ? 'pointer' : 'default'
-  }, [opacity, interactive])
+    if (zIndex != null) img.style.zIndex = String(zIndex)
+  }, [opacity, interactive, zIndex])
 
   // Reproject on view changes.
   useEffect(() => {

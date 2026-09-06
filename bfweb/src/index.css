@@ -190,6 +190,19 @@ body {
 .leaflet-control-attribution a { color: var(--text-dim) !important; }
 
 .obj-label { background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
+
+/* Recon-intel coordinate grid labels — faint, no bubble */
+.grid-lbl {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: rgba(255,255,255,0.55) !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-size: 9px !important;
+  text-shadow: 0 0 3px #000, 0 0 3px #000 !important;
+}
+.grid-lbl::before { display: none !important; }
 .logi-tip {
   background: transparent !important;
   border: none !important;
