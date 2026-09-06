@@ -242,6 +242,13 @@ export default function IntelPage() {
     catch (e) { window.alert(String(e)) }
   }, [refreshMarkup])
 
+  // Eraser tool: click a shape to remove it, but only your own (admins any).
+  const eraseMarkup = useCallback((id: string) => {
+    const m = markup.find(x => x.id === id)
+    if (!m || (!m.mine && !user?.is_admin)) return
+    deleteMarkup(id)
+  }, [markup, user, deleteMarkup])
+
   const exportPng = useCallback(async () => {
     const el = mapWrapRef.current
     if (!el) return
@@ -491,7 +498,7 @@ export default function IntelPage() {
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {([
                 ['select', MousePointer2], ['pencil', Pencil], ['line', Minus],
-                ['rect', Square], ['circle', CircleIcon], ['x', X],
+                ['rect', Square], ['circle', CircleIcon], ['x', X], ['eraser', Eraser],
               ] as [MarkupTool, typeof X][]).map(([t, Ico]) => (
                 <button key={t} onClick={() => { setMarkupTool(t); setSelMarkup(null) }} title={t}
                   style={{
@@ -738,6 +745,7 @@ export default function IntelPage() {
               selectedId={selMarkup}
               onAdd={addMarkup}
               onSelect={setSelMarkup}
+              onErase={eraseMarkup}
               visible={showMarkup}
             />
 

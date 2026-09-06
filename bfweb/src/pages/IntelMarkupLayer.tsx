@@ -3,7 +3,7 @@ import { Polyline, Rectangle, Circle, Marker, useMap, useMapEvents } from 'react
 import L from 'leaflet'
 import type { IntelMarkup, IntelMarkupKind } from '../api'
 
-export type MarkupTool = 'select' | 'pencil' | 'line' | 'rect' | 'circle' | 'x'
+export type MarkupTool = 'select' | 'pencil' | 'line' | 'rect' | 'circle' | 'x' | 'eraser'
 
 type LL = [number, number]
 
@@ -21,7 +21,7 @@ function xIcon(color: string, size: number): L.DivIcon {
 /** Renders coalition markup and, when a drawing tool is active, captures the
  *  strokes/shapes the user draws and hands finished ones to `onAdd`. */
 export default function IntelMarkupLayer({
-  items, tool, color, width, selectedId, onAdd, onSelect, visible,
+  items, tool, color, width, selectedId, onAdd, onSelect, onErase, visible,
 }: {
   items: IntelMarkup[]
   tool: MarkupTool
@@ -30,6 +30,7 @@ export default function IntelMarkupLayer({
   selectedId: string | null
   onAdd: (kind: IntelMarkupKind, points: LL[]) => void
   onSelect: (id: string | null) => void
+  onErase: (id: string) => void
   visible: boolean
 }) {
   const map = useMap()
@@ -117,7 +118,8 @@ export default function IntelMarkupLayer({
       fillOpacity: m.kind === 'rect' || m.kind === 'circle' ? 0.08 : 0,
       dashArray: sel ? '6 4' : undefined,
     }
-    const handlers = id != null ? { click: (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); onSelect(id) } } : undefined
+    const hit = (id: string) => (tool === 'eraser' ? onErase(id) : onSelect(id))
+    const handlers = id != null ? { click: (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); hit(id) } } : undefined
     switch (m.kind) {
       case 'pencil':
       case 'line':
@@ -130,7 +132,7 @@ export default function IntelMarkupLayer({
       }
       case 'x':
         return <Marker key={key} pane={PANE} position={m.points[0]} icon={xIcon(m.color, 22 + m.width)}
-          eventHandlers={id != null ? { click: () => onSelect(id) } : undefined} />
+          eventHandlers={id != null ? { click: () => hit(id) } : undefined} />
       default:
         return null
     }
@@ -141,7 +143,7 @@ export default function IntelMarkupLayer({
       {items.map(m => renderShape(m as unknown as { kind: string; points: LL[]; color: string; width: number }, m.id, m.id))}
       {draft && draft.length > 0 && renderShape(
         {
-          kind: tool === 'select' ? 'pencil' : tool,
+          kind: tool === 'select' || tool === 'eraser' ? 'pencil' : tool,
           points: cursor && tool !== 'pencil' ? [draft[0], cursor] : draft,
           color, width,
         },
