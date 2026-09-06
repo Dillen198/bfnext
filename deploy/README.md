@@ -94,6 +94,16 @@ in `bfweb/` and `bfsite/` (bfsite additionally needs `--base=/` passed to
 `vite build` instead of its default `/site/`), then serve each `dist/`
 folder with any static file server.
 
+## Recon intel photo storage
+
+Recon Intel (TARPS) uploads default to living as blobs inside the stats
+DB. TARPS PNGs are large and a busy round can hold hundreds, so for a real
+deployment pass `--intel-dir <path>` and bfdb stores them as files there
+instead, keeping only a small index row in the DB. bfdb creates the
+directory if missing and clears it on a campaign reset. Point it at a disk
+with room to spare (a few GB per active round); back it up alongside the
+`--db` directory if you want the imagery to survive a rebuild.
+
 ## Reverting to embedded mode
 
 Just don't pass `--cors-origin`, keep `--listen-address 0.0.0.0:<port>`,

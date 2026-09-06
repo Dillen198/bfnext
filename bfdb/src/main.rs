@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bfprotocols::cfg::UnitTag;
 use clap::Parser;
-use db::{IntelCapture, IntelImage, SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
+use db::{IntelCapture, SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
 use futures::{SinkExt, StreamExt};
 use netidx::{config::Config, path::Path as NetidxPath, subscriber::SubscriberBuilder};
 use regex::Regex;
@@ -62,6 +62,12 @@ struct Args {
     /// Exclude scenarios that match the given regex
     #[arg(long)]
     exclude: Option<Regex>,
+    /// Store uploaded recon-intel (TARPS) photos as files in this directory
+    /// instead of as blobs in the stats DB. bfdb creates it if missing and
+    /// clears it on a campaign reset. Recommended for any real deployment --
+    /// TARPS PNGs are large and a busy round can hold hundreds.
+    #[arg(long)]
+    intel_dir: Option<PathBuf>,
     /// The web address to listen on
     #[arg(long)]
     listen_address: SocketAddr,
@@ -2130,10 +2136,7 @@ async fn api_intel_upload(
         note: None,
     };
     task::block_in_place(|| {
-        db.intel_put_image(
-            image_id,
-            IntelImage { content_type, data: body.to_vec() },
-        )?;
+        db.intel_put_image(image_id, content_type, body.to_vec())?;
         db.intel_put(cap_id, cap.clone())
     })?;
     log::info!(
@@ -2164,12 +2167,12 @@ async fn api_intel_get_image(
     if !c.god_mode && cap.side != c.side {
         return Err(anyhow::anyhow!("not authorized for this coalition's intel").into());
     }
-    let img = task::block_in_place(|| db.intel_get_image(&cap.image_id))?
+    let (content_type, bytes) = task::block_in_place(|| db.intel_get_image(&cap.image_id))?
         .ok_or_else(|| anyhow::anyhow!("image not found"))?;
     Ok(warp::http::Response::builder()
-        .header("content-type", img.content_type)
+        .header("content-type", content_type)
         .header("cache-control", "private, max-age=31536000, immutable")
-        .body(img.data)
+        .body(bytes)
         .unwrap())
 }
 
@@ -3209,6 +3212,10 @@ async fn main() -> Result<()> {
             StatsDb::new_offline(args.db, args.stats_dir, args.stats_jsonl)?
         }
     };
+    db.set_intel_dir(args.intel_dir.clone())?;
+    if let Some(d) = &args.intel_dir {
+        log::info!("recon intel photos stored on disk at {}", d.display());
+    }
 
     let auth_cfg: Option<AuthConfig> = match (
         args.discord_client_id,

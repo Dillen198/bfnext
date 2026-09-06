@@ -1,5 +1,5 @@
 use crate::db_id;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use arrayvec::ArrayVec;
 use bfprotocols::{
     cfg::{Cfg, LifeType, UnitTag, UnitTags, Vehicle},
@@ -154,13 +154,14 @@ pub(crate) struct IntelAdjust {
     pub(crate) opacity: Option<f64>,
 }
 
-/// Raw bytes of an uploaded recon photo, keyed by `IntelCapture.image_id`
-/// in `intel_images`. Served only to same-coalition viewers (unlike wiki
-/// images, which are public).
+/// Index row for an uploaded recon photo, keyed by `IntelCapture.image_id`
+/// in `intel_images`. `data` holds the bytes when they live in the DB;
+/// `None` means the bytes are a file at `<intel_dir>/<image_id>` on disk
+/// (see `--intel-dir`). Served only to same-coalition viewers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct IntelImage {
     pub(crate) content_type: std::string::String,
-    pub(crate) data:         Vec<u8>,
+    pub(crate) data:         Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -539,8 +540,12 @@ pub(crate) struct StatsDbInner {
     // Recon intel (TARPS) captures, keyed (RoundId, capture Uuid). Per-round,
     // per-coalition; wiped by reset_campaign_data.
     intel_captures: Tree<(RoundId, Uuid), IntelCapture>,
-    // Recon intel photo bytes, keyed by IntelCapture.image_id.
+    // Recon intel photo index, keyed by IntelCapture.image_id. The bytes are
+    // inline unless `intel_dir` is set, in which case they're files on disk.
     intel_images: Tree<Uuid, IntelImage>,
+    // When set (--intel-dir), recon photos are stored as files here rather
+    // than as blobs in the DB. Set once at startup via set_intel_dir.
+    intel_dir: Arc<RwLock<Option<PathBuf>>>,
     // Live bflib engine log, streamed over netidx from the running DCS mission
     // (distinct from bfdb's own process log)
     engine_log_tx: broadcast::Sender<std::string::String>,
@@ -747,6 +752,7 @@ impl StatsDb {
             wiki_images: Tree::open(&db, "wiki_images")?,
             intel_captures: Tree::open(&db, "intel_captures")?,
             intel_images: Tree::open(&db, "intel_images")?,
+            intel_dir: Arc::new(RwLock::new(None)),
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
             engine_error_history: Arc::new(StdMutex::new(VecDeque::new())),
@@ -845,6 +851,7 @@ impl StatsDb {
             wiki_images: Tree::open(&db, "wiki_images")?,
             intel_captures: Tree::open(&db, "intel_captures")?,
             intel_images: Tree::open(&db, "intel_images")?,
+            intel_dir: Arc::new(RwLock::new(None)),
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
             engine_error_history: Arc::new(StdMutex::new(VecDeque::new())),
@@ -1773,7 +1780,7 @@ impl StatsDb {
         }
         for (rid, id) in stale {
             if let Some(cap) = self.intel_captures.remove(&(rid, id))? {
-                let _ = self.intel_images.remove(&cap.image_id)?;
+                self.intel_remove_image(&cap.image_id)?;
             }
         }
         out.sort_by_key(|(_, c)| c.captured_at.unwrap_or(c.uploaded_at));
@@ -1801,19 +1808,74 @@ impl StatsDb {
         Ok(())
     }
 
-    pub(crate) fn intel_put_image(&self, id: Uuid, img: IntelImage) -> Result<()> {
-        self.intel_images.insert(&id, &img)?;
+    /// Current on-disk photo directory, if `--intel-dir` was set.
+    pub(crate) fn intel_dir(&self) -> Option<PathBuf> {
+        self.intel_dir.read().ok().and_then(|g| g.clone())
+    }
+
+    /// Point recon-photo storage at a directory on disk (creating it), or
+    /// `None` to keep photos as blobs in the DB. Called once at startup.
+    pub(crate) fn set_intel_dir(&self, dir: Option<PathBuf>) -> Result<()> {
+        if let Some(d) = &dir {
+            std::fs::create_dir_all(d)
+                .with_context(|| format!("creating --intel-dir {}", d.display()))?;
+        }
+        *self.intel_dir.write().unwrap() = dir;
         Ok(())
     }
 
-    pub(crate) fn intel_get_image(&self, id: &Uuid) -> Result<Option<IntelImage>> {
-        self.intel_images.get(id)
+    pub(crate) fn intel_put_image(
+        &self,
+        id: Uuid,
+        content_type: std::string::String,
+        bytes: Vec<u8>,
+    ) -> Result<()> {
+        let row = match self.intel_dir() {
+            Some(dir) => {
+                std::fs::create_dir_all(&dir)?;
+                std::fs::write(dir.join(id.to_string()), &bytes)
+                    .with_context(|| format!("writing intel image {id} to {}", dir.display()))?;
+                IntelImage { content_type, data: None }
+            }
+            None => IntelImage { content_type, data: Some(bytes) },
+        };
+        self.intel_images.insert(&id, &row)?;
+        Ok(())
+    }
+
+    /// Resolve an image to `(content_type, bytes)`, reading from disk if it
+    /// was stored there.
+    pub(crate) fn intel_get_image(&self, id: &Uuid) -> Result<Option<(std::string::String, Vec<u8>)>> {
+        let Some(row) = self.intel_images.get(id)? else { return Ok(None) };
+        let bytes = match row.data {
+            Some(b) => b,
+            None => {
+                let dir = self
+                    .intel_dir()
+                    .ok_or_else(|| anyhow!("intel image {id} is on disk but --intel-dir is not set"))?;
+                std::fs::read(dir.join(id.to_string()))
+                    .with_context(|| format!("reading intel image {id} from {}", dir.display()))?
+            }
+        };
+        Ok(Some((row.content_type, bytes)))
+    }
+
+    /// Drop an image row and its on-disk file, if any. Best effort on the file.
+    fn intel_remove_image(&self, image_id: &Uuid) -> Result<()> {
+        if let Some(row) = self.intel_images.remove(image_id)? {
+            if row.data.is_none() {
+                if let Some(dir) = self.intel_dir() {
+                    let _ = std::fs::remove_file(dir.join(image_id.to_string()));
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn intel_delete(&self, round: RoundId, id: &Uuid) -> Result<bool> {
         match self.intel_captures.remove(&(round, *id))? {
             Some(cap) => {
-                let _ = self.intel_images.remove(&cap.image_id)?;
+                self.intel_remove_image(&cap.image_id)?;
                 Ok(true)
             }
             None => Ok(false),
@@ -1821,6 +1883,15 @@ impl StatsDb {
     }
 
     pub(crate) fn intel_purge_all(&self) -> Result<()> {
+        // Remove on-disk files before clearing the index.
+        for r in self.intel_images.iter() {
+            let (id, row) = r?;
+            if row.data.is_none() {
+                if let Some(dir) = self.intel_dir() {
+                    let _ = std::fs::remove_file(dir.join(id.to_string()));
+                }
+            }
+        }
         self.intel_captures.clear()?;
         self.intel_images.clear()?;
         Ok(())
@@ -2864,10 +2935,59 @@ impl StatsDb {
         // Trails & weather
         self.trail_points.clear()?;
         if let Ok(mut w) = self.latest_weather.write() { *w = None; }
-        // Recon intel (TARPS) -- per-round picture, gone on reset
-        self.intel_captures.clear()?;
-        self.intel_images.clear()?;
+        // Recon intel (TARPS) -- per-round picture, gone on reset (incl. any
+        // on-disk photo files)
+        self.intel_purge_all()?;
         // auth_sessions, auth_states → preserved
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod intel_storage_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn on_disk_photo_round_trip() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-intel-test-{}", Uuid::new_v4()));
+        let db_path = tmp.join("db");
+        let img_dir = tmp.join("photos");
+        let db = StatsDb::new_offline(&db_path, None, None).unwrap();
+        db.set_intel_dir(Some(img_dir.clone())).unwrap();
+        assert!(img_dir.is_dir(), "--intel-dir should be created");
+
+        let id = Uuid::new_v4();
+        let bytes = vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4];
+        db.intel_put_image(id, "image/png".into(), bytes.clone()).unwrap();
+
+        // the row carries no inline bytes, the file holds them
+        let row = db.intel_images.get(&id).unwrap().unwrap();
+        assert!(row.data.is_none());
+        assert_eq!(std::fs::read(img_dir.join(id.to_string())).unwrap(), bytes);
+
+        // reads resolve back to the same (content_type, bytes)
+        let (ct, got) = db.intel_get_image(&id).unwrap().unwrap();
+        assert_eq!(ct, "image/png");
+        assert_eq!(got, bytes);
+
+        // purge removes both the row and the file
+        db.intel_purge_all().unwrap();
+        assert!(db.intel_images.get(&id).unwrap().is_none());
+        assert!(!img_dir.join(id.to_string()).exists());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn in_db_photo_when_no_dir() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-intel-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let id = Uuid::new_v4();
+        db.intel_put_image(id, "image/jpeg".into(), vec![1, 2, 3]).unwrap();
+        let row = db.intel_images.get(&id).unwrap().unwrap();
+        assert_eq!(row.data.as_deref(), Some(&[1, 2, 3][..]));
+        let (ct, got) = db.intel_get_image(&id).unwrap().unwrap();
+        assert_eq!((ct.as_str(), got), ("image/jpeg", vec![1, 2, 3]));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
