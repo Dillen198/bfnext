@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Polyline, Rectangle, Circle, Marker, Pane, useMap, useMapEvents } from 'react-leaflet'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Polyline, Rectangle, Circle, Marker, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import type { IntelMarkup, IntelMarkupKind } from '../api'
 
@@ -36,6 +36,18 @@ export default function IntelMarkupLayer({
   const [draft, setDraft] = useState<LL[] | null>(null)      // points committed so far
   const [cursor, setCursor] = useState<LL | null>(null)      // live pointer for previews
   const drawingPencil = useRef(false)
+
+  // A dedicated pane stacked above the warp-photo `<img>`s (which sit at
+  // z-index ~500 inside Leaflet's overlayPane) so markup draws on top of the
+  // imagery. Created imperatively and reused -- a react-leaflet <Pane> here
+  // churns the SVG renderer on every draft re-render and makes the map
+  // flicker. Must exist before the child layers mount, hence useMemo (runs
+  // during render) not useEffect.
+  const PANE = 'intel-markup'
+  useMemo(() => {
+    const pane = map.getPane(PANE) ?? map.createPane(PANE)
+    pane.style.zIndex = '640'
+  }, [map])
 
   // Toggle map drag / cursor while a tool is active.
   useEffect(() => {
@@ -109,26 +121,23 @@ export default function IntelMarkupLayer({
     switch (m.kind) {
       case 'pencil':
       case 'line':
-        return <Polyline key={key} positions={m.points} pathOptions={opts} eventHandlers={handlers} />
+        return <Polyline key={key} pane={PANE} positions={m.points} pathOptions={opts} eventHandlers={handlers} />
       case 'rect':
-        return <Rectangle key={key} bounds={L.latLngBounds(m.points[0], m.points[1] ?? m.points[0])} pathOptions={opts} eventHandlers={handlers} />
+        return <Rectangle key={key} pane={PANE} bounds={L.latLngBounds(m.points[0], m.points[1] ?? m.points[0])} pathOptions={opts} eventHandlers={handlers} />
       case 'circle': {
         const r = m.points[1] ? L.latLng(m.points[0]).distanceTo(L.latLng(m.points[1])) : 1
-        return <Circle key={key} center={m.points[0]} radius={r} pathOptions={opts} eventHandlers={handlers} />
+        return <Circle key={key} pane={PANE} center={m.points[0]} radius={r} pathOptions={opts} eventHandlers={handlers} />
       }
       case 'x':
-        return <Marker key={key} position={m.points[0]} icon={xIcon(m.color, 22 + m.width)}
+        return <Marker key={key} pane={PANE} position={m.points[0]} icon={xIcon(m.color, 22 + m.width)}
           eventHandlers={id != null ? { click: () => onSelect(id) } : undefined} />
       default:
         return null
     }
   }
 
-  // Own pane, stacked above the warp-photo `<img>`s (which sit at z-index ~500
-  // inside Leaflet's overlayPane) so the markup always draws on top of the
-  // imagery, not behind it.
   return (
-    <Pane name="intel-markup" style={{ zIndex: 640 }}>
+    <>
       {items.map(m => renderShape(m as unknown as { kind: string; points: LL[]; color: string; width: number }, m.id, m.id))}
       {draft && draft.length > 0 && renderShape(
         {
@@ -138,6 +147,6 @@ export default function IntelMarkupLayer({
         },
         'draft',
       )}
-    </Pane>
+    </>
   )
 }
