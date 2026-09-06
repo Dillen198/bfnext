@@ -4,12 +4,15 @@ import L from 'leaflet'
 import { matrix3dForQuad } from '../lib/warp'
 import type { LatLon } from '../lib/geo'
 
-const MAX_DIM = 1000        // cap the working bitmap; the warp softens it anyway
+// Only downscale genuinely huge frames — keep native resolution otherwise so
+// the imagery stays sharp when you zoom in. A 2560px cap is ~15 MB of canvas
+// per frame; with a busy run that's the ceiling worth paying.
+const MAX_DIM = 2560
 
-/** Draw `src` into a canvas (capped at MAX_DIM on the long edge), knock the
- *  near-black TARPS matte out to transparent and feather the frame edges so
- *  overlapping frames cross-fade. Resolves the prepared canvas, or null if
- *  the pixels can't be read (tainted) or the load fails. */
+/** Draw `src` into a canvas (long edge capped at MAX_DIM), knock the near-black
+ *  TARPS matte out to transparent and feather the frame edges so overlapping
+ *  frames cross-fade. Resolves the prepared canvas, or null if the pixels
+ *  can't be read (tainted) or the load fails. */
 function prepareCanvas(src: string): Promise<HTMLCanvasElement | null> {
   return new Promise(resolve => {
     const im = new Image()
@@ -26,10 +29,12 @@ function prepareCanvas(src: string): Promise<HTMLCanvasElement | null> {
         cv.width = w; cv.height = h
         const ctx = cv.getContext('2d')
         if (!ctx) return resolve(null)
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
         ctx.drawImage(im, 0, 0, w, h)
         const data = ctx.getImageData(0, 0, w, h)   // throws if tainted
         const px = data.data
-        const feather = Math.max(1, Math.round(Math.min(w, h) * 0.06))
+        const feather = Math.max(1, Math.round(Math.min(w, h) * 0.035))
         for (let y = 0; y < h; y++) {
           const ey = y < h - 1 - y ? y : h - 1 - y
           for (let x = 0; x < w; x++) {

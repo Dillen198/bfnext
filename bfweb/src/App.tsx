@@ -18,6 +18,7 @@ import AboutPage from './pages/AboutPage'
 import { PilotPage } from './pages/PilotPage'
 import CockpitPage from './pages/CockpitPage'
 import IntelPage from './pages/IntelPage'
+import IntelTestPage from './pages/IntelTestPage'
 import { useAuth } from './context/AuthContext'
 
 const queryClient = new QueryClient({
@@ -62,6 +63,7 @@ export default function App() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/cockpit" element={<CockpitPage />} />
+              <Route path="/inteltest" element={<IntelTestPage />} />
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
                 <Route path="map" element={<MapPage />} />
