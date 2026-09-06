@@ -1708,24 +1708,35 @@ impl StatsDb {
 
     // ── Recon intel (TARPS) ─────────────────────────────────────────────────
 
-    /// The coalition a pilot is registered to in the currently-active round,
-    /// or `None` if there's no active round or the pilot has no Blue/Red side
-    /// in it. This is the gate for who may contribute / see recon intel.
+    /// The coalition a pilot belongs to this campaign, for the recon-intel
+    /// gate. Prefers the active round's registration, then falls back to the
+    /// most recent Blue/Red side the pilot held in *any* round on record.
+    ///
+    /// The campaign-level "locked to one coalition until reset" lock lives in
+    /// bflib's game DB, not here -- bfdb only learns a pilot's side from the
+    /// `Register`/`Sideswitch` stats bflib emits when they connect to the
+    /// server, and each mission restart opens a fresh round. But
+    /// `reset_campaign_data` wipes `round_info`, so "any round still on
+    /// record" == "this campaign", which is the same lock. Without this
+    /// fallback a registered pilot who simply hasn't rejoined the server
+    /// since the last restart would be walled out of their own coalition's
+    /// intel.
     pub(crate) fn pilot_current_side(&self, ucid: &Ucid) -> Result<Option<Side>> {
-        let Some(rid) = self
-            .latest_rounds()?
-            .into_iter()
-            .find(|(_, _, r)| r.end.is_none())
-            .map(|(_, rid, _)| rid)
-        else {
-            return Ok(None);
-        };
-        Ok(self
-            .pilots
-            .round_info
-            .get(&(*ucid, rid))?
-            .map(|ri| ri.side.1)
-            .filter(|s| matches!(s, Side::Blue | Side::Red)))
+        let active = self.active_round_id()?;
+        let mut best: Option<(DateTime<Utc>, Side)> = None;
+        for r in self.pilots.round_info.scan_prefix(ucid)? {
+            let ((_, rid), ri) = r?;
+            if !matches!(ri.side.1, Side::Blue | Side::Red) {
+                continue;
+            }
+            if Some(rid) == active {
+                return Ok(Some(ri.side.1));
+            }
+            if best.map_or(true, |(t, _)| ri.side.0 > t) {
+                best = Some(ri.side);
+            }
+        }
+        Ok(best.map(|(_, s)| s))
     }
 
     /// The active round id, if any.

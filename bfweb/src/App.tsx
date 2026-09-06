@@ -40,9 +40,11 @@ function RequireIntelAccess({ children }: { children: ReactNode }) {
         <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: '1.4rem', letterSpacing: '0.12em', color: 'var(--text)' }}>
           NO COALITION
         </div>
-        <div style={{ maxWidth: 380, lineHeight: 1.6 }}>
-          Recon intel is locked to your coalition. Slot in on the server this
-          round so the campaign knows which side you're on, then reload.
+        <div style={{ maxWidth: 400, lineHeight: 1.6 }}>
+          Recon intel is locked to your coalition, and the dashboard can't tell
+          which side you're on. Make sure your Discord is linked
+          (<code>-linkme</code> in DCS chat), and that you've registered a
+          coalition on the server this campaign, then reload.
         </div>
       </div>
     )
