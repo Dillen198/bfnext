@@ -156,7 +156,7 @@ export default function IntelPage() {
   const [adminSide, setAdminSide] = useState<'blue' | 'red' | 'all'>('blue')
   const [tileKey, setTileKey] = useState<IntelTileKey | 'grid'>('satellite')
   const [showImagery, setShowImagery] = useState(true)
-  const [keyBlack, setKeyBlack] = useState(true)   // drop the black letterbox/matte around TARPS frames
+  const [keyBlack, setKeyBlack] = useState(true)   // "BLEND": feather + lighten-blend overlapping frames into a mosaic
   const [showGrid, setShowGrid] = useState(false)
   const [showPath, setShowPath] = useState(true)
   const [lightbox, setLightbox] = useState<IntelCapture | null>(null)
@@ -662,8 +662,8 @@ export default function IntelPage() {
           <button onClick={() => setShowImagery(v => !v)} title="Toggle photo overlays" style={toggleBtn(showImagery)}>
             {showImagery ? <Eye size={11} /> : <EyeOff size={11} />} PHOTOS
           </button>
-          <button onClick={() => setKeyBlack(v => !v)} title="Drop the black matte around each TARPS frame" style={toggleBtn(keyBlack)}>
-            <Eraser size={11} /> DE-MATTE
+          <button onClick={() => setKeyBlack(v => !v)} title="Feather + lighten-blend overlapping frames into one mosaic (drops the black matte and dark seams)" style={toggleBtn(keyBlack)}>
+            <Eraser size={11} /> BLEND
           </button>
           <button onClick={() => setShowPath(v => !v)} title="Toggle flight-path markers" style={toggleBtn(showPath)}>
             <Navigation size={11} /> PATH
