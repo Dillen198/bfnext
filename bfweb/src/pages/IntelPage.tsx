@@ -8,8 +8,9 @@ import L from 'leaflet'
 import {
   Camera, Trash2, Crosshair, X, Upload, MapPin, Move3d, Eye, EyeOff,
   Grid3x3, Navigation, Play, Pause, SendToBack, ChevronRight,
-  MousePointer2, Pencil, Minus, Square, Circle as CircleIcon,
+  MousePointer2, Pencil, Minus, Square, Circle as CircleIcon, Download, Maximize2,
 } from 'lucide-react'
+import html2canvas from 'html2canvas'
 import { api, type IntelCapture, type IntelMarkupKind, type Objective, type Frontlines } from '../api'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -21,6 +22,13 @@ import IntelWarpOverlay from './IntelWarpOverlay'
 import IntelMarkupLayer, { type MarkupTool } from './IntelMarkupLayer'
 
 const MARKUP_COLORS = ['#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ffffff']
+const RUN_COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#a855f7', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16']
+function runColor(name: string, override?: string): string {
+  if (override) return override
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0
+  return RUN_COLORS[Math.abs(h) % RUN_COLORS.length]
+}
 
 const REFRESH_MS = 20_000
 const COL_BLUE = '#4a8fd4'
@@ -163,6 +171,16 @@ export default function IntelPage() {
   // collapsed and which uploaders are hidden from the map.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [hiddenBy, setHiddenBy] = useState<Set<string>>(new Set())
+  const [runColors, setRunColors] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('intel_run_colors') || '{}') } catch { return {} }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('intel_run_colors', JSON.stringify(runColors)) } catch { /* quota */ }
+  }, [runColors])
+  const [globalOpacity, setGlobalOpacity] = useState(1)
+  const [selCap, setSelCap] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const mapWrapRef = useRef<HTMLDivElement | null>(null)
 
   // Timeline
   const [cutoff, setCutoff] = useState(1)                   // 0..1, show captures up to this point in the run
@@ -222,6 +240,23 @@ export default function IntelPage() {
     try { await api.intel.markup.del(id); setSelMarkup(null); refreshMarkup() }
     catch (e) { window.alert(String(e)) }
   }, [refreshMarkup])
+
+  const exportPng = useCallback(async () => {
+    const el = mapWrapRef.current
+    if (!el) return
+    setExporting(true)
+    try {
+      const canvas = await html2canvas(el, { useCORS: true, backgroundColor: '#0b0e14', logging: false })
+      const a = document.createElement('a')
+      a.href = canvas.toDataURL('image/png')
+      a.download = `recon-intel-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.png`
+      a.click()
+    } catch (e) {
+      window.alert(`Export failed: ${e}`)
+    } finally {
+      setExporting(false)
+    }
+  }, [])
 
   // Natural image dimensions → correct footprint / warp aspect ratio.
   useEffect(() => {
@@ -507,6 +542,12 @@ export default function IntelPage() {
                   <span style={{ color: 'var(--text-dim)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.12s' }}>
                     <ChevronRight size={12} />
                   </span>
+                  <label onClick={e => e.stopPropagation()} title="Run colour"
+                    style={{ width: 12, height: 12, borderRadius: 3, flexShrink: 0, cursor: 'pointer', position: 'relative', background: runColor(g.name, runColors[g.name]) }}>
+                    <input type="color" value={runColor(g.name, runColors[g.name])}
+                      onChange={e => setRunColors(rc => ({ ...rc, [g.name]: e.target.value }))}
+                      style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
+                  </label>
                   <span style={{ flex: 1, color: 'var(--text)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {g.name}
                   </span>
@@ -568,6 +609,33 @@ export default function IntelPage() {
             )
           })}
         </div>
+
+        {/* SELECTED capture details */}
+        {selCap && (() => {
+          const c = placed.find(x => x.id === selCap)
+          if (!c) return null
+          return (
+            <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-elevated)', padding: '10px 14px', fontSize: '0.66rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <span style={{ fontSize: '0.6rem', letterSpacing: '0.12em', color: 'var(--text-dim)', flex: 1 }}>SELECTED</span>
+                <button onClick={() => setLightbox(c)} title="View full photo"
+                  style={{ background: 'var(--accent)', border: 'none', color: '#fff', borderRadius: 3, padding: '2px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.58rem' }}>
+                  <Maximize2 size={10} /> VIEW
+                </button>
+                <button onClick={() => setSelCap(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}><X size={12} /></button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 8px', fontFamily: FONT_MONO, color: 'var(--text-muted)' }}>
+                <span style={{ color: 'var(--text-dim)' }}>File</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.filename || '—'}</span>
+                <span style={{ color: 'var(--text-dim)' }}>Run</span><span>{c.uploaded_by_name}</span>
+                <span style={{ color: 'var(--text-dim)' }}>Pos</span><span>{fmtLatLon(c.lat, c.lon)}</span>
+                <span style={{ color: 'var(--text-dim)' }}>Alt</span><span>{c.alt_ft != null ? `${Math.round(c.alt_ft)} ft` : '—'}</span>
+                <span style={{ color: 'var(--text-dim)' }}>Hdg</span><span>{c.heading_deg != null ? `${Math.round(c.heading_deg)}°` : '—'}</span>
+                <span style={{ color: 'var(--text-dim)' }}>Att</span><span>{c.pitch_deg != null ? `pitch ${c.pitch_deg}°  roll ${c.roll_deg ?? 0}°` : '—'}</span>
+                <span style={{ color: 'var(--text-dim)' }}>Shot</span><span>{c.captured_at ? new Date(c.captured_at).toLocaleString() : '—'}</span>
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       {/* ── Map ───────────────────────────────────────────────────── */}
@@ -598,6 +666,15 @@ export default function IntelPage() {
               ...toggleBtn(tileKey === k), gap: 0,
             }}>{k === 'grid' ? 'GRID MAP' : INTEL_TILE_LAYERS[k].label}</button>
           ))}
+          <button onClick={exportPng} disabled={exporting} title="Export the current view as PNG"
+            style={{ ...toggleBtn(false), opacity: exporting ? 0.5 : 1 }}>
+            <Download size={11} /> {exporting ? '…' : 'PNG'}
+          </button>
+          <label style={{ ...toggleBtn(false), gap: 5, cursor: 'default' }} title="Overall photo opacity">
+            OPACITY
+            <input type="range" min={0.1} max={1} step={0.05} value={globalOpacity}
+              onChange={e => setGlobalOpacity(Number(e.target.value))} style={{ width: 64 }} />
+          </label>
         </div>
 
         {placing && (
@@ -633,9 +710,9 @@ export default function IntelPage() {
           </div>
         )}
 
-        <div style={{ flex: 1, position: 'relative' }}>
+        <div ref={mapWrapRef} style={{ flex: 1, position: 'relative' }}>
           <MapContainer center={[35, 40]} zoom={6} style={{ height: '100%', width: '100%' }}>
-            {tile && <TileLayer url={tile.url} attribution={tile.attr} maxZoom={18} />}
+            {tile && <TileLayer url={tile.url} attribution={tile.attr} maxZoom={18} crossOrigin="" />}
             <ScaleControl position="bottomleft" />
             <FlyToFirst captures={captures} objectives={objectives} />
             {placing && <PlacementClicks onPick={placeAt} />}
@@ -663,14 +740,16 @@ export default function IntelPage() {
 
             {/* Recon captures */}
             {placed.map(c => {
-              const col = sideColor(c.side)
+              const col = runColor(c.uploaded_by_name, runColors[c.uploaded_by_name])
               const isAligning = aligning?.id === c.id
+              const isSel = selCap === c.id
               const shown = isAligning || visible.includes(c)
               const quad: LatLon[] | null = isAligning ? alignCorners : quadFor(c, dims[c.id])
               const d = dims[c.id]
               const hasQuad = !!quad && quad.length === 4
               const showWarp = shown && showImagery && !!d && hasQuad
-              const opacity = isAligning ? alignOpacity : (opa[c.id] ?? c.adjust?.opacity ?? DEFAULT_OPACITY)
+              const baseOpacity = isAligning ? alignOpacity : (opa[c.id] ?? c.adjust?.opacity ?? DEFAULT_OPACITY)
+              const opacity = baseOpacity * globalOpacity
               return (
                 <Fragment key={c.id}>
                   {showWarp && d && quad && (
@@ -682,7 +761,7 @@ export default function IntelPage() {
                       opacity={opacity}
                       interactive={!isAligning}
                       zIndex={zOf(c.id)}
-                      onClick={() => setLightbox(c)}
+                      onClick={() => setSelCap(c.id)}
                       onContextMenu={() => sendBack(c.id)}
                     />
                   )}
@@ -690,19 +769,19 @@ export default function IntelPage() {
                     <Polygon positions={quad}
                       pathOptions={{
                         color: isAligning ? '#fff' : col,
-                        weight: isAligning ? 2 : 1,
-                        opacity: isAligning ? 0.9 : (showWarp ? 0.4 : 0.75),
+                        weight: isAligning || isSel ? 2.5 : 1,
+                        opacity: isAligning ? 0.9 : (isSel ? 0.95 : (showWarp ? 0.4 : 0.75)),
                         fillOpacity: showWarp ? 0 : 0.08,
                         dashArray: isAligning ? '6 4' : undefined,
                       }}
                       eventHandlers={{
-                        click: () => !isAligning && setLightbox(c),
+                        click: () => !isAligning && setSelCap(c.id),
                         contextmenu: () => sendBack(c.id),
                       }} />
                   )}
                   {shown && showPath && !isAligning && (
                     <Marker position={[c.lat, c.lon]} icon={cameraIcon(c.heading_deg, col)}
-                      eventHandlers={{ click: () => setLightbox(c), contextmenu: () => sendBack(c.id) }}>
+                      eventHandlers={{ click: () => setSelCap(c.id), contextmenu: () => sendBack(c.id) }}>
                       <Tooltip direction="top" offset={[0, -12]}>
                         <div style={{ fontFamily: FONT_MONO, fontSize: '0.7rem' }}>
                           <div>{c.filename || 'capture'}</div>
