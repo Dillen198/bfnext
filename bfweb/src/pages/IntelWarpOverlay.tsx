@@ -4,29 +4,67 @@ import L from 'leaflet'
 import { matrix3dForQuad } from '../lib/warp'
 import type { LatLon } from '../lib/geo'
 
-/** Load `url`, knock out the near-black border/letterbox pixels (DCS TARPS
- *  screenshots are matted on black), and hand back an object URL for the
- *  cleaned PNG. Falls back to the original url if the canvas is tainted or
- *  anything throws. */
-function keyOutBlack(url: string): Promise<{ href: string; revoke: boolean }> {
+const MAX_CANVAS_DIM = 1600
+const TARGET_LUMA = 150
+
+/** Load `url` and normalise the frame so a run of overlapping warped photos
+ *  reads as one mosaic instead of a stack of hard-edged, unevenly-exposed
+ *  wedges:
+ *   - drop the near-black matte (DCS TARPS shots are letterboxed on black),
+ *   - feather the frame edges so neighbours cross-fade,
+ *   - pull each frame's mean brightness toward a common target so a dark
+ *     capture doesn't sit on the map as a grey box.
+ *  Returns an object URL for the processed PNG; falls back to the original
+ *  url if the canvas is tainted or anything throws. */
+function cleanPhoto(url: string): Promise<{ href: string; revoke: boolean }> {
   return new Promise(resolve => {
     const im = new Image()
     im.crossOrigin = 'use-credentials'
     im.onload = () => {
       try {
-        const w = im.naturalWidth, h = im.naturalHeight
+        const scale = Math.min(1, MAX_CANVAS_DIM / Math.max(im.naturalWidth, im.naturalHeight))
+        const w = Math.max(1, Math.round(im.naturalWidth * scale))
+        const h = Math.max(1, Math.round(im.naturalHeight * scale))
         const cv = document.createElement('canvas')
         cv.width = w; cv.height = h
         const ctx = cv.getContext('2d')
         if (!ctx) return resolve({ href: url, revoke: false })
-        ctx.drawImage(im, 0, 0)
+        ctx.drawImage(im, 0, 0, w, h)
         const data = ctx.getImageData(0, 0, w, h)
         const px = data.data
-        for (let i = 0; i < px.length; i += 4) {
-          const m = Math.max(px[i], px[i + 1], px[i + 2])
-          if (m <= 14) px[i + 3] = 0
-          else if (m < 44) px[i + 3] = Math.round((px[i + 3] * (m - 14)) / 30)
+        const feather = Math.max(2, Math.round(Math.min(w, h) * 0.08))
+
+        // pass 1 — alpha (matte + edge feather) and mean luminance of the kept pixels
+        let lumaSum = 0, lumaN = 0
+        for (let y = 0; y < h; y++) {
+          const ey = y < h - 1 - y ? y : h - 1 - y
+          for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4
+            const r = px[i], g = px[i + 1], b = px[i + 2]
+            const m = r > g ? (r > b ? r : b) : (g > b ? g : b)
+            if (m <= 14) { px[i + 3] = 0; continue }
+            let a = px[i + 3]
+            if (m < 44) a = (a * (m - 14)) / 30
+            const e = x < ey ? (x < w - 1 - x ? x : w - 1 - x) : ey
+            if (e < feather) a = (a * e) / feather
+            px[i + 3] = a < 0 ? 0 : (a > 255 ? 255 : Math.round(a))
+            if (a > 24) { lumaSum += 0.299 * r + 0.587 * g + 0.114 * b; lumaN++ }
+          }
         }
+
+        // pass 2 — exposure match
+        const mean = lumaN ? lumaSum / lumaN : TARGET_LUMA
+        let gain = TARGET_LUMA / Math.max(1, mean)
+        gain = gain < 0.65 ? 0.65 : gain > 1.7 ? 1.7 : gain
+        if (Math.abs(gain - 1) > 0.03) {
+          for (let i = 0; i < px.length; i += 4) {
+            if (px[i + 3] === 0) continue
+            px[i] = Math.min(255, px[i] * gain)
+            px[i + 1] = Math.min(255, px[i + 1] * gain)
+            px[i + 2] = Math.min(255, px[i + 2] * gain)
+          }
+        }
+
         ctx.putImageData(data, 0, 0)
         cv.toBlob(b => {
           if (b) resolve({ href: URL.createObjectURL(b), revoke: true })
@@ -95,7 +133,7 @@ export default function IntelWarpOverlay({
     let cancelled = false
     let objectUrl: string | null = null
     if (keyBlack) {
-      keyOutBlack(url).then(({ href, revoke }) => {
+      cleanPhoto(url).then(({ href, revoke }) => {
         if (cancelled) { if (revoke) URL.revokeObjectURL(href); return }
         objectUrl = revoke ? href : null
         img.src = href
