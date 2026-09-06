@@ -188,7 +188,7 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
             placeholder="# Heading&#10;&#10;Write markdown here… (drag & drop, paste, or use Insert Image for screenshots)"
           />
           <div className="wiki-prose" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 3, padding: '1rem 1.25rem', overflowY: 'auto', maxHeight: 480, fontSize: '0.82rem' }}>
-            <WikiMarkdown>{content || '*Preview appears here*'}</WikiMarkdown>
+            <WikiMarkdown slug={slug}>{content || '*Preview appears here*'}</WikiMarkdown>
           </div>
         </div>
         <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: 6 }}>
