@@ -101,6 +101,8 @@ export default function IntelWarpOverlay({
   const imgRef = useRef<HTMLImageElement | null>(null)
   const clickRef = useRef<(() => void) | undefined>(onClick)
   const ctxRef = useRef<(() => void) | undefined>(onContextMenu)
+  const opacityRef = useRef(opacity)
+  useEffect(() => { opacityRef.current = opacity }, [opacity])
   useEffect(() => { clickRef.current = onClick }, [onClick])
   useEffect(() => { ctxRef.current = onContextMenu }, [onContextMenu])
 
@@ -127,6 +129,14 @@ export default function IntelWarpOverlay({
     const onImgCtx = (e: MouseEvent) => { L.DomEvent.stop(e); e.preventDefault(); ctxRef.current?.() }
     img.addEventListener('click', onImgClick)
     img.addEventListener('contextmenu', onImgCtx)
+    // Stay invisible until the bitmap is actually decoded — otherwise a
+    // sized-but-src-less <img> flashes as a box while the (async) fetch +
+    // canvas pass runs, and with dozens of captures loading at once that's
+    // a screenful of dark rectangles.
+    img.style.opacity = '0'
+    img.style.transition = 'opacity 160ms linear'
+    const reveal = () => { img.dataset.ready = '1'; img.style.opacity = String(opacityRef.current) }
+    img.addEventListener('load', reveal)
     pane.appendChild(img)
     imgRef.current = img
 
@@ -146,6 +156,7 @@ export default function IntelWarpOverlay({
       cancelled = true
       img.removeEventListener('click', onImgClick)
       img.removeEventListener('contextmenu', onImgCtx)
+      img.removeEventListener('load', reveal)
       img.remove()
       imgRef.current = null
       if (objectUrl) URL.revokeObjectURL(objectUrl)
@@ -156,7 +167,7 @@ export default function IntelWarpOverlay({
   useEffect(() => {
     const img = imgRef.current
     if (!img) return
-    img.style.opacity = String(opacity)
+    if (img.dataset.ready === '1') img.style.opacity = String(opacity)
     img.style.pointerEvents = interactive ? 'auto' : 'none'
     img.style.cursor = interactive ? 'pointer' : 'default'
     if (zIndex != null) img.style.zIndex = String(zIndex)
