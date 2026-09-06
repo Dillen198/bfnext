@@ -4,33 +4,61 @@ import L from 'leaflet'
 import { matrix3dForQuad } from '../lib/warp'
 import type { LatLon } from '../lib/geo'
 
-// Feather mask — a single radial gradient that fades every edge/corner so
-// overlapping frames cross-blend instead of showing hard seams. Cheap: it's
-// one GPU-composited property, no per-pixel work.
-const FEATHER_MASK =
-  'radial-gradient(ellipse 150% 150% at 50% 50%, #000 58%, rgba(0,0,0,0) 94%)'
+const MAX_DIM = 1000        // cap the working bitmap; the warp softens it anyway
 
-/** The photos live in their own pane so `mix-blend-mode` blends them against
- *  each other (and a transparent backdrop) rather than the map tiles, and the
- *  whole mosaic then composites onto the map normally. */
-function photoPane(map: L.Map): HTMLElement {
-  let p = map.getPane('intel-photos')
-  if (!p) {
-    p = map.createPane('intel-photos')
-    p.style.zIndex = '450'
-    p.style.isolation = 'isolate'
-    p.style.pointerEvents = 'none'
-  }
-  return p
+/** Draw `src` into a canvas (capped at MAX_DIM on the long edge), knock the
+ *  near-black TARPS matte out to transparent and feather the frame edges so
+ *  overlapping frames cross-fade. Resolves the prepared canvas, or null if
+ *  the pixels can't be read (tainted) or the load fails. */
+function prepareCanvas(src: string): Promise<HTMLCanvasElement | null> {
+  return new Promise(resolve => {
+    const im = new Image()
+    im.crossOrigin = 'use-credentials'
+    im.decoding = 'async'
+    im.onerror = () => resolve(null)
+    im.onload = () => {
+      try {
+        const nw = im.naturalWidth || 1, nh = im.naturalHeight || 1
+        const scale = Math.min(1, MAX_DIM / Math.max(nw, nh))
+        const w = Math.max(1, Math.round(nw * scale))
+        const h = Math.max(1, Math.round(nh * scale))
+        const cv = document.createElement('canvas')
+        cv.width = w; cv.height = h
+        const ctx = cv.getContext('2d')
+        if (!ctx) return resolve(null)
+        ctx.drawImage(im, 0, 0, w, h)
+        const data = ctx.getImageData(0, 0, w, h)   // throws if tainted
+        const px = data.data
+        const feather = Math.max(1, Math.round(Math.min(w, h) * 0.06))
+        for (let y = 0; y < h; y++) {
+          const ey = y < h - 1 - y ? y : h - 1 - y
+          for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4
+            const r = px[i], g = px[i + 1], b = px[i + 2]
+            const mx = r > g ? (r > b ? r : b) : (g > b ? g : b)
+            if (mx <= 16) { px[i + 3] = 0; continue }
+            let a = px[i + 3]
+            if (mx < 46) a = (a * (mx - 16)) / 30            // fade the matte edge
+            const e = x < ey ? (x < w - 1 - x ? x : w - 1 - x) : ey
+            if (e < feather) a = (a * e) / feather           // feather frame border
+            px[i + 3] = a < 0 ? 0 : a > 255 ? 255 : a
+          }
+        }
+        ctx.putImageData(data, 0, 0)
+        resolve(cv)
+      } catch {
+        resolve(null)
+      }
+    }
+    im.src = src
+  })
 }
 
-/** Renders one recon photo perspective-warped onto a ground quad, as an
- *  `<img>` transformed with `matrix3d`. The image is hidden while its quad is
- *  degenerate (e.g. edge-on to the camera) and until its bitmap has decoded.
- *  With `blend` on (the default) the frame is edge-feathered and drawn with
- *  `mix-blend-mode: lighten`, so a run of overlapping captures reads as one
- *  mosaic — the black TARPS matte and darker frames drop out because a
- *  brighter neighbour always wins. */
+/** Renders one recon photo perspective-warped onto a ground quad. The photo
+ *  is prepared once (matte knocked out, edges feathered) into a `<canvas>`
+ *  which is then CSS `matrix3d`-warped onto the quad — falling back to a
+ *  plain `<img>` if the pixels can't be read. Hidden while the quad is
+ *  degenerate or the bitmap isn't ready. */
 export default function IntelWarpOverlay({
   url, corners, naturalW, naturalH, opacity, interactive, zIndex, keyBlack = true, onClick, onContextMenu,
 }: {
@@ -41,12 +69,14 @@ export default function IntelWarpOverlay({
   opacity: number
   interactive: boolean
   zIndex?: number
-  keyBlack?: boolean   // "blend": feather + lighten so overlaps mosaic cleanly
+  keyBlack?: boolean
   onClick?: () => void
   onContextMenu?: () => void
 }) {
   const map = useMap()
-  const imgRef = useRef<HTMLImageElement | null>(null)
+  const elRef = useRef<HTMLElement | null>(null)
+  const sizeRef = useRef({ w: naturalW, h: naturalH })
+  const cornersRef = useRef(corners)
   const clickRef = useRef<(() => void) | undefined>(onClick)
   const ctxRef = useRef<(() => void) | undefined>(onContextMenu)
   const opacityRef = useRef(opacity)
@@ -54,80 +84,98 @@ export default function IntelWarpOverlay({
   useEffect(() => { clickRef.current = onClick }, [onClick])
   useEffect(() => { ctxRef.current = onContextMenu }, [onContextMenu])
 
-  // Create / destroy the <img> element.
-  useEffect(() => {
-    const pane = photoPane(map)
-    const img = L.DomUtil.create('img', 'leaflet-zoom-hide') as HTMLImageElement
-    // Photos are served cross-origin from bfdb and gated on the session
-    // cookie, so the request has to carry credentials.
-    img.crossOrigin = 'use-credentials'
-    img.alt = ''
-    img.decoding = 'async'
-    img.draggable = false
-    Object.assign(img.style, {
-      position: 'absolute', left: '0', top: '0', transformOrigin: '0 0',
-      width: `${naturalW}px`, height: `${naturalH}px`,
-      // Tailwind's preflight (`img{max-width:100%;height:auto}`) otherwise
-      // clamps the image to the (near-zero-width) pane and collapses the warp
-      // — same fix MapPage uses for its sprite icons.
-      maxWidth: 'none', maxHeight: 'none',
-      // Hidden until the bitmap decodes — a sized <img> with no pixels yet
-      // flashes as a box, and with dozens of captures that's a screenful of
-      // rectangles during load.
-      opacity: '0',
-      transition: 'opacity 160ms linear',
+  const reproject = () => {
+    const node = elRef.current
+    if (!node) return
+    const { w, h } = sizeRef.current
+    const pts = cornersRef.current.map(c => {
+      const p = map.latLngToLayerPoint(L.latLng(c[0], c[1]))
+      return { x: p.x, y: p.y }
     })
-    if (keyBlack) {
-      img.style.mixBlendMode = 'lighten'
-      img.style.webkitMaskImage = FEATHER_MASK
-      img.style.maskImage = FEATHER_MASK
-    }
-    const onImgClick = (e: MouseEvent) => { L.DomEvent.stop(e); clickRef.current?.() }
-    const onImgCtx = (e: MouseEvent) => { L.DomEvent.stop(e); e.preventDefault(); ctxRef.current?.() }
-    const reveal = () => { img.dataset.ready = '1'; img.style.opacity = String(opacityRef.current) }
-    img.addEventListener('click', onImgClick)
-    img.addEventListener('contextmenu', onImgCtx)
-    img.addEventListener('load', reveal)
-    pane.appendChild(img)
-    imgRef.current = img
-    img.src = url
+    const t = matrix3dForQuad(pts, w, h)
+    if (t) { node.style.transform = t; node.style.display = '' }
+    else { node.style.display = 'none' }
+  }
 
-    return () => {
-      img.removeEventListener('click', onImgClick)
-      img.removeEventListener('contextmenu', onImgCtx)
-      img.removeEventListener('load', reveal)
-      img.remove()
-      imgRef.current = null
+  // Create / destroy the overlay element.
+  useEffect(() => {
+    const pane = map.getPane('overlayPane')
+    if (!pane) return
+    let cancelled = false
+
+    const mount = (node: HTMLElement, w: number, h: number) => {
+      if (cancelled) { return }
+      node.classList.add('leaflet-zoom-hide')
+      Object.assign(node.style, {
+        position: 'absolute', left: '0', top: '0', transformOrigin: '0 0',
+        width: `${w}px`, height: `${h}px`, maxWidth: 'none', maxHeight: 'none',
+        display: 'none', opacity: '0', transition: 'opacity 160ms linear',
+      })
+      const onC = (e: MouseEvent) => { L.DomEvent.stop(e); clickRef.current?.() }
+      const onX = (e: MouseEvent) => { L.DomEvent.stop(e); e.preventDefault(); ctxRef.current?.() }
+      node.addEventListener('click', onC)
+      node.addEventListener('contextmenu', onX)
+      cleanupListeners = () => {
+        node.removeEventListener('click', onC)
+        node.removeEventListener('contextmenu', onX)
+      }
+      pane.appendChild(node)
+      elRef.current = node
+      sizeRef.current = { w, h }
+      node.dataset.ready = '1'
+      reproject()
+      node.style.opacity = String(opacityRef.current)
     }
+
+    let cleanupListeners: (() => void) | null = null
+
+    const loadImg = () => {
+      const img = new Image()
+      img.crossOrigin = 'use-credentials'
+      img.draggable = false
+      img.alt = ''
+      img.onload = () => mount(img, naturalW, naturalH)
+      img.onerror = () => mount(img, naturalW, naturalH)
+      img.src = url
+    }
+
+    if (keyBlack) {
+      prepareCanvas(url).then(cv => {
+        if (cancelled) return
+        if (cv) mount(cv, cv.width, cv.height)
+        else loadImg()
+      })
+    } else {
+      loadImg()
+    }
+
+    map.on('zoomend viewreset moveend', reproject)
+    return () => {
+      cancelled = true
+      map.off('zoomend viewreset moveend', reproject)
+      cleanupListeners?.()
+      elRef.current?.remove()
+      elRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, url, naturalW, naturalH, keyBlack])
+
+  // Keep the projection current when the quad changes.
+  useEffect(() => {
+    cornersRef.current = corners
+    reproject()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [corners])
 
   // Cheap style updates.
   useEffect(() => {
-    const img = imgRef.current
-    if (!img) return
-    if (img.dataset.ready === '1') img.style.opacity = String(opacity)
-    img.style.pointerEvents = interactive ? 'auto' : 'none'
-    img.style.cursor = interactive ? 'pointer' : 'default'
-    if (zIndex != null) img.style.zIndex = String(zIndex)
+    const node = elRef.current
+    if (!node) return
+    if (node.dataset.ready === '1') node.style.opacity = String(opacity)
+    node.style.pointerEvents = interactive ? 'auto' : 'none'
+    node.style.cursor = interactive ? 'pointer' : 'default'
+    if (zIndex != null) node.style.zIndex = String(zIndex)
   }, [opacity, interactive, zIndex])
-
-  // Reproject on view changes.
-  useEffect(() => {
-    const img = imgRef.current
-    if (!img) return
-    const update = () => {
-      const pts = corners.map(c => {
-        const p = map.latLngToLayerPoint(L.latLng(c[0], c[1]))
-        return { x: p.x, y: p.y }
-      })
-      const t = matrix3dForQuad(pts, naturalW, naturalH)
-      if (t) { img.style.transform = t; img.style.display = '' }
-      else { img.style.display = 'none' }
-    }
-    update()
-    map.on('zoomend viewreset moveend', update)
-    return () => { map.off('zoomend viewreset moveend', update) }
-  }, [map, corners, naturalW, naturalH])
 
   return null
 }
