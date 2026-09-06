@@ -108,7 +108,10 @@ function PlacementClicks({ onPick }: { onPick: (lat: number, lon: number) => voi
 export default function IntelPage() {
   const { user } = useAuth()
   const qc = useQueryClient()
-  const isAdmin = !!user?.is_admin
+  // A registered player is locked to their own coalition. Only a dashboard
+  // admin with no in-game side of their own gets the Blue/Red/All switcher.
+  const ownSide = user?.side ?? null
+  const canSwitch = !!user?.is_admin && !ownSide
 
   const [adminSide, setAdminSide] = useState<'blue' | 'red' | 'all'>('blue')
   const [tileKey, setTileKey] = useState<IntelTileKey>('satellite')
@@ -124,8 +127,9 @@ export default function IntelPage() {
   const [alignCorners, setAlignCorners] = useState<LatLon[] | null>(null)
   const [alignOpacity, setAlignOpacity] = useState(DEFAULT_OPACITY)
 
-  const sideParam = isAdmin ? adminSide : undefined
-  const bannerSide = isAdmin ? adminSide.toUpperCase() : (user?.side?.toUpperCase() ?? '—')
+  // When not switching, omit ?side= entirely — the server forces our own side.
+  const sideParam = canSwitch ? adminSide : undefined
+  const bannerSide = canSwitch ? adminSide.toUpperCase() : (ownSide?.toUpperCase() ?? '—')
 
   const { data: captures = [], isError, error } = useQuery({
     queryKey: ['intel', 'captures', sideParam ?? 'me'],
@@ -168,7 +172,7 @@ export default function IntelPage() {
     let ok = 0, placedCount = 0, failed = 0
     for (const f of Array.from(files)) {
       try {
-        const cap = await api.intel.upload(f, isAdmin && adminSide !== 'all' ? adminSide : undefined)
+        const cap = await api.intel.upload(f, canSwitch && adminSide !== 'all' ? adminSide : undefined)
         ok++
         if (cap.placed) placedCount++
       } catch {
@@ -242,7 +246,7 @@ export default function IntelPage() {
             <span style={{ fontFamily: FONT_HEAD, letterSpacing: '0.12em', fontSize: '1rem' }}>RECON INTEL</span>
           </div>
           <div style={{ marginTop: 6, fontSize: '0.68rem', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>
-            {isAdmin ? (
+            {canSwitch ? (
               <div style={{ display: 'flex', gap: 4 }}>
                 {(['blue', 'red', 'all'] as const).map(s => (
                   <button key={s} onClick={() => setAdminSide(s)} style={{
@@ -254,7 +258,7 @@ export default function IntelPage() {
                 ))}
               </div>
             ) : (
-              <span>COALITION: <strong style={{ color: sideColor(user?.side ?? '') }}>{bannerSide}</strong></span>
+              <span>COALITION: <strong style={{ color: sideColor(ownSide ?? '') }}>{bannerSide}</strong></span>
             )}
           </div>
         </div>

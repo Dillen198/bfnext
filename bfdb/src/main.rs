@@ -696,9 +696,9 @@ async fn api_briefing(
     query: std::collections::HashMap<std::string::String, std::string::String>,
 ) -> std::result::Result<impl warp::Reply, Error> {
     use netidx::publisher::Value;
-    let (_session, _ucid, coalition) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     // dcso3's Side::from_str only accepts lowercase.
-    let side = match coalition {
+    let side = match c.side {
         dcso3::coalition::Side::Red => "red",
         _ => "blue",
     };
@@ -1961,37 +1961,58 @@ fn parse_side(s: &str) -> Option<dcso3::coalition::Side> {
     }
 }
 
-/// Resolve the caller to `(session, ucid, coalition)` for a coalition-locked
-/// endpoint (recon intel, per-side briefing). A non-admin with no Blue/Red
-/// side this campaign is rejected outright; an admin may target a side via
-/// `?side=blue|red` (default Blue) even without a pilot link.
+/// The authenticated caller of a coalition-locked endpoint (recon intel,
+/// per-side briefing).
+struct Caller {
+    session: SessionData,
+    #[allow(dead_code)]
+    ucid: Option<dcso3::net::Ucid>,
+    /// The coalition whose data the caller gets. For a registered player this
+    /// is *their* side, full stop. For a dashboard admin with no in-game
+    /// registration it's whatever `?side=` asked for (default Blue).
+    side: dcso3::coalition::Side,
+    /// True only for an admin with no coalition of their own: they picked
+    /// `side` via `?side=` and may freely inspect either side. A registered
+    /// player -- admin or not -- is locked to their own side.
+    god_mode: bool,
+}
+
+impl Caller {
+    fn ucid(&self) -> Option<&dcso3::net::Ucid> {
+        self.ucid.as_ref()
+    }
+}
+
+/// Resolve the caller for a coalition-locked endpoint. A non-admin with no
+/// Blue/Red side this campaign is rejected; a dashboard admin without a
+/// registration may target a side via `?side=blue|red` (default Blue).
 async fn require_coalition(
     query: &std::collections::HashMap<std::string::String, std::string::String>,
     session_id: Option<Uuid>,
     db: &StatsDb,
     bot_cfg: &Arc<Option<BotLinkConfig>>,
-) -> std::result::Result<(SessionData, Option<dcso3::net::Ucid>, dcso3::coalition::Side), Error> {
+) -> std::result::Result<Caller, Error> {
     let Some(id) = session_id else {
         return Err(anyhow::anyhow!("not logged in").into());
     };
     let session = task::block_in_place(|| db.get_session(id))?
         .ok_or_else(|| anyhow::anyhow!("session expired"))?;
     let ucid = resolve_ucid_via_bot(bot_cfg, &session.discord_id).await;
-    let side = match &ucid {
+    let own_side = match &ucid {
         Some(u) => task::block_in_place(|| db.pilot_current_side(u))?,
         None => None,
     };
-    match side {
-        Some(s) => Ok((session, ucid, s)),
+    match own_side {
+        Some(side) => Ok(Caller { session, ucid, side, god_mode: false }),
         None if session.is_admin => {
-            let s = query
+            let side = query
                 .get("side")
                 .and_then(|s| parse_side(s))
                 .unwrap_or(dcso3::coalition::Side::Blue);
-            Ok((session, ucid, s))
+            Ok(Caller { session, ucid, side, god_mode: true })
         }
         None => Err(anyhow::anyhow!(
-            "you have no coalition in the active round -- slot in on the server first"
+            "you have no coalition this campaign -- register a side on the server first"
         )
         .into()),
     }
@@ -2025,29 +2046,30 @@ fn intel_json(id: &Uuid, c: &IntelCapture, viewer_discord: &str, viewer_admin: b
     })
 }
 
-/// GET /api/intel/captures — this coalition's captures for the active round.
-/// Admins may pass `?side=blue|red|all`.
+/// GET /api/intel/captures — the caller's coalition captures for the active
+/// round. A dashboard admin with no coalition of their own may pass
+/// `?side=blue|red|all`; a registered player only ever sees their own side.
 async fn api_intel_list(
     session_id: Option<Uuid>,
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (session, _ucid, side) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     let round = active_round_or_err(&db)?;
-    let filter = if session.is_admin {
+    let filter = if c.god_mode {
         match query.get("side").map(|s| s.as_str()) {
             Some("all") => None,
-            Some(s) => parse_side(s).or(Some(side)),
-            None => Some(side),
+            Some(s) => parse_side(s).or(Some(c.side)),
+            None => Some(c.side),
         }
     } else {
-        Some(side)
+        Some(c.side)
     };
     let caps = task::block_in_place(|| db.intel_list(round, filter))?;
     let json: Vec<_> = caps
         .iter()
-        .map(|(id, c)| intel_json(id, c, &session.discord_id, session.is_admin))
+        .map(|(id, cap)| intel_json(id, cap, &c.session.discord_id, c.session.is_admin))
         .collect();
     Ok(warp::reply::json(&json))
 }
@@ -2063,15 +2085,13 @@ async fn api_intel_upload(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (session, ucid, mut side) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     if !content_type.starts_with("image/") {
         return Err(anyhow::anyhow!("only image uploads are allowed (got '{content_type}')").into());
     }
-    if session.is_admin {
-        if let Some(s) = query.get("side").and_then(|s| parse_side(s)) {
-            side = s;
-        }
-    }
+    // A registered player uploads into their own side; only a no-coalition
+    // admin may direct an upload with `?side=`.
+    let side = c.side;
     let round = active_round_or_err(&db)?;
     if task::block_in_place(|| db.intel_count_side(round, side))? >= MAX_INTEL_CAPTURES_PER_SIDE {
         return Err(anyhow::anyhow!(
@@ -2084,17 +2104,17 @@ async fn api_intel_upload(
         .map(|h| urlencoding::decode(h).map(|c| c.into_owned()).unwrap_or_else(|_| h.to_string()))
         .unwrap_or_default();
     let parsed = intel::parse_filename(&filename);
-    let name = ucid
-        .as_ref()
+    let name = c
+        .ucid()
         .and_then(|u| db.pilot_name(u))
-        .unwrap_or_else(|| session.username.clone());
+        .unwrap_or_else(|| c.session.username.clone());
     let image_id = Uuid::new_v4();
     let cap_id = Uuid::new_v4();
     let cap = IntelCapture {
         round,
         side,
         image_id,
-        uploaded_by: session.discord_id.clone(),
+        uploaded_by: c.session.discord_id.clone(),
         uploaded_by_name: name,
         uploaded_at: chrono::Utc::now(),
         captured_at: parsed.captured_at,
@@ -2118,18 +2138,19 @@ async fn api_intel_upload(
     })?;
     log::info!(
         "INTEL: {} uploaded capture {cap_id} ({filename:?}) for {side:?} (placed={})",
-        session.discord_id,
+        c.session.discord_id,
         cap.placed
     );
     Ok(warp::reply::json(&intel_json(
         &cap_id,
         &cap,
-        &session.discord_id,
-        session.is_admin,
+        &c.session.discord_id,
+        c.session.is_admin,
     )))
 }
 
-/// GET /api/intel/images/<capture-id> — serve the photo, same-coalition only.
+/// GET /api/intel/images/<capture-id> — serve the photo. A registered player
+/// only ever sees their own side's photos; a no-coalition admin sees any.
 async fn api_intel_get_image(
     id: Uuid,
     session_id: Option<Uuid>,
@@ -2137,10 +2158,10 @@ async fn api_intel_get_image(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (session, _ucid, side) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     let cap = task::block_in_place(|| db.intel_get_by_id(&id))?
         .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
-    if !session.is_admin && cap.side != side {
+    if !c.god_mode && cap.side != c.side {
         return Err(anyhow::anyhow!("not authorized for this coalition's intel").into());
     }
     let img = task::block_in_place(|| db.intel_get_image(&cap.image_id))?
@@ -2162,7 +2183,8 @@ struct IntelAdjustBody {
     adjust: Option<db::IntelAdjust>,
 }
 
-/// POST /api/intel/adjust — reposition / annotate a capture (uploader or admin).
+/// POST /api/intel/adjust — reposition / annotate a capture. Allowed for the
+/// uploader, any admin moderating their own side, or a no-coalition admin.
 async fn api_intel_adjust(
     session_id: Option<Uuid>,
     query: std::collections::HashMap<std::string::String, std::string::String>,
@@ -2170,12 +2192,16 @@ async fn api_intel_adjust(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (session, _ucid, side) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     let cap_id: Uuid = body.id.parse().map_err(|e| anyhow::anyhow!("bad id: {e}"))?;
     let mut cap = task::block_in_place(|| db.intel_get_by_id(&cap_id))?
         .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
-    if !session.is_admin && (cap.side != side || cap.uploaded_by != session.discord_id) {
-        return Err(anyhow::anyhow!("not authorized to edit this capture").into());
+    let owns = cap.uploaded_by == c.session.discord_id;
+    if !c.god_mode && cap.side != c.side {
+        return Err(anyhow::anyhow!("not authorized for this coalition's intel").into());
+    }
+    if !c.god_mode && !c.session.is_admin && !owns {
+        return Err(anyhow::anyhow!("only the uploader or an admin can edit this capture").into());
     }
     if let Some(lat) = body.lat {
         cap.lat = lat;
@@ -2199,8 +2225,8 @@ async fn api_intel_adjust(
     Ok(warp::reply::json(&intel_json(
         &cap_id,
         &cap,
-        &session.discord_id,
-        session.is_admin,
+        &c.session.discord_id,
+        c.session.is_admin,
     )))
 }
 
@@ -2217,15 +2243,19 @@ async fn api_intel_delete(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (session, _ucid, side) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     let cap_id: Uuid = body.id.parse().map_err(|e| anyhow::anyhow!("bad id: {e}"))?;
     let cap = task::block_in_place(|| db.intel_get_by_id(&cap_id))?
         .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
-    if !session.is_admin && (cap.side != side || cap.uploaded_by != session.discord_id) {
-        return Err(anyhow::anyhow!("not authorized to delete this capture").into());
+    let owns = cap.uploaded_by == c.session.discord_id;
+    if !c.god_mode && cap.side != c.side {
+        return Err(anyhow::anyhow!("not authorized for this coalition's intel").into());
+    }
+    if !c.god_mode && !c.session.is_admin && !owns {
+        return Err(anyhow::anyhow!("only the uploader or an admin can delete this capture").into());
     }
     task::block_in_place(|| db.intel_delete(cap.round, &cap_id))?;
-    log::info!("INTEL: {} deleted capture {cap_id}", session.discord_id);
+    log::info!("INTEL: {} deleted capture {cap_id}", c.session.discord_id);
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 

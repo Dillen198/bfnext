@@ -64,7 +64,7 @@ function DataTable<T>({
 
   const view = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    let r = needle
+    const r = needle
       ? rows.filter(row => columns.some(c => String(c.value(row)).toLowerCase().includes(needle)))
       : rows.slice()
     const col = columns.find(c => c.key === sortKey)
@@ -321,13 +321,15 @@ function mockBriefing(side: Side): Briefing {
 
 export default function BriefingPage() {
   const { user } = useAuth()
-  const isAdmin = !!user?.is_admin
-  // Non-admins are locked to their own coalition; admins may switch sides.
-  const [adminSide, setAdminSide] = useState<Side>(user?.side === 'Red' ? 'Red' : 'Blue')
-  const side: Side = isAdmin ? adminSide : (user?.side === 'Red' ? 'Red' : 'Blue')
+  // A registered player is locked to their own coalition. Only a dashboard
+  // admin with no in-game side of their own can switch sides.
+  const ownSide: Side | null = user?.side === 'Red' ? 'Red' : user?.side === 'Blue' ? 'Blue' : null
+  const canSwitch = !!user?.is_admin && !ownSide
+  const [adminSide, setAdminSide] = useState<Side>('Blue')
+  const side: Side = canSwitch ? adminSide : (ownSide ?? 'Blue')
   const { data: fetched, isLoading, error } = useQuery({
     queryKey: ['briefing', side],
-    queryFn: () => api.briefing(isAdmin ? side : undefined),
+    queryFn: () => api.briefing(canSwitch ? side : undefined),
     refetchInterval: 30_000,
     enabled: !MOCK,
   })
@@ -340,7 +342,7 @@ export default function BriefingPage() {
         sub={b ? `${b.navaids.length} navaids · ${b.radios.length} stations · ${b.threats.length} threat types` : 'kneeboard data'}
         right={
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {isAdmin ? (
+            {canSwitch ? (
               <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
                 {(['Blue', 'Red'] as Side[]).map(s => (
                   <button
