@@ -310,6 +310,19 @@ export interface IntelAdjust {
   opacity: number | null
 }
 
+export type IntelMarkupKind = 'pencil' | 'line' | 'rect' | 'circle' | 'x' | 'text'
+export interface IntelMarkup {
+  id:      string
+  kind:    IntelMarkupKind
+  points:  [number, number][]   // [lat, lon]; meaning depends on kind
+  color:   string
+  width:   number
+  text:    string | null
+  by_name: string
+  at:      string
+  mine:    boolean
+}
+
 export interface IntelCapture {
   id:               string
   side:             'Blue' | 'Red'
@@ -667,5 +680,17 @@ export const api = {
     }) => post<IntelCapture>('/intel/adjust', body),
     del:   (id: string) => post<{ ok: boolean }>('/intel/delete', { id }),
     purge: () => post<{ ok: boolean }>('/intel/purge', {}),
+    markup: {
+      list: (side?: 'all' | 'blue' | 'red') =>
+        get<IntelMarkup[]>(`/intel/markup${side ? `?side=${side}` : ''}`),
+      add: (body: {
+        kind: IntelMarkupKind
+        points: [number, number][]
+        color: string
+        width: number
+        text?: string | null
+      }) => post<IntelMarkup>('/intel/markup', body),
+      del: (id: string) => post<{ ok: boolean }>('/intel/markup/delete', { id }),
+    },
   },
 }

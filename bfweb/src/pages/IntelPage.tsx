@@ -8,8 +8,9 @@ import L from 'leaflet'
 import {
   Camera, Trash2, Crosshair, X, Upload, MapPin, Move3d, Eye, EyeOff,
   Grid3x3, Navigation, Play, Pause, SendToBack, ChevronRight,
+  MousePointer2, Pencil, Minus, Square, Circle as CircleIcon,
 } from 'lucide-react'
-import { api, type IntelCapture, type Objective, type Frontlines } from '../api'
+import { api, type IntelCapture, type IntelMarkupKind, type Objective, type Frontlines } from '../api'
 import { useAuth } from '../context/AuthContext'
 import {
   fmtLatLon, fmtGridLabel, niceGridStep, groundFootprint,
@@ -17,6 +18,9 @@ import {
 } from '../lib/geo'
 import { warpedGroundQuad } from '../lib/warp'
 import IntelWarpOverlay from './IntelWarpOverlay'
+import IntelMarkupLayer, { type MarkupTool } from './IntelMarkupLayer'
+
+const MARKUP_COLORS = ['#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ffffff']
 
 const REFRESH_MS = 20_000
 const COL_BLUE = '#4a8fd4'
@@ -142,7 +146,7 @@ export default function IntelPage() {
   const canSwitch = !!user?.is_admin && !ownSide
 
   const [adminSide, setAdminSide] = useState<'blue' | 'red' | 'all'>('blue')
-  const [tileKey, setTileKey] = useState<IntelTileKey>('satellite')
+  const [tileKey, setTileKey] = useState<IntelTileKey | 'grid'>('satellite')
   const [showImagery, setShowImagery] = useState(true)
   const [showGrid, setShowGrid] = useState(false)
   const [showPath, setShowPath] = useState(true)
@@ -163,6 +167,14 @@ export default function IntelPage() {
   // Timeline
   const [cutoff, setCutoff] = useState(1)                   // 0..1, show captures up to this point in the run
   const [playing, setPlaying] = useState(false)
+  const [speed, setSpeed] = useState(10)
+
+  // Markup
+  const [showMarkup, setShowMarkup] = useState(true)
+  const [markupTool, setMarkupTool] = useState<MarkupTool>('select')
+  const [markupColor, setMarkupColor] = useState(MARKUP_COLORS[0])
+  const [markupWidth, setMarkupWidth] = useState(3)
+  const [selMarkup, setSelMarkup] = useState<string | null>(null)
 
   // Warp-align editor
   const [aligning, setAligning] = useState<IntelCapture | null>(null)
@@ -175,6 +187,11 @@ export default function IntelPage() {
   const { data: captures = [], isError, error } = useQuery({
     queryKey: ['intel', 'captures', sideParam ?? 'me'],
     queryFn: () => api.intel.captures(sideParam),
+    refetchInterval: REFRESH_MS,
+  })
+  const { data: markup = [] } = useQuery({
+    queryKey: ['intel', 'markup', sideParam ?? 'me'],
+    queryFn: () => api.intel.markup.list(sideParam),
     refetchInterval: REFRESH_MS,
   })
   const { data: objectives = [] } = useQuery({
@@ -190,6 +207,21 @@ export default function IntelPage() {
   const refresh = useCallback(() => {
     qc.invalidateQueries({ queryKey: ['intel', 'captures'] })
   }, [qc])
+  const refreshMarkup = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ['intel', 'markup'] })
+  }, [qc])
+
+  const addMarkup = useCallback(async (kind: IntelMarkupKind, points: [number, number][]) => {
+    try {
+      await api.intel.markup.add({ kind, points, color: markupColor, width: markupWidth })
+      refreshMarkup()
+    } catch (e) { window.alert(String(e)) }
+  }, [markupColor, markupWidth, refreshMarkup])
+
+  const deleteMarkup = useCallback(async (id: string) => {
+    try { await api.intel.markup.del(id); setSelMarkup(null); refreshMarkup() }
+    catch (e) { window.alert(String(e)) }
+  }, [refreshMarkup])
 
   // Natural image dimensions → correct footprint / warp aspect ratio.
   useEffect(() => {
@@ -219,13 +251,13 @@ export default function IntelPage() {
     if (!playing || !hasTimeline) return
     const id = setInterval(() => {
       setCutoff(p => {
-        const next = p + 0.02
+        const next = p + 0.004 * speed
         if (next >= 1) { setPlaying(false); return 1 }
         return next
       })
     }, 120)
     return () => clearInterval(id)
-  }, [playing, hasTimeline])
+  }, [playing, hasTimeline, speed])
 
   const visible = useMemo(() => placed.filter(c => {
     if (hiddenBy.has(c.uploaded_by_name)) return false
@@ -319,7 +351,8 @@ export default function IntelPage() {
     } catch (e) { window.alert(String(e)) }
   }
 
-  const tile = INTEL_TILE_LAYERS[tileKey]
+  const tile = tileKey === 'grid' ? null : INTEL_TILE_LAYERS[tileKey]
+  const gridShown = showGrid || tileKey === 'grid'
   const toggleBtn = (on: boolean): CSSProperties => ({
     padding: '4px 8px', fontSize: '0.6rem', letterSpacing: '0.08em', cursor: 'pointer', borderRadius: 3,
     border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`,
@@ -403,6 +436,49 @@ export default function IntelPage() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Markup toolbar */}
+        {showMarkup && (
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '0.6rem', letterSpacing: '0.12em', color: 'var(--text-dim)', marginBottom: 6 }}>MARKUP</div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {([
+                ['select', MousePointer2], ['pencil', Pencil], ['line', Minus],
+                ['rect', Square], ['circle', CircleIcon], ['x', X],
+              ] as [MarkupTool, typeof X][]).map(([t, Ico]) => (
+                <button key={t} onClick={() => { setMarkupTool(t); setSelMarkup(null) }} title={t}
+                  style={{
+                    width: 30, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', borderRadius: 3,
+                    border: `1px solid ${markupTool === t ? 'var(--accent)' : 'var(--border)'}`,
+                    background: markupTool === t ? 'var(--accent)' : 'transparent',
+                    color: markupTool === t ? '#fff' : 'var(--text-dim)',
+                  }}>
+                  <Ico size={13} />
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 4, marginTop: 8, alignItems: 'center' }}>
+              {MARKUP_COLORS.map(c => (
+                <button key={c} onClick={() => setMarkupColor(c)} style={{
+                  width: 18, height: 18, borderRadius: 3, cursor: 'pointer', background: c,
+                  border: markupColor === c ? '2px solid var(--text)' : '1px solid var(--border)',
+                }} />
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: '0.58rem', color: 'var(--text-dim)' }}>WIDTH</span>
+              <input type="range" min={1} max={10} step={1} value={markupWidth}
+                onChange={e => setMarkupWidth(Number(e.target.value))} style={{ flex: 1 }} />
+              {selMarkup && (markup.find(m => m.id === selMarkup)?.mine || user?.is_admin) && (
+                <button onClick={() => deleteMarkup(selMarkup)} title="Delete selected"
+                  style={{ background: '#7f1d1d', border: 'none', color: '#fff', borderRadius: 3, padding: '3px 6px', cursor: 'pointer', fontSize: '0.6rem' }}>
+                  <Trash2 size={11} />
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -514,10 +590,13 @@ export default function IntelPage() {
           <button onClick={() => setShowGrid(v => !v)} title="Toggle coordinate grid" style={toggleBtn(showGrid)}>
             <Grid3x3 size={11} /> GRID
           </button>
-          {(Object.keys(INTEL_TILE_LAYERS) as IntelTileKey[]).map(k => (
+          <button onClick={() => { setShowMarkup(v => !v); setMarkupTool('select') }} title="Toggle markup layer / tools" style={toggleBtn(showMarkup)}>
+            <Pencil size={11} /> MARKUP
+          </button>
+          {([...(Object.keys(INTEL_TILE_LAYERS) as IntelTileKey[]), 'grid'] as const).map(k => (
             <button key={k} onClick={() => setTileKey(k)} style={{
               ...toggleBtn(tileKey === k), gap: 0,
-            }}>{INTEL_TILE_LAYERS[k].label}</button>
+            }}>{k === 'grid' ? 'GRID MAP' : INTEL_TILE_LAYERS[k].label}</button>
           ))}
         </div>
 
@@ -556,11 +635,21 @@ export default function IntelPage() {
 
         <div style={{ flex: 1, position: 'relative' }}>
           <MapContainer center={[35, 40]} zoom={6} style={{ height: '100%', width: '100%' }}>
-            <TileLayer url={tile.url} attribution={tile.attr} maxZoom={18} />
+            {tile && <TileLayer url={tile.url} attribution={tile.attr} maxZoom={18} />}
             <ScaleControl position="bottomleft" />
             <FlyToFirst captures={captures} objectives={objectives} />
             {placing && <PlacementClicks onPick={placeAt} />}
-            {showGrid && <CoordGrid />}
+            {gridShown && <CoordGrid />}
+            <IntelMarkupLayer
+              items={markup}
+              tool={showMarkup ? markupTool : 'select'}
+              color={markupColor}
+              width={markupWidth}
+              selectedId={selMarkup}
+              onAdd={addMarkup}
+              onSelect={setSelMarkup}
+              visible={showMarkup}
+            />
 
             {midLines.map((line, i) => (
               <Polyline key={`m${i}`} positions={line} pathOptions={{ color: '#ddd', weight: 1, opacity: 0.5, dashArray: '4 4' }} />
@@ -651,11 +740,26 @@ export default function IntelPage() {
             }}>
               {playing ? <Pause size={13} /> : <Play size={13} />}
             </button>
-            <input type="range" min={0} max={1} step={0.005} value={cutoff}
-              onChange={e => { setPlaying(false); setCutoff(Number(e.target.value)) }}
-              style={{ flex: 1 }} />
-            <span style={{ fontFamily: FONT_MONO, fontSize: '0.66rem', color: 'var(--text-dim)', minWidth: 84, textAlign: 'right' }}>
-              {new Date(cutoffMs).toLocaleTimeString()}
+            <div style={{ flex: 1, position: 'relative' }}>
+              {/* per-capture ticks */}
+              <div style={{ position: 'absolute', inset: '0 0 auto 0', height: 6, pointerEvents: 'none' }}>
+                {times.map((t, i) => (
+                  <span key={i} style={{
+                    position: 'absolute', left: `${((t - tMin) / (tMax - tMin)) * 100}%`,
+                    width: 2, height: 6, background: 'var(--text-dim)', transform: 'translateX(-1px)',
+                  }} />
+                ))}
+              </div>
+              <input type="range" min={0} max={1} step={0.002} value={cutoff}
+                onChange={e => { setPlaying(false); setCutoff(Number(e.target.value)) }}
+                style={{ width: '100%' }} />
+            </div>
+            <select value={speed} onChange={e => setSpeed(Number(e.target.value))} className="vs-input"
+              style={{ fontSize: '0.62rem', padding: '2px 4px', height: 22 }}>
+              {[1, 5, 10, 30, 60].map(s => <option key={s} value={s}>{s}×</option>)}
+            </select>
+            <span style={{ fontFamily: FONT_MONO, fontSize: '0.66rem', color: 'var(--text-dim)', minWidth: 74, textAlign: 'right' }}>
+              {new Date(cutoffMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </span>
           </div>
         )}

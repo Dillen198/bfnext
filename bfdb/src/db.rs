@@ -154,6 +154,25 @@ pub(crate) struct IntelAdjust {
     pub(crate) opacity: Option<f64>,
 }
 
+/// One piece of map markup drawn on the recon picture (freehand line, shape,
+/// or text). Coalition-shared, per-round, wiped on reset. bfdb stores the
+/// geometry verbatim -- `points` are `[lat, lon]` pairs whose meaning depends
+/// on `kind` (pencil: the path; line: two ends; rect/circle: two defining
+/// points; x/text: a single anchor).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct IntelMarkup {
+    pub(crate) round:   RoundId,
+    pub(crate) side:    Side,
+    pub(crate) kind:    std::string::String,
+    pub(crate) points:  Vec<[f64; 2]>,
+    pub(crate) color:   std::string::String,
+    pub(crate) width:   f64,
+    pub(crate) text:    Option<std::string::String>,
+    pub(crate) by:      std::string::String,      // discord_id
+    pub(crate) by_name: std::string::String,
+    pub(crate) at:      DateTime<Utc>,
+}
+
 /// Index row for an uploaded recon photo, keyed by `IntelCapture.image_id`
 /// in `intel_images`. `data` holds the bytes when they live in the DB;
 /// `None` means the bytes are a file at `<intel_dir>/<image_id>` on disk
@@ -543,6 +562,8 @@ pub(crate) struct StatsDbInner {
     // Recon intel photo index, keyed by IntelCapture.image_id. The bytes are
     // inline unless `intel_dir` is set, in which case they're files on disk.
     intel_images: Tree<Uuid, IntelImage>,
+    // Coalition-shared map markup on the recon picture, keyed (RoundId, Uuid).
+    intel_markup: Tree<(RoundId, Uuid), IntelMarkup>,
     // When set (--intel-dir), recon photos are stored as files here rather
     // than as blobs in the DB. Set once at startup via set_intel_dir.
     intel_dir: Arc<RwLock<Option<PathBuf>>>,
@@ -752,6 +773,7 @@ impl StatsDb {
             wiki_images: Tree::open(&db, "wiki_images")?,
             intel_captures: Tree::open(&db, "intel_captures")?,
             intel_images: Tree::open(&db, "intel_images")?,
+            intel_markup: Tree::open(&db, "intel_markup")?,
             intel_dir: Arc::new(RwLock::new(None)),
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
@@ -851,6 +873,7 @@ impl StatsDb {
             wiki_images: Tree::open(&db, "wiki_images")?,
             intel_captures: Tree::open(&db, "intel_captures")?,
             intel_images: Tree::open(&db, "intel_images")?,
+            intel_markup: Tree::open(&db, "intel_markup")?,
             intel_dir: Arc::new(RwLock::new(None)),
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
@@ -1894,7 +1917,52 @@ impl StatsDb {
         }
         self.intel_captures.clear()?;
         self.intel_images.clear()?;
+        self.intel_markup.clear()?;
         Ok(())
+    }
+
+    // ── Recon intel markup ─────────────────────────────────────────────────
+
+    pub(crate) fn intel_markup_list(
+        &self,
+        round: RoundId,
+        side: Option<Side>,
+    ) -> Result<Vec<(Uuid, IntelMarkup)>> {
+        let mut out = Vec::new();
+        for r in self.intel_markup.iter() {
+            let ((rid, id), m) = r?;
+            if rid != round {
+                continue;
+            }
+            if let Some(s) = side {
+                if m.side != s {
+                    continue;
+                }
+            }
+            out.push((id, m));
+        }
+        out.sort_by_key(|(_, m)| m.at);
+        Ok(out)
+    }
+
+    pub(crate) fn intel_markup_put(&self, id: Uuid, m: IntelMarkup) -> Result<()> {
+        self.intel_markup.insert(&(m.round, id), &m)?;
+        Ok(())
+    }
+
+    /// Look up a markup item by id alone (scanning rounds).
+    pub(crate) fn intel_markup_get(&self, id: &Uuid) -> Result<Option<IntelMarkup>> {
+        for r in self.intel_markup.iter() {
+            let ((_, mid), m) = r?;
+            if mid == *id {
+                return Ok(Some(m));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn intel_markup_delete(&self, round: RoundId, id: &Uuid) -> Result<bool> {
+        Ok(self.intel_markup.remove(&(round, *id))?.is_some())
     }
 
     /// Seed / refresh the built-in gameplay wiki content (compiled in from

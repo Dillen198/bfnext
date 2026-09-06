@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bfprotocols::cfg::UnitTag;
 use clap::Parser;
-use db::{IntelCapture, SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
+use db::{IntelCapture, IntelMarkup, SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
 use futures::{SinkExt, StreamExt};
 use netidx::{config::Config, path::Path as NetidxPath, subscriber::SubscriberBuilder};
 use regex::Regex;
@@ -2273,6 +2273,113 @@ async fn api_intel_purge(
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
+// ── Recon intel markup ─────────────────────────────────────────────────────
+
+fn markup_json(id: &Uuid, m: &IntelMarkup, viewer_discord: &str, viewer_admin: bool) -> serde_json::Value {
+    serde_json::json!({
+        "id":      id.to_string(),
+        "kind":    m.kind,
+        "points":  m.points,
+        "color":   m.color,
+        "width":   m.width,
+        "text":    m.text,
+        "by_name": m.by_name,
+        "at":      m.at.to_rfc3339(),
+        "mine":    viewer_admin || m.by == viewer_discord,
+    })
+}
+
+/// GET /api/intel/markup — the caller's coalition markup for the active round.
+async fn api_intel_markup_list(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let round = active_round_or_err(&db)?;
+    let filter = if c.god_mode {
+        match query.get("side").map(|s| s.as_str()) {
+            Some("all") => None,
+            Some(s) => parse_side(s).or(Some(c.side)),
+            None => Some(c.side),
+        }
+    } else {
+        Some(c.side)
+    };
+    let items = task::block_in_place(|| db.intel_markup_list(round, filter))?;
+    let json: Vec<_> = items
+        .iter()
+        .map(|(id, m)| markup_json(id, m, &c.session.discord_id, c.session.is_admin))
+        .collect();
+    Ok(warp::reply::json(&json))
+}
+
+#[derive(Deserialize)]
+struct IntelMarkupBody {
+    kind:   std::string::String,
+    points: Vec<[f64; 2]>,
+    color:  std::string::String,
+    width:  f64,
+    text:   Option<std::string::String>,
+}
+
+/// POST /api/intel/markup — add a markup shape (coalition-shared).
+async fn api_intel_markup_add(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: IntelMarkupBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let round = active_round_or_err(&db)?;
+    if body.points.is_empty() || body.points.len() > 4000 {
+        return Err(anyhow::anyhow!("markup needs 1..4000 points").into());
+    }
+    let id = Uuid::new_v4();
+    let name = c
+        .ucid()
+        .and_then(|u| db.pilot_name(u))
+        .unwrap_or_else(|| c.session.username.clone());
+    let m = IntelMarkup {
+        round,
+        side: c.side,
+        kind: body.kind,
+        points: body.points,
+        color: body.color,
+        width: body.width.clamp(1.0, 20.0),
+        text: body.text.filter(|t| !t.trim().is_empty()),
+        by: c.session.discord_id.clone(),
+        by_name: name,
+        at: chrono::Utc::now(),
+    };
+    task::block_in_place(|| db.intel_markup_put(id, m.clone()))?;
+    Ok(warp::reply::json(&markup_json(&id, &m, &c.session.discord_id, c.session.is_admin)))
+}
+
+/// POST /api/intel/markup/delete — remove a markup shape (author or admin).
+async fn api_intel_markup_delete(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: IntelDeleteBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let id: Uuid = body.id.parse().map_err(|e| anyhow::anyhow!("bad id: {e}"))?;
+    let m = task::block_in_place(|| db.intel_markup_get(&id))?
+        .ok_or_else(|| anyhow::anyhow!("markup not found"))?;
+    if !c.god_mode && m.side != c.side {
+        return Err(anyhow::anyhow!("not authorized for this coalition's intel").into());
+    }
+    if !c.god_mode && !c.session.is_admin && m.by != c.session.discord_id {
+        return Err(anyhow::anyhow!("only the author or an admin can delete this markup").into());
+    }
+    task::block_in_place(|| db.intel_markup_delete(m.round, &id))?;
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
 /// GET /api/admin/perf  — last session's DCS engine performance stats (admin only)
 /// Snapshot this host's CPU/RAM/disk/GPU usage and available temperature
 /// sensors. Two CPU refreshes with a short sleep in between are required
@@ -3799,6 +3906,32 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_intel_purge);
 
+    let intel_markup_list_route = warp::path!("api" / "intel" / "markup")
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_intel_markup_list);
+
+    let intel_markup_add_route = warp::path!("api" / "intel" / "markup")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::content_length_limit(512 * 1024))
+        .and(warp::body::json::<IntelMarkupBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_intel_markup_add);
+
+    let intel_markup_delete_route = warp::path!("api" / "intel" / "markup" / "delete")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::json::<IntelDeleteBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_intel_markup_delete);
+
     // /site/* → embedded bfsite SPA
     let site_files = warp::path("site")
         .and(warp::path::tail())
@@ -3842,6 +3975,7 @@ async fn main() -> Result<()> {
         .or(wiki_get_image_route)
         .or(intel_list_route)
         .or(intel_get_image_route)
+        .or(intel_markup_list_route)
         .boxed();
 
     let auth_routes = auth_login
@@ -3883,6 +4017,8 @@ async fn main() -> Result<()> {
             .or(intel_adjust_route)
             .or(intel_delete_route)
             .or(intel_purge_route)
+            .or(intel_markup_add_route)
+            .or(intel_markup_delete_route)
             .boxed())
         .or(admin_bot_start
             .or(admin_bot_stop)
