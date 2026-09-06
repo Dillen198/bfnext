@@ -8,7 +8,7 @@ import L from 'leaflet'
 import {
   Camera, Trash2, Crosshair, X, Upload, MapPin, Move3d, Eye, EyeOff,
   Grid3x3, Navigation, Play, Pause, SendToBack, ChevronRight,
-  MousePointer2, Pencil, Minus, Square, Circle as CircleIcon, Download, Maximize2,
+  MousePointer2, Pencil, Minus, Square, Circle as CircleIcon, Download, Maximize2, Eraser,
 } from 'lucide-react'
 import html2canvas from 'html2canvas'
 import { api, type IntelCapture, type IntelMarkupKind, type Objective, type Frontlines } from '../api'
@@ -156,6 +156,7 @@ export default function IntelPage() {
   const [adminSide, setAdminSide] = useState<'blue' | 'red' | 'all'>('blue')
   const [tileKey, setTileKey] = useState<IntelTileKey | 'grid'>('satellite')
   const [showImagery, setShowImagery] = useState(true)
+  const [keyBlack, setKeyBlack] = useState(true)   // drop the black letterbox/matte around TARPS frames
   const [showGrid, setShowGrid] = useState(false)
   const [showPath, setShowPath] = useState(true)
   const [lightbox, setLightbox] = useState<IntelCapture | null>(null)
@@ -652,6 +653,9 @@ export default function IntelPage() {
           <button onClick={() => setShowImagery(v => !v)} title="Toggle photo overlays" style={toggleBtn(showImagery)}>
             {showImagery ? <Eye size={11} /> : <EyeOff size={11} />} PHOTOS
           </button>
+          <button onClick={() => setKeyBlack(v => !v)} title="Drop the black matte around each TARPS frame" style={toggleBtn(keyBlack)}>
+            <Eraser size={11} /> DE-MATTE
+          </button>
           <button onClick={() => setShowPath(v => !v)} title="Toggle flight-path markers" style={toggleBtn(showPath)}>
             <Navigation size={11} /> PATH
           </button>
@@ -760,6 +764,7 @@ export default function IntelPage() {
                       naturalH={d.h}
                       opacity={opacity}
                       interactive={!isAligning}
+                      keyBlack={keyBlack}
                       zIndex={zOf(c.id)}
                       onClick={() => setSelCap(c.id)}
                       onContextMenu={() => sendBack(c.id)}

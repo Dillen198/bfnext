@@ -4,12 +4,49 @@ import L from 'leaflet'
 import { matrix3dForQuad } from '../lib/warp'
 import type { LatLon } from '../lib/geo'
 
+/** Load `url`, knock out the near-black border/letterbox pixels (DCS TARPS
+ *  screenshots are matted on black), and hand back an object URL for the
+ *  cleaned PNG. Falls back to the original url if the canvas is tainted or
+ *  anything throws. */
+function keyOutBlack(url: string): Promise<{ href: string; revoke: boolean }> {
+  return new Promise(resolve => {
+    const im = new Image()
+    im.crossOrigin = 'use-credentials'
+    im.onload = () => {
+      try {
+        const w = im.naturalWidth, h = im.naturalHeight
+        const cv = document.createElement('canvas')
+        cv.width = w; cv.height = h
+        const ctx = cv.getContext('2d')
+        if (!ctx) return resolve({ href: url, revoke: false })
+        ctx.drawImage(im, 0, 0)
+        const data = ctx.getImageData(0, 0, w, h)
+        const px = data.data
+        for (let i = 0; i < px.length; i += 4) {
+          const m = Math.max(px[i], px[i + 1], px[i + 2])
+          if (m <= 14) px[i + 3] = 0
+          else if (m < 44) px[i + 3] = Math.round((px[i + 3] * (m - 14)) / 30)
+        }
+        ctx.putImageData(data, 0, 0)
+        cv.toBlob(b => {
+          if (b) resolve({ href: URL.createObjectURL(b), revoke: true })
+          else resolve({ href: url, revoke: false })
+        }, 'image/png')
+      } catch {
+        resolve({ href: url, revoke: false })
+      }
+    }
+    im.onerror = () => resolve({ href: url, revoke: false })
+    im.src = url
+  })
+}
+
 /** Renders one recon photo perspective-warped onto a ground quad, as an
  *  `<img>` in Leaflet's overlay pane transformed with `matrix3d`. The quad
  *  corners are [TL, TR, BR, BL]; the image is hidden while its quad is
  *  degenerate (e.g. edge-on to the camera). */
 export default function IntelWarpOverlay({
-  url, corners, naturalW, naturalH, opacity, interactive, zIndex, onClick, onContextMenu,
+  url, corners, naturalW, naturalH, opacity, interactive, zIndex, keyBlack = true, onClick, onContextMenu,
 }: {
   url: string
   corners: LatLon[]
@@ -18,6 +55,7 @@ export default function IntelWarpOverlay({
   opacity: number
   interactive: boolean
   zIndex?: number
+  keyBlack?: boolean
   onClick?: () => void
   onContextMenu?: () => void
 }) {
@@ -36,7 +74,6 @@ export default function IntelWarpOverlay({
     // Photos are served cross-origin from bfdb and gated on the session
     // cookie, so the request has to carry credentials.
     img.crossOrigin = 'use-credentials'
-    img.src = url
     img.alt = ''
     img.decoding = 'async'
     img.draggable = false
@@ -54,13 +91,28 @@ export default function IntelWarpOverlay({
     img.addEventListener('contextmenu', onImgCtx)
     pane.appendChild(img)
     imgRef.current = img
+
+    let cancelled = false
+    let objectUrl: string | null = null
+    if (keyBlack) {
+      keyOutBlack(url).then(({ href, revoke }) => {
+        if (cancelled) { if (revoke) URL.revokeObjectURL(href); return }
+        objectUrl = revoke ? href : null
+        img.src = href
+      })
+    } else {
+      img.src = url
+    }
+
     return () => {
+      cancelled = true
       img.removeEventListener('click', onImgClick)
       img.removeEventListener('contextmenu', onImgCtx)
       img.remove()
       imgRef.current = null
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [map, url, naturalW, naturalH])
+  }, [map, url, naturalW, naturalH, keyBlack])
 
   // Cheap style updates.
   useEffect(() => {
