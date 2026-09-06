@@ -296,6 +296,38 @@ export interface AuthUser {
   avatar:     string | null
   is_admin:   boolean
   ucid:       string | null
+  /** Coalition in the active round; null if the pilot has no side (or isn't
+   *  linked). Gates access to the recon intel page. */
+  side:       'Blue' | 'Red' | null
+}
+
+// ── Recon intel (TARPS) ─────────────────────────────────────────────────
+export interface IntelAdjust {
+  /** 4 ground corners (TL, TR, BR, BL) as [lat, lon] the photo is pinned to,
+   *  overriding the automatic projection. Set by the warp editor. */
+  corners: [[number, number], [number, number], [number, number], [number, number]] | null
+  /** Overlay opacity 0..1 for peeling stacked photos. */
+  opacity: number | null
+}
+
+export interface IntelCapture {
+  id:               string
+  side:             'Blue' | 'Red'
+  image_url:        string   // server path, prefix with API_ROOT
+  uploaded_by_name: string
+  uploaded_at:      string
+  captured_at:      string | null
+  filename:         string
+  placed:           boolean
+  lat:              number
+  lon:              number
+  alt_ft:           number | null
+  heading_deg:      number | null
+  pitch_deg:        number | null
+  roll_deg:         number | null
+  adjust:           IntelAdjust | null
+  note:             string | null
+  mine:             boolean   // may the current viewer edit/delete it
 }
 
 export interface AdminSession {
@@ -602,5 +634,36 @@ export const api = {
       const q = playerId ? `?playerid=${playerId}` : ''
       return post<{ message: string }>(`/cockpit/cargo/spawn${q}`, { crate_name: crateName, qty, c130 })
     },
+  },
+  intel: {
+    /** Recon captures visible to the caller's coalition in the active round.
+     *  `side` is admin-only ('all' | 'blue' | 'red'). */
+    captures: (side?: 'all' | 'blue' | 'red') =>
+      get<IntelCapture[]>(`/intel/captures${side ? `?side=${side}` : ''}`),
+    /** Absolute URL for a capture's photo (same-coalition gated server-side). */
+    imageUrl: (id: string) => `${BASE}/intel/images/${id}`,
+    upload: async (file: File, side?: 'blue' | 'red'): Promise<IntelCapture> => {
+      const res = await fetch(`${BASE}/intel/upload${side ? `?side=${side}` : ''}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'content-type': file.type || 'image/png',
+          'x-intel-filename': encodeURIComponent(file.name),
+        },
+        body: file,
+      })
+      if (!res.ok) throw new Error(await errorMessage(res))
+      return res.json()
+    },
+    adjust: (body: {
+      id: string
+      lat?: number
+      lon?: number
+      placed?: boolean
+      note?: string | null
+      adjust?: IntelAdjust | null
+    }) => post<IntelCapture>('/intel/adjust', body),
+    del:   (id: string) => post<{ ok: boolean }>('/intel/delete', { id }),
+    purge: () => post<{ ok: boolean }>('/intel/purge', {}),
   },
 }

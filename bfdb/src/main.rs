@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bfprotocols::cfg::UnitTag;
 use clap::Parser;
-use db::{SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
+use db::{IntelCapture, IntelImage, SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
 use futures::{SinkExt, StreamExt};
 use netidx::{config::Config, path::Path as NetidxPath, subscriber::SubscriberBuilder};
 use regex::Regex;
@@ -32,6 +32,7 @@ struct SiteAssets;
 
 mod db;
 mod db_id;
+mod intel;
 
 /// Load stats and serve the Fowl Engine API
 #[derive(Parser, Debug)]
@@ -1338,15 +1339,20 @@ async fn api_auth_me(
     let Some(s) = session else {
         return Ok(json_response(r#"{"user":null}"#.to_string()));
     };
-    let ucid = resolve_ucid_via_bot(&bot_cfg, &s.discord_id).await
-        .map(|u| u.to_string());
+    let ucid = resolve_ucid_via_bot(&bot_cfg, &s.discord_id).await;
+    // Coalition in the active round -- gates access to the recon intel page.
+    let side = match &ucid {
+        Some(u) => task::block_in_place(|| db.pilot_current_side(u))?.map(|s| format!("{s:?}")),
+        None => None,
+    };
     Ok(json_response(serde_json::to_string(&serde_json::json!({
         "user": {
             "discord_id": s.discord_id,
             "username":   s.username,
             "avatar":     s.avatar,
             "is_admin":   s.is_admin,
-            "ucid":       ucid,
+            "ucid":       ucid.map(|u| u.to_string()),
+            "side":       side,
         }
     })).map_err(anyhow::Error::from)?))
 }
@@ -1933,6 +1939,302 @@ async fn api_wiki_get_image(
         .header("cache-control", "public, max-age=31536000, immutable")
         .body(image.data)
         .unwrap())
+}
+
+// ── Recon intel (TARPS) API ────────────────────────────────────────────────
+//
+// A shared reconnaissance picture built from F-14 TARPS photos, contributed
+// through the dashboard login and locked to the contributor's coalition.
+// Everything is scoped to the active round and wiped by a campaign reset.
+
+const MAX_INTEL_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_INTEL_CAPTURES_PER_SIDE: usize = 400;
+
+fn parse_side(s: &str) -> Option<dcso3::coalition::Side> {
+    match s.to_ascii_lowercase().as_str() {
+        "blue" => Some(dcso3::coalition::Side::Blue),
+        "red" => Some(dcso3::coalition::Side::Red),
+        _ => None,
+    }
+}
+
+/// Resolve the caller to `(session, ucid, coalition)`. A non-admin with no
+/// Blue/Red side in the active round is rejected outright. An admin with no
+/// pilot link may still act, targeting a side via `?side=blue|red`
+/// (default Blue).
+async fn require_intel_side(
+    query: &std::collections::HashMap<std::string::String, std::string::String>,
+    session_id: Option<Uuid>,
+    db: &StatsDb,
+    bot_cfg: &Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<(SessionData, Option<dcso3::net::Ucid>, dcso3::coalition::Side), Error> {
+    let Some(id) = session_id else {
+        return Err(anyhow::anyhow!("not logged in").into());
+    };
+    let session = task::block_in_place(|| db.get_session(id))?
+        .ok_or_else(|| anyhow::anyhow!("session expired"))?;
+    let ucid = resolve_ucid_via_bot(bot_cfg, &session.discord_id).await;
+    let side = match &ucid {
+        Some(u) => task::block_in_place(|| db.pilot_current_side(u))?,
+        None => None,
+    };
+    match side {
+        Some(s) => Ok((session, ucid, s)),
+        None if session.is_admin => {
+            let s = query
+                .get("side")
+                .and_then(|s| parse_side(s))
+                .unwrap_or(dcso3::coalition::Side::Blue);
+            Ok((session, ucid, s))
+        }
+        None => Err(anyhow::anyhow!(
+            "you have no coalition in the active round -- slot in on the server first"
+        )
+        .into()),
+    }
+}
+
+fn active_round_or_err(db: &StatsDb) -> std::result::Result<db::RoundId, Error> {
+    task::block_in_place(|| db.active_round_id())?
+        .ok_or_else(|| anyhow::anyhow!("no active round").into())
+}
+
+fn intel_json(id: &Uuid, c: &IntelCapture, viewer_discord: &str, viewer_admin: bool) -> serde_json::Value {
+    serde_json::json!({
+        "id":               id.to_string(),
+        "side":             format!("{:?}", c.side),
+        "image_url":        format!("/api/intel/images/{id}"),
+        "uploaded_by_name": c.uploaded_by_name,
+        "uploaded_at":      c.uploaded_at.to_rfc3339(),
+        "captured_at":      c.captured_at.map(|t| t.to_rfc3339()),
+        "filename":         c.filename,
+        "placed":           c.placed,
+        "lat":              c.lat,
+        "lon":              c.lon,
+        "alt_ft":           c.alt_ft,
+        "heading_deg":      c.heading_deg,
+        "pitch_deg":        c.pitch_deg,
+        "roll_deg":         c.roll_deg,
+        "adjust":           c.adjust,
+        "note":             c.note,
+        // may this viewer edit/delete it?
+        "mine":             viewer_admin || c.uploaded_by == viewer_discord,
+    })
+}
+
+/// GET /api/intel/captures — this coalition's captures for the active round.
+/// Admins may pass `?side=blue|red|all`.
+async fn api_intel_list(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let (session, _ucid, side) = require_intel_side(&query, session_id, &db, &bot_cfg).await?;
+    let round = active_round_or_err(&db)?;
+    let filter = if session.is_admin {
+        match query.get("side").map(|s| s.as_str()) {
+            Some("all") => None,
+            Some(s) => parse_side(s).or(Some(side)),
+            None => Some(side),
+        }
+    } else {
+        Some(side)
+    };
+    let caps = task::block_in_place(|| db.intel_list(round, filter))?;
+    let json: Vec<_> = caps
+        .iter()
+        .map(|(id, c)| intel_json(id, c, &session.discord_id, session.is_admin))
+        .collect();
+    Ok(warp::reply::json(&json))
+}
+
+/// POST /api/intel/upload — body is the raw image bytes; the TARPS filename
+/// comes in the `x-intel-filename` header (URL-encoded).
+async fn api_intel_upload(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    filename_hdr: Option<std::string::String>,
+    content_type: std::string::String,
+    body: bytes::Bytes,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let (session, ucid, mut side) = require_intel_side(&query, session_id, &db, &bot_cfg).await?;
+    if !content_type.starts_with("image/") {
+        return Err(anyhow::anyhow!("only image uploads are allowed (got '{content_type}')").into());
+    }
+    if session.is_admin {
+        if let Some(s) = query.get("side").and_then(|s| parse_side(s)) {
+            side = s;
+        }
+    }
+    let round = active_round_or_err(&db)?;
+    if task::block_in_place(|| db.intel_count_side(round, side))? >= MAX_INTEL_CAPTURES_PER_SIDE {
+        return Err(anyhow::anyhow!(
+            "recon intel limit reached for this coalition this round ({MAX_INTEL_CAPTURES_PER_SIDE})"
+        )
+        .into());
+    }
+    let filename = filename_hdr
+        .as_deref()
+        .map(|h| urlencoding::decode(h).map(|c| c.into_owned()).unwrap_or_else(|_| h.to_string()))
+        .unwrap_or_default();
+    let parsed = intel::parse_filename(&filename);
+    let name = ucid
+        .as_ref()
+        .and_then(|u| db.pilot_name(u))
+        .unwrap_or_else(|| session.username.clone());
+    let image_id = Uuid::new_v4();
+    let cap_id = Uuid::new_v4();
+    let cap = IntelCapture {
+        round,
+        side,
+        image_id,
+        uploaded_by: session.discord_id.clone(),
+        uploaded_by_name: name,
+        uploaded_at: chrono::Utc::now(),
+        captured_at: parsed.captured_at,
+        filename: filename.clone(),
+        placed: parsed.has_position(),
+        lat: parsed.lat.unwrap_or(0.0),
+        lon: parsed.lon.unwrap_or(0.0),
+        alt_ft: parsed.alt_ft,
+        heading_deg: parsed.heading_deg,
+        pitch_deg: parsed.pitch_deg,
+        roll_deg: parsed.roll_deg,
+        adjust: None,
+        note: None,
+    };
+    task::block_in_place(|| {
+        db.intel_put_image(
+            image_id,
+            IntelImage { content_type, data: body.to_vec() },
+        )?;
+        db.intel_put(cap_id, cap.clone())
+    })?;
+    log::info!(
+        "INTEL: {} uploaded capture {cap_id} ({filename:?}) for {side:?} (placed={})",
+        session.discord_id,
+        cap.placed
+    );
+    Ok(warp::reply::json(&intel_json(
+        &cap_id,
+        &cap,
+        &session.discord_id,
+        session.is_admin,
+    )))
+}
+
+/// GET /api/intel/images/<capture-id> — serve the photo, same-coalition only.
+async fn api_intel_get_image(
+    id: Uuid,
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let (session, _ucid, side) = require_intel_side(&query, session_id, &db, &bot_cfg).await?;
+    let cap = task::block_in_place(|| db.intel_get_by_id(&id))?
+        .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
+    if !session.is_admin && cap.side != side {
+        return Err(anyhow::anyhow!("not authorized for this coalition's intel").into());
+    }
+    let img = task::block_in_place(|| db.intel_get_image(&cap.image_id))?
+        .ok_or_else(|| anyhow::anyhow!("image not found"))?;
+    Ok(warp::http::Response::builder()
+        .header("content-type", img.content_type)
+        .header("cache-control", "private, max-age=31536000, immutable")
+        .body(img.data)
+        .unwrap())
+}
+
+#[derive(Deserialize)]
+struct IntelAdjustBody {
+    id:     std::string::String,
+    lat:    Option<f64>,
+    lon:    Option<f64>,
+    placed: Option<bool>,
+    note:   Option<std::string::String>,
+    adjust: Option<db::IntelAdjust>,
+}
+
+/// POST /api/intel/adjust — reposition / annotate a capture (uploader or admin).
+async fn api_intel_adjust(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: IntelAdjustBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let (session, _ucid, side) = require_intel_side(&query, session_id, &db, &bot_cfg).await?;
+    let cap_id: Uuid = body.id.parse().map_err(|e| anyhow::anyhow!("bad id: {e}"))?;
+    let mut cap = task::block_in_place(|| db.intel_get_by_id(&cap_id))?
+        .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
+    if !session.is_admin && (cap.side != side || cap.uploaded_by != session.discord_id) {
+        return Err(anyhow::anyhow!("not authorized to edit this capture").into());
+    }
+    if let Some(lat) = body.lat {
+        cap.lat = lat;
+    }
+    if let Some(lon) = body.lon {
+        cap.lon = lon;
+    }
+    if let Some(p) = body.placed {
+        cap.placed = p;
+    }
+    if body.lat.is_some() || body.lon.is_some() {
+        cap.placed = true;
+    }
+    if body.note.is_some() {
+        cap.note = body.note.filter(|n| !n.trim().is_empty());
+    }
+    if body.adjust.is_some() {
+        cap.adjust = body.adjust;
+    }
+    task::block_in_place(|| db.intel_put(cap_id, cap.clone()))?;
+    Ok(warp::reply::json(&intel_json(
+        &cap_id,
+        &cap,
+        &session.discord_id,
+        session.is_admin,
+    )))
+}
+
+#[derive(Deserialize)]
+struct IntelDeleteBody {
+    id: std::string::String,
+}
+
+/// POST /api/intel/delete — remove a capture + its image (uploader or admin).
+async fn api_intel_delete(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: IntelDeleteBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let (session, _ucid, side) = require_intel_side(&query, session_id, &db, &bot_cfg).await?;
+    let cap_id: Uuid = body.id.parse().map_err(|e| anyhow::anyhow!("bad id: {e}"))?;
+    let cap = task::block_in_place(|| db.intel_get_by_id(&cap_id))?
+        .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
+    if !session.is_admin && (cap.side != side || cap.uploaded_by != session.discord_id) {
+        return Err(anyhow::anyhow!("not authorized to delete this capture").into());
+    }
+    task::block_in_place(|| db.intel_delete(cap.round, &cap_id))?;
+    log::info!("INTEL: {} deleted capture {cap_id}", session.discord_id);
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
+/// POST /api/intel/purge — clear the whole recon picture (admin only).
+async fn api_intel_purge(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    task::block_in_place(|| db.intel_purge_all())?;
+    log::info!("ADMIN: recon intel purged");
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
 /// GET /api/admin/perf  — last session's DCS engine performance stats (admin only)
@@ -3402,6 +3704,57 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_wiki_get_image);
 
+    // ── Recon intel (TARPS) ──────────────────────────────────────────────
+    let intel_list_route = warp::path!("api" / "intel" / "captures")
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_intel_list);
+
+    let intel_get_image_route = warp::path!("api" / "intel" / "images" / Uuid)
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_intel_get_image);
+
+    let intel_upload_route = warp::path!("api" / "intel" / "upload")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::header::optional::<std::string::String>("x-intel-filename"))
+        .and(warp::header::<std::string::String>("content-type"))
+        .and(warp::body::content_length_limit(MAX_INTEL_IMAGE_BYTES))
+        .and(warp::body::bytes())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_intel_upload);
+
+    let intel_adjust_route = warp::path!("api" / "intel" / "adjust")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::json::<IntelAdjustBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_intel_adjust);
+
+    let intel_delete_route = warp::path!("api" / "intel" / "delete")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::json::<IntelDeleteBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_intel_delete);
+
+    let intel_purge_route = warp::path!("api" / "intel" / "purge")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(api_intel_purge);
+
     // /site/* → embedded bfsite SPA
     let site_files = warp::path("site")
         .and(warp::path::tail())
@@ -3443,6 +3796,8 @@ async fn main() -> Result<()> {
         .or(wiki_list_route)
         .or(wiki_get_route)
         .or(wiki_get_image_route)
+        .or(intel_list_route)
+        .or(intel_get_image_route)
         .boxed();
 
     let auth_routes = auth_login
@@ -3480,6 +3835,11 @@ async fn main() -> Result<()> {
         .or(cockpit_ewr_toggle_route.or(cockpit_ewr_units_route).or(cockpit_cargo_spawn_route).boxed())
         .boxed()
         .or(wiki_save_route.or(wiki_delete_route).or(wiki_upload_image_route).boxed())
+        .or(intel_upload_route
+            .or(intel_adjust_route)
+            .or(intel_delete_route)
+            .or(intel_purge_route)
+            .boxed())
         .or(admin_bot_start
             .or(admin_bot_stop)
             .or(admin_bot_restart)

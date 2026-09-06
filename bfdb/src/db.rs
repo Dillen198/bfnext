@@ -111,6 +111,58 @@ pub(crate) struct WikiImage {
     pub(crate) uploaded_by:  std::string::String,
 }
 
+// ── Recon intel (TARPS) types ─────────────────────────────────────────
+
+/// One reconnaissance capture (a TARPS photo) contributed through the
+/// dashboard. Keyed by `(RoundId, Uuid)` in `intel_captures` -- the intel
+/// picture is per-round and per-coalition, and wiped by a campaign reset.
+/// `side` is snapshotted at upload time so a pilot who later switches
+/// coalitions doesn't drag their old photos across with them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct IntelCapture {
+    pub(crate) round:            RoundId,
+    pub(crate) side:             Side,        // Blue | Red -- owning coalition
+    pub(crate) image_id:         Uuid,        // -> intel_images
+    pub(crate) uploaded_by:      std::string::String, // session discord_id
+    pub(crate) uploaded_by_name: std::string::String, // pilot display name (best effort)
+    pub(crate) uploaded_at:      DateTime<Utc>,
+    pub(crate) captured_at:      Option<DateTime<Utc>>, // from the filename, if present
+    pub(crate) filename:         std::string::String,
+    /// false -> the filename couldn't be parsed for coordinates; the client
+    /// must drop this capture on the map manually before it renders.
+    pub(crate) placed:           bool,
+    pub(crate) lat:              f64,
+    pub(crate) lon:              f64,
+    pub(crate) alt_ft:           Option<f64>,
+    pub(crate) heading_deg:      Option<f64>,
+    pub(crate) pitch_deg:        Option<f64>,
+    pub(crate) roll_deg:         Option<f64>,
+    /// Opaque manual-nudge state set by the client (Phase 2 warp editor).
+    /// Persisted verbatim so edits survive reload; bfdb never interprets it.
+    pub(crate) adjust:           Option<IntelAdjust>,
+    pub(crate) note:             Option<std::string::String>,
+}
+
+/// Manual alignment set by the client's warp editor. `corners`, when present,
+/// are the 4 ground corners (TL, TR, BR, BL as `[lat, lon]`) the photo should
+/// be pinned to, overriding the automatic pinhole projection entirely.
+/// `opacity` (0..1) lets stacked photos be peeled apart. bfdb stores these
+/// verbatim -- all warp math lives in the client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct IntelAdjust {
+    pub(crate) corners: Option<[[f64; 2]; 4]>,
+    pub(crate) opacity: Option<f64>,
+}
+
+/// Raw bytes of an uploaded recon photo, keyed by `IntelCapture.image_id`
+/// in `intel_images`. Served only to same-coalition viewers (unlike wiki
+/// images, which are public).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct IntelImage {
+    pub(crate) content_type: std::string::String,
+    pub(crate) data:         Vec<u8>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WeatherSnapshot {
     pub(crate) temp_c: f64,
@@ -484,6 +536,11 @@ pub(crate) struct StatsDbInner {
     wiki_pages: Tree<std::string::String, WikiPage>,
     // bfwiki uploaded images (screenshots etc.), keyed by generated Uuid
     wiki_images: Tree<Uuid, WikiImage>,
+    // Recon intel (TARPS) captures, keyed (RoundId, capture Uuid). Per-round,
+    // per-coalition; wiped by reset_campaign_data.
+    intel_captures: Tree<(RoundId, Uuid), IntelCapture>,
+    // Recon intel photo bytes, keyed by IntelCapture.image_id.
+    intel_images: Tree<Uuid, IntelImage>,
     // Live bflib engine log, streamed over netidx from the running DCS mission
     // (distinct from bfdb's own process log)
     engine_log_tx: broadcast::Sender<std::string::String>,
@@ -688,6 +745,8 @@ impl StatsDb {
             admin_bans: Tree::open(&db, "admin_bans")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
+            intel_captures: Tree::open(&db, "intel_captures")?,
+            intel_images: Tree::open(&db, "intel_images")?,
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
             engine_error_history: Arc::new(StdMutex::new(VecDeque::new())),
@@ -784,6 +843,8 @@ impl StatsDb {
             admin_bans: Tree::open(&db, "admin_bans")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
+            intel_captures: Tree::open(&db, "intel_captures")?,
+            intel_images: Tree::open(&db, "intel_images")?,
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
             engine_error_history: Arc::new(StdMutex::new(VecDeque::new())),
@@ -1643,6 +1704,115 @@ impl StatsDb {
 
     pub(crate) fn wiki_get_image(&self, id: &Uuid) -> Result<Option<WikiImage>> {
         self.wiki_images.get(id)
+    }
+
+    // ── Recon intel (TARPS) ─────────────────────────────────────────────────
+
+    /// The coalition a pilot is registered to in the currently-active round,
+    /// or `None` if there's no active round or the pilot has no Blue/Red side
+    /// in it. This is the gate for who may contribute / see recon intel.
+    pub(crate) fn pilot_current_side(&self, ucid: &Ucid) -> Result<Option<Side>> {
+        let Some(rid) = self
+            .latest_rounds()?
+            .into_iter()
+            .find(|(_, _, r)| r.end.is_none())
+            .map(|(_, rid, _)| rid)
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .pilots
+            .round_info
+            .get(&(*ucid, rid))?
+            .map(|ri| ri.side.1)
+            .filter(|s| matches!(s, Side::Blue | Side::Red)))
+    }
+
+    /// The active round id, if any.
+    pub(crate) fn active_round_id(&self) -> Result<Option<RoundId>> {
+        Ok(self
+            .latest_rounds()?
+            .into_iter()
+            .find(|(_, _, r)| r.end.is_none())
+            .map(|(_, rid, _)| rid))
+    }
+
+    /// All intel captures for `round`, optionally filtered to one `side`.
+    /// Also opportunistically drops captures from any *other* round so a
+    /// mission restart leaves no stale imagery behind.
+    pub(crate) fn intel_list(
+        &self,
+        round: RoundId,
+        side: Option<Side>,
+    ) -> Result<Vec<(Uuid, IntelCapture)>> {
+        let mut stale: Vec<(RoundId, Uuid)> = Vec::new();
+        let mut out = Vec::new();
+        for r in self.intel_captures.iter() {
+            let ((rid, id), cap) = r?;
+            if rid != round {
+                stale.push((rid, id));
+                continue;
+            }
+            if let Some(s) = side {
+                if cap.side != s {
+                    continue;
+                }
+            }
+            out.push((id, cap));
+        }
+        for (rid, id) in stale {
+            if let Some(cap) = self.intel_captures.remove(&(rid, id))? {
+                let _ = self.intel_images.remove(&cap.image_id)?;
+            }
+        }
+        out.sort_by_key(|(_, c)| c.captured_at.unwrap_or(c.uploaded_at));
+        Ok(out)
+    }
+
+    /// Look up a capture by its id alone (scanning rounds) -- the image and
+    /// adjust/delete endpoints only carry the capture id, not the round.
+    pub(crate) fn intel_get_by_id(&self, id: &Uuid) -> Result<Option<IntelCapture>> {
+        for r in self.intel_captures.iter() {
+            let ((_, cid), cap) = r?;
+            if cid == *id {
+                return Ok(Some(cap));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn intel_count_side(&self, round: RoundId, side: Side) -> Result<usize> {
+        Ok(self.intel_list(round, Some(side))?.len())
+    }
+
+    pub(crate) fn intel_put(&self, id: Uuid, cap: IntelCapture) -> Result<()> {
+        self.intel_captures.insert(&(cap.round, id), &cap)?;
+        Ok(())
+    }
+
+    pub(crate) fn intel_put_image(&self, id: Uuid, img: IntelImage) -> Result<()> {
+        self.intel_images.insert(&id, &img)?;
+        Ok(())
+    }
+
+    pub(crate) fn intel_get_image(&self, id: &Uuid) -> Result<Option<IntelImage>> {
+        self.intel_images.get(id)
+    }
+
+    pub(crate) fn intel_delete(&self, round: RoundId, id: &Uuid) -> Result<bool> {
+        match self.intel_captures.remove(&(round, *id))? {
+            Some(cap) => {
+                let _ = self.intel_images.remove(&cap.image_id)?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    pub(crate) fn intel_purge_all(&self) -> Result<()> {
+        self.intel_captures.clear()?;
+        self.intel_images.clear()?;
+        Ok(())
     }
 
     /// Seed / refresh the built-in gameplay wiki content (compiled in from
@@ -2682,6 +2852,9 @@ impl StatsDb {
         // Trails & weather
         self.trail_points.clear()?;
         if let Ok(mut w) = self.latest_weather.write() { *w = None; }
+        // Recon intel (TARPS) -- per-round picture, gone on reset
+        self.intel_captures.clear()?;
+        self.intel_images.clear()?;
         // auth_sessions, auth_states → preserved
         Ok(())
     }

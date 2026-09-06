@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Map, Target, BarChart3, Users, Crosshair,
   Zap, LogOut, Shield, Settings, Settings2, Info, Server, Radio,
-  ChevronRight, Plane, Menu, X, ChevronsLeft, ChevronsRight, BookOpen,
+  ChevronRight, Plane, Menu, X, ChevronsLeft, ChevronsRight, BookOpen, Camera,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
@@ -25,6 +25,7 @@ const NAV = [
   { to: '/kills',       icon: Crosshair,       label: 'KILL FEED'  },
   { to: '/about',       icon: Info,            label: 'ABOUT'      },
 ]
+const INTEL_NAV = { to: '/intel', icon: Camera, label: 'RECON INTEL' }
 const ADMIN_NAV = { to: '/admin', icon: Settings, label: 'ADMIN' }
 const CONFIG_NAV = { to: '/admin/config', icon: Settings2, label: 'CONFIG' }
 const PROFILE_NAV = (ucid: string) => ({ to: `/pilots?ucid=${ucid}`, icon: Users, label: 'MY PROFILE' })
@@ -138,7 +139,8 @@ export default function Layout() {
   const pastRounds  = rounds.filter(r => !r.active)
 
   const allNav = [
-    ...NAV, 
+    ...NAV,
+    ...(user?.side || user?.is_admin ? [INTEL_NAV] : []),
     ...(user?.ucid ? [PROFILE_NAV(user.ucid)] : []),
     ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV] : [])
   ]
