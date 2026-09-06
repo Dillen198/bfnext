@@ -15,23 +15,28 @@ import LogoMark from './LogoMark'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 
-const NAV = [
+// Operational picture. BRIEFING / RECON INTEL are coalition-locked and only
+// appear once bfdb can resolve the viewer's side (or they're an admin).
+const OPS_NAV = [
   { to: '/',            icon: LayoutDashboard, label: 'SITREP'     },
   { to: '/map',         icon: Map,             label: 'TACMAP'     },
   { to: '/objectives',  icon: Target,          label: 'OBJECTIVES' },
-  { to: '/leaderboard', icon: BarChart3,        label: 'RANKINGS'   },
-  { to: '/pilots',      icon: Users,           label: 'PILOTS'     },
-  { to: '/kills',       icon: Crosshair,       label: 'KILL FEED'  },
-  { to: '/about',       icon: Info,            label: 'ABOUT'      },
 ]
-// Coalition-locked: only shown once bfdb can resolve the viewer's side.
 const COALITION_NAV = [
   { to: '/briefing', icon: Radio,  label: 'BRIEFING'     },
   { to: '/intel',    icon: Camera, label: 'RECON INTEL'  },
 ]
+// Stats & people.
+const STATS_NAV = [
+  { to: '/leaderboard', icon: BarChart3,  label: 'RANKINGS'  },
+  { to: '/pilots',      icon: Users,      label: 'PILOTS'    },
+  { to: '/kills',       icon: Crosshair,  label: 'KILL FEED' },
+]
+const PROFILE_NAV = (ucid: string) => ({ to: `/pilots?ucid=${ucid}`, icon: Users, label: 'MY PROFILE' })
+// Meta / system.
+const ABOUT_NAV = { to: '/about', icon: Info, label: 'ABOUT' }
 const ADMIN_NAV = { to: '/admin', icon: Settings, label: 'ADMIN' }
 const CONFIG_NAV = { to: '/admin/config', icon: Settings2, label: 'CONFIG' }
-const PROFILE_NAV = (ucid: string) => ({ to: `/pilots?ucid=${ucid}`, icon: Users, label: 'MY PROFILE' })
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -141,12 +146,23 @@ export default function Layout() {
   const activeRound = rounds.find(r => r.active)
   const pastRounds  = rounds.filter(r => !r.active)
 
-  const allNav = [
-    ...NAV,
-    ...(user?.side || user?.is_admin ? COALITION_NAV : []),
-    ...(user?.ucid ? [PROFILE_NAV(user.ucid)] : []),
-    ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV] : [])
-  ]
+  // Grouped by purpose: operational picture, then stats/people, then
+  // meta/system. Empty groups (e.g. no coalition, not admin) are dropped so
+  // no stray dividers show.
+  const navGroups: { to: string; icon: typeof Info; label: string }[][] = [
+    [
+      ...OPS_NAV,
+      ...(user?.side || user?.is_admin ? COALITION_NAV : []),
+    ],
+    [
+      ...STATS_NAV,
+      ...(user?.ucid ? [PROFILE_NAV(user.ucid)] : []),
+    ],
+    [
+      ABOUT_NAV,
+      ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV] : []),
+    ],
+  ].filter(g => g.length > 0)
 
   const Sep = () => <div className="topbar-sep" />
 
@@ -330,21 +346,26 @@ export default function Layout() {
           {/* Nav section */}
           <div className="nav-group-label">Navigation</div>
           <nav style={{ flex: 1 }}>
-            {allNav.map(({ to, icon: Icon, label }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === '/' || to === '/admin'}
-                onClick={() => setSidebarOpen(false)}
-                className={() => `nav-item${isNavActive(to, location.pathname, location.search, to === '/' || to === '/admin') ? ' active' : ''}`}
-                title={sidebarCollapsed ? label : undefined}
-              >
-                <Icon size={16} style={{ flexShrink: 0 }} />
-                <span>{label}</span>
-                {to === '/kills' && !sidebarCollapsed && (
-                  <span style={{ marginLeft: 'auto', opacity: 0.4 }}><ChevronRight size={12} /></span>
-                )}
-              </NavLink>
+            {navGroups.map((group, gi) => (
+              <React.Fragment key={gi}>
+                {gi > 0 && <div className="nav-divider" />}
+                {group.map(({ to, icon: Icon, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to === '/' || to === '/admin'}
+                    onClick={() => setSidebarOpen(false)}
+                    className={() => `nav-item${isNavActive(to, location.pathname, location.search, to === '/' || to === '/admin') ? ' active' : ''}`}
+                    title={sidebarCollapsed ? label : undefined}
+                  >
+                    <Icon size={16} style={{ flexShrink: 0 }} />
+                    <span>{label}</span>
+                    {to === '/kills' && !sidebarCollapsed && (
+                      <span style={{ marginLeft: 'auto', opacity: 0.4 }}><ChevronRight size={12} /></span>
+                    )}
+                  </NavLink>
+                ))}
+              </React.Fragment>
             ))}
           </nav>
 

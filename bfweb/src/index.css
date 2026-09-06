@@ -662,6 +662,16 @@ body {
   font-family: var(--font-mono);
 }
 
+/* Thin rule between purpose-grouped nav sections. */
+.nav-divider {
+  height: 1px;
+  margin: 8px 16px;
+  background: var(--border);
+}
+.sidebar.collapsed .nav-divider {
+  margin: 8px 10px;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    KPI STRIP
    ═══════════════════════════════════════════════════════════════ */
