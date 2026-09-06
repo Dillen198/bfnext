@@ -22,7 +22,7 @@ Unlike traditional DCS missions that reset after each flight:
 ### Strategic Depth
 - Capture objectives to expand your coalition's territory
 - Manage logistics and supply lines
-- Deploy reinforcements strategically
+
 - Coordinate with teammates for maximum effectiveness
 
 ### Reward System

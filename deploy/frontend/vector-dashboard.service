@@ -1,0 +1,26 @@
+# Manages the frontend docker-compose stack on a Linux host (e.g. a
+# DigitalOcean droplet). Install:
+#
+#   sudo cp deploy/frontend/vector-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vector-dashboard
+#
+# Edit WorkingDirectory below to wherever you cloned this repo, and put
+# VITE_API_BASE=https://api.example.com in deploy/frontend/.env first.
+
+[Unit]
+Description=Vector Strike dashboard + site (bfweb/bfsite via docker compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/bfnext-vector
+ExecStart=/usr/bin/docker compose -f deploy/frontend/docker-compose.yml up -d --build
+ExecStop=/usr/bin/docker compose -f deploy/frontend/docker-compose.yml down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

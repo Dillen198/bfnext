@@ -19,7 +19,7 @@ use crate::{maybe, maybe_mut, objective_mut};
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{LifeType, PointsCfg, UnitTag, Vehicle},
-    db::{group::GroupId, objective::ObjectiveId},
+    db::{group::GroupId, objective::{ObjectiveId, ObjectiveKind}},
     shots::{Dead, Who},
     stats::{self, EnId, Stat},
 };
@@ -61,6 +61,12 @@ pub enum SlotAuth {
     NotRegistered(Side),
     VehicleNotAvailable(Vehicle),
     Denied,
+    EraRestricted { vehicle: Vehicle, era: compact_str::CompactString },
+    /// A carrier is flying an aircraft type its own side doesn't normally
+    /// produce (kept from the previous owner on capture -- see
+    /// capture_warehouse's carrier branch), and the carrier hasn't finished
+    /// repairs yet.
+    CarrierNotRepaired(Vehicle),
 }
 
 pub enum RegErr {
@@ -105,6 +111,12 @@ pub struct Player {
     pub ai_team_kills: SetS<DateTime<Utc>>,
     #[serde(default)]
     pub player_team_kills: MapS<DateTime<Utc>, Ucid>,
+    /// Kills in the current sortie (resets on death)
+    #[serde(default)]
+    pub kill_streak: u8,
+    /// Total career kills
+    #[serde(default)]
+    pub total_kills: u32,
     #[serde(skip)]
     pub current_slot: Option<(SlotId, Option<InstancedPlayer>)>,
     #[serde(skip)]
@@ -247,6 +259,7 @@ impl Db {
                                 moved_by: _,
                                 cost_fraction: _,
                                 origin: _,
+                                jtac: _,
                             } => Some(player.clone()),
                             DeployKind::Troop {
                                 player,
@@ -254,11 +267,14 @@ impl Db {
                                 moved_by: _,
                                 origin: _,
                                 cost_fraction: _,
+                                ..
                             } => Some(*player),
                             DeployKind::Action { player, .. } => player.clone(),
                             DeployKind::Crate { .. }
                             | DeployKind::Objective { .. }
-                            | DeployKind::ObjectiveDeprecated => None,
+                            | DeployKind::ObjectiveDeprecated
+                            | DeployKind::DownedPilot { .. }
+                            | DeployKind::Dismount { .. } => None,
                         })
                 }
             }
@@ -319,7 +335,7 @@ impl Db {
         let owned_objective = self
             .persisted
             .objectives
-            .iter_mut_cow()
+            .into_iter()
             .find_map(|(oid, obj)| {
                 if obj.owner == player.side && obj.zone.contains(position) {
                     Some((oid, obj))
@@ -342,6 +358,7 @@ impl Db {
             return Ok(TakeoffRes::OutOfPoints);
         } else if !self.ephemeral.cfg.limited_lives {
             player.airborne = Some(life_type);
+            player.kill_streak = 0; // reset streak on new sortie
             self.ephemeral.dirty();
             Ok(TakeoffRes::NoLifeTaken)
         } else if owned_objective.is_some() {
@@ -350,6 +367,7 @@ impl Db {
                 return Ok(TakeoffRes::OutOfLives);
             } else {
                 player.airborne = Some(life_type);
+                player.kill_streak = 0; // reset streak on new sortie
                 *player_lives -= 1;
                 self.ephemeral.stat(Stat::Life {
                     id: ucid,
@@ -359,6 +377,9 @@ impl Db {
             self.ephemeral.dirty();
             Ok(TakeoffRes::TookLife(life_type))
         } else {
+            player.airborne = Some(life_type);
+            player.kill_streak = 0;
+            self.ephemeral.dirty();
             Ok(TakeoffRes::NoLifeTaken)
         };
         if cost > 0
@@ -494,6 +515,46 @@ impl Db {
         }
     }
 
+    /// Restore one life of the given type to a player (e.g. after CSAR delivery).
+    /// If the player is already at max for that tier, cascade down via `LifeType::down()`.
+    /// Returns the new life count, or None if nothing to restore.
+    pub fn restore_life(&mut self, ucid: &Ucid, life_type: LifeType) -> Option<u8> {
+        if !self.ephemeral.cfg.limited_lives {
+            return None;
+        }
+        // Find the first tier (starting from life_type, cascading down) that has a deficit
+        let mut current = life_type;
+        let (current, max_lives) = loop {
+            let max = self.ephemeral.cfg.default_lives.get(&current).map(|(n, _)| *n);
+            let has_deficit = self
+                .persisted
+                .players
+                .get(ucid)
+                .map(|p| p.lives.get(&current).is_some())
+                .unwrap_or(false);
+            match (max, has_deficit) {
+                (Some(max), true) => break (current, max),
+                _ => match current.down() {
+                    Some(lower) => current = lower,
+                    None => return None,
+                },
+            }
+        };
+        let player = self.persisted.players.get_mut_cow(ucid)?;
+        let new_count = match player.lives.get_mut_cow(&current) {
+            None => return None,
+            Some((_, count)) => {
+                *count = (*count + 1).min(max_lives);
+                *count
+            }
+        };
+        if new_count >= max_lives {
+            player.lives.remove_cow(&current);
+        }
+        self.ephemeral.dirty();
+        Some(new_count)
+    }
+
     pub fn maybe_reset_lives(&mut self, ucid: &Ucid, now: DateTime<Utc>) -> Result<()> {
         let mut lt_to_reset: SmallVec<[LifeType; 2]> = smallvec![];
         let player = self
@@ -625,6 +686,23 @@ impl Db {
                             }
                         }
                     }
+                    // A carrier can end up carrying an aircraft type its own
+                    // side doesn't normally produce -- kept from the previous
+                    // owner on capture so the new owner can operate it (see
+                    // capture_warehouse's carrier branch). That foreign
+                    // aircraft only becomes flyable once the carrier finishes
+                    // repairs, not immediately at capture.
+                    if matches!(objective.kind, ObjectiveKind::CarrierGroup { .. }) {
+                        let is_own_roster = self
+                            .ephemeral
+                            .production_by_side
+                            .get(&objective.owner)
+                            .map(|p| p.equipment.contains_key(typ))
+                            .unwrap_or(true);
+                        if !is_own_roster && objective.health < 100 {
+                            break SlotAuth::CarrierNotRepaired(sifo.typ.clone());
+                        }
+                    }
                 }
                 player.changing_slots = false;
                 player.jtac_or_spectators = false;
@@ -648,6 +726,15 @@ impl Db {
                     cost: cost as u32,
                     vehicle: sifo.typ.clone(),
                     balance,
+                };
+            }
+        }
+        if let Some(era_cfg) = &self.ephemeral.cfg.era {
+            let allowed = era_cfg.eras.get(era_cfg.current.as_str()).map(|v| v.as_slice()).unwrap_or(&[]);
+            if !allowed.is_empty() && !allowed.contains(&sifo.typ) {
+                return SlotAuth::EraRestricted {
+                    vehicle: sifo.typ.clone(),
+                    era: compact_str::format_compact!("{}", era_cfg.current),
                 };
             }
         }
@@ -688,6 +775,14 @@ impl Db {
                 self.ephemeral.dirty()
             }
         }
+        // Register only fires once, the first time a ucid is ever seen, so a
+        // returning player reconnecting into a new round would otherwise never
+        // get a side recorded for that round in bfdb, leaving them out of the
+        // per-round registered/online counts. Reaffirm their known side on
+        // every connect so bfdb always has a current-round side for them.
+        if let Some(player) = self.persisted.players.get(&ucid) {
+            self.ephemeral.stat(Stat::Sideswitch { id: ucid, side: player.side });
+        }
     }
 
     pub fn register_player(&mut self, ucid: Ucid, name: String, side: Side) -> Result<(), RegErr> {
@@ -719,6 +814,8 @@ impl Db {
                         jtac_or_spectators: true,
                         ai_team_kills: SetS::new(),
                         player_team_kills: MapS::new(),
+                        kill_streak: 0,
+                        total_kills: 0,
                     },
                 );
                 self.ephemeral.stat(Stat::Register {
@@ -1221,7 +1318,7 @@ impl Db {
             }
         }
         if !hit_by.is_empty() {
-            let total_points = (&dead.shots)
+            let base_points = (&dead.shots)
                 .into_iter()
                 .find(|s| s.target_typ.trim() != "")
                 .map(|s| &s.target_typ)
@@ -1237,6 +1334,23 @@ impl Db {
                     }
                 })
                 .unwrap_or(cfg.ground_kill);
+            // Apply night kill bonus if configured
+            let total_points = if let Some(tod_cfg) = self.ephemeral.cfg.time_of_day_effects.as_ref() {
+                let hour = dead.time.hour() as u8;
+                let is_night = if tod_cfg.night_start_hour > tod_cfg.night_end_hour {
+                    // Wraps midnight (e.g. 22-06)
+                    hour >= tod_cfg.night_start_hour || hour < tod_cfg.night_end_hour
+                } else {
+                    hour >= tod_cfg.night_start_hour && hour < tod_cfg.night_end_hour
+                };
+                if is_night {
+                    (base_points as f64 * tod_cfg.night_kill_bonus).ceil() as u32
+                } else {
+                    base_points
+                }
+            } else {
+                base_points
+            };
             let pps = (total_points as f32 / hit_by.len() as f32).ceil() as i32;
             let victim_info = match &dead.victim {
                 Who::Player { ucid, .. } => self.persisted.players.get(ucid).map(|p| VictimInfo {
@@ -1260,24 +1374,49 @@ impl Db {
                     let msg = if player.side == *dead.victim.side() {
                         self.apply_teamkill_penalty(ucid, total_points, &victim_info)
                     } else {
+                        // Apply kill streak bonus
+                        let streak_mult = cfg.kill_streak_bonuses
+                            .iter()
+                            .rev()
+                            .find(|(min_streak, _)| player.kill_streak >= *min_streak)
+                            .map(|(_, mult)| *mult)
+                            .unwrap_or(1.0);
+                        let pps_with_streak = (pps as f64 * streak_mult).ceil() as i32;
                         let tp = if provisional {
-                            player.provisional_points += pps;
+                            player.provisional_points += pps_with_streak;
                             player.provisional_points
                         } else {
-                            player.points += pps;
+                            player.points += pps_with_streak;
                             player.points
                         };
+                        // Increment streak and total kills
+                        player.kill_streak = player.kill_streak.saturating_add(1);
+                        player.total_kills = player.total_kills.saturating_add(1);
+                        
+                        if player.kill_streak == 5 {
+                            self.ephemeral.pending_achievements.push(format!("{} is now an Ace! (5 kill streak)", player.name).into());
+                        } else if player.kill_streak == 10 {
+                            self.ephemeral.pending_achievements.push(format!("{} is unstoppable! (10 kill streak)", player.name).into());
+                        } else if player.kill_streak == 15 {
+                            self.ephemeral.pending_achievements.push(format!("{} is a god of war! (15 kill streak)", player.name).into());
+                        }
+                        
                         let pm = if provisional { " provisional" } else { "" };
+                        let streak_msg = if streak_mult > 1.0 {
+                            format_compact!(" [x{:.1} streak]", streak_mult)
+                        } else {
+                            format_compact!("")
+                        };
                         match &victim_info {
-                            None => format_compact!("{tp}(+{pps}){pm} points"),
+                            None => format_compact!("{tp}(+{pps_with_streak}){pm}{streak_msg} points"),
                             Some(vi) => {
                                 if vi.ai_deployable {
                                     format_compact!(
-                                        "{tp}(+{pps}){pm} points, killed {}'s deployed ai unit",
+                                        "{tp}(+{pps_with_streak}){pm}{streak_msg} points, killed {}'s deployed ai unit",
                                         vi.name
                                     )
                                 } else {
-                                    format_compact!("{tp}(+{pps}){pm} points, killed {}", vi.name)
+                                    format_compact!("{tp}(+{pps_with_streak}){pm}{streak_msg} points, killed {}", vi.name)
                                 }
                             }
                         }
@@ -1302,6 +1441,20 @@ impl Db {
                     id: *ucid,
                 });
                 self.ephemeral.panel_to_player(&self.persisted, 10, ucid, m);
+                self.ephemeral.dirty();
+            }
+        }
+    }
+
+    pub fn adjust_points_silent(&mut self, ucid: &Ucid, amount: i32, why: &str) {
+        if let Some(player) = self.persisted.players.get_mut_cow(ucid) {
+            player.points += amount;
+            if amount != 0 {
+                self.ephemeral.stat(Stat::Points {
+                    points: amount,
+                    reason: compact_str::format_compact!("{}({}) points {}", player.points, amount, why).into(),
+                    id: *ucid,
+                });
                 self.ephemeral.dirty();
             }
         }

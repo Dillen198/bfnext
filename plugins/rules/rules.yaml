@@ -1,0 +1,26 @@
+DEFAULT:
+  channel: 1450818994973048872  # Target Discord channel ID
+  title: "📜 **SERVER RULES & REGULATIONS**"
+  description: "Please adhere to the following rules while participating in our community and DCS servers."
+  image_url: "" # Optional header image URL (e.g., https://i.imgur.com/your_banner.png)
+  rules:
+    - title: "1. General Conduct & Maturity"
+      description: "**Be respectful. Don't be toxic.** We expect maturity and camaraderie at all times. Respect your fellow pilots and you will be respected in return. Harassment, excessive trash-talking, or degrading behavior will result in immediate removal."
+    - title: "2. Chain of Command & Support"
+      description: "**Do not @ping or DM staff members directly.** If you require assistance or need to report an issue, please open a support ticket in the designated channels. Our staff monitors tickets to ensure all issues are handled fairly and efficiently."
+    - title: "3. Content Standards & Relevant Channels"
+      description: |
+        * **NSFW/Edgy Content:** Keep all NSFW content, political debates, war discussions, and "edgy" topics strictly within designated NSFW channels.
+        * **Prohibited Content:** Gore, obscenity, and pornography are strictly prohibited across the entire server.
+        * **Stay On-Topic:** Please use the correct channels for their intended purposes to keep the server organized and relevant for everyone.
+    - title: "4. Security & OPSEC"
+      description: "**Do not post, reference, or discuss sensitive, confidential, or classified military documents.** This includes \"leaked\" manuals or restricted technical data. We maintain a strict policy to protect the community and the integrity of the simulation hobby."
+    - title: "5. Spam & Malicious Links"
+      description: |
+        * **No Spam:** Avoid mass-mentioning, wall-of-text spamming, or repetitive messaging.
+        * **Security:** Do not post shady, malicious, or "scam" links.
+        * **Report:** If you see suspicious activity, sketchy links, or scam DMs, please alert staff immediately.
+    - title: "6. Advertising & Partnerships"
+      description: "Unsanctioned advertising is not allowed. We are always open to community partnerships; if you wish to advertise or collaborate, please contact staff for formal permission."
+    - title: "7. Doxing & Privacy"
+      description: "Posting real-life information (IP addresses, physical locations, full names, etc.) about other users without their express permission is **strictly prohibited**. Doxing is a zero-tolerance offense."

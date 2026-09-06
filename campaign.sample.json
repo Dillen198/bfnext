@@ -1,0 +1,75 @@
+{
+  "_comment": "Copy this file, rename it (e.g. campaign.json), fill in your values, then pass it to bfdb:",
+  "_usage":   "bfdb.exe --db \"E:\\Saved Games\\DCS\\bfdb\" --config \"E:\\campaign.json\" --listen-address 0.0.0.0:8080",
+  "_note":    "All fields are optional — only include keys you want to override from the defaults.",
+
+  "_section_identity": "──── IDENTITY ────────────────────────────────────────────────────────────",
+  "name":      "Vector Strike",
+  "shortName": "VS",
+  "tagline":   "Where every sortie shapes the war.",
+  "version":   "v3.0",
+  "logoUrl":   "",
+
+  "_section_links": "──── LINKS ───────────────────────────────────────────────────────────────",
+  "discord":     "https://discord.gg/YOURCODE",
+  "server":      "Your Server Name · Campaign Name",
+  "serverIp":    "123.456.789.0:10309",
+  "websiteUrl":  "https://yourdomain.com",
+  "donationUrl": "https://ko-fi.com/yourname",
+
+  "_section_factions": "──── FACTION LABELS ──────────────────────────────────────────────────────",
+  "blueLabel": "BLUFOR",
+  "redLabel":  "REDFOR",
+
+  "_section_colors": "──── COLORS (military olive palette by default) ──────────────────────────",
+  "_color_note": "CSS color strings. Leave any key out to keep the default military palette.",
+  "accentColor":      "#6aab1f",
+  "accentHoverColor": "#8ec83f",
+  "blueColor":        "#4a8fd4",
+  "redColor":         "#cc4444",
+  "bgColor":          "#080b06",
+  "bgCardColor":      "#0d1009",
+  "bgElevatedColor":  "#141910",
+  "borderColor":      "#1c2318",
+
+  "_section_background": "──── BACKGROUND / THEME ──────────────────────────────────────────────",
+
+  "_bg_image_note": "backgroundImage: URL to any image (HTTPS or relative path). Leave empty for none.",
+  "_bg_image_examples": [
+    "https://example.com/camo-texture.jpg",
+    "/assets/map-bg.jpg"
+  ],
+  "backgroundImage":        "",
+  "backgroundImageOpacity": 0.08,
+  "backgroundImageSize":    "cover",
+  "backgroundImageBlend":   "overlay",
+
+  "_camo_note": "camoPattern: built-in CSS pattern overlay. Options: 'none' | 'digital' | 'hex' | 'terrain' | 'multicam'",
+  "_camo_combine": "You can combine a camoPattern with a backgroundImage — the pattern renders on top.",
+  "camoPattern": "none",
+  "camoOpacity": 0.05,
+
+  "_section_map": "──── MAP ─────────────────────────────────────────────────────────────────",
+  "_map_note": "mapCenter is [lat, lon]. Preset regions: Caucasus [42.35,43.50], Syria [35.0,38.5], Persia [26.5,55.5]",
+  "mapCenter": [33.0, 36.5],
+  "mapZoom":   7,
+
+  "_section_dashboard": "──── DASHBOARD ───────────────────────────────────────────────────────────",
+  "dashboardKillFeedCount": 30,
+
+  "_section_integrations": "──── INTEGRATIONS ────────────────────────────────────────────────────────",
+  "_srs_note": "SRS radio panel — URL of your SRS server. Leave empty to hide the SRS panel entirely.",
+  "_srs_cli":  "You can also pass --srs-url on the bfdb command line (CLI takes precedence over this file).",
+  "srsUrl": "http://localhost:5002",
+
+  "_section_credits": "──── CREDITS ─────────────────────────────────────────────────────────────",
+  "engineCredits": [
+    { "name": "EvilKipper", "handle": "",                  "role": "Creator"              },
+    { "name": "KillerDog",  "handle": "No15 | KillerDog",  "role": "Lead Developer"       },
+    { "name": "EagleEye",   "handle": "[.ID] EagleEye",    "role": "Tester & Contributor" }
+  ],
+
+  "serverCredits": [
+    { "name": "YourName", "role": "Server Admin" }
+  ]
+}

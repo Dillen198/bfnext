@@ -23,7 +23,7 @@ use dcso3::{
     String,
     event::Shot as ShotEvent,
     object::{DcsObject, DcsOid},
-    unit::{ClassUnit, Unit},
+    unit::{ClassUnit, Unit, UnitCategory},
 };
 use fxhash::FxHashMap;
 use std::collections::hash_map::Entry;
@@ -67,7 +67,9 @@ fn who(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
                 DeployKind::Troop { player, .. } => Some(*player),
                 DeployKind::Crate { .. }
                 | DeployKind::Objective { .. }
-                | DeployKind::ObjectiveDeprecated => None,
+                | DeployKind::ObjectiveDeprecated
+                | DeployKind::Dismount { .. }
+                | DeployKind::DownedPilot { .. } => None,
             }),
         }),
         None => db
@@ -95,18 +97,28 @@ impl ShotDb {
         if db.ephemeral.cfg.weapon_target_exclusions.contains(&e.weapon_name) {
             return Ok(())
         }
+        // Ground units (artillery, MLRS) and ships fire at ground coordinates, not unit objects.
+        // Calling weapon.get_target() for such shots crashes DCS via wAmmunitionGuided::Target_ID.
+        // Ships tagged Artillery/Launcher also use FireAtPoint (coordinate targeting), so they
+        // share the same crash. Only aircraft (Airplane/Helicopter) reliably target unit objects.
+        let category = ok!(e.initiator.get_category());
+        if category == UnitCategory::GroundUnit || category == UnitCategory::Ship {
+            return Ok(());
+        }
         let target = ok!(some!(e.weapon.get_target()?).as_unit());
         let target_oid = target.object_id()?;
         if self.dead.contains_key(&target_oid) || self.recently_dead.contains_key(&target_oid) {
             return Ok(());
         }
         let shooter = some!(who(db, e.initiator.object_id()?));
+        let shooter_typ = e.initiator.get_type_name().ok().map(|s| dcso3::String::from(s.as_str()));
         let target_typ = target.get_type_name()?;
         let target = some!(who(db, target_oid.clone()));
         self.by_target.entry(target_oid).or_default().push(Shot {
             weapon_name: Some(e.weapon_name.clone()),
             weapon: Some(e.weapon.object_id()?),
             shooter,
+            shooter_typ,
             target,
             target_typ,
             time: now,
@@ -129,6 +141,7 @@ impl ShotDb {
             return Ok(());
         }
         let target_typ = target.get_type_name()?;
+        let shooter_typ = shooter.get_type_name().ok().map(|s| dcso3::String::from(s.as_str()));
         let shooter = some!(who(db, shooter.object_id()?));
         let target = some!(who(db, target_oid.clone()));
         self.by_target
@@ -138,6 +151,7 @@ impl ShotDb {
                 weapon_name: Some(weapon_name),
                 weapon: None,
                 shooter,
+                shooter_typ,
                 target,
                 target_typ,
                 time: now,

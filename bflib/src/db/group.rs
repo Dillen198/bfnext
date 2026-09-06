@@ -14,15 +14,15 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{ephemeral::SlotInfo, objective::ObjGroupClass, player::SlotAuth, Db, SetS};
+use super::{cargo::C130CargoState, ephemeral::SlotInfo, objective::ObjGroupClass, player::SlotAuth, Db, SetS};
 use crate::{
-    group, group_by_name, group_health, group_mut, objective,
+    group, group_health, group_mut, objective,
     spawnctx::{Despawn, SpawnCtx, SpawnLoc},
-    unit, unit_by_name, unit_mut, Connected,
+    unit, unit_mut, Connected,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use bfprotocols::{
-    cfg::{Action, ActionKind, Crate, Deployable, Troop, UnitTag, UnitTags, Vehicle},
+    cfg::{Action, ActionKind, Crate, Deployable, LifeType, SpecialSamUnitCfg, Troop, UnitTag, UnitTags, Vehicle},
     db::objective::ObjectiveId,
     stats::{self, EnId},
 };
@@ -33,9 +33,10 @@ use bfprotocols::{
 use chrono::prelude::*;
 use compact_str::{format_compact, CompactString};
 use dcso3::{
-    azumith3d, centroid2d, centroid3d, change_heading,
-    coalition::Side,
+    azumith3d, centroid2d, change_heading,
+    coalition::{Side, Static},
     coord::Coord,
+    country::Country,
     env::miz,
     env::miz::{Group, GroupKind, MizIndex},
     group::GroupCategory,
@@ -83,6 +84,8 @@ pub enum DeployKind {
         cost_fraction: f32,
         #[serde(default)]
         origin: Option<ObjectiveId>,
+        #[serde(default)]
+        jtac: Option<bfprotocols::cfg::JtacState>,
     },
     Troop {
         player: Ucid,
@@ -92,6 +95,13 @@ pub enum DeployKind {
         spec: Troop,
         #[serde(default = "default_cost_fraction")]
         cost_fraction: f32,
+        #[serde(default)]
+        jtac: Option<bfprotocols::cfg::JtacState>,
+    },
+    DownedPilot {
+        ucid: Ucid,
+        name: String,
+        life_type: LifeType,
     },
     Crate {
         origin: ObjectiveId,
@@ -112,6 +122,13 @@ pub enum DeployKind {
         origin: Option<ObjectiveId>,
         #[serde(skip)]
         ammo: i32,
+        #[serde(default)]
+        jtac: Option<bfprotocols::cfg::JtacState>,
+    },
+    /// Infantry that bailed out of a destroyed vehicle
+    Dismount {
+        from_group: GroupId,
+        can_capture: bool,
     },
 }
 
@@ -151,11 +168,6 @@ pub struct SpawnedGroup {
 }
 
 impl Db {
-    #[allow(dead_code)]
-    pub fn groups(&self) -> impl Iterator<Item = (&GroupId, &SpawnedGroup)> {
-        self.persisted.groups.into_iter()
-    }
-
     pub fn group(&self, id: &GroupId) -> Result<&SpawnedGroup> {
         group!(self, id)
     }
@@ -171,38 +183,8 @@ impl Db {
         ))
     }
 
-    #[allow(dead_code)]
-    pub fn group_center3(&self, id: &GroupId) -> Result<Vector3> {
-        let group = group!(self, id)?;
-        Ok(centroid3d(
-            group
-                .units
-                .into_iter()
-                .filter_map(|uid| self.persisted.units.get(uid))
-                .filter_map(
-                    |unit| {
-                        if unit.dead {
-                            None
-                        } else {
-                            Some(unit.position.p.0)
-                        }
-                    },
-                ),
-        ))
-    }
-
-    #[allow(dead_code)]
-    pub fn group_by_name(&self, name: &str) -> Result<&SpawnedGroup> {
-        group_by_name!(self, name)
-    }
-
     pub fn unit(&self, id: &UnitId) -> Result<&SpawnedUnit> {
         unit!(self, id)
-    }
-
-    #[allow(dead_code)]
-    pub fn unit_by_name(&self, name: &str) -> Result<&SpawnedUnit> {
-        unit_by_name!(self, name)
     }
 
     pub fn first_living_unit(&self, gid: &GroupId) -> Result<&DcsOid<ClassUnit>> {
@@ -312,6 +294,7 @@ impl Db {
                 moved_by,
                 cost_fraction: _,
                 origin: _,
+                jtac: _,
             } => {
                 let name = self.persisted.players[player].name.clone();
                 let resp = moved_by
@@ -332,7 +315,7 @@ impl Db {
                     msg,
                 ))
             }
-            DeployKind::Troop { player, spec, moved_by, origin: _, cost_fraction: _ } => {
+            DeployKind::Troop { player, spec, moved_by, origin: _, cost_fraction: _, .. } => {
                 let name = self.persisted.players[player].name.clone();
                 let resp = moved_by
                     .as_ref()
@@ -349,6 +332,16 @@ impl Db {
                     msg,
                 ))
             }
+            DeployKind::DownedPilot { name, .. } => {
+                let msg = format_compact!("downed pilot: {name}");
+                Some(self.ephemeral.msgs.mark_to_side(
+                    group.side,
+                    group_center,
+                    true,
+                    msg,
+                ))
+            }
+            DeployKind::Dismount { .. } => None,
         };
         if let Some(id) = id {
             self.ephemeral.group_marks.insert(*gid, id);
@@ -377,6 +370,12 @@ impl Db {
             DeployKind::Crate { player, .. } => {
                 self.persisted.crates.remove_cow(gid);
                 self.persisted.players[player].crates.remove_cow(gid);
+                // Drop any dynamic-cargo (C-130 / helo) tracking entry for this
+                // group too. Without this, unpacking or destroying a tracked
+                // crate through any path other than unpack_c130_crate leaves a
+                // zombie in c130_crates that update_c130_crates chases every
+                // tick ("has no object_id in map, skipping") forever.
+                self.ephemeral.c130_crates.remove(&group.name);
             }
             DeployKind::Deployed { spec, .. } => {
                 self.persisted.deployed.remove_cow(gid);
@@ -392,6 +391,18 @@ impl Db {
                 if spec.jtac.is_some() {
                     self.persisted.jtacs.remove_cow(gid);
                 }
+            }
+            DeployKind::DownedPilot { .. } => {
+                self.persisted.downed_pilots.remove_cow(gid);
+                self.persisted.downed_pilot_spawn_times.remove_cow(gid);
+                self.ephemeral.csar_flared.remove(gid);
+                self.ephemeral.csar_moving.remove(gid);
+                self.ephemeral.csar_notified.remove(gid);
+                self.ephemeral.csar_last_renotify.remove(gid);
+                self.ephemeral.csar_smoke_cooldown.remove(gid);
+            }
+            DeployKind::Dismount { .. } => {
+                self.persisted.dismounts.remove_cow(gid);
             }
         }
         if let Some(id) = self.ephemeral.group_marks.remove(gid) {
@@ -412,15 +423,28 @@ impl Db {
         self.ephemeral.dirty();
         match group.kind {
             None => {
-                // it's a static, we have to get it's units
-                for unit in &units {
-                    self.ephemeral.push_despawn(*gid, Despawn::Static(unit.clone()))
+                // it's a static. Prefer using the object_id if we have one (e.g. for
+                // C-130 crates whose DCS name may differ from the bflib name after
+                // cargo load/drop renames). Fall back to name-based lookup.
+                if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
+                    self.ephemeral
+                        .push_despawn(*gid, Despawn::StaticObject(oid.clone()));
+                } else {
+                    for unit in &units {
+                        self.ephemeral
+                            .push_despawn(*gid, Despawn::Static(unit.clone()))
+                    }
                 }
             }
             Some(_) => {
                 // it's a normal group
                 if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
                     self.ephemeral.push_despawn(*gid, Despawn::Group(oid.clone()));
+                } else {
+                    // Object ID not yet tracked (e.g. group spawned moments ago and no DCS
+                    // event has fired yet). Fall back to destroying by name so the DCS unit
+                    // is actually removed from the world rather than silently left alive.
+                    self.ephemeral.push_despawn(*gid, Despawn::GroupByName(group.name.to_string()));
                 }
             }
         }
@@ -549,6 +573,18 @@ impl Db {
                         p.heading = change_heading(p.heading, group_heading);
                         p.altitude = None;
                     }
+                    Ok(GroupPosition { positions, by_type: FxHashMap::default() })
+                }
+                SpawnLoc::AtPosExact { pos, group_heading } => {
+                    let group_center = centroid2d(positions.iter().map(|p| p.position));
+                    for p in positions.iter_mut() {
+                        p.position = p.position - group_center + pos;
+                        p.heading = change_heading(p.heading, group_heading);
+                        p.altitude = None;
+                    }
+                    rotate2d_gen(group_heading, positions.make_contiguous(), |p| {
+                        &mut p.position
+                    });
                     Ok(GroupPosition { positions, by_type: FxHashMap::default() })
                 }
                 SpawnLoc::AtPosWithComponents { pos, group_heading, component_pos } => {
@@ -688,12 +724,19 @@ impl Db {
         }
         match &location {
             SpawnLoc::AtPos { .. }
+            | SpawnLoc::AtPosExact { .. }
             | SpawnLoc::AtPosWithCenter { .. }
             | SpawnLoc::AtPosWithComponents { .. }
             | SpawnLoc::AtTrigger { .. } => {
-                if let Some(tmpl) = self.ephemeral.cfg.crate_template.get(&side)
-                    && &template_name == tmpl
-                {
+                let is_crate_template = [
+                    self.ephemeral.cfg.crate_template.get(&side),
+                    self.ephemeral.cfg.c130_cargo_template.get(&side),
+                    self.ephemeral.cfg.helo_cargo_template.get(&side),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|tmpl| tmpl == &template_name);
+                if is_crate_template {
                     () // it's ok to spawn crates on ships
                 } else if spawned.tags.contains(UnitTag::Boat) {
                     check_land(&land, &gpos.positions, &gpos.by_type)
@@ -791,7 +834,99 @@ impl Db {
                     self.persisted.jtacs.insert_cow(gid);
                 }
             }
+            DeployKind::DownedPilot { .. } => {
+                self.persisted.downed_pilots.insert_cow(gid);
+            }
+            DeployKind::Dismount { .. } => {
+                self.persisted.dismounts.insert_cow(gid);
+            }
         }
+        self.persisted.groups.insert_cow(gid, spawned);
+        self.persisted.groups_by_name.insert_cow(group_name, gid);
+        self.persisted.groups_by_side.get_or_default_cow(side).insert_cow(gid);
+        self.ephemeral.dirty();
+        self.mark_group(&gid)?;
+        Ok(gid)
+    }
+
+    /// Create a `SpawnedGroup` from inline unit definitions (no .miz template required).
+    /// Registers a `SyntheticGroupSpec` in `ephemeral.synthetic_templates` so that
+    /// `spawn_group` can build the DCS Lua table at respawn time.
+    pub(super) fn add_group_from_units(
+        &mut self,
+        spctx: &SpawnCtx,
+        side: Side,
+        country: Country,
+        units: &[SpecialSamUnitCfg],
+        origin: DeployKind,
+    ) -> Result<GroupId> {
+        use super::ephemeral::SyntheticGroupSpec;
+
+        let gid = GroupId::new();
+        // Use a stable template name derived from the group ID so synthetic_templates can look it up.
+        let template_name = String::from(format_compact!("@synthetic:{}", gid));
+        let group_name = template_name.clone();
+
+        let mut spawned = SpawnedGroup {
+            id: gid,
+            name: group_name.clone(),
+            template_name: template_name.clone(),
+            side,
+            kind: Some(GroupCategory::Ground),
+            origin,
+            class: ObjGroupClass::Lr,
+            units: SetS::new(),
+            tags: UnitTags(BitFlags::empty()),
+        };
+
+        let land = Land::singleton(spctx.lua())?;
+        for unit_cfg in units {
+            let uid = UnitId::new();
+            let tags = *self
+                .ephemeral
+                .cfg
+                .unit_classification
+                .get(unit_cfg.typ.as_str())
+                .ok_or_else(|| anyhow!("unit type not classified {}", unit_cfg.typ))?;
+            let tags = UnitTags(tags.0);
+            spawned.tags.0.insert(tags.0);
+
+            let unit_name = String::from(format_compact!("{}-{}", group_name, uid));
+            let unit_pos = Vector2::new(unit_cfg.pos.x, unit_cfg.pos.y);
+            let height = land.get_height(LuaVec2(unit_pos))?;
+            let mut position = Position3::default();
+            position.p.x = unit_cfg.pos.x;
+            position.p.y = height;
+            position.p.z = unit_cfg.pos.y;
+
+            let su = SpawnedUnit {
+                id: uid,
+                group: gid,
+                side,
+                typ: Vehicle(String::from(unit_cfg.typ.as_str())),
+                tags,
+                name: unit_name.clone(),
+                template_name: unit_name.clone(),
+                spawn_position: position,
+                spawn_pos: unit_pos,
+                spawn_heading: unit_cfg.heading,
+                position,
+                pos: unit_pos,
+                heading: unit_cfg.heading,
+                dead: false,
+                moved: None,
+                airborne_velocity: None,
+            };
+            spawned.units.insert_cow(uid);
+            self.persisted.units.insert_cow(uid, su);
+            self.persisted.units_by_name.insert_cow(unit_name, uid);
+        }
+
+        self.ephemeral.synthetic_templates.insert(
+            template_name.clone(),
+            SyntheticGroupSpec { country, category: GroupCategory::Ground },
+        );
+
         self.persisted.groups.insert_cow(gid, spawned);
         self.persisted.groups_by_name.insert_cow(group_name, gid);
         self.persisted.groups_by_side.get_or_default_cow(side).insert_cow(gid);
@@ -835,16 +970,26 @@ impl Db {
     ) -> Result<BirthRes> {
         let id = unit.object_id()?;
         let name = unit.get_name()?;
-        if let Some(uid) = self.persisted.units_by_name.get(name.as_str()) {
+        // First try direct name lookup, then try template_name lookup for activated carrier units
+        // Carrier groups use Group.activate() which keeps the original DCS unit names (e.g., "BCARRIER-1")
+        // but bflib stores units with names like "{group_name}-{uid}"
+        let uid_lookup = self.persisted.units_by_name.get(name.as_str()).copied()
+            .or_else(|| {
+                // Try finding by template_name for activated carriers
+                self.persisted.units.into_iter()
+                    .find(|(_, u)| u.template_name == name)
+                    .map(|(uid, _)| *uid)
+            });
+        if let Some(uid) = uid_lookup {
             let unit = unit!(self, uid)?;
-            self.ephemeral.uid_by_object_id.insert(id.clone(), *uid);
-            self.ephemeral.object_id_by_uid.insert(*uid, id.clone());
-            self.ephemeral.units_potentially_close_to_enemies.insert(*uid);
-            if unit.tags.contains(UnitTag::Driveable) {
-                self.ephemeral.units_able_to_move.insert(*uid);
+            self.ephemeral.uid_by_object_id.insert(id.clone(), uid);
+            self.ephemeral.object_id_by_uid.insert(uid, id.clone());
+            self.ephemeral.units_potentially_close_to_enemies.insert(uid);
+            if unit.tags.contains(UnitTag::Driveable) || unit.tags.contains(UnitTag::Boat) {
+                self.ephemeral.units_able_to_move.insert(uid);
             }
             self.ephemeral.stat(Stat::Unit {
-                id: EnId::Unit(*uid),
+                id: EnId::Unit(uid),
                 gid: Some(unit.group),
                 owner: unit.side,
                 typ: stats::Unit { typ: unit.typ.clone(), tags: unit.tags },
@@ -1003,33 +1148,41 @@ impl Db {
             let crate_data = self.ephemeral.c130_crates.get_mut(crate_key.as_str()).unwrap();
             let gid = crate_data.group_id;
 
-            // Check if we already have a mapping for this group
-            let needs_update = !self.ephemeral.object_id_by_gid.contains_key(&gid);
-
-            if needs_update {
-                info!("[C130_CARGO] static_born: Creating object_id mapping for crate '{}' (tracked as '{}') group {:?}",
-                    name, crate_key, gid);
-
-                // For static objects, use the static's own object_id directly
-                // (not a group's object_id, since statics don't have groups in DCS API)
-                if let Ok(obj) = st.as_object() {
-                    if let Ok(static_oid) = obj.object_id() {
-                        info!("[C130_CARGO] static_born: Inserting mapping {:?} -> {:?}", gid, static_oid);
+            // For static objects, use the static's own object_id directly
+            // (not a group's object_id, since statics don't have groups in DCS API)
+            if let Ok(obj) = st.as_object() {
+                if let Ok(static_oid) = obj.object_id() {
+                    // DCS destroys the original static when a player loads it
+                    // as cargo (via F8 Ground Crew) and creates a brand new
+                    // one, with a new object_id but the same tracked name,
+                    // when it's dropped. Gating this on "do we have any
+                    // mapping at all" left the tracked mapping pointing at
+                    // the now-destroyed original object forever after the
+                    // first load/drop cycle, so the dropped crate was never
+                    // re-tracked even though it's physically still there.
+                    // Compare the actual object_id instead so a drop always
+                    // repoints the mapping to the live object.
+                    let already_current = self.ephemeral.object_id_by_gid.get(&gid) == Some(&static_oid);
+                    if !already_current {
+                        if let Some(old_oid) = self.ephemeral.object_id_by_gid.get(&gid) {
+                            self.ephemeral.gid_by_object_id.remove(old_oid);
+                        }
+                        info!("[C130_CARGO] static_born: Updating object_id mapping for crate '{}' (tracked as '{}') group {:?} -> {:?}",
+                            name, crate_key, gid, static_oid);
                         self.ephemeral.object_id_by_gid.insert(gid, static_oid.clone());
-                        self.ephemeral.gid_by_object_id.insert(static_oid.clone(), gid);
-                        info!("[C130_CARGO] static_born: Mapping inserted, map now has {} entries", self.ephemeral.object_id_by_gid.len());
+                        self.ephemeral.gid_by_object_id.insert(static_oid, gid);
 
                         // Note: We don't transition to Airborne here
                         // The update_c130_crates function will detect when the crate is actually airborne
                         // based on in_air and speed checks
                     } else {
-                        info!("[C130_CARGO] static_born: Failed to get static object_id");
+                        info!("[C130_CARGO] static_born: Mapping already up to date for {:?}, skipping", gid);
                     }
                 } else {
-                    info!("[C130_CARGO] static_born: Failed to convert static to object");
+                    info!("[C130_CARGO] static_born: Failed to get static object_id");
                 }
             } else {
-                info!("[C130_CARGO] static_born: Mapping already exists for {:?}, skipping", gid);
+                info!("[C130_CARGO] static_born: Failed to convert static to object");
             }
         }
 
@@ -1045,7 +1198,38 @@ impl Db {
             None => return Ok(()),
             Some((uid, ucid)) => {
                 if let Some(ucid) = ucid {
-                    self.player_deslot(&ucid)
+                    self.player_deslot(&ucid);
+                    // Physical cargo crates this player was carrying die with the
+                    // aircraft -- a crashed delivery must not leave free crates
+                    // behind to be recovered or auto-unpacked. Only crates that
+                    // actually moved with the aircraft are removed; ones still
+                    // sitting where they were spawned stay put for another pilot.
+                    let orphaned: Vec<String> = self
+                        .ephemeral
+                        .c130_crates
+                        .iter()
+                        .filter(|(_, c)| {
+                            c.player == ucid
+                                && matches!(
+                                    c.state,
+                                    C130CargoState::Spawned | C130CargoState::Loaded
+                                )
+                                && na::distance(&c.last_pos.into(), &c.spawn_pos.into()) > 50.0
+                        })
+                        .map(|(name, _)| name.clone())
+                        .collect();
+                    for name in orphaned {
+                        if let Some(c) = self.ephemeral.c130_crates.remove(&name) {
+                            if let Some(id) = c.missing_marker {
+                                self.ephemeral.msgs().delete_mark(id);
+                            }
+                            if let Err(e) = self.delete_group(&c.group_id) {
+                                error!(
+                                    "[C130_CARGO] failed to delete orphaned crate {name}: {e:?}"
+                                );
+                            }
+                        }
+                    }
                 }
                 uid
             }
@@ -1069,9 +1253,10 @@ impl Db {
                         }
                     }
                 }
-                if self.persisted.deployed.contains(&gid)
+                if self.is_player_deployed(&gid)
                     || self.persisted.troops.contains(&gid)
                     || self.persisted.crates.contains(&gid)
+                    || self.persisted.dismounts.contains(&gid)
                 {
                     if health == 0 {
                         match &group!(self, gid)?.origin {
@@ -1098,10 +1283,15 @@ impl Db {
                             | DeployKind::Action { .. }
                             | DeployKind::Crate { .. }
                             | DeployKind::Objective { .. }
-                            | DeployKind::ObjectiveDeprecated => (),
+                            | DeployKind::ObjectiveDeprecated
+                            | DeployKind::DownedPilot { .. }
+                            | DeployKind::Dismount { .. } => (),
                         }
                         self.delete_group(&gid)?
                     }
+                }
+                if self.persisted.downed_pilots.contains(&gid) && health == 0 {
+                    self.delete_group(&gid)?
                 }
                 if self.persisted.actions.contains(&gid) {
                     if let DeployKind::Action { player, spec, .. } =
@@ -1146,7 +1336,7 @@ impl Db {
                     {
                         self.update_objective_status(&oid, now)?;
                     }
-                    if self.persisted.deployed.contains(&gid)
+                    if self.is_player_deployed(&gid)
                         || self.persisted.troops.contains(&gid)
                         || self.persisted.crates.contains(&gid)
                     {
@@ -1155,6 +1345,39 @@ impl Db {
                         }
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// If `id` is a tracked "immortal" decoration static (see `init_protected_statics`),
+    /// respawn it from its original template so it looks like it was never destroyed.
+    /// Safe to call for any dead static id; no-ops if it isn't a protected one.
+    pub fn respawn_protected_static(
+        &mut self,
+        lua: MizLua,
+        idx: &MizIndex,
+        id: &DcsOid<ClassStatic>,
+    ) -> Result<()> {
+        if let Some(protected) = self.ephemeral.protected_statics.remove(id) {
+            let spctx = SpawnCtx::new(lua)?;
+            let template = spctx.get_template(
+                idx,
+                GroupKind::Static,
+                protected.side,
+                protected.template_name.as_str(),
+            )?;
+            spctx.spawn(template)?;
+            match StaticObject::get_by_name(lua, protected.template_name.as_str()) {
+                Ok(Static::Static(obj)) => {
+                    let new_id = obj.object_id()?;
+                    self.ephemeral.protected_statics.insert(new_id, protected);
+                }
+                Ok(Static::Airbase(_)) => (),
+                Err(e) => warn!(
+                    "respawned protected static '{}' but couldn't re-find it: {e:?}",
+                    protected.template_name
+                ),
             }
         }
         Ok(())
@@ -1173,7 +1396,13 @@ impl Db {
         let artillery = self
             .deployed()
             .filter_map(|group| {
-                if group.tags.contains(UnitTag::Artillery) && group.side == side {
+                // Tube/rocket artillery is tagged Artillery; ballistic/cruise TELs
+                // (Scud, Iskander, Silkworm, ...) are tagged Launcher. Accept both,
+                // but exclude SAM launchers (SA-x) which also carry Launcher.
+                let is_arty = group.tags.contains(UnitTag::Artillery)
+                    || (group.tags.contains(UnitTag::Launcher)
+                        && !group.tags.contains(UnitTag::SAM));
+                if is_arty && group.side == side {
                     let center = self.group_center(&group.id).ok()?;
                     if na::distance_squared(&center.into(), &pos.into()) <= range2 {
                         Some(group.id)
@@ -1242,8 +1471,12 @@ impl Db {
         if last < total {
             let mut uids: SmallVec<[UnitId; 64]> = smallvec![];
             let elts = self.ephemeral.units_able_to_move.as_slice();
-            let stop = last + max(1, total >> 4);
-            while last < total && uids.len() < stop {
+            // Process 1/16 of units per tick, capped at 32 to bound frame time.
+            // Bug fix: compare uids.len() to the CHUNK SIZE, not the absolute
+            // stop index — the old `uids.len() < stop` doubled the batch each
+            // successive tick (tick 2 processed 2× the intended amount, etc.).
+            let chunk = max(1, total >> 4).min(32);
+            while last < total && uids.len() < chunk {
                 uids.push(elts[last]);
                 last += 1;
             }
@@ -1318,5 +1551,29 @@ impl Db {
             self.mark_group(&gid)?;
         }
         Ok(dead)
+    }
+
+    /// Returns an iterator over all **non-player** aircraft/helicopter units that have been
+    /// confirmed alive by DCS (i.e. they appear in `object_id_by_uid`). This includes
+    /// AI CAP, AI AWACS, logistics aircraft, etc.
+    ///
+    /// The EWR system calls this to get the live DCS object IDs it needs to call
+    /// `Unit::get_instance()` and check `in_air()` for each AI aircraft, so that
+    /// AI units show up in radar reports just like player aircraft do.
+    pub fn ai_aircraft_unit_ids(
+        &self,
+    ) -> impl Iterator<Item = (UnitId, &DcsOid<ClassUnit>, Side)> {
+        self.ephemeral.object_id_by_uid.iter().filter_map(|(uid, oid)| {
+            let su = self.persisted.units.get(uid)?;
+            // Fixed-wing or rotary-wing only.
+            if !su.tags.contains(UnitTag::Aircraft) && !su.tags.contains(UnitTag::Helicopter) {
+                return None;
+            }
+            // Exclude units that belong to a player slot (already tracked via instanced_players).
+            if self.ephemeral.slot_by_object_id.contains_key(oid) {
+                return None;
+            }
+            Some((*uid, oid, su.side))
+        })
     }
 }

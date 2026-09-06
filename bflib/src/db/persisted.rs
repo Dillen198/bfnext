@@ -20,10 +20,12 @@ use super::{
     player::Player,
     Map, MapM, MapS, Set, SetM, SetS,
 };
+use crate::navaids::Navaid;
 use bfprotocols::db::{
     group::{GroupId, UnitId},
     objective::ObjectiveId,
 };
+use chrono::prelude::*;
 use dcso3::{coalition::Side, net::Ucid, String};
 use serde_derive::{Deserialize, Serialize};
 
@@ -49,6 +51,30 @@ pub struct Persisted {
     #[serde(default)]
     pub logistics_hubs: SetS<ObjectiveId>,
     #[serde(default)]
+    pub naval_bases: SetS<ObjectiveId>,
+    #[serde(default)]
+    pub carrier_groups: SetS<ObjectiveId>,
+    #[serde(default)]
+    pub factories: SetS<ObjectiveId>,
+    #[serde(default)]
+    pub special_sam_sites: SetS<ObjectiveId>,
+    #[serde(default)]
+    pub command_centers: SetS<ObjectiveId>,
+    /// SAM site -> its auto-linked nearest friendly CommandCenter (set at
+    /// mission init, same pattern as CarrierGroup.parent_naval_base). A SAM
+    /// site missing an entry here, or whose linked command center is dead
+    /// or enemy-owned, loses IADN network cueing and falls back to plain
+    /// DCS AI.
+    #[serde(default)]
+    pub sam_command_center_link: MapS<ObjectiveId, ObjectiveId>,
+    #[serde(default)]
+    pub downed_pilots: SetS<GroupId>,
+    #[serde(default)]
+    pub dismounts: SetS<GroupId>,
+    /// Spawn UTC timestamp for each downed pilot (used for capture timer)
+    #[serde(default)]
+    pub downed_pilot_spawn_times: MapS<GroupId, DateTime<Utc>>,
+    #[serde(default)]
     pub nukes_used: u32,
     #[serde(default)]
     pub logistics_ticks_since_delivery: u32,
@@ -60,10 +86,75 @@ pub struct Persisted {
     pub uid: i64,
     #[serde(default)]
     pub migrated_v0: bool,
+    /// Coalition treasury balances (Smart Commander).
+    #[serde(default)]
+    pub blue_treasury: i64,
+    #[serde(default)]
+    pub red_treasury: i64,
+    /// Auto-generated navaids per objective (see `crate::navaids`). One entry
+    /// for a ground objective; one per aircraft-carrying ship for a carrier
+    /// task force. Rebuilt deterministically whenever the objective set
+    /// changes, so it's safe if this loads empty (or single-valued) from an
+    /// older save.
+    #[serde(default, deserialize_with = "de_navaids_compat")]
+    pub navaids: MapS<ObjectiveId, Vec<Navaid>>,
+}
+
+/// Backward compatibility: saves written before the per-ship rework stored
+/// `navaids` as `MapS<ObjectiveId, Navaid>` (one navaid per objective), and
+/// the `Navaid` struct itself has changed shape a few times. Read the field
+/// as raw JSON and convert best-effort — anything that doesn't parse is
+/// dropped, which is safe because `navaids::reallocate` regenerates the
+/// whole table on the next objective-set change anyway.
+fn de_navaids_compat<'de, D>(d: D) -> std::result::Result<MapS<ObjectiveId, Vec<Navaid>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: serde_json::Value = serde::Deserialize::deserialize(d)?;
+    let Some(obj) = raw.as_object() else {
+        return Ok(MapS::default());
+    };
+    let mut out: Vec<(ObjectiveId, Vec<Navaid>)> = Vec::new();
+    for (k, v) in obj {
+        let Ok(id) = k.parse::<i64>() else { continue };
+        let oid = ObjectiveId::from(id);
+        let navs: Vec<Navaid> = if v.is_array() {
+            serde_json::from_value(v.clone()).unwrap_or_default()
+        } else if v.is_object() {
+            match serde_json::from_value::<Navaid>(v.clone()) {
+                Ok(n) => vec![n],
+                Err(_) => continue,
+            }
+        } else {
+            continue;
+        };
+        if !navs.is_empty() {
+            out.push((oid, navs));
+        }
+    }
+    Ok(out.into_iter().collect())
 }
 
 impl Persisted {
     pub fn players(&self) -> &Map<Ucid, Player> {
         &self.players
+    }
+
+    pub fn treasury(&self, side: Side) -> i64 {
+        match side {
+            Side::Blue => self.blue_treasury,
+            Side::Red => self.red_treasury,
+            _ => 0,
+        }
+    }
+
+    pub fn adjust_treasury(&mut self, side: Side, delta: i64) -> i64 {
+        let t = match side {
+            Side::Blue => &mut self.blue_treasury,
+            Side::Red => &mut self.red_treasury,
+            _ => return 0,
+        };
+        *t = (*t + delta).max(0);
+        *t
     }
 }

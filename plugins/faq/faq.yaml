@@ -1,0 +1,119 @@
+DEFAULT:
+  # =============================================================
+  # SECTION 1: CAMPAIGN OVERVIEW & VICTORY CONDITIONS
+  # =============================================================
+  fowl_overview:
+    title: "🦅 Dynamic Campaign Overview (Fowl Engine)"
+    description: "Core mechanics of Operation Fowl Intent and the Fowl Engine."
+    fields:
+      - name: "Victory Condition"
+        value: "A side wins by controlling a set percentage of all objectives on the map. If that control holds for long enough, the round ends and a new one begins automatically."
+        inline: false
+      - name: "Last Stand"
+        value: "If a side is reduced to its last primary objective (an Airbase, Naval Base, or FARP), a countdown timer starts. If they can't retake ground before it expires, that side loses."
+        inline: false
+      - name: "Persistent Campaign State"
+        value: "**bflib** (the mission engine) saves territory ownership, base health, and warehouse supply to disk continuously — this state survives DCS server restarts and mission reloads. Player stats, kills, and sorties are tracked separately by **bfdb** per campaign round, which starts fresh each time the mission is reloaded."
+        inline: false
+      - name: "Dynamic Frontlines"
+        value: "The active frontline is determined by sector control. Controlling adjacent sectors expands your team's operational envelope and opens forward staging areas."
+        inline: false
+
+  # =============================================================
+  # SECTION 2: SECTOR CAPTURE & GROUND OPERATIONS
+  # =============================================================
+  capture_mechanics:
+    title: "🚩 Sector Capture & Airbase Takeover"
+    description: "Detailed two-stage requirements for claiming enemy territory."
+    fields:
+      - name: "Stage 1: Neutralization (Air Superiority & Strike)"
+        value: "An objective only becomes capturable once its health drops to 20% or below AND all defending infantry inside it are eliminated. Strike its defenses, SAMs, and ground forces until both conditions are met."
+        inline: false
+      - name: "Stage 2: Ground Insertion & Deployment"
+        value: "Once capturable, friendly troops must be physically deployed inside the objective's zone (via transport helicopters, ground convoys, or dismounts) to begin the capture. Most objectives then take a configured amount of time to flip while your troops hold the zone — SAM sites are the exception and capture instantly once troops are in the zone."
+        inline: false
+      - name: "Forward Operating Bases (FOBs)"
+        value: "Capturing neutral or enemy FOBs unlocks forward rearm/refuel locations, tactical repair points, and rapid air transport landing zones for rotary wing aircraft."
+        inline: false
+
+  # =============================================================
+  # SECTION 3: LOGISTICS, SUPPLIES & REARMING
+  # =============================================================
+  logistics_system:
+    title: "📦 Logistics, Cargo & Base Stockpiles"
+    description: "Managing munitions, fuel, and infrastructure resupply."
+    fields:
+      - name: "Localized Inventories"
+        value: "Airbases do not have unlimited supplies. High-tier airframes, advanced munitions (FOX-3, PGM, standoff weapons), and fuel are tied to the local airbase stockpile."
+        inline: false
+      - name: "Cargo Sling Loading & Transport"
+        value: "Logistics pilots must haul cargo crates from main logistics depots to forward bases to replenish depleted weapon racks, fuel tanks, and airframe counts."
+        inline: false
+      - name: "Base Repair & Air Defense Rebuilding"
+        value: "Delivering engineering and defense crates allows ground crews to repair damaged structures, deploy new SAM sites, and replenish automated perimeter AAA."
+        inline: false
+
+  # =============================================================
+  # SECTION 4: SLOTTING, LIVES & SIDE SELECTION
+  # =============================================================
+  lives_and_slotting:
+    title: "✈️ Aircraft Slots, Lives & Side Selection"
+    description: "How aircraft availability, pilot lives, and side selection work."
+    fields:
+      - name: "Choosing a Side"
+        value: "Type `blue` or `red` in in-game chat to register with a faction. You can switch sides a limited number of times per round with `-switch <color>` — check `-status` in chat to see the current campaign state."
+        inline: false
+      - name: "Life Pool"
+        value: "Each airframe belongs to a life category (Standard, Intercept, Attack, Logistics, Recon). When limited lives are active, each category has its own life count that refills after a cooldown period. Type `-lives` in chat at any time to see your current life counts — this can be toggled on or off by admins, so always check in-game rather than assuming."
+        inline: false
+      - name: "Dynamic Slotting"
+        value: "Available aircraft slots at a base directly reflect what is physically in stock. When an airframe is destroyed, local inventory decreases until resupplied."
+        inline: false
+      - name: "Specialized Ordnance Restrictions"
+        value: "Heavy ordnance and long-range radar missiles require specific munition crates to be delivered before they can be loaded in the rearm menu."
+        inline: false
+
+  # =============================================================
+  # SECTION 5: SRS & SERVER CONNECTIONS
+  # =============================================================
+  srs_and_comms:
+    title: "🎙️ SRS Configuration & Radio Channels"
+    description: "Voice communication setup for tactical coordination."
+    fields:
+      - name: "Simple Radio Standalone (SRS)"
+        value: "SRS auto-connect is enabled on all active campaign servers. Launch SRS before opening DCS to ensure automatic synchronization with your cockpit radios."
+        inline: false
+      - name: "Tactical Frequencies"
+        value: "Check the in-game kneeboard or Discord `#frequencies` channel for AWACS, JTAC, logistics coordination, and flight-level radio channels."
+        inline: false
+
+  # =============================================================
+  # SECTION 6: ACCOUNT LINKING & STATS
+  # =============================================================
+  account_linking:
+    title: "🔗 Player Account & Stats Linking"
+    description: "Track persistent flight hours, ground kills, and campaign stats."
+    fields:
+      - name: "Linking Your Account"
+        value: "Log into the web dashboard with Discord, then enter your DCS UCID on the Pilots page and click LINK to connect your account."
+        inline: false
+      - name: "Persistent Career Stats"
+        value: "Once linked, your combat statistics, flight hours, cargo deliveries, and sector captures persist across all campaign rounds and are visible on your public pilot profile."
+        inline: false
+
+  # =============================================================
+  # SECTION 7: IN-GAME CHAT COMMANDS
+  # =============================================================
+  chat_commands:
+    title: "⌨️ In-Game Chat Command Reference"
+    description: "Type these directly into the DCS in-game chat window."
+    fields:
+      - name: "General"
+        value: "`blue` / `red` — join a faction\n`-switch <color>` — change sides (limited uses per round)\n`-status` — campaign status (objectives, convoys, streak)\n`-time` — time until server restart\n`-help` — show all commands in-game"
+        inline: false
+      - name: "Economy & Logistics"
+        value: "`-balance` — show your points balance\n`-transfer <amount> <player|objective:name>` — transfer points\n`-action <name> <args>` — run a purchasable action (`-action help` for the list)\n`-delete <groupid>` — delete a group you deployed for a partial refund"
+        inline: false
+      - name: "Combat & JTAC"
+        value: "`-lives` — show your current life counts\n`-jtac <id> <cmd>` — JTAC controls"
+        inline: false

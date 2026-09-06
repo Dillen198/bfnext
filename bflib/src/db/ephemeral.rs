@@ -15,13 +15,18 @@ for more details.
 */
 
 use super::{
-    cargo::{Cargo, C130Cargo},
-    group::{SpawnedGroup, SpawnedUnit},
+    cargo::{Cargo, C130Cargo, GroundVehiclePassengers},
+
+    group::{DeployKind, SpawnedGroup, SpawnedUnit},
+    intel::IntelDatabase,
     logistics::LogiStage,
+    recon::ReconSession,
+    map_layer::MapLayer,
     markup::ObjectiveMarkup,
     objective::Objective,
     persisted::Persisted,
 };
+use bfprotocols::db::objective::ObjectiveKind;
 use crate::{
     bg::Task,
     maybe,
@@ -43,14 +48,16 @@ use bfprotocols::{
     stats::Stat,
 };
 use chrono::prelude::*;
-use compact_str::format_compact;
+use compact_str::{CompactString, format_compact};
 use dcso3::{
-    MizLua, Position3, String, Vector2,
+    LuaVec2, MizLua, Position3, String, Vector2,
     airbase::ClassAirbase,
     centroid2d,
     coalition::Side,
-    controller::MissionPoint,
+    controller::{MissionPoint, PointType},
+    country::Country,
     env::miz::{self, GroupKind, Miz, MizIndex},
+    group::GroupCategory,
     net::{SlotId, Ucid},
     object::{ClassObject, DcsObject, DcsOid},
     perf::record_perf,
@@ -61,7 +68,7 @@ use dcso3::{
 };
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use indexmap::{IndexMap, IndexSet};
-use log::{error, info};
+use log::{error, info, warn};
 use mlua::prelude::*;
 use smallvec::{SmallVec, smallvec};
 use std::{
@@ -82,6 +89,15 @@ pub struct SlotInfo {
     pub side: Side,
 }
 
+
+/// Metadata for a group that was created from inline config rather than a .miz template.
+/// Stored in Ephemeral so that spawn_group can build a synthetic Lua group table for DCS.
+#[derive(Debug, Clone)]
+pub(super) struct SyntheticGroupSpec {
+    pub country: Country,
+    pub category: GroupCategory,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(super) struct DeployableIndex {
     pub(super) deployables_by_name: FxHashMap<String, Deployable>,
@@ -90,6 +106,38 @@ pub(super) struct DeployableIndex {
     pub(super) crates_by_name: FxHashMap<String, Crate>,
     pub(super) squads_by_name: FxHashMap<String, Troop>,
     pub(super) pad_templates: FxHashMap<String, FxHashSet<String>>,
+}
+
+/// A neutral-coalition static object placed inside an objective zone that should
+/// never appear destroyed. Tracked by its live DCS object id; when that object
+/// dies, the static is respawned from its original template so it looks immortal.
+#[derive(Debug, Clone)]
+pub(super) struct ProtectedStatic {
+    pub(super) template_name: String,
+    pub(super) side: Side,
+}
+
+/// A real map-terrain building (DCS "Scenery" category) registered by
+/// `scan_objective_scenery` as logistics-relevant for an objective. Tracked so
+/// its destruction can be periodically detected (Scenery objects don't reliably
+/// fire death events the way units/statics do) and folded into that
+/// objective's `logi` rating. This state is intentionally NOT persisted --
+/// it's rebuilt by a fresh scan on every mission load, matching the fact that
+/// DCS's own terrain destruction doesn't survive a server restart either.
+#[derive(Debug, Clone)]
+pub(super) struct TrackedScenery {
+    pub(super) objective: ObjectiveId,
+    pub(super) label: String,
+    /// Ground position of the building, kept so its map marker can be recreated
+    /// for a new side when the objective is captured or re-spawned.
+    pub(super) pos: Vector2,
+    /// F10 map marker for this building. Present only while the parent objective
+    /// is spawned (culled the same way units are) and the building is standing;
+    /// `None` otherwise.
+    pub(super) marker: Option<dcso3::trigger::MarkId>,
+    /// Which side the current `marker` was drawn for, so a capture while the
+    /// objective is still spawned can re-scope it.
+    pub(super) marker_side: Option<Side>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -112,8 +160,36 @@ pub struct Ephemeral {
     pub(super) cargo: FxHashMap<SlotId, Cargo>,
     /// C-130 physical cargo tracking: crate_name -> C130Cargo (tracked by name because DCS changes object ID when loading/dropping)
     pub(super) c130_crates: FxHashMap<String, C130Cargo>,
-    /// Queue for staggered crate spawning: (spawn_time, crate_data with index for positioning)
-    pub(super) c130_spawn_queue: BTreeMap<DateTime<Utc>, Vec<(Side, String, ObjectiveId, Ucid, Crate, usize)>>,
+    /// Queue for staggered crate spawning: (spawn_time, crate_data with index
+    /// for positioning). anchor_point/anchor_dir/anchor_offset/carrier_link
+    /// are resolved once when the whole batch is queued (not re-resolved per
+    /// crate per tick) so that a moving carrier deck doesn't drag the grid
+    /// reference out from under already-spawned crates in the same batch,
+    /// which otherwise makes every later crate collapse back onto the first
+    /// grid cell instead of spreading out.
+    pub(super) c130_spawn_queue: BTreeMap<
+        DateTime<Utc>,
+        Vec<(Side, String, ObjectiveId, Ucid, String, Crate, usize, bool, Vector2, Vector2, f64, Option<String>)>,
+    >,
+    /// Supply convoy tracking: convoy_id -> SupplyConvoy
+    pub(super) active_convoys: FxHashMap<super::logistics::ConvoyId, super::logistics::SupplyConvoy>,
+    /// Track last convoy spawn time per side to throttle spawning
+    pub(super) last_convoy_spawn: FxHashMap<Side, DateTime<Utc>>,
+    /// Counter for generating unique convoy IDs
+    pub(super) convoy_counter: u32,
+    /// Air logistics route tracking: route_id -> AirLogisticsRoute
+    pub(super) active_air_routes: FxHashMap<super::logistics::LogiRouteId, super::logistics::AirLogisticsRoute>,
+    /// Track last air route spawn time per side to throttle spawning
+    pub(super) last_air_route_spawn: FxHashMap<Side, DateTime<Utc>>,
+    pub(crate) pending_achievements: Vec<String>,
+    /// Counter for generating unique air route IDs
+    pub(super) air_route_counter: u32,
+    /// Sea logistics route tracking: route_id -> SeaLogisticsRoute
+    pub(super) active_sea_routes: FxHashMap<super::logistics::LogiRouteId, super::logistics::SeaLogisticsRoute>,
+    /// Track last sea route spawn time per side to throttle spawning
+    pub(super) last_sea_route_spawn: FxHashMap<Side, DateTime<Utc>>,
+    /// Counter for generating unique sea route IDs
+    pub(super) sea_route_counter: u32,
     pub(super) deployable_idx: FxHashMap<Side, Arc<DeployableIndex>>,
     pub(super) group_marks: FxHashMap<GroupId, MarkId>,
     objective_markup: FxHashMap<ObjectiveId, ObjectiveMarkup>,
@@ -124,6 +200,21 @@ pub struct Ephemeral {
     pub(super) object_id_by_gid: FxHashMap<GroupId, DcsOid<ClassObject>>,
     pub(super) gid_by_object_id: FxHashMap<DcsOid<ClassObject>, GroupId>,
     pub(super) uid_by_static: FxHashMap<DcsOid<ClassStatic>, UnitId>,
+    /// Neutral decoration statics inside objective zones that get respawned in place
+    /// whenever they're destroyed, so they behave as if immortal.
+    pub(super) protected_statics: FxHashMap<DcsOid<ClassStatic>, ProtectedStatic>,
+    /// Real map-terrain buildings registered as logistics-relevant, still standing.
+    pub(super) tracked_scenery: FxHashMap<DcsOid<ClassObject>, TrackedScenery>,
+    /// Round-robin queue for batched `is_exist()` polling of `tracked_scenery`
+    /// (checking all of them every tick would be far too expensive).
+    pub(super) scenery_check_queue: VecDeque<DcsOid<ClassObject>>,
+    /// How many of an objective's originally-registered scenery buildings have
+    /// been confirmed destroyed. Combined with `scenery_total_by_objective` to
+    /// scale that objective's `logi` rating down as its infrastructure is lost.
+    pub(super) scenery_destroyed_by_objective: FxHashMap<ObjectiveId, u32>,
+    /// How many logistics-relevant scenery buildings were registered for an
+    /// objective at scan time (the denominator for the ratio above).
+    pub(super) scenery_total_by_objective: FxHashMap<ObjectiveId, u32>,
     pub(super) slot_by_miz_gid: FxHashMap<miz::GroupId, SlotId>,
     pub(super) airbase_by_oid: FxHashMap<ObjectiveId, DcsOid<ClassAirbase>>,
     pub(super) slot_info: FxHashMap<SlotId, SlotInfo>,
@@ -133,6 +224,13 @@ pub struct Ephemeral {
     pub(super) units_able_to_move: IndexSet<UnitId, FxBuildHasher>,
     pub(super) groups_with_move_missions: FxHashMap<GroupId, Vector2>,
     pub(super) units_potentially_close_to_enemies: FxHashSet<UnitId>,
+    /// Recent weapon-launch events: (shooter_pos, attacking_side, timestamp).
+    /// Used to keep enemy objectives awake while weapons are inbound.
+    pub(crate) recent_shots: Vec<(Vector2, Side, DateTime<Utc>)>,
+    /// Objectives that have been targeted by artillery/missile strikes, keyed by
+    /// ObjectiveId. Entries expire after ARTY_WAKE_SECS seconds and cause the
+    /// objective's units to be (re)spawned so they are present to absorb fire.
+    pub(crate) artillery_targeted: FxHashMap<ObjectiveId, DateTime<Utc>>,
     pub(super) production_by_side: FxHashMap<Side, Arc<Production>>,
     pub(super) actions_taken: FxHashMap<Side, FxHashMap<String, u32>>,
     pub(super) delayspawnq: BTreeMap<DateTime<Utc>, SmallVec<[GroupId; 8]>>,
@@ -140,9 +238,68 @@ pub struct Ephemeral {
     pub(super) logistics_stage: LogiStage,
     spawnq: VecDeque<GroupId>,
     despawnq: VecDeque<(GroupId, Despawn)>,
+    /// Groups that should be linked to a carrier unit when spawned.
+    /// Maps GroupId to DCS unit ID of the carrier to link to.
+    pub(super) carrier_linked_groups: FxHashMap<GroupId, String>,
     sync_warehouse: Vec<(ObjectiveId, Vehicle)>,
     pub(super) msgs: MsgQ,
     pub(super) victory: Option<(DateTime<Utc>, Side)>,
+    /// Downed pilots that have already fired their approach flare (reset on restart)
+    pub(super) csar_flared: FxHashSet<GroupId>,
+    /// Downed pilots currently moving toward a helicopter: gid -> last move order time
+    pub(super) csar_moving: FxHashMap<GroupId, DateTime<Utc>>,
+    /// Objectives for which the "enemies spotted" threat alert has already been sent this session.
+    /// Prevents the alert from repeating each time a threat appears/clears cycle repeats.
+    pub(crate) threat_notified: FxHashSet<ObjectiveId>,
+    /// Downed pilots for which the all-helicopter-pilots notification has already been sent
+    pub(super) csar_notified: FxHashSet<GroupId>,
+    /// Per-pilot last renotify broadcast time (bearing/distance reminder to helo pilots)
+    pub(super) csar_last_renotify: FxHashMap<GroupId, DateTime<Utc>>,
+    /// Per-pilot last smoke request time (for cooldown enforcement)
+    pub(crate) csar_smoke_cooldown: FxHashMap<GroupId, DateTime<Utc>>,
+    /// Set of objective IDs for which a "supply critical" alert has been broadcast,
+    /// mapped to the time the alert first fired. Cleared when supply recovers.
+    pub(super) supply_warned: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// Tracks when enemy troops first entered an objective zone (for capture momentum timer).
+    /// Maps ObjectiveId -> (capturing Side, entry DateTime, last_seen DateTime).
+    /// last_seen is updated each tick troops are in zone; cleared only after a grace period.
+    pub(super) capture_progress: FxHashMap<ObjectiveId, (dcso3::coalition::Side, DateTime<Utc>, DateTime<Utc>)>,
+    /// Last time we told players in an objective's zone why it isn't capturable yet
+    /// (e.g. troops still in zone but health/infantry/destruction-ratio conditions unmet).
+    /// Cooldown-throttled per objective so it doesn't spam every tick.
+    pub(super) capture_blocked_notice: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// Last time treasury income was deposited (Smart Commander).
+    pub(crate) last_treasury_income: DateTime<Utc>,
+    /// Last time objectives were funded (Smart Commander).
+    pub(crate) last_objective_fund: DateTime<Utc>,
+    /// Centralised F10 map drawing layer.
+    pub(super) map_layer: MapLayer,
+    /// Registry of groups whose unit definitions came from inline config rather than a .miz template.
+    /// Keyed by the group's template_name (which encodes the group's name prefix).
+    /// Used by spawn_group to build synthetic Lua tables for DCS when there is no .miz template.
+    pub(super) synthetic_templates: FxHashMap<String, SyntheticGroupSpec>,
+    /// Mercy timer state: (arm_time, losing_side). Set when a side drops to trigger_count primary objectives.
+    pub(crate) last_stand_state: Option<(DateTime<Utc>, Side)>,
+    /// Last time an under-attack notification was sent per objective (for cooldown).
+    pub(crate) last_under_attack_notif: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// Last time a counter-battery report was sent per grid cell (x_cell, y_cell).
+    pub(crate) counter_battery_reports: FxHashMap<(i64, i64), DateTime<Utc>>,
+    /// How many repair crates are stacked on each carrier's in-progress
+    /// repair. Divides the repair timer (see check_carrier_repairs). Not
+    /// persisted -- a repair spanning a restart just reverts to base speed.
+    pub(crate) carrier_repair_crates: FxHashMap<ObjectiveId, u32>,
+    /// ELINT/SIGINT persistent intel database (populated when cfg.elint is Some).
+    pub(crate) intel_db: IntelDatabase,
+    /// Ground vehicle passenger manifests: vehicle UnitId -> passengers.
+    pub(crate) ground_vehicle_passengers: FxHashMap<bfprotocols::db::group::UnitId, GroundVehiclePassengers>,
+    /// In-progress player "Recon Pass" sessions, keyed by pilot ucid.
+    pub(crate) recon_sessions: FxHashMap<Ucid, ReconSession>,
+    /// Per-pilot cooldown after a recon pass ends (completed or aborted).
+    pub(crate) recon_cooldown: FxHashMap<Ucid, DateTime<Utc>>,
+    /// F10 marks drawn from the dashboard's recon markup (bfdb `intel-marks`
+    /// RPC), keyed by the source markup id. Not persisted -- redrawn on the
+    /// next push after a restart.
+    pub(crate) intel_map_marks: FxHashMap<std::string::String, SmallVec<[dcso3::trigger::MarkId; 4]>>,
 }
 
 impl Default for Ephemeral {
@@ -155,6 +312,16 @@ impl Default for Ephemeral {
             cargo: FxHashMap::default(),
             c130_crates: FxHashMap::default(),
             c130_spawn_queue: BTreeMap::default(),
+            active_convoys: FxHashMap::default(),
+            last_convoy_spawn: FxHashMap::default(),
+            convoy_counter: 0,
+            active_air_routes: FxHashMap::default(),
+            last_air_route_spawn: FxHashMap::default(),
+            pending_achievements: Vec::new(),
+            air_route_counter: 0,
+            active_sea_routes: FxHashMap::default(),
+            last_sea_route_spawn: FxHashMap::default(),
+            sea_route_counter: 0,
             deployable_idx: FxHashMap::default(),
             group_marks: FxHashMap::default(),
             objective_markup: FxHashMap::default(),
@@ -166,6 +333,11 @@ impl Default for Ephemeral {
             object_id_by_gid: FxHashMap::default(),
             gid_by_object_id: FxHashMap::default(),
             uid_by_static: FxHashMap::default(),
+            protected_statics: FxHashMap::default(),
+            tracked_scenery: FxHashMap::default(),
+            scenery_check_queue: VecDeque::default(),
+            scenery_destroyed_by_objective: FxHashMap::default(),
+            scenery_total_by_objective: FxHashMap::default(),
             airbase_by_oid: FxHashMap::default(),
             slot_info: FxHashMap::default(),
             used_pad_templates: FxHashSet::default(),
@@ -174,16 +346,41 @@ impl Default for Ephemeral {
             units_able_to_move: IndexSet::default(),
             groups_with_move_missions: FxHashMap::default(),
             units_potentially_close_to_enemies: FxHashSet::default(),
+            recent_shots: Vec::new(),
+            artillery_targeted: FxHashMap::default(),
             production_by_side: FxHashMap::default(),
             actions_taken: FxHashMap::default(),
             delayspawnq: BTreeMap::default(),
             awacs_stn: 0o77777,
             spawnq: VecDeque::default(),
             despawnq: VecDeque::default(),
+            carrier_linked_groups: FxHashMap::default(),
             sync_warehouse: Vec::default(),
             msgs: MsgQ::default(),
             logistics_stage: LogiStage::default(),
             victory: None,
+            csar_flared: FxHashSet::default(),
+            csar_moving: FxHashMap::default(),
+            threat_notified: FxHashSet::default(),
+            csar_notified: FxHashSet::default(),
+            csar_last_renotify: FxHashMap::default(),
+            csar_smoke_cooldown: FxHashMap::default(),
+            supply_warned: FxHashMap::default(),
+            capture_progress: FxHashMap::default(),
+            capture_blocked_notice: FxHashMap::default(),
+            last_treasury_income: DateTime::<Utc>::default(),
+            last_objective_fund: DateTime::<Utc>::default(),
+            map_layer: MapLayer::default(),
+            synthetic_templates: FxHashMap::default(),
+            last_stand_state: None,
+            last_under_attack_notif: FxHashMap::default(),
+            counter_battery_reports: FxHashMap::default(),
+            carrier_repair_crates: FxHashMap::default(),
+            intel_db: IntelDatabase::default(),
+            ground_vehicle_passengers: FxHashMap::default(),
+            recon_sessions: FxHashMap::default(),
+            recon_cooldown: FxHashMap::default(),
+            intel_map_marks: FxHashMap::default(),
         }
     }
 }
@@ -193,7 +390,7 @@ impl Ephemeral {
         if let Some(to_bg) = &self.to_bg {
             match to_bg.send(task) {
                 Ok(()) => (),
-                Err(_) => panic!("background thread is dead"),
+                Err(e) => log::error!("background thread is dead, task dropped: {e}"),
             }
         }
     }
@@ -206,19 +403,107 @@ impl Ephemeral {
         self.slot_info.get(slot)
     }
 
+    pub fn get_airbase_by_oid(&self, oid: &ObjectiveId) -> Option<&DcsOid<ClassAirbase>> {
+        self.airbase_by_oid.get(oid)
+    }
+
+    /// Logistics-relevant scenery buildings (warehouses, depots, fuel, storage)
+    /// still standing at `oid`, sorted by label for stable ordering (used by
+    /// JTAC to cycle through them as designatable/callable targets).
+    pub fn scenery_at_objective(
+        &self,
+        oid: ObjectiveId,
+    ) -> SmallVec<[(DcsOid<ClassObject>, CompactString); 8]> {
+        let mut v: SmallVec<[(DcsOid<ClassObject>, CompactString); 8]> = self
+            .tracked_scenery
+            .iter()
+            .filter(|(_, ts)| ts.objective == oid)
+            .map(|(id, ts)| (id.clone(), CompactString::from(ts.label.as_str())))
+            .collect();
+        v.sort_by(|a, b| a.1.cmp(&b.1));
+        v
+    }
+
     pub fn get_slot_info_by_miz_gid(&self, gid: &miz::GroupId) -> Option<(SlotId, &SlotInfo)> {
         self.slot_by_miz_gid
             .get(gid)
             .and_then(|sl| self.slot_info.get(sl).map(|s| (*sl, s)))
     }
 
+    /// Capture progress (0-100) for an objective currently being captured,
+    /// or None if it isn't. capture_time_secs == 0 means instant capture --
+    /// no meaningful bar to show there.
+    fn capture_pct_for(&self, oid: &ObjectiveId) -> Option<u8> {
+        let (_, start, _) = self.capture_progress.get(oid)?;
+        // Missing campaign_events still means the default 60s momentum, not instant.
+        let total = self
+            .cfg
+            .campaign_events
+            .as_ref()
+            .map_or(180, |c| c.capture_time_secs);
+        if total == 0 {
+            return None;
+        }
+        let elapsed = (Utc::now() - *start).num_seconds().max(0);
+        Some(((elapsed as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as u8)
+    }
+
+    /// Repair progress (0-100) and estimated seconds remaining for an
+    /// objective currently mid-repair, or None if it isn't actively
+    /// progressing toward a repair completion.
+    ///
+    /// Carriers have a single timed repair operation (repair_start_time +
+    /// carrier.repair_time). Regular objectives auto-repair to 100% once
+    /// `now - last_change_ts` reaches `repair_time / logi_fraction` (see
+    /// `maybe_do_repairs`/`repair_objective`) -- last_change_ts only moves
+    /// when something actually changes (combat, crate delivery, scenery
+    /// loss), so during a quiet stretch this is just as much a clean
+    /// countdown as the carrier's is.
+    fn repair_pct_for(&self, obj: &Objective) -> Option<(u8, i64)> {
+        if let ObjectiveKind::CarrierGroup { repair_start_time: Some(start), .. } = &obj.kind {
+            let total = self.cfg.carrier.as_ref().map(|c| c.repair_time).unwrap_or(600) as f64;
+            if total <= 0.0 {
+                return None;
+            }
+            let elapsed = (Utc::now() - *start).num_seconds().max(0) as f64;
+            let pct = ((elapsed / total) * 100.0).clamp(0.0, 100.0) as u8;
+            return Some((pct, (total - elapsed).max(0.0) as i64));
+        }
+        // Match maybe_do_repairs: a threatened / actively-contested objective
+        // does not auto-repair, so don't show a phantom repair ETA. (A merely
+        // capturable base does still repair -- burning supply -- so its ETA is
+        // real and worth showing.)
+        if obj.threatened || self.capture_progress.contains_key(&obj.id) {
+            return None;
+        }
+        if obj.health < 100 && obj.logi > 0 {
+            let logi_frac = obj.logi as f64 / 100.;
+            let total = self.cfg.repair_time as f64 / logi_frac;
+            if !total.is_finite() || total <= 0.0 {
+                return None;
+            }
+            let elapsed = (Utc::now() - obj.last_change_ts).num_seconds().max(0) as f64;
+            let pct = ((elapsed / total) * 100.0).clamp(0.0, 100.0) as u8;
+            return Some((pct, (total - elapsed).max(0.0) as i64));
+        }
+        None
+    }
+
     pub fn create_objective_markup(&mut self, persisted: &Persisted, obj: &Objective) {
+        if obj.kind.is_special_sam_site() {
+            if let Some(mk) = self.objective_markup.remove(&obj.id) {
+                mk.remove(&mut self.msgs);
+            }
+            return;
+        }
         if let Some(mk) = self.objective_markup.remove(&obj.id) {
             mk.remove(&mut self.msgs);
         }
+        let capture_pct = self.capture_pct_for(&obj.id);
+        let repair_pct = self.repair_pct_for(obj);
         self.objective_markup.insert(
             obj.id,
-            ObjectiveMarkup::new(&self.cfg, &mut self.msgs, obj, persisted),
+            ObjectiveMarkup::new(&self.cfg, &mut self.msgs, obj, persisted, capture_pct, repair_pct),
         );
     }
 
@@ -228,14 +513,20 @@ impl Ephemeral {
         obj: &Objective,
         moved: &[ObjectiveId],
     ) {
+        let capture_pct = self.capture_pct_for(&obj.id);
+        let repair_pct = self.repair_pct_for(obj);
         match self.objective_markup.entry(obj.id) {
-            Entry::Occupied(mut e) => e.get_mut().update(persisted, &mut self.msgs, obj, moved),
+            Entry::Occupied(mut e) => {
+                e.get_mut().update(persisted, &mut self.msgs, obj, moved, capture_pct, repair_pct)
+            }
             Entry::Vacant(e) => {
                 e.insert(ObjectiveMarkup::new(
                     &self.cfg,
                     &mut self.msgs,
                     obj,
                     persisted,
+                    capture_pct,
+                    repair_pct,
                 ));
             }
         }
@@ -245,6 +536,106 @@ impl Ephemeral {
         if let Some(mk) = self.objective_markup.remove(oid) {
             mk.remove(&mut self.msgs)
         }
+    }
+
+    /// Perform a full diff-based update of the F10 map layer.  Call this from
+    /// the slow tick in lib.rs (every ~5 seconds).
+    pub fn update_map_layer(&mut self, persisted: &Persisted, now: DateTime<Utc>) {
+        let convoys = &self.active_convoys;
+        let air = &self.active_air_routes;
+        let sea = &self.active_sea_routes;
+        let csar_capture_mins = self.cfg.csar.as_ref().map(|c| c.capture_timer).unwrap_or(0);
+        self.map_layer.update_all(persisted, convoys, air, sea, csar_capture_mins, now, &mut self.msgs);
+    }
+
+    /// Draw a fire-mission overlay on the F10 map.  Replaces the inline
+    /// `circle_to_all` call in `db/actions.rs`.
+    pub fn on_fire_mission(
+        &mut self,
+        gun_pos: dcso3::Vector2,
+        target_pos: dcso3::Vector2,
+        radius_m: f64,
+        gun_count: u32,
+        side: dcso3::coalition::Side,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_fire_mission(
+            gun_pos,
+            target_pos,
+            radius_m,
+            gun_count,
+            side,
+            now,
+            &mut self.msgs,
+        );
+    }
+
+    /// Remove all F10 map layer marks (e.g. on mission reset).
+    pub fn remove_map_layer(&mut self) {
+        self.map_layer.remove_all(&mut self.msgs);
+        self.recon_sessions.clear();
+    }
+
+    pub fn tick_intel_decay(&mut self, now: DateTime<Utc>) {
+        // The intel contact pipeline is shared by the ELINT/SIGINT system and
+        // the player Recon Pass -- run decay/marks if either is configured.
+        let elint_cfg = match self.cfg.elint.as_ref() {
+            Some(c) => c.clone(),
+            None if self.cfg.player_recon.is_some() => bfprotocols::cfg::ElintConfig::default(),
+            None => return,
+        };
+        let (updated, removed) = self.intel_db.tick_decay(&elint_cfg, now, 1.0);
+        for (rect, label) in removed {
+            self.map_layer.remove_intel_contact_marks(rect, label, &mut self.msgs);
+        }
+        let ids = updated;
+        for id in ids {
+            if let Some(contact) = self.intel_db.contacts.get_mut(&id) {
+                self.map_layer.update_intel_contact_mark(contact, &elint_cfg, &mut self.msgs);
+            }
+        }
+    }
+
+    pub fn on_recon_result(
+        &mut self,
+        target_pos: dcso3::Vector2,
+        scan_radius_m: f64,
+        unit_count: usize,
+        side: dcso3::coalition::Side,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_recon_result(target_pos, scan_radius_m, unit_count, side, now, &mut self.msgs);
+    }
+
+    pub fn on_counter_battery(
+        &mut self,
+        enemy_pos: dcso3::Vector2,
+        friendly_side: dcso3::coalition::Side,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_counter_battery(enemy_pos, friendly_side, now, &mut self.msgs);
+    }
+
+    pub fn on_objective_threatened(
+        &mut self,
+        obj_pos: dcso3::Vector2,
+        side: dcso3::coalition::Side,
+        obj_name: &str,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_objective_threatened(obj_pos, side, obj_name, now, &mut self.msgs);
+    }
+
+
+    pub fn on_objective_under_attack(
+        &mut self,
+        obj_pos: dcso3::Vector2,
+        side: dcso3::coalition::Side,
+        obj_name: &str,
+        ttl_secs: i64,
+        now: DateTime<Utc>,
+    ) {
+        self.map_layer.on_objective_under_attack(obj_pos, side, obj_name, ttl_secs, now, &mut self.msgs);
     }
 
     pub fn push_sync_warehouse(&mut self, oid: ObjectiveId, vehicle: Vehicle) {
@@ -312,10 +703,13 @@ impl Ephemeral {
         if dlen > 0 {
             for _ in 0..max(1, dlen >> 4) {
                 if let Some((gid, despawn)) = self.despawnq.pop_front() {
+                    // Always clean up gid tracking (delete_group may have already
+                    // removed the group from persisted, but object_id_by_gid still
+                    // needs cleanup)
+                    if let Some(id) = self.object_id_by_gid.remove(&gid) {
+                        self.gid_by_object_id.remove(&id);
+                    }
                     if let Some(group) = persisted.groups.get(&gid) {
-                        if let Some(id) = self.object_id_by_gid.remove(&gid) {
-                            self.gid_by_object_id.remove(&id);
-                        }
                         for uid in &group.units {
                             self.units_able_to_move.swap_remove(uid);
                             self.units_potentially_close_to_enemies.remove(uid);
@@ -363,6 +757,20 @@ impl Ephemeral {
         &mut self.msgs
     }
 
+    pub fn map_layer_and_msgs(&mut self) -> (&mut MapLayer, &mut MsgQ) {
+        (&mut self.map_layer, &mut self.msgs)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn intel_marks_and_msgs(
+        &mut self,
+    ) -> (
+        &mut FxHashMap<std::string::String, SmallVec<[dcso3::trigger::MarkId; 4]>>,
+        &mut MsgQ,
+    ) {
+        (&mut self.intel_map_marks, &mut self.msgs)
+    }
+
     pub fn get_uid_by_object_id(&self, id: &DcsOid<ClassUnit>) -> Option<&UnitId> {
         self.uid_by_object_id.get(id)
     }
@@ -379,6 +787,10 @@ impl Ephemeral {
         self.object_id_by_slot.get(id)
     }
 
+    pub fn logistics_stage(&self) -> &LogiStage {
+        &self.logistics_stage
+    }
+
     fn index_deployables_for_side(
         &mut self,
         miz: &Miz,
@@ -393,15 +805,24 @@ impl Ephemeral {
         idx.crates_by_name
             .insert(repair_crate.name.clone(), repair_crate);
         if let Some(whcfg) = whcfg.as_ref() {
-            match whcfg.supply_transfer_crate.get(&side) {
-                None => bail!("missing supply transfer crate for {side}"),
-                Some(cr) => match idx.crates_by_name.entry(cr.name.clone()) {
-                    Entry::Occupied(_) => bail!("multiple {} crates for side {side}", cr.name),
+            // Register fuel transfer crate
+            if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(&side) {
+                match idx.crates_by_name.entry(fuel_cr.name.clone()) {
+                    Entry::Occupied(_) => bail!("multiple {} crates for side {side}", fuel_cr.name),
                     Entry::Vacant(e) => {
-                        e.insert(cr.clone());
+                        e.insert(fuel_cr.clone());
                     }
-                },
-            };
+                }
+            }
+            // Register weapons transfer crate
+            if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(&side) {
+                match idx.crates_by_name.entry(weapons_cr.name.clone()) {
+                    Entry::Occupied(_) => bail!("multiple {} crates for side {side}", weapons_cr.name),
+                    Entry::Vacant(e) => {
+                        e.insert(weapons_cr.clone());
+                    }
+                }
+            }
         }
         for dep in deployables.iter() {
             if let DeployableKind::Group { template } = &dep.kind {
@@ -541,14 +962,6 @@ impl Ephemeral {
         self.object_id_by_slot
             .get(slot)
             .ok_or_else(|| anyhow!("unit {:?} not currently in the mission", slot))
-            .and_then(|id| Unit::get_instance(lua, id))
-    }
-
-    #[allow(dead_code)]
-    pub fn instance_unit<'lua>(&self, lua: MizLua<'lua>, uid: &UnitId) -> Result<Unit<'lua>> {
-        self.object_id_by_uid
-            .get(uid)
-            .ok_or_else(|| anyhow!("unit {:?} not currently in the mission", uid))
             .and_then(|id| Unit::get_instance(lua, id))
     }
 
@@ -822,7 +1235,14 @@ impl Ephemeral {
                     | ActionKind::SeadWaypoint
                     | ActionKind::Move(_)
                     | ActionKind::Rtb
-                    | ActionKind::Nuke(_) => (),
+                    | ActionKind::Nuke(_)
+                    | ActionKind::CarrierWaypoint
+                    | ActionKind::CarrierRepair
+                    | ActionKind::CarrierRespawn
+                    // Artillery uses existing Armor/Mr/Lr groups; no template validation needed.
+                    | ActionKind::Artillery(_)
+                    | ActionKind::NavalCruiseMissileStrike(_)
+                    | ActionKind::Recon(_) => (),
                 }
             }
         }
@@ -840,65 +1260,452 @@ impl Ephemeral {
         mission: Vec<MissionPoint<'lua>>,
     ) -> Result<Option<Spawned<'lua>>> {
         let ts = Utc::now();
-        let template = spctx
-            .get_template(
-                idx,
-                GroupKind::Any,
-                group.side,
-                group.template_name.as_str(),
-            )
-            .with_context(|| format_compact!("getting template {}", group.template_name))?;
-        template.group.set("lateActivation", false)?;
-        template.group.set("hidden", false)?;
-        template.group.set_name(group.name.clone())?;
-        if mission.len() > 0 {
-            template
-                .group
-                .route()
-                .context("getting route")?
-                .set_points(mission)
-                .context("setting points")?;
+
+        // Check if this is a carrier group defined in config, or falls back to prefix matching
+        // For carrier groups, spawn via coalition.addGroup() with positions set to the saved
+        // state so the carrier appears directly at its last known location.
+        let carrier_cfg = self.cfg.carrier.as_ref()
+            .and_then(|c| c.groups.iter().find(|g| g.template.as_str() == group.template_name.as_str()));
+
+        let is_carrier_group = carrier_cfg.is_some()
+            || group.template_name.starts_with("BCARRIER")
+            || group.template_name.starts_with("RCARRIER")
+            || group.template_name.starts_with("NCARRIER");
+
+        if is_carrier_group {
+            let display_name = carrier_cfg
+                .map(|c| c.display_name.clone())
+                .unwrap_or_else(|| group.template_name.clone());
+            info!("[CARRIER_SPAWN] Activating carrier group {} (template: {}, display: {})",
+                  group.name, group.template_name, display_name);
+
+            // Build map of template_name -> persisted unit data for position lookup
+            let by_tname: FxHashMap<&str, &SpawnedUnit> = group
+                .units
+                .into_iter()
+                .filter_map(|uid| {
+                    persisted.units.get(uid).and_then(|u| {
+                        if u.dead {
+                            None
+                        } else {
+                            Some((u.template_name.as_str(), u))
+                        }
+                    })
+                })
+                .collect();
+
+            // Deep-clone the template so we can modify positions without touching the
+            // original miz data, then spawn via coalition.addGroup() which reads directly
+            // from the Lua table — so the carrier spawns at the saved positions.
+            let miz_template = spctx
+                .get_template(idx, GroupKind::Any, group.side, group.template_name.as_str())
+                .with_context(|| format_compact!("getting carrier miz template {}", group.template_name))?;
+
+            // Must disable lateActivation in the clone so coalition.addGroup() spawns it immediately.
+            miz_template.group.set("lateActivation", false)?;
+
+            // Set each unit's position in the cloned template to the saved position.
+            // Also update the group centroid and route waypoints to prevent circling.
+            {
+                let units = miz_template.group.units().context("getting carrier miz units")?;
+                let mut centroid_x = 0.0f64;
+                let mut centroid_y = 0.0f64;
+                let mut count = 0u32;
+                for i in 1..=(units.len() as i64) {
+                    if let Ok(unit) = units.get(i) {
+                        let unit_name = unit.name()?;
+                        if let Some(su) = by_tname.get(unit_name.as_str()) {
+                            let dist = na::distance(&su.pos.into(), &su.spawn_pos.into());
+                            info!("[CARRIER_SPAWN] Setting unit '{}' position: ({:.0}, {:.0}) -> ({:.0}, {:.0}), dist={:.0}m",
+                                  unit_name, su.spawn_pos.x, su.spawn_pos.y, su.pos.x, su.pos.y, dist);
+                            unit.set_pos(su.pos)?;
+                            unit.set_heading(su.heading)?;
+                            centroid_x += su.pos.x;
+                            centroid_y += su.pos.y;
+                            count += 1;
+                        }
+                    }
+                }
+
+                if count > 0 {
+                    let cx = centroid_x / count as f64;
+                    let cy = centroid_y / count as f64;
+                    miz_template.group.set_pos(Vector2::new(cx, cy))?;
+                    info!("[CARRIER_SPAWN] Set group position to ({:.0}, {:.0})", cx, cy);
+
+                    // Override all route waypoints to the carrier's saved position so DCS
+                    // doesn't send it circling to old ME waypoints before StopRoute takes effect.
+                    if let Ok(route) = miz_template.group.raw_get::<_, mlua::Table>("route") {
+                        if let Ok(points) = route.raw_get::<_, mlua::Table>("points") {
+                            let num_points = points.raw_len();
+                            for i in 1..=(num_points as i64) {
+                                if let Ok(point) = points.raw_get::<_, mlua::Table>(i) {
+                                    point.raw_set("x", cx)?;
+                                    point.raw_set("y", cy)?;
+                                }
+                            }
+                            info!("[CARRIER_SPAWN] Set all {} route waypoints to ({:.0}, {:.0})", num_points, cx, cy);
+                        }
+                    }
+                }
+            }
+
+            // Spawn via coalition.addGroup() — the carrier appears directly at the saved positions.
+            let dcs_group = match spctx.spawn(miz_template)
+                .with_context(|| format_compact!("spawning carrier group {}", group.template_name))? {
+                Spawned::Group(g) => g,
+                other => bail!("[CARRIER_SPAWN] Expected Group from carrier spawn of {}, got {:?}",
+                               group.template_name, other),
+            };
+            let oid = dcs_group.object_id()?.erased();
+            self.object_id_by_gid.insert(group.id, oid.clone());
+            self.gid_by_object_id.insert(oid, group.id);
+
+            // Manually register each unit's DCS object ID mappings.
+            // DCS does NOT fire S_EVENT_BIRTH for coalition.addGroup(), so we must do this here.
+            info!("[CARRIER_SPAWN] Registering units from activated group {} ({} persisted units)",
+                  group.template_name, group.units.len());
+            let mut needs_repositioning = false;
+            match dcs_group.get_units() {
+                Ok(dcs_units) => {
+                    for dcs_unit_res in dcs_units {
+                        let dcs_unit = match dcs_unit_res {
+                            Ok(u) => u,
+                            Err(e) => {
+                                error!("[CARRIER_SPAWN] Failed to get DCS unit from sequence: {:?}", e);
+                                continue;
+                            }
+                        };
+                        match dcs_unit.get_name() {
+                            Ok(dcs_unit_name) => {
+                                // Log actual DCS position after activation to verify position fix
+                                match dcs_unit.get_ground_position() {
+                                    Ok(pos) => info!("[CARRIER_SPAWN] DCS unit '{}' activated at position ({:.0}, {:.0})",
+                                                     dcs_unit_name, pos.0.x, pos.0.y),
+                                    Err(e) => info!("[CARRIER_SPAWN] Could not read position for '{}': {:?}",
+                                                    dcs_unit_name, e),
+                                }
+                                let uid_match = group.units.into_iter().find_map(|uid| {
+                                    persisted.units.get(uid).and_then(|u| {
+                                        if !u.dead && u.template_name.as_str() == dcs_unit_name.as_str() {
+                                            Some((*uid, u))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                });
+                                if let Some((uid, unit)) = uid_match {
+                                    match dcs_unit.object_id() {
+                                        Ok(unit_oid) => {
+                                            info!("[CARRIER_SPAWN] Registering carrier unit '{}' (uid={:?}) with DCS object_id {:?}",
+                                                  unit.name, uid, unit_oid);
+                                            self.uid_by_object_id.insert(unit_oid.clone(), uid);
+                                            self.object_id_by_uid.insert(uid, unit_oid.clone());
+                                            self.units_potentially_close_to_enemies.insert(uid);
+                                            if unit.tags.contains(UnitTag::Driveable) || unit.tags.contains(UnitTag::Boat) {
+                                                self.units_able_to_move.insert(uid);
+                                                info!("[CARRIER_SPAWN] Added carrier unit '{}' to units_able_to_move",
+                                                      unit.name);
+                                            }
+                                            // Verify unit spawned at the expected position.
+                                            // With coalition.addGroup() this should always be correct,
+                                            // but setPosition is attempted as a fallback if not.
+                                            match dcs_unit.get_ground_position() {
+                                                Ok(actual) => {
+                                                    let expected = unit.pos;
+                                                    let dist = na::distance(
+                                                        &na::Point2::new(actual.0.x, actual.0.y),
+                                                        &na::Point2::new(expected.x, expected.y),
+                                                    );
+                                                    info!("[CARRIER_TELEPORT] Unit '{}': actual=({:.0},{:.0}) expected=({:.0},{:.0}) dist={:.0}m",
+                                                          unit.name, actual.0.x, actual.0.y, expected.x, expected.y, dist);
+                                                    if dist > 100.0 {
+                                                        needs_repositioning = true;
+                                                        info!("[CARRIER_TELEPORT] Teleporting '{}' {:.0}m to persisted position ({:.0},{:.0})",
+                                                              unit.name, dist, expected.x, expected.y);
+                                                        match dcs_unit.as_object() {
+                                                            Ok(obj) => {
+                                                                if let Err(e) = obj.set_position(unit.position) {
+                                                                    error!("[CARRIER_TELEPORT] Failed to teleport '{}': {:?}", unit.name, e);
+                                                                } else {
+                                                                    match dcs_unit.get_ground_position() {
+                                                                        Ok(after) => info!("[CARRIER_TELEPORT] '{}' now at ({:.0},{:.0}) after teleport",
+                                                                                          unit.name, after.0.x, after.0.y),
+                                                                        Err(e) => warn!("[CARRIER_TELEPORT] Could not verify position after teleport for '{}': {:?}",
+                                                                                       unit.name, e),
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(e) => error!("[CARRIER_TELEPORT] Failed to get Object for '{}': {:?}", unit.name, e),
+                                                        }
+                                                    } else {
+                                                        info!("[CARRIER_TELEPORT] '{}' already at correct position (dist={:.0}m), no teleport needed",
+                                                              unit.name, dist);
+                                                    }
+                                                }
+                                                Err(e) => warn!("[CARRIER_TELEPORT] Could not read position for '{}' to check teleport: {:?}",
+                                                               unit.name, e),
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("[CARRIER_SPAWN] Failed to get object_id for '{}': {:?}",
+                                                   dcs_unit_name, e);
+                                        }
+                                    }
+                                } else {
+                                    info!("[CARRIER_SPAWN] DCS unit '{}' not matched to any persisted unit",
+                                           dcs_unit_name);
+                                }
+                            }
+                            Err(e) => {
+                                error!("[CARRIER_SPAWN] Failed to get name for DCS unit: {:?}", e);
+                            }
+                        }
+                    }
+                    info!("[CARRIER_SPAWN] Carrier unit registration complete for {} - units_able_to_move has {} entries",
+                          group.name, self.units_able_to_move.len());
+                }
+                Err(e) => {
+                    error!("[CARRIER_SPAWN] Failed to get units from activated carrier group {}: {:?}",
+                           group.template_name, e);
+                }
+            }
+
+            // Immediately stop the carrier from following its mission editor route.
+            // Without this, the carrier will circle through ME waypoints after activation.
+            let controller = dcs_group.get_controller()
+                .context("getting carrier controller after activation")?;
+            controller.set_command(dcso3::controller::Command::StopRoute(true))
+                .context("issuing StopRoute to carrier")?;
+            controller.reset_task()
+                .context("resetting carrier tasks")?;
+            info!("[CARRIER_SPAWN] Issued StopRoute and resetTask for {} to prevent circling", group.template_name);
+
+            // If carrier had a commanded waypoint destination, issue movement command
+            // to continue traveling there (starting from the correct activated position).
+            let waypoint_pos = persisted.objectives_by_group.get(&group.id)
+                .and_then(|oid| {
+                    info!("[CARRIER_SPAWN] Group {} is linked to objective {:?}", group.template_name, oid);
+                    persisted.objectives.get(oid)
+                })
+                .and_then(|obj| {
+                    match &obj.kind {
+                        ObjectiveKind::CarrierGroup { waypoint, .. } => {
+                            info!("[CARRIER_SPAWN] Objective is CarrierGroup, waypoint={:?}", waypoint);
+                            waypoint.as_ref().map(|wp| *wp)
+                        }
+                        other => {
+                            info!("[CARRIER_SPAWN] Objective is not CarrierGroup: {:?}", mem::discriminant(other));
+                            None
+                        }
+                    }
+                });
+
+            if let Some(target) = waypoint_pos {
+                let speed = if needs_repositioning {
+                    self.cfg.carrier.as_ref()
+                        .map(|c| c.spawn_repositioning_speed)
+                        .unwrap_or(100.0)
+                } else {
+                    self.cfg.carrier.as_ref().map(|c| c.movement_speed).unwrap_or(5.0)
+                };
+                info!("[CARRIER_SPAWN] Commanding carrier {} to continue to waypoint ({:.0}, {:.0}) at speed {:.1}{}",
+                      group.template_name, target.x, target.y, speed,
+                      if needs_repositioning { " (repositioning speed)" } else { "" });
+                // Re-enable route following and set the new destination
+                controller.set_command(dcso3::controller::Command::StopRoute(false))
+                    .context("re-enabling carrier route")?;
+                controller.set_task(dcso3::controller::Task::Mission {
+                    route: vec![MissionPoint {
+                        action: None,
+                        airdrome_id: None,
+                        helipad: None,
+                        typ: PointType::TurningPoint,
+                        time_re_fu_ar: None,
+                        link_unit: None,
+                        pos: LuaVec2(target),
+                        alt: 0.,
+                        alt_typ: None,
+                        speed,
+                        speed_locked: None,
+                        eta: None,
+                        eta_locked: None,
+                        name: Some(dcso3::String::from("restore_waypoint")),
+                        task: Box::new(dcso3::controller::Task::ComboTask(vec![])),
+                    }],
+                    airborne: Some(false),
+                }).context("setting carrier waypoint restore task")?;
+                info!("[CARRIER_SPAWN] Waypoint task set successfully for {}", group.template_name);
+            } else {
+                info!("[CARRIER_SPAWN] Carrier {} activated at saved position with StopRoute, no active waypoint",
+                      group.template_name);
+            }
+
+            // Carrier auto-navaids (TACAN / ICLS / ACLS / Link-4) are lit by
+            // the periodic sweep in `maybe_reallocate_navaids`, not here: DCS
+            // only registers the carrier deck as an airbase a beat after the
+            // group spawns, so this path can't reliably resolve it.
+
+            record_perf(&mut perf.spawn, ts);
+            return Ok(Some(Spawned::Group(dcs_group)));
         }
+
+        // Collect alive units and their positions.
         let mut points: SmallVec<[Vector2; 16]> = smallvec![];
-        let by_tname: FxHashMap<&str, &SpawnedUnit> = group
+        let alive_units: Vec<&SpawnedUnit> = group
             .units
             .into_iter()
             .filter_map(|uid| {
                 persisted.units.get(uid).and_then(|u| {
                     points.push(u.pos);
-                    if u.dead {
-                        None
-                    } else {
-                        Some((u.template_name.as_str(), u))
-                    }
+                    if u.dead { None } else { Some(u) }
                 })
             })
             .collect();
-        let alive = {
-            let units = template.group.units().context("getting units")?;
-            let mut i = 1;
-            while i as usize <= units.len() {
-                let unit = units.get(i)?;
-                match by_tname.get(unit.name()?.as_str()) {
-                    None => units.remove(i)?,
-                    Some(su) => {
-                        if su.tags.contains(UnitTag::AWACS) {
-                            let stn = String::from(format_compact!("{:005o}", self.awacs_stn));
-                            if let Ok(props) = unit.raw_get::<_, LuaTable>("AddPropAircraft") {
-                                self.awacs_stn -= 1;
-                                props.raw_set("STN_L16", stn)?;
-                            }
-                        }
-                        unit.raw_remove("unitId")?;
-                        unit.set_pos(su.pos)?;
-                        unit.set_alt(su.position.p.y)?;
-                        unit.set_heading(su.heading)?;
-                        unit.set_name(su.name.clone())?;
-                        i += 1;
+
+        // Check whether this is a synthetic (inline-config) group.  If so, build a Lua
+        // group table from scratch instead of cloning a .miz template.
+        let (template, alive) = if let Some(spec) = self.synthetic_templates.get(group.template_name.as_str()).cloned() {
+            if alive_units.is_empty() {
+                record_perf(&mut perf.spawn, ts);
+                return Ok(None);
+            }
+            use dcso3::LuaEnv as _;
+            let lua_inner = spctx.lua().inner();
+            let units_tbl = lua_inner.create_table()?;
+            for (i, su) in alive_units.iter().enumerate() {
+                let unit_tbl = lua_inner.create_table()?;
+                unit_tbl.raw_set("type", su.typ.0.as_str())?;
+                unit_tbl.raw_set("name", su.name.as_str())?;
+                unit_tbl.raw_set("x", su.pos.x)?;
+                unit_tbl.raw_set("y", su.pos.y)?;
+                unit_tbl.raw_set("heading", su.heading)?;
+                unit_tbl.raw_set("psi", -su.heading)?;
+                unit_tbl.raw_set("skill", "High")?;
+                unit_tbl.raw_set("playerCanDrive", false)?;
+                unit_tbl.raw_set("coldAtStart", false)?;
+                units_tbl.raw_set(i + 1, unit_tbl)?;
+            }
+            let point = centroid2d(points.iter().map(|p| *p));
+            let wp_tbl = lua_inner.create_table()?;
+            wp_tbl.raw_set("x", point.x)?;
+            wp_tbl.raw_set("y", point.y)?;
+            wp_tbl.raw_set("alt", 0.0f64)?;
+            wp_tbl.raw_set("type", "Turning Point")?;
+            wp_tbl.raw_set("action", "Off Road")?;
+            wp_tbl.raw_set("speed", 0.0f64)?;
+            wp_tbl.raw_set("speed_locked", true)?;
+            let combo_params = lua_inner.create_table()?;
+            combo_params.raw_set("tasks", lua_inner.create_table()?)?;
+            let combo_tbl = lua_inner.create_table()?;
+            combo_tbl.raw_set("id", "ComboTask")?;
+            combo_tbl.raw_set("params", combo_params)?;
+            wp_tbl.raw_set("task", combo_tbl)?;
+            let wps_tbl = lua_inner.create_table()?;
+            wps_tbl.raw_set(1, wp_tbl)?;
+            let route_tbl = lua_inner.create_table()?;
+            route_tbl.raw_set("points", wps_tbl)?;
+            let group_tbl = lua_inner.create_table()?;
+            group_tbl.raw_set("name", group.name.as_str())?;
+            group_tbl.raw_set("groupId", 0i64)?;
+            group_tbl.raw_set("x", point.x)?;
+            group_tbl.raw_set("y", point.y)?;
+            group_tbl.raw_set("lateActivation", false)?;
+            group_tbl.raw_set("hidden", false)?;
+            group_tbl.raw_set("visible", true)?;
+            group_tbl.raw_set("uncontrolled", false)?;
+            group_tbl.raw_set("task", "Ground Nothing")?;
+            group_tbl.raw_set("route", route_tbl)?;
+            group_tbl.raw_set("units", units_tbl)?;
+            let miz_group = miz::Group::from_lua(LuaValue::Table(group_tbl), lua_inner)
+                .map_err(|e| anyhow!("building synthetic group table: {e}"))?;
+            use dcso3::env::miz::GroupInfo;
+            let template = GroupInfo {
+                side: group.side,
+                country: spec.country,
+                category: match spec.category {
+                    GroupCategory::Ground | GroupCategory::Train => dcso3::env::miz::GroupKind::Vehicle,
+                    GroupCategory::Ship => dcso3::env::miz::GroupKind::Ship,
+                    GroupCategory::Airplane | GroupCategory::Helicopter => dcso3::env::miz::GroupKind::Plane,
+                },
+                group: miz_group,
+            };
+            (template, true)
+        } else {
+            let template = spctx
+                .get_template(
+                    idx,
+                    GroupKind::Any,
+                    group.side,
+                    group.template_name.as_str(),
+                )
+                .with_context(|| format_compact!("getting template {}", group.template_name))?;
+            template.group.set("lateActivation", false)?;
+            template.group.set("hidden", false)?;
+            template.group.set("visible", true)?;
+            template.group.set_name(group.name.clone())?;
+            let group_clone = template.group.clone();
+            let route = group_clone.route().context("getting route")?;
+            let mut points: Vec<dcso3::controller::MissionPoint> = if mission.len() > 0 {
+                mission
+            } else {
+                route.points().ok().map(|seq| seq.into_iter().filter_map(|p| p.ok()).collect()).unwrap_or_default()
+            };
+
+            if group.tags.contains(UnitTag::CAP) || group.tags.contains(UnitTag::HotStart) {
+                if let Some(first) = points.first_mut() {
+                    first.typ = dcso3::controller::PointType::TakeOffParkingHot;
+                    first.action = Some(dcso3::controller::ActionTyp::Air(dcso3::controller::TurnMethod::FromParkingAreaHot));
+                    first.alt = 0.0;
+                    first.alt_typ = Some(dcso3::controller::AltType::BARO);
+
+                    if group.tags.contains(UnitTag::CAP) {
+                        let opts = vec![
+                            dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::Roe(dcso3::controller::AirRoe::WeaponFree))),
+                            dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::RadarUsing(dcso3::controller::AirRadarUsing::ForContinuousSearch))),
+                            dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::ReactionOnThreat(dcso3::controller::AirReactionToThreat::EvadeFire))),
+                            dcso3::controller::Task::WrappedOption(dcso3::controller::AiOption::Air(dcso3::controller::AirOption::Silence(false))),
+                            *first.task.clone()
+                        ];
+                        first.task = Box::new(dcso3::controller::Task::ComboTask(opts));
                     }
                 }
             }
-            units.len() > 0
+
+            if points.len() > 0 {
+                route.set_points(points).context("setting points")?;
+            }
+            let by_tname: FxHashMap<&str, &SpawnedUnit> = alive_units
+                .iter()
+                .map(|u| (u.template_name.as_str(), *u))
+                .collect();
+            let alive = {
+                let units = template.group.units().context("getting units")?;
+                let mut i = 1;
+                while i as usize <= units.len() {
+                    let unit = units.get(i)?;
+                    match by_tname.get(unit.name()?.as_str()) {
+                        None => units.remove(i)?,
+                        Some(su) => {
+                            if su.tags.contains(UnitTag::AWACS) {
+                                let stn = String::from(format_compact!("{:005o}", self.awacs_stn));
+                                if let Ok(props) = unit.raw_get::<_, LuaTable>("AddPropAircraft") {
+                                    self.awacs_stn -= 1;
+                                    props.raw_set("STN_L16", stn)?;
+                                }
+                            }
+                            unit.raw_remove("unitId")?;
+                            unit.set_pos(su.pos)?;
+                            unit.set_alt(su.position.p.y)?;
+                            unit.set_heading(su.heading)?;
+                            unit.set_name(su.name.clone())?;
+                            i += 1;
+                        }
+                    }
+                }
+                units.len() > 0
+            };
+            (template, alive)
         };
         if !alive {
             record_perf(&mut perf.spawn, ts);
@@ -916,15 +1723,146 @@ impl Ephemeral {
                 format_compact!("removing junk before spawn of {}", group.template_name)
             })?;
             */
+            // Check if this group should be linked to a carrier
+            // First, re-establish carrier link for crates that originated from carrier objectives
+            // (this link is lost on save/load since carrier_linked_groups is ephemeral)
+            if !self.carrier_linked_groups.contains_key(&group.id) {
+                if let DeployKind::Crate { origin, .. } = &group.origin {
+                    // Check if the origin objective is a carrier group
+                    if let Some(obj) = persisted.objectives.get(origin) {
+                        if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &obj.kind {
+                            if !carrier_template.is_empty() {
+                                // carrier_template is the GROUP template name (e.g., "RCARRIER").
+                                // Unit template_names are mission editor names (e.g., "Kurznetsov"),
+                                // which don't necessarily start with the group name.
+                                // Match by GROUP membership instead: find groups matching carrier_template,
+                                // then look at their units.
+                                'carrier_search: for (_, cg) in &persisted.groups {
+                                    if cg.template_name.starts_with(carrier_template.as_str()) && cg.side == group.side {
+                                        for uid in cg.units.into_iter() {
+                                            if let Some(cu) = persisted.units.get(uid) {
+                                                if !cu.dead {
+                                                    if Unit::get_by_name(spctx.lua(), &cu.template_name).is_ok() {
+                                                        info!("[CARRIER_LINK] Re-establishing link for crate {:?} to carrier '{}'",
+                                                              group.id, cu.template_name);
+                                                        self.carrier_linked_groups.insert(group.id, cu.template_name.clone());
+                                                        break 'carrier_search;
+                                                    }
+                                                    if Unit::get_by_name(spctx.lua(), &cu.name).is_ok() {
+                                                        info!("[CARRIER_LINK] Re-establishing link for crate {:?} to carrier '{}' (bflib name)",
+                                                              group.id, cu.name);
+                                                        self.carrier_linked_groups.insert(group.id, cu.name.clone());
+                                                        break 'carrier_search;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Crates spawn from one shared template per side (crate_template /
+            // c130_cargo_template / helo_cargo_template); per-crate weight
+            // override is applied to the cloned template's single unit here,
+            // right before spawn. Both the C-130 and helicopters load crates
+            // into an internal cargo bay (not a DCS sling-load hook), so the
+            // weight override applies uniformly to all crate templates.
+            //
+            // The `dcs_type` reskin is C-130-only: helo_cargo_template
+            // (RCRATE_HELO/BCRATE_HELO) already IS the correct helicopter
+            // crate model per side -- reskinning it to a crate's configured
+            // dcs_type (meant for the C-130 pallet model) replaced that model
+            // with one whose baked-in default mass ignored our weight
+            // override, which is why helo crates always showed the same
+            // weight regardless of config.
+            if let DeployKind::Crate { spec, .. } = &group.origin {
+                let is_helo_template = self
+                    .cfg
+                    .helo_cargo_template
+                    .values()
+                    .any(|t| t.as_str() == group.template_name.as_str());
+                match template.group.units() {
+                    Ok(units) => match units.get(1) {
+                        Ok(unit) => {
+                            if !is_helo_template {
+                                if let Some(dcs_type) = spec.dcs_type.clone() {
+                                    unit.set_typ(dcs_type)?;
+                                }
+                            }
+                            unit.set_mass(spec.weight)?;
+                            info!(
+                                "[CRATE_MASS] set mass={}kg on template {} (unit type after override: {:?}) for crate {}",
+                                spec.weight,
+                                group.template_name,
+                                unit.typ(),
+                                spec.name
+                            );
+                        }
+                        Err(e) => warn!(
+                            "[CRATE_MASS] template {} has no unit at index 1, cannot set mass={}kg: {e:?}",
+                            group.template_name, spec.weight
+                        ),
+                    },
+                    Err(e) => warn!(
+                        "[CRATE_MASS] template {} has no units() table, cannot set mass={}kg: {e:?}",
+                        group.template_name, spec.weight
+                    ),
+                }
+            }
+            let carrier_link_id = self.carrier_linked_groups.remove(&group.id);
             let spawned = spctx
-                .spawn(template)
+                .spawn_with_link(template, carrier_link_id)
                 .with_context(|| format_compact!("spawning template {}", group.template_name))?;
             match &spawned {
-                Spawned::Static => (),
+                Spawned::Static(oid) => {
+                    self.object_id_by_gid.insert(group.id, oid.clone());
+                    self.gid_by_object_id.insert(oid.clone(), group.id);
+                }
                 Spawned::Group(g) => {
                     let oid = g.object_id()?.erased();
                     self.object_id_by_gid.insert(group.id, oid.clone());
                     self.gid_by_object_id.insert(oid, group.id);
+                    let gci = match &group.origin {
+                        DeployKind::Deployed { spec, .. } => spec.gci.as_ref(),
+                        _ => None,
+                    };
+                    if let Some(gci) = gci {
+                        if let Some(unit) = g.get_units()?.into_iter().filter_map(|u| u.ok()).next() {
+                            let ll = dcso3::coord::Coord::singleton(spctx.lua())?
+                                .lo_to_ll(unit.get_point()?)?;
+                            let controller = unit.get_controller()
+                                .context("getting GCI unit controller")?;
+                            controller
+                                .set_command(dcso3::controller::Command::ActivateGci {
+                                    unit: unit.id()?,
+                                    latitude: ll.latitude,
+                                    longitude: ll.longitude,
+                                    channel: gci.channel,
+                                    radius: gci.radius,
+                                })
+                                .context("activating GCI station")?;
+                        }
+                    }
+                    // (Re)light this objective's auto-navaid if this group is its
+                    // designated beacon host. Best effort -- never abort a spawn.
+                    if self.cfg.navaids.enabled {
+                        if let DeployKind::Objective { origin } = &group.origin {
+                            if let Some(navs) = persisted.navaids.get(origin) {
+                                for nav in navs {
+                                    if nav.host_gid == Some(group.id) {
+                                        if let Err(e) = crate::navaids::activate_on_group(g, nav) {
+                                            warn!(
+                                                "navaid activation failed for objective {origin:?}: {e:?}"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             record_perf(&mut perf.spawn, ts);

@@ -19,8 +19,8 @@ use super::{
     as_tbl, as_tbl_ref, lua_err, object::Object, unit::Unit, value_to_json,
     weapon::Weapon, world::MarkPanel, String, Time,
 };
-use anyhow::{bail, Result};
-use log::{error, info};
+use anyhow::Result;
+use log::{debug, error, info};
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
 
@@ -332,7 +332,15 @@ fn translate<'a, 'lua: 'a>(
         55 => Event::PostponedTakeoff(AtPlace::from_lua(value, lua)?),
         56 => Event::PostponedLand(AtPlace::from_lua(value, lua)?),
         57 => Event::Max,
-        n => bail!("unknown event {n}"),
+        // DCS periodically adds new event ids in updates (e.g. simulation
+        // freeze/unfreeze, human aircraft repair start/finish were added
+        // after this table was last updated). Rather than erroring every
+        // time DCS adds one we don't know about yet, ignore it — none of
+        // these newer events are consumed by campaign logic anyway.
+        n => {
+            debug!("ignoring unknown DCS event id {n}: {}", value_to_json(&value));
+            Event::Invalid
+        }
     })
 }
 

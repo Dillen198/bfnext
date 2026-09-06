@@ -1,0 +1,165 @@
+# Fowl Engine DCSServerBot Plugin Configuration
+# Rename this file to `fowlengine.yaml` and place it in your DCSServerBot `config/plugins/` directory.
+
+DEFAULT:
+  # ---------------------------------------------
+  # Presentation Configuration
+  # ---------------------------------------------
+  # The brand name to show in Discord Embeds (e.g. "Vector Strike", "Desert Fury", "Fowl Engine").
+  brand_name: "Vector Strike"
+
+  # ---------------------------------------------
+  # Channel Configurations
+  # ---------------------------------------------
+  # The ID of the Discord channel where the live campaign status embed will be updated.
+  status_channel: 123456789012345678
+  
+  # The ID of the Discord channel where killstreak achievements (Ace, Unstoppable,
+  # God of War) will be announced. Detected by polling /api/kills every ~20s and
+  # tracking consecutive kills per pilot (resets when they die); no admin auth needed.
+  achievements_channel: 123456789012345678
+
+  # The ID of the Discord channel where objective captures, neutrals, and
+  # ready-to-capture alerts are sent. Detected by polling /api/objectives every
+  # ~20s and diffing owner/health against the previous poll; no admin auth needed.
+  alerts_channel: 123456789012345678
+
+  # (Optional) When true (the default), the bot auto-creates "Blue Ops" and
+  # "Red Ops" threads under alerts_channel and routes alerts by relevance:
+  # the defending faction gets a "defend it!" warning, the opposing faction
+  # gets an "opportunity!" alert, for the same ready-to-capture event.
+  # Captures post to both. Set to false to post everything to alerts_channel
+  # directly instead. Requires the bot to have "Create Public Threads" and
+  # "Send Messages in Threads" permission on alerts_channel.
+  use_faction_threads: true
+
+  # (Optional) The ID of the Discord channel where the live bflib engine log will be
+  # relayed in real time. A single message is continuously edited with a rolling tail,
+  # and ERROR/WARN lines are additionally posted as standalone alerts. Leave unset to
+  # disable the relay entirely. Requires admin_username/admin_password below.
+  engine_log_channel: 123456789012345678
+
+  # (Optional) The ID of the Discord channel where a live server performance/hardware
+  # embed will be posted and edited every 5 minutes: CPU/RAM/GPU/disk usage, temps,
+  # and the DCS mission script's own frame-time breakdown (from bfdb's
+  # /api/admin/perf). Leave unset to disable. Requires admin_username/admin_password
+  # below, and bfdb must be running on the same machine it's reporting on.
+  perf_channel: 123456789012345678
+
+  # (Optional) The ID of the Discord channel where a mission-briefing welcome
+  # message is posted whenever someone joins the Discord server. Pulls the
+  # active scenario, round duration, and current front (objective counts per
+  # faction) from bfdb, same as the live status embed. Leave unset to disable.
+  welcome_channel: 123456789012345678
+
+  # (Optional) The line posted above the briefing embed. {mention} and
+  # {brand_name} are substituted.
+  welcome_message: "Welcome aboard, {mention}! 🪖"
+
+  # (Optional) Freeform briefing text shown inside the welcome embed
+  # (rules pointer, how to pick a faction, useful commands, etc).
+  welcome_briefing: >-
+    Read the rules, pick your faction, and check the dashboard for your pilot
+    profile and the live map.
+
+    Use /vs dashboard for your secure web login, /vs objectives for the full
+    objective list, and /vs stats to track your kills and captures.
+
+  # ---------------------------------------------
+  # Web Dashboard Configurations
+  # ---------------------------------------------
+  # The base URL to your bfweb or custom Fowl Engine web dashboard.
+  dashboard_url: "https://bfweb.your-domain.com"
+  
+  # A highly secure, secret string used to generate auto-login tokens.
+  # Ensure this matches the secret used in your web backend to verify the HMAC tokens!
+  dashboard_secret: "REPLACE_WITH_A_LONG_SECURE_RANDOM_STRING_HERE"
+  
+  # ---------------------------------------------
+  # Fowl Engine DB (bfdb) Integration
+  # ---------------------------------------------
+  # The base URL to your Fowl Engine REST API (bfdb).
+  api_url: "http://localhost:8765"
+  # (Optional) Direct path to the mission's ODFv2_CFG json file.
+  # If specified, the bot will parse deployables directly from this file
+  # rather than querying the bfdb API over HTTP.
+  cfg_path: "C:\\path\\to\\your\\miz\\ODFv2_CFG"
+
+  # Admin username/password for bfdb's local-login (matches bfdb's own
+  # --admin-username/--admin-password startup flags). Required for the
+  # engine_log_channel relay above (since /ws/engine-logs is admin-only) and
+  # for the commander terminal / spawn_deployable commands (POST /api/commander/spawn
+  # is also admin-only -- these always fail without it).
+  admin_username: ""
+  admin_password: ""
+
+  # ---------------------------------------------
+  # bfdb Process Supervision (optional)
+  # ---------------------------------------------
+  # bfdb.exe isn't controlled by DCSServerBot's own server start/stop -- it's
+  # a separate sidecar process that normally has to be relaunched by hand
+  # (re-running bfsystem.ps1) if it crashes or is unreachable. When true, the
+  # bot health-checks it (GET api_url/api/health, a cheap no-DB probe) every
+  # ~30s and relaunches it via bfsystem_script if it stops responding for
+  # bfdb_health_failures checks in a row AND the process is either gone or
+  # has been unresponsive longer than bfdb_hung_relaunch_secs. A bfdb that's
+  # merely slow (e.g. replaying its stats archive at startup) is left alone.
+  # Requires the bot itself to be running on the same Windows machine as
+  # bfdb/bfsystem.ps1.
+  bfdb_supervisor: false
+
+  # Absolute path to bfsystem.ps1 (or an equivalent launcher) on the machine
+  # this bot runs on. Required if bfdb_supervisor is true.
+  bfsystem_script: "C:\\path\\to\\bfsystem.ps1"
+
+  # (Optional) Consecutive failed health checks before considering a relaunch. Default 3.
+  bfdb_health_failures: 3
+
+  # (Optional) If bfdb.exe is still running but unresponsive, wait this many
+  # seconds before force-relaunching it (long enough for a full stats-archive
+  # replay on startup). If the process is gone entirely it's relaunched
+  # immediately regardless. Default 600.
+  bfdb_hung_relaunch_secs: 600
+
+  # (Optional) Minimum seconds between relaunch attempts, so a bfdb that's
+  # merely slow to start doesn't get relaunched repeatedly. Default 120.
+  bfdb_restart_cooldown: 120
+
+  # (Optional) Discord channel for "bfdb went unreachable / relaunched"
+  # notices. Falls back to alerts_channel if unset, otherwise silent.
+  ops_channel: 123456789012345678
+
+  # ---------------------------------------------
+  # bflib.dll Upload (optional, admin-only)
+  # ---------------------------------------------
+  # Live path bflib.dll is loaded from (wherever your mission's `require`
+  # resolves it). /vs fe_upload_bflib only accepts a server that's already
+  # shut down (DCS.exe holds a file lock on bflib.dll while running), backs
+  # up the current DLL, overwrites it with the uploaded one, and restarts the
+  # server -- so a new build can be shipped without RDPing into the server.
+  # Leave unset to disable the command.
+  bflib_dll_path: "C:\\path\\to\\Scripts\\bflib.dll"
+
+  # ---------------------------------------------
+  # Localization & Message Formats
+  # ---------------------------------------------
+  # Customize the text used by the bot when posting alerts and achievements.
+  messages:
+    capture: "🏆 **[CAPTURED]** {message}"
+    neutral: "🏳️ **[NEUTRAL]** {message}"
+    ready_to_capture: "⏳ **[READY TO CAPTURE]** {message}"
+    capture_opportunity: "🎯 **[OPPORTUNITY]** {message}"
+    achievement: "🎖️ **[ACHIEVEMENT]** {message}"
+    alert: "🚨 **[ALERT]** {message}"
+    
+  # ---------------------------------------------
+  # Discord Role Syncing
+  # ---------------------------------------------
+  # Automatically assigns Discord roles based on a pilot's total in-game score/points.
+  # Map your EXACT Discord role names to the minimum point threshold required.
+  rank_thresholds:
+    "Pilot Officer": 0
+    "Flight Lieutenant": 500
+    "Squadron Leader": 2000
+    "Wing Commander": 5000
+    "Group Captain": 10000

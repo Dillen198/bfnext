@@ -34,6 +34,7 @@ use std::{mem, ops::Deref};
 string_enum!(PointType, u8, [
     TakeOffGround => "TakeOffGround",
     TakeOffGroundHot => "TakeOffGroundHot",
+    TakeOffParkingHot => "TakeOffParkingHot",
     TurningPoint => "Turning Point",
     TakeOffParking => "TakeOffParking",
     TakeOff => "TakeOff",
@@ -57,7 +58,8 @@ string_enum!(OrbitPattern, u8, [
 
 string_enum!(TurnMethod, u8, [
     FlyOverPoint => "Fly Over Point",
-    OffRoad => "Off Road"
+    OffRoad => "Off Road",
+    FromParkingAreaHot => "From Parking Area Hot"
 ]);
 
 string_enum!(Designation, u8, [
@@ -71,6 +73,12 @@ string_enum!(Designation, u8, [
 string_enum!(AltType, u8, [
     BARO => "BARO",
     RADIO => "RADIO"
+]);
+
+// TACAN channel band, as selected on the aircraft's TACAN control panel.
+string_enum!(TacanBand, u8, [
+    X => "X",
+    Y => "Y"
 ]);
 
 simple_enum!(FACCallsign, u8, [
@@ -1182,6 +1190,16 @@ pub enum Command {
         name: Option<String>,
         callsign: String,
         frequency: i64,
+        /// TACAN channel number (1-126). Only meaningful when `system` is a TACAN variant;
+        /// when set, DCS derives the beacon's actual RF frequency from this + `mode_channel`
+        /// instead of using `frequency` directly.
+        channel: Option<i64>,
+        /// TACAN channel band (X or Y). Only meaningful alongside `channel`.
+        mode_channel: Option<TacanBand>,
+        /// Air-to-air TACAN (set for beacons mounted on aircraft, e.g. tankers/AWACS).
+        aa: Option<bool>,
+        /// Whether the beacon provides bearing information.
+        bearing: Option<bool>,
     },
     DeactivateBeacon,
     ActivateICLS {
@@ -1190,6 +1208,17 @@ pub enum Command {
         name: Option<String>,
     },
     DeactivateICLS,
+    /// Activates the MiG-29 GCI (ground controlled intercept) station on the unit.
+    /// `x`/`y` are latitude/longitude in degrees (not map coordinates) — the unit's
+    /// own position, converted via `coord.lo_to_ll`.
+    ActivateGci {
+        unit: UnitId,
+        latitude: f64,
+        longitude: f64,
+        channel: i64,
+        /// Max control radius in meters.
+        radius: u32,
+    },
     EPLRS {
         enable: bool,
         group: Option<GroupId>,
@@ -1290,6 +1319,10 @@ impl<'lua> IntoLua<'lua> for Command {
                 name,
                 callsign,
                 frequency,
+                channel,
+                mode_channel,
+                aa,
+                bearing,
             } => {
                 root.raw_set("id", "ActivateBeacon")?;
                 params.raw_set("type", typ)?;
@@ -1298,6 +1331,18 @@ impl<'lua> IntoLua<'lua> for Command {
                 params.raw_set("frequency", frequency)?;
                 if let Some(name) = name {
                     params.raw_set("name", name)?;
+                }
+                if let Some(channel) = channel {
+                    params.raw_set("channel", channel)?;
+                }
+                if let Some(mode_channel) = mode_channel {
+                    params.raw_set("modeChannel", mode_channel)?;
+                }
+                if let Some(aa) = aa {
+                    params.raw_set("AA", aa)?;
+                }
+                if let Some(bearing) = bearing {
+                    params.raw_set("bearing", bearing)?;
                 }
             }
             Self::DeactivateBeacon => root.raw_set("id", "DeactivateBeacon")?,
@@ -1315,6 +1360,20 @@ impl<'lua> IntoLua<'lua> for Command {
                 }
             }
             Self::DeactivateICLS => root.raw_set("id", "DeactivateICLS")?,
+            Self::ActivateGci {
+                unit,
+                latitude,
+                longitude,
+                channel,
+                radius,
+            } => {
+                root.raw_set("id", "ActivateGCI")?;
+                params.raw_set("unitId", unit)?;
+                params.raw_set("x", longitude)?;
+                params.raw_set("y", latitude)?;
+                params.raw_set("channel", channel)?;
+                params.raw_set("radius", radius)?;
+            }
             Self::EPLRS { enable, group } => {
                 root.raw_set("id", "EPLRS")?;
                 params.raw_set("value", enable)?;
@@ -1414,6 +1473,10 @@ impl<'lua> FromLua<'lua> for Command {
                 name: params.raw_get("name")?,
                 callsign: params.raw_get("callsign")?,
                 frequency: params.raw_get("frequency")?,
+                channel: params.raw_get("channel")?,
+                mode_channel: params.raw_get("modeChannel")?,
+                aa: params.raw_get("AA")?,
+                bearing: params.raw_get("bearing")?,
             }),
             "DeactivateBeacon" => Ok(Self::DeactivateBeacon),
             "DeactivateICLS" => Ok(Self::DeactivateACLS),

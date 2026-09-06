@@ -15,13 +15,19 @@ for more details.
 */
 
 use super::{cargo, player_name, slot_for_group, ArgTuple};
-use crate::{jtac::JtId, Context};
+use crate::{
+    jtac::JtId,
+    Context,
+};
 use anyhow::{Context as ErrContext, Result};
 use bfprotocols::cfg::{Cfg, LimitEnforceTyp};
 use compact_str::format_compact;
 use dcso3::{
     coalition::Side, env::miz::GroupId, mission_commands::MissionCommands, MizLua, String,
+
 };
+
+use std::sync::Arc;
 
 fn load_troops(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
@@ -77,14 +83,15 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     match ctx.db.unload_troops(lua, &ctx.idx, &slot) {
         Ok((tr, tgid, oid)) => {
             let player = player_name(&ctx.db, &slot);
-            let sub = ctx.subscribed_jtac_menus.entry(slot).or_default();
+            let sub = ctx.subscribed_jtac_menus.entry(slot.clone()).or_default();
             sub.pinned.insert(JtId::Group(tgid));
             if let Some(oid) = oid {
                 sub.subscribed_objectives.insert(oid);
             }
             super::jtac::init_jtac_menu_for_slot(ctx, lua, &slot)?;
+
             let msg = format_compact!("{player} dropped {} troops into the field", tr.name);
-            ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
+            ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
         }
         Err(e) => ctx
             .db
@@ -98,9 +105,11 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
 fn extract_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    match ctx.db.extract_troops(lua, &slot) {
-        Ok(tr) => {
+    match ctx.db.extract_troops(lua, &ctx.jtac, &slot) {
+        Ok((tr, _extracted_gid)) => {
             let player = player_name(&ctx.db, &slot);
+
+
             let msg = format_compact!("{player} extracted {} troops from the field", tr.name);
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
         }
@@ -119,6 +128,8 @@ fn return_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     match ctx.db.return_troops(lua, &slot) {
         Ok(tr) => {
             let player = player_name(&ctx.db, &slot);
+
+
             let msg = format_compact!("{player} returned {} troops", tr.name);
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
         }
@@ -127,6 +138,91 @@ fn return_troops(lua: MizLua, gid: GroupId) -> Result<()> {
             .ephemeral
             .msgs()
             .panel_to_group(10, false, gid, format_compact!("{e}")),
+    }
+    Ok(())
+}
+
+// ─── Ground Vehicle Troop Transport ──────────────────────────────────────────
+// Menu currently hidden (see add_troops_menu); handlers kept for easy re-enable.
+
+#[allow(dead_code)]
+fn board_ground_vehicle(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    match ctx.db.board_ground_vehicle(lua, &slot) {
+        Ok((troop, _vehicle_uid)) => {
+            let player = player_name(&ctx.db, &slot);
+            ctx.db.ephemeral.msgs().panel_to_side(
+                10,
+                false,
+                side,
+                format_compact!(
+                    "{player} boarded {} into a ground vehicle",
+                    troop.name
+                ),
+            )
+        }
+        Err(e) => ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("{e}")),
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn disembark_ground_vehicle(lua: MizLua, arg: ArgTuple<GroupId, bfprotocols::db::group::UnitId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    match ctx.db.disembark_ground_vehicle(lua, &ctx.idx, arg.snd, &slot) {
+        Ok((troop, _tgid)) => {
+            let player = player_name(&ctx.db, &slot);
+            ctx.db.ephemeral.msgs().panel_to_side(
+                10,
+                false,
+                side,
+                format_compact!("{player} dismounted {} from vehicle", troop.name),
+            )
+        }
+        Err(e) => ctx.db.ephemeral.msgs().panel_to_group(10, false, arg.fst, format_compact!("{e}")),
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn list_ground_vehicle_passengers(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (side, _slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
+    if cfg.ground_vehicle_cargo.is_empty() {
+        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("No ground vehicle cargo configured"));
+        return Ok(());
+    }
+    // Find a nearby boardable vehicle and show its manifest.
+    let has_pax = ctx
+        .db
+        .ephemeral
+        .ground_vehicle_passengers
+        .values()
+        .any(|p| p.side == side && !p.troops.is_empty());
+    if !has_pax {
+        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("No troops aboard friendly vehicles"));
+    } else {
+        let now = chrono::Utc::now();
+        let manifests: Vec<_> = ctx.db.ephemeral.ground_vehicle_passengers.values()
+            .filter(|p| p.side == side && !p.troops.is_empty())
+            .map(|pax| {
+                let names: Vec<_> = pax.troops.iter().map(|t| t.troop.name.as_str()).collect();
+                let age_min = (now - pax.loaded_at).num_minutes();
+                format_compact!(
+                    "Vehicle {} (ID:{:?}): {} squad(s) [{age_min}m ago]: {}",
+                    pax.vehicle_name,
+                    pax.vehicle_unit_id,
+                    pax.troops.len(),
+                    names.join(", ")
+                )
+            })
+            .collect();
+        for msg in manifests {
+            ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, msg);
+        }
     }
     Ok(())
 }
@@ -186,5 +282,10 @@ pub(super) fn add_troops_menu_for_group(
             )?;
         }
     }
+
+    // Ground vehicle transport menu — hidden per request. The board/dismount
+    // handlers still exist; re-add this block to expose the "Ground Vehicle"
+    // submenu again.
+    let _ = &cfg.ground_vehicle_cargo;
     Ok(())
 }

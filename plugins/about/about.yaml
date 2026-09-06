@@ -1,0 +1,35 @@
+DEFAULT:
+  website: "https://vectorstrike.org"
+  
+  about_us:
+    title: "🎯 About Us & The Team"
+    description: "Welcome to **Vector Strike**! We are a dedicated team passionate about delivering immersive, high-performance, and deeply strategic multiplayer experiences in DCS World."
+    team:
+      - name: "KillerDog"
+        role: "Engine customization, added new features, and improved performance."
+      - name: "EagleEye"
+        role: "Mastermind behind all mission designs, layouts, and tactical scenarios."
+
+  mission:
+    title: "🗺️ About Vector Strike Mission"
+    description: "**Vector Strike** is our flagship dynamic campaign framework built to test tactical coordination, logistics supply lines, air superiority, and frontline ground dominance."
+    features:
+      - "Persistent sector control and active frontline mechanics."
+      - "Stockpile-driven logistics and localized airbase inventories."
+      - "Optimized engine performance for seamless large-scale multiplayer operations."
+
+  credits_ed:
+    title: "✈️ Simulation Platform: Eagle Dynamics"
+    description: "We extend our deepest appreciation to **Eagle Dynamics (ED)** for creating and continuously expanding **DCS World**, providing the foundational aviation sandbox that makes these complex multiplayer campaigns possible."
+
+  credits_estokes:
+    title: "🦅 Engine Architecture: Eric Stokes"
+    description: "Special recognition goes to **Eric Stokes**, the original creator and developer of the core Fowl Engine (`bfnext`) framework. His architectural foundation paved the way for our heavy customizations and performance enhancements."
+
+  credits_hacker:
+    title: "🖥️ Server Host: Hacker"
+    description: "A persistent, 24/7 campaign lives or dies on having a machine that never goes offline — and Vector Strike has one because **Hacker**, founder of **61st ATP — Arctic Terns & Penguins**, generously donated the server it runs on. Every objective captured, every sortie flown, and every name on the leaderboard is only possible because of that support. On behalf of the whole squadron: thank you."
+
+  credits_special_k:
+    title: "🤖 Bot Infrastructure: Special K"
+    description: "Enormous thanks to **Special K**, the creator and lead developer of **DCSServerBot**. Their robust Discord bot platform powers our community automation, and live server telemetry."
