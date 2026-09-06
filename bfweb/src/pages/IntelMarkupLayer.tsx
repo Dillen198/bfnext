@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Polyline, Rectangle, Circle, Marker, useMap, useMapEvents } from 'react-leaflet'
+import { Polyline, Rectangle, Circle, Marker, Pane, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import type { IntelMarkup, IntelMarkupKind } from '../api'
 
@@ -124,8 +124,11 @@ export default function IntelMarkupLayer({
     }
   }
 
+  // Own pane, stacked above the warp-photo `<img>`s (which sit at z-index ~500
+  // inside Leaflet's overlayPane) so the markup always draws on top of the
+  // imagery, not behind it.
   return (
-    <>
+    <Pane name="intel-markup" style={{ zIndex: 640 }}>
       {items.map(m => renderShape(m as unknown as { kind: string; points: LL[]; color: string; width: number }, m.id, m.id))}
       {draft && draft.length > 0 && renderShape(
         {
@@ -135,6 +138,6 @@ export default function IntelMarkupLayer({
         },
         'draft',
       )}
-    </>
+    </Pane>
   )
 }
