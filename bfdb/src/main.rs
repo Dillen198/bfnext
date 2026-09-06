@@ -3307,6 +3307,7 @@ async fn main() -> Result<()> {
         log::set_boxed_logger(Box::new(logger)).expect("logger already set");
         log::set_max_level(max_level);
     }
+    let has_engine = args.base.is_some();
     let db = match args.base {
         Some(base) => {
             let subscriber = SubscriberBuilder::new()
@@ -3322,6 +3323,36 @@ async fn main() -> Result<()> {
     db.set_intel_dir(args.intel_dir.clone())?;
     if let Some(d) = &args.intel_dir {
         log::info!("recon intel photos stored on disk at {}", d.display());
+    }
+
+    // Push the coalition recon markup onto the in-game F10 map every ~15s.
+    // Fire-and-forget: the engine may be unreachable, and a failed push just
+    // retries next tick. Only runs when there's a live engine (--base).
+    if has_engine {
+        let intel_db = db.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
+            loop {
+                tick.tick().await;
+                let payload = match task::block_in_place(|| intel_db.intel_marks_payload()) {
+                    Ok(Some(p)) => p,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        log::warn!("intel-marks: building payload failed: {e:?}");
+                        continue;
+                    }
+                };
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    call_engine_rpc_str(
+                        &intel_db,
+                        "intel-marks",
+                        vec![("data", netidx::publisher::Value::from(payload))],
+                    ),
+                )
+                .await;
+            }
+        });
     }
 
     let auth_cfg: Option<AuthConfig> = match (

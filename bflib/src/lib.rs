@@ -24,6 +24,7 @@ mod commander;
 mod db;
 mod ewr;
 mod frontline;
+mod intel_marks;
 mod jtac;
 mod landcache;
 mod menu;

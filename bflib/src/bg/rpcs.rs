@@ -75,6 +75,7 @@ pub struct Rpcs {
     _carp_solve_latlon: Proc,
     _cargo_spawn_crate: Proc,
     _set_server_info: Proc,
+    _intel_marks: Proc,
 }
 
 /// Parse the JSON bfdb pushes on `set-server-info` into an `AdminCommand`.
@@ -990,6 +991,23 @@ impl Rpcs {
             Some(wait.clone()),
             info: Chars = Value::Null; "JSON {restart_at, weather:{temp_c,wind_speed_kts,wind_from_deg,qnh_hpa,cloud_base_m}}"
         )?;
+        let _q = Arc::clone(&q);
+        let intel_marks = define_rpc!(
+            publisher,
+            base.append("intel-marks"),
+            "Push the dashboard's coalition recon markup onto the F10 map",
+            |mut c: RpcCall, data: Chars| {
+                let (tx, rx) = oneshot::channel();
+                if data.is_empty() {
+                    c.reply.send(Value::Error("empty intel-marks payload".into()));
+                    return None;
+                }
+                _q.push((AdminCommand::SetIntelMarks(data.as_ref().into()), tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            data: Chars = Value::Null; "JSON {marks:[{id,side,kind,points,color,by_name}]}"
+        )?;
         Ok(Self {
             _reduce_inventory: reduce_inventory,
             _transfer_supply: transfer_supply,
@@ -1044,6 +1062,7 @@ impl Rpcs {
             _carp_solve_latlon: carp_solve_latlon,
             _cargo_spawn_crate: cargo_spawn_crate,
             _set_server_info: set_server_info,
+            _intel_marks: intel_marks,
         })
     }
 }

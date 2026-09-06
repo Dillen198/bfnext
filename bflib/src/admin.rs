@@ -281,6 +281,9 @@ pub enum AdminCommand {
         restart_at: Option<DateTime<Utc>>,
         weather: Option<crate::BotWeather>,
     },
+    /// The active round's coalition recon markup, pushed in from bfdb as JSON
+    /// (see `intel_marks`) -- drawn on the F10 map for the owning side.
+    SetIntelMarks(std::string::String),
 }
 
 impl AdminCommand {
@@ -2247,6 +2250,13 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 ctx.shutdown = restart_at.map(crate::AutoShutdown::new);
                 ctx.bot_weather = weather;
                 reply_ok!("server info updated");
+            }
+            AdminCommand::SetIntelMarks(json) => {
+                let (marks, msgs) = ctx.db.ephemeral.intel_marks_and_msgs();
+                match crate::intel_marks::reconcile(marks, msgs, lua, &json) {
+                    Ok(()) => reply_ok!("intel marks updated"),
+                    Err(e) => reply_err!("intel marks: {e:?}"),
+                }
             }
         }
         match caller {

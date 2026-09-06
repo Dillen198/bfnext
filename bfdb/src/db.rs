@@ -1965,6 +1965,29 @@ impl StatsDb {
         Ok(self.intel_markup.remove(&(round, *id))?.is_some())
     }
 
+    /// JSON payload of the active round's markup (both coalitions) for the
+    /// engine's F10-map feed. `None` when there's no active round.
+    pub(crate) fn intel_marks_payload(&self) -> Result<Option<std::string::String>> {
+        let Some(round) = self.active_round_id()? else {
+            return Ok(None);
+        };
+        let items = self.intel_markup_list(round, None)?;
+        let marks: Vec<serde_json::Value> = items
+            .iter()
+            .map(|(id, m)| {
+                serde_json::json!({
+                    "id":      id.to_string(),
+                    "side":    format!("{:?}", m.side),
+                    "kind":    m.kind,
+                    "points":  m.points,
+                    "color":   m.color,
+                    "by_name": m.by_name,
+                })
+            })
+            .collect();
+        Ok(Some(serde_json::json!({ "marks": marks }).to_string()))
+    }
+
     /// Seed / refresh the built-in gameplay wiki content (compiled in from
     /// `bfdb/seed_wiki/`). A page is (re)written from the compiled-in source
     /// only when it is missing or still at its seed version (`updated_by ==

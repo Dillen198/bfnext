@@ -296,6 +296,10 @@ pub struct Ephemeral {
     pub(crate) recon_sessions: FxHashMap<Ucid, ReconSession>,
     /// Per-pilot cooldown after a recon pass ends (completed or aborted).
     pub(crate) recon_cooldown: FxHashMap<Ucid, DateTime<Utc>>,
+    /// F10 marks drawn from the dashboard's recon markup (bfdb `intel-marks`
+    /// RPC), keyed by the source markup id. Not persisted -- redrawn on the
+    /// next push after a restart.
+    pub(crate) intel_map_marks: FxHashMap<std::string::String, SmallVec<[dcso3::trigger::MarkId; 4]>>,
 }
 
 impl Default for Ephemeral {
@@ -376,6 +380,7 @@ impl Default for Ephemeral {
             ground_vehicle_passengers: FxHashMap::default(),
             recon_sessions: FxHashMap::default(),
             recon_cooldown: FxHashMap::default(),
+            intel_map_marks: FxHashMap::default(),
         }
     }
 }
@@ -754,6 +759,16 @@ impl Ephemeral {
 
     pub fn map_layer_and_msgs(&mut self) -> (&mut MapLayer, &mut MsgQ) {
         (&mut self.map_layer, &mut self.msgs)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn intel_marks_and_msgs(
+        &mut self,
+    ) -> (
+        &mut FxHashMap<std::string::String, SmallVec<[dcso3::trigger::MarkId; 4]>>,
+        &mut MsgQ,
+    ) {
+        (&mut self.intel_map_marks, &mut self.msgs)
     }
 
     pub fn get_uid_by_object_id(&self, id: &DcsOid<ClassUnit>) -> Option<&UnitId> {
