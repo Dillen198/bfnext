@@ -1868,6 +1868,7 @@ impl StatsDb {
             ("reference/changelog", "Changelog — v2.0", "Reference", 6, include_str!("../seed_wiki/reference/changelog.md")),
             ("advanced/c130-airdrop", "C-130 Hercules & Airdrop", "Advanced Topics", 2, include_str!("../seed_wiki/advanced/c130-airdrop.md")),
             ("advanced/deployables-guide", "Deployables Guide", "Advanced Topics", 3, include_str!("../seed_wiki/advanced/deployables-guide.md")),
+            ("advanced/recon-intel-map", "Recon Intel Map (TARPS)", "Advanced Topics", 4, include_str!("../seed_wiki/advanced/recon-intel-map.md")),
         ];
         let mut refreshed = 0u32;
         for (slug, title, section, order, content) in seed {
