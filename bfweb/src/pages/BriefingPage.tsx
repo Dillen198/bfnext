@@ -4,6 +4,7 @@ import { jsPDF } from 'jspdf'
 import { Radio, Download, Navigation, Crosshair, Package, ShieldAlert, ArrowUp, ArrowDown } from 'lucide-react'
 import { api, type Briefing } from '../api'
 import PageHeader from '../components/PageHeader'
+import { useAuth } from '../context/AuthContext'
 
 type Side = 'Blue' | 'Red'
 
@@ -319,10 +320,14 @@ function mockBriefing(side: Side): Briefing {
 }
 
 export default function BriefingPage() {
-  const [side, setSide] = useState<Side>('Blue')
+  const { user } = useAuth()
+  const isAdmin = !!user?.is_admin
+  // Non-admins are locked to their own coalition; admins may switch sides.
+  const [adminSide, setAdminSide] = useState<Side>(user?.side === 'Red' ? 'Red' : 'Blue')
+  const side: Side = isAdmin ? adminSide : (user?.side === 'Red' ? 'Red' : 'Blue')
   const { data: fetched, isLoading, error } = useQuery({
     queryKey: ['briefing', side],
-    queryFn: () => api.briefing(side),
+    queryFn: () => api.briefing(isAdmin ? side : undefined),
     refetchInterval: 30_000,
     enabled: !MOCK,
   })
@@ -335,20 +340,27 @@ export default function BriefingPage() {
         sub={b ? `${b.navaids.length} navaids · ${b.radios.length} stations · ${b.threats.length} threat types` : 'kneeboard data'}
         right={
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
-              {(['Blue', 'Red'] as Side[]).map(s => (
-                <button
-                  key={s}
-                  onClick={() => setSide(s)}
-                  style={{
-                    padding: '4px 12px', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em',
-                    border: 'none', cursor: 'pointer',
-                    background: side === s ? (s === 'Blue' ? '#1d4ed8' : '#b91c1c') : 'var(--bg-elevated)',
-                    color: side === s ? '#fff' : 'var(--text-dim)',
-                  }}
-                >{s.toUpperCase()}</button>
-              ))}
-            </div>
+            {isAdmin ? (
+              <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+                {(['Blue', 'Red'] as Side[]).map(s => (
+                  <button
+                    key={s}
+                    onClick={() => setAdminSide(s)}
+                    style={{
+                      padding: '4px 12px', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em',
+                      border: 'none', cursor: 'pointer',
+                      background: side === s ? (s === 'Blue' ? '#1d4ed8' : '#b91c1c') : 'var(--bg-elevated)',
+                      color: side === s ? '#fff' : 'var(--text-dim)',
+                    }}
+                  >{s.toUpperCase()}</button>
+                ))}
+              </div>
+            ) : (
+              <span style={{
+                padding: '4px 12px', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em',
+                borderRadius: 4, background: side === 'Blue' ? '#1d4ed8' : '#b91c1c', color: '#fff',
+              }}>{side.toUpperCase()}</span>
+            )}
             <button
               onClick={() => b && buildPdf(b)}
               disabled={!b}

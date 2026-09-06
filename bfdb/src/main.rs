@@ -685,18 +685,21 @@ async fn api_frontline(
     Ok(json_response(data))
 }
 
-/// GET /api/briefing?side=blue — the per-side kneeboard briefing (navaids,
-/// radios, artillery, deployables, threats). Proxied live from the engine;
-/// only meaningful for the active round.
+/// GET /api/briefing — the caller's own coalition kneeboard briefing (navaids,
+/// radios, artillery, deployables, threats). Coalition-locked: you get your
+/// side and can't request the enemy's; admins may pass `?side=blue|red`.
+/// Proxied live from the engine; only meaningful for the active round.
 async fn api_briefing(
+    session_id: Option<Uuid>,
     db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
     query: std::collections::HashMap<std::string::String, std::string::String>,
 ) -> std::result::Result<impl warp::Reply, Error> {
     use netidx::publisher::Value;
+    let (_session, _ucid, coalition) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     // dcso3's Side::from_str only accepts lowercase.
-    let side = match query.get("side").map(|s| s.to_ascii_lowercase()) {
-        Some(s) if s.starts_with('r') => "red",
-        Some(s) if s.starts_with('n') => "neutral",
+    let side = match coalition {
+        dcso3::coalition::Side::Red => "red",
         _ => "blue",
     };
     match tokio::time::timeout(
@@ -1958,11 +1961,11 @@ fn parse_side(s: &str) -> Option<dcso3::coalition::Side> {
     }
 }
 
-/// Resolve the caller to `(session, ucid, coalition)`. A non-admin with no
-/// Blue/Red side in the active round is rejected outright. An admin with no
-/// pilot link may still act, targeting a side via `?side=blue|red`
-/// (default Blue).
-async fn require_intel_side(
+/// Resolve the caller to `(session, ucid, coalition)` for a coalition-locked
+/// endpoint (recon intel, per-side briefing). A non-admin with no Blue/Red
+/// side this campaign is rejected outright; an admin may target a side via
+/// `?side=blue|red` (default Blue) even without a pilot link.
+async fn require_coalition(
     query: &std::collections::HashMap<std::string::String, std::string::String>,
     session_id: Option<Uuid>,
     db: &StatsDb,
@@ -2030,7 +2033,7 @@ async fn api_intel_list(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (session, _ucid, side) = require_intel_side(&query, session_id, &db, &bot_cfg).await?;
+    let (session, _ucid, side) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     let round = active_round_or_err(&db)?;
     let filter = if session.is_admin {
         match query.get("side").map(|s| s.as_str()) {
@@ -2060,7 +2063,7 @@ async fn api_intel_upload(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (session, ucid, mut side) = require_intel_side(&query, session_id, &db, &bot_cfg).await?;
+    let (session, ucid, mut side) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     if !content_type.starts_with("image/") {
         return Err(anyhow::anyhow!("only image uploads are allowed (got '{content_type}')").into());
     }
@@ -2134,7 +2137,7 @@ async fn api_intel_get_image(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (session, _ucid, side) = require_intel_side(&query, session_id, &db, &bot_cfg).await?;
+    let (session, _ucid, side) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     let cap = task::block_in_place(|| db.intel_get_by_id(&id))?
         .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
     if !session.is_admin && cap.side != side {
@@ -2167,7 +2170,7 @@ async fn api_intel_adjust(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (session, _ucid, side) = require_intel_side(&query, session_id, &db, &bot_cfg).await?;
+    let (session, _ucid, side) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     let cap_id: Uuid = body.id.parse().map_err(|e| anyhow::anyhow!("bad id: {e}"))?;
     let mut cap = task::block_in_place(|| db.intel_get_by_id(&cap_id))?
         .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
@@ -2214,7 +2217,7 @@ async fn api_intel_delete(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let (session, _ucid, side) = require_intel_side(&query, session_id, &db, &bot_cfg).await?;
+    let (session, _ucid, side) = require_coalition(&query, session_id, &db, &bot_cfg).await?;
     let cap_id: Uuid = body.id.parse().map_err(|e| anyhow::anyhow!("bad id: {e}"))?;
     let cap = task::block_in_place(|| db.intel_get_by_id(&cap_id))?
         .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
@@ -3315,9 +3318,11 @@ async fn main() -> Result<()> {
         });
 
     let briefing = warp::path!("api" / "briefing")
+        .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
-        .then(|db, q: std::collections::HashMap<String, String>| api_briefing(db, q));
+        .then(api_briefing);
 
     let kills = warp::path!("api" / "kills")
         .and(with_db(db.clone()))

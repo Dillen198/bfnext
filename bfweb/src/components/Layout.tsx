@@ -19,13 +19,16 @@ const NAV = [
   { to: '/',            icon: LayoutDashboard, label: 'SITREP'     },
   { to: '/map',         icon: Map,             label: 'TACMAP'     },
   { to: '/objectives',  icon: Target,          label: 'OBJECTIVES' },
-  { to: '/briefing',    icon: Radio,           label: 'BRIEFING'   },
   { to: '/leaderboard', icon: BarChart3,        label: 'RANKINGS'   },
   { to: '/pilots',      icon: Users,           label: 'PILOTS'     },
   { to: '/kills',       icon: Crosshair,       label: 'KILL FEED'  },
   { to: '/about',       icon: Info,            label: 'ABOUT'      },
 ]
-const INTEL_NAV = { to: '/intel', icon: Camera, label: 'RECON INTEL' }
+// Coalition-locked: only shown once bfdb can resolve the viewer's side.
+const COALITION_NAV = [
+  { to: '/briefing', icon: Radio,  label: 'BRIEFING'     },
+  { to: '/intel',    icon: Camera, label: 'RECON INTEL'  },
+]
 const ADMIN_NAV = { to: '/admin', icon: Settings, label: 'ADMIN' }
 const CONFIG_NAV = { to: '/admin/config', icon: Settings2, label: 'CONFIG' }
 const PROFILE_NAV = (ucid: string) => ({ to: `/pilots?ucid=${ucid}`, icon: Users, label: 'MY PROFILE' })
@@ -140,7 +143,7 @@ export default function Layout() {
 
   const allNav = [
     ...NAV,
-    ...(user?.side || user?.is_admin ? [INTEL_NAV] : []),
+    ...(user?.side || user?.is_admin ? COALITION_NAV : []),
     ...(user?.ucid ? [PROFILE_NAV(user.ucid)] : []),
     ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV] : [])
   ]

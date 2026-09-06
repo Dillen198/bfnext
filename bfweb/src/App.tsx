@@ -24,9 +24,10 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, retry: 1 } },
 })
 
-/** Recon intel is login-gated and coalition-locked: you must be signed in and
- *  resolvable to a Blue/Red side in the active round (admins exempt). */
-function RequireIntelAccess({ children }: { children: ReactNode }) {
+/** Login-gated and coalition-locked pages (recon intel, per-side briefing):
+ *  you must be signed in and resolvable to a Blue/Red side this campaign
+ *  (admins exempt). */
+function RequireCoalition({ what, children }: { what: string; children: ReactNode }) {
   const { user, loading } = useAuth()
   if (loading) return null
   if (!user) return <Navigate to="/login" replace />
@@ -41,7 +42,7 @@ function RequireIntelAccess({ children }: { children: ReactNode }) {
           NO COALITION
         </div>
         <div style={{ maxWidth: 400, lineHeight: 1.6 }}>
-          Recon intel is locked to your coalition, and the dashboard can't tell
+          The {what} is locked to your coalition, and the dashboard can't tell
           which side you're on. Make sure your Discord is linked
           (<code>-linkme</code> in DCS chat), and that you've registered a
           coalition on the server this campaign, then reload.
@@ -65,11 +66,11 @@ export default function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="map" element={<MapPage />} />
                 <Route path="objectives" element={<Objectives />} />
-                <Route path="briefing" element={<BriefingPage />} />
+                <Route path="briefing" element={<RequireCoalition what="briefing"><BriefingPage /></RequireCoalition>} />
                 <Route path="leaderboard" element={<Leaderboard />} />
                 <Route path="pilots" element={<Pilots />} />
                 <Route path="kills" element={<KillFeed />} />
-              <Route path="intel" element={<RequireIntelAccess><IntelPage /></RequireIntelAccess>} />
+              <Route path="intel" element={<RequireCoalition what="recon intel"><IntelPage /></RequireCoalition>} />
               <Route path="admin" element={<AdminPage />} />
               <Route path="admin/config" element={<ConfigEditorPage />} />
               <Route path="about" element={<AboutPage />} />

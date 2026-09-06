@@ -543,8 +543,10 @@ export const api = {
     get<Objective[]>(roundId ? `/objectives?round=${roundId}` : '/objectives'),
   frontline: (roundId?: number) =>
     get<Frontlines>(roundId ? `/frontline?round=${roundId}` : '/frontline'),
-  briefing: (side: 'Blue' | 'Red' | 'Neutral' = 'Blue') =>
-    get<Briefing>(`/briefing?side=${side}`),
+  // Coalition-locked server-side: omit `side` to get your own coalition's
+  // briefing; only admins may request a specific side.
+  briefing: (side?: 'Blue' | 'Red') =>
+    get<Briefing>(side ? `/briefing?side=${side}` : '/briefing'),
   kills: (roundId?: number, limit = 50) =>
     get<Kill[]>(`/kills?limit=${limit}${roundId ? `&round=${roundId}` : ''}`),
   pilot: (ucid: string) => get<Pilot>(`/pilot/${ucid}`),
