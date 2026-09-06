@@ -3315,7 +3315,9 @@ async fn main() -> Result<()> {
     let allowed_login_origins: Arc<Vec<std::string::String>> = Arc::new(args.cors_origins.clone());
     let cors = warp::cors()
         .allow_methods(&[Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers(vec!["content-type"])
+        // x-intel-filename: sent by the recon-intel photo upload, which is a
+        // cross-origin POST and so triggers a CORS preflight.
+        .allow_headers(vec!["content-type", "x-intel-filename"])
         .allow_credentials(true);
     let cors = if cross_origin {
         cors.allow_origins(args.cors_origins.iter().map(|s| s.as_str()))
