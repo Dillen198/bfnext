@@ -319,6 +319,15 @@ export default function IntelPage() {
       .sort((a, b) => b.latest - a.latest)
   }, [placed])
 
+  // Flight path: one polyline per run through its visible captures, in time order.
+  const runPaths = useMemo(() => groups
+    .map(g => ({
+      name: g.name,
+      color: runColor(g.name, runColors[g.name]),
+      pts: g.caps.filter(c => visible.includes(c)).map(c => [c.lat, c.lon] as LatLon),
+    }))
+    .filter(rp => rp.pts.length >= 2), [groups, visible, runColors])
+
   // Stacking: a capture in backList renders behind; earlier in the list = further back.
   const zOf = useCallback((id: string) => {
     const i = backList.indexOf(id)
@@ -742,6 +751,12 @@ export default function IntelPage() {
               </CircleMarker>
             ))}
 
+            {/* Flight path per run */}
+            {showPath && runPaths.map(rp => (
+              <Polyline key={`rp-${rp.name}`} positions={rp.pts}
+                pathOptions={{ color: rp.color, weight: 2, opacity: 0.6 }} />
+            ))}
+
             {/* Recon captures */}
             {placed.map(c => {
               const col = runColor(c.uploaded_by_name, runColors[c.uploaded_by_name])
@@ -784,10 +799,9 @@ export default function IntelPage() {
                         contextmenu: () => sendBack(c.id),
                       }} />
                   )}
-                  {shown && showPath && !isAligning && (
-                    <Marker position={[c.lat, c.lon]} icon={cameraIcon(c.heading_deg, col)}
-                      eventHandlers={{ click: () => setSelCap(c.id), contextmenu: () => sendBack(c.id) }}>
-                      <Tooltip direction="top" offset={[0, -12]}>
+                  {shown && showPath && !isAligning && (() => {
+                    const tip = (
+                      <Tooltip direction="top" offset={[0, -10]}>
                         <div style={{ fontFamily: FONT_MONO, fontSize: '0.7rem' }}>
                           <div>{c.filename || 'capture'}</div>
                           <div>{fmtLatLon(c.lat, c.lon)}</div>
@@ -795,8 +809,17 @@ export default function IntelPage() {
                           {c.pitch_deg != null && <div>PITCH {c.pitch_deg}° · ROLL {c.roll_deg ?? 0}°</div>}
                         </div>
                       </Tooltip>
-                    </Marker>
-                  )}
+                    )
+                    const handlers = { click: () => setSelCap(c.id), contextmenu: () => sendBack(c.id) }
+                    // Full heading-camera glyph only for the selected shot; every
+                    // other capture is a small dot so a dense run doesn't smear
+                    // into a bar of camera icons.
+                    return isSel
+                      ? <Marker position={[c.lat, c.lon]} icon={cameraIcon(c.heading_deg, col)} eventHandlers={handlers}>{tip}</Marker>
+                      : <CircleMarker center={[c.lat, c.lon]} radius={3}
+                          pathOptions={{ color: col, fillColor: col, fillOpacity: 0.9, weight: 1 }}
+                          eventHandlers={handlers}>{tip}</CircleMarker>
+                  })()}
                   {isAligning && hasQuad && quad && quad.map((corner, ci) => (
                     <Marker key={ci} position={corner} icon={HANDLE_ICON} draggable
                       eventHandlers={{
