@@ -7,6 +7,20 @@ declare module 'mgrs' {
   export function toPoint(mgrs: string): [number, number]
 }
 
+declare module '@turf/circle' {
+  import type { Feature, Polygon } from 'geojson'
+  interface Options {
+    steps?: number
+    units?: 'kilometers' | 'miles' | 'degrees' | 'radians'
+    properties?: Record<string, unknown>
+  }
+  export default function circle(
+    center: [number, number] | Feature,
+    radius: number,
+    options?: Options,
+  ): Feature<Polygon>
+}
+
 declare module 'geomagnetism' {
   interface GeomagPoint {
     /** Magnetic declination (variation) in degrees, east positive. */

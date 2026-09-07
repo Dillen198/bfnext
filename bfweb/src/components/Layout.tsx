@@ -20,6 +20,7 @@ import LogoMark from './LogoMark'
 const OPS_NAV = [
   { to: '/',            icon: LayoutDashboard, label: 'SITREP'     },
   { to: '/map',         icon: Map,             label: 'TACMAP'     },
+  { to: '/scope',       icon: Radio,           label: 'SCOPE'      },
   { to: '/objectives',  icon: Target,          label: 'OBJECTIVES' },
 ]
 const COALITION_NAV = [

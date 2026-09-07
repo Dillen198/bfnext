@@ -19,6 +19,7 @@ import { PilotPage } from './pages/PilotPage'
 import CockpitPage from './pages/CockpitPage'
 import IntelPage from './pages/IntelPage'
 import IntelTestPage from './pages/IntelTestPage'
+import ScopePage from './scope/ScopePage'
 import { useAuth } from './context/AuthContext'
 
 const queryClient = new QueryClient({
@@ -67,6 +68,7 @@ export default function App() {
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
                 <Route path="map" element={<MapPage />} />
+                <Route path="scope" element={<ScopePage />} />
                 <Route path="objectives" element={<Objectives />} />
                 <Route path="briefing" element={<RequireCoalition what="briefing"><BriefingPage /></RequireCoalition>} />
                 <Route path="leaderboard" element={<Leaderboard />} />
