@@ -8,6 +8,7 @@ import geomagnetism from 'geomagnetism'
 import { useMemo, useState, type ReactElement } from 'react'
 import Map, { AttributionControl, Layer, Source } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import './scope.css'
 
 import AirportMarker from './AirportMarker'
 import BraaInfo from './BraaInfo'
@@ -193,8 +194,8 @@ export default function ScopePage(): ReactElement {
 
   if (denied) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-slate-300">
-        <div className="text-lg tracking-wide text-white">
+      <div className="scope-root theme-locked-dark flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-slate-300" style={{ background: 'var(--bg)' }}>
+        <div className="text-lg tracking-wide text-white" style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.14em' }}>
           {reason === 'nocoalition' ? 'NO COALITION' : 'NOT SIGNED IN'}
         </div>
         <div className="max-w-md leading-relaxed">
@@ -208,7 +209,7 @@ export default function ScopePage(): ReactElement {
 
   if (referenceLatitude === undefined || referenceLongitude === undefined || terrain === undefined) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3">
+      <div className="scope-root theme-locked-dark flex h-full flex-col items-center justify-center gap-3" style={{ background: 'var(--bg)' }}>
         <Spinner />
         <div className="text-xs text-slate-400">
           {status === 'open' ? 'Waiting for the tactical picture…' : 'Connecting…'}
@@ -242,7 +243,7 @@ export default function ScopePage(): ReactElement {
   }
 
   return (
-    <div className="relative h-full w-full">
+    <div className="scope-root theme-locked-dark relative h-full w-full">
       <Map
         mapStyle={MAP_STYLE}
         style={{ width: '100%', height: '100%' }}

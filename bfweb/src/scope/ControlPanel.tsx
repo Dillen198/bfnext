@@ -14,8 +14,21 @@ export interface ControlPanelProps {
 export default function ControlPanel(props: ControlPanelProps): ReactElement {
   const [selectedTab, setSelectedTab] = useState<string | undefined>(undefined);
   const [search, setSearch] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
 
   const { objects, watchingObjects, onObjectClick } = props;
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="scope-panel-reopen"
+        onClick={() => setCollapsed(false)}
+      >
+        ‹ PANEL
+      </button>
+    );
+  }
 
   return (
     <div className="bg-gray-200">
@@ -58,7 +71,15 @@ export default function ControlPanel(props: ControlPanelProps): ReactElement {
             Watches
           </button>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-row gap-2">
+          <button
+            type="button"
+            className="scope-panel-collapse"
+            title="Hide panel"
+            onClick={() => setCollapsed(true)}
+          >
+            ›
+          </button>
           <button
             className="btn-accent btn-xs btn"
             onClick={() => {
