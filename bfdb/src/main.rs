@@ -32,6 +32,7 @@ struct SiteAssets;
 
 mod db;
 mod db_id;
+mod gci;
 mod intel;
 
 /// Load stats and serve the Fowl Engine API
@@ -112,6 +113,12 @@ struct Args {
     /// --config, which is just dashboard branding.
     #[arg(long)]
     engine_config: Option<PathBuf>,
+    /// Path to the live GCI config JSON (see gci.sample.json in the repo root).
+    /// Enables the proactive AWACS-style SRS callout system. Takes precedence
+    /// over a `gci` key in --config. Requires --base (a live engine to query)
+    /// and DCS-SR-ExternalAudio.exe (ships with SRS).
+    #[arg(long = "gci-config")]
+    gci_config: Option<PathBuf>,
     /// Origin(s) allowed to make cross-origin, credentialed API requests
     /// (e.g. https://dashboard.example.com). Repeat for multiple origins.
     /// Pass this when bfweb/bfsite are hosted separately from bfdb instead of
@@ -140,6 +147,15 @@ struct Args {
     /// restapi.yaml). Required if --dcsserverbot-url is set.
     #[arg(long = "dcsserverbot-api-key")]
     dcsserverbot_api_key: Option<String>,
+    /// Bearer token that unlocks the read-only plain-text log endpoints
+    /// `GET /api/logs/engine` and `GET /api/logs/bfdb` (pass as
+    /// `?token=<TOKEN>` or `Authorization: Bearer <TOKEN>`). These return the
+    /// same in-memory backlog the dashboard's Engine Log viewer streams, but as
+    /// plain text over a single GET so tooling (or a remote helper) can pull
+    /// logs without a browser session. Leave unset to disable both endpoints
+    /// entirely. Use a long random value and only expose it over TLS.
+    #[arg(long = "log-read-token")]
+    log_read_token: Option<String>,
     /// One-off maintenance: clear the `session` tree (per-round Cfg
     /// snapshot + perf history) and exit immediately without starting the
     /// server. Use this to recover from old Session records that predate a
@@ -355,7 +371,9 @@ impl From<anyhow::Error> for Error {
 
 // ── Real-time log broadcaster ─────────────────────────────────────────────────
 
-const LOG_HISTORY_CAP: usize = 500;
+// Large enough that `GET /api/logs/bfdb` (token-gated, for remote debugging)
+// can hand back a meaningful window, not just the last few seconds.
+const LOG_HISTORY_CAP: usize = 10_000;
 
 type LogHistory = Arc<Mutex<VecDeque<String>>>;
 
@@ -755,10 +773,15 @@ async fn api_kills(
                 // specifically instead of guessing from target_type's raw DCS
                 // unit-type string.
                 let is_air = db.victim_is_air(rid, &dead.victim).unwrap_or(false);
+                // The "killer" is the shot that finished the target -- the last
+                // hit, not the first (a target can be grazed by several shooters
+                // over a long engagement before one drops it).
                 let killer = dead
                     .shots
                     .iter()
-                    .find(|s| s.hit)
+                    .filter(|s| s.hit)
+                    .max_by_key(|s| s.time)
+                    .or_else(|| dead.shots.last())
                     .map(|s| {
                         serde_json::json!({
                             "ucid": s.shooter.ucid().map(|u| u.to_string()),
@@ -876,7 +899,16 @@ async fn api_pilot_kills(
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let kills = db.pilot_kills_for(&ucid)?;
         let entries: Vec<_> = kills.iter().map(|(round_id, dead)| {
-            let shot = dead.shots.iter().find(|s| s.hit || dead.shots.len() == 1);
+            // `dead.shots` holds every shot that ever landed on this victim,
+            // possibly from several shooters across a long engagement. This is
+            // *this* pilot's kill list, so pick this pilot's own shot for the
+            // weapon/airframe columns -- `.find(|s| s.hit)` alone would show
+            // whoever's shot happens to sort first, i.e. the wrong aircraft.
+            let mine = |s: &&bfprotocols::shots::Shot| s.shooter.ucid() == Some(&ucid);
+            let shot = dead.shots.iter().find(|s| s.hit && mine(s))
+                .or_else(|| dead.shots.iter().find(|s| mine(s)))
+                .or_else(|| dead.shots.iter().find(|s| s.hit))
+                .or_else(|| dead.shots.first());
             let weapon = shot.and_then(|s| s.weapon_name.as_ref().map(|w| w.to_string()));
             let airframe = shot.and_then(|s| s.shooter_typ.as_deref().map(|t| t.to_string()));
             let target_type = shot.map(|s| s.target_typ.to_string());
@@ -2635,6 +2667,100 @@ async fn api_admin_engine_errors(
     Ok(json_response(serde_json::to_string(&lines).map_err(|e| Error(e.into()))?))
 }
 
+/// GET /api/logs/:source  — plain-text tail of an in-memory log backlog.
+///
+/// `source` is `engine` (bflib's live engine log, streamed in over netidx) or
+/// `bfdb` (this process's own log). Auth is a single static bearer token
+/// (`--log-read-token`), passed as `?token=` or `Authorization: Bearer`. When
+/// no token is configured the endpoint is disabled (404).
+///
+/// Query params: `lines` (tail length, default 500, capped at the buffer),
+/// `level` (`all` default, or `error` — engine source only, ERROR/WARN lines),
+/// `grep` (case-insensitive substring filter, applied before the tail).
+async fn api_logs(
+    source: String,
+    q: std::collections::HashMap<std::string::String, std::string::String>,
+    auth_header: Option<std::string::String>,
+    expected_token: Arc<Option<std::string::String>>,
+    db: StatsDb,
+    bfdb_log: LogHistory,
+) -> Response {
+    fn text(status: warp::http::StatusCode, body: impl Into<String>) -> Response {
+        warp::http::Response::builder()
+            .status(status)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(body.into())
+            .unwrap()
+            .into_response()
+    }
+
+    let Some(expected) = expected_token.as_ref() else {
+        return text(warp::http::StatusCode::NOT_FOUND, "log endpoints are disabled (no --log-read-token)\n");
+    };
+    let provided = q.get("token").cloned().or_else(|| {
+        auth_header
+            .as_deref()
+            .and_then(|h| h.strip_prefix("Bearer ").or_else(|| h.strip_prefix("bearer ")))
+            .map(str::to_string)
+    });
+    // length-independent-ish compare
+    let ok = provided
+        .as_deref()
+        .map(|p| p.len() == expected.len() && p.bytes().zip(expected.bytes()).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0)
+        .unwrap_or(false);
+    if !ok {
+        return text(warp::http::StatusCode::UNAUTHORIZED, "bad or missing token\n");
+    }
+
+    let level = q.get("level").map(|s| s.as_str()).unwrap_or("all");
+    let grep = q.get("grep").map(|s| s.to_ascii_lowercase());
+    let want = q
+        .get("lines")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(500)
+        .clamp(1, 50_000);
+
+    let mut lines: Vec<std::string::String> = match source.as_str() {
+        "engine" if level == "error" => db.engine_error_snapshot(),
+        "engine" => db.engine_log_snapshot(),
+        "bfdb" => {
+            // stored as JSON LogLine objects -- flatten to "ts LEVEL target: msg"
+            bfdb_log
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|j| {
+                    serde_json::from_str::<serde_json::Value>(j)
+                        .ok()
+                        .map(|v| {
+                            format!(
+                                "{} {:>5} {}: {}",
+                                v.get("ts").and_then(|x| x.as_str()).unwrap_or(""),
+                                v.get("level").and_then(|x| x.as_str()).unwrap_or(""),
+                                v.get("target").and_then(|x| x.as_str()).unwrap_or(""),
+                                v.get("msg").and_then(|x| x.as_str()).unwrap_or(""),
+                            )
+                        })
+                        .unwrap_or_else(|| j.clone())
+                })
+                .collect()
+        }
+        other => {
+            return text(
+                warp::http::StatusCode::BAD_REQUEST,
+                format!("unknown log source {other:?} (want 'engine' or 'bfdb')\n"),
+            )
+        }
+    };
+
+    if let Some(g) = grep {
+        lines.retain(|l| l.to_ascii_lowercase().contains(&g));
+    }
+    let start = lines.len().saturating_sub(want);
+    let out = lines[start..].join("\n");
+    text(warp::http::StatusCode::OK, format!("{out}\n"))
+}
+
 #[derive(serde::Deserialize)]
 struct BanBody {
     ucid:   std::string::String,
@@ -3669,18 +3795,19 @@ async fn main() -> Result<()> {
     });
 
     // ── Load campaign config JSON (served at /api/config) ────────────────
-    let (campaign_json, srs_url_from_cfg): (Arc<String>, Option<String>) = match &args.config {
+    let (campaign_json, srs_url_from_cfg, gci_cfg): (Arc<String>, Option<String>, Option<gci::GciConfig>) = match &args.config {
         Some(path) => {
             match std::fs::read_to_string(path) {
                 Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
                     Ok(v) => {
                         log::info!("Campaign config loaded from {:?}", path);
                         let srs = v.get("srsUrl").and_then(|u| u.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
-                        (Arc::new(raw), srs)
+                        let gci = gci::from_campaign_json(&v);
+                        (Arc::new(raw), srs, gci)
                     }
                     Err(_) => {
                         log::warn!("--config file is not valid JSON, using empty config");
-                        (Arc::new("{}".to_string()), None)
+                        (Arc::new("{}".to_string()), None, None)
                     }
                 },
                 Err(e) => {
@@ -3690,13 +3817,13 @@ async fn main() -> Result<()> {
                     // means "use default dashboard branding", same as
                     // --config being omitted entirely below.
                     log::warn!("Could not read --config {path:?}: {e} -- using default campaign branding");
-                    (Arc::new("{}".to_string()), None)
+                    (Arc::new("{}".to_string()), None, None)
                 }
             }
         }
         None => {
             log::info!("No --config file specified; /api/config will return {{}}");
-            (Arc::new("{}".to_string()), None)
+            (Arc::new("{}".to_string()), None, None)
         }
     };
     // CLI --srs-url takes precedence over campaign.json srsUrl
@@ -3705,6 +3832,14 @@ async fn main() -> Result<()> {
         let kind = if u.starts_with("http://") || u.starts_with("https://") { "proxying" } else { "reading" };
         log::info!("SRS client list enabled, {kind} {u}");
     }
+
+    // A dedicated --gci-config file wins over a `gci` key in --config, same
+    // precedence rule as --srs-url vs campaign.json srsUrl above.
+    let gci_cfg: Option<gci::GciConfig> = args
+        .gci_config
+        .as_ref()
+        .and_then(|p| gci::from_file(p))
+        .or(gci_cfg);
 
     let engine_config_path: Arc<Option<PathBuf>> = Arc::new(args.engine_config.clone());
     match &args.engine_config {
@@ -3857,6 +3992,21 @@ async fn main() -> Result<()> {
     if has_engine {
         tokio::spawn(tacmap_poller(db.clone(), tac_state.clone()));
     }
+
+    // ── Live GCI: proactive AWACS-style SRS callouts ──────────────────────
+    // A broadcast stream of every GCI call, for the dashboard transcript panel
+    // (/ws/gci) and the last-N snapshot (/api/gci/transcript).
+    let (gci_tx, _) = broadcast::channel::<String>(128);
+    let gci_history: LogHistory = Arc::new(Mutex::new(VecDeque::new()));
+    match (has_engine, gci_cfg) {
+        (true, Some(cfg)) => {
+            tokio::spawn(gci::run(db.clone(), cfg, gci_tx.clone(), gci_history.clone()));
+        }
+        (false, Some(_)) => {
+            log::warn!("GCI configured but disabled: bfdb has no --base (no live engine to query)");
+        }
+        _ => {}
+    }
     let tac_state_ws = tac_state.clone();
     let tac_live_ws  = live_state.clone();
     let ws_tacmap_route = warp::path!("ws" / "tacmap")
@@ -3879,6 +4029,46 @@ async fn main() -> Result<()> {
         .and(warp::any().map(move || log_tx_ws.clone()))
         .and(warp::any().map(move || log_hist_ws.clone()))
         .then(ws_logs_handler);
+
+    // ── GCI transcript (/ws/gci live, /api/gci/transcript snapshot) — admin ──
+    let gci_tx_ws = gci_tx.clone();
+    let gci_hist_ws = gci_history.clone();
+    let ws_gci_route = warp::path!("ws" / "gci")
+        .and(warp::ws())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(warp::any().map(move || gci_tx_ws.clone()))
+        .and(warp::any().map(move || gci_hist_ws.clone()))
+        .then(ws_logs_handler);
+    let gci_hist_api = gci_history.clone();
+    let gci_transcript_route = warp::path!("api" / "gci" / "transcript")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(warp::any().map(move || gci_hist_api.clone()))
+        .then(|sid: Option<Uuid>, db: StatsDb, hist: LogHistory| async move {
+            let authed = match sid {
+                Some(id) => task::block_in_place(|| db.get_session(id))
+                    .ok()
+                    .flatten()
+                    .map(|s| s.is_admin)
+                    .unwrap_or(false),
+                None => false,
+            };
+            if !authed {
+                return warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"error": "admin only"})),
+                    warp::http::StatusCode::FORBIDDEN,
+                )
+                .into_response();
+            }
+            let lines: Vec<serde_json::Value> = hist
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|s| serde_json::from_str(s).ok())
+                .collect();
+            warp::reply::json(&lines).into_response()
+        });
 
     // ── Engine log WebSocket (/ws/engine-logs) — live bflib logs, admin only ──
     let ws_engine_logs_route = warp::path!("ws" / "engine-logs")
@@ -4006,6 +4196,18 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .then(api_admin_engine_errors);
+
+    // ── Plain-text log tail (/api/logs/:source) — static-token auth ──────────
+    let log_read_token = Arc::new(args.log_read_token.clone());
+    let logs_hist_api = log_history.clone();
+    let logs_route = warp::path!("api" / "logs" / String)
+        .and(warp::get())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::header::optional::<std::string::String>("authorization"))
+        .and(warp::any().map(move || log_read_token.clone()))
+        .and(with_db(db.clone()))
+        .and(warp::any().map(move || logs_hist_api.clone()))
+        .then(api_logs);
 
     let admin_ban_route = warp::path!("api" / "admin" / "ban")
         .and(warp::post())
@@ -4303,6 +4505,7 @@ async fn main() -> Result<()> {
         .or(admin_perf_history)
         .or(admin_banned)
         .or(admin_engine_errors)
+        .or(logs_route)
         .or(admin_bot_status)
         .or(admin_cfg_get_route)
         .or(admin_cfg_schema_route)
@@ -4315,6 +4518,8 @@ async fn main() -> Result<()> {
                 .or(ws_units_route)
                 .or(ws_tacmap_route)
                 .or(ws_logs_route)
+                .or(ws_gci_route)
+                .or(gci_transcript_route)
                 .or(ws_engine_logs_route)
                 .or(site_files)
                 .or(static_files),

@@ -137,6 +137,79 @@ fn lives_command(ctx: &mut Context, id: PlayerId) -> Result<()> {
     Ok(())
 }
 
+fn gci_command(ctx: &mut Context, id: PlayerId, arg: &str) {
+    use crate::ewr::EwrUnits;
+    let Some(ifo) = ctx.connected.get(&id) else { return };
+    let ucid = ifo.ucid.clone();
+    let reply = |ctx: &mut Context, m: CompactString| {
+        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), m);
+    };
+    match arg.trim().to_lowercase().as_str() {
+        "" | "status" => {
+            let (enabled, units, refm) = ctx.ewr.gci_prefs(&ucid);
+            let u = match units {
+                Some(EwrUnits::Metric) => "metric",
+                Some(EwrUnits::Imperial) => "imperial",
+                None => "server default",
+            };
+            let r = match refm {
+                Some(0) => "BRAA (own jet)",
+                Some(1) => "bullseye",
+                Some(2) => "clock",
+                _ => "server default",
+            };
+            reply(
+                ctx,
+                format_compact!(
+                    "GCI voice: {} | units: {} | reference: {}\n  -gci on | off              toggle GCI calls\n  -gci metric | imperial     spoken units\n  -gci braa | bulls | clock   position reference\n  -gci auto                  follow the server defaults",
+                    if enabled { "ON" } else { "OFF" },
+                    u,
+                    r
+                ),
+            );
+        }
+        "on" | "off" => {
+            let want_on = arg.trim().eq_ignore_ascii_case("on");
+            let now = ctx.ewr.gci_prefs(&ucid).0;
+            if now != want_on {
+                ctx.ewr.gci_toggle(&ucid);
+            }
+            reply(
+                ctx,
+                format_compact!("GCI voice calls {}", if want_on { "enabled" } else { "disabled" }),
+            );
+        }
+        "metric" => {
+            ctx.ewr.gci_set_units(&ucid, Some(EwrUnits::Metric));
+            reply(ctx, "GCI calls will use metric units".into());
+        }
+        "imperial" => {
+            ctx.ewr.gci_set_units(&ucid, Some(EwrUnits::Imperial));
+            reply(ctx, "GCI calls will use imperial units".into());
+        }
+        "braa" | "self" => {
+            ctx.ewr.gci_set_reference(&ucid, Some(0));
+            reply(ctx, "GCI calls will use BRAA from your aircraft".into());
+        }
+        "bulls" | "bullseye" => {
+            ctx.ewr.gci_set_reference(&ucid, Some(1));
+            reply(ctx, "GCI calls will use bullseye reference".into());
+        }
+        "clock" => {
+            ctx.ewr.gci_set_reference(&ucid, Some(2));
+            reply(ctx, "GCI calls will use clock position".into());
+        }
+        "auto" | "default" => {
+            ctx.ewr.gci_set_units(&ucid, None);
+            ctx.ewr.gci_set_reference(&ucid, None);
+            reply(ctx, "GCI calls will use the server default units and reference".into());
+        }
+        other => {
+            reply(ctx, format_compact!("unknown -gci option '{other}' (try: on, off, metric, imperial, braa, bulls, clock, auto)"));
+        }
+    }
+}
+
 fn admin_command(ctx: &mut Context, id: PlayerId, cmd: &str) {
     let ifo = match ctx.connected.get(&id) {
         Some(ifo) => ifo,
@@ -830,6 +903,7 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
         " -action <name> <args>: perform an action, -action help for a list of actions",
         " -bind <token>: bind your ucid to the specified token (for the web gui)",
         " -jtac <jtid> <cmd>",
+        " -gci [on|off|metric|imperial|auto]: control your live GCI voice calls",
         " -help: show this help message",
     ] {
         ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), cmd)
@@ -869,6 +943,12 @@ pub(super) fn process(
         Ok("".into())
     } else if let Some(msg) = msg.strip_prefix("-action ") {
         action_command(ctx, id, msg);
+        Ok("".into())
+    } else if msg.eq_ignore_ascii_case("-gci") {
+        gci_command(ctx, id, "");
+        Ok("".into())
+    } else if let Some(s) = msg.strip_prefix("-gci ") {
+        gci_command(ctx, id, s);
         Ok("".into())
     } else if msg.starts_with("-balance") {
         balance_command(ctx, id);

@@ -3,14 +3,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { api, connectLiveLogs, connectEngineLogs, type LogLine, type PerfRow, type PerfTimelinePoint, type BotActionResult } from '../api'
+import { api, connectLiveLogs, connectEngineLogs, connectGciTranscript, type GciCall, type LogLine, type PerfRow, type PerfTimelinePoint, type BotActionResult } from '../api'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
 import { useTableSort, SortTh } from '../components/SortableTh'
 import {
   Shield, Users, Trash2, AlertTriangle, RotateCcw,
   Activity, Ban, UserX, Terminal, Search, ChevronsDown,
-  Server, Play, Square, RotateCw, Pause, PlayCircle,
+  Server, Play, Square, RotateCw, Pause, PlayCircle, Radio,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
@@ -503,6 +503,63 @@ function EngineErrorFeed({ lines }: { lines: string[] }) {
   )
 }
 
+// ── Live GCI transcript ────────────────────────────────────────────────────
+
+function GciTranscriptPanel() {
+  const [calls, setCalls] = useState<GciCall[]>([])
+  const [wsStatus, setWsStatus] = useState<'connecting' | 'open' | 'closed' | 'error'>('connecting')
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    api.gciTranscript().then(r => setCalls(r ?? [])).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    setWsStatus('connecting')
+    return connectGciTranscript(
+      c => setCalls(prev => {
+        const next = [...prev, c]
+        return next.length > 300 ? next.slice(next.length - 300) : next
+      }),
+      s => setWsStatus(s),
+    )
+  }, [])
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'auto' }) }, [calls])
+
+  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' ? '#f59e0b' : '#ef4444'
+  const statusLabel = wsStatus === 'open' ? 'LIVE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
+
+  return (
+    <div className="vs-card" style={{ display: 'flex', flexDirection: 'column', height: 420 }}>
+      <CardHeader
+        icon={<Radio size={13} style={{ color: 'var(--accent)' }} />}
+        label="Live GCI Transcript"
+        badge={
+          <span style={{ fontSize: '0.6rem', color: statusCol, fontFamily: 'var(--font-mono)', border: `1px solid ${statusCol}`, padding: '1px 6px', letterSpacing: '0.1em' }}>
+            {statusLabel}
+          </span>
+        }
+      />
+      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', lineHeight: 1.5 }}>
+        {calls.length === 0 && (
+          <div style={{ opacity: 0.5 }}>No GCI calls yet. Needs bfdb started with a gci.json and a live engine.</div>
+        )}
+        {calls.map((c, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, padding: '1px 0' }}>
+            <span style={{ opacity: 0.4, flexShrink: 0 }}>{new Date(c.time).toLocaleTimeString()}</span>
+            <span style={{ color: c.side === 'red' ? '#ef4444' : '#4a8fd4', flexShrink: 0, fontWeight: 600 }}>
+              {c.side === 'red' ? 'RED' : 'BLU'}
+            </span>
+            <span>{c.text}</span>
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  )
+}
+
 // ── DCSServerBot server control ─────────────────────────────────────────────
 
 interface BotAction {
@@ -966,6 +1023,9 @@ export default function AdminPage() {
 
         {/* ── Engine log analyzer (live bflib logs, requires bfdb --base) ── */}
         <EngineLogAnalyzer />
+
+        {/* ── Live GCI transcript ── */}
+        <GciTranscriptPanel />
 
         {/* ── DCSServerBot server control ── */}
         <ServerControlPanel />

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { jsPDF } from 'jspdf'
-import { Radio, Download, Navigation, Crosshair, Package, ShieldAlert, ArrowUp, ArrowDown } from 'lucide-react'
+import { Radio, Download, Navigation, Crosshair, Package, ShieldAlert, ArrowUp, ArrowDown, Headphones } from 'lucide-react'
 import { api, type Briefing } from '../api'
 import PageHeader from '../components/PageHeader'
 import { useAuth } from '../context/AuthContext'
@@ -176,6 +176,78 @@ function Section({
         <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{count}</span>
       </div>
       {children}
+    </div>
+  )
+}
+
+// ── GCI / AWACS voice reference (static — same on every round) ─────────────
+function GciReference() {
+  const [open, setOpen] = useState(false)
+  const ask: [string, string][] = [
+    ['"Magic, radio check"', '"Loud and clear" — confirms two-way.'],
+    ['"Magic, checking in"', '"Radar contact, copy the picture, bullseye is …" + group count.'],
+    ['"Magic, bogey dope"', 'Nearest hostile group: bearing, range, altitude, aspect, type.'],
+    ['"Magic, picture"', 'The whole picture — every group GCI holds for you, nearest first.'],
+    ['"Magic, declare"', 'Hostile / clean for the contact nearest you (or a bullseye point you name).'],
+    ['"Magic, alpha check"', 'Your own position as bullseye bearing/range.'],
+    ['"Magic, commit"', 'GCI takes you onto the group and feeds running intercept vectors to the merge.'],
+  ]
+  const hear: [string, string][] = [
+    ['Threat', 'A hostile is close and dangerous — highest priority, jumps the quiet timer.'],
+    ['Bogey → bandit → hostile', 'A fresh hit ripens in identity as the track firms up.'],
+    ['North / south / center group', 'Shared group names when several flights see the same raid.'],
+    ['Cold · splitting · merged · faded', 'Turned away · split up · inside 3 nm · lost radar contact.'],
+    ['SAM launch / SAM threat — "defend, defend"', 'Missile in the air, or a SAM ring now covers you.'],
+    ['Splash', 'A hostile you were warned about went down.'],
+    ['All players: chute / tumbleweed / support', 'CSAR cue · radar net down · tanker & AWACS location.'],
+  ]
+  const cmds: [string, string][] = [
+    ['-gci', 'Show your current settings'],
+    ['-gci on / off', 'Unmute / mute all GCI calls to you'],
+    ['-gci imperial / metric', 'Nautical miles + feet, or km + metres'],
+    ['-gci braa / bulls / clock', 'Contact position from your jet, the bullseye, or a clock code'],
+    ['-gci auto', 'Follow the server defaults'],
+  ]
+  const row = (k: string, v: string) => (
+    <div key={k} style={{ display: 'grid', gridTemplateColumns: '210px 1fr', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--border)' }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.68rem', color: 'var(--accent)' }}>{k}</span>
+      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>{v}</span>
+    </div>
+  )
+  const sub = (t: string) => (
+    <div style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-dim)', margin: '12px 0 4px' }}>{t}</div>
+  )
+  return (
+    <div className="vs-card" style={{ overflow: 'hidden', flexShrink: 0 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+          borderBottom: open ? '1px solid var(--border)' : 'none', background: 'none', border: 'none',
+          cursor: 'pointer', color: 'var(--text)', textAlign: 'left',
+        }}
+      >
+        <Headphones size={13} style={{ color: 'var(--accent)' }} />
+        <span style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>GCI / AWACS Voice</span>
+        <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: 'var(--text-dim)' }}>{open ? 'HIDE' : 'HOW TO TALK TO GCI'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: '10px 14px 14px' }}>
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.6, margin: '0 0 4px' }}>
+            A live controller works your coalition's radar picture over SRS and calls contacts to you by name.
+            The frequency is on a "GCI: <span style={{ fontFamily: 'var(--font-mono)' }}>&lt;callsign&gt; on &lt;freq&gt;</span>"
+            note when you slot in, and in <strong style={{ color: 'var(--text)' }}>Radios</strong> below. Blue is
+            usually <strong style={{ color: 'var(--text)' }}>Magic</strong>, red <strong style={{ color: 'var(--text)' }}>Overlord</strong>.
+            It talks on its own — keying up to ask only works where the server enabled speech recognition.
+          </p>
+          {sub('Ask GCI (say the callsign first)')}
+          {ask.map(([k, v]) => row(k, v))}
+          {sub('Calls you hear unprompted')}
+          {hear.map(([k, v]) => row(k, v))}
+          {sub('Tune your own calls — chat, or F10 → EWR → GCI Voice')}
+          {cmds.map(([k, v]) => row(k, v))}
+        </div>
+      )}
     </div>
   )
 }
@@ -379,6 +451,8 @@ export default function BriefingPage() {
         flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overflowX: 'hidden',
         padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: 12,
       }}>
+        <GciReference />
+
         {isLoading && <div className="vs-card" style={{ padding: 20, color: 'var(--text-dim)' }}>Loading briefing…</div>}
         {error && (
           <div className="vs-card" style={{ padding: 20, color: '#f87171' }}>

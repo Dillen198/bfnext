@@ -62,6 +62,8 @@
   "_srs_cli":  "You can also pass --srs-url on the bfdb command line (CLI takes precedence over this file).",
   "srsUrl": "http://localhost:5002",
 
+  "_gci_note": "Live GCI (proactive AWACS-style SRS callouts, via two persistent SRS connections) is configured in its OWN file — see gci.sample.json in the repo root and the $gciConfigPath variable in bfsystem.ps1, not here. A `gci` object may be placed here as a fallback (same keys as gci.sample.json) but --gci-config wins.",
+
   "_section_credits": "──── CREDITS ─────────────────────────────────────────────────────────────",
   "engineCredits": [
     { "name": "EvilKipper", "handle": "",                  "role": "Creator"              },

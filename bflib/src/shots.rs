@@ -135,12 +135,26 @@ impl ShotDb {
         if db.ephemeral.cfg.weapon_target_exclusions.contains(&e.weapon_name) {
             return Ok(())
         }
-        // Ground units (artillery, MLRS) and ships fire at ground coordinates, not unit objects.
-        // Calling weapon.get_target() for such shots crashes DCS via wAmmunitionGuided::Target_ID.
-        // Ships tagged Artillery/Launcher also use FireAtPoint (coordinate targeting), so they
-        // share the same crash. Only aircraft (Airplane/Helicopter) reliably target unit objects.
+        // Calling weapon.get_target() on a weapon that targets a ground point
+        // rather than a unit object hard-crashes DCS inside
+        // wAmmunitionGuided::Target_ID -- no Lua error, a straight access
+        // violation that takes the whole server down. Ground units (artillery,
+        // MLRS), ships firing FireAtPoint, and *ballistic weapons that fire a
+        // second shot event with the rocket itself as initiator* (Scud /
+        // Iskander cluster warheads -- initiator category then comes back as
+        // something other than a real aircraft) all hit this.
+        //
+        // So this is an allow-list, not a deny-list: only proceed when the
+        // initiator is unambiguously an Airplane or Helicopter AND we can
+        // resolve it to a unit we actually know about. Anything else -- ground,
+        // ship, structure, a weapon masquerading as a unit, an errored
+        // category lookup -- bails before get_target() is ever called.
         let category = ok!(e.initiator.get_category());
-        if category == UnitCategory::GroundUnit || category == UnitCategory::Ship {
+        if category != UnitCategory::Airplane && category != UnitCategory::Helicopter {
+            return Ok(());
+        }
+        let initiator_oid = ok!(e.initiator.object_id());
+        if db.ephemeral.get_uid_by_object_id(&initiator_oid).is_none() {
             return Ok(());
         }
         let target = ok!(some!(e.weapon.get_target()?).as_unit());

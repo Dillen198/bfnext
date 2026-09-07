@@ -556,6 +556,7 @@ export default function ManualSection() {
               { cmd: '-jtac <id> arty <id|all> <n>', desc: 'Direct nearby artillery to fire N rounds at the JTAC target.' },
               { cmd: '-jtac <id> bomber [mission]', desc: 'Call a bomber strike on the current JTAC target.' },
               { cmd: '-bind <token>', desc: 'Link your DCS pilot to your web dashboard account using the token from the Pilots page.' },
+              { cmd: '-gci [option]', desc: 'Tune the live voice GCI: on/off, imperial/metric, braa/bulls/clock reference, or auto. See section 13.' },
               { cmd: '-help', desc: 'Display the full command list in chat.' },
             ]}
           />
@@ -1492,6 +1493,111 @@ export default function ManualSection() {
               <InfoRow key={item.label} label={item.label} value={item.value} />
             ))}
           </div>
+        </Subsection>
+        </Reveal>
+
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {/* 13 — LIVE GCI / AWACS                                             */}
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        <Reveal>
+        <Subsection number="13" title="LIVE" accent="GCI / AWACS">
+          <p style={{ ...BODY_TEXT, marginBottom: '1.5rem', maxWidth: 700 }}>
+            A live voice controller works the coalition radar picture over SRS and calls contacts
+            to you by name — like a human AWACS, not the F10 text report. It talks on its own; on
+            servers with speech recognition you can also key up and ask it questions. Everything it
+            says is fog-of-war true: if your side's radar network isn't painting a contact, GCI
+            doesn't know about it either.
+          </p>
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            <InfoRow label="Frequency" value='Shown on a "GCI: <callsign> on <freq>" note when you slot in, and on the Briefing kneeboard. Tune it in SRS.' />
+            <InfoRow label="Callsigns" value="Blue is usually Magic, Red is usually Overlord (Russian-accented voice, same English brevity)." />
+            <InfoRow label="No check-in needed" value="Proactive calls come regardless. Keying up is optional and only works where the server enabled speech recognition." />
+          </div>
+
+          <h4
+            style={{
+              fontFamily: "'Bebas Neue', sans-serif",
+              fontSize: '1.1rem',
+              letterSpacing: '0.15em',
+              color: 'var(--text)',
+              margin: '0 0 1rem 0',
+              borderLeft: '3px solid var(--accent)',
+              paddingLeft: '0.75rem',
+            }}
+          >
+            WHAT YOU CAN ASK
+          </h4>
+          <CommandTable
+            rows={[
+              { cmd: '"Magic, radio check"', desc: '"Loud and clear" — confirms two-way.' },
+              { cmd: '"Magic, checking in"', desc: '"Radar contact, copy the picture, bullseye is …" plus your current group count.' },
+              { cmd: '"Magic, bogey dope"', desc: 'Your nearest hostile group: bearing, range, altitude, aspect, and what it is.' },
+              { cmd: '"Magic, picture"', desc: 'The whole picture — every group GCI holds for you, nearest first.' },
+              { cmd: '"Magic, declare"', desc: 'Hostile or clean for the contact nearest you (or nearest a bullseye point you name).' },
+              { cmd: '"Magic, alpha check"', desc: 'Your own position as bullseye bearing/range — a nav sanity check.' },
+              { cmd: '"Magic, commit"', desc: 'GCI takes you onto the nearest group and feeds running intercept vectors until you merge.' },
+            ]}
+          />
+
+          <h4
+            style={{
+              fontFamily: "'Bebas Neue', sans-serif",
+              fontSize: '1.1rem',
+              letterSpacing: '0.15em',
+              color: 'var(--text)',
+              margin: '2rem 0 1rem 0',
+              borderLeft: '3px solid var(--accent)',
+              paddingLeft: '0.75rem',
+            }}
+          >
+            CALLS YOU'LL HEAR UNPROMPTED
+          </h4>
+          <div style={{ marginBottom: '1.5rem' }}>
+            {[
+              { label: 'Threat', value: '"…, threat, single group, BRAA 340 for 12, 18 thousand, hot" — a hostile is close and dangerous. Highest priority.' },
+              { label: 'Bogey → Hostile', value: 'A fresh hit is a "bogey", ripening to "bandit" then "hostile <type>" as the track firms up.' },
+              { label: 'Group naming', value: 'When several flights see the same raid, GCI names groups "north / south / center" so the coalition shares one picture.' },
+              { label: 'Cold / Splitting / Merged / Faded', value: 'Threat turned away · one group became several · hostile inside 3nm · lost radar contact.' },
+              { label: 'SAM launch / threat', value: '"…, SAM launch, 210 for 18, defend, defend" · "…, medium range SAM threat, …, defend".' },
+              { label: 'Splash', value: '"…, splash, 040 for 22" — a hostile you were warned about went down.' },
+              { label: 'All players', value: 'Chute observed (CSAR cue) · tumbleweed (radar net down) · periodic tanker / AWACS location.' },
+            ].map((item) => (
+              <InfoRow key={item.label} label={item.label} value={item.value} />
+            ))}
+          </div>
+
+          <h4
+            style={{
+              fontFamily: "'Bebas Neue', sans-serif",
+              fontSize: '1.1rem',
+              letterSpacing: '0.15em',
+              color: 'var(--text)',
+              margin: '2rem 0 1rem 0',
+              borderLeft: '3px solid var(--accent)',
+              paddingLeft: '0.75rem',
+            }}
+          >
+            TUNE YOUR OWN CALLS
+          </h4>
+          <CommandTable
+            rows={[
+              { cmd: '-gci', desc: 'Show your current GCI settings.' },
+              { cmd: '-gci on / off', desc: 'Unmute / mute all GCI calls to you.' },
+              { cmd: '-gci imperial / metric', desc: 'Nautical miles + feet, or kilometres + metres.' },
+              { cmd: '-gci braa / bulls / clock', desc: 'Contact position from your jet, from the bullseye, or as a clock code + high/low.' },
+              { cmd: '-gci auto', desc: 'Follow the server defaults.' },
+            ]}
+          />
+          <p style={{ ...BODY_TEXT, marginTop: '1rem', fontSize: '0.8rem' }}>
+            Also under F10 → EWR → GCI Voice. Your choice sticks to your pilot across slots and rounds.
+          </p>
+
+          <Callout type="info">
+            GCI leaves a short quiet gap between transmissions and listens before it keys up, so
+            there's room for you to talk. When you ask it something, say the controller's name
+            first — "Magic, …" — and use plain aircrew brevity, numbers as digits.
+          </Callout>
         </Subsection>
         </Reveal>
 

@@ -73,6 +73,11 @@ export const campaign = {
       description: 'EWR networks detect and report enemy air contacts, feeding threat data directly into the coalition picture.',
     },
     {
+      icon: 'Radio',
+      title: 'Live Voice GCI',
+      description: 'A controller works the coalition radar picture over SRS — proactive threat, SAM launch and picture calls in NATO brevity, plus bogey dope, declare and intercept vectors when you key up and ask.',
+    },
+    {
       icon: 'Antenna',
       title: 'Networked SAM Defense',
       description: 'SAM sites share a live sensor picture, go dark until there\'s a real threat, and defend each other from anti-radiation missiles.',

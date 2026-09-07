@@ -51,7 +51,7 @@ use chrono::prelude::*;
 use compact_str::{CompactString, format_compact};
 use dcso3::{
     LuaVec2, MizLua, Position3, String, Vector2,
-    airbase::ClassAirbase,
+    airbase::{Airbase, ClassAirbase},
     centroid2d,
     coalition::Side,
     controller::{MissionPoint, PointType},
@@ -269,6 +269,9 @@ pub struct Ephemeral {
     /// have passed -- stops a base with capture-capable troops from both sides
     /// parked in the zone from flipping every capture-timer's length forever.
     pub(super) last_owner_change: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// Throttle for the "captureable but no capturing troops detected" diagnostic
+    /// log in check_capture (one line per objective per 15s).
+    pub(super) last_capture_debug: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Last time treasury income was deposited (Smart Commander).
     pub(crate) last_treasury_income: DateTime<Utc>,
     /// Last time objectives were funded (Smart Commander).
@@ -369,6 +372,7 @@ impl Default for Ephemeral {
             supply_warned: FxHashMap::default(),
             capture_progress: FxHashMap::default(),
             last_owner_change: FxHashMap::default(),
+            last_capture_debug: FxHashMap::default(),
             last_treasury_income: DateTime::<Utc>::default(),
             last_objective_fund: DateTime::<Utc>::default(),
             map_layer: MapLayer::default(),
@@ -521,6 +525,17 @@ impl Ephemeral {
         obj: &Objective,
         moved: &[ObjectiveId],
     ) {
+        // Special SAM sites are position-classified -- they get no F10 label,
+        // health bar or rings (see create_objective_markup). The per-tick
+        // refresh loop calls straight in here, so without the same guard a
+        // Vacant entry would rebuild the full "<name>\nHealth: .." markup every
+        // few seconds -- which is the SAM-site label players keep seeing.
+        if obj.kind.is_special_sam_site() {
+            if let Some(mk) = self.objective_markup.remove(&obj.id) {
+                mk.remove(&mut self.msgs);
+            }
+            return;
+        }
         let capture_pct = self.capture_pct_for(&obj.id);
         let repair_pct = self.repair_pct_for(obj);
         match self.objective_markup.entry(obj.id) {
@@ -1680,6 +1695,50 @@ impl Ephemeral {
                     first.action = Some(dcso3::controller::ActionTyp::Air(dcso3::controller::TurnMethod::FromParkingAreaHot));
                     first.alt = 0.0;
                     first.alt_typ = Some(dcso3::controller::AltType::BARO);
+                    // Without an airdromeId on a TakeOffParkingHot waypoint DCS
+                    // can't resolve which base to spawn at and falls back to an
+                    // air start -- which is why commander/reactive CAP was
+                    // appearing airborne with no startup/taxi/takeoff time
+                    // between flights. CAP always originates from a friendly
+                    // airbase objective, so pull that base's id here.
+                    if let DeployKind::Objective { origin } = &group.origin {
+                        // Primary: the runtime airbase registered for this
+                        // objective at load. Fallback: match the objective name
+                        // to a DCS airbase directly -- bflib names Airbase-kind
+                        // objectives after the airfield, and a zone-overlap can
+                        // leave `airbase_by_oid` keyed to a neighbouring SAM /
+                        // command-center objective instead.
+                        let ab = self
+                            .airbase_by_oid
+                            .get(origin)
+                            .and_then(|abid| Airbase::get_instance(spctx.lua(), abid).ok())
+                            .or_else(|| {
+                                persisted.objectives.get(origin).and_then(|o| {
+                                    Airbase::get_by_name(
+                                        spctx.lua(),
+                                        dcso3::String::from(o.name.as_str()),
+                                    )
+                                    .ok()
+                                    .filter(|ab| ab.is_exist().unwrap_or(false))
+                                })
+                            });
+                        match ab.and_then(|ab| ab.get_id().ok()) {
+                            Some(abid) => {
+                                first.airdrome_id = Some(abid);
+                                first.helipad = None;
+                                first.link_unit = None;
+                                info!(
+                                    "[CAP_SPAWN] {} ground-starting from airbase id {:?}",
+                                    group.name, abid
+                                );
+                            }
+                            None => warn!(
+                                "[CAP_SPAWN] {} has no resolvable airbase for objective {:?} -- \
+                                 DCS will air-start it",
+                                group.name, origin
+                            ),
+                        }
+                    }
 
                     if group.tags.contains(UnitTag::CAP) {
                         let opts = vec![

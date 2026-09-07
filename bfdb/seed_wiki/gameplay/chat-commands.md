@@ -237,6 +237,29 @@ Control deployed action units via chat.
 
 ---
 
+### GCI / AWACS Voice
+
+#### `-gci [option]`
+Tune the [Live GCI](gci.md) voice controller to your preference. Also available
+under **F10 → EWR → GCI Voice**. Your choice is saved to your pilot.
+
+```
+-gci             - show your current GCI settings
+-gci on / off    - unmute / mute all GCI calls to you
+-gci imperial    - range in nautical miles, altitude in thousands of feet
+-gci metric      - range in kilometres, altitude in metres
+-gci braa        - contact position from your own jet (default)
+-gci bulls       - contact position from the bullseye
+-gci clock       - contact position as a clock code + high / low
+-gci auto        - follow the server defaults
+```
+
+On servers with speech recognition you can also key up on the GCI frequency and
+ask — *"Magic, bogey dope"*, *"Magic, picture"*, *"Magic, declare"*,
+*"Magic, commit"*. See [Live GCI](gci.md) for the full phrasebook.
+
+---
+
 ## Administrative Commands
 
 These commands require admin privileges.

@@ -1073,6 +1073,8 @@ impl Db {
             error!("couldn't adjust warehouse {:?}", e)
         }
         let player = maybe_mut!(self.persisted.players, ucid, "player")?;
+        let player_side = player.side;
+        let slot_uid = slot.as_unit_id();
         let position = unit.get_position()?;
         let point = Vector2::new(position.p.x, position.p.z);
         let landed_at_objective = self
@@ -1107,6 +1109,18 @@ impl Db {
         ));
         player.changing_slots = false;
         player.provisional_points = 0;
+        // Slot-entry GCI radio briefing ("GCI: Magic on 251.0 AM (SRS)").
+        let gci_brief = self
+            .ephemeral
+            .cfg
+            .gci_briefing
+            .as_ref()
+            .and_then(|b| b.render(player_side).map(|t| (t, b.display_secs)));
+        if let (Some((text, secs)), Some(uid)) = (gci_brief, slot_uid) {
+            self.ephemeral
+                .msgs()
+                .panel_to_unit(secs, false, uid, String::from(text));
+        }
         self.ephemeral.dirty();
         Ok(())
     }

@@ -202,7 +202,7 @@
   "ground_vehicle_cull_distance": 10000,
   "cull_after": 1800,
   "capture_consolidation_secs": 300,
-  "takeoff_delay_secs": 0,
+  "takeoff_delay_secs": 60,
   "slot_leave_kill_radius_m": 15000,
   "slow_timed_events_freq": 10,
   "threatened_distance": {
@@ -1175,7 +1175,8 @@
     "enabled_vehicles": [
       "Mi-8MT",
       "UH-1H",
-      "CH-47Fbl1"
+      "CH-47Fbl1",
+      "Mi-24P"
     ],
     "spawn_delay": 1,
     "max_spawn_all": 10,
@@ -5644,6 +5645,14 @@
     "cooldown_secs": 300,
     "max_altitude_m": 0
   },
+  "gci_briefing": {
+    "blue_freq": "251.0 AM",
+    "red_freq": "252.0 AM",
+    "blue_callsign": "Magic",
+    "red_callsign": "Overlord",
+    "note": "Broadcast only — no check-in required. Key up to ask for BOGEY DOPE / PICTURE / DECLARE.",
+    "display_secs": 20
+  },
   "ground_vehicle_cargo": {
     "M-2 Bradley": {
       "troop_capacity": 2,
@@ -5751,6 +5760,7 @@
     "cap_altitude_m": 8000,
     "cap_speed_ms": 250,
     "cap_max_push_m": 60000,
+    "cap_engage_radius_m": 45000,
     "cap_idle_rtb_secs": 240,
     "cap_orbit_radius_m": 15000,
     "cap_trigger_radius_m": 90000,

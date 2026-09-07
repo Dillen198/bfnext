@@ -93,6 +93,11 @@ DEFAULT:
   admin_username: ""
   admin_password: ""
 
+  # NOTE: the Live GCI system (proactive AWACS-style SRS callouts) is NOT
+  # configured here -- it runs entirely inside bfdb with no Discord surface.
+  # Configure it in gci.json (see gci.sample.json in the repo root) and point
+  # bfsystem.ps1's $gciConfigPath at it.
+
   # ---------------------------------------------
   # bfdb Process Supervision (optional)
   # ---------------------------------------------

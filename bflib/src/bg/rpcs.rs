@@ -60,6 +60,7 @@ pub struct Rpcs {
     _query_perf: Proc,
     _query_briefing: Proc,
     _query_tacmap: Proc,
+    _query_gci: Proc,
     // Action API
     _spawn_deployable: Proc,
     _spawn_troop: Proc,
@@ -701,6 +702,26 @@ impl Rpcs {
             Some(wait.clone()),
             side: Chars = Value::Null; "The side (blue, red, neutral)"
         )?;
+        let _q = Arc::clone(&q);
+        let query_gci = define_rpc!(
+            publisher,
+            base.append("query-gci"),
+            "Query the live GCI controller picture for one side: every airborne human flight plus, per flight, the hostile groups its coalition sensors are painting (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryGci { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)"
+        )?;
         // ==================== Action API ====================
         let _q = Arc::clone(&q);
         let spawn_deployable = define_rpc!(
@@ -1069,6 +1090,7 @@ impl Rpcs {
             _query_perf: query_perf,
             _query_briefing: query_briefing,
             _query_tacmap: query_tacmap,
+            _query_gci: query_gci,
             // Action API
             _spawn_deployable: spawn_deployable,
             _spawn_troop: spawn_troop,

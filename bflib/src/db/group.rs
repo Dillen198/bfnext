@@ -16,7 +16,7 @@ for more details.
 
 use super::{cargo::C130CargoState, ephemeral::SlotInfo, objective::ObjGroupClass, player::SlotAuth, Db, SetS};
 use crate::{
-    group, group_health, group_mut, objective,
+    group, group_health, group_mut,
     spawnctx::{Despawn, SpawnCtx, SpawnLoc},
     unit, unit_mut, Connected,
 };
@@ -228,27 +228,12 @@ impl Db {
             centroid2d(group.units.into_iter().map(|uid| self.persisted.units[uid].pos));
         let id = match &mut group.origin {
             DeployKind::ObjectiveDeprecated => None,
-            DeployKind::Objective { origin: oid } => match objective!(self, oid) {
-                Err(_) => None,
-                Ok(obj) => {
-                    if group.side == obj.owner {
-                        let msg = format_compact!(
-                            "objective group id {} name {} of class {:?}",
-                            group.id,
-                            group.name,
-                            group.class
-                        );
-                        Some(self.ephemeral.msgs.mark_to_side(
-                            group.side,
-                            group_center,
-                            true,
-                            msg,
-                        ))
-                    } else {
-                        None
-                    }
-                }
-            },
+            // Garrison groups (the pre-placed SAM / AAA / armour / logi at every
+            // objective) used to get a floating "objective group id N name <miz
+            // group name> of class Sr" label on the F10 map for the owning side.
+            // That's one debug-grade label per group at every base -- pure
+            // clutter (and a contributor to F10 lag), so don't draw it.
+            DeployKind::Objective { .. } => None,
             DeployKind::Action { name, spec: _, destination, player, marks, .. } => {
                 let pname = player
                     .as_ref()

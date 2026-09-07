@@ -346,6 +346,29 @@ export function connectEngineLogs(
   return () => ws.close()
 }
 
+// ── Live GCI transcript (from /ws/gci) ──────────────────────────────────
+export interface GciCall {
+  time: string
+  side: 'blue' | 'red'
+  text: string
+}
+
+/** Connect to the live GCI transcript WebSocket (every AWACS-style call the
+ *  engine's GCI makes). Admin session required. */
+export function connectGciTranscript(
+  onCall: (c: GciCall) => void,
+  onStatus: (s: 'open' | 'closed' | 'error') => void,
+): () => void {
+  const ws = new WebSocket(wsUrl('/ws/gci'))
+  ws.onopen  = () => onStatus('open')
+  ws.onclose = () => onStatus('closed')
+  ws.onerror = () => onStatus('error')
+  ws.onmessage = (e) => {
+    try { onCall(JSON.parse(e.data as string) as GciCall) } catch { /* ignore */ }
+  }
+  return () => ws.close()
+}
+
 /** Connect to the live unit WebSocket.
  *  Returns a cleanup function to close the socket.
  *  @param onMsg  called each time a full unit snapshot arrives
@@ -642,6 +665,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 export const api = {
+  gciTranscript: () => get<GciCall[]>('/gci/transcript'),
   rounds: () => get<Round[]>('/rounds'),
   leaderboard: () => get<Pilot[]>('/leaderboard'),
   allPilots: () => get<PilotName[]>('/pilots'),

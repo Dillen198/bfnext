@@ -13,6 +13,9 @@ Detection is no longer a simple binary "in range = detected." Probability now de
 **ELINT/SIGINT Intel Database**
 Recon flights now build a persistent, decaying intel picture instead of a one-shot report: detected enemy ground units are classified, clustered, and tracked with a confidence score that fades over time (faster for older/lower-quality sources). Shown as F10 map markers and in a radio "intel picture" report.
 
+**Live GCI — proactive AWACS radio calls**
+On servers that enable it, a live GCI controller watches the coalition radar picture and transmits calls to players over SRS, addressed by flight callsign — threat, SAM launch, splash, bogey/bandit/hostile with NATO reporting names, coalition-wide group naming ("north group"), merged, faded, split/converge and periodic picture, all fog-of-war true. Players can also key up and ask (bogey dope, picture, declare, commit) where speech recognition is on, and get GCI-flown intercept vectors after a commit. A short "GCI: &lt;callsign&gt; on &lt;freq&gt;" note shows on slot entry. See [Live GCI](../gameplay/gci.md).
+
 **Player Recon Pass**
 Recon-capable airframes (server-configured) get an **F10 → Recon** menu. Start a timed pass while within range of an enemy objective, hold station for the dwell time, and every enemy unit your aircraft has line-of-sight to — SAM and AAA sites included — is revealed on the coalition F10 map through the same decaying intel picture. See [Reconnaissance](../f10-menu/recon.md).
 

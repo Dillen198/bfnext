@@ -1855,6 +1855,8 @@ impl Db {
             .unwrap_or(0.0);
         let mut captured: FxHashMap<ObjectiveId, Vec<(Side, Option<Ucid>, Option<ObjectiveId>, GroupId)>> =
             FxHashMap::default();
+        #[allow(clippy::type_complexity)]
+        let mut capture_debug: Vec<(ObjectiveId, String, SmallVec<[CompactString; 8]>)> = vec![];
         let capture_cooldown = self
             .ephemeral
             .cfg
@@ -1940,9 +1942,74 @@ impl Db {
                         }
                     }
                 }
+                // Diagnostic: base reads capturable but nothing is registering
+                // as a capturing group. Dump every candidate troop group so a
+                // "why won't it capture" report has hard data. Throttled below.
+                if !captured.contains_key(oid) {
+                    let center = obj.zone.pos();
+                    let radius = obj.zone.radius();
+                    let mut lines: SmallVec<[CompactString; 8]> = smallvec![];
+                    let mut scan_dbg = |group: &SpawnedGroup, cc: bool, kind: &str, gid: &GroupId| {
+                        let mut nearest = f64::INFINITY;
+                        let mut in_zone = false;
+                        let mut alive = 0u32;
+                        for uid in &group.units {
+                            let Some(u) = self.persisted.units.get(uid) else { continue };
+                            if u.dead {
+                                continue;
+                            }
+                            alive += 1;
+                            let d = na::distance(&center.into(), &u.pos.into());
+                            if d < nearest {
+                                nearest = d;
+                            }
+                            if obj.zone.contains(u.pos) {
+                                in_zone = true;
+                            }
+                        }
+                        // Only surface candidates close enough that a player is
+                        // plausibly trying to capture with them -- a squad 70 km
+                        // away is just noise (and there are dozens of them).
+                        if nearest > 25_000.0 && !in_zone {
+                            return;
+                        }
+                        lines.push(format_compact!(
+                            "{kind} {gid} side={:?} can_capture={cc} alive={alive} in_zone={in_zone} nearest={nearest:.0}m (zone r={radius:.0}m owner={:?})",
+                            group.side, obj.owner
+                        ));
+                    };
+                    for gid in &self.persisted.troops {
+                        if let Ok(group) = group!(self, gid) {
+                            if let DeployKind::Troop { spec, .. } = &group.origin {
+                                scan_dbg(group, spec.can_capture, "troop", gid);
+                            }
+                        }
+                    }
+                    for gid in &self.persisted.dismounts {
+                        if let Ok(group) = group!(self, gid) {
+                            if let DeployKind::Dismount { can_capture, .. } = &group.origin {
+                                scan_dbg(group, *can_capture, "dismount", gid);
+                            }
+                        }
+                    }
+                    if !lines.is_empty() {
+                        capture_debug.push((*oid, obj.name.clone(), lines));
+                    }
+                }
             }
             // Note: no "not capturable yet" broadcast here -- players pull that
             // on demand from Objectives > Capture Advisor (see capture_diagnosis).
+        }
+        for (oid, name, lines) in capture_debug {
+            let last = self.ephemeral.last_capture_debug.get(&oid).copied();
+            if last.map(|t| (now - t).num_seconds() < 120).unwrap_or(false) {
+                continue;
+            }
+            self.ephemeral.last_capture_debug.insert(oid, now);
+            info!(
+                "[CAPTURE_DIAG] {name} is captureable but registered no capturing group. candidates:\n  {}",
+                lines.join("\n  ")
+            );
         }
         let mut actually_captured = smallvec![];
         let mut to_mark: SmallVec<[GroupId; 32]> = smallvec![];

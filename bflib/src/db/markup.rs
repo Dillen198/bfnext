@@ -359,6 +359,12 @@ pub(super) struct ObjectiveMarkup {
     logi: u8,
     supply: u8,
     fuel: u8,
+    /// Whether the base is mid consolidation-hold. The label prints ">> NOT
+    /// CONSOLIDATED" vs ">> CAPTURABLE" off this, and neither `health` nor
+    /// `capture_pct` necessarily changes when the hold clears (a base taken at
+    /// 100% health), so the label has to key off this flag directly or it
+    /// freezes on "NOT CONSOLIDATED".
+    capture_hold: bool,
     points: i32,
     capture_pct: Option<u8>,
     /// (percent complete, seconds remaining)
@@ -483,6 +489,7 @@ impl ObjectiveMarkup {
             logi: _,
             supply: _,
             fuel: _,
+            capture_hold: _,
             points: _,
             capture_pct: _,
             repair_pct: _,
@@ -540,13 +547,15 @@ impl ObjectiveMarkup {
         // `health <= 20 && infantry == 0` -- a base can flip to capturable with
         // logi untouched, which left the ring invisible. (SAM sites drive this
         // ring from owner/health blocks instead, so skip them here.)
-        if !obj.kind.is_special_sam_site() && obj.captureable() != self.capturable {
+        let capturable_changed = obj.captureable() != self.capturable;
+        if !obj.kind.is_special_sam_site() && capturable_changed {
             self.capturable = obj.captureable();
             msgq.set_markup_color(
                 self.capturable_ring,
                 Color::white(if self.capturable { 0.75 } else { 0. }),
             );
         }
+        let hold_changed = obj.in_capture_hold() != self.capture_hold;
         // Carrier navaids are deliberately kept off the F10 label (see
         // objective_label) -- don't spend the summarize() every redraw either.
         let navaid = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
@@ -566,7 +575,10 @@ impl ObjectiveMarkup {
             || self.capture_pct != capture_pct
             || self.repair_pct != repair_pct
             || self.navaid != navaid
+            || hold_changed
+            || capturable_changed
         {
+            self.capture_hold = obj.in_capture_hold();
             // Non-SAM capturable ring is handled by the captureable() check
             // above; here only the SAM-site ring (owner colour / white when
             // the site is dead) needs refreshing on a health change.
@@ -636,6 +648,7 @@ impl ObjectiveMarkup {
         t.side = obj.owner;
         t.threatened = obj.threatened;
         t.capturable = obj.captureable();
+        t.capture_hold = obj.in_capture_hold();
         t.health = obj.health;
         t.logi = obj.logi;
         t.supply = obj.supply;

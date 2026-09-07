@@ -2315,6 +2315,14 @@ pub struct CampaignEventsCfg {
     /// without chasing contacts deep across the front line. Default 60000.
     #[serde(default = "default_cap_max_push_m")]
     pub cap_max_push_m: f64,
+    /// Radius (metres) of a CAP flight's engage-in-zone order around its
+    /// station. This is the leash: the flight will chase an air contact this
+    /// far from where it is stationed and no further. Keep it modest -- a large
+    /// value plus `cap_max_push_m` lets interceptors wander into enemy SAM
+    /// belts and get swatted, which reads in-game as CAP that spawns, dies, and
+    /// respawns on a loop. Default 45000.
+    #[serde(default = "default_cap_engage_radius_m")]
+    pub cap_engage_radius_m: f64,
     /// If a CAP flight's side has painted no workable threat for this many
     /// seconds, it is sent home (RTB) and despawned early rather than loitering
     /// out its full `cap_duration_secs`. Keeps the air picture matched to the
@@ -2402,6 +2410,7 @@ fn default_cap_template_blue() -> String { "BCAP".into() }
 fn default_cap_altitude_m() -> f64 { 8000.0 }
 fn default_cap_speed_ms() -> f64 { 250.0 }
 fn default_cap_max_push_m() -> f64 { 60000.0 }
+fn default_cap_engage_radius_m() -> f64 { 45000.0 }
 fn default_cap_idle_rtb_secs() -> u32 { 240 }
 fn default_cap_duration() -> u32 { 600 }
 fn default_cap_orbit_radius() -> f64 { 15_000.0 }
@@ -2438,6 +2447,7 @@ impl Default for CampaignEventsCfg {
             cap_altitude_m: default_cap_altitude_m(),
             cap_speed_ms: default_cap_speed_ms(),
             cap_max_push_m: default_cap_max_push_m(),
+            cap_engage_radius_m: default_cap_engage_radius_m(),
             cap_idle_rtb_secs: default_cap_idle_rtb_secs(),
             cap_orbit_radius_m: default_cap_orbit_radius(),
             cap_probability: default_cap_probability(),
@@ -2509,6 +2519,60 @@ impl Default for PilotExperienceCfg {
             xp_per_delivery: default_xp_delivery(),
             rank_thresholds: default_rank_thresholds(),
         }
+    }
+}
+
+/// Short slot-entry radio briefing shown to a player when they take a slot,
+/// so they know where to tune for the live GCI controller. Purely cosmetic —
+/// the operational GCI configuration lives in bfdb's `gci.json`. Omit the
+/// whole block to show nothing on slot entry.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
+pub struct GciBriefingCfg {
+    /// Blue GCI/AWACS radio, spoken as written (e.g. "251.0 AM" or
+    /// "251.0 AM / 33X"). Omit to skip the frequency line for blue.
+    #[serde(default)]
+    pub blue_freq: Option<String>,
+    /// Red GCI/AWACS radio.
+    #[serde(default)]
+    pub red_freq: Option<String>,
+    /// Blue controller callsign shown in the briefing. Defaults to "Magic".
+    #[serde(default)]
+    pub blue_callsign: Option<String>,
+    /// Red controller callsign shown in the briefing. Defaults to "Overlord".
+    #[serde(default)]
+    pub red_callsign: Option<String>,
+    /// Optional extra line appended to the briefing (e.g. "Broadcast only —
+    /// no check-in required" or a SRS server note).
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Seconds the panel message stays on screen. Default 20.
+    #[serde(default = "default_gci_briefing_secs")]
+    pub display_secs: i64,
+}
+
+fn default_gci_briefing_secs() -> i64 {
+    20
+}
+
+impl GciBriefingCfg {
+    /// Render the briefing panel text for a side, or `None` if there is
+    /// nothing configured to show that side.
+    pub fn render(&self, side: Side) -> Option<std::string::String> {
+        let (freq, callsign, default_cs) = match side {
+            Side::Red => (&self.red_freq, &self.red_callsign, "Overlord"),
+            _ => (&self.blue_freq, &self.blue_callsign, "Magic"),
+        };
+        let str_opt = |o: &Option<String>| -> Option<std::string::String> {
+            o.as_ref().map(|s| s.as_str().to_string()).filter(|s| !s.is_empty())
+        };
+        let freq = str_opt(freq)?;
+        let callsign = str_opt(callsign).unwrap_or_else(|| default_cs.to_string());
+        let mut out = format!("GCI: {callsign} on {freq} (SRS)");
+        if let Some(note) = str_opt(&self.note) {
+            out.push('\n');
+            out.push_str(&note);
+        }
+        Some(out)
     }
 }
 
@@ -2841,6 +2905,11 @@ pub struct Cfg {
     /// Disabled if absent.
     #[serde(default)]
     pub player_recon: Option<PlayerReconCfg>,
+    /// Short "GCI: <callsign> on <freq> (SRS)" panel shown to a player on slot
+    /// entry so they know where to tune for the live GCI controller. Omit to
+    /// show nothing. The GCI system itself is configured in bfdb's `gci.json`.
+    #[serde(default)]
+    pub gci_briefing: Option<GciBriefingCfg>,
 }
 
 fn default_supply_alert_threshold() -> u8 {

@@ -997,11 +997,27 @@ impl Db {
                         None
                     }
                     .or_else(|| {
-                        self.persisted
-                            .objectives
-                            .into_iter()
-                            .find(|(_, obj)| obj.zone.contains(pos))
-                            .map(|(oid, _)| *oid)
+                        // Several objective zones can overlap one airfield -- a
+                        // hidden SAM site or a command center placed on/next to
+                        // the base. `find` would attach the airbase (and its
+                        // warehouse, and its `airbase_by_oid` entry) to
+                        // whichever iterates first, which then breaks CAP
+                        // ground-start (it looks the airbase up by the
+                        // Airbase-kind objective id and misses). Prefer an
+                        // actual Airbase-kind objective when there's a choice.
+                        let mut hit: Option<(&ObjectiveId, bool)> = None;
+                        for (oid, obj) in &self.persisted.objectives {
+                            if !obj.zone.contains(pos) {
+                                continue;
+                            }
+                            let is_ab = matches!(obj.kind, ObjectiveKind::Airbase);
+                            match hit {
+                                None => hit = Some((oid, is_ab)),
+                                Some((_, false)) if is_ab => hit = Some((oid, is_ab)),
+                                _ => {}
+                            }
+                        }
+                        hit.map(|(oid, _)| *oid)
                     });
                     let w = airbase
                         .get_warehouse()

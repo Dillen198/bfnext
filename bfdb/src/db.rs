@@ -528,6 +528,12 @@ pub(crate) struct StatsDbInner {
     session: Tree<(RoundId, DateTime<Utc>), Session>,
     kills: Tree<(EnId, RoundId, KillId), Dead>,
     shared_kills: Tree<KillId, SmallVec<[EnId; 2]>>,
+    /// Content key for a kill -- (round, victim, death time in millis). Guards
+    /// `record_kill` against the same `Stat::Kill` being applied twice (archive
+    /// re-read after a restart before the round context is re-primed, a
+    /// publisher retry, etc.), which otherwise mints a second KillId and shows
+    /// the kill twice in the feed / a pilot's list.
+    kill_seen: Tree<(RoundId, EnId, i64), KillId>,
     units: Tree<(RoundId, EnId), Unit>,
     groups: Tree<(RoundId, GroupId), Group>,
     detected: Tree<(RoundId, EnId), BitFlags<DetectionSource, u8>>,
@@ -590,8 +596,12 @@ pub(crate) struct StatsDbInner {
     replay_cursor: Tree<u8, DateTime<Utc>>,
 }
 
-const ENGINE_LOG_HISTORY_CAP: usize = 500;
-const ENGINE_ERROR_HISTORY_CAP: usize = 200;
+// Kept deliberately large: the dashboard's Engine Log viewer only shows a
+// tail, but `GET /api/logs/engine` (the token-gated plain-text endpoint used
+// for remote debugging) needs enough backlog to cover a full contested-base
+// fight or a slow leak -- ~20k lines is a few MB of Strings.
+const ENGINE_LOG_HISTORY_CAP: usize = 20_000;
+const ENGINE_ERROR_HISTORY_CAP: usize = 4_000;
 
 /// Matches the `[ERROR]`/`[WARN]`/`[WARNING]` level tags bflib's engine log
 /// lines carry -- mirrors ENGINE_LOG_LEVEL_RE in the fowlengine Discord plugin
@@ -754,6 +764,7 @@ impl StatsDb {
             session: Tree::open(&db, "session")?,
             kills: Tree::open(&db, "kills")?,
             shared_kills: Tree::open(&db, "shared_kills")?,
+            kill_seen: Tree::open(&db, "kill_seen")?,
             units: Tree::open(&db, "units")?,
             groups: Tree::open(&db, "groups")?,
             detected: Tree::open(&db, "detected")?,
@@ -854,6 +865,7 @@ impl StatsDb {
             session: Tree::open(&db, "session")?,
             kills: Tree::open(&db, "kills")?,
             shared_kills: Tree::open(&db, "shared_kills")?,
+            kill_seen: Tree::open(&db, "kill_seen")?,
             units: Tree::open(&db, "units")?,
             groups: Tree::open(&db, "groups")?,
             detected: Tree::open(&db, "detected")?,
@@ -972,6 +984,12 @@ impl StatsDb {
     /// admin dashboard's error feed (see api_admin_engine_errors in main.rs).
     pub(crate) fn engine_error_snapshot(&self) -> Vec<std::string::String> {
         self.0.engine_error_history.lock().unwrap().iter().cloned().collect()
+    }
+
+    /// Full in-memory engine-log backlog, oldest first (cap
+    /// `ENGINE_LOG_HISTORY_CAP`). Backs `GET /api/logs/engine`.
+    pub(crate) fn engine_log_snapshot(&self) -> Vec<std::string::String> {
+        self.0.engine_log_history.lock().unwrap().iter().cloned().collect()
     }
 
     /// Call one of bflib's netidx RPC procs (published under
@@ -1348,7 +1366,20 @@ impl StatsDb {
     }
 
     fn record_kill(&self, ctx: &mut StatCtxInner, dead: Dead) -> Result<()> {
+        // Idempotency guard: one real kill = one (round, victim, death-time)
+        // triple. If we've already recorded this exact kill, a redelivery is in
+        // play (archive re-read, publisher retry) -- bail before minting a
+        // second KillId that would double it in every kill view.
+        let victim_enid = match &dead.victim {
+            Who::Player { ucid, .. } => EnId::Player(*ucid),
+            Who::AI { uid, .. } => EnId::Unit(*uid),
+        };
+        let dedup_key = (ctx.round, victim_enid, dead.time.timestamp_millis());
+        if self.kill_seen.get(&dedup_key)?.is_some() {
+            return Ok(());
+        }
         let kid = KillId::new(&self.db)?;
+        self.kill_seen.insert(&dedup_key, &kid)?;
         let air = match &dead.victim {
             Who::Player { ucid, .. } => {
                 self.pilots.with_pilot_and_aggregates(
@@ -2013,6 +2044,7 @@ impl StatsDb {
             ("gameplay/logistics", "Logistics & Supply", "Core Gameplay", 2, include_str!("../seed_wiki/gameplay/logistics.md")),
             ("gameplay/points-and-lives", "Points and Lives", "Core Gameplay", 3, include_str!("../seed_wiki/gameplay/points-and-lives.md")),
             ("gameplay/chat-commands", "Chat Commands", "Core Gameplay", 4, include_str!("../seed_wiki/gameplay/chat-commands.md")),
+            ("gameplay/gci", "Live GCI (AWACS Calls)", "Core Gameplay", 5, include_str!("../seed_wiki/gameplay/gci.md")),
             ("f10-menu/overview", "Overview", "F10 Menu Systems", 0, include_str!("../seed_wiki/f10-menu/overview.md")),
             ("f10-menu/actions", "Actions Menu", "F10 Menu Systems", 1, include_str!("../seed_wiki/f10-menu/actions.md")),
             ("f10-menu/jtac", "JTAC System", "F10 Menu Systems", 2, include_str!("../seed_wiki/f10-menu/jtac.md")),

@@ -54,3 +54,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 urlencoding = "2"
 sysinfo = "0.32"
 nvml-wrapper = "0.10"
+# Live GCI: native SRS voice client. Opus encoding is done by dynamically
+# loading opus.dll at runtime (the one that ships with DCS-SRS) via libloading,
+# so there is no build-time native/CMake dependency. hound reads the WAV that
+# the TTS engine (Piper or Windows SAPI) produces.
+libloading = "0.8"
+hound = "3"

@@ -200,6 +200,9 @@ pub enum AdminCommand {
     QueryTacmap {
         side: Side,
     },
+    QueryGci {
+        side: Side,
+    },
     // Action API commands
     SpawnDeployable {
         side: Side,
@@ -1777,6 +1780,279 @@ pub(crate) fn query_tacmap(ctx: &Context, lua: MizLua, side: Side) -> bfprotocol
     }
 }
 
+/// Build one coalition's live GCI controller picture: every airborne human
+/// flight on that side plus, per flight, the hostile groups its coalition's
+/// EWR/AWACS network is currently painting (strict fog of war). Consumed by
+/// bfdb's `gci` module, which diffs successive pictures into spoken SRS
+/// brevity calls. AI slots are never included — `instanced_players()` only
+/// yields human-occupied slots.
+pub(crate) fn query_gci(
+    ctx: &Context,
+    lua: MizLua,
+    side: Side,
+) -> bfprotocols::gci::GciControlPicture {
+    use bfprotocols::cfg::SensorType;
+    use bfprotocols::gci::{
+        GciAspect, GciContact, GciControlPicture, GciFlight, GciRef, GciSamThreat, GciSupport,
+        GciUnits,
+    };
+    use crate::ewr::{Aspect, ContactClass, EwrUnits};
+
+    let now = Utc::now();
+    let db = &ctx.db;
+    let coord = dcso3::coord::Coord::singleton(lua).ok();
+    let to_ll = |x: f64, z: f64| -> (f64, f64) {
+        coord
+            .as_ref()
+            .and_then(|c| c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(x, 0.0, z))).ok())
+            .map(|ll| (ll.latitude, ll.longitude))
+            .unwrap_or((0.0, 0.0))
+    };
+
+    // Coalition bullseye (from the loaded mission), for bullseye-format calls.
+    let bullseye = dcso3::env::miz::Miz::singleton(lua)
+        .ok()
+        .and_then(|miz| miz.coalition(side).ok())
+        .and_then(|c| c.bullseye().ok())
+        .map(|be| to_ll(be.0.x, be.0.y));
+
+    // Live enemy SAM search radars, as (2D pos, engagement range m). Reused
+    // per flight for SAM threat calls.
+    let enemy_sams: Vec<(Vector2, u32)> = db
+        .radar_donors()
+        .filter(|d| d.side == side.opposite())
+        .filter(|d| matches!(d.sensor_type, SensorType::SamSearchRadar))
+        .map(|d| (Vector2::new(d.pos.p.x, d.pos.p.z), d.range))
+        .collect();
+
+    let mut flights: Vec<GciFlight> = vec![];
+    for (ucid, player, inst) in db.instanced_players() {
+        if player.side != side || !inst.in_air {
+            continue;
+        }
+        let (gci_enabled, gci_units, gci_ref) = ctx.ewr.gci_prefs(ucid);
+        if !gci_enabled {
+            continue;
+        }
+        let callsign = player
+            .current_slot
+            .as_ref()
+            .and_then(|(slot, _)| db.ephemeral.slot_instance_unit(lua, slot).ok())
+            .and_then(|u| u.get_callsign().ok())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| player.name.to_string());
+
+        let mut contacts: Vec<GciContact> = ctx
+            .ewr
+            .gci_contacts(now, db, ucid, player, inst)
+            .into_iter()
+            .map(|(b, cls, typ, vspd)| GciContact {
+                brg: b.bearing,
+                rng_m: b.range,
+                alt_m: b.altitude as i32,
+                hdg: b.heading,
+                spd_ms: b.speed,
+                vspd_ms: vspd,
+                aspect: match b.aspect {
+                    Aspect::Hot => GciAspect::Hot,
+                    Aspect::FlankLeft | Aspect::FlankRight => GciAspect::Flank,
+                    Aspect::BeamLeft | Aspect::BeamRight => GciAspect::Beam,
+                    Aspect::Cold => GciAspect::Cold,
+                },
+                class: match cls {
+                    ContactClass::Unknown => 0,
+                    ContactClass::Fighter => 1,
+                    ContactClass::Bomber => 2,
+                    ContactClass::Helicopter => 3,
+                },
+                type_name: typ.map(|t| t.to_string()),
+                group_size: 1,
+                stale: b.stale,
+            })
+            .collect();
+        cluster_gci_contacts(&mut contacts);
+
+        // SAM threats: any live enemy SAM search radar whose nominal
+        // engagement zone currently covers this flight.
+        let fp = Vector2::new(inst.position.p.x, inst.position.p.z);
+        let mut sam_threats: Vec<GciSamThreat> = enemy_sams
+            .iter()
+            .filter_map(|(sp, range)| {
+                let dn = sp.x - fp.x;
+                let de = sp.y - fp.y;
+                let d = (dn * dn + de * de).sqrt();
+                if d <= *range as f64 {
+                    Some(GciSamThreat {
+                        brg: ((de.atan2(dn).to_degrees() + 360.0) % 360.0) as u16,
+                        rng_m: d as u32,
+                        site_range_m: *range,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        sam_threats.sort_by_key(|t| t.rng_m);
+        sam_threats.truncate(3);
+
+        // SAM launches: enemy SAM missiles fired within ~40 nm in the last few
+        // seconds — a "SAM launch, defend" call.
+        let mut sam_launches: Vec<GciSamThreat> = ctx
+            .ewr
+            .recent_sam_launches_near(fp, side, 74_000.0, now)
+            .into_iter()
+            .map(|sp| {
+                let dn = sp.x - fp.x;
+                let de = sp.y - fp.y;
+                GciSamThreat {
+                    brg: ((de.atan2(dn).to_degrees() + 360.0) % 360.0) as u16,
+                    rng_m: (dn * dn + de * de).sqrt() as u32,
+                    site_range_m: 0,
+                }
+            })
+            .collect();
+        sam_launches.sort_by_key(|t| t.rng_m);
+        sam_launches.truncate(2);
+
+        // Splash: hostile air killed near the flight in the last few seconds.
+        let mut splashes: Vec<GciSamThreat> = ctx
+            .ewr
+            .recent_air_kills_near(fp, side, 74_000.0, now)
+            .into_iter()
+            .map(|kp| {
+                let dn = kp.x - fp.x;
+                let de = kp.y - fp.y;
+                GciSamThreat {
+                    brg: ((de.atan2(dn).to_degrees() + 360.0) % 360.0) as u16,
+                    rng_m: (dn * dn + de * de).sqrt() as u32,
+                    site_range_m: 0,
+                }
+            })
+            .collect();
+        splashes.sort_by_key(|t| t.rng_m);
+        splashes.truncate(2);
+
+        let v = inst.velocity;
+        let heading = if v.x.abs() > f64::EPSILON || v.z.abs() > f64::EPSILON {
+            ((v.z.atan2(v.x).to_degrees() + 360.0) % 360.0) as u16
+        } else {
+            0
+        };
+        let speed_ms = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt() as u16;
+        let (lat, lon) = to_ll(inst.position.p.x, inst.position.p.z);
+        flights.push(GciFlight {
+            ucid: ucid.to_string(),
+            callsign,
+            player_name: player.name.to_string(),
+            lat,
+            lon,
+            alt_m: inst.position.p.y as i32,
+            heading,
+            speed_ms,
+            units: gci_units.map(|u| match u {
+                EwrUnits::Metric => GciUnits::Metric,
+                EwrUnits::Imperial => GciUnits::Imperial,
+            }),
+            reference: gci_ref.map(GciRef::from_u8),
+            contacts,
+            sam_threats,
+            sam_launches,
+            splashes,
+        });
+    }
+
+    // Coalition-wide: EWR net health, friendly ejections, support assets.
+    let radar_up = db.radar_donors().any(|d| d.side == side);
+    let ejections: Vec<(f64, f64)> = ctx
+        .ewr
+        .recent_ejections(side, now)
+        .into_iter()
+        .map(|p| to_ll(p.x, p.y))
+        .collect();
+    let support: Vec<GciSupport> = {
+        use bfprotocols::cfg::UnitTag;
+        db.persisted
+            .units
+            .into_iter()
+            .filter(|(_, u)| u.side == side && !u.dead)
+            .filter_map(|(_, u)| {
+                let t = u.typ.to_string();
+                let awacs = db
+                    .ephemeral
+                    .cfg
+                    .unit_classification
+                    .get(&u.typ)
+                    .map(|tags| tags.contains(UnitTag::AWACS))
+                    .unwrap_or(false)
+                    || t.contains("A-50")
+                    || t.contains("E-3")
+                    || t.contains("E-2")
+                    || t.contains("KJ-2000");
+                let tanker = t.contains("KC-")
+                    || t.contains("KC130")
+                    || t.contains("KC135")
+                    || t.contains("IL-78")
+                    || t.contains("S-3B Tanker");
+                let kind = if awacs {
+                    "awacs"
+                } else if tanker {
+                    "tanker"
+                } else {
+                    return None;
+                };
+                let (lat, lon) = to_ll(u.pos.x, u.pos.y);
+                Some(GciSupport {
+                    kind: kind.to_string(),
+                    lat,
+                    lon,
+                    alt_m: u.position.p.y as i32,
+                    callsign: None,
+                })
+            })
+            .collect()
+    };
+
+    GciControlPicture {
+        side,
+        time: now,
+        bullseye,
+        flights,
+        radar_up,
+        ejections,
+        support,
+    }
+}
+
+/// Merge hostile contacts within ~9 km and ~25° of heading of each other into a
+/// single called "group", bumping `group_size`. Input must be sorted
+/// nearest-first; output stays sorted. Cheap O(n²) — n is capped at 12.
+fn cluster_gci_contacts(contacts: &mut Vec<bfprotocols::gci::GciContact>) {
+    let mut merged: Vec<bfprotocols::gci::GciContact> = Vec::with_capacity(contacts.len());
+    'next: for c in contacts.drain(..) {
+        for g in merged.iter_mut() {
+            let dr = (g.rng_m as i32 - c.rng_m as i32).abs();
+            let db_ = {
+                let d = (g.brg as i32 - c.brg as i32).abs() % 360;
+                d.min(360 - d)
+            };
+            let dh = {
+                let d = (g.hdg as i32 - c.hdg as i32).abs() % 360;
+                d.min(360 - d)
+            };
+            if dr <= 9000 && db_ <= 10 && dh <= 25 {
+                g.group_size = g.group_size.saturating_add(1);
+                if !c.stale {
+                    g.stale = false;
+                }
+                continue 'next;
+            }
+        }
+        merged.push(c);
+    }
+    *contacts = merged;
+}
+
 /// Snapshots the engine/API perf counters accumulated so far *this session*
 /// (the same globals admin_shutdown reads to build Stat::SessionEnd), so
 /// bfdb's perf endpoint can show live numbers throughout an active round
@@ -2282,6 +2558,13 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 match serde_json::to_string(&picture) {
                     Ok(json) => replies.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize tacmap: {e:?}"),
+                }
+            }
+            AdminCommand::QueryGci { side } => {
+                let picture = query_gci(ctx, lua, side);
+                match serde_json::to_string(&picture) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize gci picture: {e:?}"),
                 }
             }
             // Action API commands

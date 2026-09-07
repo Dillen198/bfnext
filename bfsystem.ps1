@@ -29,6 +29,15 @@ $configPath = Join-Path $dcsWriteDir "campaign.json"
 # set, GET/POST to that endpoint fails with "engine config not configured".
 $engineConfigPath = Join-Path $dcsWriteDir "ODFv2_CFG"
 
+# Path to the live GCI config JSON — the proactive AWACS-style SRS callout
+# system (see gci.sample.json in the repo root). bfdb only enables GCI when
+# this file exists AND $netidxBase below is set (it needs --base to query the
+# engine). bfdb opens two persistent SRS connections (blue + red) and needs
+# opus.dll from your DCS-SimpleRadio-Standalone folder copied next to bfdb.exe
+# (or opusDllPath set in gci.json). On an External AWACS Mode server, set the
+# coalition passwords in gci.json. Delete/rename the file to turn GCI off.
+$gciConfigPath = Join-Path $dcsWriteDir "gci.json"
+
 # Path to the stats JSONL file written by bflib
 # bflib writes this file as missions run — e.g. DCS\Logs\stats.jsonl
 $statsJsonl = Join-Path $dcsWriteDir "Logs\stats.jsonl"
@@ -213,6 +222,9 @@ function Start-VECTOR {
         }
         if ($using:engineConfigPath -ne "") {
             $argList += "--engine-config", $using:engineConfigPath
+        }
+        if ($using:gciConfigPath -ne "" -and (Test-Path $using:gciConfigPath)) {
+            $argList += "--gci-config", $using:gciConfigPath
         }
         if ($using:statsDir -ne "") {
             $argList += "--stats-dir", $using:statsDir

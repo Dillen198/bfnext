@@ -244,6 +244,14 @@ struct PlayerState {
     units: EwrUnits,
     last: DateTime<Utc>,
     last_spike_warned: DateTime<Utc>,
+    /// Live voice GCI: whether this player wants unsolicited GCI calls.
+    gci_enabled: bool,
+    /// Live voice GCI: this player's explicit spoken-unit override. `None`
+    /// means bfdb should use the server default.
+    gci_units: Option<EwrUnits>,
+    /// Live voice GCI: position reference — `Some(0)` BRAA (own aircraft),
+    /// `Some(1)` bullseye, `Some(2)` clock, `None` server default.
+    gci_ref: Option<u8>,
 }
 
 impl Default for PlayerState {
@@ -253,6 +261,9 @@ impl Default for PlayerState {
             units: EwrUnits::default(),
             last: DateTime::default(),
             last_spike_warned: DateTime::default(),
+            gci_enabled: true,
+            gci_units: None,
+            gci_ref: None,
         }
     }
 }
@@ -470,6 +481,16 @@ pub struct Ewr {
     /// so a site doesn't flicker between AlarmState values every tick and
     /// doesn't snap hot the instant a cue appears -- see decide_hot_state.
     sam_emcon: FxHashMap<GroupId, SamEmconState>,
+    /// Live voice GCI: recent enemy SAM missile launches, for "SAM launch,
+    /// defend" calls. `(launch site 2D pos, launcher side, launch time)`.
+    /// Populated from Shot events, expired lazily.
+    sam_launches: Vec<(Vector2, Side, DateTime<Utc>)>,
+    /// Live voice GCI: recent air kills for "splash" calls.
+    /// `(kill 2D pos, VICTIM side, time)`.
+    air_kills: Vec<(Vector2, Side, DateTime<Utc>)>,
+    /// Live voice GCI: recent ejections for "chute observed" calls.
+    /// `(2D pos, EJECTED PILOT side, time)`.
+    ejections: Vec<(Vector2, Side, DateTime<Utc>)>,
 }
 
 /// Per-SAM-site engagement doctrine state (see Ewr::decide_hot_state).
@@ -485,6 +506,29 @@ struct SamEmconState {
     /// Scheduled time this site is allowed to go hot after first detecting
     /// a qualifying cue, for the randomized per-site reaction delay.
     pending_hot_at: Option<DateTime<Utc>>,
+}
+
+/// Shared filter for the GCI event vecs: entries whose side matches `want`,
+/// within `radius_m` of `pos`, no older than `max_secs`.
+fn near(
+    events: &[(Vector2, Side, DateTime<Utc>)],
+    pos: Vector2,
+    want: Side,
+    radius_m: f64,
+    max_secs: i64,
+    now: DateTime<Utc>,
+) -> SmallVec<[Vector2; 4]> {
+    let r2 = radius_m * radius_m;
+    events
+        .iter()
+        .filter(|(_, s, t)| *s == want && (now - *t).num_seconds() <= max_secs)
+        .filter(|(p, _, _)| {
+            let dn = p.x - pos.x;
+            let de = p.y - pos.y;
+            dn * dn + de * de <= r2
+        })
+        .map(|(p, _, _)| *p)
+        .collect()
 }
 
 impl Ewr {
@@ -1394,6 +1438,167 @@ impl Ewr {
 
     pub fn set_units(&mut self, ucid: &Ucid, units: EwrUnits) {
         self.player_state.entry(ucid.clone()).or_default().units = units;
+    }
+
+    /// Live voice GCI: is this player opted in to unsolicited GCI calls, what
+    /// spoken-unit override, and what position-reference override (if any) have
+    /// they set? Read by `crate::admin::query_gci`.
+    pub fn gci_prefs(&self, ucid: &Ucid) -> (bool, Option<EwrUnits>, Option<u8>) {
+        self.player_state
+            .get(ucid)
+            .map(|s| (s.gci_enabled, s.gci_units, s.gci_ref))
+            .unwrap_or((true, None, None))
+    }
+
+    /// Live voice GCI: set this player's position-reference override
+    /// (`Some(0)` BRAA, `Some(1)` bullseye, `Some(2)` clock, `None` default).
+    pub fn gci_set_reference(&mut self, ucid: &Ucid, refmode: Option<u8>) {
+        self.player_state.entry(ucid.clone()).or_default().gci_ref = refmode;
+    }
+
+    /// Live voice GCI: record an enemy SAM missile launch (from a Shot event)
+    /// so `crate::admin::query_gci` can raise a "SAM launch, defend" call for
+    /// nearby friendly flights.
+    pub fn record_sam_launch(&mut self, pos: Vector2, side: Side, now: DateTime<Utc>) {
+        self.sam_launches.retain(|(_, _, t)| (now - *t).num_seconds() < 40);
+        self.sam_launches.push((pos, side, now));
+    }
+
+    /// Live voice GCI: enemy SAM launches within `radius_m` of `pos` in the
+    /// last 30s, as 2D positions.
+    pub fn recent_sam_launches_near(
+        &self,
+        pos: Vector2,
+        enemy_of: Side,
+        radius_m: f64,
+        now: DateTime<Utc>,
+    ) -> SmallVec<[Vector2; 4]> {
+        near(&self.sam_launches, pos, enemy_of.opposite(), radius_m, 30, now)
+    }
+
+    /// Live voice GCI: record a hostile air kill for "splash" calls.
+    pub fn record_air_kill(&mut self, pos: Vector2, victim_side: Side, now: DateTime<Utc>) {
+        self.air_kills.retain(|(_, _, t)| (now - *t).num_seconds() < 30);
+        self.air_kills.push((pos, victim_side, now));
+    }
+
+    /// Live voice GCI: hostile air killed within `radius_m` of `pos` in the
+    /// last 12s ("splash").
+    pub fn recent_air_kills_near(
+        &self,
+        pos: Vector2,
+        friendly: Side,
+        radius_m: f64,
+        now: DateTime<Utc>,
+    ) -> SmallVec<[Vector2; 4]> {
+        near(&self.air_kills, pos, friendly.opposite(), radius_m, 12, now)
+    }
+
+    /// Live voice GCI: record an ejection for "chute observed" calls.
+    pub fn record_ejection(&mut self, pos: Vector2, pilot_side: Side, now: DateTime<Utc>) {
+        self.ejections.retain(|(_, _, t)| (now - *t).num_seconds() < 90);
+        self.ejections.push((pos, pilot_side, now));
+    }
+
+    /// Live voice GCI: friendly ejections in the last 60s.
+    pub fn recent_ejections(&self, side: Side, now: DateTime<Utc>) -> SmallVec<[Vector2; 4]> {
+        self.ejections
+            .iter()
+            .filter(|(_, s, t)| *s == side && (now - *t).num_seconds() <= 60)
+            .map(|(p, _, _)| *p)
+            .collect()
+    }
+
+    /// Live voice GCI: toggle this player's opt-in. Returns the new state.
+    pub fn gci_toggle(&mut self, ucid: &Ucid) -> bool {
+        let s = self.player_state.entry(ucid.clone()).or_default();
+        s.gci_enabled = !s.gci_enabled;
+        s.gci_enabled
+    }
+
+    /// Live voice GCI: set this player's spoken-unit override
+    /// (`None` = follow the server default).
+    pub fn gci_set_units(&mut self, ucid: &Ucid, units: Option<EwrUnits>) {
+        self.player_state.entry(ucid.clone()).or_default().gci_units = units;
+    }
+
+    /// Read-only bandit snapshot for the live voice GCI
+    /// (`crate::admin::query_gci`). Unlike [`Self::where_chicken`] this never
+    /// mutates player or track state; magnitudes are raw SI (metres, m/s) and
+    /// bfdb converts to the flight's chosen units at render time. Nearest-first,
+    /// capped at 12 groups; each entry is paired with its coarse class.
+    pub fn gci_contacts(
+        &self,
+        now: DateTime<Utc>,
+        db: &crate::db::Db,
+        ucid: &Ucid,
+        player: &Player,
+        inst: &InstancedPlayer,
+    ) -> SmallVec<[(GibBraa, ContactClass, Option<CompactString>, i16); 16]> {
+        let side = player.side;
+        let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
+        let mut reports: SmallVec<[(GibBraa, ContactClass, Option<CompactString>, i16); 16]> =
+            smallvec![];
+        let Some(tracks) = self.tracks.get(&side) else {
+            return reports;
+        };
+        let ownship = EnId::Player(*ucid);
+        for (tid, track) in tracks.iter() {
+            if tid == &ownship || track.side == side {
+                continue;
+            }
+            let age = (now - track.last).num_seconds();
+            if age > DROP_AGE_SECS {
+                continue;
+            }
+            let cpos = Vector2::new(track.pos.p.x, track.pos.p.z);
+            let range = na::distance(&pos.into(), &cpos.into());
+            let bearing = radians_to_degrees(azumith2d_to(pos, cpos));
+            let heading = radians_to_degrees(azumith3d(track.pos.x.0));
+            let speed = track.velocity.magnitude();
+            let altitude = track.pos.p.y;
+            let aspect = Aspect::compute(bearing, heading, pos, cpos);
+            let braa = GibBraa {
+                range: range as u32,
+                heading: heading as u16,
+                altitude: altitude.max(0.0) as u32,
+                bearing: bearing as u16,
+                age: age as u16,
+                speed: speed as u16,
+                aspect,
+                units: EwrUnits::Metric,
+                stale: age >= STALE_AGE_SECS,
+                detected_by: track.detected_by,
+                converted: false,
+            };
+            let vspd = track.velocity.y as i16;
+            reports.push((
+                braa,
+                Self::classify_contact(tid, db),
+                Self::contact_type(tid, db),
+                vspd,
+            ));
+        }
+        reports.sort_by_key(|(r, _, _, _)| r.range);
+        while reports.len() > 12 {
+            reports.pop();
+        }
+        reports
+    }
+
+    /// Raw DCS type name of a tracked contact (e.g. "MiG-29A"), when known.
+    fn contact_type(id: &EnId, db: &crate::db::Db) -> Option<CompactString> {
+        let typ = match id {
+            EnId::Player(ucid) => db
+                .persisted
+                .players
+                .get(ucid)
+                .and_then(|p| p.current_slot.as_ref())
+                .and_then(|(_, inst)| inst.as_ref())
+                .map(|inst| inst.typ.clone()),
+            EnId::Unit(uid) => db.persisted.units.get(uid).map(|u| u.typ.clone()),
+        };
+        typ.map(|t| CompactString::from(t.to_string()))
     }
 
     pub fn where_chicken(

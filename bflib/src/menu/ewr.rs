@@ -139,6 +139,75 @@ fn ewr_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
     Ok(())
 }
 
+fn gci_toggle(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let st = if ctx.ewr.gci_toggle(&ucid) { "enabled" } else { "disabled" };
+        ctx.db.ephemeral.msgs().panel_to_group(
+            5,
+            false,
+            gid,
+            format_compact!("GCI voice calls are {st}"),
+        );
+    }
+    Ok(())
+}
+
+fn gci_units_set(lua: MizLua, gid: GroupId, units: Option<crate::ewr::EwrUnits>, label: &str) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        ctx.ewr.gci_set_units(&ucid, units);
+        ctx.db.ephemeral.msgs().panel_to_group(
+            5,
+            false,
+            gid,
+            format_compact!("GCI calls will use {label} units"),
+        );
+    }
+    Ok(())
+}
+
+fn gci_units_imperial(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_units_set(lua, gid, Some(crate::ewr::EwrUnits::Imperial), "imperial")
+}
+
+fn gci_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_units_set(lua, gid, Some(crate::ewr::EwrUnits::Metric), "metric")
+}
+
+fn gci_units_auto(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_units_set(lua, gid, None, "the server default")
+}
+
+fn gci_ref_set(lua: MizLua, gid: GroupId, refmode: Option<u8>, label: &str) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        ctx.ewr.gci_set_reference(&ucid, refmode);
+        ctx.db.ephemeral.msgs().panel_to_group(
+            5,
+            false,
+            gid,
+            format_compact!("GCI calls will use {label}"),
+        );
+    }
+    Ok(())
+}
+
+fn gci_ref_braa(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_ref_set(lua, gid, Some(0), "BRAA from your aircraft")
+}
+
+fn gci_ref_bullseye(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_ref_set(lua, gid, Some(1), "bullseye reference")
+}
+
+fn gci_ref_clock(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_ref_set(lua, gid, Some(2), "clock position")
+}
+
 fn ground_intel_report(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
@@ -191,6 +260,57 @@ pub(super) fn add_ewr_menu_for_group(mc: &MissionCommands, group: GroupId) -> Re
         "Ground Intel".into(),
         Some(root.clone()),
         ground_intel_report,
+        group,
+    )?;
+
+    let gci = mc.add_submenu_for_group(group, "GCI Voice".into(), Some(root.clone()))?;
+    mc.add_command_for_group(
+        group,
+        "Toggle GCI Calls".into(),
+        Some(gci.clone()),
+        gci_toggle,
+        group,
+    )?;
+    mc.add_command_for_group(
+        group,
+        "Units to Imperial".into(),
+        Some(gci.clone()),
+        gci_units_imperial,
+        group,
+    )?;
+    mc.add_command_for_group(
+        group,
+        "Units to Metric".into(),
+        Some(gci.clone()),
+        gci_units_metric,
+        group,
+    )?;
+    mc.add_command_for_group(
+        group,
+        "Units to Server Default".into(),
+        Some(gci.clone()),
+        gci_units_auto,
+        group,
+    )?;
+    mc.add_command_for_group(
+        group,
+        "Reference: BRAA".into(),
+        Some(gci.clone()),
+        gci_ref_braa,
+        group,
+    )?;
+    mc.add_command_for_group(
+        group,
+        "Reference: Bullseye".into(),
+        Some(gci.clone()),
+        gci_ref_bullseye,
+        group,
+    )?;
+    mc.add_command_for_group(
+        group,
+        "Reference: Clock".into(),
+        Some(gci.clone()),
+        gci_ref_clock,
         group,
     )?;
     Ok(())
