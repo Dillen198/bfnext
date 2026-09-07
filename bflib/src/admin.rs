@@ -197,6 +197,9 @@ pub enum AdminCommand {
     QueryBriefing {
         side: Side,
     },
+    QueryTacmap {
+        side: Side,
+    },
     // Action API commands
     SpawnDeployable {
         side: Side,
@@ -1605,6 +1608,175 @@ pub(crate) fn query_briefing(ctx: &Context, lua: MizLua, side: Side) -> Briefing
     }
 }
 
+/// Build one coalition's fog-of-war tactical picture for the dashboard
+/// TACMAP: the air tracks its EWR/AWACS network is painting plus its own
+/// blue-force air, the ground/naval contacts in its ELINT/JTAC intel
+/// database, and its friendly radar coverage rings. Positions are converted
+/// to lat/lon here (bfdb has no DCS coord library). Bullseye is filled in by
+/// bfdb from the `Export.lua` feed.
+pub(crate) fn query_tacmap(ctx: &Context, lua: MizLua, side: Side) -> bfprotocols::tacmap::TacPicture {
+    use bfprotocols::tacmap::{
+        AirClass, AirTrack, GroundClass, GroundContact, GroundSource, Iff, RadarRing, TacPicture,
+        TrackSource,
+    };
+    use crate::db::intel::{IntelSource, IntelUnitClass};
+    use crate::ewr::ContactClass;
+
+    let now = Utc::now();
+    let db = &ctx.db;
+    let coord = dcso3::coord::Coord::singleton(lua).ok();
+    let to_ll = |x: f64, z: f64| -> (f64, f64) {
+        coord
+            .as_ref()
+            .and_then(|c| c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(x, 0.0, z))).ok())
+            .map(|ll| (ll.latitude, ll.longitude))
+            .unwrap_or((0.0, 0.0))
+    };
+
+    let air = ctx
+        .ewr
+        .air_picture_for(side, now, db)
+        .into_iter()
+        .map(|c| {
+            let (lat, lon) = to_ll(c.pos.p.x, c.pos.p.z);
+            let v = c.velocity;
+            let heading = if v.x.abs() > f64::EPSILON || v.z.abs() > f64::EPSILON {
+                (v.z.atan2(v.x).to_degrees() + 360.0) % 360.0
+            } else {
+                0.0
+            };
+            let speed_kts = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt() * 1.94384;
+            let source = if c.friendly && !c.detected_by.is_ground() && !c.detected_by.is_airborne() {
+                TrackSource::Datalink
+            } else if c.detected_by.is_ground() && c.detected_by.is_airborne() {
+                TrackSource::Fused
+            } else if c.detected_by.is_airborne() {
+                TrackSource::Awacs
+            } else {
+                TrackSource::GroundRadar
+            };
+            AirTrack {
+                id: c.id,
+                side: Some(c.side),
+                lat,
+                lon,
+                alt_m: c.pos.p.y,
+                heading,
+                speed_kts,
+                vspd_ms: v.y,
+                iff: if c.friendly { Iff::Friendly } else { Iff::Hostile },
+                class: match c.class {
+                    ContactClass::Fighter => AirClass::Fighter,
+                    ContactClass::Bomber => AirClass::Bomber,
+                    ContactClass::Helicopter => AirClass::Helo,
+                    ContactClass::Unknown => AirClass::Unknown,
+                },
+                age_s: c.age_s,
+                stale: c.stale,
+                jammed: false,
+                source,
+                label: None,
+            }
+        })
+        .collect();
+
+    // Known emitter ranges for auto threat rings: every live enemy SAM/AAA
+    // search-radar unit, as (position, detection-range m). An air-defence
+    // contact inherits the widest range of any such unit inside its
+    // uncertainty bubble — enough to identify the site without leaking its
+    // exact type.
+    let cfg = &db.ephemeral.cfg;
+    let ad_emitters: Vec<(Vector2, f32)> = db
+        .persisted
+        .groups
+        .into_iter()
+        .filter(|(_, g)| g.side == side.opposite())
+        .flat_map(|(_, g)| g.units.into_iter())
+        .filter_map(|uid| db.persisted.units.get(uid))
+        .filter(|u| !u.dead)
+        .filter_map(|u| cfg.ground_radar_ewrs.get(&u.typ).map(|e| (u.pos, e.range as f32)))
+        .collect();
+    let threat_range_for = |cpos: Vector2, uncertainty_m: f32| -> Option<f32> {
+        let r = (uncertainty_m as f64).max(2500.0);
+        let r2 = r * r;
+        ad_emitters
+            .iter()
+            .filter(|(p, _)| {
+                let dx = p.x - cpos.x;
+                let dy = p.y - cpos.y;
+                dx * dx + dy * dy <= r2
+            })
+            .map(|(_, range)| *range)
+            .fold(None, |acc: Option<f32>, v| Some(acc.map_or(v, |a| a.max(v))))
+    };
+
+    let ground = db
+        .ephemeral
+        .intel_db
+        .contacts_for(side)
+        .map(|c| {
+            let (lat, lon) = to_ll(c.pos.x, c.pos.y);
+            let threat_range_m = if matches!(c.unit_class, IntelUnitClass::AirDefense) {
+                threat_range_for(c.pos, c.pos_uncertainty_m)
+            } else {
+                None
+            };
+            GroundContact {
+                id: c.id.raw(),
+                side: Some(c.enemy_side),
+                lat,
+                lon,
+                class: match c.unit_class {
+                    IntelUnitClass::Armor => GroundClass::Armor,
+                    IntelUnitClass::AirDefense => GroundClass::AirDefense,
+                    IntelUnitClass::Artillery => GroundClass::Artillery,
+                    IntelUnitClass::Infantry => GroundClass::Infantry,
+                    IntelUnitClass::AirBase => GroundClass::Airbase,
+                    IntelUnitClass::Naval => GroundClass::Naval,
+                    IntelUnitClass::Unknown => GroundClass::Unknown,
+                },
+                count: c.unit_count,
+                confidence: c.confidence,
+                uncertainty_m: c.pos_uncertainty_m,
+                source: match c.source {
+                    IntelSource::ReconFlight => GroundSource::Recon,
+                    IntelSource::SpecialForces => GroundSource::SpecialForces,
+                    IntelSource::Awacs => GroundSource::Awacs,
+                    IntelSource::EwrFusion => GroundSource::EwrFusion,
+                    IntelSource::Jtac => GroundSource::Jtac,
+                    IntelSource::HumanInt => GroundSource::HumanInt,
+                },
+                age_s: (now - c.detected_at).num_seconds().max(0) as u32,
+                threat_range_m,
+            }
+        })
+        .collect();
+
+    let radar_rings = db
+        .radar_donors()
+        .filter(|d| d.side == side)
+        .map(|d| {
+            let (lat, lon) = to_ll(d.pos.p.x, d.pos.p.z);
+            RadarRing {
+                lat,
+                lon,
+                range_m: d.range as f64,
+                airborne: d.airborne,
+                alive: true,
+            }
+        })
+        .collect();
+
+    TacPicture {
+        side: Some(side),
+        time: now,
+        bullseye: vec![],
+        air,
+        ground,
+        radar_rings,
+    }
+}
+
 /// Snapshots the engine/API perf counters accumulated so far *this session*
 /// (the same globals admin_shutdown reads to build Stat::SessionEnd), so
 /// bfdb's perf endpoint can show live numbers throughout an active round
@@ -2103,6 +2275,13 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 match serde_json::to_string(&briefing) {
                     Ok(json) => replies.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize briefing: {e:?}"),
+                }
+            }
+            AdminCommand::QueryTacmap { side } => {
+                let picture = query_tacmap(ctx, lua, side);
+                match serde_json::to_string(&picture) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize tacmap: {e:?}"),
                 }
             }
             // Action API commands

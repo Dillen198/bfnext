@@ -102,7 +102,9 @@ fn flags(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
     if obj.threatened() {
         s.push_str(" [THREAT]");
     }
-    if obj.captureable() {
+    if obj.in_capture_hold() {
+        s.push_str(" [CONSOLIDATING]");
+    } else if obj.captureable() {
         s.push_str(" [CAP]");
     }
     if db.capture_in_progress(oid) {
@@ -197,9 +199,58 @@ fn repair_state(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
     format_compact!("active -- next pulse in ~{:.0}m", (remaining / 60.0).ceil())
 }
 
+/// Attacker-side reading of whether a knocked-down objective will heal back
+/// out of capturable range, and what is stopping it if not. Mirrors the
+/// gating in `maybe_do_repairs` / `repair_objective`.
+fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
+    if obj.health() >= 100 {
+        return CompactString::from("at full strength");
+    }
+    if obj.health() == 0 && obj.owner() != Side::Neutral {
+        return CompactString::from(
+            "garrison wiped -- base will fall to NEUTRAL, then must be retaken with troops",
+        );
+    }
+    if obj.owner() == Side::Neutral {
+        return CompactString::from("NEUTRAL -- does not self-repair, must be retaken with troops");
+    }
+    if obj.threatened() {
+        return CompactString::from("FROZEN while you keep units within sight of the base");
+    }
+    if db.capture_in_progress(oid) {
+        return CompactString::from("FROZEN while the capture timer is running");
+    }
+    let cfg = &db.ephemeral.cfg;
+    if obj.supply() < cfg.repair_supply_cost {
+        return format_compact!(
+            "STARVED -- supply {}% is below the {}% a repair pulse costs; cannot heal until resupplied",
+            obj.supply(),
+            cfg.repair_supply_cost
+        );
+    }
+    if obj.logi() == 0 && !obj.kind().is_special_sam_site() {
+        return CompactString::from("logistics destroyed (logi 0%) -- cannot self-repair");
+    }
+    let logi = if obj.kind().is_special_sam_site() {
+        1.0
+    } else {
+        (obj.logi() as f32 / 100.0).max(0.01)
+    };
+    let pulse = (cfg.repair_time as f32 / logi).max(1.0);
+    let elapsed = (chrono::Utc::now() - obj.last_change()).num_seconds().max(0) as f32;
+    let remaining = (pulse - elapsed).max(0.0);
+    format_compact!(
+        "WILL self-repair -- next pulse ~{:.0}m; act fast or it heals back above 20%",
+        (remaining / 60.0).ceil()
+    )
+}
+
 fn capture_state(frac: f64, obj: &Objective) -> CompactString {
     if obj.in_capture_hold() {
-        return CompactString::from("HELD post-capture -- takeable now by either side");
+        return CompactString::from(
+            "HELD -- new owner is consolidating; you can't start a capture timer here, \
+             wipe the holding troops to force it Neutral",
+        );
     }
     if obj.kind().is_special_sam_site() {
         return if obj.health() == 0 {
@@ -361,10 +412,16 @@ fn contested(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
             CompactString::from("")
         };
         let tag = if being_taken { "BEING TAKEN" } else { "capturable" };
+        let why = ctx
+            .db
+            .capture_diagnosis(oid, arg.snd)
+            .ok()
+            .map(|d| d.one_liner())
+            .unwrap_or_default();
         lines.push((
             r,
             format_compact!(
-                "{} [{}] {}{br} HP:{}% -- {tag}\n",
+                "{} [{}] {}{br} HP:{}% -- {tag}\n    {why}\n",
                 obj.name(),
                 fmt_kind(obj.kind()),
                 side_tag(obj.owner()),
@@ -419,6 +476,153 @@ fn under_attack(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
         report.push_str("No friendly bases are under threat.\n");
     }
     ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
+    Ok(())
+}
+
+fn build_capture_advisor_card(
+    ctx: &Context,
+    lua: MizLua,
+    oid: &ObjectiveId,
+    viewer: Side,
+    from: Option<Vector2>,
+) -> CompactString {
+    let db = &ctx.db;
+    let obj = match db.objective(oid) {
+        Ok(o) => o,
+        Err(_) => return CompactString::from("that objective no longer exists"),
+    };
+    let diag = match db.capture_diagnosis(oid, viewer) {
+        Ok(d) => d,
+        Err(_) => return CompactString::from("could not read capture status"),
+    };
+    let mut s = format_compact!("===== CAPTURE ADVISOR: {} =====\n", diag.obj_name);
+    let _ = write!(s, "{} - owned by {}\n", fmt_kind(obj.kind()), side_tag(diag.owner));
+    if let Some((ll, mgrs)) = fmt_position(lua, obj.pos()) {
+        let _ = write!(s, "LL:   {ll}\nMGRS: {mgrs}\n");
+    }
+    if let Some(p) = from {
+        let (b, r) = brg_rng(p, obj.pos());
+        let _ = write!(s, "From you: {b:03}\u{b0} / {r:.1} nm\n");
+    }
+    let _ = write!(s, "Zone radius: {:.0} m\n", obj.radius());
+    let _ = write!(
+        s,
+        "Health {}%   Logi {}%   Supply {}%   Infantry {}\n",
+        obj.health(),
+        obj.logi(),
+        obj.supply(),
+        obj.infantry()
+    );
+    let _ = write!(s, "----------------------------------\n");
+
+    if diag.owner == viewer {
+        let _ = write!(s, "You already own this objective.\n");
+        return s;
+    }
+
+    if diag.in_capture_hold {
+        let _ = write!(
+            s,
+            "STATUS: post-capture hold -- takeable NOW by either side.\n"
+        );
+    } else if diag.obj_eligible {
+        let _ = write!(s, "STATUS: objective is ELIGIBLE for capture.\n");
+    } else {
+        let _ = write!(s, "STATUS: objective NOT eligible yet --\n");
+        for b in &diag.obj_blockers {
+            let _ = write!(s, "  - {b}\n");
+        }
+    }
+
+    if let Some(cd) = diag.cooldown_secs {
+        let _ = write!(
+            s,
+            "COOLDOWN: base changed hands recently -- no capture timer can start for {cd}s.\n"
+        );
+    }
+
+    if obj.health() < 100 && !diag.in_capture_hold {
+        let _ = write!(s, "REPAIR: {}\n", repair_outlook(db, oid, obj));
+    }
+
+    if let Some((side, held, base)) = diag.in_progress {
+        if side == viewer {
+            let _ = write!(
+                s,
+                "IN PROGRESS: your side is capturing -- held {held}s (~{base}s needed, less with more squads). Hold the zone.\n"
+            );
+        } else {
+            let _ = write!(
+                s,
+                "IN PROGRESS: {side:?} is capturing this base -- held {held}s. Kill their troops to stop it.\n"
+            );
+        }
+    }
+
+    let _ = write!(s, "----------------------------------\n");
+    if diag.troops.is_empty() {
+        let _ = write!(s, "YOUR CAPTURE TROOPS: none within 30 nm.\n");
+        let _ = write!(
+            s,
+            "  Deploy capture-capable troops and move them into the zone.\n"
+        );
+    } else {
+        let _ = write!(s, "YOUR TROOPS NEAR THIS BASE:\n");
+        for t in &diag.troops {
+            let loc = if t.in_zone {
+                CompactString::from("in the zone")
+            } else {
+                format_compact!("{:.0} m outside the zone edge", t.outside_by)
+            };
+            let cap = if t.can_capture {
+                ""
+            } else {
+                "  <-- CANNOT capture (troop type)"
+            };
+            let _ = write!(s, "  - {}: {}{}\n", t.name, loc, cap);
+        }
+    }
+
+    let _ = write!(s, "----------------------------------\n");
+    let _ = write!(s, "BOTTOM LINE: {}\n", diag.one_liner());
+    s
+}
+
+fn capture_advisor_by_oid(lua: MizLua, arg: ArgTuple<GroupId, ObjectiveId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (viewer, from) = match slot_for_group(lua, ctx, &arg.fst) {
+        Ok((side, slot)) => (side, player_world_pos(ctx, &slot)),
+        Err(_) => (Side::Neutral, None),
+    };
+    let report = build_capture_advisor_card(ctx, lua, &arg.snd, viewer, from);
+    ctx.db.ephemeral.msgs().panel_to_group(45, false, arg.fst, report);
+    Ok(())
+}
+
+fn capture_advisor_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let from = from_pos(ctx, lua, &arg.fst);
+    let side = arg.snd;
+    let pick = {
+        let mut best: Option<(u8, f64, ObjectiveId)> = None;
+        for (oid, obj) in ctx.db.objectives() {
+            if obj.owner() == side {
+                continue;
+            }
+            let hot = obj.captureable() || ctx.db.capture_in_progress(oid);
+            let rank = if hot { 0u8 } else { 1u8 };
+            let dist = from.map(|p| brg_rng(p, obj.pos()).1).unwrap_or(0.0);
+            if best.map(|(br, bd, _)| (rank, dist) < (br, bd)).unwrap_or(true) {
+                best = Some((rank, dist, *oid));
+            }
+        }
+        best.map(|(_, _, oid)| oid)
+    };
+    let report = match pick {
+        None => CompactString::from("No enemy or neutral objectives on the map."),
+        Some(oid) => build_capture_advisor_card(ctx, lua, &oid, side, from),
+    };
+    ctx.db.ephemeral.msgs().panel_to_group(45, false, arg.fst, report);
     Ok(())
 }
 
@@ -490,6 +694,14 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
         .objectives()
         .filter(|(_, o)| o.owner() == side.opposite())
         .count();
+    // Enemy + neutral objectives, for the per-base Capture Advisor cards.
+    let mut takeable: Vec<(ObjectiveId, CompactString)> = ctx
+        .db
+        .objectives()
+        .filter(|(_, o)| o.owner() != side)
+        .map(|(oid, o)| (*oid, CompactString::from(o.name())))
+        .collect();
+    takeable.sort_by(|a, b| a.1.cmp(&b.1));
 
     mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Objectives".into()]))?;
     let root = mc.add_submenu_for_group(miz_gid, "Objectives".into(), None)?;
@@ -506,6 +718,13 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
         "Capturable / Contested".into(),
         Some(root.clone()),
         contested,
+        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
+    )?;
+    mc.add_command_for_group(
+        miz_gid,
+        "Capture Advisor: Nearest".into(),
+        Some(root.clone()),
+        capture_advisor_nearest,
         ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
     )?;
     mc.add_command_for_group(
@@ -544,6 +763,39 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
                     name.clone().into(),
                     Some(parent.clone()),
                     detail_by_oid,
+                    ArgTuple { fst: miz_gid, snd: *oid },
+                )?;
+            }
+        }
+    }
+
+    // Per-base Capture Advisor cards for enemy / neutral objectives. Same
+    // paging + cap as Base Detail; the "Capture Advisor: Nearest" command and
+    // "Capturable / Contested" list cover anything past the cap or that flips
+    // owner mid-slot.
+    if !takeable.is_empty() {
+        // Higher cap than Base Detail: capturable bases are the whole point of
+        // this menu, so an alphabetical tail shouldn't fall off on a big map.
+        const ADVISOR_CAP: usize = 120;
+        takeable.truncate(ADVISOR_CAP);
+        let adv_root = mc.add_submenu_for_group(miz_gid, "Capture Advisor".into(), Some(root.clone()))?;
+        let pages = takeable.len().div_ceil(PAGE_SIZE);
+        for page in 0..pages {
+            let parent = if pages > 1 {
+                mc.add_submenu_for_group(
+                    miz_gid,
+                    format_compact!("Page {}", page + 1).into(),
+                    Some(adv_root.clone()),
+                )?
+            } else {
+                adv_root.clone()
+            };
+            for (oid, name) in takeable.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
+                mc.add_command_for_group(
+                    miz_gid,
+                    name.clone().into(),
+                    Some(parent.clone()),
+                    capture_advisor_by_oid,
                     ArgTuple { fst: miz_gid, snd: *oid },
                 )?;
             }

@@ -216,6 +216,99 @@ export interface WsUnitsMsg {
   bull:  Bullseye[]
 }
 
+// ── Fog-of-war tactical picture (from /ws/tacmap) ────────────────────
+// Server-authoritative: the engine fuses each coalition's own EWR / AWACS /
+// JTAC / recon sensor state, bfdb streams the caller only their side's
+// picture. `picture` is null for a viewer who is not logged in or has no
+// coalition — the page then renders the territory map only.
+
+export type TacIff = 'friendly' | 'hostile' | 'unknown'
+export type TacAirClass =
+  | 'fighter' | 'bomber' | 'attack' | 'helo' | 'awacs' | 'tanker' | 'transport' | 'unknown'
+export type TacTrackSource = 'groundradar' | 'awacs' | 'fused' | 'datalink'
+export type TacGroundClass =
+  | 'armor' | 'airdefense' | 'artillery' | 'infantry' | 'airbase' | 'naval' | 'unknown'
+export type TacGroundSource = 'recon' | 'sf' | 'awacs' | 'ewr' | 'jtac' | 'humint'
+export type TacSide = 'Blue' | 'Red' | 'Neutral'
+
+export interface AirTrack {
+  id:         number
+  side:       TacSide | null
+  lat:        number
+  lon:        number
+  alt_m:      number
+  heading:    number
+  speed_kts:  number
+  vspd_ms:    number
+  iff:        TacIff
+  class:      TacAirClass
+  age_s:      number
+  stale:      boolean
+  jammed:     boolean
+  source:     TacTrackSource
+  label:      string | null
+}
+
+export interface GroundContact {
+  id:            number
+  side:          TacSide | null
+  lat:           number
+  lon:           number
+  class:         TacGroundClass
+  count:         number
+  confidence:    number
+  uncertainty_m: number
+  source:        TacGroundSource
+  age_s:         number
+  /** SAM/AAA engagement range in metres when the emitter is identified —
+   *  the client auto-draws the threat ring from this. null otherwise. */
+  threat_range_m: number | null
+}
+
+export interface RadarRing {
+  lat:      number
+  lon:      number
+  range_m:  number
+  airborne: boolean
+  alive:    boolean
+}
+
+export interface TacBullseye {
+  side: TacSide
+  lat:  number
+  lon:  number
+}
+
+export interface TacPicture {
+  side:        TacSide | null
+  time:        string
+  bullseye:    TacBullseye[]
+  air:         AirTrack[]
+  ground:      GroundContact[]
+  radar_rings: RadarRing[]
+}
+
+export interface TacFrame {
+  picture: TacPicture | null
+  /** Why `picture` is absent: 'login' | 'nocoalition'. */
+  reason:  'login' | 'nocoalition' | null
+}
+
+/** Connect to the fog-of-war tactical picture WebSocket. Returns a cleanup fn. */
+export function connectTacmap(
+  onFrame: (frame: TacFrame) => void,
+  onStatus: (s: 'open' | 'closed' | 'error') => void,
+): () => void {
+  const ws = new WebSocket(wsUrl('/ws/tacmap'))
+  ws.onopen  = () => onStatus('open')
+  ws.onclose = () => onStatus('closed')
+  ws.onerror = () => onStatus('error')
+  ws.onmessage = (e) => {
+    try { onFrame(JSON.parse(e.data as string) as TacFrame) } catch { /* ignore */ }
+  }
+  return () => ws.close()
+}
+
 export interface LogLine {
   ts:     string   // ISO timestamp with millis
   level:  string   // ERROR | WARN | INFO | DEBUG | TRACE

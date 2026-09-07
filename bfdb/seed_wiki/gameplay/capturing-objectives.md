@@ -15,10 +15,23 @@ An objective can only be captured when **ALL** of these conditions are met:
 3. **Capture troops in zone** ✓
 4. **Troops are correct type** ✓
 5. **No enemy contest** ✓
+6. **Not in a post-capture hold** — a base that just changed hands is held by
+   its new owner's assault troops and can't have a fresh capture timer started
+   against it (see Step 5) ✓
+7. **Off cooldown** — for ~2 minutes after a base changes owner or falls
+   Neutral, no new capture timer can start against it ✓
 
 > Health/infantry — not logistics — is what gates capture. Logistics still
 > matters (it drives repair speed and the objective's own garrison), but you
 > capture a base by killing its defenders, not by emptying its warehouse.
+
+> A base bombed all the way to **Health 0** flips to **Neutral** on its own —
+> no troops needed to knock it loose, though you still need troops to *take*
+> the Neutral base afterwards.
+
+> You **cannot load troops or pull crates from a base that is itself
+> capturable** — its logistics are considered cut off. Stage your assault from
+> another friendly objective.
 
 ## The Capture Process
 
@@ -109,11 +122,20 @@ yours yet. Your assault troops **stay on the ground and hold** for a
 
 - The F10 label shows **"NOT CONSOLIDATED — hold with troops or it goes
   Neutral"** during this window.
-- If the enemy wipes out your holding troops before it consolidates, the
-  base goes **Neutral** (contested) — nobody owns it, and it has to be
-  taken again from scratch.
-- If your troops survive the window, the garrison spawns and the base is
-  firmly yours. The holding troops are then removed.
+- **The enemy cannot start a fresh capture timer** against a base in its
+  hold. To take it back they have to physically **wipe out your holding
+  troops** (air, artillery, or their own troops fighting yours).
+- If your holding troops are killed **and** the base is still shot up
+  (Health ≤ 20%), it drops to **Neutral** (contested) and must be taken
+  again from scratch.
+- If your **new garrison is standing** (Health > 20% — see "After Capture"
+  below), the base **consolidates and stays yours** even if the assault
+  troops die. The assault force did its job.
+- If your troops survive the whole window, it consolidates normally.
+- Either way, once consolidated the holding troops are removed and the
+  garrison takes over.
+- For ~2 minutes after any capture (or Neutral flip) a **cooldown** blocks
+  a new capture timer entirely, giving the new owner time to set up.
 
 ## Success!
 
@@ -131,10 +153,16 @@ When capture succeeds:
 
 **Immediate Effects**:
 - Airbase coalition changes
-- Logistics begins one step of repair
+- **The previous owner's garrison is overrun** — any of their surviving
+  armour, AAA, SAM, or infantry at the base is destroyed on the spot
+- **You get a light garrison back** — AAA and infantry first, a bit of
+  armour, at roughly 25% health. **No SAMs.** The base's SAM cover (and the
+  rest of the garrison) rebuilds slowly through auto-repair, or you fly it
+  in with deployable crates. So a freshly-taken base is a soft target that
+  you have to build up — and it can still be contested from the air right
+  after it flips.
+- Logistics begins one step of repair; services follow shortly
 - Supply lines and warehouse stock transfer to the new owner
-- The garrison respawns for the new owner **only once your troops finish
-  consolidating** (see Step 5)
 
 ## Failed Captures
 
@@ -146,8 +174,10 @@ Captures can fail if:
 
 **Troops Killed**:
 - All capturing troops die before the timer completes → deploy fresh troops
-- All *holding* troops die during the consolidation window → the base goes
-  **Neutral** and must be re-captured
+- All *holding* troops die during the consolidation window **and** the base
+  is still at Health ≤ 20% → it goes **Neutral** and must be re-captured. If
+  your new garrison has already brought it above 20%, it consolidates and
+  stays yours.
 
 **Zone Contested**:
 - Enemy troops enter the zone
@@ -193,7 +223,7 @@ When a coalition is reduced to its **last primary objective** (an airbase, naval
 
 ### What Capture Does On Success
 
-Capturing an airbase or naval base flips its coalition and repairs one step of its logistics and services automatically. Warehouse stock and supply routes transfer to the new owner immediately, and the new owner's garrison is revived on the spot so the base isn't left sitting at 0% health, wide open to being taken straight back.
+Capturing an airbase or naval base flips its coalition and repairs one step of its logistics and services automatically. Warehouse stock and supply routes transfer to the new owner immediately. The previous owner's surviving combat units at the base are destroyed. The new owner gets back only a **light garrison — AAA and infantry, ~25% health, no SAMs**; everything heavier rebuilds slowly through auto-repair or has to be delivered by crate. This is deliberate: a freshly-taken base is a soft target you invest logistics into, not an instant fortress, and it can still be worked over from the air right after the flip. (`capture_garrison_revive_fraction`, and `capture_garrison_revive_include_sam` if a server wants SAMs back too.)
 
 ## Point Rewards
 
@@ -216,10 +246,14 @@ Points divided equally among all players whose troops participated in the captur
 When capture succeeds:
 - Objective changes owner immediately
 - Airbase coalition switches
+- The previous garrison is wiped; you get a light AAA/infantry garrison
+  (~25%, no SAMs) and rebuild the rest via logistics or crates
 - Logistics repairs one step automatically
 - Supply lines recalculate
 - Capturing troops stay to hold the zone through the consolidation window,
   then are removed once the garrison is established
+- The base is on a ~2-minute capture cooldown; the enemy can't immediately
+  start taking it back
 - Points awarded to participants
 
 ## Next Steps

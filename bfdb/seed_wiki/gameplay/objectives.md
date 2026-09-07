@@ -143,11 +143,16 @@ An objective becomes "threatened" when:
 
 ### Capturable
 Ready to be captured when:
-- Health ≤ 20%
+- Health ≤ 20% (or Health 0, which flips the base to Neutral automatically)
 - Every infantry defender is dead
 - Capture-capable troops of yours in the zone
+- It is **not** in a post-capture consolidation hold, and **not** in the
+  ~2-minute cooldown after a recent ownership change
 
-**Visual Indicator**: Capturable objectives show a **white circle** on F10 map instead of the owner's color.
+**Visual Indicator**: Capturable objectives show a **white circle** on F10 map instead of the owner's color. A base in its consolidation hold shows "NOT CONSOLIDATED" instead — you can't start a capture there, you have to break the holding troops.
+
+### Consolidating (post-capture hold)
+For ~5 minutes after a base is taken, its new owner's assault troops hold it while the garrison moves in. The enemy can't start a capture timer against it during this window — they can only take it back by physically destroying the holding troops (which forces it Neutral, *if* the base is still at ≤ 20% health). On capture the previous garrison is wiped and you get back only a light AAA/infantry garrison (~25%, no SAMs) — the rest rebuilds through auto-repair or has to be delivered by crate.
 
 ## Objective Information
 

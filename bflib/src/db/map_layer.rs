@@ -105,88 +105,44 @@ fn direction_arrow(pos: Vector2, heading_deg: f64, len_m: f64) -> (Vector2, Vect
 
 #[derive(Debug)]
 struct ConvoyMarks {
-    /// Long-dash line: origin â†’ destination
-    route: MarkId,
-    /// Arrow at current convoy position showing direction of travel
-    arrow: MarkId,
-    /// Text label: cargo type + active status
-    label: MarkId,
-    /// Cache of last known position so we only push updates when it changes
+    /// Single map-marker pin riding with the convoy. Replaces the old
+    /// origin->destination line + 3 km direction arrow + floating text label,
+    /// which stacked into serious F10 clutter once several convoys were
+    /// rolling. The pin collapses to an icon until clicked.
+    pin: MarkId,
+    /// Pin label text, kept so the pin can be re-dropped at a new position
+    /// (DCS map pins can't be moved in place).
+    text: dcso3::String,
+    /// Cache of last known position so the pin is only re-dropped after the
+    /// convoy has travelled a meaningful distance.
     last_pos: Vector2,
 }
 
 impl ConvoyMarks {
     fn new(
-        origin: Vector2,
-        destination: Vector2,
+        _origin: Vector2,
+        _destination: Vector2,
         current_pos: Vector2,
-        side: Side,
+        _side: Side,
         cargo_label: impl Into<dcso3::String>,
         msgs: &mut MsgQ,
     ) -> Self {
-        let sf = SideFilter::All;
-        let col = side_color(side, 0.7);
-
-        let route = MarkId::new();
-        msgs.line_to_all(
-            sf,
-            route,
-            LineSpec {
-                start: v3(origin.x, origin.y),
-                end: v3(destination.x, destination.y),
-                color: col,
-                line_type: LineType::LongDash,
-                read_only: true,
-            },
-            None,
-        );
-
-        let (a_start, a_end) = direction_arrow(current_pos, 0., 3_000.);
-        let arrow = MarkId::new();
-        msgs.arrow_to(
-            sf,
-            arrow,
-            ArrowSpec {
-                start: v3(a_start.x, a_start.y),
-                end: v3(a_end.x, a_end.y),
-                color: col,
-                fill_color: col,
-                line_type: LineType::Solid,
-                read_only: true,
-            },
-            None,
-        );
-
-        let label = MarkId::new();
-        msgs.text_to_all(
-            sf,
-            label,
-            TextSpec {
-                pos: v3(current_pos.x + 500., current_pos.y + 500.),
-                color: col,
-                fill_color: Color::black(0.0),
-                font_size: 9,
-                read_only: true,
-                text: cargo_label.into(),
-            },
-        );
-
-        Self { route, arrow, label, last_pos: current_pos }
+        let text = cargo_label.into();
+        let pin = msgs.mark_to_all(current_pos, true, text.clone());
+        Self { pin, text, last_pos: current_pos }
     }
 
-    /// Call when the convoy moves.  Updates the arrow and text positions
-    /// in-place without a full redraw.
-    fn on_move(&mut self, new_pos: Vector2, heading_deg: f64, msgs: &mut MsgQ) {
-        if (new_pos - self.last_pos).norm() < 50. {
+    /// Call when the convoy moves. Re-drops the pin at the new position, but
+    /// only once the convoy has moved far enough to matter -- a map pin can't
+    /// be repositioned in place, so each move is a delete + re-add.
+    fn on_move(&mut self, new_pos: Vector2, _heading_deg: f64, msgs: &mut MsgQ) {
+        if (new_pos - self.last_pos).norm() < 3_000. {
             return;
         }
         self.last_pos = new_pos;
-        let (a_start, a_end) = direction_arrow(new_pos, heading_deg, 3_000.);
-        msgs.set_markup_pos_start(self.arrow, v3(a_start.x, a_start.y));
-        msgs.set_markup_pos_end(self.arrow, v3(a_end.x, a_end.y));
-        msgs.set_markup_pos_start(self.label, v3(new_pos.x + 500., new_pos.y + 500.));
+        msgs.delete_mark(self.pin);
+        self.pin = msgs.mark_to_all(new_pos, true, self.text.clone());
     }
-
 }
 
 #[derive(Debug)]
@@ -524,14 +480,16 @@ pub enum UrgencyLevel {
 /// jtac.rs.  Keyed by the JTAC `GroupId`.
 #[derive(Debug)]
 pub struct JtacLayerMarks {
-    /// Large dashed circle at JTAC position: lasing / detection range
-    lase_ring: MarkId,
-    /// Small dotted circle at the lased target (~200 m radius)
-    target_ring: MarkId,
-    /// Straight line from JTAC to target â€” bearing / range aid
+    /// Straight line from JTAC to target -- bearing / range aid. The one
+    /// drawn primitive kept for the JTAC layer.
     bearing_line: MarkId,
-    /// Rich text 9-line panel beside the target
-    nine_line: MarkId,
+    /// Map-marker pin at the target carrying the 9-line text. Replaces the
+    /// old lase-range circle + target circle + floating text panel, which
+    /// were a big share of the F10 clutter around an active JTAC.
+    info_pin: MarkId,
+    /// Side the pin is shown to, kept so it can be re-dropped on target move
+    /// (DCS map pins can't be moved in place).
+    side: Side,
     /// Cached target position for movement detection
     last_target: Vector2,
     /// Cached JTAC position for movement detection
@@ -542,43 +500,12 @@ impl JtacLayerMarks {
     pub fn new(
         jtac_pos: Vector2,
         target_pos: Vector2,
-        lase_range_m: f64,
+        _lase_range_m: f64,
         side: Side,
         nine_line_text: impl Into<dcso3::String>,
         msgs: &mut MsgQ,
     ) -> Self {
         let sf = side_filter(side);
-        let col = side_color(side, 0.85);
-
-        let lase_ring = MarkId::new();
-        msgs.circle_to_all(
-            sf,
-            lase_ring,
-            CircleSpec {
-                center: v3(jtac_pos.x, jtac_pos.y),
-                radius: lase_range_m,
-                color: side_color(side, 0.3),
-                fill_color: Color::white(0.),
-                line_type: LineType::Dashed,
-                read_only: true,
-            },
-            None,
-        );
-
-        let target_ring = MarkId::new();
-        msgs.circle_to_all(
-            sf,
-            target_ring,
-            CircleSpec {
-                center: v3(target_pos.x, target_pos.y),
-                radius: 200.,
-                color: Color::red(0.9),
-                fill_color: Color::new(1., 0., 0., 0.08),
-                line_type: LineType::Dotted,
-                read_only: true,
-            },
-            None,
-        );
 
         let bearing_line = MarkId::new();
         msgs.line_to_all(
@@ -594,25 +521,12 @@ impl JtacLayerMarks {
             None,
         );
 
-        let nine_line = MarkId::new();
-        msgs.text_to_all(
-            sf,
-            nine_line,
-            TextSpec {
-                pos: v3(target_pos.x + 500., target_pos.y + 500.),
-                color: col,
-                fill_color: Color::black(0.0),
-                font_size: 10,
-                read_only: true,
-                text: nine_line_text.into(),
-            },
-        );
+        let info_pin = msgs.mark_to_side(side, target_pos, true, nine_line_text);
 
         Self {
-            lase_ring,
-            target_ring,
             bearing_line,
-            nine_line,
+            info_pin,
+            side,
             last_target: target_pos,
             last_jtac: jtac_pos,
         }
@@ -631,10 +545,10 @@ impl JtacLayerMarks {
             return;
         }
         self.last_target = new_target;
-        msgs.set_markup_pos_start(self.target_ring, v3(new_target.x, new_target.y));
         msgs.set_markup_pos_end(self.bearing_line, v3(new_target.x, new_target.y));
-        msgs.set_markup_pos_start(self.nine_line, v3(new_target.x + 500., new_target.y + 500.));
-        msgs.set_markup_text(self.nine_line, new_nine_line.into());
+        // Pins can't be repositioned in place -- drop and re-drop it.
+        msgs.delete_mark(self.info_pin);
+        self.info_pin = msgs.mark_to_side(self.side, new_target, true, new_nine_line);
     }
 
     /// Call when the JTAC itself moves (airborne JTAC / drone).
@@ -643,15 +557,12 @@ impl JtacLayerMarks {
             return;
         }
         self.last_jtac = new_jtac;
-        msgs.set_markup_pos_start(self.lase_ring, v3(new_jtac.x, new_jtac.y));
         msgs.set_markup_pos_start(self.bearing_line, v3(new_jtac.x, new_jtac.y));
     }
 
     pub fn remove(self, msgs: &mut MsgQ) {
-        msgs.delete_mark(self.lase_ring);
-        msgs.delete_mark(self.target_ring);
         msgs.delete_mark(self.bearing_line);
-        msgs.delete_mark(self.nine_line);
+        msgs.delete_mark(self.info_pin);
     }
 }
 
@@ -1105,9 +1016,7 @@ impl MapLayer {
         // Remove stale convoy marks
         self.convoy_marks.retain(|id, marks| {
             if !active_convoys.contains_key(id.as_str()) {
-                msgs.delete_mark(marks.route);
-                msgs.delete_mark(marks.arrow);
-                msgs.delete_mark(marks.label);
+                msgs.delete_mark(marks.pin);
                 false
             } else {
                 true
@@ -1330,9 +1239,7 @@ impl MapLayer {
 
     pub fn remove_all(&mut self, msgs: &mut MsgQ) {
         for (_, c) in self.convoy_marks.drain() {
-            msgs.delete_mark(c.route);
-            msgs.delete_mark(c.arrow);
-            msgs.delete_mark(c.label);
+            msgs.delete_mark(c.pin);
         }
         for (_, a) in self.air_route_marks.drain() {
             msgs.delete_mark(a.transit_line);
@@ -1355,10 +1262,8 @@ impl MapLayer {
             msgs.delete_mark(c.label);
         }
         for (_, j) in self.jtac_marks.drain() {
-            msgs.delete_mark(j.lase_ring);
-            msgs.delete_mark(j.target_ring);
             msgs.delete_mark(j.bearing_line);
-            msgs.delete_mark(j.nine_line);
+            msgs.delete_mark(j.info_pin);
         }
         for (_, m) in self.supply_critical_marks.drain() {
             msgs.delete_mark(m);

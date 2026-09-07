@@ -49,6 +49,10 @@ const M_TO_FT: f64 = 3.28084;
 // (~1.98C/1000ft). Winds aloft come from atmosphere.getWind at each
 // level's world Y, which DCS does model accurately.
 const ISA_LAPSE_C_PER_FT: f64 = 0.00198;
+// Standard meteorological surface-wind reference height. Also keeps the
+// getWind query clear of the terrain mesh, which returns a zero vector for a
+// point sampled at or below ground level.
+const SURFACE_WIND_AGL_M: f64 = 10.0;
 
 fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
     let globals = lua.inner().globals();
@@ -78,11 +82,15 @@ fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
     // at a hardcoded y=0.0 asks for wind at sea level. Anywhere the terrain
     // itself sits above sea level, that point is underground, and
     // atmosphere.getWind() returns a zero vector there instead of the
-    // configured surface wind. Query at actual ground elevation instead.
+    // configured surface wind. Querying at *exactly* the terrain height hits
+    // the same problem (the point is on/inside the mesh), which is why ATIS
+    // was reporting a dead calm over a 15 kt mission wind -- offset the query
+    // to the 10 m standard surface-wind reference height instead.
     let ground_elev_m = dcso3::land::Land::singleton(lua)
         .and_then(|land| land.get_height(dcso3::LuaVec2(dcso3::Vector2::new(pos_x, pos_z))))
         .unwrap_or(0.0);
-    let (wind_from_deg, wind_speed_kts) = wind_at(lua, pos_x, ground_elev_m, pos_z)?;
+    let (wind_from_deg, wind_speed_kts) =
+        wind_at(lua, pos_x, ground_elev_m + SURFACE_WIND_AGL_M, pos_z)?;
 
     let env_tbl: LuaTable = globals.raw_get("env")?;
     let mission: LuaTable = env_tbl.raw_get("mission")?;

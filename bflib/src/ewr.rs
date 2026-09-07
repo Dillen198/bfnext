@@ -61,6 +61,16 @@ impl DetectedBy {
         DetectedBy(self.0 | other.0)
     }
 
+    /// A ground-based sensor contributed to this track.
+    pub fn is_ground(self) -> bool {
+        self.0 & Self::GROUND.0 != 0
+    }
+
+    /// An airborne sensor (AWACS) contributed to this track.
+    pub fn is_airborne(self) -> bool {
+        self.0 & Self::AIRBORNE.0 != 0
+    }
+
     fn label(self) -> &'static str {
         match self.0 {
             0b01 => "[G]",
@@ -413,6 +423,28 @@ fn compute_detection_probability(
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// One air contact on a coalition's fused picture, in DCS world coordinates.
+/// Consumed by `crate::admin::query_tacmap`, which converts to lat/lon for the
+/// dashboard TACMAP (`bfprotocols::tacmap`).
+#[derive(Debug, Clone, Copy)]
+pub struct AirContact {
+    /// Stable id (hash of the engine `EnId`) so the client can keep a trail.
+    pub id: u64,
+    /// Owning coalition of the tracked unit.
+    pub side: Side,
+    /// DCS world position (x = north, z = east), y = altitude MSL metres.
+    pub pos: Position3,
+    pub velocity: Vector3,
+    /// True when `side` owns this contact (BFT / own radar), false for a
+    /// detected hostile.
+    pub friendly: bool,
+    pub class: ContactClass,
+    /// Seconds since the last sensor hit.
+    pub age_s: u32,
+    pub stale: bool,
+    pub detected_by: DetectedBy,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Ewr {
     tracks: FxHashMap<Side, FxHashMap<EnId, Track>>,
@@ -745,6 +777,15 @@ impl Ewr {
                     }
                     let Some(gid) = donor.gid else { continue };
                     let Some(group) = db.persisted.groups.get(&gid) else { continue };
+                    // Player-deployed SAMs are tactical assets positioned
+                    // deliberately by a player -- IADN EMCON must not manage
+                    // them. They are brought up hot at spawn (see
+                    // Ephemeral::spawn_group) and left under player control,
+                    // otherwise this loop drives them to Auto every tick and
+                    // they never light up.
+                    if db.persisted.deployed.contains(&gid) {
+                        continue;
+                    }
                     let sam_pos = Vector2::new(donor.pos.p.x, donor.pos.p.z);
                     let under_harm_threat = self
                         .harm_dark_until
@@ -813,9 +854,118 @@ impl Ewr {
                     // range against airborne contacts near a UnitTag::Jammer
                     // unit -- see jamming_factor_for_donor.
                 }
+                // Sites that have lost their own search radar produce no donor
+                // above and would otherwise fall out of the network entirely --
+                // cue them off-board from the fused picture instead.
+                self.cue_blinded_sam_sites(lua, db, now, iadn);
             }
         }
         Ok(())
+    }
+
+    /// Keep a command-center-networked SAM site fighting after its own
+    /// search/acquisition radar is gone. It produces no `SamSearchRadar` donor,
+    /// so the main cue loop never sees it; here the fused network picture (EWR,
+    /// AWACS, other SAM search radars) decides when it comes up hot, and its
+    /// remaining tracking radar / launcher is held live so DCS's own AI can
+    /// acquire and engage within that sensor's sector. A site with no live
+    /// command-center link just goes inert, exactly as before.
+    fn cue_blinded_sam_sites(
+        &mut self,
+        lua: MizLua,
+        db: &Db,
+        now: DateTime<Utc>,
+        cfg: &IadnConfig,
+    ) {
+        use dcso3::controller::{AiOption, AlarmState, GroundOption};
+        if !cfg.sam_offboard_cue_enabled {
+            return;
+        }
+        // Sites the main (search-radar donor) loop already drove this tick.
+        let handled: SmallVec<[GroupId; 16]> = self
+            .donor_snapshot
+            .iter()
+            .filter(|d| matches!(d.sensor_type, SensorType::SamSearchRadar))
+            .filter_map(|d| d.gid)
+            .collect();
+        // (side, gid, group_name, sam_pos) for every blinded-but-networked SAM
+        // group, gathered before we touch &mut self.
+        let mut blinded: SmallVec<[(Side, GroupId, CompactString, Vector2); 16]> = smallvec![];
+        for (sam_oid, cc_oid) in &db.persisted.sam_command_center_link {
+            let Some(sam) = db.persisted.objectives.get(sam_oid) else {
+                continue;
+            };
+            let side = sam.owner();
+            if side == Side::Neutral {
+                continue;
+            }
+            let networked = db
+                .persisted
+                .objectives
+                .get(cc_oid)
+                .map(|cc| cc.owner() == side && cc.health() > 0)
+                .unwrap_or(false);
+            if !networked {
+                continue;
+            }
+            let Some(gids) = sam.groups().get(&side) else {
+                continue;
+            };
+            let sam_pos = sam.pos();
+            for gid in gids {
+                if handled.contains(gid) || db.persisted.deployed.contains(gid) {
+                    continue;
+                }
+                let Some(group) = db.persisted.groups.get(gid) else {
+                    continue;
+                };
+                let mut is_sam = false;
+                let mut live_search = false;
+                let mut live_shooter = false;
+                for uid in &group.units {
+                    let Some(u) = db.persisted.units.get(uid) else {
+                        continue;
+                    };
+                    if u.tags.contains(UnitTag::SAM) {
+                        is_sam = true;
+                    }
+                    if u.dead {
+                        continue;
+                    }
+                    if u.tags.contains(UnitTag::SearchRadar) {
+                        live_search = true;
+                    }
+                    if u.tags.contains(UnitTag::TrackRadar)
+                        || u.tags.contains(UnitTag::Launcher)
+                        || u.tags.contains(UnitTag::EngagesWeapons)
+                    {
+                        live_shooter = true;
+                    }
+                }
+                if is_sam && !live_search && live_shooter {
+                    blinded.push((side, *gid, CompactString::from(group.name.as_str()), sam_pos));
+                }
+            }
+        }
+        for (side, gid, group_name, sam_pos) in blinded {
+            let cues = self.sam_cue_targets(side, sam_pos, cfg.sam_offboard_cue_range_m, cfg);
+            let desired = self.decide_hot_state(gid, !cues.is_empty(), now, cfg);
+            if let Ok(live) = dcso3::group::Group::get_by_name(lua, group_name.as_str()) {
+                if let Ok(con) = live.get_controller() {
+                    let _ = con.set_option(AiOption::Ground(GroundOption::AlarmState(desired)));
+                }
+            }
+            let hot = matches!(desired, AlarmState::Auto | AlarmState::Red);
+            self.apply_layered_radar_emission(
+                lua,
+                db,
+                gid,
+                hot,
+                None,
+                cfg.sam_offboard_cue_range_m,
+                cfg,
+            );
+        }
     }
 
     // ─── IADN: fuse sensor contributions into FusedTrack table ──────────────
@@ -1161,8 +1311,15 @@ impl Ewr {
     ) {
         let Some(group) = db.persisted.groups.get(&gid) else { return };
         let track_range_m = search_range_m * cfg.track_radar_range_fraction as f64;
+        // Cue-gate the engagement radar ONLY when we actually have a fused cue
+        // distance. With no cue data (a site handed back to DCS-native Auto
+        // because it isn't networked to a live command center, or a hot site
+        // whose cue just dropped during its min-hot dwell) we must NOT hold the
+        // tracking radar down -- a SAM with its search radar up but engagement
+        // radar forced off sees targets and never fires, which is how strikers
+        // were leaking straight through un-networked SA-10/Patriot/Hawk sites.
         let track_should_be_on =
-            hot && nearest_cue_dist_m.map(|d| d <= track_range_m).unwrap_or(false);
+            hot && nearest_cue_dist_m.map(|d| d <= track_range_m).unwrap_or(true);
         for uid in &group.units {
             let Some(unit) = db.persisted.units.get(uid) else { continue };
             if unit.dead {
@@ -1401,6 +1558,52 @@ impl Ewr {
                     && (now - t.last).num_seconds() <= DROP_AGE_SECS
             })
             .map(|t| Vector2::new(t.pos.p.x, t.pos.p.z))
+            .collect()
+    }
+
+    /// The fused air picture `side` currently holds: every own-side track
+    /// (BFT / friendly radar) plus every hostile track its radar network is
+    /// actually painting. Stale-but-not-dropped tracks are included with
+    /// `stale = true`; dropped tracks (past `DROP_AGE_SECS`) are omitted.
+    ///
+    /// This is the authoritative fog-of-war source for the dashboard TACMAP —
+    /// a contact absent here is a contact the coalition has not earned.
+    pub fn air_picture_for(
+        &self,
+        side: Side,
+        now: DateTime<Utc>,
+        db: &Db,
+    ) -> Vec<AirContact> {
+        use std::hash::{Hash, Hasher};
+        let Some(tracks) = self.tracks.get(&side) else {
+            return vec![];
+        };
+        tracks
+            .iter()
+            .filter_map(|(id, t)| {
+                let age = (now - t.last).num_seconds();
+                if age > DROP_AGE_SECS {
+                    return None;
+                }
+                let friendly = t.side == side;
+                // Hostiles only appear once a sensor has actually detected them.
+                if !friendly && !t.detected {
+                    return None;
+                }
+                let mut h = fxhash::FxHasher::default();
+                id.hash(&mut h);
+                Some(AirContact {
+                    id: h.finish(),
+                    side: t.side,
+                    pos: t.pos,
+                    velocity: t.velocity,
+                    friendly,
+                    class: Self::classify_contact(id, db),
+                    age_s: age.max(0) as u32,
+                    stale: age >= STALE_AGE_SECS,
+                    detected_by: t.detected_by,
+                })
+            })
             .collect()
     }
 

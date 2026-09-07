@@ -596,6 +596,20 @@ pub struct IadnConfig {
     /// stealth).
     #[serde(default = "default_jamming_detection_penalty")]
     pub jamming_detection_penalty: f32,
+    /// Keep a command-center-networked SAM site fighting after it loses its
+    /// own search/acquisition radar: as long as it still has a live tracking
+    /// radar or launcher, the fused network picture (EWR + AWACS + other SAM
+    /// search radars) decides when it comes up hot, and its remaining radar is
+    /// held on so DCS's own AI can acquire and engage within that sensor's
+    /// sector. A site with no live command-center link just goes inert as
+    /// before. Default true.
+    #[serde(default = "default_sam_offboard_cue_enabled")]
+    pub sam_offboard_cue_enabled: bool,
+    /// Engagement range (m) assumed for a blinded SAM site being cued purely
+    /// off-board -- there's no live search radar to read a range from. A fused
+    /// hostile inside this radius brings the site up hot. Default 60000.
+    #[serde(default = "default_sam_offboard_cue_range_m")]
+    pub sam_offboard_cue_range_m: f64,
 }
 
 impl Default for IadnConfig {
@@ -616,6 +630,8 @@ impl Default for IadnConfig {
             jamming_enabled: default_jamming_enabled(),
             jamming_range_m: default_jamming_range_m(),
             jamming_detection_penalty: default_jamming_detection_penalty(),
+            sam_offboard_cue_enabled: default_sam_offboard_cue_enabled(),
+            sam_offboard_cue_range_m: default_sam_offboard_cue_range_m(),
         }
     }
 }
@@ -634,6 +650,8 @@ fn default_track_radar_range_fraction() -> f32 { 0.5 }
 fn default_jamming_enabled() -> bool { true }
 fn default_jamming_range_m() -> f64 { 40_000.0 }
 fn default_jamming_detection_penalty() -> f32 { 0.5 }
+fn default_sam_offboard_cue_enabled() -> bool { true }
+fn default_sam_offboard_cue_range_m() -> f64 { 60_000.0 }
 
 /// ELINT/SIGINT intelligence system configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1044,6 +1062,20 @@ pub struct LiveWeatherConfig {
     /// and time of the machine running the server
     #[serde(default)]
     pub sync_time: bool,
+    /// checkwxapi.com API key. When set together with `metar_station`, the
+    /// mission's *surface* layer (wind, temperature, QNH, cloud cover) is taken
+    /// from that station's real decoded METAR instead of the open-meteo model.
+    /// The winds-aloft layers still come from open-meteo (METAR has no upper
+    /// air), and a failed/empty METAR fetch falls back to open-meteo for
+    /// everything.
+    #[serde(default)]
+    pub checkwx_api_key: Option<String>,
+    /// ICAO of the station whose METAR drives the surface layer -- pick the
+    /// real-world field nearest the operating area (e.g. "LTAG" Incirlik,
+    /// "OSDI" Damascus, "OLBA" Beirut, "OJAI" Amman). Only used when
+    /// `checkwx_api_key` is also set.
+    #[serde(default)]
+    pub metar_station: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1812,6 +1844,10 @@ fn default_capture_consolidation_secs() -> u32 {
     300
 }
 
+fn default_slot_leave_kill_radius_m() -> f64 {
+    15000.0
+}
+
 fn default_lr_cull_distance() -> u32 {
     80_000
 }
@@ -2266,6 +2302,25 @@ pub struct CampaignEventsCfg {
     /// How long (seconds) a CAP orbit lasts before despawning. Default: 600.
     #[serde(default = "default_cap_duration")]
     pub cap_duration_secs: u32,
+    /// Barometric altitude (metres MSL) AI CAP flights hold and intercept at.
+    /// Default 7000 (~FL230) -- without this DCS parks them low and slow.
+    #[serde(default = "default_cap_altitude_m")]
+    pub cap_altitude_m: f64,
+    /// True airspeed (m/s) for AI CAP orbit and intercept legs. Default 230
+    /// (~450 kt).
+    #[serde(default = "default_cap_speed_ms")]
+    pub cap_speed_ms: f64,
+    /// How far (metres) a CAP flight may push from the objective it is
+    /// defending toward a detected threat. Keeps interceptors leaning forward
+    /// without chasing contacts deep across the front line. Default 60000.
+    #[serde(default = "default_cap_max_push_m")]
+    pub cap_max_push_m: f64,
+    /// If a CAP flight's side has painted no workable threat for this many
+    /// seconds, it is sent home (RTB) and despawned early rather than loitering
+    /// out its full `cap_duration_secs`. Keeps the air picture matched to the
+    /// actual threat instead of accumulating idle flights. Default 240.
+    #[serde(default = "default_cap_idle_rtb_secs")]
+    pub cap_idle_rtb_secs: u32,
     /// Distance from an objective (metres) within which a CAP orbit is placed. Default: 15000.
     #[serde(default = "default_cap_orbit_radius")]
     pub cap_orbit_radius_m: f64,
@@ -2281,6 +2336,27 @@ pub struct CampaignEventsCfg {
     /// Example: 0.30 requires 30% of defenders to be killed first.
     #[serde(default)]
     pub capture_min_unit_pct_destroyed: f64,
+    /// Seconds after a base changes hands (captured, or fell to Neutral) during
+    /// which no new capture timer can start against it. Gives the new owner a
+    /// window to defend / reinforce and stops a zone with capture troops from
+    /// both sides in it from flipping on a loop. Default 120.
+    #[serde(default = "default_capture_cooldown_secs")]
+    pub capture_cooldown_secs: u32,
+    /// Fraction (0.0–1.0) of the new owner's *non-SAM* combat garrison (AAA,
+    /// infantry, armour) brought back the moment a base is captured -- spent
+    /// AAA/infantry-first. The rest, and all of the SAMs, rebuild gradually
+    /// through normal auto-repair (or must be delivered by crate). 1.0 = full
+    /// non-SAM garrison; lower = a freshly-taken base is a light target you
+    /// have to build up. Default 0.25.
+    #[serde(default = "default_capture_garrison_revive_fraction")]
+    pub capture_garrison_revive_fraction: f64,
+    /// Also bring back a share of the new owner's SAM garrison (short/medium/
+    /// long-range) on capture. Default false -- a freshly-taken base has no
+    /// working SAM cover until it's rebuilt or resupplied, which is both more
+    /// realistic and stops "fly over a wrecked base, get killed by an
+    /// instant Pantsir".
+    #[serde(default)]
+    pub capture_garrison_revive_include_sam: bool,
     /// Distance (metres) from an enemy-owned objective within which an in-air player aircraft
     /// is considered a threat and triggers a reactive CAP spawn. Default: 60000 (60 km).
     #[serde(default = "default_cap_trigger_radius")]
@@ -2323,10 +2399,16 @@ fn default_barrage_duration() -> u32 { 300 }
 fn default_ambush_duration() -> u32 { 600 }
 fn default_cap_template_red() -> String { "RCAP".into() }
 fn default_cap_template_blue() -> String { "BCAP".into() }
+fn default_cap_altitude_m() -> f64 { 8000.0 }
+fn default_cap_speed_ms() -> f64 { 250.0 }
+fn default_cap_max_push_m() -> f64 { 60000.0 }
+fn default_cap_idle_rtb_secs() -> u32 { 240 }
 fn default_cap_duration() -> u32 { 600 }
 fn default_cap_orbit_radius() -> f64 { 15_000.0 }
 fn default_cap_probability() -> f64 { 0.35 }
 fn default_capture_time() -> u32 { 180 }
+fn default_capture_garrison_revive_fraction() -> f64 { 0.25 }
+fn default_capture_cooldown_secs() -> u32 { 120 }
 fn default_barrage_radius_m() -> f64 { 500.0 }
 fn default_barrage_max_groups() -> usize { 5 }
 fn default_cap_trigger_radius() -> f64 { 90_000.0 }
@@ -2353,10 +2435,17 @@ impl Default for CampaignEventsCfg {
             cap_template_red: default_cap_template_red(),
             cap_template_blue: default_cap_template_blue(),
             cap_duration_secs: default_cap_duration(),
+            cap_altitude_m: default_cap_altitude_m(),
+            cap_speed_ms: default_cap_speed_ms(),
+            cap_max_push_m: default_cap_max_push_m(),
+            cap_idle_rtb_secs: default_cap_idle_rtb_secs(),
             cap_orbit_radius_m: default_cap_orbit_radius(),
             cap_probability: default_cap_probability(),
             capture_time_secs: default_capture_time(),
             capture_min_unit_pct_destroyed: 0.0,
+            capture_cooldown_secs: default_capture_cooldown_secs(),
+            capture_garrison_revive_fraction: default_capture_garrison_revive_fraction(),
+            capture_garrison_revive_include_sam: false,
             barrage_radius_m: default_barrage_radius_m(),
             barrage_max_groups: default_barrage_max_groups(),
             cap_trigger_radius_m: default_cap_trigger_radius(),
@@ -2531,6 +2620,18 @@ pub struct Cfg {
     /// consolidation (old behaviour).
     #[serde(default = "default_capture_consolidation_secs")]
     pub capture_consolidation_secs: u32,
+    /// Seconds a player must sit in a freshly-taken slot before they're allowed
+    /// to get airborne. They get a once-a-second "time remaining" message; take
+    /// off early and they're sent straight back to spectators. 0 disables it.
+    #[serde(default)]
+    pub takeoff_delay_secs: u32,
+    /// Anti "bail out of a losing fight" abuse: if a player leaves their slot
+    /// while airborne (and not landed at a friendly base) with an enemy
+    /// aircraft within this many metres, credit that enemy with the kill (and
+    /// the player still loses the life for the sortie). 0 disables it.
+    /// Default 15000.
+    #[serde(default = "default_slot_leave_kill_radius_m")]
+    pub slot_leave_kill_radius_m: f64,
     /// how often to do more expensive checks such as unit culling and
     /// updating unit positions (Seconds)
     pub slow_timed_events_freq: u32,

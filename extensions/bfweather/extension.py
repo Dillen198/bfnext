@@ -62,6 +62,8 @@ class BFWeather(Extension):
                 live_time: false                     # optional, default false
                 options_overrides: 'E:\\...\\overrides.json'  # optional
                 timeout: 120                          # optional, seconds, default 120
+                checkwx_api_key: 'your-checkwxapi.com-key'  # optional
+                metar_station: 'OSDI'                 # optional, ICAO; needs checkwx_api_key
     """
 
     def __init__(self, server: Server, config: dict):
@@ -102,6 +104,11 @@ class BFWeather(Extension):
             cmd += ['--warehouse', os.path.expandvars(cfg['warehouse'])]
         if cfg.get('live_time'):
             cmd.append('--live-time')
+        if cfg.get('checkwx_api_key') and cfg.get('metar_station'):
+            cmd += [
+                '--checkwx-api-key', str(cfg['checkwx_api_key']),
+                '--metar-station', str(cfg['metar_station']),
+            ]
         if cfg.get('options_overrides'):
             cmd += ['--options-overrides', os.path.expandvars(cfg['options_overrides'])]
         if cfg.get('blue_production_template'):
@@ -113,7 +120,11 @@ class BFWeather(Extension):
     def _run_bftools(self, output: str):
         cmd = self._build_command(output)
         timeout = self.config.get('timeout', 120)
-        self.log.debug(f"{self.name}: running {' '.join(cmd)}")
+        redacted = [
+            '***' if i > 0 and cmd[i - 1] == '--checkwx-api-key' else a
+            for i, a in enumerate(cmd)
+        ]
+        self.log.debug(f"{self.name}: running {' '.join(redacted)}")
         # bftools uses plain env_logger::init(), which only shows error-level
         # logs unless RUST_LOG is set -- without this, its own info! lines
         # (including the applied temperature/QNH/wind values) are silently

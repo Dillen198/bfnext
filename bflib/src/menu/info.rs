@@ -432,11 +432,14 @@ Secure rear bases resupply automatically. Forward/contested bases are
 resupplied by physical truck convoys instead -- protect your own, or hunt
 the enemy's on the map. The Info > Supply Convoys menu lists yours.
 
-Crates (Cargo / C-130 Cargo menu): spawn one, carry it to the target base,
-then Unpack it there.
- - Logistics Crate: revives dead logistics-defense units at a base
- - Fuel/Weapons Transfer: tops off warehouse stock directly
- - Deployable crates: build SAM sites, vehicles, and other defenses
+Crates: Cargo menu -> Crates -> Base Supply. Spawn one (or pick \"xN\" to
+spawn several at once), carry it to the target base, then Unpack it there.
+ - Logistics Repair Kit: revives the base's dead logistics-defense units
+   (the trucks/depot that make it a working base again)
+ - Base Fuel Resupply / Base Ammo Resupply: adds fuel / weapons stock to
+   the base's warehouse -- use these to top up a starved forward base
+ - Deployable crates (their own categories): build SAM sites, vehicles,
+   and other defenses
 A crate delivered with no effect (e.g. nothing left to revive) will tell you
 so honestly instead of just saying \"delivered\".";
 
@@ -451,13 +454,30 @@ LL/MGRS, bearing/range from you, repair state, and capture requirements.
 HOW TO CAPTURE A BASE:
 1. Reduce it to capturable: Health at or below 20% AND zero infantry
    defenders left (some servers also require a further share of total
-   defenders destroyed).
+   defenders destroyed). A base bombed all the way to Health 0 flips
+   straight to Neutral on its own.
 2. Deploy capture-capable troops (Troops menu) and get them physically
    alive into the objective's zone. All your troops in the zone must be
-   the same side.
-3. A capture timer starts (length set by the server) -- both sides get a
-   warning message. Killing your troops before it completes resets your
-   progress, so the enemy can still stop you.
+   the same side. Note: you can't load troops or pull crates FROM a base
+   that's itself capturable -- bring them from another friendly objective.
+3. A capture timer starts (~180s, faster with more squads) -- both sides
+   get a warning. Killing your troops resets your progress.
+4. CONSOLIDATION HOLD: the base flips to you the instant the timer ends,
+   but your assault troops must stay in the zone for a consolidation
+   window (~5 min). During the hold the enemy CANNOT start a fresh capture
+   timer -- to take it back they have to wipe out your holding troops. If
+   they do, and the base is still shot up (Health <= 20%), it drops to
+   Neutral. If your new garrison is standing (Health > 20%), it holds and
+   consolidates even if the assault troops die.
+5. For ~2 minutes after any base changes hands (or goes Neutral) no new
+   capture timer can start against it -- the new owner gets a breather.
+
+AFTER CAPTURE: the enemy garrison is wiped and you get back only a LIGHT
+garrison -- AAA and infantry, ~25% health, NO SAMs. The SAM cover and the
+rest of the garrison rebuild slowly via auto-repair or have to be flown in
+as deployable crates. Warehouse stock and supply lines transfer to you and
+logistics/services get one repair step. A freshly-taken base is a soft
+target you have to invest in.
 
 Special SAM sites work differently: they're always eligible once fully
 destroyed (Health 0), and capture there is INSTANT once your troops are in

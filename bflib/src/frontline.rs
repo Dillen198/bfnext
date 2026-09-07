@@ -96,8 +96,8 @@ impl FrontLine {
 
     fn draw_frontline(&mut self, persisted: &Persisted, msgq: &mut MsgQ) {
         let objs = frontline_objectives(persisted);
-        let fronts = fl::compute(&objs, &self.params());
-        if fronts.is_empty() {
+        let fl = fl::compute(&objs, &self.params());
+        if fl.mid.is_empty() && fl.blue.is_empty() && fl.red.is_empty() {
             return;
         }
 
@@ -121,10 +121,14 @@ impl FrontLine {
             }
         };
 
-        for f in &fronts {
-            draw(&f.blue, Color::new(0.0, 0.4, 1.0, LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
-            draw(&f.red, Color::new(1.0, 0.2, 0.2, LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
-            draw(&f.mid, Color::new(1.0, 1.0, 1.0, LINE_ALPHA), MID_LINE, &mut self.marks, msgq);
+        for l in &fl.blue {
+            draw(l, Color::new(0.0, 0.4, 1.0, LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
+        }
+        for l in &fl.red {
+            draw(l, Color::new(1.0, 0.2, 0.2, LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
+        }
+        for l in &fl.mid {
+            draw(l, Color::new(1.0, 1.0, 1.0, LINE_ALPHA), MID_LINE, &mut self.marks, msgq);
         }
     }
 

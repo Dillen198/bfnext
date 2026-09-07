@@ -2148,6 +2148,8 @@ impl Default for Cfg {
             weapon_spawn_expiry_secs: 120,
             cull_after: 1800,
             capture_consolidation_secs: 300,
+            takeoff_delay_secs: 0,
+            slot_leave_kill_radius_m: 15000.0,
             slow_timed_events_freq: 10,
             threatened_distance: default_threatened_distance(),
             threatened_cooldown: 300,

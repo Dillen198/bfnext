@@ -453,7 +453,11 @@ fn objective_label(
     if let Some((pct, remaining)) = repair_pct {
         let _ = write!(s, "\nRepairing: {pct}% (ETA {})", fmt_eta(remaining));
     }
-    if !navaid.is_empty() {
+    // Carriers publish a navaid per ship (TACAN / ICLS / Link-4 / ACLS), which
+    // is several lines of dense text on every carrier marker -- players get all
+    // of that from the carrier ATIS / kneeboard, and it's a big contributor to
+    // F10-map clutter and lag. Keep it off the map label.
+    if !navaid.is_empty() && !matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
         let _ = write!(s, "\n{navaid}");
     }
     s
@@ -543,11 +547,17 @@ impl ObjectiveMarkup {
                 Color::white(if self.capturable { 0.75 } else { 0. }),
             );
         }
-        let navaid = persisted
-            .navaids
-            .get(&obj.id)
-            .map(|navs| crate::navaids::summarize(navs))
-            .unwrap_or_default();
+        // Carrier navaids are deliberately kept off the F10 label (see
+        // objective_label) -- don't spend the summarize() every redraw either.
+        let navaid = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
+            CompactString::default()
+        } else {
+            persisted
+                .navaids
+                .get(&obj.id)
+                .map(|navs| crate::navaids::summarize(navs))
+                .unwrap_or_default()
+        };
         if self.health != obj.health
             || self.logi != obj.logi
             || self.supply != obj.supply
@@ -632,11 +642,15 @@ impl ObjectiveMarkup {
         t.fuel = obj.fuel;
         t.capture_pct = capture_pct;
         t.repair_pct = repair_pct;
-        t.navaid = persisted
-            .navaids
-            .get(&obj.id)
-            .map(|navs| crate::navaids::summarize(navs))
-            .unwrap_or_default();
+        t.navaid = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
+            CompactString::default()
+        } else {
+            persisted
+                .navaids
+                .get(&obj.id)
+                .map(|navs| crate::navaids::summarize(navs))
+                .unwrap_or_default()
+        };
         t.name = match obj.kind {
             ObjectiveKind::SpecialSamSite => format_compact!("{}", obj.name).into(),
             _ => format_compact!("{} {}", obj.name, obj.kind.name()).into(),

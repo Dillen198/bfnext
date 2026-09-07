@@ -342,13 +342,37 @@ pub(crate) fn spawn_crates_for_ucid(
         .ok_or_else(|| anyhow!("you must be in a slot to spawn crates"))?;
     let origin = ctx.db.player_current_objective_id(&slot)?;
 
-    let crate_def = ctx
-        .db
-        .ephemeral
-        .cfg
-        .deployables
-        .get(&side)
-        .and_then(|deps| deps.iter().flat_map(|d| &d.crates).find(|cr| cr.name.as_str() == crate_name))
+    // Resolve the crate def from every source the single-spawn path knows
+    // about -- base-supply crates (fuel/weapons resupply, carrier repair,
+    // logistics repair kit) as well as deployables -- so "spawn N" works for
+    // all of them, not just deployable crates.
+    let cfg = &ctx.db.ephemeral.cfg;
+    let whcfg = cfg.warehouse.as_ref();
+    let crate_def = whcfg
+        .and_then(|w| w.supply_transfer_fuel_crate.get(&side))
+        .filter(|cr| cr.name.as_str() == crate_name)
+        .or_else(|| {
+            whcfg
+                .and_then(|w| w.supply_transfer_weapons_crate.get(&side))
+                .filter(|cr| cr.name.as_str() == crate_name)
+        })
+        .or_else(|| {
+            whcfg
+                .and_then(|w| w.carrier_repair_crate.get(&side))
+                .filter(|cr| cr.name.as_str() == crate_name)
+        })
+        .or_else(|| {
+            cfg.repair_crate
+                .get(&side)
+                .filter(|cr| cr.name.as_str() == crate_name)
+        })
+        .or_else(|| {
+            cfg.deployables
+                .get(&side)
+                .and_then(|deps| {
+                    deps.iter().flat_map(|d| &d.crates).find(|cr| cr.name.as_str() == crate_name)
+                })
+        })
         .cloned()
         .ok_or_else(|| anyhow!("crate {} not found", crate_name))?;
 
@@ -859,63 +883,45 @@ pub(super) fn add_c130_cargo_menu_for_group(
     // with the same name+parent collide in DCS, breaking both menus.
     if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() {
         let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(crates_menu.clone()))?;
-
-        // Base logistics repair crate
-        if let Some(rep) = cfg.repair_crate.get(side) {
+        // One base-supply crate: the single "spawn 1" command plus a "xN"
+        // submenu (1-9) so a poor base can be topped off / a wreck fully
+        // repaired in one trip, same as deployable crates.
+        let add_supply = |name: &str| -> Result<()> {
             mc.add_command_for_group(
                 group,
-                rep.name.clone(),
+                String::from(name),
                 Some(logi.clone()),
                 spawn_c130_crate,
-                ArgTuple {
-                    fst: group,
-                    snd: rep.name.clone(),
-                },
+                ArgTuple { fst: group, snd: String::from(name) },
             )?;
+            let qty = mc.add_submenu_for_group(
+                group,
+                String::from(format_compact!("{name} xN")),
+                Some(logi.clone()),
+            )?;
+            for n in 1..=9u32 {
+                mc.add_command_for_group(
+                    group,
+                    String::from(format_compact!("{n}")),
+                    Some(qty.clone()),
+                    spawn_n_c130_crates,
+                    ArgTriple { fst: group, snd: String::from(name), trd: n },
+                )?;
+            }
+            Ok(())
+        };
+        if let Some(rep) = cfg.repair_crate.get(side) {
+            add_supply(rep.name.as_str())?;
         }
-
         if let Some(whcfg) = &cfg.warehouse {
-            // Fuel transfer crate
             if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(side) {
-                mc.add_command_for_group(
-                    group,
-                    fuel_cr.name.clone(),
-                    Some(logi.clone()),
-                    spawn_c130_crate,
-                    ArgTuple {
-                        fst: group,
-                        snd: fuel_cr.name.clone(),
-                    },
-                )?;
+                add_supply(fuel_cr.name.as_str())?;
             }
-
-            // Weapons transfer crate
             if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(side) {
-                mc.add_command_for_group(
-                    group,
-                    weapons_cr.name.clone(),
-                    Some(logi.clone()),
-                    spawn_c130_crate,
-                    ArgTuple {
-                        fst: group,
-                        snd: weapons_cr.name.clone(),
-                    },
-                )?;
+                add_supply(weapons_cr.name.as_str())?;
             }
-
-            // Carrier repair crate
             if !whcfg.carrier_repair_crate.is_empty() {
-                let cr = &whcfg.carrier_repair_crate[&side];
-                mc.add_command_for_group(
-                    group,
-                    cr.name.clone(),
-                    Some(logi.clone()),
-                    spawn_c130_crate,
-                    ArgTuple {
-                        fst: group,
-                        snd: cr.name.clone(),
-                    },
-                )?;
+                add_supply(whcfg.carrier_repair_crate[&side].name.as_str())?;
             }
         }
     }
@@ -925,7 +931,7 @@ pub(super) fn add_c130_cargo_menu_for_group(
     let base_items = if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() { 1 } else { 0 };
     let mut crate_page = (crates_menu.clone(), base_items);
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
-        if dep.crates.is_empty() {
+        if dep.crates.is_empty() && dep.repair_crate.is_none() {
             continue;
         }
 
@@ -938,7 +944,24 @@ pub(super) fn add_c130_cargo_menu_for_group(
             dep.cost,
         )?;
 
-        // Only add deployable crates, NOT repair crates
+        // The per-deployable repair crate (revives that deployed group after
+        // it's been shot up) is a plain single command -- no xN quantity menu,
+        // same as the helo cargo menu.
+        if let Some(rc) = &dep.repair_crate {
+            let title = if rc.required > 1 {
+                String::from(format_compact!("{}({})", rc.name, rc.required))
+            } else {
+                rc.name.clone()
+            };
+            mc.add_command_for_group(
+                group,
+                title,
+                Some(root.clone()),
+                spawn_c130_crate,
+                ArgTuple { fst: group, snd: rc.name.clone() },
+            )?;
+        }
+
         for cr in &dep.crates {
             let title = if cr.required > 1 {
                 String::from(format_compact!("{}({})", cr.name, cr.required))
@@ -955,8 +978,17 @@ pub(super) fn add_c130_cargo_menu_for_group(
                     snd: cr.name.clone(),
                 },
             )?;
-            // "X" submenu: pick a quantity 1-9 of this crate to spawn at once.
-            let qty_menu = mc.add_submenu_for_group(group, "X".into(), Some(root.clone()))?;
+            // Per-crate quantity submenu: pick 1-9 of this crate to spawn at
+            // once. The name must include the crate name -- a leaf category
+            // with more than one crate (e.g. "SA 3") would otherwise call
+            // add_submenu_for_group with the same name+parent once per crate,
+            // which collides in DCS and corrupts the menu / binds the quantity
+            // commands to the wrong crate.
+            let qty_menu = mc.add_submenu_for_group(
+                group,
+                String::from(format_compact!("{} xN", cr.name)),
+                Some(root.clone()),
+            )?;
             for n in 1..=9u32 {
                 mc.add_command_for_group(
                     group,
@@ -1098,47 +1130,56 @@ pub(super) fn add_helo_cargo_menu_for_group(
 
     // "Base Supply", not "Logistics" -- a deployable's own category path can be
     // named "Logistics" too (e.g. Ammo Truck), and two addSubMenuForGroup calls
-    // with the same name+parent collide in DCS, breaking both menus.
-    if let Some(whcfg) = &cfg.warehouse {
+    // with the same name+parent collide in DCS, breaking both menus. Build it
+    // once and hang every base-supply crate off it.
+    if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() {
         let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(crates_menu.clone()))?;
-
-        if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(side) {
+        // "spawn 1" command + a "xN" submenu (1-9) per base-supply crate.
+        let add_supply = |name: &str| -> Result<()> {
             mc.add_command_for_group(
                 group,
-                fuel_cr.name.clone(),
+                String::from(name),
                 Some(logi.clone()),
                 spawn_helo_crate,
-                ArgTuple { fst: group, snd: fuel_cr.name.clone() },
+                ArgTuple { fst: group, snd: String::from(name) },
             )?;
+            let qty = mc.add_submenu_for_group(
+                group,
+                String::from(format_compact!("{name} xN")),
+                Some(logi.clone()),
+            )?;
+            for n in 1..=9u32 {
+                mc.add_command_for_group(
+                    group,
+                    String::from(format_compact!("{n}")),
+                    Some(qty.clone()),
+                    spawn_n_helo_crates,
+                    ArgTriple { fst: group, snd: String::from(name), trd: n },
+                )?;
+            }
+            Ok(())
+        };
+        if let Some(rep) = cfg.repair_crate.get(side) {
+            add_supply(rep.name.as_str())?;
         }
-
-        if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(side) {
-            mc.add_command_for_group(
-                group,
-                weapons_cr.name.clone(),
-                Some(logi.clone()),
-                spawn_helo_crate,
-                ArgTuple { fst: group, snd: weapons_cr.name.clone() },
-            )?;
-        }
-
-        if !whcfg.carrier_repair_crate.is_empty() {
-            let cr = &whcfg.carrier_repair_crate[side];
-            mc.add_command_for_group(
-                group,
-                cr.name.clone(),
-                Some(logi.clone()),
-                spawn_helo_crate,
-                ArgTuple { fst: group, snd: cr.name.clone() },
-            )?;
+        if let Some(whcfg) = &cfg.warehouse {
+            if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(side) {
+                add_supply(fuel_cr.name.as_str())?;
+            }
+            if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(side) {
+                add_supply(weapons_cr.name.as_str())?;
+            }
+            if !whcfg.carrier_repair_crate.is_empty() {
+                add_supply(whcfg.carrier_repair_crate[side].name.as_str())?;
+            }
         }
     }
 
     let mut created_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
-    let base_items = if cfg.warehouse.is_some() { 1 } else { 0 };
+    let base_items = if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() { 1 } else { 0 };
     let mut crate_page = (crates_menu.clone(), base_items);
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
-        if dep.crates.is_empty() {
+        if dep.crates.is_empty() && dep.repair_crate.is_none() {
             continue;
         }
 
@@ -1150,6 +1191,23 @@ pub(super) fn add_helo_cargo_menu_for_group(
             &dep.path,
             dep.cost,
         )?;
+
+        // Per-deployable repair crate (revives that deployed group after it's
+        // been shot up) -- plain single command, no xN menu.
+        if let Some(rc) = &dep.repair_crate {
+            let title = if rc.required > 1 {
+                String::from(format_compact!("{}({})", rc.name, rc.required))
+            } else {
+                rc.name.clone()
+            };
+            mc.add_command_for_group(
+                group,
+                title,
+                Some(dep_root.clone()),
+                spawn_helo_crate,
+                ArgTuple { fst: group, snd: rc.name.clone() },
+            )?;
+        }
 
         for cr in &dep.crates {
             let title = if cr.required > 1 {
@@ -1164,8 +1222,17 @@ pub(super) fn add_helo_cargo_menu_for_group(
                 spawn_helo_crate,
                 ArgTuple { fst: group, snd: cr.name.clone() },
             )?;
-            // "X" submenu: pick a quantity 1-9 of this crate to spawn at once.
-            let qty_menu = mc.add_submenu_for_group(group, "X".into(), Some(dep_root.clone()))?;
+            // Per-crate quantity submenu: pick 1-9 of this crate to spawn at
+            // once. The name must include the crate name -- a leaf category
+            // with more than one crate (e.g. "SA 3") would otherwise call
+            // add_submenu_for_group with the same name+parent once per crate,
+            // which collides in DCS and corrupts the menu / binds the quantity
+            // commands to the wrong crate.
+            let qty_menu = mc.add_submenu_for_group(
+                group,
+                String::from(format_compact!("{} xN", cr.name)),
+                Some(dep_root.clone()),
+            )?;
             for n in 1..=9u32 {
                 mc.add_command_for_group(
                     group,

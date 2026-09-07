@@ -54,6 +54,12 @@ macro_rules! some {
     };
 }
 
+/// Public wrapper around `who` for callers outside the shot pipeline
+/// (e.g. the slot-leave-under-threat handler).
+pub fn who_for(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
+    who(db, id)
+}
+
 fn who(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
     match db.ephemeral.get_uid_by_object_id(&id) {
         Some(uid) => db.unit(uid).ok().map(|u| Who::AI {
@@ -91,6 +97,38 @@ impl ShotDb {
         if let Entry::Vacant(e) = self.dead.entry(target) {
             e.insert(time);
         }
+    }
+
+    /// A player bailed out of a slot while airborne and under threat (an enemy
+    /// aircraft close by). Credit that enemy with the kill: mark the unit dead
+    /// and, only if nothing has already been recorded against it, attach a
+    /// synthetic shot so `bring_out_your_dead` produces a `Dead`.
+    pub fn abandoned_under_threat(
+        &mut self,
+        target_oid: DcsOid<ClassUnit>,
+        shooter: Who,
+        target: Who,
+        shooter_typ: Option<String>,
+        target_typ: String,
+        time: DateTime<Utc>,
+    ) {
+        if self.recently_dead.contains_key(&target_oid) {
+            return;
+        }
+        let entry = self.by_target.entry(target_oid.clone()).or_default();
+        if entry.is_empty() {
+            entry.push(Shot {
+                weapon_name: Some(String::from("left slot under threat")),
+                weapon: None,
+                shooter,
+                shooter_typ,
+                target,
+                target_typ,
+                time,
+                hit: true,
+            });
+        }
+        self.dead.entry(target_oid).or_insert(time);
     }
 
     pub fn shot(&mut self, db: &Db, now: DateTime<Utc>, e: &ShotEvent) -> Result<()> {

@@ -354,14 +354,22 @@ impl Db {
             .objectives
             .into_iter()
             .find_map(|(oid, obj)| {
-                if obj.owner == side && obj.logi() > 0 && obj.zone.contains(point) {
+                // A base that's been bombed into a capturable state can't
+                // supply its own defenders -- no troop pickups, no repair
+                // crates from here. Its garrison has to be reinforced from
+                // another friendly objective.
+                if obj.owner == side
+                    && obj.logi() > 0
+                    && !obj.captureable()
+                    && obj.zone.contains(point)
+                {
                     return Some((oid, obj));
                 }
                 None
             });
         match obj {
             Some((oid, obj)) => Ok((*oid, obj)),
-            None => bail!("not near friendly logistics"),
+            None => bail!("not near friendly logistics (or this base is too damaged to supply from)"),
         }
     }
 
@@ -2994,6 +3002,31 @@ impl Db {
             None => (point, spawn_distance),
         };
 
+        // Resolve carrier linkage up front so it can also gate the
+        // logistics-proximity check below (and reuse it when registering the
+        // link further down).
+        let carrier_link_id = match &carrier_marker {
+            Some((_, link_name)) => Some(link_name.clone()),
+            None => self.find_carrier_unit_at_position(lua, point, side)?,
+        };
+        let on_carrier = carrier_marker.is_some() || carrier_link_id.is_some();
+
+        // Outside of carrier ops, the pilot must physically be inside a
+        // friendly logistics objective to spawn crates -- the same rule the
+        // legacy `spawn_crate` path enforces via `point_near_logistics`.
+        // Without this a C-130/helo pilot could air-drop crates anywhere on
+        // the map. The recorded origin is the objective actually dropped at,
+        // not the slot's home base.
+        let origin = if on_carrier {
+            origin
+        } else {
+            self.point_near_logistics(side, point)
+                .map(|(oid, _)| oid)
+                .map_err(|_| {
+                    anyhow!("you must be inside a friendly logistics objective to spawn crates")
+                })?
+        };
+
         // Scan for a spot clear of any existing crate, from any player, so two
         // players dropping cargo near the same spot don't compute overlapping
         // spawn points and destroy each other's crates
@@ -3039,11 +3072,7 @@ impl Db {
         debug!("[C130_CARGO] Spawning with template='{}', dir=({:.2}, {:.2})",
                template, dir.x, dir.y);
 
-        // Check if player is on a carrier - if so, link the crate to the carrier unit
-        let carrier_link_id = match carrier_marker {
-            Some((_, link_name)) => Some(link_name),
-            None => self.find_carrier_unit_at_position(lua, point, side)?,
-        };
+        // Carrier linkage was resolved above.
         if carrier_link_id.is_some() {
             debug!("[C130_CARGO] Player is on carrier, will link crate to carrier unit");
         }
@@ -3338,6 +3367,19 @@ impl Db {
             None => self.find_carrier_unit_at_position(lua, point, side)?,
         };
 
+        // Same logistics-proximity rule as spawn_c130_crate / spawn_crate:
+        // off-carrier, the pilot must be inside a friendly logistics objective,
+        // and the recorded origin is where they actually are.
+        let origin = if carrier_link_id.is_some() {
+            origin
+        } else {
+            self.point_near_logistics(side, point)
+                .map(|(oid, _)| oid)
+                .map_err(|_| {
+                    anyhow!("you must be inside a friendly logistics objective to spawn crates")
+                })?
+        };
+
         let num_to_spawn = crate_list.len().min(max_spawn);
         let mut spawn_time = Utc::now();
 
@@ -3418,12 +3460,21 @@ impl Db {
                         None => continue,
                     };
 
-                    let crate_type = if crate_name.contains("Fuel Transfer") {
+                    // Match the crate NAME against the configured base-supply
+                    // crate names (rename-safe, and covers the logistics repair
+                    // kit which the old hardcoded check missed).
+                    let whcfg = self.ephemeral.cfg.warehouse.as_ref();
+                    let named = |cr: Option<&Crate>| {
+                        cr.map(|c| c.name.as_str() == crate_name.as_str()).unwrap_or(false)
+                    };
+                    let crate_type = if named(whcfg.and_then(|w| w.supply_transfer_fuel_crate.get(&side))) {
                         C130CargoType::SupplyTransferFuel
-                    } else if crate_name.contains("Weapons Transfer") {
+                    } else if named(whcfg.and_then(|w| w.supply_transfer_weapons_crate.get(&side))) {
                         C130CargoType::SupplyTransferWeapons
-                    } else if crate_name.contains("Carrier Repair") {
+                    } else if named(whcfg.and_then(|w| w.carrier_repair_crate.get(&side))) {
                         C130CargoType::CarrierRepair
+                    } else if named(self.ephemeral.cfg.repair_crate.get(&side)) {
+                        C130CargoType::LogisticsRepair
                     } else {
                         C130CargoType::Deployable { name: crate_name.clone() }
                     };

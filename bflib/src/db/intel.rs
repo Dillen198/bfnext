@@ -39,6 +39,11 @@ impl ContactId {
         static SEQ: AtomicU64 = AtomicU64::new(1);
         Self(SEQ.fetch_add(1, Ordering::Relaxed))
     }
+
+    /// The raw counter value, for use as a stable wire id.
+    pub fn raw(self) -> u64 {
+        self.0
+    }
 }
 
 /// Coarse unit classification stored in an intel contact.
@@ -287,6 +292,16 @@ impl IntelDatabase {
             .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.into_iter().take(n).map(|(c, _)| c).collect()
+    }
+
+    /// Every contact visible to `side`, unordered. Backs the dashboard
+    /// TACMAP ground picture (`crate::admin::query_tacmap`).
+    pub fn contacts_for(&self, side: Side) -> impl Iterator<Item = &IntelContact> {
+        self.by_side
+            .get(&side)
+            .into_iter()
+            .flat_map(|ids| ids.iter())
+            .filter_map(move |id| self.contacts.get(id))
     }
 
     /// Build the map marker label text for a contact.

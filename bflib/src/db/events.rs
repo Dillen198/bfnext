@@ -243,6 +243,16 @@ pub struct EventScheduler {
     /// retargeting takes over).
     #[serde(skip)]
     pub pending_cap_tasks: FxHashMap<GroupId, Vector2>,
+    /// CAP event → the ground point its flights are currently stationed over.
+    /// Used by retarget_cap_groups to avoid re-issuing an identical CAP-station
+    /// task every slow tick (which would interrupt an in-progress intercept).
+    #[serde(skip)]
+    pub cap_station_by_event: FxHashMap<EventId, Vector2>,
+    /// CAP event → last time its side's radar network still painted a threat it
+    /// could work. Once a CAP has had nothing to do for `cap_idle_rtb_secs` it
+    /// is sent home early instead of burning its full `cap_duration_secs`.
+    #[serde(skip)]
+    pub cap_last_threat_seen: FxHashMap<EventId, DateTime<Utc>>,
 
 
     #[serde(skip)]
@@ -629,7 +639,11 @@ impl EventScheduler {
             .map(|(_, obj)| obj.pos())
             .unwrap_or_else(|| Vector2::new(0., 0.));
 
-        // Now pick the furthest airbase from the threat center to scramble from
+        // Scramble from the friendly airbase *nearest* the threatened sector --
+        // that's where the fight is, and it's what gets CAP onto a northern
+        // front instead of leaving every flight orbiting a rear base in the
+        // south. Bases already covered by an active CAP event are skipped so
+        // multiple fronts each get their own flight.
         let best = db
             .persisted
             .objectives
@@ -639,7 +653,7 @@ impl EventScheduler {
                     && obj.is_airbase()
                     && !active_cap_objs.contains(oid)
             })
-            .max_by(|(_, a), (_, b)| {
+            .min_by(|(_, a), (_, b)| {
                 let da = na::distance_squared(&a.pos().into(), &threat_center.into());
                 let db = na::distance_squared(&b.pos().into(), &threat_center.into());
                 da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)

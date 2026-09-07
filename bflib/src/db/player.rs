@@ -80,6 +80,9 @@ pub enum TakeoffRes {
     NoLifeTaken,
     OutOfLives,
     OutOfPoints,
+    /// Got airborne before the `takeoff_delay_secs` hold expired -- carries the
+    /// seconds that were still remaining.
+    TooEarly(i64),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -93,6 +96,9 @@ pub struct InstancedPlayer {
     pub stopped_at_objective: bool,
     pub moved: Option<DateTime<Utc>>,
     pub cost_fraction: f32,
+    /// Earliest time this player is cleared to get airborne (slot-entry time +
+    /// `cfg.takeoff_delay_secs`). `None` when the delay is disabled.
+    pub takeoff_ok_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,6 +338,14 @@ impl Db {
             .get(&slot)
             .and_then(|ucid| self.persisted.players.get_mut_cow(ucid).map(|p| (*ucid, p)))
             .ok_or_else(|| anyhow!("could not find player in slot {:?}", slot))?;
+        // Enforce the post-slot-entry takeoff hold.
+        if let Some((_, Some(inst))) = &player.current_slot {
+            if let Some(ok_at) = inst.takeoff_ok_at {
+                if time < ok_at {
+                    return Ok(TakeoffRes::TooEarly((ok_at - time).num_seconds().max(1)));
+                }
+            }
+        }
         let owned_objective = self
             .persisted
             .objectives
@@ -1020,6 +1034,35 @@ impl Db {
                         inv.stored = whcnt - count;
                     }
                 }
+                // Debit the fuel it launches with, so landing it somewhere else
+                // is a real transfer of the airframe *and* its fuel, not free
+                // supply appearing at the destination (see player_left_unit).
+                if let Ok(frac) = unit.get_fuel() {
+                    let max_kg = unit
+                        .get_desc()
+                        .ok()
+                        .and_then(|d| d.raw_get::<_, f64>("fuelMassMax").ok())
+                        .unwrap_or(0.0);
+                    let kg = (frac.clamp(0.0, 1.0) as f64 * max_kg).round() as u32;
+                    if kg > 0 {
+                        let have = wh
+                            .get_liquid_amount(dcso3::warehouse::LiquidType::JetFuel)
+                            .unwrap_or(0);
+                        let _ = wh.remove_liquid(
+                            dcso3::warehouse::LiquidType::JetFuel,
+                            kg.min(have),
+                        );
+                        if let Some(inv) = obj
+                            .warehouse
+                            .liquids
+                            .get_mut_cow(&dcso3::warehouse::LiquidType::JetFuel)
+                        {
+                            inv.stored = wh
+                                .get_liquid_amount(dcso3::warehouse::LiquidType::JetFuel)
+                                .unwrap_or(inv.stored);
+                        }
+                    }
+                }
             }
             maybe_mut!(obj.warehouse.equipment, sifo.typ.0, "equip")?.stored = wh
                 .get_item_count(sifo.typ.0.clone())
@@ -1038,18 +1081,28 @@ impl Db {
             .into_iter()
             .find(|(_, obj)| obj.zone.contains(point))
             .map(|(oid, _)| *oid);
+        let in_air = unit.in_air()?;
+        // Ground-start slots get a hold before they may get airborne; air starts
+        // are already flying, so there's nothing to hold.
+        let takeoff_ok_at = match self.ephemeral.cfg.takeoff_delay_secs {
+            secs if secs > 0 && !in_air => {
+                Some(Utc::now() + Duration::seconds(secs as i64))
+            }
+            _ => None,
+        };
         player.current_slot = Some((
             slot,
             Some(InstancedPlayer {
                 unit_name: unit.get_name()?,
                 position,
                 velocity: unit.get_velocity()?.0,
-                in_air: unit.in_air()?,
+                in_air,
                 typ: Vehicle::from(unit.get_type_name()?),
                 landed_at_objective,
                 stopped_at_objective: true,
                 moved: None,
                 cost_fraction: 1.,
+                takeoff_ok_at,
             }),
         ));
         player.changing_slots = false;
@@ -1073,33 +1126,75 @@ impl Db {
             }
             self.ephemeral.units_able_to_move.swap_remove(&uid);
         }
-        if let Some(slot) = self.ephemeral.slot_by_object_id.get(&objid) {
-            if let Some(ucid) = self.ephemeral.player_in_slot(slot) {
-                let ucid = ucid.clone();
+        if let Some(slot) = self.ephemeral.slot_by_object_id.get(&objid).cloned() {
+            if let Some(ucid) = self.ephemeral.player_in_slot(&slot).cloned() {
+                let player_side = self.persisted.players.get(&ucid).map(|p| p.side);
+                // Only ground-start slots have their airframe / stores debited
+                // from the departure base (see adjust_warehouse), so only they
+                // are credited back on landing.
+                let ground_start = self
+                    .ephemeral
+                    .slot_info
+                    .get(&slot)
+                    .map(|s| s.ground_start)
+                    .unwrap_or(false);
                 let player = maybe_mut!(self.persisted.players, ucid, "player")?;
                 if let Some((_, Some(inst))) = player.current_slot.as_mut() {
                     let typ = inst.typ.clone();
                     if let Some(oid) = inst.landed_at_objective {
                         let mut fix_warehouse = || -> Result<()> {
                             let obj = objective_mut!(self, oid).context("get objective")?;
+                            // The base can change hands while a player sits
+                            // parked in it. `landed_at_objective` was friendly
+                            // when it was set; re-check now so a captured base
+                            // doesn't absorb the departing (enemy) player's
+                            // airframe and stores into what is now the new
+                            // owner's warehouse.
+                            if player_side != Some(obj.owner()) {
+                                return Ok(());
+                            }
                             let id = maybe!(self.ephemeral.airbase_by_oid, oid, "airbase")?;
                             let airbase = Airbase::get_instance(lua, &id).context("get airbase")?;
                             let wh = airbase.get_warehouse().context("get warehouse")?;
-                            let airbase = obj.kind.is_airbase()
-                                || self
-                                    .ephemeral
-                                    .cfg
-                                    .extra_fixed_wing_objectives
-                                    .contains(obj.name());
                             let mut sync: SmallVec<[String; 4]> = smallvec![typ.0.clone()];
-                            if !airbase && let Ok(unit) = Unit::get_instance(lua, &objid) {
+                            // Return the airframe + its remaining stores to the
+                            // base it landed at -- for every objective type
+                            // (FARP, FOB, airbase, naval). This is the credit
+                            // half of the takeoff debit in adjust_warehouse.
+                            if ground_start && let Ok(unit) = Unit::get_instance(lua, &objid) {
                                 wh.add_item(typ.0.clone(), 1)?;
                                 for ammo in unit.get_ammo().context("get ammo")? {
                                     let ammo = ammo.context("ammo")?;
                                     let count = ammo.count().context("ammo count")?;
-                                    let typ = ammo.type_name().context("ammo typ")?;
-                                    sync.push(typ.clone());
-                                    wh.add_item(typ, count).context("add item to warehouse")?;
+                                    let atyp = ammo.type_name().context("ammo typ")?;
+                                    sync.push(atyp.clone());
+                                    wh.add_item(atyp, count).context("add item to warehouse")?;
+                                }
+                                // Remaining internal fuel comes back as jet fuel.
+                                if let Ok(frac) = unit.get_fuel() {
+                                    let max_kg = unit
+                                        .get_desc()
+                                        .ok()
+                                        .and_then(|d| d.raw_get::<_, f64>("fuelMassMax").ok())
+                                        .unwrap_or(0.0);
+                                    let kg = (frac.clamp(0.0, 1.0) as f64 * max_kg).round() as u32;
+                                    if kg > 0 {
+                                        let _ = wh.add_liquid(
+                                            dcso3::warehouse::LiquidType::JetFuel,
+                                            kg,
+                                        );
+                                        if let Some(inv) = obj
+                                            .warehouse
+                                            .liquids
+                                            .get_mut_cow(&dcso3::warehouse::LiquidType::JetFuel)
+                                        {
+                                            inv.stored = wh
+                                                .get_liquid_amount(
+                                                    dcso3::warehouse::LiquidType::JetFuel,
+                                                )
+                                                .unwrap_or(inv.stored);
+                                        }
+                                    }
                                 }
                             }
                             for typ in sync {

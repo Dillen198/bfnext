@@ -16,7 +16,7 @@ for more details.
 
 use super::{
     Db, Map, MapM, MapS, Set,
-    group::{DeployKind, SpawnedUnit},
+    group::{DeployKind, SpawnedGroup, SpawnedUnit},
     logistics::{Inventory, LogiStage, Warehouse},
 };
 use crate::{
@@ -36,7 +36,7 @@ use bfprotocols::{
     stats::Stat,
 };
 use chrono::{Duration, prelude::*};
-use compact_str::format_compact;
+use compact_str::{CompactString, format_compact};
 use core::f64;
 use dcso3::{
     LuaVec2, LuaVec3, MizLua, Quad2, String, Vector2, Vector3,
@@ -479,6 +479,71 @@ impl Objective {
     }
 }
 
+/// One friendly capture group's standing relative to an objective, for
+/// `Db::capture_diagnosis`.
+#[derive(Debug, Clone)]
+pub struct CaptureTroopStatus {
+    /// Squad name from the troop config, or "dismounted infantry".
+    pub name: CompactString,
+    /// False for troop types configured `can_capture = false` -- they can
+    /// sit in the zone forever and nothing happens.
+    pub can_capture: bool,
+    /// At least one living unit is inside the capture zone.
+    pub in_zone: bool,
+    /// Metres the nearest living unit sits outside the zone edge (0 when in
+    /// the zone). Approximate for quad zones.
+    pub outside_by: f64,
+}
+
+/// Why an objective is or isn't being captured -- see `Db::capture_diagnosis`.
+#[derive(Debug, Clone)]
+pub struct CaptureDiagnosis {
+    pub obj_name: CompactString,
+    pub owner: Side,
+    /// The base is in its post-capture consolidation hold (takeable now by
+    /// either side, garrison still down).
+    pub in_capture_hold: bool,
+    /// The objective itself currently meets the capture preconditions.
+    pub obj_eligible: bool,
+    /// Objective-level blockers in plain language; empty when `obj_eligible`.
+    pub obj_blockers: SmallVec<[CompactString; 3]>,
+    /// Seconds left on the post-owner-change cooldown, if one is running.
+    pub cooldown_secs: Option<i64>,
+    /// (capturing side, seconds held so far, base momentum seconds) if a
+    /// capture timer is currently running.
+    pub in_progress: Option<(Side, i64, i64)>,
+    /// The asking side's capture-capable groups in or near the zone.
+    pub troops: SmallVec<[CaptureTroopStatus; 4]>,
+}
+
+impl CaptureDiagnosis {
+    /// A one-line summary for list views (Capturable / Contested).
+    pub fn one_liner(&self) -> CompactString {
+        if let Some((side, held, base)) = self.in_progress {
+            return format_compact!("being taken by {side:?} -- held {held}s (~{base}s needed)");
+        }
+        if let Some(cd) = self.cooldown_secs {
+            return format_compact!("just changed hands -- {cd}s cooldown before a new attempt");
+        }
+        let have_capture_troops = self.troops.iter().any(|t| t.can_capture);
+        let in_zone = self.troops.iter().any(|t| t.can_capture && t.in_zone);
+        if !self.obj_eligible {
+            return self
+                .obj_blockers
+                .first()
+                .cloned()
+                .unwrap_or_else(|| CompactString::from("not eligible yet"));
+        }
+        if in_zone {
+            CompactString::from("eligible -- capture troops in the zone, hold position")
+        } else if have_capture_troops {
+            CompactString::from("eligible -- move your capture troops into the zone")
+        } else {
+            CompactString::from("eligible -- no capture troops near the zone")
+        }
+    }
+}
+
 impl Db {
     pub fn objective(&self, id: &ObjectiveId) -> Result<&Objective> {
         objective!(self, id)
@@ -894,13 +959,24 @@ impl Db {
         let (kind, health, logi, _prev_logi, name, owner, newly_capturable) = {
             let obj = objective!(self, oid)?;
             let prev_logi = obj.logi;
+            let prev_health = obj.health;
+            let prev_infantry = obj.infantry;
             let prev_eligible = obj.captureable() || obj.kind.is_special_sam_site();
             let (health, logi, infantry) = self.compute_objective_status(obj)?;
             let obj = objective_mut!(self, oid)?;
             obj.health = health;
             obj.logi = logi;
             obj.infantry = infantry;
-            obj.last_change_ts = now;
+            // Only advance the "time since last change" clock when the objective
+            // actually changed. This function is called from many paths that
+            // recompute an unchanged status (culling, scenery sync, threat
+            // checks); bumping last_change_ts on every one of them keeps the
+            // auto-repair countdown (see maybe_do_repairs) from ever elapsing,
+            // which left bombed-out bases stuck showing "Repairing 100% ETA 0s"
+            // while never actually rebuilding.
+            if health != prev_health || logi != prev_logi || infantry != prev_infantry {
+                obj.last_change_ts = now;
+            }
 
             // For carrier groups, mark warehouse as damaged if supply ship is destroyed (logi drops to 0)
             if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
@@ -1506,42 +1582,120 @@ impl Db {
     }
 
     pub fn maybe_do_repairs(&mut self, now: DateTime<Utc>) -> Result<()> {
-        let to_repair = self
-            .persisted
-            .objectives
-            .into_iter()
-            .filter_map(|(oid, obj)| {
-                // A base under active assault (enemy nearby, or troops already
-                // running the capture timer) can't rebuild itself. A capturable
-                // but un-pressured base still repairs -- it just burns supply to
-                // do it (see repair_objective), so an attacker who leaves gives
-                // it the chance to recover from its own stockpile.
-                if obj.threatened || self.ephemeral.capture_progress.contains_key(oid) {
-                    return None;
-                }
+        let mut to_repair: Vec<ObjectiveId> = vec![];
+        let mut to_neutralize: Vec<ObjectiveId> = vec![];
+        for (oid, obj) in &self.persisted.objectives {
+            // A base bombed flat -- garrison ground down to nothing -- falls out
+            // of its owner's hands entirely: it goes Neutral and has to be
+            // retaken with troops, it does NOT quietly heal itself back to life.
+            // Carriers, command centers, and special SAM sites have no garrison
+            // model and are handled elsewhere.
+            if obj.health == 0
+                && obj.owner != Side::Neutral
+                && obj.spawned
+                && obj.capture_hold.is_empty()
+                && !matches!(
+                    obj.kind,
+                    ObjectiveKind::CarrierGroup { .. }
+                        | ObjectiveKind::CommandCenter
+                        | ObjectiveKind::SpecialSamSite
+                )
+            {
+                to_neutralize.push(*oid);
+                continue;
+            }
+            // A base under active assault (enemy nearby, or troops already
+            // running the capture timer) can't rebuild itself. A capturable
+            // but un-pressured base still repairs -- it just burns supply to
+            // do it (see repair_objective), so an attacker who leaves gives
+            // it the chance to recover from its own stockpile. A Neutral base
+            // has no owner-side groups to rebuild -- it's retaken, not healed.
+            if obj.owner == Side::Neutral
+                || obj.threatened
+                || self.ephemeral.capture_progress.contains_key(oid)
+            {
+                continue;
+            }
+            // Special SAM sites have no logistics units, so the logi-scaled
+            // clock below would divide by zero (logi == 0) and never fire.
+            // Rebuild them on the flat repair_time instead.
+            let repair_time = if obj.kind.is_special_sam_site() {
+                self.ephemeral.cfg.repair_time as f32
+            } else {
                 let logi = obj.logi as f32 / 100.;
-                let repair_time = self.ephemeral.cfg.repair_time as f32 / logi;
-                if repair_time < i64::MAX as f32 {
-                    let repair_time = Duration::seconds(repair_time as i64);
-                    if obj.health < 100 && (now - obj.last_change_ts) >= repair_time {
-                        Some(*oid)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                self.ephemeral.cfg.repair_time as f32 / logi
+            };
+            if repair_time < i64::MAX as f32 {
+                let repair_time = Duration::seconds(repair_time as i64);
+                if obj.health < 100 && (now - obj.last_change_ts) >= repair_time {
+                    to_repair.push(*oid);
                 }
-            })
-            .collect::<Vec<_>>();
-        for oid in to_repair {
-            self.repair_objective(oid, now)?
+            }
         }
+        for oid in to_neutralize {
+            if let Err(e) = self.neutralize_depleted_objective(oid, now) {
+                error!("neutralize {oid} failed: {e:?}");
+            }
+        }
+        for oid in to_repair {
+            // One bad objective (e.g. a stale group id) must not abort the whole
+            // repair pass -- that would freeze auto-repair for every other base.
+            if let Err(e) = self.repair_objective(oid, now) {
+                error!("repair {oid} failed: {e:?}");
+            }
+        }
+        Ok(())
+    }
+
+    /// A base whose garrison has been wiped out (health 0) falls to Neutral:
+    /// spawns lock (see `SlotAuth`), it stops self-repairing (no owner-side
+    /// groups left to rebuild), and it has to be retaken with capture-capable
+    /// troops staged from another friendly objective. Mirrors the "assault
+    /// force wiped out" transition in `check_capture_hold`.
+    fn neutralize_depleted_objective(
+        &mut self,
+        oid: ObjectiveId,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let name = {
+            let obj = objective_mut!(self, oid)?;
+            if obj.owner == Side::Neutral {
+                return Ok(());
+            }
+            obj.owner = Side::Neutral;
+            obj.spawned = false;
+            obj.last_activate = now;
+            obj.last_change_ts = now;
+            obj.threatened = false;
+            obj.capture_hold.clear();
+            obj.capture_hold_ts = None;
+            obj.name.clone()
+        };
+        self.ephemeral.capture_progress.remove(&oid);
+        self.ephemeral.last_owner_change.insert(oid, now);
+        self.ephemeral.msgs().panel_to_all(
+            15,
+            true,
+            format_compact!(
+                "{name}: the garrison has been wiped out -- the base is now Neutral and must be retaken with troops"
+            ),
+        );
+        let obj = objective!(self, oid)?;
+        self.ephemeral.create_objective_markup(&self.persisted, obj);
+        self.ephemeral.dirty();
+        self.sync_scenery_markers(oid);
         Ok(())
     }
 
     pub fn capturable_objectives(&self) -> SmallVec<[ObjectiveId; 1]> {
         let mut cap = smallvec![];
         for (oid, obj) in &self.persisted.objectives {
+            // A base in its post-capture hold reads as `captureable()` but the
+            // "land troops now" advice is wrong -- the enemy has to break the
+            // assault force first. Don't advertise it.
+            if obj.in_capture_hold() {
+                continue;
+            }
             if obj.captureable() || obj.kind.is_special_sam_site() {
                 cap.push(*oid)
             }
@@ -1701,12 +1855,40 @@ impl Db {
             .unwrap_or(0.0);
         let mut captured: FxHashMap<ObjectiveId, Vec<(Side, Option<Ucid>, Option<ObjectiveId>, GroupId)>> =
             FxHashMap::default();
+        let capture_cooldown = self
+            .ephemeral
+            .cfg
+            .campaign_events
+            .as_ref()
+            .map(|c| c.capture_cooldown_secs as i64)
+            .unwrap_or(120);
         for (oid, obj) in &self.persisted.objectives {
+            // A base that was just taken is held by its assault force during the
+            // consolidation window (`in_capture_hold`). The enemy can't simply
+            // walk back in and re-flip it -- they have to eliminate that assault
+            // force first, which drops the base to Neutral (see
+            // check_capture_hold) and only then makes it contestable again.
+            if obj.in_capture_hold() {
+                continue;
+            }
+            // Post-ownership-change cooldown: no fresh capture timer starts
+            // against a base that just flipped (or fell Neutral), so a zone with
+            // capture troops from both sides in it can't loop every capture
+            // timer's length.
+            if capture_cooldown > 0
+                && self
+                    .ephemeral
+                    .last_owner_change
+                    .get(oid)
+                    .map(|t| (now - *t).num_seconds() < capture_cooldown)
+                    .unwrap_or(false)
+            {
+                continue;
+            }
             let unit_threshold_met = min_unit_pct <= 0.0
                 || obj.kind.is_special_sam_site()
                 || self.defender_destruction_ratio(obj) >= min_unit_pct;
             if (obj.captureable() || obj.kind.is_special_sam_site()) && unit_threshold_met {
-                self.ephemeral.capture_blocked_notice.remove(oid);
                 for gid in &self.persisted.troops {
                     let group = group!(self, gid)?;
                     match &group.origin {
@@ -1758,53 +1940,9 @@ impl Db {
                         }
                     }
                 }
-            } else {
-                // Not yet eligible -- if enemy capture-capable troops are already
-                // standing in the zone, tell them why nothing is happening instead
-                // of leaving them guessing. Throttled per-objective.
-                let mut enemy_in_zone = false;
-                for gid in &self.persisted.troops {
-                    let group = group!(self, gid)?;
-                    if let DeployKind::Troop { spec, .. } = &group.origin {
-                        if spec.can_capture
-                            && group.side != obj.owner
-                            && group
-                                .units
-                                .into_iter()
-                                .filter_map(|uid| self.persisted.units.get(uid))
-                                .any(|u| !u.dead && obj.zone.contains(u.pos))
-                        {
-                            enemy_in_zone = true;
-                            break;
-                        }
-                    }
-                }
-                if enemy_in_zone {
-                    let last = self.ephemeral.capture_blocked_notice.get(oid).copied();
-                    let due = last.map(|t| (now - t).num_seconds() >= 30).unwrap_or(true);
-                    if due {
-                        self.ephemeral.capture_blocked_notice.insert(*oid, now);
-                        let reason = if !unit_threshold_met {
-                            format_compact!(
-                                "not enough defenders destroyed yet ({:.0}% required)",
-                                min_unit_pct * 100.0
-                            )
-                        } else if obj.infantry > 0 {
-                            format_compact!("enemy infantry still defending ({}% left)", obj.infantry)
-                        } else {
-                            format_compact!("health still above 20% ({}%)", obj.health)
-                        };
-                        self.ephemeral.msgs().panel_to_all(
-                            15,
-                            false,
-                            format_compact!(
-                                "{} is not capturable yet: {reason}.",
-                                obj.name
-                            ),
-                        );
-                    }
-                }
             }
+            // Note: no "not capturable yet" broadcast here -- players pull that
+            // on demand from Objectives > Capture Advisor (see capture_diagnosis).
         }
         let mut actually_captured = smallvec![];
         let mut to_mark: SmallVec<[GroupId; 32]> = smallvec![];
@@ -1881,6 +2019,7 @@ impl Db {
                 obj.last_activate = now;
                 obj.owner = new_owner;
                 self.ephemeral.capture_progress.remove(&oid);
+                self.ephemeral.last_owner_change.insert(oid, now);
                 actually_captured.push((*side, oid));
                 self.ephemeral.msgs().panel_to_all(
                     15,
@@ -1890,16 +2029,39 @@ impl Db {
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     to_mark.push(*gid);
                 }
-                for gid in obj.groups.get(&obj.owner.opposite()).unwrap_or(&Set::new()) {
-                    if let Some(id) = self.ephemeral.group_marks.remove(gid) {
+                // The previous garrison's combat units are overrun on capture:
+                // kill the survivors and despawn them, rather than leaving stray
+                // ex-owner armour/infantry/SAM standing around a base that just
+                // changed hands (they and the new garrison mostly ignore each
+                // other). Logi/services have their own capture transition
+                // (repair_one_logi_step / repair_services) so leave those.
+                let stale_gids: SmallVec<[GroupId; 16]> = [Side::Blue, Side::Red, Side::Neutral]
+                    .into_iter()
+                    .filter(|s| *s != new_owner)
+                    .flat_map(|s| {
+                        obj.groups
+                            .get(&s)
+                            .into_iter()
+                            .flat_map(|set| set.into_iter().copied())
+                    })
+                    .collect();
+                for gid in stale_gids {
+                    let is_combat = group!(self, &gid)
+                        .map(|g| !g.class.is_logi() && !g.class.is_services())
+                        .unwrap_or(false);
+                    if !is_combat {
+                        continue;
+                    }
+                    if let Some(id) = self.ephemeral.group_marks.remove(&gid) {
                         self.ephemeral.msgs.delete_mark(id)
                     }
-                    for uid in &group!(self, gid)?.units {
-                        if !unit!(self, uid)?.dead {
-                            self.ephemeral
-                                .units_potentially_close_to_enemies
-                                .insert(*uid);
-                        }
+                    let uids: SmallVec<[UnitId; 32]> =
+                        group!(self, &gid)?.units.into_iter().copied().collect();
+                    for uid in &uids {
+                        unit_mut!(self, uid)?.dead = true;
+                    }
+                    if let Some(dcs_oid) = self.ephemeral.object_id_by_gid.get(&gid).cloned() {
+                        self.ephemeral.push_despawn(gid, Despawn::Group(dcs_oid));
                     }
                 }
                 let is_sam = objective!(self, oid)?.kind.is_special_sam_site();
@@ -1919,35 +2081,119 @@ impl Db {
                     .context("repairing captured airbase logi")?;
                 self.repair_services(*side, now, oid)
                     .context("repairing captured airbase services")?;
-                // Bring the new owner's defensive garrison (armour, infantry,
-                // AAA, SAM) back to full. The .miz pre-places BOTH sides'
-                // garrisons at every objective with the non-owner's units
-                // dead, and nothing else revives them on capture -- so
-                // without this a freshly-taken base sits near 0% health,
-                // stays permanently re-capturable, and the capturing side
-                // can't fix it (friendly troops don't trigger a capture).
-                // Logi (gradual, via repair_one_logi_step) and services
-                // (delayed, via repair_services) are deliberately left alone.
+                // Bring a *fraction* of the new owner's combat garrison
+                // (armour, infantry, AAA, SAM) back on capture -- config
+                // `capture_garrison_revive_fraction`. The .miz pre-places BOTH
+                // sides' garrisons with the non-owner's units dead, so without
+                // at least a partial revive a freshly-taken base sits near 0%
+                // and is instantly re-capturable. The remainder rebuilds
+                // through normal auto-repair, so holding a base still leans on
+                // logistics instead of handing the capturing side an instant
+                // 20-unit fortress. Logi (gradual, via repair_one_logi_step)
+                // and services (delayed, via repair_services) are left alone.
                 {
-                    let garrison: SmallVec<[GroupId; 16]> = objective!(self, oid)?
+                    let (target, include_sam) = self
+                        .ephemeral
+                        .cfg
+                        .campaign_events
+                        .as_ref()
+                        .map(|c| {
+                            (
+                                c.capture_garrison_revive_fraction,
+                                c.capture_garrison_revive_include_sam,
+                            )
+                        })
+                        .unwrap_or((0.25, false));
+                    let target = target.clamp(0.0, 1.0);
+                    let is_sam = |c: ObjGroupClass| {
+                        matches!(
+                            c,
+                            ObjGroupClass::Sr | ObjGroupClass::Mr | ObjGroupClass::Lr
+                        )
+                    };
+                    let mut combat_gids: SmallVec<[GroupId; 16]> = objective!(self, oid)?
                         .groups
                         .get(side)
                         .into_iter()
                         .flat_map(|s| s.into_iter().copied())
+                        .filter(|gid| {
+                            group!(self, gid)
+                                .map(|g| {
+                                    !g.class.is_logi()
+                                        && !g.class.is_services()
+                                        && (include_sam || !is_sam(g.class))
+                                })
+                                .unwrap_or(false)
+                        })
                         .collect();
-                    for gid in garrison {
-                        let g = group!(self, &gid)?;
-                        if g.class.is_logi() || g.class.is_services() {
-                            continue;
+                    // A freshly-taken base comes back as a light target: AAA and
+                    // infantry first, then armour. SAMs are excluded entirely
+                    // (unless capture_garrison_revive_include_sam) -- they
+                    // rebuild slowly through auto-repair or have to be delivered
+                    // by crate. Reviving nothing heavy also means you can still
+                    // contest a wrecked base from the air right after it flips.
+                    combat_gids.sort_by_key(|gid| {
+                        group!(self, gid)
+                            .map(|g| match g.class {
+                                ObjGroupClass::Aaa => 0u8,
+                                ObjGroupClass::Infantry => 1,
+                                ObjGroupClass::Armor => 2,
+                                ObjGroupClass::Naval | ObjGroupClass::Other => 3,
+                                ObjGroupClass::Lr => 4,
+                                ObjGroupClass::Mr => 5,
+                                ObjGroupClass::Sr => 6,
+                                _ => 7,
+                            })
+                            .unwrap_or(8)
+                    });
+                    let total_units: usize = combat_gids
+                        .iter()
+                        .filter_map(|gid| group!(self, gid).ok())
+                        .map(|g| g.units.len())
+                        .sum();
+                    if total_units > 0 && target > 0.0 {
+                        let want = ((total_units as f64) * target).ceil() as usize;
+                        let mut revived = 0usize;
+                        let mut revived_infantry = false;
+                        for gid in &combat_gids {
+                            // Keep going past the budget only to guarantee at
+                            // least one infantry group -- otherwise a base with
+                            // health <= 20% and infantry 0 is instantly
+                            // re-capturable.
+                            let need_infantry = !revived_infantry
+                                && group!(self, gid)
+                                    .map(|g| g.class.is_infantry())
+                                    .unwrap_or(false);
+                            if revived >= want && !need_infantry {
+                                if revived_infantry {
+                                    break;
+                                }
+                                continue;
+                            }
+                            if need_infantry {
+                                revived_infantry = true;
+                            }
+                            let uids: SmallVec<[UnitId; 32]> =
+                                group!(self, gid)?.units.into_iter().copied().collect();
+                            for uid in &uids {
+                                unit_mut!(self, uid)?.dead = false;
+                            }
+                            revived += uids.len();
+                            if objective!(self, oid)?.spawned {
+                                self.ephemeral.push_spawn(*gid);
+                            }
                         }
-                        let uids: SmallVec<[UnitId; 32]> =
-                            g.units.into_iter().copied().collect();
-                        for uid in uids {
-                            unit_mut!(self, &uid)?.dead = false;
-                        }
-                        if objective!(self, oid)?.spawned {
-                            self.ephemeral.push_spawn(gid);
-                        }
+                        self.update_objective_status(&oid, now)
+                            .context("status after garrison revive")?;
+                        let hp = objective!(self, oid)?.health;
+                        self.ephemeral.msgs().panel_to_all(
+                            15,
+                            false,
+                            format_compact!(
+                                "{name}: light garrison in place (~{hp}% -- AAA and infantry). \
+                                 Its SAM cover has to be rebuilt or flown in."
+                            ),
+                        );
                     }
                 }
                 self.capture_warehouse(lua, oid)
@@ -2027,6 +2273,142 @@ impl Db {
             }
         }
         Ok(actually_captured)
+    }
+
+    /// Structured "why isn't this objective being captured" report, backing
+    /// the F10 Objectives > Capture Advisor menu. The gating checked here
+    /// deliberately mirrors `check_capture` -- when either changes, update
+    /// both so the advice can't drift from what the engine actually enforces.
+    ///
+    /// `by_side` is the side asking (normally the requesting player's
+    /// coalition); troop status is reported for that side's capture groups.
+    pub fn capture_diagnosis(&self, oid: &ObjectiveId, by_side: Side) -> Result<CaptureDiagnosis> {
+        let now = Utc::now();
+        let obj = objective!(self, oid)?;
+        let cev = self.ephemeral.cfg.campaign_events.as_ref();
+        let min_unit_pct = cev.map(|c| c.capture_min_unit_pct_destroyed).unwrap_or(0.0);
+        let unit_threshold_met = min_unit_pct <= 0.0
+            || obj.kind.is_special_sam_site()
+            || self.defender_destruction_ratio(obj) >= min_unit_pct;
+
+        let mut obj_blockers: SmallVec<[CompactString; 3]> = smallvec![];
+        let obj_eligible = if obj.in_capture_hold() {
+            true
+        } else if obj.kind.is_special_sam_site() {
+            if obj.health == 0 {
+                true
+            } else {
+                obj_blockers.push(format_compact!(
+                    "destroy the SAM site first (health {}%)",
+                    obj.health
+                ));
+                false
+            }
+        } else if obj.kind.is_carrier_group() {
+            if obj.logi == 0 {
+                true
+            } else {
+                obj_blockers.push(format_compact!(
+                    "sink the SUPPLY ship first (logi must reach 0%, now {}%)",
+                    obj.logi
+                ));
+                false
+            }
+        } else {
+            if obj.health > 20 {
+                obj_blockers.push(format_compact!(
+                    "objective health must be <=20% (now {}%)",
+                    obj.health
+                ));
+            }
+            if obj.infantry > 0 {
+                obj_blockers.push(format_compact!(
+                    "clear the infantry defenders ({} left)",
+                    obj.infantry
+                ));
+            }
+            if !unit_threshold_met {
+                obj_blockers.push(format_compact!(
+                    "destroy {:.0}% of the defending units first (now {:.0}%)",
+                    min_unit_pct * 100.0,
+                    self.defender_destruction_ratio(obj) * 100.0
+                ));
+            }
+            obj.captureable() && unit_threshold_met
+        };
+
+        let cooldown_secs = {
+            let cd = cev.map(|c| c.capture_cooldown_secs as i64).unwrap_or(120);
+            self.ephemeral.last_owner_change.get(oid).and_then(|t| {
+                let left = cd - (now - *t).num_seconds();
+                (cd > 0 && left > 0).then_some(left)
+            })
+        };
+
+        let in_progress = self.ephemeral.capture_progress.get(oid).map(|(side, start, _)| {
+            let base = cev.map(|c| c.capture_time_secs as i64).unwrap_or(180);
+            (*side, (now - *start).num_seconds().max(0), base)
+        });
+
+        // Friendly capture-capable troop / dismount groups near this objective.
+        const NEAR_M: f64 = 55_560.0; // ~30 nm -- keep the card about this base
+        let center = obj.zone.pos();
+        let radius = obj.radius();
+        let mut troops: SmallVec<[CaptureTroopStatus; 4]> = smallvec![];
+        let mut scan = |group: &SpawnedGroup, name: CompactString, can_capture: bool| {
+            let mut nearest: Option<f64> = None;
+            let mut in_zone = false;
+            for uid in &group.units {
+                let Some(u) = self.persisted.units.get(uid) else { continue };
+                if u.dead {
+                    continue;
+                }
+                if obj.zone.contains(u.pos) {
+                    in_zone = true;
+                }
+                let d = na::distance(&center.into(), &u.pos.into());
+                nearest = Some(nearest.map_or(d, |n| n.min(d)));
+            }
+            let Some(nearest) = nearest else { return }; // whole group dead
+            if !in_zone && nearest > NEAR_M {
+                return;
+            }
+            troops.push(CaptureTroopStatus {
+                name,
+                can_capture,
+                in_zone,
+                outside_by: if in_zone { 0.0 } else { (nearest - radius).max(0.0) },
+            });
+        };
+        for gid in &self.persisted.troops {
+            let group = group!(self, gid)?;
+            if group.side != by_side {
+                continue;
+            }
+            if let DeployKind::Troop { spec, .. } = &group.origin {
+                scan(group, spec.name.as_str().into(), spec.can_capture);
+            }
+        }
+        for gid in &self.persisted.dismounts {
+            let group = group!(self, gid)?;
+            if group.side != by_side {
+                continue;
+            }
+            if let DeployKind::Dismount { can_capture, .. } = &group.origin {
+                scan(group, "dismounted infantry".into(), *can_capture);
+            }
+        }
+
+        Ok(CaptureDiagnosis {
+            obj_name: obj.name.as_str().into(),
+            owner: obj.owner,
+            in_capture_hold: obj.in_capture_hold(),
+            obj_eligible,
+            obj_blockers,
+            cooldown_secs,
+            in_progress,
+            troops,
+        })
     }
 
     /// Force an objective to change hands, applying the same side effects as
@@ -2148,13 +2530,20 @@ impl Db {
                     .collect();
                 (alive, started, obj.name.clone(), obj.owner)
             };
-            if alive.is_empty() {
+            // The assault force is gone. It only drops to Neutral if the base
+            // is *also* undefended -- if the garrison the capture revived is
+            // still standing (health > 20), the assault force did its job and
+            // the base consolidates under its new owner instead of becoming a
+            // free-for-all again.
+            let held_health = objective!(self, oid)?.health();
+            if alive.is_empty() && held_health <= 20 {
                 let obj = objective_mut!(self, oid)?;
                 obj.capture_hold.clear();
                 obj.capture_hold_ts = None;
                 obj.owner = Side::Neutral;
                 obj.spawned = false;
                 obj.last_activate = now;
+                self.ephemeral.last_owner_change.insert(oid, now);
                 self.ephemeral.msgs().panel_to_all(
                     15,
                     true,
@@ -2166,7 +2555,7 @@ impl Db {
                 self.ephemeral.create_objective_markup(&self.persisted, obj);
                 self.ephemeral.dirty();
                 self.sync_scenery_markers(oid);
-            } else if now - started >= consolidation {
+            } else if alive.is_empty() || now - started >= consolidation {
                 let obj = objective_mut!(self, oid)?;
                 obj.capture_hold.clear();
                 obj.capture_hold_ts = None;

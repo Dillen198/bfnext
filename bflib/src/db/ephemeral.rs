@@ -264,10 +264,11 @@ pub struct Ephemeral {
     /// Maps ObjectiveId -> (capturing Side, entry DateTime, last_seen DateTime).
     /// last_seen is updated each tick troops are in zone; cleared only after a grace period.
     pub(super) capture_progress: FxHashMap<ObjectiveId, (dcso3::coalition::Side, DateTime<Utc>, DateTime<Utc>)>,
-    /// Last time we told players in an objective's zone why it isn't capturable yet
-    /// (e.g. troops still in zone but health/infantry/destruction-ratio conditions unmet).
-    /// Cooldown-throttled per objective so it doesn't spam every tick.
-    pub(super) capture_blocked_notice: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// Last time an objective changed hands (captured or fell to Neutral). No
+    /// fresh capture timer may start against it until `capture_cooldown_secs`
+    /// have passed -- stops a base with capture-capable troops from both sides
+    /// parked in the zone from flipping every capture-timer's length forever.
+    pub(super) last_owner_change: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Last time treasury income was deposited (Smart Commander).
     pub(crate) last_treasury_income: DateTime<Utc>,
     /// Last time objectives were funded (Smart Commander).
@@ -367,7 +368,7 @@ impl Default for Ephemeral {
             csar_smoke_cooldown: FxHashMap::default(),
             supply_warned: FxHashMap::default(),
             capture_progress: FxHashMap::default(),
-            capture_blocked_notice: FxHashMap::default(),
+            last_owner_change: FxHashMap::default(),
             last_treasury_income: DateTime::<Utc>::default(),
             last_objective_fund: DateTime::<Utc>::default(),
             map_layer: MapLayer::default(),
@@ -483,6 +484,13 @@ impl Ephemeral {
                 return None;
             }
             let elapsed = (Utc::now() - obj.last_change_ts).num_seconds().max(0) as f64;
+            // A working repair resets last_change_ts each tick it fires, so a
+            // real countdown never sits past `total`. If elapsed has run well
+            // past it, the repair is blocked (contested, no revivable groups,
+            // ...) -- show nothing rather than a frozen "100% (ETA 0s)".
+            if elapsed >= total {
+                return None;
+            }
             let pct = ((elapsed / total) * 100.0).clamp(0.0, 100.0) as u8;
             return Some((pct, (total - elapsed).max(0.0) as i64));
         }
@@ -1645,7 +1653,21 @@ impl Ephemeral {
             template.group.set("visible", true)?;
             template.group.set_name(group.name.clone())?;
             let group_clone = template.group.clone();
-            let route = group_clone.route().context("getting route")?;
+            // A plain vehicle group placed in the ME can come through with no
+            // `route` table at all -- give it an empty one rather than blowing
+            // up ("expected a table, got Nil"). The points we set below (or the
+            // caller's `mission`) then land somewhere valid.
+            let route = match group_clone.route() {
+                Ok(r) => r,
+                Err(_) => {
+                    use dcso3::LuaEnv as _;
+                    let inner = spctx.lua().inner();
+                    let r = inner.create_table()?;
+                    r.raw_set("points", inner.create_table()?)?;
+                    group_clone.raw_set("route", r)?;
+                    group_clone.route().context("getting route")?
+                }
+            };
             let mut points: Vec<dcso3::controller::MissionPoint> = if mission.len() > 0 {
                 mission
             } else {
@@ -1844,6 +1866,31 @@ impl Ephemeral {
                                     radius: gci.radius,
                                 })
                                 .context("activating GCI station")?;
+                        }
+                    }
+                    // Player-deployed air defence comes up hot. DCS spawns a
+                    // ground group in AlarmState::Auto, in which a lone
+                    // launcher / short-range SAM with no external cueing often
+                    // never powers its radar on -- the player unpacks a SAM
+                    // and it just sits there dark. Force AlarmState::Red so it
+                    // searches and engages immediately; IADN EMCON explicitly
+                    // skips player-deployed groups (see ewr.rs) so this isn't
+                    // overridden on the next tick. Best effort -- never abort
+                    // a spawn.
+                    if let DeployKind::Deployed { .. } = &group.origin {
+                        if group.tags.contains(UnitTag::SAM) || group.tags.contains(UnitTag::AAA) {
+                            if let Ok(con) = g.get_controller() {
+                                if let Err(e) = con.set_option(dcso3::controller::AiOption::Ground(
+                                    dcso3::controller::GroundOption::AlarmState(
+                                        dcso3::controller::AlarmState::Red,
+                                    ),
+                                )) {
+                                    warn!(
+                                        "failed to set AlarmState::Red on deployed AD group {}: {e:?}",
+                                        group.name
+                                    );
+                                }
+                            }
                         }
                     }
                     // (Re)light this objective's auto-navaid if this group is its

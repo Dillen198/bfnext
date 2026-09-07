@@ -20,7 +20,7 @@ use super::{
     weapon::Weapon, world::MarkPanel, String, Time,
 };
 use anyhow::Result;
-use log::{debug, error, info};
+use log::{debug, info};
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
 
@@ -71,6 +71,24 @@ impl<'lua> FromLua<'lua> for ShootingEnd<'lua> {
     }
 }
 
+/// DCS sometimes hands an event an `initiator`/`target` that is a bare table
+/// with no object metatable -- e.g. a Hit/Kill/Dead/Score for a shell fired by
+/// a unit that has since died. Those can't be turned into a usable `Object`
+/// (any method call would fail anyway), so degrade them to `None` instead of
+/// failing the whole event and spamming the log.
+fn opt_object<'lua>(
+    tbl: &LuaTable<'lua>,
+    key: &str,
+    lua: &'lua Lua,
+) -> LuaResult<Option<Object<'lua>>> {
+    match tbl.raw_get::<_, Value<'lua>>(key)? {
+        Value::Table(t) if t.get_metatable().is_some() => {
+            Ok(Some(Object::from_lua(Value::Table(t), lua)?))
+        }
+        _ => Ok(None),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WeaponUse<'lua> {
     pub time: Time,
@@ -80,12 +98,12 @@ pub struct WeaponUse<'lua> {
 }
 
 impl<'lua> FromLua<'lua> for WeaponUse<'lua> {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
         let tbl = as_tbl("WeaponUse", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
-            initiator: tbl.raw_get("initiator")?,
-            target: tbl.raw_get("target")?,
+            initiator: opt_object(&tbl, "initiator", lua)?,
+            target: opt_object(&tbl, "target", lua)?,
             weapon_name: tbl.raw_get("weapon_name")?,
         })
     }
@@ -120,9 +138,9 @@ pub struct UnitEvent<'lua> {
 }
 
 impl<'lua> FromLua<'lua> for UnitEvent<'lua> {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
         let tbl = as_tbl("UnitEvent", None, value).map_err(lua_err)?;
-        Ok(Self { time: tbl.raw_get("time")?, initiator: tbl.raw_get("initiator")? })
+        Ok(Self { time: tbl.raw_get("time")?, initiator: opt_object(&tbl, "initiator", lua)? })
     }
 }
 
@@ -350,8 +368,12 @@ impl<'lua> FromLua<'lua> for Event<'lua> {
         match translate(lua, id, value.clone()) {
             Ok(ev) => Ok(ev),
             Err(e) => {
+                // The world event handler (world.rs) already logs a WARN for
+                // this and skips the event -- keep the detailed payload at
+                // debug level so a genuine translation bug is still diagnosable
+                // without double-logging every dead-object edge case.
                 let s = value_to_json(&value);
-                error!("error translating event {id}: {e:?}, value: {s}");
+                debug!("error translating event {id}: {e:?}, value: {s}");
                 Err(lua_err(e))
             }
         }

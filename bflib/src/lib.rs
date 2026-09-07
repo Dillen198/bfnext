@@ -72,7 +72,7 @@ use dcso3::{
     trigger::Trigger,
     unit::{ClassUnit, Unit},
     world::{HandlerId, MarkPanel, World},
-    HooksLua, LuaEnv, LuaVec3, MizLua, String, Vector3,
+    HooksLua, LuaEnv, LuaVec3, MizLua, String, Vector2, Vector3,
 };
 use ewr::Ewr;
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
@@ -730,6 +730,11 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         {
             ()
         }
+        // DCS re-fires a batch of unrecognised event ids (dynamic cargo, sim
+        // freeze, human repair start/stop, ...) that translate to Invalid and
+        // that campaign logic doesn't consume -- and it fires several of them
+        // twice per tick. Don't spam the log with them.
+        Event::Invalid => (),
         ev => info!("onEvent: {:?}", ev),
     }
     match ev {
@@ -777,11 +782,51 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         }
         Event::PlayerLeaveUnit(e) => {
             if let Some(initiator) = e.initiator {
-                if let Some(ucid) = ctx.db.player_in_unit(false, &initiator) {
-                    if let Some(player) = ctx.db.player(&ucid) {
-                        if let Some((_, Some(inst))) = player.current_slot.as_ref() {
-                            if inst.landed_at_objective.is_none() {
-                                ctx.shots_out.dead(initiator.clone(), start_ts)
+                // Snapshot what we need before the deslot invalidates it.
+                let leave_info = ctx.db.player_in_unit(false, &initiator).and_then(|ucid| {
+                    ctx.db.player(&ucid).and_then(|p| {
+                        p.current_slot
+                            .as_ref()
+                            .and_then(|(_, i)| i.as_ref())
+                            .filter(|inst| inst.landed_at_objective.is_none())
+                            .map(|inst| {
+                                (p.side, Vector2::new(inst.position.p.x, inst.position.p.z))
+                            })
+                    })
+                });
+                if let Some((my_side, my_pos)) = leave_info {
+                    ctx.shots_out.dead(initiator.clone(), start_ts);
+                    // Anti-abuse: bailing a losing fight. If an enemy aircraft
+                    // is close, credit them with the kill.
+                    let radius = ctx.db.ephemeral.cfg.slot_leave_kill_radius_m;
+                    if radius > 0.0 {
+                        if let Some(enemy_oid) =
+                            nearest_enemy_player_in_air(&ctx.db, my_side, my_pos, radius)
+                        {
+                            let shooter = crate::shots::who_for(&ctx.db, enemy_oid.clone());
+                            let target = crate::shots::who_for(&ctx.db, initiator.clone());
+                            let s_typ = ctx
+                                .db
+                                .ephemeral
+                                .get_slot_by_object_id(&enemy_oid)
+                                .and_then(|sl| ctx.db.ephemeral.get_slot_info(sl))
+                                .map(|si| String::from(si.typ.as_str()));
+                            let t_typ = ctx
+                                .db
+                                .ephemeral
+                                .get_slot_by_object_id(&initiator)
+                                .and_then(|sl| ctx.db.ephemeral.get_slot_info(sl))
+                                .map(|si| String::from(si.typ.as_str()))
+                                .unwrap_or_else(|| String::from("aircraft"));
+                            if let (Some(shooter), Some(target)) = (shooter, target) {
+                                ctx.shots_out.abandoned_under_threat(
+                                    initiator.clone(),
+                                    shooter,
+                                    target,
+                                    s_typ,
+                                    t_typ,
+                                    start_ts,
+                                );
                             }
                         }
                     }
@@ -907,12 +952,15 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         }
         Event::PilotDead(e) => {
             if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
-                let csar_pilot = try_capture_csar_info(lua, ctx, &unit);
+                // CSAR is only for a pilot who actually got out -- that's the
+                // Ejection event. PilotDead also fires when the pilot is killed
+                // in the aircraft (no ejection), and there's nobody on the
+                // ground to rescue in that case, so don't spawn a downed pilot
+                // here.
                 let id = unit.object_id()?;
                 if let Err(e) = unit_killed(lua, ctx, id, start_ts) {
                     error!("1 unit killed failed {:?}", e)
                 }
-                spawn_csar_pilot(lua, ctx, csar_pilot);
             } else if let Some(st) = e.initiator.as_ref().and_then(|s| s.as_static().ok())
             {
                 if let Err(e) = ctx.db.static_dead(&st.object_id()?, start_ts) {
@@ -939,6 +987,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 {
                     let slot = unit.slot()?;
                     let position = unit.get_ground_position()?.0;
+                    warn_taxiway_takeoff(lua, ctx, &unit, e.place.as_ref(), position, &slot);
                     match ctx.db.takeoff(Utc::now(), slot, &unit, position) {
                         Err(e) => error!("could not process takeoff, {:?}", e),
                         Ok(TakeoffRes::NoLifeTaken) => (),
@@ -955,6 +1004,25 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                                 error!(
                                     "failed to destroy unit that took off without lives or points {e:?}"
                                 )
+                            }
+                        }
+                        Ok(TakeoffRes::TooEarly(remaining)) => {
+                            let ucid = ctx.db.ephemeral.player_in_slot(&slot).cloned();
+                            if let Some(uid) = slot.as_unit_id() {
+                                ctx.db.ephemeral.msgs().panel_to_unit(
+                                    15,
+                                    true,
+                                    uid,
+                                    format_compact!(
+                                        "You took off {remaining}s before your ground hold expired -- returning to spectators."
+                                    ),
+                                );
+                            }
+                            if let Err(e) = unit.destroy() {
+                                error!("failed to destroy unit that took off during the hold {e:?}")
+                            }
+                            if let Some(ucid) = ucid {
+                                ctx.db.ephemeral.force_player_to_spectators(&ucid);
                             }
                         }
                     }
@@ -1021,6 +1089,123 @@ pub(crate) fn lives(db: &mut Db, ucid: &Ucid, typfilter: Option<LifeType>) -> Re
         }
     }
     Ok(msg)
+}
+
+/// Did this departure break ground somewhere other than a runway of
+/// `airbase_name`? Projects the lift-off point onto each runway's axis and
+/// checks it's within the runway rectangle (plus a generous line-up / shoulder
+/// margin). `None` when we can't tell -- no departure airbase, or the airbase /
+/// runway lookup failed.
+fn took_off_off_runway(lua: MizLua, airbase_name: &str, pos: Vector2) -> Option<bool> {
+    let ab = dcso3::airbase::Airbase::get_by_name(lua, airbase_name.into()).ok()?;
+    let runways = ab.get_runways().ok()?;
+    let mut saw_runway = false;
+    for rwy in runways {
+        let Ok(rwy) = rwy else { continue };
+        let (Ok(center), Ok(course), Ok(length), Ok(width)) =
+            (rwy.position(), rwy.course(), rwy.length(), rwy.width())
+        else {
+            continue;
+        };
+        saw_runway = true;
+        // DCS world frame: x = north, z = east. get_ground_position gives a
+        // Vector2 of (x = north, y = east).
+        let dn = pos.x - center.0.x;
+        let de = pos.y - center.0.z;
+        let (s, c) = course.sin_cos();
+        let along = dn * c + de * s;
+        let across = -dn * s + de * c;
+        // ~300 m off either end (line-up point / overrun), ~30 m off the edge.
+        if along.abs() <= length / 2.0 + 300.0 && across.abs() <= width / 2.0 + 30.0 {
+            return Some(false);
+        }
+    }
+    saw_runway.then_some(true)
+}
+
+/// Warn a fixed-wing player who got airborne from a taxiway or apron instead of
+/// the runway. Helicopters and the AV-8B are exempt -- a pad departure is normal
+/// for them.
+fn warn_taxiway_takeoff(lua: MizLua, ctx: &mut Context, unit: &Unit, place: Option<&dcso3::object::Object>, pos: Vector2, slot: &SlotId) {
+    let Some(place) = place else { return };
+    let Some(sifo) = ctx.db.ephemeral.get_slot_info(slot) else { return };
+    let is_helo = ctx
+        .db
+        .ephemeral
+        .cfg
+        .unit_classification
+        .get(&sifo.typ)
+        .map(|tags| tags.contains(UnitTag::Helicopter))
+        .unwrap_or(false);
+    if is_helo || sifo.typ.as_str() == "AV8BNA" {
+        return;
+    }
+    let Ok(airbase_name) = place.get_name() else { return };
+    if took_off_off_runway(lua, airbase_name.as_str(), pos) == Some(true) {
+        if let Some(uid) = slot.as_unit_id() {
+            ctx.db.ephemeral.msgs().panel_to_unit(
+                15,
+                false,
+                uid,
+                "You departed from a taxiway or apron. Fixed-wing aircraft must take off from the active runway.",
+            );
+        }
+        if let Ok(name) = unit.get_player_name() {
+            info!("taxiway/apron takeoff by {:?} from {airbase_name}", name);
+        }
+    }
+}
+
+/// Nearest airborne enemy *player*'s unit object id within `radius` metres of
+/// `my_pos`, or None. Used to attribute a kill when someone bails a slot mid-
+/// fight.
+fn nearest_enemy_player_in_air(
+    db: &db::Db,
+    my_side: Side,
+    my_pos: Vector2,
+    radius: f64,
+) -> Option<DcsOid<ClassUnit>> {
+    let mut best: Option<(DcsOid<ClassUnit>, f64)> = None;
+    for (_ucid, p, inst) in db.instanced_players() {
+        if p.side == my_side || !inst.in_air {
+            continue;
+        }
+        let Some((slot, _)) = p.current_slot.as_ref() else {
+            continue;
+        };
+        let Some(oid) = db.ephemeral.get_object_id_by_slot(slot) else {
+            continue;
+        };
+        let epos = Vector2::new(inst.position.p.x, inst.position.p.z);
+        let d = na::distance(&my_pos.into(), &epos.into());
+        if d <= radius && best.as_ref().map(|(_, bd)| d < *bd).unwrap_or(true) {
+            best = Some((oid.clone(), d));
+        }
+    }
+    best.map(|(oid, _)| oid)
+}
+
+/// Once-a-second "time remaining" nag for players still inside their
+/// post-slot-entry takeoff hold. Called from the 1 Hz timed-events loop.
+fn announce_takeoff_holds(ctx: &mut Context, now: DateTime<Utc>) {
+    let mut pending: Vec<(UnitId, i64)> = vec![];
+    for (_ucid, player, inst) in ctx.db.instanced_players() {
+        let Some(ok_at) = inst.takeoff_ok_at else { continue };
+        if now >= ok_at {
+            continue;
+        }
+        let Some((slot, _)) = player.current_slot.as_ref() else { continue };
+        let Some(uid) = slot.as_unit_id() else { continue };
+        pending.push((uid, (ok_at - now).num_seconds().max(1)));
+    }
+    for (uid, secs) in pending {
+        ctx.db.ephemeral.msgs().panel_to_unit(
+            1,
+            false,
+            uid,
+            format_compact!("Takeoff hold: {secs}s remaining"),
+        );
+    }
 }
 
 fn message_life(
@@ -1828,6 +2013,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 
 
 
+                ctx.event_scheduler.cap_station_by_event.remove(&event_id);
                 if let Some(gids) = ctx.event_scheduler.cap_groups.remove(&event_id) {
                     for gid in gids {
                         let group_name = match ctx.db.persisted.groups.get(&gid) {
@@ -1978,8 +2164,16 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
         .take(1)
         .collect();
 
+    let (cap_alt, cap_spd) = ctx
+        .db
+        .ephemeral
+        .cfg
+        .campaign_events
+        .as_ref()
+        .map(|c| (c.cap_altitude_m, c.cap_speed_ms))
+        .unwrap_or((8000.0, 250.0));
     for (gid, orbit_center) in pending_cap {
-        use dcso3::controller::Task;
+        use dcso3::controller::{OrbitPattern, Task};
         use dcso3::attribute::Attribute;
         let group_name = match ctx.db.persisted.groups.get(&gid) {
             Some(g) => g.name.clone(),
@@ -2000,14 +2194,24 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
                 continue;
             }
         };
-        // Initial task: broad hunt centred on the spawn position.
-        // Dynamic retargeting each slow tick will redirect to actual enemy positions.
-        let hunt = Task::EngageTargetsInZone {
-            point: LuaVec2(orbit_center),
-            zone_radius: 200_000.0, // 200 km — effectively "hunt everywhere nearby"
-            target_types: vec![Attribute::Air],
-            priority: None,
-        };
+        // Initial task: climb to the CAP block and run a broad hunt centred on
+        // the spawn position. Dynamic retargeting each slow tick then redirects
+        // to actual detected enemy positions.
+        let hunt = Task::ComboTask(vec![
+            Task::Orbit {
+                pattern: OrbitPattern::Circle,
+                point: Some(LuaVec2(orbit_center)),
+                point2: None,
+                speed: Some(cap_spd),
+                altitude: Some(cap_alt),
+            },
+            Task::EngageTargetsInZone {
+                point: LuaVec2(orbit_center),
+                zone_radius: 200_000.0, // 200 km — effectively "hunt everywhere nearby"
+                target_types: vec![Attribute::Air],
+                priority: None,
+            },
+        ]);
         if let Err(e) = controller.set_task(hunt) {
             error!("flush_pending_cap_tasks: set_task {group_name}: {e}");
         } else {
@@ -2018,65 +2222,171 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
 
 }
 
-/// Each slow tick, redirect all active CAP groups toward the centroid of the
-/// nearest enemy aircraft cluster.  If no enemies are airborne, fall back to
-/// a wide EngageTargets sweep so they don't just hover stationary.
-fn retarget_cap_groups(lua: MizLua, ctx: &mut Context) {
-    use dcso3::controller::Task;
+/// Each slow tick, station every active CAP flight over the air threat its
+/// side's radar network is actually painting -- the full EWR + AWACS + SAM
+/// search-radar picture (`Ewr::detected_enemy_positions`), not just human
+/// players. Each flight is sent to the detected hostile nearest the objective
+/// it defends and holds a CAP station there (orbit + engage-in-zone), so it
+/// shows up to the fight instead of circling home until the event expires and
+/// it RTBs. With nothing detected it orbits the defended objective rather than
+/// running a one-shot sweep that completes and sends it home.
+fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
+    use dcso3::controller::{OrbitPattern, Task};
     use dcso3::attribute::Attribute;
     use dcso3::coalition::Side;
     use dcso3::Vector2;
     use crate::db::events::CampaignEvent;
 
-    // Collect enemy in-air positions per side.
-    let mut enemy_positions: fxhash::FxHashMap<Side, Vec<Vector2>> =
-        fxhash::FxHashMap::default();
+    // Restation only when the target has moved meaningfully -- re-issuing an
+    // identical task every tick interrupts an in-progress intercept.
+    const RESTATION_THRESHOLD_M: f64 = 15_000.0;
+    const CAP_ZONE_RADIUS_M: f64 = 150_000.0;
+    let (cap_alt, cap_spd, cap_push, cap_idle_rtb) = ctx
+        .db
+        .ephemeral
+        .cfg
+        .campaign_events
+        .as_ref()
+        .map(|c| (c.cap_altitude_m, c.cap_speed_ms, c.cap_max_push_m, c.cap_idle_rtb_secs))
+        .unwrap_or((8000.0, 250.0, 60_000.0, 240));
+
+    // In-air enemy player positions per side. A player in a radar gap is still a
+    // known threat, so this is unioned with the detected-track picture below.
+    let mut player_positions: fxhash::FxHashMap<Side, Vec<Vector2>> = fxhash::FxHashMap::default();
     for (_, player) in ctx.db.persisted.players() {
         if let Some((_, Some(inst))) = &player.current_slot {
             if inst.in_air {
                 let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
-                // Enemies of blue are red, and vice versa.
-                let enemy_side = match player.side {
-                    Side::Blue => Side::Red,
-                    Side::Red => Side::Blue,
-                    s => s,
-                };
-                enemy_positions.entry(enemy_side).or_default().push(pos);
+                player_positions.entry(player.side.opposite()).or_default().push(pos);
             }
         }
     }
 
-    // Build list of (event_id, cap_side) for all active CAP events.
     let cap_events: Vec<_> = ctx
         .event_scheduler
         .active_events
         .iter()
         .filter_map(|e| match e {
-            CampaignEvent::EnemyCap { id, cap_side, .. }
-            | CampaignEvent::CommanderCap { id, cap_side, .. } => Some((*id, *cap_side)),
+            CampaignEvent::EnemyCap { id, cap_side, objective, .. }
+            | CampaignEvent::CommanderCap { id, cap_side, objective, .. } => {
+                Some((*id, *cap_side, *objective))
+            }
             _ => None,
         })
         .collect();
 
-    for (event_id, cap_side) in cap_events {
+    for (event_id, cap_side, objective) in cap_events {
         let gids = match ctx.event_scheduler.cap_groups.get(&event_id) {
             Some(v) => v.clone(),
             None => continue,
         };
-        // Compute centroid of enemy aircraft (enemies of cap_side).
-        let target_pos: Option<Vector2> = enemy_positions
-            .get(&cap_side) // positions of players that are enemies of cap_side
-            .filter(|v| !v.is_empty())
-            .map(|positions| {
-                let n = positions.len() as f64;
-                let sum = positions
-                    .iter()
-                    .fold(Vector2::new(0., 0.), |acc, p| {
-                        Vector2::new(acc.x + p.x, acc.y + p.y)
-                    });
-                Vector2::new(sum.x / n, sum.y / n)
-            });
 
+        // The objective this CAP is defending -- its fallback station.
+        let home = ctx.db.persisted.objectives.get(&objective).map(|o| o.pos());
+
+        // Everything cap_side's radar network sees, plus any airborne enemy
+        // player (covers radar gaps).
+        let mut threats = ctx.ewr.detected_enemy_positions(cap_side, now);
+        if let Some(pp) = player_positions.get(&cap_side) {
+            threats.extend_from_slice(pp);
+        }
+
+        // Idle CAP -> RTB. If this flight's side has painted nothing to work for
+        // `cap_idle_rtb` seconds, expire the event now: the DespawnCap effect
+        // already sends the group home, and the picture stops accumulating
+        // flights that have no job.
+        if !threats.is_empty() {
+            ctx.event_scheduler.cap_last_threat_seen.insert(event_id, now);
+        } else {
+            let since = *ctx
+                .event_scheduler
+                .cap_last_threat_seen
+                .entry(event_id)
+                .or_insert(now);
+            if (now - since).num_seconds() >= cap_idle_rtb as i64 {
+                for e in ctx.event_scheduler.active_events.iter_mut() {
+                    match e {
+                        CampaignEvent::EnemyCap { id, expires_at, .. }
+                        | CampaignEvent::CommanderCap { id, expires_at, .. }
+                            if *id == event_id =>
+                        {
+                            *expires_at = now;
+                        }
+                        _ => {}
+                    }
+                }
+                ctx.event_scheduler.cap_last_threat_seen.remove(&event_id);
+                info!("retarget_cap_groups: CAP {:?} idle {}s -> RTB", event_id, cap_idle_rtb);
+                continue;
+            }
+        }
+
+        let station: Option<Vector2> = match (home, threats.is_empty()) {
+            // Nearest detected threat to the defended objective.
+            (Some(h), false) => threats.iter().copied().min_by(|a, b| {
+                na::distance_squared(&(*a).into(), &h.into())
+                    .partial_cmp(&na::distance_squared(&(*b).into(), &h.into()))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+            // Threats but no known objective -- go to their centroid.
+            (None, false) => {
+                let n = threats.len() as f64;
+                let sum = threats
+                    .iter()
+                    .fold(Vector2::new(0., 0.), |acc, p| Vector2::new(acc.x + p.x, acc.y + p.y));
+                Some(Vector2::new(sum.x / n, sum.y / n))
+            }
+            // Nothing detected -- hold over the objective we're defending.
+            (Some(h), true) => Some(h),
+            (None, true) => None,
+        };
+        let Some(station) = station else { continue };
+
+        // Keep the flight from chasing a contact deep across the front: never
+        // push more than `cap_push` metres from the objective it's defending.
+        let station = match home {
+            Some(h) => {
+                let d = na::distance(&h.into(), &station.into());
+                if d > cap_push && d > 1.0 {
+                    let t = cap_push / d;
+                    Vector2::new(h.x + (station.x - h.x) * t, h.y + (station.y - h.y) * t)
+                } else {
+                    station
+                }
+            }
+            None => station,
+        };
+
+        // Skip if we're already stationed here (within threshold).
+        let restation = ctx
+            .event_scheduler
+            .cap_station_by_event
+            .get(&event_id)
+            .map_or(true, |prev| na::distance(&(*prev).into(), &station.into()) > RESTATION_THRESHOLD_M);
+        if !restation {
+            continue;
+        }
+
+        // CAP station: orbit the point and engage any air target in a wide zone
+        // around it. ComboTask keeps them on station (break to intercept, then
+        // return) instead of completing a one-shot task and RTBing.
+        let task = Task::ComboTask(vec![
+            Task::Orbit {
+                pattern: OrbitPattern::Circle,
+                point: Some(dcso3::LuaVec2(station)),
+                point2: None,
+                speed: Some(cap_spd),
+                altitude: Some(cap_alt),
+            },
+            Task::EngageTargetsInZone {
+                point: dcso3::LuaVec2(station),
+                zone_radius: CAP_ZONE_RADIUS_M,
+                target_types: vec![Attribute::Air],
+                priority: None,
+            },
+        ]);
+
+        let mut any_tasked = false;
         for gid in gids {
             let group_name = match ctx.db.persisted.groups.get(&gid) {
                 Some(g) => g.name.clone(),
@@ -2086,9 +2396,8 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context) {
                 Ok(g) => g,
                 Err(_) => continue, // not in DCS yet
             };
-            
-            // Wait until the group takes off before retargeting, 
-            // otherwise set_task interrupts their TakeOffParkingHot task
+            // Wait until the group takes off before retargeting, otherwise
+            // set_task interrupts their TakeOffParkingHot task.
             if !dcs_group.get_unit(1).and_then(|u| u.in_air()).unwrap_or(false) {
                 continue;
             }
@@ -2099,31 +2408,14 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context) {
                     continue;
                 }
             };
-
-            let task = match target_pos {
-                Some(center) => {
-                    // Push towards the enemy cluster with a 150 km zone so they
-                    // actively manoeuvre rather than staying put.
-                    Task::EngageTargetsInZone {
-                        point: dcso3::LuaVec2(center),
-                        zone_radius: 150_000.0,
-                        target_types: vec![Attribute::Air],
-                        priority: None,
-                    }
-                }
-                None => {
-                    // No enemies airborne — broad area sweep so they keep moving.
-                    Task::EngageTargets {
-                        target_types: vec![Attribute::Air],
-                        max_dist: Some(200_000.0),
-                        priority: None,
-                    }
-                }
-            };
-
-            if let Err(e) = controller.set_task(task) {
+            if let Err(e) = controller.set_task(task.clone()) {
                 error!("retarget_cap_groups: set_task {group_name}: {e}");
+            } else {
+                any_tasked = true;
             }
+        }
+        if any_tasked {
+            ctx.event_scheduler.cap_station_by_event.insert(event_id, station);
         }
     }
 }
@@ -2285,7 +2577,11 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
                             !already
                         }
                 })
-                .max_by(|(_, a), (_, b)| {
+                // Closest available friendly airbase to the incursion -- the
+                // comment always said "closest", the code was scrambling from
+                // the furthest one (deep rear), which is why intercepts never
+                // showed up and one flank got all the coverage.
+                .min_by(|(_, a), (_, b)| {
                     let ap = a.pos();
                     let bp = b.pos();
                     let da = {
@@ -2806,8 +3102,16 @@ fn run_slow_timed_events(
                 flush_pending_moves(lua, ctx);
                 // Reactive CAP: spawn intercepts wherever enemy aircraft are detected
                 check_air_threats(ctx, start_ts);
-                // Dynamic CAP retargeting: redirect active CAP groups toward enemy aircraft
-                retarget_cap_groups(lua, ctx);
+                // Dynamic CAP retargeting: redirect active CAP groups toward enemy aircraft.
+                // Isolated in its own panic boundary -- a panic in here must not
+                // take down the rest of this tick (positions, logistics, stats
+                // publishing) along with it; the outer run_timed_events catch_unwind
+                // would otherwise unwind straight through all of that too.
+                if let Err(e) =
+                    catch_unwind(AssertUnwindSafe(|| retarget_cap_groups(lua, ctx, start_ts)))
+                {
+                    error!("retarget_cap_groups panicked {e:?} {}", Backtrace::capture())
+                }
                 // Check SF HVT capture missions (proximity + timeout)
 
             }
@@ -2859,6 +3163,8 @@ fn run_timed_events(
         }
     }
     record_perf(&mut perf.player_positions, ts);
+
+    announce_takeoff_holds(ctx, ts);
 
     match run_slow_timed_events(lua, ctx, perf, path, ts) {
         Ok(AdminResult::Continue) => (),

@@ -83,6 +83,17 @@ struct MizCmd {
     /// longitude to fetch live weather for, required by --live-weather
     #[clap(long)]
     live_weather_lon: Option<f64>,
+    /// checkwxapi.com API key. When set together with --metar-station, the
+    /// mission's surface layer (wind, temp, QNH, clouds) is taken from that
+    /// station's real decoded METAR instead of the open-meteo model; the winds
+    /// aloft still come from open-meteo. A failed METAR fetch falls back to
+    /// open-meteo for everything.
+    #[clap(long)]
+    checkwx_api_key: Option<String>,
+    /// ICAO of the METAR station driving the surface layer (e.g. "OSDI"
+    /// Damascus, "LTAG" Incirlik). Only used with --checkwx-api-key.
+    #[clap(long)]
+    metar_station: Option<String>,
     /// optional JSON file of DCS client option overrides (e.g.
     /// {"miscellaneous": {"f10_awacs": true, "chat_window_at_start": true}})
     /// merged into the generated mission's options file. The options file's

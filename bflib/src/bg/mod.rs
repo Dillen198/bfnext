@@ -590,15 +590,19 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
 static TXCOM: OnceCell<mpsc::UnboundedSender<Task>> = OnceCell::new();
 
 fn setup_logger(tx: UnboundedSender<Task>) {
+    // Default to Info -- Debug emits a few tens of thousands of lines an hour
+    // on a populated server (per-crate C-130 cargo polling, per-tick carrier
+    // position dumps, unknown-event chatter), which is real disk/IO load over
+    // a long campaign. Set RUST_LOG=debug to get it back.
     let level = match env::var("RUST_LOG").ok().map(|s| s.to_ascii_lowercase()) {
-        None => LevelFilter::Debug,
+        None => LevelFilter::Info,
         Some(s) if &s == "trace" => LevelFilter::Trace,
         Some(s) if &s == "debug" => LevelFilter::Debug,
         Some(s) if &s == "info" => LevelFilter::Info,
         Some(s) if &s == "error" => LevelFilter::Error,
         Some(s) if &s == "warn" => LevelFilter::Warn,
         Some(s) if &s == "off" => LevelFilter::Off,
-        Some(_) => LevelFilter::Debug,
+        Some(_) => LevelFilter::Info,
     };
     WriteLogger::init(level, simplelog::Config::default(), LogHandle(tx))
         .expect("could not init logger")

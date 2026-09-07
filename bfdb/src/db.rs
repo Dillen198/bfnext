@@ -736,6 +736,7 @@ impl StatsDb {
         db: P,
         base: NetidxPath,
         stats_dir: Option<PathBuf>,
+        stats_jsonl: Option<PathBuf>,
         include: Option<Regex>,
         exclude: Option<Regex>,
     ) -> Result<Self> {
@@ -759,7 +760,7 @@ impl StatsDb {
             objectives: Tree::open(&db, "objectives")?,
             equipment: Tree::open(&db, "equipment")?,
             liquids: Tree::open(&db, "liquids")?,
-            stats_jsonl: None,
+            stats_jsonl,
             auth_sessions: Tree::open(&db, "auth_sessions")?,
             auth_states: Tree::open(&db, "auth_states")?,
             trail_points: Tree::open(&db, "trail_points")?,
@@ -2456,6 +2457,10 @@ impl StatsDb {
                     .filter(|((_, rid), ri)| *rid == ctx.round && ri.connected.is_some())
                     .map(|((ucid, _), _)| ucid)
                     .collect();
+                info!(
+                    "SessionStart: clearing {} stale connected flag(s) in round {:?}",
+                    stale.len(), ctx.round
+                );
                 for ucid in stale {
                     self.pilots
                         .with_pilot_round_info(ucid, ctx.round, |ri| ri.connected = None)?;

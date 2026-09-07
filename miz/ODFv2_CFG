@@ -56,7 +56,7 @@
   "deploy_supply_cost": 3,
   "repair_crate": {
     "Red": {
-      "name": "Base Repair Kit",
+      "name": "Logistics Repair Kit",
       "weight": 600,
       "required": 1,
       "pos_unit": null,
@@ -65,7 +65,7 @@
       "dcs_type": "container_cargo"
     },
     "Blue": {
-      "name": "Base Repair Kit",
+      "name": "Logistics Repair Kit",
       "weight": 450,
       "required": 1,
       "pos_unit": null,
@@ -74,7 +74,7 @@
       "dcs_type": "container_cargo"
     },
     "Neutral": {
-      "name": "Base Repair Kit",
+      "name": "Logistics Repair Kit",
       "weight": 600,
       "required": 1,
       "pos_unit": null,
@@ -91,7 +91,7 @@
     "supply_transfer_size": 25,
     "supply_transfer_fuel_crate": {
       "Red": {
-        "name": "Fuel Transfer",
+        "name": "Base Fuel Resupply",
         "weight": 600,
         "required": 1,
         "pos_unit": null,
@@ -100,7 +100,7 @@
         "dcs_type": "cds_barrels"
       },
       "Blue": {
-        "name": "Fuel Transfer",
+        "name": "Base Fuel Resupply",
         "weight": 400,
         "required": 1,
         "pos_unit": null,
@@ -111,7 +111,7 @@
     },
     "supply_transfer_weapons_crate": {
       "Red": {
-        "name": "Weapons Transfer",
+        "name": "Base Ammo Resupply",
         "weight": 450,
         "required": 1,
         "pos_unit": null,
@@ -120,7 +120,7 @@
         "dcs_type": "container_cargo"
       },
       "Blue": {
-        "name": "Weapons Transfer",
+        "name": "Base Ammo Resupply",
         "weight": 800,
         "required": 1,
         "pos_unit": null,
@@ -202,6 +202,8 @@
   "ground_vehicle_cull_distance": 10000,
   "cull_after": 1800,
   "capture_consolidation_secs": 300,
+  "takeoff_delay_secs": 0,
+  "slot_leave_kill_radius_m": 15000,
   "slow_timed_events_freq": 10,
   "threatened_distance": {
     "F-100D": 14400,
@@ -1141,7 +1143,7 @@
     "C-130J-30": {
       "troop_slots": 20,
       "crate_slots": 0,
-      "total_slots": 0,
+      "total_slots": 20,
       "pilot_slots": 0,
       "spawn_distance": -35
     }
@@ -1182,7 +1184,9 @@
   "live_weather": {
     "lat": 33.4114,
     "lon": 36.5156,
-    "sync_time": false
+    "sync_time": false,
+    "checkwx_api_key": null,
+    "metar_station": "OSDI"
   },
   "deployables": {
     "Red": [
@@ -5599,7 +5603,7 @@
     "track_stale_secs": 60,
     "track_drop_secs": 120,
     "sam_cue_enabled": true,
-    "sam_cue_confidence_threshold": 0.4,
+    "sam_cue_confidence_threshold": 0.3,
     "anti_radiation_weapons": [
       "AGM_88C",
       "AGM_88",
@@ -5608,14 +5612,16 @@
       "Kh31P",
       "ALARM"
     ],
-    "harm_defense_radius_m": 20000,
-    "harm_defense_cooldown_secs": 20,
-    "min_hot_dwell_secs": 15,
-    "reaction_delay_max_secs": 4,
-    "track_radar_range_fraction": 0.5,
+    "harm_defense_radius_m": 12000,
+    "harm_defense_cooldown_secs": 12,
+    "min_hot_dwell_secs": 45,
+    "reaction_delay_max_secs": 2,
+    "track_radar_range_fraction": 0.8,
     "jamming_enabled": true,
     "jamming_range_m": 40000,
-    "jamming_detection_penalty": 0.5
+    "jamming_detection_penalty": 0.5,
+    "sam_offboard_cue_enabled": true,
+    "sam_offboard_cue_range_m": 60000
   },
   "elint": {
     "contact_cluster_radius_m": 500,
@@ -5742,6 +5748,10 @@
     "cap_template_red": "RCAP",
     "cap_template_blue": "BCAP",
     "cap_duration_secs": 600,
+    "cap_altitude_m": 8000,
+    "cap_speed_ms": 250,
+    "cap_max_push_m": 60000,
+    "cap_idle_rtb_secs": 240,
     "cap_orbit_radius_m": 15000,
     "cap_trigger_radius_m": 90000,
     "cap_max_concurrent": 3,
@@ -5752,7 +5762,10 @@
     "barrage_enabled": false,
     "ambush_enabled": false,
     "capture_time_secs": 180,
-    "capture_min_unit_pct_destroyed": 0
+    "capture_min_unit_pct_destroyed": 0,
+    "capture_cooldown_secs": 120,
+    "capture_garrison_revive_fraction": 0.25,
+    "capture_garrison_revive_include_sam": false
   },
   "csar": {
     "enabled": true,

@@ -2189,7 +2189,6 @@ impl Db {
 
         // Spawn trucks using existing group spawn infrastructure
         use crate::spawnctx::{SpawnCtx, SpawnLoc};
-        use dcso3::group::Group;
         use dcso3::controller::{Task, MissionPoint, PointType, ActionTyp, VehicleFormation, AltType};
         use dcso3::LuaVec2;
         use dcso3::land::Land;
@@ -2197,29 +2196,43 @@ impl Db {
         use crate::db::group::DeployKind;
         use enumflags2::BitFlags;
 
-        let spawn_ctx = SpawnCtx::new(lua)?;
-        let miz = Miz::singleton(lua)?;
-        let idx = miz.index()?;
-        let land = Land::singleton(lua)?;
+        let spawn_ctx = SpawnCtx::new(lua).context("convoy: spawn ctx")?;
+        let miz = Miz::singleton(lua).context("convoy: miz singleton")?;
+        let idx = miz.index().context("convoy: miz index")?;
+        let land = Land::singleton(lua).context("convoy: land singleton")?;
 
         // Use add_group to spawn the convoy
-        let group_id = self.add_group(
-            &spawn_ctx,
-            &idx,
-            side,
-            SpawnLoc::AtPos {
-                pos: origin_pos,
-                offset_direction: Vector2::new(0.0, 0.0),
-                group_heading: heading,
-            },
-            &truck_template,
-            DeployKind::Objective { origin },
-            BitFlags::empty(),
-        )?;
+        let group_id = self
+            .add_group(
+                &spawn_ctx,
+                &idx,
+                side,
+                SpawnLoc::AtPos {
+                    pos: origin_pos,
+                    // a real direction so the trucks aren't all stacked on the
+                    // origin point (a zero vector left them piled up)
+                    offset_direction: {
+                        let d = dest_pos - origin_pos;
+                        let n = d.norm();
+                        if n > 1.0 { d / n } else { Vector2::new(1.0, 0.0) }
+                    },
+                    group_heading: heading,
+                },
+                &truck_template,
+                DeployKind::Objective { origin },
+                BitFlags::empty(),
+            )
+            .with_context(|| {
+                format_compact!(
+                    "convoy: add_group template '{truck_template}' side {side:?} {origin_name} -> {dest_name}"
+                )
+            })?;
 
-        // Set group to move to destination
-        let group = Group::get_by_name(lua, &*self.persisted.groups[&group_id].name)?;
-        let controller = group.get_controller()?;
+        // The group is only queued for spawn at this point -- it does not exist
+        // in DCS yet, so we cannot fetch it with Group::get_by_name. Instead we
+        // build the road route here and hand it to spawn_group, which bakes the
+        // route into the group at actual spawn time (same pattern as
+        // add_and_spawn_ai_air).
         let origin_alt = land.get_height(LuaVec2(origin_pos))?;
         let dest_alt = land.get_height(LuaVec2(dest_pos))?;
 
@@ -2253,18 +2266,32 @@ impl Db {
             LuaVec2(dest_pos),
         ) {
             Ok(path) => {
-                // Add intermediate road waypoints (skip first/last as they're origin/dest)
+                // DCS's findPathOnRoads returns the raw road polyline -- often
+                // thousands of vertices. A route that big chokes the group AI
+                // (it just sits at the origin). Decimate to a waypoint roughly
+                // every 3 km (and hard-cap the count); "On Road" formation makes
+                // DCS follow the actual road between the sparse points anyway.
+                const MIN_SPACING_M: f64 = 3000.0;
+                const MAX_WAYPOINTS: usize = 60;
+                let pts: Vec<LuaVec2> = path.into_iter().filter_map(|wp| wp.ok()).collect();
+                let mut last_kept: Option<LuaVec2> = None;
                 let mut wp_count = 0;
-                for wp in path {
-                    if let Ok(wp) = wp {
-                        let alt = land.get_height(wp).unwrap_or(0.0);
+                for (i, wp) in pts.iter().enumerate() {
+                    let far_enough = last_kept
+                        .map(|lk| na::distance(&lk.0.into(), &wp.0.into()) >= MIN_SPACING_M)
+                        .unwrap_or(true);
+                    // always keep the last polyline point so we actually reach
+                    // the road exit nearest the destination
+                    let is_last = i + 1 == pts.len();
+                    if (far_enough || is_last) && wp_count < MAX_WAYPOINTS {
+                        let alt = land.get_height(*wp).unwrap_or(0.0);
                         route_points.push(MissionPoint {
                             action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
                             airdrome_id: None,
                             helipad: None,
                             typ: PointType::TurningPoint,
                             link_unit: None,
-                            pos: wp,
+                            pos: *wp,
                             alt,
                             alt_typ: Some(AltType::BARO),
                             time_re_fu_ar: None,
@@ -2275,11 +2302,17 @@ impl Db {
                             name: None,
                             task: Box::new(Task::ComboTask(vec![])),
                         });
+                        last_kept = Some(*wp);
                         wp_count += 1;
                     }
                 }
                 if wp_count > 0 {
-                    info!("Convoy {} using road path with {} waypoints", convoy_id, wp_count);
+                    info!(
+                        "Convoy {} using road path: {} raw pts -> {} waypoints",
+                        convoy_id,
+                        pts.len(),
+                        wp_count
+                    );
                 }
             }
             Err(e) => {
@@ -2306,11 +2339,23 @@ impl Db {
             task: Box::new(Task::ComboTask(vec![])),
         });
 
-        // Create mission with route
-        controller.set_task(Task::Mission {
-            airborne: Some(false),
-            route: route_points,
-        })?;
+        // Spawn the queued group now, with the road route baked in.
+        {
+            let perf = unsafe { Perf::get_mut() };
+            let perf = Arc::make_mut(&mut perf.inner);
+            self.ephemeral
+                .spawn_group(
+                    perf,
+                    &self.persisted,
+                    &idx,
+                    &spawn_ctx,
+                    group!(self, group_id)?,
+                    route_points,
+                )
+                .with_context(|| {
+                    format_compact!("convoy: spawn_group '{truck_template}' {origin_name} -> {dest_name}")
+                })?;
+        }
 
         // Create convoy tracking struct
         let convoy = SupplyConvoy {
@@ -2422,10 +2467,6 @@ impl Db {
             BitFlags::empty(),
         )?;
 
-        use dcso3::group::Group;
-        let group = Group::get_by_name(lua, &*self.persisted.groups[&group_id].name)?;
-        let controller = group.get_controller()?;
-
         let route_points = vec![
             MissionPoint {
                 action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
@@ -2463,10 +2504,18 @@ impl Db {
             },
         ];
 
-        controller.set_task(Task::Mission {
-            airborne: Some(true),
-            route: route_points,
-        })?;
+        {
+            let perf = unsafe { Perf::get_mut() };
+            let perf = Arc::make_mut(&mut perf.inner);
+            self.ephemeral.spawn_group(
+                perf,
+                &self.persisted,
+                &idx,
+                &spawn_ctx,
+                group!(self, group_id)?,
+                route_points,
+            )?;
+        }
 
         let route = AirLogisticsRoute {
             id: route_id.clone(),
@@ -2572,10 +2621,6 @@ impl Db {
             BitFlags::empty(),
         )?;
 
-        use dcso3::group::Group;
-        let group = Group::get_by_name(lua, &*self.persisted.groups[&group_id].name)?;
-        let controller = group.get_controller()?;
-
         let route_points = vec![
             MissionPoint {
                 action: Some(ActionTyp::Ground(VehicleFormation::Vee)),
@@ -2613,10 +2658,18 @@ impl Db {
             },
         ];
 
-        controller.set_task(Task::Mission {
-            airborne: Some(false),
-            route: route_points,
-        })?;
+        {
+            let perf = unsafe { Perf::get_mut() };
+            let perf = Arc::make_mut(&mut perf.inner);
+            self.ephemeral.spawn_group(
+                perf,
+                &self.persisted,
+                &idx,
+                &spawn_ctx,
+                group!(self, group_id)?,
+                route_points,
+            )?;
+        }
 
         let route = SeaLogisticsRoute {
             id: route_id.clone(),

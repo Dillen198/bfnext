@@ -1159,7 +1159,14 @@ async fn api_online(db: StatsDb) -> std::result::Result<impl warp::Reply, Error>
     Ok(json_response(data))
 }
 
-async fn api_units(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+/// GET /api/units — raw detected-unit dump for the current round.
+/// **Admin only**: this is not fogged per requesting coalition. Players get
+/// their fogged picture from `/ws/tacmap`.
+async fn api_units(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
     let data = task::block_in_place(|| -> Result<String> {
         let rounds = db.latest_rounds()?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
@@ -2793,8 +2800,13 @@ async fn api_admin_perf_history(
     Ok(json_response(data))
 }
 
-/// GET /api/trails  — return recent trail points for the active round
-async fn api_trails(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+/// GET /api/trails  — return recent trail points for the active round.
+/// **Admin only** (derived from the raw god's-eye `Export.lua` feed).
+async fn api_trails(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
     let data = task::block_in_place(|| -> Result<String> {
         let rounds = db.latest_rounds()?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
@@ -3096,8 +3108,32 @@ async fn udp_export_listener(state: LiveState, tx: broadcast::Sender<String>, db
 }
 
 /// WebSocket handler for `/ws/units` — streams live unit positions.
-async fn ws_units_handler(ws: warp::ws::Ws, state: LiveState, tx: broadcast::Sender<String>) -> impl Reply {
+///
+/// This is the raw, unfogged god's-eye feed straight off `Export.lua`
+/// (every unit on both coalitions, precise, with pilot names). It is
+/// **admin only** — the fog-of-war player picture is `/ws/tacmap`.
+async fn ws_units_handler(
+    ws: warp::ws::Ws,
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    state: LiveState,
+    tx: broadcast::Sender<String>,
+) -> impl Reply {
+    let authed = match session_id {
+        Some(id) => task::block_in_place(|| db.get_session(id))
+            .ok()
+            .flatten()
+            .map(|s| s.is_admin)
+            .unwrap_or(false),
+        None => false,
+    };
+    if !authed {
+        return ws
+            .on_upgrade(|sock| async move { drop(sock) })
+            .into_response();
+    }
     ws.on_upgrade(move |socket| ws_units(socket, state, tx.subscribe()))
+        .into_response()
 }
 
 async fn ws_units(ws: WebSocket, state: LiveState, mut rx: broadcast::Receiver<String>) {
@@ -3132,6 +3168,227 @@ async fn ws_units(ws: WebSocket, state: LiveState, mut rx: broadcast::Receiver<S
                     None => break,
                     _ => {}
                 }
+            }
+        }
+    }
+}
+
+// ── Tactical picture (fog of war) — /ws/tacmap ──────────────────────
+//
+// The engine fuses each coalition's own sensor state (EWR/AWACS radar
+// network, JTAC eyes-on, recon/ELINT database) into a `TacPicture`. bfdb
+// polls both sides on a fixed cadence, then `/ws/tacmap` streams the caller
+// the picture for *their* coalition only — resolved from the session cookie
+// exactly like the coalition-locked REST endpoints. Anonymous or
+// no-coalition viewers get an empty frame (territory map only). This is the
+// anti-cheat boundary: a browser never receives a contact its side hasn't
+// earned.
+
+#[derive(Default)]
+struct TacCache {
+    blue: Option<bfprotocols::tacmap::TacPicture>,
+    red: Option<bfprotocols::tacmap::TacPicture>,
+}
+type TacState = Arc<tokio::sync::RwLock<TacCache>>;
+
+/// What a connected `/ws/tacmap` client is allowed to see.
+enum TacView {
+    /// A resolved coalition — stream only this side's picture.
+    Side(dcso3::coalition::Side),
+    /// A dashboard admin with no coalition of their own — merged both-sides view.
+    God,
+    /// Not logged in (`"login"`) or logged in with no side (`"nocoalition"`).
+    Denied(&'static str),
+}
+
+/// Background task: poll `query-tacmap` for both coalitions every second and
+/// cache the results. Cheap on the engine side (in-memory sensor maps).
+/// No-op when bfdb has no live engine.
+async fn tacmap_poller(db: StatsDb, state: TacState) {
+    use netidx::publisher::Value;
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(1000));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        for side in ["blue", "red"] {
+            let res = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                call_engine_rpc_str(&db, "query-tacmap", vec![("side", Value::from(side))]),
+            )
+            .await;
+            let pic = match res {
+                Ok(Ok(json)) => serde_json::from_str::<bfprotocols::tacmap::TacPicture>(&json).ok(),
+                _ => None,
+            };
+            if let Some(pic) = pic {
+                let mut w = state.write().await;
+                if side == "blue" {
+                    w.blue = Some(pic);
+                } else {
+                    w.red = Some(pic);
+                }
+            }
+        }
+    }
+}
+
+/// Build the frame to send this tick for one viewer.
+async fn build_tac_frame(
+    view: &TacView,
+    tac: &TacState,
+    live: &LiveState,
+) -> bfprotocols::tacmap::TacFrame {
+    use bfprotocols::tacmap::{TacBullseye, TacFrame, TacPicture};
+    use dcso3::coalition::Side;
+
+    let (side_opt, god) = match view {
+        TacView::Denied(reason) => {
+            return TacFrame { picture: None, reason: Some((*reason).to_string()) };
+        }
+        TacView::Side(s) => (Some(*s), false),
+        TacView::God => (None, true),
+    };
+
+    // A cached picture older than this is treated as "engine went away".
+    let fresh = |p: &TacPicture| (chrono::Utc::now() - p.time).num_seconds() < 20;
+    let empty = || TacPicture {
+        side: side_opt,
+        time: chrono::Utc::now(),
+        bullseye: vec![],
+        air: vec![],
+        ground: vec![],
+        radar_rings: vec![],
+    };
+
+    let mut picture = {
+        let cache = tac.read().await;
+        if god {
+            let mut merged = empty();
+            let mut seen_air = std::collections::HashSet::new();
+            let mut seen_gnd = std::collections::HashSet::new();
+            for p in [cache.blue.as_ref(), cache.red.as_ref()]
+                .into_iter()
+                .flatten()
+                .filter(|p| fresh(p))
+            {
+                // Same contact can appear in both sides' pictures (hostile in
+                // one, friendly in the other) — the EnId hash id is stable, so
+                // keep the first (friendly wins by blue-before-red order only
+                // incidentally; god view colours by `side` anyway).
+                for t in &p.air {
+                    if seen_air.insert(t.id) {
+                        merged.air.push(t.clone());
+                    }
+                }
+                for g in &p.ground {
+                    if seen_gnd.insert(g.id) {
+                        merged.ground.push(g.clone());
+                    }
+                }
+                merged.radar_rings.extend(p.radar_rings.iter().cloned());
+            }
+            merged
+        } else {
+            let p = match side_opt {
+                Some(Side::Blue) => cache.blue.clone(),
+                Some(Side::Red) => cache.red.clone(),
+                _ => None,
+            };
+            p.filter(|p| fresh(p)).unwrap_or_else(empty)
+        }
+    };
+
+    // Bullseye comes from the Export.lua feed (side 1 = Red, 2 = Blue).
+    let bulls = { live.read().await.2.clone() };
+    picture.bullseye = bulls
+        .into_iter()
+        .filter_map(|b| {
+            let s = match b.side {
+                1 => Side::Red,
+                2 => Side::Blue,
+                _ => return None,
+            };
+            if god || side_opt == Some(s) {
+                Some(TacBullseye { side: s, lat: b.lat, lon: b.lon })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    TacFrame { picture: Some(picture), reason: None }
+}
+
+async fn ws_tacmap_handler(
+    ws: warp::ws::Ws,
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    tac: TacState,
+    live: LiveState,
+) -> impl Reply {
+    use dcso3::coalition::Side;
+    let view = match session_id {
+        None => TacView::Denied("login"),
+        Some(id) => match task::block_in_place(|| db.get_session(id)).ok().flatten() {
+            None => TacView::Denied("login"),
+            Some(session) => {
+                let ucid = resolve_ucid_via_bot(&bot_cfg, &session.discord_id).await;
+                let own = match &ucid {
+                    Some(u) => task::block_in_place(|| db.pilot_current_side(u)).ok().flatten(),
+                    None => None,
+                };
+                match own {
+                    Some(s) => TacView::Side(s),
+                    None if session.is_admin => match query.get("side").map(|s| s.as_str()) {
+                        Some("blue") => TacView::Side(Side::Blue),
+                        Some("red") => TacView::Side(Side::Red),
+                        _ => TacView::God,
+                    },
+                    None => TacView::Denied("nocoalition"),
+                }
+            }
+        },
+    };
+    ws.on_upgrade(move |socket| ws_tacmap(socket, view, tac, live))
+}
+
+async fn ws_tacmap(ws: WebSocket, view: TacView, tac: TacState, live: LiveState) {
+    let (mut sink, mut stream) = ws.split();
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(1000));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Send one frame immediately so the client doesn't wait a full second.
+    let frame = build_tac_frame(&view, &tac, &live).await;
+    if sink
+        .send(Message::text(serde_json::to_string(&frame).unwrap_or_default()))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    // A denied viewer never gets a picture — just hold the socket open.
+    if matches!(view, TacView::Denied(_)) {
+        while let Some(msg) = stream.next().await {
+            match msg {
+                Ok(m) if m.is_close() => break,
+                Err(_) => break,
+                _ => {}
+            }
+        }
+        return;
+    }
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                let frame = build_tac_frame(&view, &tac, &live).await;
+                let json = serde_json::to_string(&frame).unwrap_or_default();
+                if sink.send(Message::text(json)).await.is_err() { break; }
+            }
+            msg = stream.next() => match msg {
+                Some(Ok(m)) if m.is_close() => break,
+                None => break,
+                _ => {}
             }
         }
     }
@@ -3280,6 +3537,12 @@ async fn main() -> Result<()> {
         // Default to Info when RUST_LOG is not set so the log viewer has useful output
         if std::env::var("RUST_LOG").is_err() {
             builder.filter_level(log::LevelFilter::Info);
+            // netidx's subscriber logs a WARN on every resubscription attempt for
+            // a path that isn't published yet, and retries roughly once a second
+            // forever -- e.g. an engine RPC the mission hasn't registered. That's
+            // tens of thousands of identical lines over a campaign; keep only the
+            // errors from that module.
+            builder.filter_module("netidx::subscriber", log::LevelFilter::Error);
         }
         if let Some(path) = &args.log_file {
             if let Some(parent) = path.parent() {
@@ -3313,7 +3576,7 @@ async fn main() -> Result<()> {
             let subscriber = SubscriberBuilder::new()
                 .config(Config::load_default()?)
                 .build()?;
-            StatsDb::new(subscriber, args.db, base, args.stats_dir, args.include, args.exclude)?
+            StatsDb::new(subscriber, args.db, base, args.stats_dir, args.stats_jsonl, args.include, args.exclude)?
         }
         None => {
             log::info!("Running in offline mode (no --base specified, Netidx disabled)");
@@ -3552,6 +3815,7 @@ async fn main() -> Result<()> {
         .then(api_stats);
 
     let units = warp::path!("api" / "units")
+        .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .then(api_units);
 
@@ -3582,9 +3846,28 @@ async fn main() -> Result<()> {
     let ws_tx    = live_tx.clone();
     let ws_units_route = warp::path!("ws" / "units")
         .and(warp::ws())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
         .and(warp::any().map(move || ws_state.clone()))
         .and(warp::any().map(move || ws_tx.clone()))
         .then(ws_units_handler);
+
+    // ── Fog-of-war tactical picture WebSocket (/ws/tacmap) ─────────────
+    let tac_state: TacState = Arc::new(tokio::sync::RwLock::new(TacCache::default()));
+    if has_engine {
+        tokio::spawn(tacmap_poller(db.clone(), tac_state.clone()));
+    }
+    let tac_state_ws = tac_state.clone();
+    let tac_live_ws  = live_state.clone();
+    let ws_tacmap_route = warp::path!("ws" / "tacmap")
+        .and(warp::ws())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::any().map(move || tac_state_ws.clone()))
+        .and(warp::any().map(move || tac_live_ws.clone()))
+        .then(ws_tacmap_handler);
 
     // ── Log WebSocket (/ws/logs) — admin only ────────────────────────
     let log_tx_ws  = log_tx.clone();
@@ -3807,6 +4090,7 @@ async fn main() -> Result<()> {
         .then(api_cockpit_cargo_spawn);
 
     let trails = warp::path!("api" / "trails")
+        .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .then(api_trails);
 
@@ -4029,6 +4313,7 @@ async fn main() -> Result<()> {
             api_routes
                 .or(auth_routes)
                 .or(ws_units_route)
+                .or(ws_tacmap_route)
                 .or(ws_logs_route)
                 .or(ws_engine_logs_route)
                 .or(site_files)
