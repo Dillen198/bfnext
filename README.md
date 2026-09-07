@@ -160,4 +160,20 @@ host, etc.) while `bfdb` stays with the game server, see
 
 ## Licenses
 
-`dcso3` is MIT. `bflib` is AGPL v3.
+This repository is a fork of [estokes/bfnext](https://github.com/estokes/bfnext)
+and contains code under different licenses. See **[NOTICE](NOTICE)** for the full
+breakdown. In short:
+
+| Component | Copyright | License |
+|---|---|---|
+| `dcso3` | Eric Stokes | MIT |
+| `bflib` | Eric Stokes | AGPL-3.0 |
+| `bfdb`, `bfprotocols`, `bftools`, `yats` | Eric Stokes (+ contributors) | upstream project terms |
+| `bfweb` (dashboard UI) | Dillen Weerasinghe | Proprietary — all rights reserved (see `bfweb/LICENSE`) |
+| `bfsite` (website) | Dillen Weerasinghe | Proprietary — all rights reserved (see `bfsite/LICENSE`) |
+| `bfwiki` (wiki UI) | Dillen Weerasinghe | Proprietary — all rights reserved (see `bfwiki/LICENSE`) |
+| Live GCI implementation (`bfdb/src/gci/**`, `bfdb/src/gci.rs`) | Dillen Weerasinghe | Proprietary — all rights reserved (see `NOTICE`) |
+
+`bfweb`, `bfsite`, `bfwiki`, and the Live GCI implementation files are **not
+open source** and are not licensed for use, modification, or redistribution.
+Permission requests: dillen.weerasinghe98@gmail.com.

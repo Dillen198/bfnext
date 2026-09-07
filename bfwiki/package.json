@@ -2,6 +2,8 @@
   "name": "bfwiki",
   "private": true,
   "version": "1.0.0",
+  "license": "UNLICENSED",
+  "author": "Dillen Weerasinghe <dillen.weerasinghe98@gmail.com>",
   "type": "module",
   "scripts": {
     "dev": "vite",
