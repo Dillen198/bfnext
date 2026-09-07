@@ -672,7 +672,11 @@ export const api = {
   objectives: (roundId?: number) =>
     get<Objective[]>(roundId ? `/objectives?round=${roundId}` : '/objectives'),
   frontline: (roundId?: number) =>
-    get<Frontlines>(roundId ? `/frontline?round=${roundId}` : '/frontline'),
+    get<Frontlines | unknown>(roundId ? `/frontline?round=${roundId}` : '/frontline')
+      // The engine-less / fresh-campaign response is `[]`, not the object
+      // shape — normalize so callers can always read `.blue/.red/.mid`.
+      .then((f): Frontlines =>
+        f && !Array.isArray(f) ? (f as Frontlines) : { mid: [], blue: [], red: [] }),
   // Coalition-locked server-side: omit `side` to get your own coalition's
   // briefing; only admins may request a specific side.
   briefing: (side?: 'Blue' | 'Red') =>

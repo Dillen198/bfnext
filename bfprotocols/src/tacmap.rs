@@ -192,3 +192,88 @@ pub struct TacFrame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Golden wire contract — the exact JSON `/ws/tacmap` puts on the socket
+    /// must stay in sync with the hand-written TS types in
+    /// `bfweb/src/api.ts` (`AirTrack` / `GroundContact` / `TacFrame`) and the
+    /// peace-eye adapter in `bfweb/src/scope/useScopeFeed.ts`.
+    #[test]
+    fn tacframe_json_shape() {
+        let frame = TacFrame {
+            picture: Some(TacPicture {
+                side: Some(Side::Blue),
+                time: DateTime::<Utc>::UNIX_EPOCH,
+                bullseye: vec![TacBullseye { side: Side::Blue, lat: 42.1, lon: 43.2 }],
+                air: vec![AirTrack {
+                    id: 12345,
+                    side: Some(Side::Red),
+                    lat: 42.5,
+                    lon: 43.6,
+                    alt_m: 7600.0,
+                    heading: 250.0,
+                    speed_kts: 440.0,
+                    vspd_ms: 5.0,
+                    iff: Iff::Hostile,
+                    class: AirClass::Fighter,
+                    age_s: 3,
+                    stale: false,
+                    jammed: true,
+                    source: TrackSource::GroundRadar,
+                    label: None,
+                }],
+                ground: vec![GroundContact {
+                    id: 7,
+                    side: Some(Side::Red),
+                    lat: 42.4,
+                    lon: 43.5,
+                    class: GroundClass::AirDefense,
+                    count: 3,
+                    confidence: 0.9,
+                    uncertainty_m: 400.0,
+                    source: GroundSource::Jtac,
+                    age_s: 8,
+                    threat_range_m: Some(43000.0),
+                }],
+                radar_rings: vec![RadarRing {
+                    lat: 42.3,
+                    lon: 43.2,
+                    range_m: 180000.0,
+                    airborne: false,
+                    alive: true,
+                }],
+            }),
+            reason: None,
+        };
+        let v: serde_json::Value = serde_json::to_value(&frame).unwrap();
+        let p = &v["picture"];
+        assert_eq!(p["side"], "Blue");
+        assert_eq!(p["bullseye"][0]["side"], "Blue");
+        let a = &p["air"][0];
+        assert_eq!(a["iff"], "hostile");
+        assert_eq!(a["class"], "fighter");
+        assert_eq!(a["source"], "groundradar");
+        assert_eq!(a["side"], "Red");
+        assert_eq!(a["jammed"], true);
+        assert!(a.get("label").is_none(), "None label must be omitted");
+        let g = &p["ground"][0];
+        assert_eq!(g["class"], "airdefense");
+        assert_eq!(g["source"], "jtac");
+        assert_eq!(g["threat_range_m"], 43000.0);
+        assert!(v.get("reason").is_none(), "None reason must be omitted");
+        // round-trips
+        let back: TacFrame = serde_json::from_value(v).unwrap();
+        assert!(back.picture.is_some());
+    }
+
+    #[test]
+    fn denied_frame_json_shape() {
+        let f = TacFrame { picture: None, reason: Some("login".into()) };
+        let v = serde_json::to_value(&f).unwrap();
+        assert!(v.get("picture").is_none());
+        assert_eq!(v["reason"], "login");
+    }
+}
