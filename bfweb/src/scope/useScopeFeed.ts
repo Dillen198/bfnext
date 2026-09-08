@@ -67,13 +67,28 @@ export function useScopeFeed(): ScopeFeed {
 
   useEffect(() => {
     let cancelled = false
-    api.objectives()
-      .then((os) => {
-        if (cancelled) return
-        const o = os.find((x) => x.lat !== 0 || x.lon !== 0)
-        if (o) setObjSample([o.lat, o.lon])
-      })
-      .catch(() => { /* objectives optional */ })
+    let tries = 0
+    const poll = () => {
+      api.objectives()
+        .then((os) => {
+          if (cancelled) return
+          const valid = os.filter((x) => x.lat !== 0 || x.lon !== 0)
+          if (valid.length) {
+            // Centroid of the campaign objectives — a stable theatre anchor.
+            setObjSample([
+              valid.reduce((s, o) => s + o.lat, 0) / valid.length,
+              valid.reduce((s, o) => s + o.lon, 0) / valid.length,
+            ])
+          } else if (tries++ < 20) {
+            // engine may not have published objectives yet on a fresh start
+            window.setTimeout(poll, 5000)
+          }
+        })
+        .catch(() => {
+          if (!cancelled && tries++ < 20) window.setTimeout(poll, 5000)
+        })
+    }
+    poll()
     return () => { cancelled = true }
   }, [])
   // Stable small integer ids: JSON round-trips the engine's u64 track ids

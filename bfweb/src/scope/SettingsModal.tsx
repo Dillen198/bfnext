@@ -136,6 +136,43 @@ export default function SettingsModal(props: SettingsModalProps): ReactElement {
                     }}
                   />
                 </label>
+                <div className="divider my-1" />
+                <label className="label cursor-pointer">
+                  <span className="label-text">Show objectives</span>
+                  <input
+                    className="checkbox"
+                    type="checkbox"
+                    checked={settings.view.showObjectives}
+                    onChange={(e) => {
+                      settings.view.showObjectives = e.target.checked;
+                      setSettings(settings);
+                    }}
+                  />
+                </label>
+                <label className="label cursor-pointer">
+                  <span className="label-text">Show frontline</span>
+                  <input
+                    className="checkbox"
+                    type="checkbox"
+                    checked={settings.view.showFrontline}
+                    onChange={(e) => {
+                      settings.view.showFrontline = e.target.checked;
+                      setSettings(settings);
+                    }}
+                  />
+                </label>
+                <label className="label cursor-pointer">
+                  <span className="label-text">Show airfields</span>
+                  <input
+                    className="checkbox"
+                    type="checkbox"
+                    checked={settings.view.showAirports}
+                    onChange={(e) => {
+                      settings.view.showAirports = e.target.checked;
+                      setSettings(settings);
+                    }}
+                  />
+                </label>
               </div>
             )}
             {selectedTab === "connection" && (

@@ -6,6 +6,9 @@ export function defaultSettings(): Settings {
       showSlowAir: false,
       showWeapon: false,
       showCursorCoords: false,
+      showObjectives: true,
+      showFrontline: true,
+      showAirports: true,
     },
   };
 }
@@ -20,4 +23,8 @@ export interface ViewSettings {
   showSlowAir: boolean;
   showWeapon: boolean;
   showCursorCoords: boolean;
+  /** Campaign layers added on top of the peace-eye scope. */
+  showObjectives: boolean;
+  showFrontline: boolean;
+  showAirports: boolean;
 }

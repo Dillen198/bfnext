@@ -6,10 +6,12 @@ import circle from '@turf/circle'
 import type { Feature, FeatureCollection } from 'geojson'
 import geomagnetism from 'geomagnetism'
 import { useMemo, useState, type ReactElement } from 'react'
-import Map, { AttributionControl, Layer, Source } from 'react-map-gl/maplibre'
+import { useQuery } from '@tanstack/react-query'
+import Map, { AttributionControl, Layer, Marker, Source } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './scope.css'
 
+import { api, type Frontlines } from '../api'
 import AirportMarker from './AirportMarker'
 import BraaInfo from './BraaInfo'
 import ControlPanel from './ControlPanel'
@@ -28,10 +30,44 @@ import { type TacviewObject } from './tacview'
 import { useScopeFeed } from './useScopeFeed'
 import { moveCoords, nmToMeter } from './util'
 
-const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json'
+// Inline raster style off the same Esri dark-canvas tiles /map uses — a
+// hosted vector style (CARTO) is blocked by the dashboard's CSP in prod and
+// renders black.
+const MAP_STYLE = {
+  version: 8 as const,
+  sources: {
+    esri: {
+      type: 'raster' as const,
+      tiles: [
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+      ],
+      tileSize: 256,
+      attribution: 'Esri',
+    },
+  },
+  layers: [
+    { id: 'bg', type: 'background' as const, paint: { 'background-color': '#0a0d07' } },
+    { id: 'esri', type: 'raster' as const, source: 'esri', paint: { 'raster-opacity': 0.85 } },
+  ],
+}
+
+const OBJ_COLOR = (owner: string) =>
+  owner === 'Blue' ? '#4a8fd4' : owner === 'Red' ? '#cc4444' : '#6a7a5a'
 
 export default function ScopePage(): ReactElement {
   const { state, terrain, denied, reason, status, threatRanges, empty } = useScopeFeed()
+
+  // Campaign context layers (public REST, same as the /map page).
+  const { data: objectives = [] } = useQuery({
+    queryKey: ['objectives'],
+    queryFn: () => api.objectives(),
+    refetchInterval: 30_000,
+  })
+  const { data: fronts = { mid: [], blue: [], red: [] } } = useQuery<Frontlines>({
+    queryKey: ['frontline'],
+    queryFn: () => api.frontline(),
+    refetchInterval: 30_000,
+  })
 
   const [settings, setSettings] = useState(defaultSettings())
   const [objectSettingsInventory, setObjectSettingsInventory] =
@@ -182,6 +218,29 @@ export default function ScopePage(): ReactElement {
     return { type: 'FeatureCollection', features: feats }
   }, [state.objects, objectSettingsInventory, threatRanges, referenceLatitude, referenceLongitude])
 
+  // Frontline: blue-dominance / no-man's-land / red-dominance polylines
+  // ([lat,lon] from the engine -> [lon,lat] for maplibre).
+  const frontlineGeoJson: FeatureCollection = useMemo(() => {
+    const line = (l: [number, number][], k: string): Feature => ({
+      type: 'Feature',
+      properties: { k },
+      geometry: { type: 'LineString', coordinates: l.map(([lat, lon]) => [lon, lat]) },
+    })
+    return {
+      type: 'FeatureCollection',
+      features: [
+        ...fronts.blue.filter((l) => l.length > 1).map((l) => line(l, 'blue')),
+        ...fronts.red.filter((l) => l.length > 1).map((l) => line(l, 'red')),
+        ...fronts.mid.filter((l) => l.length > 1).map((l) => line(l, 'mid')),
+      ],
+    }
+  }, [fronts])
+
+  const shownObjectives = useMemo(
+    () => objectives.filter((o) => o.lat !== 0 || o.lon !== 0),
+    [objectives],
+  )
+
   const watchingObjects = useMemo(() => {
     return Object.entries(objectSettingsInventory)
       .map(([id, os]): [number, TacviewObject | undefined] => {
@@ -208,8 +267,9 @@ export default function ScopePage(): ReactElement {
   }
 
   // Only hold the loading screen while we genuinely have no map reference at
-  // all (no picture, no objectives). Once a theatre resolves — even from a
-  // campaign objective with an empty picture — fall through and render the map.
+  // all. useScopeFeed resolves a theatre from a contact, the bullseye, or a
+  // campaign objective, so this normally clears the moment /api/objectives
+  // returns.
   if (referenceLatitude === undefined || referenceLongitude === undefined || terrain === undefined) {
     return (
       <div className="scope-root theme-locked-dark flex h-full flex-col items-center justify-center gap-3" style={{ background: 'var(--bg)' }}>
@@ -376,17 +436,72 @@ export default function ScopePage(): ReactElement {
             useMagneticHeading={settings.view.useMagneticHeading}
           />
         )}
-        {terrain.airports.map((airport, idx) => (
-          <AirportMarker
-            key={airport.name}
-            airport={airport}
-            selected={selectedAirportIndex === idx}
-            onClick={() => {
-              setSelectedObjectId(undefined)
-              setSelectedAirportIndex(idx)
-            }}
-          />
-        ))}
+
+        {/* ── Campaign frontline ─────────────────────────────────── */}
+        {settings.view.showFrontline && (
+          <Source id="frontline" type="geojson" data={frontlineGeoJson}>
+            <Layer
+              id="frontline-edges"
+              type="line"
+              filter={['!=', ['get', 'k'], 'mid']}
+              paint={{
+                'line-width': 2,
+                'line-opacity': 0.8,
+                'line-dasharray': [6, 4],
+                'line-color': ['match', ['get', 'k'], 'blue', '#2f7dff', 'red', '#ff3b3b', '#ffffff'],
+              }}
+            />
+            <Layer
+              id="frontline-mid"
+              type="line"
+              filter={['==', ['get', 'k'], 'mid']}
+              paint={{ 'line-width': 1.5, 'line-opacity': 0.9, 'line-dasharray': [2, 3], 'line-color': '#ffffff' }}
+            />
+          </Source>
+        )}
+
+        {/* ── Campaign objectives ────────────────────────────────── */}
+        {settings.view.showObjectives &&
+          shownObjectives.map((o) => (
+            <Marker key={o.id} latitude={o.lat} longitude={o.lon} anchor="center">
+              <div className="pointer-events-none flex flex-col items-center" style={{ opacity: o.health <= 0 ? 0.4 : 1 }}>
+                <div
+                  style={{
+                    width: 9,
+                    height: 9,
+                    borderRadius: '50%',
+                    background: OBJ_COLOR(o.owner),
+                    border: '1.5px solid rgba(0,0,0,0.7)',
+                  }}
+                />
+                <div
+                  style={{
+                    marginTop: 2,
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 9,
+                    color: 'var(--text-muted)',
+                    textShadow: '0 0 3px #000, 0 0 3px #000',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {o.name}
+                </div>
+              </div>
+            </Marker>
+          ))}
+
+        {settings.view.showAirports &&
+          terrain.airports.map((airport, idx) => (
+            <AirportMarker
+              key={airport.name}
+              airport={airport}
+              selected={selectedAirportIndex === idx}
+              onClick={() => {
+                setSelectedObjectId(undefined)
+                setSelectedAirportIndex(idx)
+              }}
+            />
+          ))}
         {Object.entries(state.objects)
           .filter(([id, object]) => selectedObjectId === Number(id) || filterObject(object, settings))
           .map(([id, object]) => (
