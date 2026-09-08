@@ -3334,18 +3334,41 @@ async fn tacmap_poller(db: StatsDb, state: TacState) {
     use netidx::publisher::Value;
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(1000));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Diagnostics, logged at most once every ~30s per side so the log stays
+    // useful for "why is the scope empty" without spamming.
+    let mut last_report: [chrono::DateTime<chrono::Utc>; 2] =
+        [chrono::DateTime::UNIX_EPOCH; 2];
+    let mut last_err_kind: [u8; 2] = [255; 2]; // 0=ok 1=rpc-err 2=timeout 3=bad-json
     loop {
         tick.tick().await;
-        for side in ["blue", "red"] {
+        for (i, side) in ["blue", "red"].into_iter().enumerate() {
             let res = tokio::time::timeout(
                 std::time::Duration::from_secs(3),
                 call_engine_rpc_str(&db, "query-tacmap", vec![("side", Value::from(side))]),
             )
             .await;
-            let pic = match res {
-                Ok(Ok(json)) => serde_json::from_str::<bfprotocols::tacmap::TacPicture>(&json).ok(),
-                _ => None,
+            let (pic, kind, detail) = match res {
+                Ok(Ok(json)) => match serde_json::from_str::<bfprotocols::tacmap::TacPicture>(&json) {
+                    Ok(p) => {
+                        let d = format!("{} air, {} ground, {} rings", p.air.len(), p.ground.len(), p.radar_rings.len());
+                        (Some(p), 0u8, d)
+                    }
+                    Err(e) => (None, 3u8, format!("unparseable JSON ({e})")),
+                },
+                Ok(Err(e)) => (None, 1u8, format!("RPC error: {} -- is bflib.dll current?", e.0)),
+                Err(_) => (None, 2u8, "RPC timed out (engine unreachable / old bflib.dll)".to_string()),
             };
+            // Report on a state change, or every 30s.
+            let now = chrono::Utc::now();
+            if last_err_kind[i] != kind || (now - last_report[i]).num_seconds() >= 30 {
+                if kind == 0 {
+                    log::info!("tacmap_poller: query-tacmap({side}) ok -- {detail}");
+                } else {
+                    log::warn!("tacmap_poller: query-tacmap({side}) {detail}");
+                }
+                last_report[i] = now;
+                last_err_kind[i] = kind;
+            }
             if let Some(pic) = pic {
                 let mut w = state.write().await;
                 if side == "blue" {

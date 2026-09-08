@@ -1636,7 +1636,7 @@ pub(crate) fn query_tacmap(ctx: &Context, lua: MizLua, side: Side) -> bfprotocol
             .unwrap_or((0.0, 0.0))
     };
 
-    let air = ctx
+    let air: Vec<AirTrack> = ctx
         .ewr
         .air_picture_for(side, now, db)
         .into_iter()
@@ -1713,7 +1713,7 @@ pub(crate) fn query_tacmap(ctx: &Context, lua: MizLua, side: Side) -> bfprotocol
             .fold(None, |acc: Option<f32>, v| Some(acc.map_or(v, |a| a.max(v))))
     };
 
-    let ground = db
+    let ground: Vec<GroundContact> = db
         .ephemeral
         .intel_db
         .contacts_for(side)
@@ -1755,7 +1755,7 @@ pub(crate) fn query_tacmap(ctx: &Context, lua: MizLua, side: Side) -> bfprotocol
         })
         .collect();
 
-    let radar_rings = db
+    let radar_rings: Vec<RadarRing> = db
         .radar_donors()
         .filter(|d| d.side == side)
         .map(|d| {
@@ -1769,6 +1769,33 @@ pub(crate) fn query_tacmap(ctx: &Context, lua: MizLua, side: Side) -> bfprotocol
             }
         })
         .collect();
+
+    // One diagnostic line per side every ~60s so "the scope is empty" is
+    // debuggable from the engine log. Cheap: just an atomic timestamp check.
+    {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        static LAST: [AtomicI64; 3] = [AtomicI64::new(0), AtomicI64::new(0), AtomicI64::new(0)];
+        let slot = match side {
+            Side::Blue => 0,
+            Side::Red => 1,
+            _ => 2,
+        };
+        let ts = now.timestamp();
+        if ts - LAST[slot].load(Ordering::Relaxed) >= 60 {
+            LAST[slot].store(ts, Ordering::Relaxed);
+            let intel_on = db.ephemeral.cfg.elint.is_some()
+                || db.ephemeral.cfg.player_recon.is_some();
+            log::info!(
+                "query_tacmap({side:?}): {} air, {} ground, {} radar rings; \
+                 intel(elint|recon) {}; {} enemy radar-emitter types in cfg",
+                air.len(),
+                ground.len(),
+                radar_rings.len(),
+                if intel_on { "ENABLED" } else { "DISABLED -> ground picture will always be empty" },
+                cfg.ground_radar_ewrs.len(),
+            );
+        }
+    }
 
     TacPicture {
         side: Some(side),
