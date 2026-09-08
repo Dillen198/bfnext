@@ -250,6 +250,29 @@ export default function ScopePage(): ReactElement {
     ? shownObjectives.find((o) => o.id === selectedObjId) ?? null
     : null
 
+  // A campaign objective usually sits right on top of an airfield/helipad —
+  // showing both markers just doubles the label. When they coincide (~3 km)
+  // the objective wins (it's the clickable, status-bearing one) and the
+  // terrain marker is suppressed.
+  const suppressedAirports = useMemo(() => {
+    const set = new Set<number>()
+    const aps = terrain?.airports ?? []
+    if (!shownObjectives.length) return set
+    aps.forEach((a, idx) => {
+      const [alat, alon] = a.position
+      const kx = 111 * Math.cos((alat * Math.PI) / 180)
+      for (const o of shownObjectives) {
+        const dy = (o.lat - alat) * 111
+        const dx = (o.lon - alon) * kx
+        if (dx * dx + dy * dy < 9) { // 3 km
+          set.add(idx)
+          break
+        }
+      }
+    })
+    return set
+  }, [terrain, shownObjectives])
+
   const watchingObjects = useMemo(() => {
     return Object.entries(objectSettingsInventory)
       .map(([id, os]): [number, TacviewObject | undefined] => {
@@ -568,6 +591,7 @@ export default function ScopePage(): ReactElement {
         {(settings.view.showAirports || settings.view.showHelipads) &&
           terrain.airports.map((airport, idx) => {
             if (airport.heli ? !settings.view.showHelipads : !settings.view.showAirports) return null
+            if (settings.view.showObjectives && suppressedAirports.has(idx) && selectedAirportIndex !== idx) return null
             return (
               <AirportMarker
                 key={airport.name}
