@@ -12,6 +12,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import './scope.css'
 
 import { api, type Frontlines } from '../api'
+import { useTheme } from '../context/ThemeContext'
 import AirportMarker from './AirportMarker'
 import BraaInfo from './BraaInfo'
 import ControlPanel from './ControlPanel'
@@ -30,32 +31,36 @@ import { type TacviewObject } from './tacview'
 import { useScopeFeed } from './useScopeFeed'
 import { moveCoords, nmToMeter } from './util'
 
-// Inline raster style off the same Esri dark-canvas tiles /map uses — a
-// hosted vector style (CARTO) is blocked by the dashboard's CSP in prod and
-// renders black.
-const MAP_STYLE = {
+// Inline raster style off the Esri canvas tiles (a hosted vector style is
+// blocked by the dashboard's prod CSP and renders black). Follows the
+// dashboard light/dark theme, same as the old /map page.
+const mapStyleFor = (theme: string) => ({
   version: 8 as const,
   sources: {
     esri: {
       type: 'raster' as const,
       tiles: [
-        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+        theme === 'light'
+          ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+          : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
       ],
       tileSize: 256,
       attribution: 'Esri',
     },
   },
   layers: [
-    { id: 'bg', type: 'background' as const, paint: { 'background-color': '#0a0d07' } },
-    { id: 'esri', type: 'raster' as const, source: 'esri', paint: { 'raster-opacity': 0.85 } },
+    { id: 'bg', type: 'background' as const, paint: { 'background-color': theme === 'light' ? '#dfe0d8' : '#0a0d07' } },
+    { id: 'esri', type: 'raster' as const, source: 'esri', paint: { 'raster-opacity': theme === 'light' ? 0.95 : 0.85 } },
   ],
-}
+})
 
 const OBJ_COLOR = (owner: string) =>
   owner === 'Blue' ? '#4a8fd4' : owner === 'Red' ? '#cc4444' : '#6a7a5a'
 
 export default function ScopePage(): ReactElement {
   const { state, terrain, denied, reason, status, threatRanges, empty } = useScopeFeed()
+  const { theme } = useTheme()
+  const mapStyle = useMemo(() => mapStyleFor(theme), [theme])
 
   // Campaign context layers (public REST, same as the /map page).
   const { data: objectives = [] } = useQuery({
@@ -257,7 +262,7 @@ export default function ScopePage(): ReactElement {
 
   if (denied) {
     return (
-      <div className="scope-root theme-locked-dark flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-slate-300" style={{ background: 'var(--bg)' }}>
+      <div className="scope-root flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-slate-300" style={{ background: 'var(--bg)' }}>
         <div className="text-lg tracking-wide text-white" style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.14em' }}>
           {reason === 'nocoalition' ? 'NO COALITION' : 'NOT SIGNED IN'}
         </div>
@@ -276,7 +281,7 @@ export default function ScopePage(): ReactElement {
   // returns.
   if (referenceLatitude === undefined || referenceLongitude === undefined || terrain === undefined) {
     return (
-      <div className="scope-root theme-locked-dark flex h-full flex-col items-center justify-center gap-3" style={{ background: 'var(--bg)' }}>
+      <div className="scope-root flex h-full flex-col items-center justify-center gap-3" style={{ background: 'var(--bg)' }}>
         <Spinner />
         <div className="text-xs text-slate-400">
           {status === 'open' ? 'Waiting for the tactical picture…' : 'Connecting…'}
@@ -310,9 +315,10 @@ export default function ScopePage(): ReactElement {
   }
 
   return (
-    <div className="scope-root theme-locked-dark relative h-full w-full">
+    <div className="scope-root relative h-full w-full">
       <Map
-        mapStyle={MAP_STYLE}
+        key={theme}
+        mapStyle={mapStyle}
         style={{ width: '100%', height: '100%' }}
         initialViewState={initialViewState}
         doubleClickZoom={false}
@@ -549,7 +555,7 @@ export default function ScopePage(): ReactElement {
                     fontFamily: 'var(--font-mono)',
                     fontSize: 9,
                     color: 'var(--text-muted)',
-                    textShadow: '0 0 3px #000, 0 0 3px #000',
+                    textShadow: '0 0 3px var(--bg), 0 0 3px var(--bg)',
                     whiteSpace: 'nowrap',
                   }}
                 >

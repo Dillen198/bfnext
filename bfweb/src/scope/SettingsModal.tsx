@@ -7,63 +7,100 @@ export interface SettingsModalProps {
   setSettings: (settings: Settings) => void;
 }
 
+const ROWS: [label: string, key: keyof Settings["view"], group?: boolean][] = [
+  ["Magnetic heading", "useMagneticHeading"],
+  ["Ground contacts", "showGround"],
+  ["Air contacts under 25 kt", "showSlowAir"],
+  ["Weapon tracks", "showWeapon"],
+  ["Cursor coordinate readout", "showCursorCoords"],
+  ["Objectives", "showObjectives", true],
+  ["Frontline", "showFrontline"],
+  ["Airfields", "showAirports"],
+  ["Helipads", "showHelipads"],
+];
+
 export default function SettingsModal(props: SettingsModalProps): ReactElement {
   const { settings, setSettings } = props;
 
-  const check = (
-    label: string,
-    key: keyof Settings["view"],
-  ): ReactElement => (
-    <label className="label cursor-pointer" key={key}>
-      <span className="label-text">{label}</span>
-      <input
-        className="checkbox"
-        type="checkbox"
-        checked={settings.view[key]}
-        onChange={(e) => {
-          settings.view[key] = e.target.checked;
-          setSettings(settings);
-        }}
-      />
-    </label>
-  );
+  const set = (key: keyof Settings["view"], v: boolean) => {
+    setSettings({ ...settings, view: { ...settings.view, [key]: v } });
+  };
 
   return (
     <dialog id="settingsModal" className="modal">
-      <form
-        method="dialog"
-        className="modal-box border border-gray-500 bg-gray-200"
+      <div
+        className="modal-box"
+        style={{
+          width: 300,
+          maxWidth: "90vw",
+          padding: 0,
+          background: "var(--bg-card)",
+          border: "1px solid var(--accent-border)",
+          color: "var(--text)",
+          fontFamily: "var(--font-mono)",
+        }}
       >
-        <div className="mb-2 flex w-full flex-row px-2">
-          <span className="text-xl">Settings</span>
-          <div className="ml-auto">
-            <button className="btn-sm btn">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                className="h-5 w-5"
-              >
-                <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-              </svg>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            padding: "10px 12px",
+            borderBottom: "1px solid var(--border-light)",
+          }}
+        >
+          <span style={{ fontFamily: "var(--font-display)", letterSpacing: "0.14em", fontSize: "0.95rem" }}>
+            DISPLAY
+          </span>
+          <form method="dialog" style={{ marginLeft: "auto" }}>
+            <button
+              style={{ background: "none", border: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 14, lineHeight: 1 }}
+            >
+              ✕
             </button>
-          </div>
+          </form>
         </div>
-        <div className="form-control px-2 pb-2 pt-2">
-          {check("Use magnetic heading", "useMagneticHeading")}
-          {check("Show ground objects", "showGround")}
-          {check("Show air objects slower than 25 knots", "showSlowAir")}
-          {check("Show weapon objects", "showWeapon")}
-          {check("Show cursor coordinates", "showCursorCoords")}
-          <div className="divider my-1" />
-          {check("Show objectives", "showObjectives")}
-          {check("Show frontline", "showFrontline")}
-          {check("Show airfields", "showAirports")}
-          {check("Show helipads", "showHelipads")}
+
+        <div style={{ padding: "6px 12px 12px" }}>
+          {ROWS.map(([label, key, group]) => (
+            <div key={key}>
+              {group && <div style={{ height: 1, background: "var(--border-light)", margin: "8px 0" }} />}
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  padding: "6px 0",
+                  fontSize: "0.78rem",
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                }}
+              >
+                <span>{label}</span>
+                <input
+                  type="checkbox"
+                  checked={settings.view[key]}
+                  onChange={(e) => set(key, e.target.checked)}
+                  style={{
+                    appearance: "none",
+                    WebkitAppearance: "none",
+                    width: 16,
+                    height: 16,
+                    flexShrink: 0,
+                    borderRadius: 2,
+                    border: "1px solid var(--accent-border)",
+                    background: settings.view[key] ? "var(--accent)" : "var(--bg-input)",
+                    boxShadow: settings.view[key] ? "inset 0 0 0 2px var(--bg-card)" : "none",
+                    cursor: "pointer",
+                  }}
+                />
+              </label>
+            </div>
+          ))}
         </div>
-      </form>
+      </div>
       <form method="dialog" className="modal-backdrop">
-        <button>Close</button>
+        <button>close</button>
       </form>
     </dialog>
   );
