@@ -45,13 +45,15 @@ Access via F10 → Cargo
 - Fuel bladders
 - Special cargo (server-dependent)
 
-**Capacity** (PG Tempest aircraft):
-- **Mi-8**: 3 crate slots, 3 troop slots
-- **CH-47**: 3 crate slots, 4 troop slots
-- **UH-1H**: 1 crate slot, 2 troop slots
-- **SA342**: 1 crate slot, 1 troop slot
-- **Mi-24**: 1 crate slot, 1 troop slot
-- **Total Max**: 6 crates server limit
+**Capacity**:
+- **CH-47**: 6 crate slots, 10 troop slots
+- **Mi-8**: 3 crate slots, 6 troop slots
+- **UH-1H**: 2 crate slots, 3 troop slots
+- **SA342L / SA342 Minigun**: 1 crate slot, 1 troop slot
+- **Mi-24P**: 1 crate slot, 1 troop slot
+
+> **SA342M** and **SA342 Mistral** cannot carry crates or troops — no cabin space.
+> Use the **SA342L** or **SA342 Minigun** for Gazelle logistics runs.
 
 ## Transporting Cargo
 

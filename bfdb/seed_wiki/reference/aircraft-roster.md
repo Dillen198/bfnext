@@ -42,13 +42,17 @@ F-14A Tomcat (Early), F-14B(U) Tomcat, F-16C Viper (Block 50), J-11A Flanker, JF
 F-4E Phantom II, MiG-21bis, MiG-29A Fulcrum, MiG-29S Fulcrum, Mirage F1BE, Mirage F1CE, Mirage 2000C
 
 ### Attack (4 lives)
-AJS37 Viggen, Ka-50 Black Shark, Ka-50-3 Black Shark, Mi-24P Hind, SA342 Gazelle (Minigun), Su-25, Su-25T Frogfoot
+AJS37 Viggen, Ka-50 Black Shark, Ka-50-3 Black Shark, Mi-24P Hind, SA342M Gazelle (HOT/Viviane), SA342 Gazelle (Mistral), Su-25, Su-25T Frogfoot
 
 ### Recon (6 lives)
 FW-190D9 Dora, L-39C Albatros, Spitfire LF Mk.IX
 
 ### Logistics (6 lives)
-C-130J-30 Super Hercules, CH-47F Chinook, Mi-8MT Hip, SA342 Gazelle (Mistral), SA342L Gazelle, SA342M Gazelle
+C-130J-30 Super Hercules, CH-47F Chinook, Mi-8MT Hip, SA342L Gazelle, SA342 Gazelle (Minigun)
+
+> Only the **SA342L** and **SA342 Minigun** Gazelles can carry troops or cargo. The
+> **SA342M** (HOT/Viviane) and **Mistral** variants fly Attack lives — their cabins are
+> taken up by mission equipment and have no room for cargo.
 
 ## Shared Aircraft
 

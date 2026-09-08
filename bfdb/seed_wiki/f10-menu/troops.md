@@ -46,13 +46,31 @@ Access via F10 → Troops
 - Anti-tank teams
 - Support units
 
-**Capacity** (PG Tempest aircraft):
-- **CH-47**: 4 troop slots (largest)
-- **Mi-8**: 3 troop slots
-- **UH-1H**: 2 troop slots
-- **SA342/Mi-24**: 1 troop slot each
+**Capacity**:
+- **C-130J**: 20 troop slots
+- **CH-47**: 10 troop slots (largest helo)
+- **Mi-8**: 6 troop slots
+- **UH-1H**: 3 troop slots
+- **SA342L / SA342 Minigun / Mi-24P**: 1 troop slot each
 - Each slot = one infantry squad
 - APCs vary by type
+
+> **Gazelle variants**: only the **SA342L** (scout) and **SA342 Minigun** carry
+> troops/cargo — they fly logistics lives. The **SA342M** (HOT/Viviane) and
+> **SA342 Mistral** have no usable cabin space and fly attack lives; they cannot
+> load troops or crates.
+
+**Squad weights** (added to the aircraft as internal cargo):
+
+| Squad | Weight |
+|-------|-------:|
+| MANPAD (Igla / Stinger) | 150 kg |
+| Standard (rifle) | 700 kg |
+| Anti Tank | 750 kg |
+| Mortar | 900 kg |
+
+A half-fuel SA342L can realistically lift a single MANPAD team. A rifle or
+mortar squad needs a Huey or larger.
 
 ## Transporting Troops
 

@@ -544,13 +544,13 @@
     "F-15C": "Standard",
     "OH58D": "Attack",
     "OH-58D": "Attack",
-    "SA342Minigun": "Attack",
+    "SA342Minigun": "Logistics",
     "SH-60B": "Attack",
     "Ka-50": "Attack",
     "FA-18C_hornet": "Standard",
     "A-10C": "Attack",
-    "SA342M": "Logistics",
-    "SA342Mistral": "Logistics",
+    "SA342M": "Attack",
+    "SA342Mistral": "Attack",
     "A-10A": "Attack",
     "AJS37": "Attack",
     "Mirage-F1CE": "Intercept",
@@ -1105,7 +1105,7 @@
       "pilot_slots": 1,
       "spawn_distance": 100
     },
-    "SA342M": {
+    "SA342Minigun": {
       "troop_slots": 1,
       "crate_slots": 1,
       "total_slots": 1,
@@ -3250,7 +3250,7 @@
         "can_capture": true,
         "limit": 10,
         "limit_enforce": "DeleteOldest",
-        "weight": 800,
+        "weight": 700,
         "cost": 0,
         "jtac": {
           "range": 8000,
@@ -3264,7 +3264,7 @@
         "can_capture": true,
         "limit": 10,
         "limit_enforce": "DeleteOldest",
-        "weight": 1000,
+        "weight": 750,
         "cost": 1,
         "jtac": {
           "range": 8000,
@@ -3278,7 +3278,7 @@
         "can_capture": true,
         "limit": 10,
         "limit_enforce": "DeleteOldest",
-        "weight": 1200,
+        "weight": 900,
         "cost": 5,
         "jtac": {
           "range": 8000,
@@ -3292,7 +3292,7 @@
         "can_capture": false,
         "limit": 10,
         "limit_enforce": "DeleteOldest",
-        "weight": 500,
+        "weight": 150,
         "cost": 5,
         "jtac": null
       }
@@ -3305,7 +3305,7 @@
         "can_capture": true,
         "limit": 10,
         "limit_enforce": "DeleteOldest",
-        "weight": 800,
+        "weight": 700,
         "cost": 0,
         "jtac": {
           "range": 8000,
@@ -3319,7 +3319,7 @@
         "can_capture": true,
         "limit": 10,
         "limit_enforce": "DeleteOldest",
-        "weight": 1000,
+        "weight": 750,
         "cost": 1,
         "jtac": {
           "range": 8000,
@@ -3333,7 +3333,7 @@
         "can_capture": true,
         "limit": 10,
         "limit_enforce": "DeleteOldest",
-        "weight": 1200,
+        "weight": 900,
         "cost": 5,
         "jtac": {
           "range": 8000,
@@ -3347,7 +3347,7 @@
         "can_capture": false,
         "limit": 10,
         "limit_enforce": "DeleteOldest",
-        "weight": 500,
+        "weight": 150,
         "cost": 5,
         "jtac": {
           "range": 8000,
