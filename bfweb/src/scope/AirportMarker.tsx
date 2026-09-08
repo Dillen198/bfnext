@@ -1,9 +1,7 @@
 import { type ReactElement } from "react";
 import { Marker } from "react-map-gl/maplibre";
 
-import Symbol from "./Symbol";
 import { type Airport } from "./dcs/terrain";
-import { sidcToSymbol } from "./entity";
 
 export interface AirportMarkerProps {
   airport: Airport;
@@ -11,53 +9,31 @@ export interface AirportMarkerProps {
   onClick: () => void;
 }
 
+// Airfield: a circle with a diagonal runway. Helipad: a circle with an "H".
+// Both hand-drawn (no milsymbol) so they stay small, sharp and theme-coloured.
+function AirfieldIcon({ col, size }: { col: string; size: number }): ReactElement {
+  const s = size;
+  return (
+    <svg width={s} height={s} viewBox="0 0 14 14" style={{ display: "block", filter: "drop-shadow(0 0 2px #000)" }}>
+      <circle cx="7" cy="7" r="6" fill="rgba(0,0,0,0.45)" stroke={col} strokeWidth="1" />
+      <line x1="3.4" y1="10.6" x2="10.6" y2="3.4" stroke={col} strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+function HelipadIcon({ col, size }: { col: string; size: number }): ReactElement {
+  const s = size;
+  return (
+    <svg width={s} height={s} viewBox="0 0 12 12" style={{ display: "block", filter: "drop-shadow(0 0 2px #000)" }}>
+      <circle cx="6" cy="6" r="5" fill="rgba(0,0,0,0.4)" stroke={col} strokeWidth="1" />
+      <path d="M4.2 3.6 V8.4 M7.8 3.6 V8.4 M4.2 6 H7.8" stroke={col} strokeWidth="1.15" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function AirportMarker(props: AirportMarkerProps): ReactElement {
   const { airport, selected, onClick } = props;
-
-  // Helipad / FARP pad — a small "H" tile, no NATO symbol, label only when
-  // selected (there are hundreds on some theatres).
-  if (airport.heli) {
-    return (
-      <Marker
-        latitude={airport.position[0]}
-        longitude={airport.position[1]}
-        anchor="center"
-        onClick={onClick}
-      >
-        <div className="flex flex-col items-center">
-          <div
-            style={{
-              width: 11,
-              height: 11,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: `1px solid ${selected ? "#fff" : "var(--text-dim, #6b7858)"}`,
-              borderRadius: 2,
-              background: "rgba(0,0,0,0.35)",
-              color: selected ? "#fff" : "var(--text-dim, #6b7858)",
-              fontFamily: "var(--font-mono)",
-              fontSize: 8,
-              lineHeight: 1,
-            }}
-          >
-            H
-          </div>
-          {selected && (
-            <div
-              className="mt-0.5 whitespace-nowrap"
-              style={{ fontFamily: "var(--font-mono)", fontSize: 9, color: "var(--text-muted)", textShadow: "0 0 3px #000" }}
-            >
-              {airport.name}
-            </div>
-          )}
-        </div>
-      </Marker>
-    );
-  }
-
-  const symbol = sidcToSymbol("10012000001213010000");
-  const symbolElement = <Symbol symbol={symbol} />;
+  const col = selected ? "var(--accent-bright, #8ec83f)" : "var(--text-muted, #7d8a6a)";
+  const heli = !!airport.heli;
 
   return (
     <>
@@ -67,27 +43,33 @@ export default function AirportMarker(props: AirportMarkerProps): ReactElement {
         anchor="center"
         onClick={onClick}
       >
-        {selected ? (
-          <div className="rounded-full border-2 border-white p-2">
-            {symbolElement}
-          </div>
-        ) : (
-          symbolElement
-        )}
-      </Marker>
-      <Marker
-        latitude={airport.position[0]}
-        longitude={airport.position[1]}
-        anchor="bottom"
-        onClick={onClick}
-      >
-        <div
-          className="mb-3 whitespace-nowrap"
-          style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text)", textShadow: "0 0 3px #000, 0 0 3px #000" }}
-        >
-          {airport.name}
+        <div className="cursor-pointer" style={selected ? { padding: 3, border: "1.5px solid #fff", borderRadius: "50%" } : undefined}>
+          {heli ? <HelipadIcon col={col} size={13} /> : <AirfieldIcon col={col} size={16} />}
         </div>
       </Marker>
+      {/* Airfield labels always; helipad labels only when selected (hundreds
+          of them on some theatres). */}
+      {(!heli || selected) && (
+        <Marker
+          latitude={airport.position[0]}
+          longitude={airport.position[1]}
+          anchor="bottom"
+          onClick={onClick}
+        >
+          <div
+            className="whitespace-nowrap"
+            style={{
+              marginBottom: heli ? 12 : 14,
+              fontFamily: "var(--font-mono)",
+              fontSize: heli ? 9 : 10,
+              color: selected ? "var(--accent-bright)" : "var(--text-muted)",
+              textShadow: "0 0 3px #000, 0 0 3px #000",
+            }}
+          >
+            {airport.name}
+          </div>
+        </Marker>
+      )}
     </>
   );
 }
