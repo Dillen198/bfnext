@@ -9,6 +9,7 @@ export function defaultSettings(): Settings {
       showObjectives: true,
       showFrontline: true,
       showAirports: true,
+      showHelipads: false,
     },
   };
 }
@@ -27,4 +28,5 @@ export interface ViewSettings {
   showObjectives: boolean;
   showFrontline: boolean;
   showAirports: boolean;
+  showHelipads: boolean;
 }

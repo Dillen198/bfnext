@@ -59,6 +59,7 @@ export default function SettingsModal(props: SettingsModalProps): ReactElement {
           {check("Show objectives", "showObjectives")}
           {check("Show frontline", "showFrontline")}
           {check("Show airfields", "showAirports")}
+          {check("Show helipads", "showHelipads")}
         </div>
       </form>
       <form method="dialog" className="modal-backdrop">

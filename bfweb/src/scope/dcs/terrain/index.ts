@@ -1,9 +1,13 @@
 import { getRange } from "../../util";
 import { Caucasus } from "./caucasus";
+import { Falklands } from "./falklands";
+import { Germany } from "./germany";
+import { Kola } from "./kola";
 import { MarianaIslands } from "./marianaislands";
 import { Nevada } from "./nevada";
 import { Normandy } from "./normandy";
 import { PersianGulf } from "./persiangulf";
+import { Sinai } from "./sinai";
 import { Syria } from "./syria";
 import { TheChannel } from "./thechannel";
 
@@ -17,6 +21,8 @@ export interface Terrain {
 export interface Airport {
   name: string;
   position: [number, number];
+  /** no runway — a helipad / FARP pad rather than an airfield. */
+  heli?: boolean;
 }
 
 export interface Projection {
@@ -34,6 +40,10 @@ export const Terrains = [
   TheChannel,
   Syria,
   MarianaIslands,
+  Sinai,
+  Kola,
+  Falklands,
+  Germany,
 ];
 
 export function getTerrainFromReferencePoint(

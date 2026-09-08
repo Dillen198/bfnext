@@ -75,6 +75,7 @@ export default function ScopePage(): ReactElement {
   const [cursorCoords, setCursorCoords] = useState<[number, number]>([0, 0])
   const [selectedObjectId, setSelectedObjectId] = useState<number | undefined>(undefined)
   const [selectedAirportIndex, setSelectedAirportIndex] = useState<number | undefined>(undefined)
+  const [selectedObjId, setSelectedObjId] = useState<string | null>(null)
   const [rulerStartCoords, setRulerStartCoords] = useState<[number, number] | undefined>(undefined)
 
   const geomagnetismModel = useMemo(() => {
@@ -240,6 +241,9 @@ export default function ScopePage(): ReactElement {
     () => objectives.filter((o) => o.lat !== 0 || o.lon !== 0),
     [objectives],
   )
+  const selectedObjective = selectedObjId
+    ? shownObjectives.find((o) => o.id === selectedObjId) ?? null
+    : null
 
   const watchingObjects = useMemo(() => {
     return Object.entries(objectSettingsInventory)
@@ -383,6 +387,65 @@ export default function ScopePage(): ReactElement {
             {state.globalProperties.referenceTime ? '' : ' · engine feed unavailable'}
           </div>
         )}
+
+        {selectedObjective && (
+          <div
+            className="absolute bottom-2 left-2 rounded-sm p-2"
+            style={{
+              width: 210,
+              background: 'color-mix(in srgb, var(--bg-card) 94%, transparent)',
+              border: '1px solid var(--accent-border)',
+              color: 'var(--text)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+            }}
+          >
+            <div className="flex items-start">
+              <div>
+                <div style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.1em', fontSize: 14, lineHeight: 1.1 }}>
+                  {selectedObjective.name}
+                </div>
+                <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>
+                  {selectedObjective.kind} ·{' '}
+                  <span style={{ color: OBJ_COLOR(selectedObjective.owner) }}>{selectedObjective.owner.toUpperCase()}</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedObjId(null)}
+                className="ml-auto"
+                style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+            {selectedObjective.owner !== 'Neutral' &&
+              (['health', 'logi', 'supply', 'fuel'] as const).map((k) => {
+                const v = selectedObjective[k]
+                const c = v >= 75 ? 'var(--accent-bright)' : v >= 40 ? 'var(--yellow)' : '#cc4444'
+                return (
+                  <div key={k} style={{ marginTop: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--text-dim)' }}>
+                      <span>{k.toUpperCase()}</span>
+                      <span style={{ color: c }}>{v}%</span>
+                    </div>
+                    <div style={{ height: 3, background: 'rgba(0,0,0,0.5)', borderRadius: 1, overflow: 'hidden' }}>
+                      <div style={{ width: `${v}%`, height: '100%', background: c }} />
+                    </div>
+                  </div>
+                )
+              })}
+            {selectedObjective.captureable && (
+              <div style={{ marginTop: 6, padding: '2px 5px', borderRadius: 2, fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: '#000', background: '#fff' }}>
+                ⚑ CAPTURABLE
+              </div>
+            )}
+            {!selectedObjective.captureable && selectedObjective.threatened && (
+              <div style={{ marginTop: 6, padding: '2px 5px', borderRadius: 2, fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: '#000', background: 'var(--yellow)' }}>
+                ⚠ THREATENED
+              </div>
+            )}
+          </div>
+        )}
         <CursorInfo
           cursorCoords={cursorCoords}
           bullseyeCoords={bullseyeCoords}
@@ -460,18 +523,24 @@ export default function ScopePage(): ReactElement {
           </Source>
         )}
 
-        {/* ── Campaign objectives ────────────────────────────────── */}
+        {/* ── Campaign objectives (click for status) ─────────────── */}
         {settings.view.showObjectives &&
           shownObjectives.map((o) => (
-            <Marker key={o.id} latitude={o.lat} longitude={o.lon} anchor="center">
-              <div className="pointer-events-none flex flex-col items-center" style={{ opacity: o.health <= 0 ? 0.4 : 1 }}>
+            <Marker
+              key={o.id}
+              latitude={o.lat}
+              longitude={o.lon}
+              anchor="center"
+              onClick={() => setSelectedObjId((cur) => (cur === o.id ? null : o.id))}
+            >
+              <div className="flex cursor-pointer flex-col items-center" style={{ opacity: o.health <= 0 ? 0.45 : 1 }}>
                 <div
                   style={{
-                    width: 9,
-                    height: 9,
+                    width: selectedObjId === o.id ? 12 : 9,
+                    height: selectedObjId === o.id ? 12 : 9,
                     borderRadius: '50%',
                     background: OBJ_COLOR(o.owner),
-                    border: '1.5px solid rgba(0,0,0,0.7)',
+                    border: `${selectedObjId === o.id ? 2 : 1.5}px solid ${selectedObjId === o.id ? '#fff' : 'rgba(0,0,0,0.7)'}`,
                   }}
                 />
                 <div
@@ -490,18 +559,21 @@ export default function ScopePage(): ReactElement {
             </Marker>
           ))}
 
-        {settings.view.showAirports &&
-          terrain.airports.map((airport, idx) => (
-            <AirportMarker
-              key={airport.name}
-              airport={airport}
-              selected={selectedAirportIndex === idx}
-              onClick={() => {
-                setSelectedObjectId(undefined)
-                setSelectedAirportIndex(idx)
-              }}
-            />
-          ))}
+        {(settings.view.showAirports || settings.view.showHelipads) &&
+          terrain.airports.map((airport, idx) => {
+            if (airport.heli ? !settings.view.showHelipads : !settings.view.showAirports) return null
+            return (
+              <AirportMarker
+                key={airport.name}
+                airport={airport}
+                selected={selectedAirportIndex === idx}
+                onClick={() => {
+                  setSelectedObjectId(undefined)
+                  setSelectedAirportIndex(idx)
+                }}
+              />
+            )
+          })}
         {Object.entries(state.objects)
           .filter(([id, object]) => selectedObjectId === Number(id) || filterObject(object, settings))
           .map(([id, object]) => (
