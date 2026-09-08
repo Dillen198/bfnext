@@ -5,7 +5,6 @@ import { RoundProvider } from './context/RoundContext'
 import { AuthProvider } from './context/AuthContext'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
-import MapPage from './pages/MapPage'
 import Objectives from './pages/Objectives'
 import BriefingPage from './pages/BriefingPage'
 import Leaderboard from './pages/Leaderboard'
@@ -67,8 +66,8 @@ export default function App() {
               <Route path="/inteltest" element={<IntelTestPage />} />
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
-                <Route path="map" element={<MapPage />} />
-                <Route path="scope" element={<ScopePage />} />
+                <Route path="map" element={<ScopePage />} />
+                <Route path="scope" element={<Navigate to="/map" replace />} />
                 <Route path="objectives" element={<Objectives />} />
                 <Route path="briefing" element={<RequireCoalition what="briefing"><BriefingPage /></RequireCoalition>} />
                 <Route path="leaderboard" element={<Leaderboard />} />
