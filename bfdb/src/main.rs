@@ -42,6 +42,15 @@ struct Args {
     /// The base path to find and subscribe to the stats (omit for offline mode)
     #[arg(short, long)]
     base: Option<NetidxPath>,
+    /// Override the mission sortie name used for the LIVE engine subscriptions
+    /// (RPC calls + engine log). bflib publishes under `<base>/<sortie>/...`
+    /// where `<sortie>` is the DCS mission's Sortie field (the same name as the
+    /// `<sortie>_CFG` file). Normally bfdb learns this from the stats stream,
+    /// but a persisted campaign that was renamed keeps emitting the old name —
+    /// set this to the real one (e.g. `ODFv2`) to point RPCs at the right path.
+    /// Check with: `netidx resolver list <base>`.
+    #[arg(long)]
+    sortie: Option<String>,
     /// The path to the database
     #[arg(short, long)]
     db: PathBuf,
@@ -164,6 +173,18 @@ struct Args {
     /// /api/admin/banned. Round/kill/objective/pilot data is untouched.
     #[arg(long = "clear-sessions")]
     clear_sessions: bool,
+    /// One-off maintenance: wipe every tree derived from replaying the stats
+    /// archive (rounds, sessions, pilot stats, kills, sorties, deploys,
+    /// objectives, trails) and rewind the replay cursor, then exit. The next
+    /// normal startup re-ingests the whole archive from the beginning with the
+    /// current idempotency guards in place -- use this to repair phantom
+    /// duplicate sorties/kills/deploys (and the inflated counters they left
+    /// behind) from stats that were redelivered before the guards existed.
+    /// Auth sessions, Discord links, the ban list, wiki content and recon
+    /// intel photos are all preserved. Requires the full archive under
+    /// --stats-dir to still be present.
+    #[arg(long = "rebuild-stats")]
+    rebuild_stats: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -3678,6 +3699,21 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    if args.rebuild_stats {
+        if args.stats_dir.is_none() && args.stats_jsonl.is_none() {
+            eprintln!("--rebuild-stats needs --stats-dir (or --stats-jsonl) present so the next start can re-ingest the archive");
+            std::process::exit(1);
+        }
+        let db = StatsDb::new_offline(args.db, None, None)?;
+        db.rebuild_stats_from_archive()?;
+        println!(
+            "rebuilt: wiped every archive-derived tree and rewound the replay cursor. \
+             Restart bfdb normally to re-ingest -- auth sessions, Discord links, bans, \
+             wiki content and recon intel are preserved."
+        );
+        return Ok(());
+    }
+
     // ── Broadcast logger: forwards to env_logger + WebSocket stream ───────
     let (log_tx, _) = broadcast::channel::<String>(512);
     let log_history: LogHistory = Arc::new(Mutex::new(VecDeque::new()));
@@ -3725,7 +3761,7 @@ async fn main() -> Result<()> {
             let subscriber = SubscriberBuilder::new()
                 .config(Config::load_default()?)
                 .build()?;
-            StatsDb::new(subscriber, args.db, base, args.stats_dir, args.stats_jsonl, args.include, args.exclude)?
+            StatsDb::new(subscriber, args.db, base, args.sortie.map(Into::into), args.stats_dir, args.stats_jsonl, args.include, args.exclude)?
         }
         None => {
             log::info!("Running in offline mode (no --base specified, Netidx disabled)");

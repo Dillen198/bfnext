@@ -516,6 +516,9 @@ pub(crate) struct StatsDbInner {
     subscriber: Option<Subscriber>,
     #[allow(dead_code)]
     base: Option<NetidxPath>,
+    /// `--sortie` override: when set, the LIVE engine subscriptions (RPC + log)
+    /// use this instead of the sortie learned from the stats stream.
+    sortie_override: Option<String>,
     stats_dir: Option<PathBuf>,
     #[allow(dead_code)]
     include: Option<Regex>,
@@ -534,6 +537,15 @@ pub(crate) struct StatsDbInner {
     /// publisher retry, etc.), which otherwise mints a second KillId and shows
     /// the kill twice in the feed / a pilot's list.
     kill_seen: Tree<(RoundId, EnId, i64), KillId>,
+    /// Idempotency key for a sortie -- (round, pilot, takeoff time in millis).
+    /// Same rationale as `kill_seen`: a redelivered `Stat::Takeoff` otherwise
+    /// mints a second SortieId and shows a phantom extra sortie (and, once its
+    /// matching `Stat::Land` is likewise replayed, double-credits flight hours).
+    sortie_seen: Tree<(RoundId, Ucid, i64), SortieId>,
+    /// Idempotency key for a deploy -- (round, deployed group). A redelivered
+    /// `Stat::DeployGroup` otherwise mints a second DeployId, doubling the row
+    /// in the pilot deploy log and the `deploys` counter.
+    deploy_seen: Tree<(RoundId, GroupId), DeployId>,
     units: Tree<(RoundId, EnId), Unit>,
     groups: Tree<(RoundId, GroupId), Group>,
     detected: Tree<(RoundId, EnId), BitFlags<DetectionSource, u8>>,
@@ -745,15 +757,20 @@ impl StatsDb {
         subscriber: Subscriber,
         db: P,
         base: NetidxPath,
+        sortie_override: Option<String>,
         stats_dir: Option<PathBuf>,
         stats_jsonl: Option<PathBuf>,
         include: Option<Regex>,
         exclude: Option<Regex>,
     ) -> Result<Self> {
         let db = sled::open(db.as_ref())?;
+        if let Some(s) = &sortie_override {
+            log::info!("live engine subscriptions pinned to sortie {s:?} (--sortie override)");
+        }
         let t = Self(Arc::new(StatsDbInner {
             subscriber: Some(subscriber),
             base: Some(base),
+            sortie_override,
             stats_dir,
             include,
             exclude,
@@ -765,6 +782,8 @@ impl StatsDb {
             kills: Tree::open(&db, "kills")?,
             shared_kills: Tree::open(&db, "shared_kills")?,
             kill_seen: Tree::open(&db, "kill_seen")?,
+            sortie_seen: Tree::open(&db, "sortie_seen")?,
+            deploy_seen: Tree::open(&db, "deploy_seen")?,
             units: Tree::open(&db, "units")?,
             groups: Tree::open(&db, "groups")?,
             detected: Tree::open(&db, "detected")?,
@@ -855,6 +874,7 @@ impl StatsDb {
         let t = Self(Arc::new(StatsDbInner {
             subscriber: None,
             base: None,
+            sortie_override: None,
             stats_dir,
             include: None,
             exclude: None,
@@ -866,6 +886,8 @@ impl StatsDb {
             kills: Tree::open(&db, "kills")?,
             shared_kills: Tree::open(&db, "shared_kills")?,
             kill_seen: Tree::open(&db, "kill_seen")?,
+            sortie_seen: Tree::open(&db, "sortie_seen")?,
+            deploy_seen: Tree::open(&db, "deploy_seen")?,
             units: Tree::open(&db, "units")?,
             groups: Tree::open(&db, "groups")?,
             detected: Tree::open(&db, "detected")?,
@@ -926,7 +948,12 @@ impl StatsDb {
         };
         loop {
             let sortie = loop {
-                if let Some(s) = self.0.current_sortie.lock().unwrap().clone() {
+                if let Some(s) = self
+                    .0
+                    .sortie_override
+                    .clone()
+                    .or_else(|| self.0.current_sortie.lock().unwrap().clone())
+                {
                     break s;
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -936,8 +963,12 @@ impl StatsDb {
             dval.updates(UpdatesFlags::empty(), tx);
             let mut seen_len = 0usize;
             while let Some(batch) = rx.next().await {
-                if self.0.current_sortie.lock().unwrap().as_ref() != Some(&sortie) {
-                    break; // sortie changed -- resubscribe under the new one
+                // With a --sortie override the target never changes; otherwise
+                // resubscribe when the live sortie moves (new mission/round).
+                if self.0.sortie_override.is_none()
+                    && self.0.current_sortie.lock().unwrap().as_ref() != Some(&sortie)
+                {
+                    break;
                 }
                 for (_id, ev) in batch.iter() {
                     let Event::Update(Value::String(chars)) = ev else { continue };
@@ -964,6 +995,12 @@ impl StatsDb {
                         let _ = self.0.engine_log_tx.send(line);
                     }
                 }
+            }
+            if self.0.sortie_override.is_some() {
+                // Sortie is pinned: the subscription just ended (engine restart
+                // / mission reload). Pause, then resubscribe on the next loop.
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
             }
             if self.0.current_sortie.lock().unwrap().as_ref() == Some(&sortie) {
                 // subscription itself ended (not a sortie change) -- nothing left to do
@@ -1012,7 +1049,8 @@ impl StatsDb {
             (Some(s), Some(b)) => (s, b),
             _ => bail!("netidx is disabled (bfdb started without --base)"),
         };
-        let sortie = self.0.current_sortie.lock().unwrap().clone()
+        let sortie = self.0.sortie_override.clone()
+            .or_else(|| self.0.current_sortie.lock().unwrap().clone())
             .ok_or_else(|| anyhow!("no active sortie yet (mission hasn't reported in)"))?;
         let path = base.append(&sortie).append("api").append(proc_name);
         let proc = Proc::new(subscriber, path)?;
@@ -2668,6 +2706,12 @@ impl StatsDb {
                 aircraft,
                 method,
             } => {
+                // Idempotency guard -- see `deploy_seen`. One deployed group =
+                // one (round, gid). A redelivered `Stat::DeployGroup` bails here
+                // before bumping the counter or minting a second DeployId.
+                if self.deploy_seen.get(&(ctx.round, gid))?.is_some() {
+                    return Ok(());
+                }
                 self.pilots.with_pilot_and_aggregates(
                     by,
                     ctx.round,
@@ -2685,6 +2729,7 @@ impl StatsDb {
                     debug!("DeployGroup: group {gid:?} not tracked yet ({e})");
                 }
                 let did = DeployId::new(&self.db)?;
+                self.deploy_seen.insert(&(ctx.round, gid), &did)?;
                 self.deploys.insert(
                     &(by, ctx.round, did),
                     &DeployRecord {
@@ -2808,6 +2853,14 @@ impl StatsDb {
                 })?;
             }
             Stat::Takeoff { id } => {
+                // Idempotency guard -- see `sortie_seen`. `Stat::Takeoff` carries
+                // no timestamp of its own, so a redelivery replays with the same
+                // `time` (the archive batch stamp); (round, pilot, takeoff millis)
+                // is a stable content key. Bail before minting a second SortieId.
+                let dedup_key = (ctx.round, id, time.timestamp_millis());
+                if self.sortie_seen.get(&dedup_key)?.is_some() {
+                    return Ok(());
+                }
                 let sid = SortieId::new(&self.db)?;
                 let mut vehicle = None;
                 self.pilots.with_pilot_round_info(id, ctx.round, |ri| {
@@ -2817,6 +2870,11 @@ impl StatsDb {
                     }
                 })?;
                 let vehicle = vehicle.ok_or_else(|| anyhow!("{id} takeoff without slotting"))?;
+                // Only commit the dedup key once the sortie is definitely going
+                // to be recorded -- a "takeoff without slotting" bail above may
+                // just be a replay running ahead of its `Stat::Slot`, and must
+                // stay retryable.
+                self.sortie_seen.insert(&dedup_key, &sid)?;
                 // Track sortie count per aircraft type
                 let ac_key = (ctx.round, vehicle.to_string());
                 let (prev_cnt, prev_hrs) = self.aircraft_sorties.get(&ac_key)?.unwrap_or((0, 0.0));
@@ -2837,7 +2895,20 @@ impl StatsDb {
                         sid = sl.sortie.take();
                     }
                 })?;
-                let sid = sid.ok_or_else(|| anyhow!("{id} landed without taking off"))?;
+                // No sortie parked in the slot: either a genuinely orphaned
+                // landing, or -- now that `Stat::Takeoff` is deduped -- a
+                // redelivered `Stat::Land` whose real partner already consumed
+                // the slot. Neither is actionable and neither should credit
+                // hours, so drop it quietly rather than failing the stat.
+                let Some(sid) = sid else {
+                    debug!("{id} landed with no active sortie -- orphan or replay, ignoring");
+                    return Ok(());
+                };
+                // Belt and braces: if the parked sortie is somehow already
+                // landed, a redelivery is in play -- don't credit hours twice.
+                if self.pilots.sortie.get(&(id, ctx.round, sid))?.is_some_and(|s| s.land.is_some()) {
+                    return Ok(());
+                }
                 // Add flight hours to aircraft sortie totals
                 let mut vehicle_str: Option<std::string::String> = None;
                 self.pilots.with_sortie((id, ctx.round, sid), |s| {
@@ -3060,6 +3131,10 @@ impl StatsDb {
         // Captures & sorties
         self.objective_captures.clear()?;
         self.aircraft_sorties.clear()?;
+        // Idempotency keys -- meaningless once their rounds are gone
+        self.kill_seen.clear()?;
+        self.sortie_seen.clear()?;
+        self.deploy_seen.clear()?;
         // Trails & weather
         self.trail_points.clear()?;
         if let Ok(mut w) = self.latest_weather.write() { *w = None; }
@@ -3067,6 +3142,61 @@ impl StatsDb {
         // on-disk photo files)
         self.intel_purge_all()?;
         // auth_sessions, auth_states → preserved
+        Ok(())
+    }
+
+    /// One-off maintenance for the `--rebuild-stats` flag. Wipes every tree that
+    /// is *derived* from replaying the stats archive -- rounds, sessions, pilot
+    /// stats, kills, sorties, deploys, objectives, trails -- and rewinds the
+    /// replay cursor so the next startup re-ingests the whole archive from the
+    /// beginning. Unlike `reset_campaign_data` this is not a campaign wipe: it
+    /// exists to repair accumulated damage from redelivered stats (phantom
+    /// duplicate sorties/kills/deploys and the inflated counters that came with
+    /// them) by rebuilding from the source of truth with the idempotency guards
+    /// now in place.
+    ///
+    /// Preserves everything the archive does NOT own: auth sessions, Discord
+    /// links (`pilots.by_token`), the admin-managed ban list, wiki content, and
+    /// recon intel (TARPS) photos and markup.
+    ///
+    /// Requires the full historical archive to still be present under
+    /// `--stats-dir`; if older segments have been pruned, history before the
+    /// oldest surviving segment will not come back.
+    pub(crate) fn rebuild_stats_from_archive(&self) -> Result<()> {
+        // Pilot stat trees
+        self.pilots.pilots.clear()?;
+        self.pilots.aggregates.clear()?;
+        self.pilots.by_name.clear()?;
+        self.pilots.sortie.clear()?;
+        self.pilots.round_info.clear()?;
+        // Round / mission trees
+        self.seq.clear()?;
+        self.round.clear()?;
+        self.session.clear()?;
+        // Combat trees
+        self.kills.clear()?;
+        self.shared_kills.clear()?;
+        self.kill_seen.clear()?;
+        self.units.clear()?;
+        self.groups.clear()?;
+        self.detected.clear()?;
+        // Objectives
+        self.objectives.clear()?;
+        self.equipment.clear()?;
+        self.liquids.clear()?;
+        // Captures, sorties & deploys
+        self.objective_captures.clear()?;
+        self.captures.clear()?;
+        self.aircraft_sorties.clear()?;
+        self.sortie_seen.clear()?;
+        self.deploys.clear()?;
+        self.deploy_seen.clear()?;
+        // Trails & weather
+        self.trail_points.clear()?;
+        if let Ok(mut w) = self.latest_weather.write() { *w = None; }
+        // Rewind the replay so a normal restart re-ingests the whole archive
+        self.replay_cursor.clear()?;
+        *self.current_sortie.lock().unwrap() = None;
         Ok(())
     }
 }
