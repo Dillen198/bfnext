@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { connectTacmap, type TacFrame, type TacPicture, type AirTrack, type GroundContact } from '../api'
+import { api, connectTacmap, type TacFrame, type TacPicture, type AirTrack, type GroundContact } from '../api'
 import { getTerrainFromReferencePoint, type Terrain } from './dcs/terrain'
 import { type TacviewObject, type TacviewState, newTacviewState } from './tacview'
 import { type Tag } from './tacview/record/objectProperty'
@@ -48,6 +48,10 @@ export interface ScopeFeed {
   status: 'open' | 'closed' | 'error'
   /** engine threat range (metres) per remapped object id, for auto rings */
   threatRanges: Record<number, number>
+  /** connected and receiving frames, but the picture has no bullseye and no
+   *  air/ground contacts — usually the engine isn't publishing `query-tacmap`
+   *  yet (old bflib.dll) or the coalition simply has nothing on sensors. */
+  empty: boolean
 }
 
 /** Bridge `/ws/tacmap` -> the shape peace-eye's MainView expects. */
@@ -55,7 +59,23 @@ export function useScopeFeed(): ScopeFeed {
   const [picture, setPicture] = useState<TacPicture | null>(null)
   const [reason, setReason] = useState<'login' | 'nocoalition' | null>(null)
   const [status, setStatus] = useState<'open' | 'closed' | 'error'>('closed')
+  // A campaign objective position — used to pick the theatre map when the
+  // tactical picture itself has no positioned entity (no contacts, no
+  // bullseye), so the scope still renders instead of hanging on the spinner.
+  const [objSample, setObjSample] = useState<[number, number] | null>(null)
   const retry = useRef<number | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api.objectives()
+      .then((os) => {
+        if (cancelled) return
+        const o = os.find((x) => x.lat !== 0 || x.lon !== 0)
+        if (o) setObjSample([o.lat, o.lon])
+      })
+      .catch(() => { /* objectives optional */ })
+    return () => { cancelled = true }
+  }, [])
   // Stable small integer ids: JSON round-trips the engine's u64 track ids
   // through an f64, and peace-eye keys objects by `number`. Assign our own.
   const idMap = useRef<Map<string, number>>(new Map())
@@ -106,11 +126,19 @@ export function useScopeFeed(): ScopeFeed {
         reason,
         status,
         threatRanges: {},
+        empty: false,
       }
     }
 
+    const empty =
+      picture.bullseye.length === 0 &&
+      picture.air.length === 0 &&
+      picture.ground.length === 0
+
     // Reference point = the DCS map's centre (peace-eye's model: absolute =
-    // reference + relative). Detect the theatre from any positioned entity.
+    // reference + relative). Detect the theatre from any positioned entity,
+    // falling back to a campaign objective so the scope renders even when the
+    // tactical picture is empty.
     const anySample =
       picture.bullseye[0] ??
       picture.air[0] ??
@@ -118,7 +146,7 @@ export function useScopeFeed(): ScopeFeed {
       null
     const sampleLL: [number, number] | null = anySample
       ? [anySample.lat, anySample.lon]
-      : null
+      : objSample
     let terrain = sampleLL ? getTerrainFromReferencePoint(sampleLL[0], sampleLL[1]) : undefined
     if (!terrain && sampleLL) {
       // Fallback for theatres peace-eye doesn't ship (Kola, Sinai, …): a
@@ -205,7 +233,7 @@ export function useScopeFeed(): ScopeFeed {
       redBullseye: mkBull('Red'),
     }
 
-    return { state, terrain, denied: false, reason: null, status, threatRanges }
+    return { state, terrain, denied: false, reason: null, status, threatRanges, empty }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [picture, status, reason])
+  }, [picture, status, reason, objSample])
 }

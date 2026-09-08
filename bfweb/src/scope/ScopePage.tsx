@@ -31,7 +31,7 @@ import { moveCoords, nmToMeter } from './util'
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json'
 
 export default function ScopePage(): ReactElement {
-  const { state, terrain, denied, reason, status, threatRanges } = useScopeFeed()
+  const { state, terrain, denied, reason, status, threatRanges, empty } = useScopeFeed()
 
   const [settings, setSettings] = useState(defaultSettings())
   const [objectSettingsInventory, setObjectSettingsInventory] =
@@ -207,6 +207,9 @@ export default function ScopePage(): ReactElement {
     )
   }
 
+  // Only hold the loading screen while we genuinely have no map reference at
+  // all (no picture, no objectives). Once a theatre resolves — even from a
+  // campaign objective with an empty picture — fall through and render the map.
   if (referenceLatitude === undefined || referenceLongitude === undefined || terrain === undefined) {
     return (
       <div className="scope-root theme-locked-dark flex h-full flex-col items-center justify-center gap-3" style={{ background: 'var(--bg)' }}>
@@ -306,6 +309,20 @@ export default function ScopePage(): ReactElement {
             }}
           />
         </div>
+        {empty && (
+          <div
+            className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-sm px-3 py-1.5 text-center text-xs"
+            style={{
+              background: 'color-mix(in srgb, var(--bg-card) 92%, transparent)',
+              border: '1px solid var(--accent-border)',
+              color: 'var(--text-muted)',
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            No sensor contacts in the picture · EWR / AWACS / JTAC / recon only
+            {state.globalProperties.referenceTime ? '' : ' · engine feed unavailable'}
+          </div>
+        )}
         <CursorInfo
           cursorCoords={cursorCoords}
           bullseyeCoords={bullseyeCoords}
