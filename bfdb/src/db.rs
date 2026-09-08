@@ -1773,10 +1773,11 @@ impl StatsDb {
             match section {
                 "Introduction" => 0,
                 "Getting Started" => 1,
-                "Core Gameplay" => 2,
-                "F10 Menu Systems" => 3,
-                "Advanced Topics" => 4,
-                "Reference" => 5,
+                "Playbooks" => 2,
+                "Core Gameplay" => 3,
+                "F10 Menu Systems" => 4,
+                "Advanced Topics" => 5,
+                "Reference" => 6,
                 _ => 100,
             }
         }
@@ -2077,6 +2078,12 @@ impl StatsDb {
             ("getting-started/welcome", "Welcome", "Getting Started", 0, include_str!("../seed_wiki/getting-started/welcome.md")),
             ("getting-started/joining-team", "Joining a Team", "Getting Started", 1, include_str!("../seed_wiki/getting-started/joining-team.md")),
             ("getting-started/hud-and-menus", "Understanding the Menus", "Getting Started", 2, include_str!("../seed_wiki/getting-started/hud-and-menus.md")),
+            ("playbooks/first-sortie", "Your First Sortie", "Playbooks", 0, include_str!("../seed_wiki/playbooks/first-sortie.md")),
+            ("playbooks/reading-live-ops", "Reading the Live Ops Dashboard", "Playbooks", 1, include_str!("../seed_wiki/playbooks/reading-live-ops.md")),
+            ("playbooks/capturing-a-base", "Capturing a Base", "Playbooks", 2, include_str!("../seed_wiki/playbooks/capturing-a-base.md")),
+            ("playbooks/cas-with-jtac", "Flying CAS With a JTAC", "Playbooks", 3, include_str!("../seed_wiki/playbooks/cas-with-jtac.md")),
+            ("playbooks/running-crates", "Running Crates & Building a Base", "Playbooks", 4, include_str!("../seed_wiki/playbooks/running-crates.md")),
+            ("playbooks/calling-support", "Calling AWACS, Tankers & CAP", "Playbooks", 5, include_str!("../seed_wiki/playbooks/calling-support.md")),
             ("gameplay/objectives", "Objectives", "Core Gameplay", 0, include_str!("../seed_wiki/gameplay/objectives.md")),
             ("gameplay/capturing-objectives", "Capturing Objectives", "Core Gameplay", 1, include_str!("../seed_wiki/gameplay/capturing-objectives.md")),
             ("gameplay/logistics", "Logistics & Supply", "Core Gameplay", 2, include_str!("../seed_wiki/gameplay/logistics.md")),

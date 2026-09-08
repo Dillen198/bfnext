@@ -1,7 +1,13 @@
 import { Link } from 'react-router-dom'
-import { Compass, Radio, Crosshair, BookOpen } from 'lucide-react'
+import { Compass, Radio, Crosshair, BookOpen, Rocket } from 'lucide-react'
 
 const FEATURES = [
+  {
+    icon: Rocket,
+    title: 'Playbooks',
+    body: 'Step-by-step walkthroughs for new pilots: your first sortie, reading the live ops dashboard, capturing a base, flying CAS, running crates.',
+    to: '/playbooks/first-sortie',
+  },
   {
     icon: Compass,
     title: 'Core Gameplay',
@@ -39,8 +45,8 @@ export default function HomePage() {
           Everything you need to fly, fight, and win the persistent campaign — objectives, logistics, JTAC, and the full F10 menu system.
         </p>
         <div style={{ display: 'flex', gap: 10, marginTop: '1.5rem' }}>
-          <Link to="/getting-started/welcome" className="vs-btn">GET STARTED</Link>
-          <a href="https://discord.gg/wAsBEfse" target="_blank" rel="noreferrer" className="vs-btn-outline" style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 14px', borderRadius: 2, fontSize: '0.72rem', letterSpacing: '0.12em', fontFamily: "'Bebas Neue', sans-serif", textDecoration: 'none' }}>
+          <Link to="/playbooks/first-sortie" className="vs-btn">GET STARTED</Link>
+          <a href="https://discord.gg/XyGkb3WAXS" target="_blank" rel="noreferrer" className="vs-btn-outline" style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 14px', borderRadius: 2, fontSize: '0.72rem', letterSpacing: '0.12em', fontFamily: "'Bebas Neue', sans-serif", textDecoration: 'none' }}>
             JOIN THE DISCORD
           </a>
         </div>

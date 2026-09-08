@@ -5,13 +5,13 @@ Common questions and answers about Fowl Engine.
 ## Getting Started
 
 ### Q: How do I join the server?
-**A**: Connect to "The Coop - Operation Fowl Intent" server, register for a team (type `blue` or `red` in chat), then select an aircraft slot.
+**A**: Find the server in the DCS multiplayer browser (see your Discord for the exact name and IP), pick a **BLUFOR** or **REDFOR** aircraft slot, and fly. Taking your first slot registers you to that coalition automatically — you don't have to type anything. You *can* still type `blue` or `red` in chat from spectators if you prefer. See [Your First Sortie](../playbooks/first-sortie.md).
 
 ### Q: Can I change teams?
-**A**: Some servers allow limited side switching with `-switch blue` or `-switch red`. Check your remaining switches with `-lives`.
+**A**: Your coalition is permanent unless the server grants side switches. If it does, go to spectators and use `-switch blue` / `-switch red`. Check your remaining switches with `-lives`.
 
 ### Q: Why can't I occupy any slots?
-**A**: You must register for a team first by typing `blue` or `red` in chat while in spectator mode.
+**A**: Either you're registered to the other coalition (you can only take slots for your side), or you're out of lives for that role — check `-lives`. Registration happens on your first slot pick; if you're still in spectators you can also type `blue` or `red` in chat.
 
 ## Gameplay
 
@@ -141,8 +141,8 @@ If not enabled, this command won't work.
 
 ### Q: I'm stuck in spectator and can't slot!
 **A**:
-- Did you register? (type `blue` or `red`)
-- Are you out of lives? (check `-lives`)
+- Are you registered to the *other* coalition? (you can only slot your own side)
+- Are you out of lives for that role? (check `-lives`)
 - Is the slot occupied?
 - Try different slot
 
@@ -162,4 +162,4 @@ If not enabled, this command won't work.
 ## Still Have Questions?
 
 Ask in:
-- **Discord**: [https://discord.gg/wAsBEfse](https://discord.gg/wAsBEfse)
+- **Discord**: [https://discord.gg/XyGkb3WAXS](https://discord.gg/XyGkb3WAXS)
