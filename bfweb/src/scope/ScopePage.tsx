@@ -521,7 +521,6 @@ export default function ScopePage(): ReactElement {
       <SettingsModal
         settings={settings}
         setSettings={(s) => setSettings({ ...s })}
-        onDisconnect={() => { window.location.href = '/' }}
       />
     </div>
   )
