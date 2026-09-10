@@ -123,6 +123,46 @@ available artillery: [54321(25)]
 **Adjustment**: 50-100m per adjustment (Short/Long/Left/Right)
 **Time of Flight**: Varies by range (~30-60 seconds)
 
+## Current Mission Deployable Artillery & Range
+
+Every artillery battery and missile TEL deployable via crates on this server, with
+the exact min/max fire range the JTAC menu enforces — pulled live from the server's
+`ODFv2_CFG`. Battery names below match what you'll see in the F10 → Deploy menu and
+the JTAC ammo listing. See [Deployable Units Reference](../reference/deployables.md)
+for crate weights and deploy limits on every deployable, not just artillery.
+
+### RED
+
+| Battery | Type | Min Range | Max Range | Crates to Deploy | Limit |
+|---|---|---|---|---|---|
+| SPH 2S19 Msta | Tube, 152mm | 30 m | 23.5 km | 2 | 15 |
+| PLZ-05 | Tube, 152mm | 60 m | 23.5 km | 2 | 15 |
+| MLRS Smerch CM | MLRS | 20 km | 70 km | 3 | 10 |
+| MLRS Smerch HE | MLRS | 20 km | 70 km | 3 | 10 |
+| MLRS TOS-1A | Thermobaric MLRS | 400 m | 6 km | 2 | 15 |
+| MLRS GRAD | MLRS | 5 km | 19 km | 2 | 15 |
+| MLRS 9K57 (Uragan) | MLRS | 11.5 km | 36 km | 2 | 15 |
+| SRBM 9K720 CM (Iskander) | Ballistic TEL | 75 km | 400 km | 4 | 10 |
+| SRBM 9K720 HE (Iskander) | Ballistic TEL | 75 km | 400 km | 4 | 10 |
+| SSM Scud | Ballistic TEL | 50 km | 285 km | 3 | 10 |
+
+### BLUE
+
+| Battery | Type | Min Range | Max Range | Crates to Deploy | Limit |
+|---|---|---|---|---|---|
+| Firtina 155MM | Tube, 155mm | 0 m | 41 km | 2 | 15 |
+| Dana 152MM | Tube, 152mm | 30 m | 18.5 km | 2 | 15 |
+| MLRS M270 | MLRS | 10 km | 32 km | 2 | 15 |
+| Himars GMLRS HE | MLRS | 15 km | 70 km | 3 | 10 |
+| Himars GMLRS CM | MLRS | 15 km | 70 km | 3 | 10 |
+| Himars ATACMS HE | Ballistic TEL | 50 km | 300 km | 3 | 10 |
+| Himars ATACMS CM | Ballistic TEL | 50 km | 300 km | 3 | 10 |
+
+> Any battery not in these lists (e.g. mission-placed statics like a Silkworm coastal
+> launcher) isn't spawnable via crates but will still take JTAC fire missions if one
+> happens to be on the map. Ranges shown are the config's `min_range_m`/`max_range_m`
+> per unit; anything not explicitly listed falls back to the server default of 4-30 km.
+
 ## See Also
 
 - [JTAC System](../f10-menu/jtac.md)
