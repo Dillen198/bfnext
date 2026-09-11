@@ -153,6 +153,12 @@ impl<'lua> Object<'lua> {
         ))
     }
 
+    /// Teleport this object to the given Position3.
+    /// Uses DCS Object.setPosition() which immediately moves the object.
+    pub fn set_position(&self, pos: Position3) -> Result<()> {
+        Ok(self.t.call_method("setPosition", pos)?)
+    }
+
     pub fn get_velocity(&self) -> Result<LuaVec3> {
         Ok(record_perf!(
             get_velocity,

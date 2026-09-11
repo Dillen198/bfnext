@@ -12,6 +12,7 @@ FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 extern crate nalgebra as na;
+pub use schemars;
 use anyhow::{anyhow, bail, Result};
 use compact_str::CompactString;
 use fxhash::FxHashMap;
@@ -315,6 +316,10 @@ pub struct Color {
 }
 
 impl Color {
+    pub fn new(r: f32, g: f32, b: f32, a: f32) -> Color {
+        Color { r, g, b, a }
+    }
+
     pub fn black(a: f32) -> Color {
         Color { r: 0., g: 0., b: 0., a }
     }
@@ -341,6 +346,10 @@ impl Color {
 
     pub fn yellow(a: f32) -> Color {
         Color { r: 0.75, g: 1., b: 0., a }
+    }
+
+    pub fn with_alpha(self, a: f32) -> Color {
+        Color { a, ..self }
     }
 }
 
@@ -418,7 +427,7 @@ impl<'lua> LuaEnv<'lua> for HooksLua<'lua> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct MizLua<'lua>(&'lua Lua);
+pub struct MizLua<'lua>(pub &'lua Lua);
 
 impl<'lua> LuaEnv<'lua> for MizLua<'lua> {
     fn inner(self) -> &'lua Lua {
@@ -511,7 +520,7 @@ macro_rules! wrapped_table {
 #[macro_export]
 macro_rules! simple_enum {
     ($name:ident, $repr:ident, [$($case:ident => $num:literal),+]) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
         #[allow(non_camel_case_types)]
         #[repr($repr)]
         pub enum $name {
@@ -572,7 +581,7 @@ macro_rules! string_enum {
      $repr:ident,
      [$($case:ident => $str:literal),+],
      [$($altcase:ident => $altstr:literal),*]) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
         #[allow(non_camel_case_types)]
         #[repr($repr)]
         pub enum $name {
@@ -1058,8 +1067,9 @@ impl<'lua> FromLua<'lua> for Box3 {
 
 #[derive(
     Debug, Clone, Default, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+    schemars::JsonSchema,
 )]
-pub struct String(CompactString);
+pub struct String(#[schemars(with = "std::string::String")] CompactString);
 
 impl std::fmt::Display for String {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

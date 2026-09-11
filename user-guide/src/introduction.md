@@ -13,7 +13,7 @@ Fowl Engine (also known as BFNEXT) is a dynamic campaign system that transforms 
 - **Logistics System**: Supply lines and resource management add strategic depth
 - **Points & Lives**: Reward system that encourages teamwork and careful planning
 - **JTAC System**: Advanced targeting system for coordinating strikes
-- **Deployable Units**: Use points to deploy reinforcements where needed
+
 - **Team-Based Gameplay**: Choose Blue or Red coalition and work with your team
 
 ## Getting Help

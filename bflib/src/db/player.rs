@@ -19,7 +19,7 @@ use crate::{maybe, maybe_mut, objective_mut};
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{LifeType, PointsCfg, UnitTag, Vehicle},
-    db::{group::GroupId, objective::ObjectiveId},
+    db::{group::GroupId, objective::{ObjectiveId, ObjectiveKind}},
     shots::{Dead, Who},
     stats::{self, EnId, Stat},
 };
@@ -61,6 +61,17 @@ pub enum SlotAuth {
     NotRegistered(Side),
     VehicleNotAvailable(Vehicle),
     Denied,
+    EraRestricted { vehicle: Vehicle, era: compact_str::CompactString },
+    /// The objective holds an aircraft type its own side doesn't normally
+    /// produce -- salvage kept from the previous owner on capture (see
+    /// capture_warehouse) -- and it hasn't been repaired far enough for the
+    /// captors to put it in the air yet.
+    CapturedNotReady(Vehicle),
+    /// The objective was just taken and is still in its post-capture
+    /// consolidation hold. Carries the seconds left on that hold so the denial
+    /// can tell the player how long, rather than the bare "is capturable" the
+    /// overloaded `captureable()` check used to produce.
+    Consolidating(i64),
 }
 
 pub enum RegErr {
@@ -74,6 +85,9 @@ pub enum TakeoffRes {
     NoLifeTaken,
     OutOfLives,
     OutOfPoints,
+    /// Got airborne before the `takeoff_delay_secs` hold expired -- carries the
+    /// seconds that were still remaining.
+    TooEarly(i64),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -87,6 +101,9 @@ pub struct InstancedPlayer {
     pub stopped_at_objective: bool,
     pub moved: Option<DateTime<Utc>>,
     pub cost_fraction: f32,
+    /// Earliest time this player is cleared to get airborne (slot-entry time +
+    /// `cfg.takeoff_delay_secs`). `None` when the delay is disabled.
+    pub takeoff_ok_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +122,12 @@ pub struct Player {
     pub ai_team_kills: SetS<DateTime<Utc>>,
     #[serde(default)]
     pub player_team_kills: MapS<DateTime<Utc>, Ucid>,
+    /// Kills in the current sortie (resets on death)
+    #[serde(default)]
+    pub kill_streak: u8,
+    /// Total career kills
+    #[serde(default)]
+    pub total_kills: u32,
     #[serde(skip)]
     pub current_slot: Option<(SlotId, Option<InstancedPlayer>)>,
     #[serde(skip)]
@@ -125,8 +148,32 @@ impl Db {
                     .ephemeral
                     .player_deslot(&self.persisted, &slot, Some(*ucid));
             }
+            // Close the sortie this slot session opened. Only a session that
+            // ended on the ground counts as landed -- a pilot who died,
+            // ejected or jumped to spectators mid-flight leaves it open, which
+            // is how the dashboard shows a sortie as not landed. This has to go
+            // out before `Stat::Deslot`: bfdb drops the slot, and with it the
+            // open SortieId, the moment it sees the deslot.
+            if let Some(Some(_landed)) = self.ephemeral.open_sorties.remove(ucid) {
+                self.ephemeral.stat(Stat::Land { id: *ucid });
+            }
             self.ephemeral.stat(Stat::Deslot { id: *ucid });
             self.ephemeral.dirty()
+        }
+    }
+
+    /// Close every sortie still open with its pilot on the ground. Shutdown
+    /// ends the slot session for everyone still slotted but never runs
+    /// `player_deslot`, so without this a pilot who landed and stayed in the
+    /// airframe would leave the sortie open forever -- never landed, no hours
+    /// credited. Pilots still airborne are left open, exactly as a mid-flight
+    /// deslot leaves them.
+    pub fn close_open_sorties(&mut self) {
+        let open = std::mem::take(&mut self.ephemeral.open_sorties);
+        for (ucid, landed) in open {
+            if landed.is_some() {
+                self.ephemeral.stat(Stat::Land { id: ucid });
+            }
         }
     }
 
@@ -212,6 +259,31 @@ impl Db {
         Ok(())
     }
 
+    /// Reset every player's lives. Returns the number of players who actually
+    /// had lives consumed.
+    pub fn reset_all_lives(&mut self) -> Result<usize> {
+        let ucids: SmallVec<[Ucid; 64]> = self
+            .persisted
+            .players
+            .into_iter()
+            .filter(|(_, player)| player.lives.len() > 0)
+            .map(|(ucid, _)| *ucid)
+            .collect();
+        for ucid in &ucids {
+            if let Some(player) = self.persisted.players.get_mut_cow(ucid) {
+                player.lives = MapS::new();
+            }
+            self.ephemeral.stat(Stat::Life {
+                id: *ucid,
+                lives: MapS::new(),
+            });
+        }
+        if !ucids.is_empty() {
+            self.ephemeral.dirty();
+        }
+        Ok(ucids.len())
+    }
+
     pub fn instanced_players(&self) -> impl Iterator<Item = (&Ucid, &Player, &InstancedPlayer)> {
         self.ephemeral.players_by_slot.values().filter_map(|ucid| {
             self.persisted.players.get(ucid).and_then(|player| {
@@ -247,6 +319,7 @@ impl Db {
                                 moved_by: _,
                                 cost_fraction: _,
                                 origin: _,
+                                jtac: _,
                             } => Some(player.clone()),
                             DeployKind::Troop {
                                 player,
@@ -254,11 +327,14 @@ impl Db {
                                 moved_by: _,
                                 origin: _,
                                 cost_fraction: _,
+                                ..
                             } => Some(*player),
                             DeployKind::Action { player, .. } => player.clone(),
                             DeployKind::Crate { .. }
                             | DeployKind::Objective { .. }
-                            | DeployKind::ObjectiveDeprecated => None,
+                            | DeployKind::ObjectiveDeprecated
+                            | DeployKind::DownedPilot { .. }
+                            | DeployKind::Dismount { .. } => None,
                         })
                 }
             }
@@ -316,10 +392,18 @@ impl Db {
             .get(&slot)
             .and_then(|ucid| self.persisted.players.get_mut_cow(ucid).map(|p| (*ucid, p)))
             .ok_or_else(|| anyhow!("could not find player in slot {:?}", slot))?;
+        // Enforce the post-slot-entry takeoff hold.
+        if let Some((_, Some(inst))) = &player.current_slot {
+            if let Some(ok_at) = inst.takeoff_ok_at {
+                if time < ok_at {
+                    return Ok(TakeoffRes::TooEarly((ok_at - time).num_seconds().max(1)));
+                }
+            }
+        }
         let owned_objective = self
             .persisted
             .objectives
-            .iter_mut_cow()
+            .into_iter()
             .find_map(|(oid, obj)| {
                 if obj.owner == player.side && obj.zone.contains(position) {
                     Some((oid, obj))
@@ -342,6 +426,7 @@ impl Db {
             return Ok(TakeoffRes::OutOfPoints);
         } else if !self.ephemeral.cfg.limited_lives {
             player.airborne = Some(life_type);
+            player.kill_streak = 0; // reset streak on new sortie
             self.ephemeral.dirty();
             Ok(TakeoffRes::NoLifeTaken)
         } else if owned_objective.is_some() {
@@ -350,6 +435,7 @@ impl Db {
                 return Ok(TakeoffRes::OutOfLives);
             } else {
                 player.airborne = Some(life_type);
+                player.kill_streak = 0; // reset streak on new sortie
                 *player_lives -= 1;
                 self.ephemeral.stat(Stat::Life {
                     id: ucid,
@@ -359,6 +445,9 @@ impl Db {
             self.ephemeral.dirty();
             Ok(TakeoffRes::TookLife(life_type))
         } else {
+            player.airborne = Some(life_type);
+            player.kill_streak = 0;
+            self.ephemeral.dirty();
             Ok(TakeoffRes::NoLifeTaken)
         };
         if cost > 0
@@ -371,7 +460,14 @@ impl Db {
                 _ => (),
             }
         };
-        self.ephemeral.stat(Stat::Takeoff { id: ucid });
+        // One sortie per slot session, not per takeoff. A pilot who lands to
+        // rearm and launches again in the same airframe is still flying the
+        // same sortie, so only the first takeoff opens one -- the rest still
+        // take a life and charge points above, they just do not mint a second
+        // SortieId in bfdb. See `Ephemeral::open_sorties`.
+        if self.ephemeral.open_sorties.insert(ucid, None).is_none() {
+            self.ephemeral.stat(Stat::Takeoff { id: ucid });
+        }
         res
     }
 
@@ -420,6 +516,15 @@ impl Db {
     }
 
     pub fn land(&mut self, slot: SlotId, position: Vector2, unit: &Unit) -> Option<LifeType> {
+        // Record the touchdown before any of the bookkeeping below can bail
+        // out. `player_deslot` reads this to decide whether the slot session
+        // ended on the ground, so every landing has to be marked -- not just
+        // the ones at an owned objective that hand a life back.
+        if let Some(ucid) = self.ephemeral.players_by_slot.get(&slot).copied()
+            && let Some(landed) = self.ephemeral.open_sorties.get_mut(&ucid)
+        {
+            *landed = Some(Utc::now());
+        }
         let sifo = match self.ephemeral.slot_info.get(&slot) {
             Some(sifo) => sifo,
             None => return None,
@@ -452,7 +557,9 @@ impl Db {
                 None
             }
         });
-        self.ephemeral.stat(Stat::Land { id: ucid });
+        // The sortie is deliberately NOT closed here: the pilot is still in
+        // the airframe and may rearm and launch again on the same sortie.
+        // `player_deslot` emits `Stat::Land` once the slot session really ends.
         if let Some(oid) = owned_objective {
             *player_lives += 1;
             player.airborne = None;
@@ -492,6 +599,46 @@ impl Db {
         } else {
             None
         }
+    }
+
+    /// Restore one life of the given type to a player (e.g. after CSAR delivery).
+    /// If the player is already at max for that tier, cascade down via `LifeType::down()`.
+    /// Returns the new life count, or None if nothing to restore.
+    pub fn restore_life(&mut self, ucid: &Ucid, life_type: LifeType) -> Option<u8> {
+        if !self.ephemeral.cfg.limited_lives {
+            return None;
+        }
+        // Find the first tier (starting from life_type, cascading down) that has a deficit
+        let mut current = life_type;
+        let (current, max_lives) = loop {
+            let max = self.ephemeral.cfg.default_lives.get(&current).map(|(n, _)| *n);
+            let has_deficit = self
+                .persisted
+                .players
+                .get(ucid)
+                .map(|p| p.lives.get(&current).is_some())
+                .unwrap_or(false);
+            match (max, has_deficit) {
+                (Some(max), true) => break (current, max),
+                _ => match current.down() {
+                    Some(lower) => current = lower,
+                    None => return None,
+                },
+            }
+        };
+        let player = self.persisted.players.get_mut_cow(ucid)?;
+        let new_count = match player.lives.get_mut_cow(&current) {
+            None => return None,
+            Some((_, count)) => {
+                *count = (*count + 1).min(max_lives);
+                *count
+            }
+        };
+        if new_count >= max_lives {
+            player.lives.remove_cow(&current);
+        }
+        self.ephemeral.dirty();
+        Some(new_count)
     }
 
     pub fn maybe_reset_lives(&mut self, ucid: &Ucid, now: DateTime<Utc>) -> Result<()> {
@@ -609,6 +756,11 @@ impl Db {
         if objective.owner != player.side {
             return SlotAuth::ObjectiveNotOwned(player.side);
         }
+        if objective.in_capture_hold() {
+            let total = self.ephemeral.cfg.capture_consolidation_secs;
+            let remaining = objective.capture_hold_pct(total).map(|(_, s)| s).unwrap_or(0);
+            return SlotAuth::Consolidating(remaining);
+        }
         if objective.captureable() {
             return SlotAuth::ObjectiveHasNoLogistics;
         }
@@ -622,6 +774,33 @@ impl Db {
                             Some(inv) if inv.stored > 0 => (),
                             Some(_) | None => {
                                 break SlotAuth::VehicleNotAvailable(sifo.typ.clone());
+                            }
+                        }
+                    }
+                    // An objective can end up holding an aircraft type its
+                    // own side doesn't produce: kept from the previous owner
+                    // on capture so the captors can operate it (see
+                    // capture_warehouse -- the carrier branch, and the land
+                    // salvage branch under `captured_airframes`). Captured
+                    // aircraft aren't flyable the moment the last defender
+                    // dies; the objective has to be consolidated and repaired
+                    // first.
+                    let is_own_roster = self
+                        .ephemeral
+                        .production_by_side
+                        .get(&objective.owner)
+                        .map(|p| p.equipment.contains_key(typ))
+                        .unwrap_or(true);
+                    if !is_own_roster {
+                        let min_health =
+                            if matches!(objective.kind, ObjectiveKind::CarrierGroup { .. }) {
+                                Some(100)
+                            } else {
+                                whcfg.captured_airframes.as_ref().map(|c| c.min_health)
+                            };
+                        if let Some(min) = min_health {
+                            if objective.health < min {
+                                break SlotAuth::CapturedNotReady(sifo.typ.clone());
                             }
                         }
                     }
@@ -648,6 +827,15 @@ impl Db {
                     cost: cost as u32,
                     vehicle: sifo.typ.clone(),
                     balance,
+                };
+            }
+        }
+        if let Some(era_cfg) = &self.ephemeral.cfg.era {
+            let allowed = era_cfg.eras.get(era_cfg.current.as_str()).map(|v| v.as_slice()).unwrap_or(&[]);
+            if !allowed.is_empty() && !allowed.contains(&sifo.typ) {
+                return SlotAuth::EraRestricted {
+                    vehicle: sifo.typ.clone(),
+                    era: compact_str::format_compact!("{}", era_cfg.current),
                 };
             }
         }
@@ -688,6 +876,14 @@ impl Db {
                 self.ephemeral.dirty()
             }
         }
+        // Register only fires once, the first time a ucid is ever seen, so a
+        // returning player reconnecting into a new round would otherwise never
+        // get a side recorded for that round in bfdb, leaving them out of the
+        // per-round registered/online counts. Reaffirm their known side on
+        // every connect so bfdb always has a current-round side for them.
+        if let Some(player) = self.persisted.players.get(&ucid) {
+            self.ephemeral.stat(Stat::Sideswitch { id: ucid, side: player.side });
+        }
     }
 
     pub fn register_player(&mut self, ucid: Ucid, name: String, side: Side) -> Result<(), RegErr> {
@@ -719,6 +915,8 @@ impl Db {
                         jtac_or_spectators: true,
                         ai_team_kills: SetS::new(),
                         player_team_kills: MapS::new(),
+                        kill_streak: 0,
+                        total_kills: 0,
                     },
                 );
                 self.ephemeral.stat(Stat::Register {
@@ -909,6 +1107,7 @@ impl Db {
                 .context("getting airbase")?
                 .get_warehouse()
                 .context("getting warehouse")?;
+            let mut drawn: SmallVec<[CompactString; 8]> = smallvec![];
             if sifo.ground_start {
                 wh.remove_item(sifo.typ.0.clone(), 1)
                     .with_context(|| format_compact!("removing {} from warehouse", sifo.typ.0))?;
@@ -917,22 +1116,76 @@ impl Db {
                     let count = wep.count()?;
                     let typ = wep.type_name()?;
                     let whcnt = wh.get_item_count(typ.clone())?;
-                    debug!("removing {count} {typ} from the warehouse which contains {whcnt}");
+                    drawn.push(format_compact!("{typ} x{count} (had {whcnt})"));
                     wh.remove_item(typ.clone(), count)?;
                     if let Some(inv) = obj.warehouse.equipment.get_mut_cow(&typ) {
                         inv.stored = whcnt - count;
                     }
                 }
+                // Debit the fuel it launches with, so landing it somewhere else
+                // is a real transfer of the airframe *and* its fuel, not free
+                // supply appearing at the destination (see player_left_unit).
+                if let Ok(frac) = unit.get_fuel() {
+                    let max_kg = unit
+                        .get_desc()
+                        .ok()
+                        .and_then(|d| d.raw_get::<_, f64>("fuelMassMax").ok())
+                        .unwrap_or(0.0);
+                    let kg = (frac.clamp(0.0, 1.0) as f64 * max_kg).round() as u32;
+                    if kg > 0 {
+                        drawn.push(format_compact!("jet fuel {kg} kg"));
+                        let have = wh
+                            .get_liquid_amount(dcso3::warehouse::LiquidType::JetFuel)
+                            .unwrap_or(0);
+                        let _ = wh.remove_liquid(
+                            dcso3::warehouse::LiquidType::JetFuel,
+                            kg.min(have),
+                        );
+                        if let Some(inv) = obj
+                            .warehouse
+                            .liquids
+                            .get_mut_cow(&dcso3::warehouse::LiquidType::JetFuel)
+                        {
+                            inv.stored = wh
+                                .get_liquid_amount(dcso3::warehouse::LiquidType::JetFuel)
+                                .unwrap_or(inv.stored);
+                        }
+                    }
+                }
             }
-            maybe_mut!(obj.warehouse.equipment, sifo.typ.0, "equip")?.stored = wh
+            let left = wh
                 .get_item_count(sifo.typ.0.clone())
                 .with_context(|| format_compact!("getting warehouse count for {}", sifo.typ.0))?;
+            // Ground starts are the campaign's main consumption path -- every
+            // sortie is an airframe, a loadout and a tank of fuel out of that
+            // base. Log the draw so a base running dry can be traced back to
+            // what actually drained it.
+            if sifo.ground_start {
+                info!(
+                    "[WAREHOUSE_DRAW] {ucid} took a {} from {} ({left} left); stores: {}",
+                    sifo.typ.0,
+                    obj.name,
+                    if drawn.is_empty() {
+                        CompactString::from("none")
+                    } else {
+                        CompactString::from(drawn.join(", "))
+                    }
+                );
+            } else {
+                debug!(
+                    "[WAREHOUSE_DRAW] {ucid} slotted an air-start {} at {} -- nothing drawn",
+                    sifo.typ.0, obj.name
+                );
+            }
+            maybe_mut!(obj.warehouse.equipment, sifo.typ.0, "equip")?.stored = left;
             Ok(())
         };
         if let Err(e) = adjust_warehouse() {
             error!("couldn't adjust warehouse {:?}", e)
         }
         let player = maybe_mut!(self.persisted.players, ucid, "player")?;
+        let player_side = player.side;
+        let slot_uid = slot.as_unit_id();
         let position = unit.get_position()?;
         let point = Vector2::new(position.p.x, position.p.z);
         let landed_at_objective = self
@@ -941,22 +1194,44 @@ impl Db {
             .into_iter()
             .find(|(_, obj)| obj.zone.contains(point))
             .map(|(oid, _)| *oid);
+        let in_air = unit.in_air()?;
+        // Ground-start slots get a hold before they may get airborne; air starts
+        // are already flying, so there's nothing to hold.
+        let takeoff_ok_at = match self.ephemeral.cfg.takeoff_delay_secs {
+            secs if secs > 0 && !in_air => {
+                Some(Utc::now() + Duration::seconds(secs as i64))
+            }
+            _ => None,
+        };
         player.current_slot = Some((
             slot,
             Some(InstancedPlayer {
                 unit_name: unit.get_name()?,
                 position,
                 velocity: unit.get_velocity()?.0,
-                in_air: unit.in_air()?,
+                in_air,
                 typ: Vehicle::from(unit.get_type_name()?),
                 landed_at_objective,
                 stopped_at_objective: true,
                 moved: None,
                 cost_fraction: 1.,
+                takeoff_ok_at,
             }),
         ));
         player.changing_slots = false;
         player.provisional_points = 0;
+        // Slot-entry GCI radio briefing ("GCI: Magic on 251.0 AM (SRS)").
+        let gci_brief = self
+            .ephemeral
+            .cfg
+            .gci_briefing
+            .as_ref()
+            .and_then(|b| b.render(player_side).map(|t| (t, b.display_secs)));
+        if let (Some((text, secs)), Some(uid)) = (gci_brief, slot_uid) {
+            self.ephemeral
+                .msgs()
+                .panel_to_unit(secs, false, uid, String::from(text));
+        }
         self.ephemeral.dirty();
         Ok(())
     }
@@ -976,33 +1251,75 @@ impl Db {
             }
             self.ephemeral.units_able_to_move.swap_remove(&uid);
         }
-        if let Some(slot) = self.ephemeral.slot_by_object_id.get(&objid) {
-            if let Some(ucid) = self.ephemeral.player_in_slot(slot) {
-                let ucid = ucid.clone();
+        if let Some(slot) = self.ephemeral.slot_by_object_id.get(&objid).cloned() {
+            if let Some(ucid) = self.ephemeral.player_in_slot(&slot).cloned() {
+                let player_side = self.persisted.players.get(&ucid).map(|p| p.side);
+                // Only ground-start slots have their airframe / stores debited
+                // from the departure base (see adjust_warehouse), so only they
+                // are credited back on landing.
+                let ground_start = self
+                    .ephemeral
+                    .slot_info
+                    .get(&slot)
+                    .map(|s| s.ground_start)
+                    .unwrap_or(false);
                 let player = maybe_mut!(self.persisted.players, ucid, "player")?;
                 if let Some((_, Some(inst))) = player.current_slot.as_mut() {
                     let typ = inst.typ.clone();
                     if let Some(oid) = inst.landed_at_objective {
                         let mut fix_warehouse = || -> Result<()> {
                             let obj = objective_mut!(self, oid).context("get objective")?;
+                            // The base can change hands while a player sits
+                            // parked in it. `landed_at_objective` was friendly
+                            // when it was set; re-check now so a captured base
+                            // doesn't absorb the departing (enemy) player's
+                            // airframe and stores into what is now the new
+                            // owner's warehouse.
+                            if player_side != Some(obj.owner()) {
+                                return Ok(());
+                            }
                             let id = maybe!(self.ephemeral.airbase_by_oid, oid, "airbase")?;
                             let airbase = Airbase::get_instance(lua, &id).context("get airbase")?;
                             let wh = airbase.get_warehouse().context("get warehouse")?;
-                            let airbase = obj.kind.is_airbase()
-                                || self
-                                    .ephemeral
-                                    .cfg
-                                    .extra_fixed_wing_objectives
-                                    .contains(obj.name());
                             let mut sync: SmallVec<[String; 4]> = smallvec![typ.0.clone()];
-                            if !airbase && let Ok(unit) = Unit::get_instance(lua, &objid) {
+                            // Return the airframe + its remaining stores to the
+                            // base it landed at -- for every objective type
+                            // (FARP, FOB, airbase, naval). This is the credit
+                            // half of the takeoff debit in adjust_warehouse.
+                            if ground_start && let Ok(unit) = Unit::get_instance(lua, &objid) {
                                 wh.add_item(typ.0.clone(), 1)?;
                                 for ammo in unit.get_ammo().context("get ammo")? {
                                     let ammo = ammo.context("ammo")?;
                                     let count = ammo.count().context("ammo count")?;
-                                    let typ = ammo.type_name().context("ammo typ")?;
-                                    sync.push(typ.clone());
-                                    wh.add_item(typ, count).context("add item to warehouse")?;
+                                    let atyp = ammo.type_name().context("ammo typ")?;
+                                    sync.push(atyp.clone());
+                                    wh.add_item(atyp, count).context("add item to warehouse")?;
+                                }
+                                // Remaining internal fuel comes back as jet fuel.
+                                if let Ok(frac) = unit.get_fuel() {
+                                    let max_kg = unit
+                                        .get_desc()
+                                        .ok()
+                                        .and_then(|d| d.raw_get::<_, f64>("fuelMassMax").ok())
+                                        .unwrap_or(0.0);
+                                    let kg = (frac.clamp(0.0, 1.0) as f64 * max_kg).round() as u32;
+                                    if kg > 0 {
+                                        let _ = wh.add_liquid(
+                                            dcso3::warehouse::LiquidType::JetFuel,
+                                            kg,
+                                        );
+                                        if let Some(inv) = obj
+                                            .warehouse
+                                            .liquids
+                                            .get_mut_cow(&dcso3::warehouse::LiquidType::JetFuel)
+                                        {
+                                            inv.stored = wh
+                                                .get_liquid_amount(
+                                                    dcso3::warehouse::LiquidType::JetFuel,
+                                                )
+                                                .unwrap_or(inv.stored);
+                                        }
+                                    }
                                 }
                             }
                             for typ in sync {
@@ -1221,7 +1538,7 @@ impl Db {
             }
         }
         if !hit_by.is_empty() {
-            let total_points = (&dead.shots)
+            let base_points = (&dead.shots)
                 .into_iter()
                 .find(|s| s.target_typ.trim() != "")
                 .map(|s| &s.target_typ)
@@ -1237,6 +1554,23 @@ impl Db {
                     }
                 })
                 .unwrap_or(cfg.ground_kill);
+            // Apply night kill bonus if configured
+            let total_points = if let Some(tod_cfg) = self.ephemeral.cfg.time_of_day_effects.as_ref() {
+                let hour = dead.time.hour() as u8;
+                let is_night = if tod_cfg.night_start_hour > tod_cfg.night_end_hour {
+                    // Wraps midnight (e.g. 22-06)
+                    hour >= tod_cfg.night_start_hour || hour < tod_cfg.night_end_hour
+                } else {
+                    hour >= tod_cfg.night_start_hour && hour < tod_cfg.night_end_hour
+                };
+                if is_night {
+                    (base_points as f64 * tod_cfg.night_kill_bonus).ceil() as u32
+                } else {
+                    base_points
+                }
+            } else {
+                base_points
+            };
             let pps = (total_points as f32 / hit_by.len() as f32).ceil() as i32;
             let victim_info = match &dead.victim {
                 Who::Player { ucid, .. } => self.persisted.players.get(ucid).map(|p| VictimInfo {
@@ -1260,24 +1594,49 @@ impl Db {
                     let msg = if player.side == *dead.victim.side() {
                         self.apply_teamkill_penalty(ucid, total_points, &victim_info)
                     } else {
+                        // Apply kill streak bonus
+                        let streak_mult = cfg.kill_streak_bonuses
+                            .iter()
+                            .rev()
+                            .find(|(min_streak, _)| player.kill_streak >= *min_streak)
+                            .map(|(_, mult)| *mult)
+                            .unwrap_or(1.0);
+                        let pps_with_streak = (pps as f64 * streak_mult).ceil() as i32;
                         let tp = if provisional {
-                            player.provisional_points += pps;
+                            player.provisional_points += pps_with_streak;
                             player.provisional_points
                         } else {
-                            player.points += pps;
+                            player.points += pps_with_streak;
                             player.points
                         };
+                        // Increment streak and total kills
+                        player.kill_streak = player.kill_streak.saturating_add(1);
+                        player.total_kills = player.total_kills.saturating_add(1);
+                        
+                        if player.kill_streak == 5 {
+                            self.ephemeral.pending_achievements.push(format!("{} is now an Ace! (5 kill streak)", player.name).into());
+                        } else if player.kill_streak == 10 {
+                            self.ephemeral.pending_achievements.push(format!("{} is unstoppable! (10 kill streak)", player.name).into());
+                        } else if player.kill_streak == 15 {
+                            self.ephemeral.pending_achievements.push(format!("{} is a god of war! (15 kill streak)", player.name).into());
+                        }
+                        
                         let pm = if provisional { " provisional" } else { "" };
+                        let streak_msg = if streak_mult > 1.0 {
+                            format_compact!(" [x{:.1} streak]", streak_mult)
+                        } else {
+                            format_compact!("")
+                        };
                         match &victim_info {
-                            None => format_compact!("{tp}(+{pps}){pm} points"),
+                            None => format_compact!("{tp}(+{pps_with_streak}){pm}{streak_msg} points"),
                             Some(vi) => {
                                 if vi.ai_deployable {
                                     format_compact!(
-                                        "{tp}(+{pps}){pm} points, killed {}'s deployed ai unit",
+                                        "{tp}(+{pps_with_streak}){pm}{streak_msg} points, killed {}'s deployed ai unit",
                                         vi.name
                                     )
                                 } else {
-                                    format_compact!("{tp}(+{pps}){pm} points, killed {}", vi.name)
+                                    format_compact!("{tp}(+{pps_with_streak}){pm}{streak_msg} points, killed {}", vi.name)
                                 }
                             }
                         }
@@ -1302,6 +1661,20 @@ impl Db {
                     id: *ucid,
                 });
                 self.ephemeral.panel_to_player(&self.persisted, 10, ucid, m);
+                self.ephemeral.dirty();
+            }
+        }
+    }
+
+    pub fn adjust_points_silent(&mut self, ucid: &Ucid, amount: i32, why: &str) {
+        if let Some(player) = self.persisted.players.get_mut_cow(ucid) {
+            player.points += amount;
+            if amount != 0 {
+                self.ephemeral.stat(Stat::Points {
+                    points: amount,
+                    reason: compact_str::format_compact!("{}({}) points {}", player.points, amount, why).into(),
+                    id: *ucid,
+                });
                 self.ephemeral.dirty();
             }
         }

@@ -14,6 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
+mod live_weather;
 mod logpub;
 mod perf;
 mod rpcs;
@@ -32,7 +33,7 @@ use compact_str::{CompactString, format_compact};
 use crossbeam::queue::SegQueue;
 use dcso3::perf::{Perf as ApiPerf, PerfStat as ApiPerfStat};
 use fxhash::FxHashMap;
-use log::error;
+use log::{error, info};
 use logpub::LogPublisher;
 use netidx::{
     chars::Chars,
@@ -245,8 +246,21 @@ pub(super) enum Task {
         sortie: dcso3::String,
         cfg: Arc<Cfg>,
         admin_channel: Arc<SegQueue<(AdminCommand, oneshot::Sender<Value>)>>,
+        /// True only when this mission load started a genuinely new round
+        /// (no saved state to resume). Threaded through to the netidx stats
+        /// publisher so it doesn't announce a spurious NewRound on every
+        /// technical restart (crash recovery, bot-triggered restart) that
+        /// resumes existing saved state.
+        fresh: bool,
     },
     SaveConfig(PathBuf, Arc<Cfg>),
+    /// rewrite the on-disk mission file's weather (and optionally date/time)
+    /// with live real-world conditions. Only takes effect the next time the
+    /// mission loads, so this must be enqueued before Task::Shutdown.
+    RewriteMissionWeather {
+        miz_path: PathBuf,
+        cfg: bfprotocols::cfg::LiveWeatherConfig,
+    },
     WriteLog(Bytes),
     LogPerf {
         players: usize,
@@ -263,11 +277,13 @@ enum Logs {
         perf: PubPerf,
         stats: Statspub,
         log: LogPublisher,
+        stats_jsonl: Option<std::fs::File>,
     },
     Files {
         log_path: PathBuf,
         log_file: Option<File>,
         stats_path: PathBuf,
+        stats_jsonl: Option<std::fs::File>,
     },
 }
 
@@ -278,7 +294,7 @@ impl Logs {
             Self::Files {
                 log_path,
                 log_file,
-                stats_path: _,
+                stats_path: _, ..
             } => {
                 *log_file = Some(
                     File::options()
@@ -295,11 +311,27 @@ impl Logs {
     async fn new(write_dir: &Path) -> Result<Self> {
         let stats_path = write_dir.join("Logs").join("stats");
         let log_path = write_dir.join("Logs").join("bfnext.txt");
+        let jsonl_path = write_dir.join("Logs").join("stats.jsonl");
         rotate_log(&log_path);
+        let stats_jsonl = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&jsonl_path)
+        {
+            Ok(f) => {
+                info!("stats JSONL file opened at {jsonl_path:?}");
+                Some(f)
+            }
+            Err(e) => {
+                error!("could not open stats JSONL file at {jsonl_path:?}: {e:?}");
+                None
+            }
+        };
         let mut t = Self::Files {
             log_file: None,
             log_path,
             stats_path,
+            stats_jsonl,
         };
         t.open_files().await?;
         Ok(t)
@@ -317,6 +349,20 @@ impl Logs {
     }
 
     fn write_stat(&mut self, stat: &Stat) -> Result<()> {
+        // Write to JSONL file (available in both modes for bfdb to read)
+        let jsonl = match self {
+            Self::Files { stats_jsonl, .. } => stats_jsonl,
+            Self::Netidx { stats_jsonl, .. } => stats_jsonl,
+        };
+        if let Some(f) = jsonl {
+            use std::io::Write;
+            let ts = Utc::now();
+            let line = serde_json::json!({"ts": ts.to_rfc3339(), "stat": stat});
+            if let Err(e) = writeln!(f, "{}", line) {
+                error!("failed to write stat to JSONL: {e:?}");
+            }
+        }
+        // Also write to netidx archive if in Netidx mode
         match self {
             Self::Files { .. } => Ok(()),
             Self::Netidx { stats, .. } => stats.append(Utc::now(), stat),
@@ -343,6 +389,8 @@ impl Logs {
         publisher: Publisher,
         cfg: &Config,
         base: NetIdxPath,
+        sortie: dcso3::String,
+        fresh: bool,
     ) -> Result<()> {
         match self {
             Self::Netidx { .. } => Ok(()),
@@ -350,8 +398,10 @@ impl Logs {
                 log_path,
                 log_file,
                 stats_path,
+                stats_jsonl,
             } => {
                 drop(log_file.take());
+                let taken_jsonl = stats_jsonl.take();
                 let go = || async {
                     let perf = PubPerf::new(
                         &publisher,
@@ -366,26 +416,30 @@ impl Logs {
                         &cfg,
                         stats_path.clone(),
                         base.append("stats"),
+                        sortie.clone(),
+                        fresh,
                     )
                     .await
                     .context("starting stats pub")?;
                     let log = LogPublisher::new(publisher.clone(), log_path, base.append("log"))
                         .context("starting log pub")?;
-                    Ok::<_, anyhow::Error>(Self::Netidx {
-                        publisher: publisher.clone(),
-                        perf,
-                        stats,
-                        log,
-                    })
+                    Ok::<_, anyhow::Error>((perf, stats, log))
                 };
                 match go().await {
-                    Ok(t) => {
-                        *self = t;
+                    Ok((perf, stats, log)) => {
+                        *self = Self::Netidx {
+                            publisher: publisher.clone(),
+                            perf,
+                            stats,
+                            log,
+                            stats_jsonl: taken_jsonl,
+                        };
                         Ok(())
                     }
                     Err(e) => {
+                        *stats_jsonl = taken_jsonl;
                         if let Err(e) = self.open_files().await {
-                            eprintln!("netidx init failed and reopening files also failed {e:?}")
+                            error!("netidx init failed and reopening files also failed {e:?}")
                         }
                         return Err(e);
                     }
@@ -423,15 +477,30 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
         .await
         .expect("could not open log files");
     let mut _rpcs: Option<Rpcs> = None;
+    // The netidx publisher's lifetime has to outlive this match arm and every
+    // fallible thing in it. `Rpcs`/`Proc` don't keep it alive on their own, and
+    // in the happy path only the stats Recorder (inside `logs`) does -- so if
+    // `switch_to_netidx` fails (e.g. a corrupt archive segment: "compressing
+    // archive: Src size is incorrect") the publisher used to drop at the end of
+    // the arm, taking every engine query RPC with it and leaving the dashboard
+    // dark. Holding a clone here keeps the RPCs up regardless.
+    let mut _publisher: Option<Publisher> = None;
     while let Some(msg) = rx.recv().await {
         match msg {
             Task::CfgLoaded {
                 sortie,
                 cfg,
                 admin_channel,
+                fresh,
             } => {
                 if let Some(base) = cfg.netidx_base.as_ref() {
                     let base = base.append(&sortie);
+                    info!(
+                        "netidx: publishing under {base} (netidx_base={} + sortie={sortie:?}); \
+                         bfdb must use --base {} and see this exact sortie",
+                        cfg.netidx_base.as_ref().unwrap(),
+                        cfg.netidx_base.as_ref().unwrap(),
+                    );
                     let cfg = match Config::load_default() {
                         Ok(c) => c,
                         Err(e) => {
@@ -446,6 +515,8 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
                             continue;
                         }
                     };
+                    info!("netidx: publisher bound to {:?}", publisher.addr());
+                    _publisher = Some(publisher.clone());
                     _rpcs = match Rpcs::new(&publisher, &admin_channel, &base).await {
                         Ok(r) => Some(r),
                         Err(e) => {
@@ -454,10 +525,58 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
                         }
                     };
                     if let Err(e) = logs
-                        .switch_to_netidx(publisher.clone(), &cfg, base.clone())
+                        .switch_to_netidx(publisher.clone(), &cfg, base.clone(), sortie.clone(), fresh)
                         .await
                     {
-                        eprintln!("failed to initialize netidx logs {e:?}")
+                        // The netidx stats archive picks up a torn segment
+                        // whenever bfdb (or the mission) is hard-killed --
+                        // "compressing archive: Src size is incorrect" -- and a
+                        // cold reopen then chokes on it every restart until
+                        // someone renames Logs/stats by hand. Quarantine it and
+                        // retry once so the dashboard heals on its own. The
+                        // publisher and RPCs are already held open above, so a
+                        // second failure just means file-mode stats (bfdb reads
+                        // the JSONL regardless).
+                        let es = format!("{e:?}");
+                        let corrupt = es.contains("Src size is incorrect")
+                            || es.contains("compressing archive")
+                            || es.contains("corrupt");
+                        let stats_dir = write_dir.join("Logs").join("stats");
+                        if corrupt && stats_dir.exists() {
+                            let aside = write_dir.join("Logs").join(format_compact!(
+                                "stats.corrupt-{}",
+                                Utc::now().timestamp()
+                            ).as_str());
+                            match fs::rename(&stats_dir, &aside) {
+                                Ok(()) => {
+                                    error!(
+                                        "netidx stats archive corrupt ({e:?}); quarantined to \
+                                         {aside:?}, retrying"
+                                    );
+                                    if let Err(e2) = logs
+                                        .switch_to_netidx(
+                                            publisher.clone(),
+                                            &cfg,
+                                            base.clone(),
+                                            sortie.clone(),
+                                            fresh,
+                                        )
+                                        .await
+                                    {
+                                        error!(
+                                            "failed to initialize netidx logs after quarantine \
+                                             {e2:?}"
+                                        )
+                                    }
+                                }
+                                Err(re) => error!(
+                                    "failed to quarantine corrupt stats archive {aside:?}: {re:?} \
+                                     (original error {e:?})"
+                                ),
+                            }
+                        } else {
+                            error!("failed to initialize netidx logs {e:?}")
+                        }
                     }
                 }
                 match &logs {
@@ -489,6 +608,14 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
                 Ok(()) => (),
                 Err(e) => error!("failed to save config {e:?}"),
             },
+            Task::RewriteMissionWeather { miz_path, cfg } => {
+                let req = live_weather::LiveWeatherRequest { miz_path, cfg };
+                match task::spawn_blocking(move || live_weather::apply(&req)).await {
+                    Ok(Ok(())) => log::info!("applied live weather/time to mission file"),
+                    Ok(Err(e)) => error!("failed to apply live weather to mission file {e:?}"),
+                    Err(e) => error!("live weather task panicked {e:?}"),
+                }
+            }
             Task::WriteLog(buf) => match Chars::from_bytes(buf) {
                 Err(e) => eprintln!("invalid unicode log {e:?}"),
                 Ok(buf) => {
@@ -517,7 +644,7 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
             }
             Task::Stat(st) => {
                 if let Err(e) = logs.write_stat(&st) {
-                    eprintln!("could not write stat {st:?} {e:?}")
+                    error!("could not write stat {st:?} {e:?}")
                 }
             }
         }
@@ -527,15 +654,19 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
 static TXCOM: OnceCell<mpsc::UnboundedSender<Task>> = OnceCell::new();
 
 fn setup_logger(tx: UnboundedSender<Task>) {
+    // Default to Info -- Debug emits a few tens of thousands of lines an hour
+    // on a populated server (per-crate C-130 cargo polling, per-tick carrier
+    // position dumps, unknown-event chatter), which is real disk/IO load over
+    // a long campaign. Set RUST_LOG=debug to get it back.
     let level = match env::var("RUST_LOG").ok().map(|s| s.to_ascii_lowercase()) {
-        None => LevelFilter::Debug,
+        None => LevelFilter::Info,
         Some(s) if &s == "trace" => LevelFilter::Trace,
         Some(s) if &s == "debug" => LevelFilter::Debug,
         Some(s) if &s == "info" => LevelFilter::Info,
         Some(s) if &s == "error" => LevelFilter::Error,
         Some(s) if &s == "warn" => LevelFilter::Warn,
         Some(s) if &s == "off" => LevelFilter::Off,
-        Some(_) => LevelFilter::Debug,
+        Some(_) => LevelFilter::Info,
     };
     WriteLogger::init(level, simplelog::Config::default(), LogHandle(tx))
         .expect("could not init logger")

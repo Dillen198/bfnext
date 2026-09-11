@@ -1,0 +1,151 @@
+{
+  "name": "Nevada",
+  "center": [
+    36.72504004726318,
+    -115.57204734741924
+  ],
+  "airports": [
+    {
+      "name": "Creech",
+      "position": [
+        36.583818971692104,
+        -115.6764424858488
+      ],
+      "heli": false
+    },
+    {
+      "name": "Groom Lake",
+      "position": [
+        37.233179384338726,
+        -115.79233552379732
+      ],
+      "heli": false
+    },
+    {
+      "name": "McCarran International",
+      "position": [
+        36.07641003288942,
+        -115.14463202319168
+      ],
+      "heli": false
+    },
+    {
+      "name": "Nellis",
+      "position": [
+        36.2352241108833,
+        -115.03300055101853
+      ],
+      "heli": false
+    },
+    {
+      "name": "Beatty",
+      "position": [
+        36.86100291276833,
+        -116.78641750314196
+      ],
+      "heli": false
+    },
+    {
+      "name": "Boulder City",
+      "position": [
+        35.94866730386085,
+        -114.86181818697374
+      ],
+      "heli": false
+    },
+    {
+      "name": "Echo Bay",
+      "position": [
+        36.311060484274606,
+        -114.46389937947889
+      ],
+      "heli": false
+    },
+    {
+      "name": "Henderson Executive",
+      "position": [
+        35.97399439800043,
+        -115.13305233940493
+      ],
+      "heli": false
+    },
+    {
+      "name": "Jean",
+      "position": [
+        35.769186841106524,
+        -115.3295683377749
+      ],
+      "heli": false
+    },
+    {
+      "name": "Laughlin",
+      "position": [
+        35.15610263998261,
+        -114.55945187290304
+      ],
+      "heli": false
+    },
+    {
+      "name": "Lincoln County",
+      "position": [
+        37.787355566372035,
+        -114.41991121201856
+      ],
+      "heli": false
+    },
+    {
+      "name": "Mesquite",
+      "position": [
+        36.833119135858055,
+        -114.05590700996972
+      ],
+      "heli": false
+    },
+    {
+      "name": "Mina",
+      "position": [
+        38.379785633394626,
+        -118.0966766611066
+      ],
+      "heli": false
+    },
+    {
+      "name": "North Las Vegas",
+      "position": [
+        36.21347177940646,
+        -115.19476766608699
+      ],
+      "heli": false
+    },
+    {
+      "name": "Pahute Mesa",
+      "position": [
+        37.10199574631138,
+        -116.31284622428223
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tonopah",
+      "position": [
+        38.06243087182403,
+        -117.08328585574216
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tonopah Test Range",
+      "position": [
+        37.79887499051046,
+        -116.7807920733868
+      ],
+      "heli": false
+    }
+  ],
+  "projection": {
+    "centralMeridian": -117,
+    "falseEasting": -193996.80999964548,
+    "falseNorthing": -4410028.063999966,
+    "scaleFactor": 0.9996
+  }
+}

@@ -1,0 +1,21 @@
+# Reverse proxy + automatic HTTPS (Let's Encrypt) for bfdb, run on the SAME
+# Windows machine as the DCS server / bfdb.exe. Caddy handles TLS termination
+# so bfdb itself can keep listening on plain HTTP on localhost only.
+#
+# Requires: api.vectorstrike.org's DNS A record pointing at this machine's
+# public IP, and ports 80 + 443 open/forwarded to it (80 is needed for the
+# one-time ACME challenge, even though all real traffic ends up on 443).
+#
+# Install Caddy on Windows: https://caddyserver.com/docs/install#windows
+# Run:  caddy run --config deploy/backend/Caddyfile.vectorstrike
+# (or install as a Windows service so it survives reboots: NSSM, or
+#  `caddy windows-service` via the caddy-windows-service adapter)
+
+api.vectorstrike.org {
+	reverse_proxy 127.0.0.1:8880
+
+	# WebSocket upgrade (logs, engine logs, live units) is handled
+	# automatically by reverse_proxy — no extra config needed.
+
+	encode gzip
+}

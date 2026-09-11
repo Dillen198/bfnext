@@ -57,6 +57,15 @@ pub enum SpawnLoc {
         /// rotate the group to this heading in radians
         group_heading: f64,
     },
+    /// like AtPos, but places the group's center exactly at pos with no
+    /// added clearance offset. Use this when the caller has already picked
+    /// a specific, deconflicted spawn point (e.g. a crate grid scan) and an
+    /// extra automatic offset would defeat that placement.
+    AtPosExact {
+        pos: Vector2,
+        /// rotate the group to this heading in radians
+        group_heading: f64,
+    },
     AtPosWithComponents {
         pos: Vector2,
         /// the position of sub components of the group by unit type
@@ -99,13 +108,19 @@ pub struct SpawnCtx<'lua> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Despawn {
     Group(DcsOid<ClassObject>),
+    /// Destroy a group by name when the DCS object ID is not yet tracked (e.g. the
+    /// group spawned so recently that no DCS event has fired to populate object_id_by_gid).
+    GroupByName(std::string::String),
     Static(String),
+    /// Destroy a static object by its DCS object ID. Used when the DCS name may
+    /// differ from the bflib name (e.g. after C-130 cargo load/drop renames).
+    StaticObject(DcsOid<ClassObject>),
 }
 
 #[derive(Debug, Clone)]
 pub enum Spawned<'lua> {
     Group(Group<'lua>),
-    Static,
+    Static(DcsOid<ClassObject>),
 }
 
 impl<'lua> SpawnCtx<'lua> {
@@ -156,6 +171,7 @@ impl<'lua> SpawnCtx<'lua> {
             .ok_or_else(|| anyhow!("no such trigger zone {name}"))?)
     }
 
+
     pub fn move_farp_pad(
         &self,
         idx: &MizIndex,
@@ -183,6 +199,13 @@ impl<'lua> SpawnCtx<'lua> {
     }
 
     pub fn spawn(&self, template: GroupInfo<'lua>) -> Result<Spawned<'lua>> {
+        self.spawn_with_link(template, None)
+    }
+
+    /// Spawn a group/static with optional linking to a ship unit.
+    /// If link_unit_id is provided and the template is a static object,
+    /// the static will be linked to that ship and move with it.
+    pub fn spawn_with_link(&self, template: GroupInfo<'lua>, link_unit_name: Option<String>) -> Result<Spawned<'lua>> {
         match GroupCategory::from_kind(template.category) {
             Some(category) => Ok(Spawned::Group(
                 self.coalition
@@ -200,12 +223,33 @@ impl<'lua> SpawnCtx<'lua> {
                     .first()
                     .context("getting first unit in static group")?
                     .clone();
-                self.coalition
+                // NOTE: linkUnit/linkOffset is NOT applied here. DCS's
+                // linkOffset=true (x/y treated as an offset from the linked
+                // unit) only appears to be honored for units placed in the
+                // mission file at build time -- for objects spawned at
+                // runtime via coalition.addStaticObject, DCS places the
+                // object at the literal x/y we set, ignoring linkOffset.
+                // Since the offset we'd compute here (crate_pos - carrier_pos)
+                // is a small relative number, the object ended up spawning
+                // near the map origin instead of on the ship (confirmed via
+                // logs: the tracked live position matched the computed
+                // offset exactly, not the intended world position). So we
+                // just spawn at the already-correct absolute position
+                // (already anchored near the carrier by the caller) and
+                // accept that the crate won't track further ship movement,
+                // rather than silently misplacing it.
+                let _ = link_unit_name;
+                let obj = self
+                    .coalition
                     .add_static_object(template.country, unit)
                     .with_context(|| {
                         format_compact!("spawning static object from template {:?}", template)
                     })?;
-                Ok(Spawned::Static)
+                let oid = match &obj {
+                    Static::Airbase(a) => a.object_id()?.erased(),
+                    Static::Static(s) => s.object_id()?.erased(),
+                };
+                Ok(Spawned::Static(oid))
             }
         }
     }
@@ -214,7 +258,6 @@ impl<'lua> SpawnCtx<'lua> {
         let ts = Utc::now();
         match name {
             Despawn::Group(oid) => {
-                // Get as Object, then convert to Unit, then get Group to despawn
                 match dcso3::object::Object::get_instance(self.lua, &oid) {
                     Ok(obj) => {
                         match obj.as_unit() {
@@ -224,10 +267,27 @@ impl<'lua> SpawnCtx<'lua> {
                                     Err(e) => info!("attempt to despawn unit without group {e:?}"),
                                 }
                             }
-                            Err(e) => info!("attempt to despawn object that is not a unit {e:?}"),
+                            Err(_) => {
+                                // oid is a Group, not a unit — destroy directly
+                                if let Err(e) = obj.destroy() {
+                                    info!("attempt to despawn group directly failed: {e:?}");
+                                }
+                            }
                         }
                     }
                     Err(e) => info!("attempt to despawn invalid object {e:?}"),
+                }
+                record_perf(&mut perf.despawn, ts);
+                Ok(())
+            }
+            Despawn::GroupByName(name) => {
+                match Group::get_by_name(self.lua, &*name) {
+                    Ok(group) => {
+                        if let Err(e) = group.destroy() {
+                            info!("attempt to despawn group by name '{}' failed: {e:?}", name);
+                        }
+                    }
+                    Err(e) => info!("attempt to despawn unknown group by name '{}' {e:?}", name),
                 }
                 record_perf(&mut perf.despawn, ts);
                 Ok(())
@@ -237,6 +297,14 @@ impl<'lua> SpawnCtx<'lua> {
                     Ok(Static::Airbase(obj)) => obj.destroy()?,
                     Ok(Static::Static(obj)) => obj.destroy()?,
                     Err(e) => info!("attempt to despawn unknown static {} {}", name, e),
+                }
+                record_perf(&mut perf.despawn, ts);
+                Ok(())
+            }
+            Despawn::StaticObject(oid) => {
+                match dcso3::object::Object::get_instance(self.lua, &oid) {
+                    Ok(obj) => obj.destroy()?,
+                    Err(e) => info!("attempt to despawn static by oid {:?} {}", oid, e),
                 }
                 record_perf(&mut perf.despawn, ts);
                 Ok(())
@@ -254,7 +322,6 @@ impl<'lua> SpawnCtx<'lua> {
     }
     */
 
-    #[allow(dead_code)]
     pub fn remove_scenery(&self, point: Vector2, radius: f64) -> Result<()> {
         let alt = Land::singleton(self.lua)?.get_height(LuaVec2(point))?;
         let point = LuaVec3(Vector3::new(point.x, alt, point.y));

@@ -30,6 +30,12 @@ impl<'lua> Dcs<'lua> {
         Ok(self.t.call_function("getMissionName", ())?)
     }
 
+    /// The running DCS build, e.g. "2.9.29.27468". Only available in the hooks
+    /// environment; the mission scripting sandbox has no equivalent.
+    pub fn get_version(&self) -> Result<String> {
+        Ok(self.t.call_function("getVersion", ())?)
+    }
+
     pub fn get_mission_filename(&self) -> Result<String> {
         Ok(self.t.call_function("getMissionFilename", ())?)
     }

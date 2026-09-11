@@ -1,19 +1,24 @@
-use super::{ArgPent, ArgQuad, ArgTriple};
+use super::{ArgPent, ArgQuad, ArgTriple, Pager};
 use crate::{
     Context,
     db::{
-        actions::{ActionArgs, ActionCmd, WithObj, WithPos, WithPosAndGroup},
+        actions::{
+            ActionArgs, ActionCmd, AddTaskArgs, TaskAt, WithObj, WithPos, WithPosAndGroup,
+            WithTask,
+        },
         group::DeployKind,
+        tasks::TaskId,
     },
+    menu::{jtac::call_bomber, objectives},
     spawnctx::SpawnCtx,
 };
 use anyhow::{Context as ErrContext, Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{Action, ActionKind},
+    cfg::{Action, ActionGeoLimit, ActionKind, TaskCfg, TaskTarget, UnitTag},
     db::{group::GroupId as DbGid, objective::ObjectiveId},
     perf::{Perf, PerfInner},
 };
-use compact_str::format_compact;
+use compact_str::{CompactString, format_compact};
 use dcso3::{
     LuaVec3, MizLua, String, Vector2, Vector3,
     coalition::Side,
@@ -25,6 +30,7 @@ use dcso3::{
     world::World,
 };
 use fxhash::FxHashMap;
+use log::info;
 use std::sync::Arc;
 
 fn run_action(
@@ -108,7 +114,17 @@ fn do_pos_action(
             cfg: cfg.clone(),
             pos,
         }),
+        ActionKind::Artillery(cfg) => ActionArgs::Artillery(WithPos {
+            cfg: cfg.clone(),
+            pos,
+        }),
+        ActionKind::Recon(cfg) => ActionArgs::Recon(WithPos {
+            cfg: cfg.clone(),
+            pos,
+        }),
         ActionKind::Bomber(_)
+        | ActionKind::AddTask(_)
+        | ActionKind::RemoveTask(_)
         | ActionKind::LogisticsTransfer(_)
         | ActionKind::LogisticsRepair(_)
         | ActionKind::Move(_)
@@ -119,7 +135,11 @@ fn do_pos_action(
         | ActionKind::FighersWaypoint
         | ActionKind::DroneWaypoint
         | ActionKind::AttackersWaypoint
-        | ActionKind::SeadWaypoint => bail!("invalid action type for this menu item"),
+        | ActionKind::SeadWaypoint
+        | ActionKind::CarrierWaypoint
+        | ActionKind::CarrierRepair
+        | ActionKind::CarrierRespawn
+        | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
@@ -241,7 +261,14 @@ fn do_pos_group_action(
             pos,
             group,
         }),
+        ActionKind::CarrierWaypoint => ActionArgs::CarrierWaypoint(WithPosAndGroup {
+            cfg: (),
+            pos,
+            group,
+        }),
         ActionKind::Attackers(_)
+        | ActionKind::AddTask(_)
+        | ActionKind::RemoveTask(_)
         | ActionKind::Sead(_)
         | ActionKind::Awacs(_)
         | ActionKind::Deployable(_)
@@ -253,7 +280,12 @@ fn do_pos_group_action(
         | ActionKind::Nuke(_)
         | ActionKind::Bomber(_)
         | ActionKind::LogisticsTransfer(_)
-        | ActionKind::LogisticsRepair(_) => bail!("invalid action type for this menu item"),
+        | ActionKind::LogisticsRepair(_)
+        | ActionKind::CarrierRepair
+        | ActionKind::CarrierRespawn
+        | ActionKind::Artillery(_)
+        | ActionKind::Recon(_)
+        | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
@@ -312,6 +344,8 @@ fn do_objective_action(
             oid,
         }),
         ActionKind::TankerWaypoint
+        | ActionKind::AddTask(_)
+        | ActionKind::RemoveTask(_)
         | ActionKind::AwacsWaypoint
         | ActionKind::CruiseMissileWaypoint
         | ActionKind::FighersWaypoint
@@ -331,7 +365,13 @@ fn do_objective_action(
         | ActionKind::LogisticsTransfer(_)
         | ActionKind::Rtb
         | ActionKind::Move(_)
-        | ActionKind::SeadWaypoint => bail!("invalid action type for this menu item"),
+        | ActionKind::SeadWaypoint
+        | ActionKind::CarrierWaypoint
+        | ActionKind::CarrierRepair
+        | ActionKind::CarrierRespawn
+        | ActionKind::Artillery(_)
+        | ActionKind::Recon(_)
+        | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
     run_action(ctx, perf, lua, side, slot, ucid, None, cmd)
@@ -368,12 +408,317 @@ fn run_objective_action(lua: MizLua, arg: ArgTriple<Ucid, String, ObjectiveId>) 
     Ok(())
 }
 
+fn do_enemy_objective_action(
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    lua: MizLua,
+    side: Side,
+    slot: SlotId,
+    ucid: Ucid,
+    name: String,
+    oid: ObjectiveId,
+    action: Action,
+) -> Result<()> {
+    let args = match &action.kind {
+        ActionKind::NavalCruiseMissileStrike(cfg) => {
+            ActionArgs::NavalCruiseMissileStrike(WithObj {
+                cfg: cfg.clone(),
+                oid,
+            })
+        }
+        _ => bail!("invalid action type for enemy objective menu item"),
+    };
+    let cmd = ActionCmd { name, action, args };
+    run_action(ctx, perf, lua, side, slot, ucid, None, cmd)
+}
+
+fn run_enemy_objective_action(
+    lua: MizLua,
+    arg: ArgTriple<Ucid, String, ObjectiveId>,
+) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
+    match do_enemy_objective_action(
+        ctx,
+        perf,
+        lua,
+        side,
+        slot,
+        arg.fst,
+        arg.snd.clone(),
+        arg.trd,
+        action,
+    ) {
+        Ok(()) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("action {} started", arg.snd),
+        ),
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("could not start {}, {e:?}", arg.snd),
+        ),
+    }
+    Ok(())
+}
+
+fn do_add_task(
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    lua: MizLua,
+    side: Side,
+    slot: SlotId,
+    ucid: Ucid,
+    name: String,
+    kind: String,
+    pos: LuaVec3,
+    mark: MarkId,
+    action: Action,
+) -> Result<()> {
+    let args = match &action.kind {
+        ActionKind::AddTask(cfg) => ActionArgs::AddTask(AddTaskArgs {
+            cfg: cfg.clone(),
+            kind,
+            at: TaskAt::Pos(Vector2::new(pos.0.x, pos.0.z)),
+        }),
+        _ => bail!("invalid action type for this menu item"),
+    };
+    let cmd = ActionCmd { name, action, args };
+    run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
+}
+
+/// Post an objective task (CAPTURE / SUPPLY). There is no map mark to
+/// consume -- the objective is the target.
+fn do_add_objective_task(
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    lua: MizLua,
+    side: Side,
+    slot: SlotId,
+    ucid: Ucid,
+    name: String,
+    kind: String,
+    oid: ObjectiveId,
+    action: Action,
+) -> Result<()> {
+    let args = match &action.kind {
+        ActionKind::AddTask(cfg) => ActionArgs::AddTask(AddTaskArgs {
+            cfg: cfg.clone(),
+            kind,
+            at: TaskAt::Obj(oid),
+        }),
+        _ => bail!("invalid action type for this menu item"),
+    };
+    let cmd = ActionCmd { name, action, args };
+    run_action(ctx, perf, lua, side, slot, ucid, None, cmd)
+}
+
+fn run_add_objective_task(
+    lua: MizLua,
+    arg: ArgQuad<Ucid, String, String, ObjectiveId>,
+) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
+    match do_add_objective_task(
+        ctx,
+        perf,
+        lua,
+        side,
+        slot,
+        arg.fst,
+        arg.snd.clone(),
+        arg.trd.clone(),
+        arg.fth,
+        action,
+    ) {
+        Ok(()) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("{} task posted", arg.trd),
+        ),
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("could not post {} task, {e:?}", arg.trd),
+        ),
+    }
+    Ok(())
+}
+
+fn run_add_task(lua: MizLua, arg: ArgPent<Ucid, String, LuaVec3, MarkId, String>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
+    match do_add_task(
+        ctx,
+        perf,
+        lua,
+        side,
+        slot,
+        arg.fst,
+        arg.snd.clone(),
+        arg.pnt.clone(),
+        arg.trd,
+        arg.fth,
+        action,
+    ) {
+        Ok(()) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("{} task posted", arg.pnt),
+        ),
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("could not post {} task, {e:?}", arg.pnt),
+        ),
+    }
+    Ok(())
+}
+
+fn do_remove_task(
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    lua: MizLua,
+    side: Side,
+    slot: SlotId,
+    ucid: Ucid,
+    name: String,
+    task: TaskId,
+    action: Action,
+) -> Result<()> {
+    let args = match &action.kind {
+        ActionKind::RemoveTask(cfg) => ActionArgs::RemoveTask(WithTask {
+            cfg: cfg.clone(),
+            task,
+        }),
+        _ => bail!("invalid action type for this menu item"),
+    };
+    let cmd = ActionCmd { name, action, args };
+    run_action(ctx, perf, lua, side, slot, ucid, None, cmd)
+}
+
+fn run_remove_task(lua: MizLua, arg: ArgTriple<Ucid, String, TaskId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
+    match do_remove_task(
+        ctx,
+        perf,
+        lua,
+        side,
+        slot,
+        arg.fst,
+        arg.snd.clone(),
+        arg.trd,
+        action,
+    ) {
+        Ok(()) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("task {} removed", arg.trd),
+        ),
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("could not remove task {}, {e:?}", arg.trd),
+        ),
+    }
+    Ok(())
+}
+
+fn run_global_artillery(lua: MizLua, arg: ArgQuad<Ucid, SlotId, LuaVec3, MarkId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let cfg = match ctx.db.ephemeral.cfg.artillery.clone() {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+    let player = match ctx.db.player(&arg.fst) {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    let side = player.side;
+    let pos = Vector2::new(arg.trd.0.x, arg.trd.0.z);
+    let spctx = SpawnCtx::new(lua)?;
+    let action = Action {
+        cost: 0,
+        penalty: None,
+        limit: None,
+        geo_limit: ActionGeoLimit::Unlimited,
+        kind: ActionKind::Artillery(cfg.clone()),
+    };
+    let args = ActionArgs::Artillery(WithPos { cfg, pos });
+    let cmd = ActionCmd {
+        name: "request-fires".into(),
+        action,
+        args,
+    };
+    match ctx.db.start_action(
+        lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, Some(arg.fst), cmd,
+    ) {
+        Ok(_) => {
+            ctx.db.ephemeral.msgs().delete_mark(arg.fth);
+            ctx.db.ephemeral.panel_to_player(
+                &ctx.db.persisted,
+                10,
+                &arg.fst,
+                compact_str::format_compact!("fire mission requested"),
+            )
+        }
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("request fires failed: {e:?}"),
+        ),
+    }
+    Ok(())
+}
+
+fn side_has_artillery(ctx: &Context, side: Side) -> bool {
+    ctx.db
+        .persisted
+        .groups_by_side
+        .get(&side)
+        .map(|gids| {
+            gids.into_iter().any(|gid| {
+                ctx.db.persisted.groups.get(gid).map(|g| {
+                    g.units.into_iter().any(|uid| {
+                        ctx.db
+                            .persisted
+                            .units
+                            .get(uid)
+                            .map(|u| {
+                                !u.dead
+                                    && (u.tags.0.contains(UnitTag::Artillery)
+                                        || u.tags.0.contains(UnitTag::Launcher))
+                            })
+                            .unwrap_or(false)
+                    })
+                }).unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let mc = MissionCommands::singleton(lua)?;
     let world = World::singleton(lua)?;
     mc.remove_command_for_group(arg.snd, vec!["Actions>>".into()].into())?;
-    let mut root = mc.add_submenu_for_group(arg.snd, "Actions".into(), None)?;
+    let root = mc.add_submenu_for_group(arg.snd, "Actions".into(), None)?;
     let player = ctx
         .db
         .player(&arg.fst)
@@ -388,34 +733,50 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     struct Mk {
         id: MarkId,
         pos: Vector3,
-        count: usize,
     }
-    let mut marks: FxHashMap<String, Mk> = FxHashMap::default();
+    // Collect this player's own F10 map marks. Named marks (<=24 chars) are keyed
+    // by text; a text that appears more than once is dropped as ambiguous. Blank
+    // marks (the common case -- players usually don't type anything) are each
+    // given a synthetic "Mark N" label so they stay usable instead of colliding
+    // on the empty string and vanishing.
+    let mut named: FxHashMap<String, (Mk, usize)> = FxHashMap::default();
+    let mut blank: Vec<Mk> = Vec::new();
     for mk in world.get_mark_panels()? {
         let mk = mk?;
-        if let Some(unit) = mk.initiator.as_ref() {
-            let id = unit.object_id()?;
-            if let Some(ucid) = ctx.db.player_in_unit(false, &id) {
-                if ucid == arg.fst && mk.text.len() <= 24 {
-                    marks
-                        .entry(mk.text.clone())
-                        .or_insert_with(|| Mk {
-                            id: mk.id,
-                            pos: mk.pos.0,
-                            count: 0,
-                        })
-                        .count += 1;
-                }
-            }
+        let Some(unit) = mk.initiator.as_ref() else { continue };
+        let id = unit.object_id()?;
+        let Some(ucid) = ctx.db.player_in_unit(false, &id) else { continue };
+        if ucid != arg.fst {
+            continue;
+        }
+        let text = mk.text.trim();
+        if text.is_empty() {
+            blank.push(Mk { id: mk.id, pos: mk.pos.0 });
+        } else if text.len() <= 24 {
+            let e = named
+                .entry(String::from(text))
+                .or_insert_with(|| (Mk { id: mk.id, pos: mk.pos.0 }, 0));
+            e.1 += 1;
         }
     }
-    marks.retain(|_, mk| mk.count == 1);
+    let mut marks: FxHashMap<String, Mk> = FxHashMap::default();
+    for (text, (mk, n)) in named {
+        if n == 1 {
+            marks.insert(text, mk);
+        }
+    }
+    for (i, mk) in blank.into_iter().enumerate() {
+        marks.insert(String::from(format_compact!("Mark {}", i + 1)), mk);
+    }
+    // Mark lists page like every other list in this menu -- a player who has
+    // dropped a dozen marks would otherwise get a menu level DCS silently
+    // truncates.
     let add_pos = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
         for (text, mk) in &marks {
-            mc.add_command_for_group(
-                arg.snd,
+            p.command(
+                &mc,
                 text.clone(),
-                Some(root.clone()),
                 run_pos_action,
                 ArgQuad {
                     fst: arg.fst,
@@ -427,9 +788,24 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
         }
         Ok(())
     };
-    let add_pos_group = |mut root: GroupSubMenu, name: String, action: bool| -> Result<()> {
+    let add_pos_group = |root: GroupSubMenu, name: String, action: bool| -> Result<()> {
+        // Collect carrier group IDs if we're processing actions (e.g., CarrierWaypoint)
+        // by checking objectives_by_group to see which groups belong to carrier objectives
+        let mut carrier_group_ids: Vec<DbGid> = Vec::new();
+        if action {
+            info!("[ACTION_MENU] Collecting carrier groups for action '{}'. Total carrier objectives: {}",
+                  name, ctx.db.persisted.carrier_groups.len());
+            for (gid, oid) in ctx.db.persisted.objectives_by_group.into_iter() {
+                if ctx.db.persisted.carrier_groups.contains(oid) {
+                    carrier_group_ids.push(*gid);
+                    info!("[ACTION_MENU] Added carrier group {:?} from objective {:?} for action '{}'", gid, oid, name);
+                }
+            }
+            info!("[ACTION_MENU] Found {} carrier groups total for action '{}'", carrier_group_ids.len(), name);
+        }
+
         let iter: Box<dyn Iterator<Item = &DbGid>> = if action {
-            Box::new(ctx.db.persisted.actions.into_iter())
+            Box::new(ctx.db.persisted.actions.into_iter().chain(carrier_group_ids.iter()))
         } else {
             Box::new(
                 ctx.db
@@ -439,12 +815,8 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     .chain(ctx.db.persisted.troops.into_iter()),
             )
         };
-        let mut n = 0;
+        let mut p = Pager::new(arg.snd, root);
         for gid in iter {
-            if n >= 8 {
-                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-                n = 0;
-            }
             let group = ctx.db.group(gid)?;
             if group.side != player.side {
                 continue;
@@ -471,21 +843,38 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                         None
                     }
                 }
+                DeployKind::Objective { .. } | DeployKind::ObjectiveDeprecated if action => {
+                    // Check if this is a carrier group for CarrierWaypoint action
+                    if let Some(origin_id) = ctx.db.persisted.objectives_by_group.get(gid) {
+                        if let Ok(obj) = ctx.db.objective(origin_id) {
+                            // Check if this objective is a carrier group
+                            if ctx.db.persisted.carrier_groups.contains(origin_id) {
+                                Some(format_compact!("{} Carrier", obj.name).into())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
                 DeployKind::Crate { .. }
                 | DeployKind::Objective { .. }
-                | DeployKind::ObjectiveDeprecated => None,
+                | DeployKind::ObjectiveDeprecated
+                | DeployKind::DownedPilot { .. }
+                | DeployKind::Dismount { .. } => None,
             };
+            // Only a group that actually gets an entry claims a slot --
+            // counting the skipped ones used to open a "Next>>" page early.
             if let Some(key) = key {
-                let root = mc.add_submenu_for_group(
-                    arg.snd,
-                    format_compact!("{gid}({key})").into(),
-                    Some(root.clone()),
-                )?;
+                let groot = p.submenu(&mc, format_compact!("{gid}({key})").into())?;
+                let mut gp = Pager::new(arg.snd, groot);
                 for (text, mk) in &marks {
-                    mc.add_command_for_group(
-                        arg.snd,
+                    gp.command(
+                        &mc,
                         text.clone(),
-                        Some(root.clone()),
                         run_pos_group_action,
                         ArgPent {
                             fst: arg.fst,
@@ -497,22 +886,16 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     )?;
                 }
             }
-            n += 1;
         }
         Ok(())
     };
-    let add_objective = |mut root: GroupSubMenu, name: String| -> Result<()> {
-        let mut n = 0;
+    let add_objective = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
         for (oid, obj) in ctx.db.objectives() {
             if obj.owner == player.side {
-                if n >= 8 {
-                    root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-                    n = 0;
-                }
-                mc.add_command_for_group(
-                    arg.snd,
+                p.command(
+                    &mc,
                     obj.name.clone(),
-                    Some(root.clone()),
                     run_objective_action,
                     ArgTriple {
                         fst: arg.fst,
@@ -520,24 +903,160 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                         trd: *oid,
                     },
                 )?;
-                n += 1;
             }
         }
         Ok(())
     };
-    let mut n = 0;
-    for (name, action) in actions {
-        if n >= 8 {
-            root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-            n = 0;
+    let add_enemy_objective = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
+        for (oid, obj) in ctx.db.objectives() {
+            if obj.owner != player.side && obj.owner != Side::Neutral {
+                p.command(
+                    &mc,
+                    obj.name.clone(),
+                    run_enemy_objective_action,
+                    ArgTriple {
+                        fst: arg.fst,
+                        snd: name.clone(),
+                        trd: *oid,
+                    },
+                )?;
+            }
         }
+        Ok(())
+    };
+    // The tasking board. "Add Task" fans out to the configured task types
+    // (CAP / CAS / LOGISTICS / CAPTURE / SUPPLY / ...). A Position task then
+    // lists this player's own map marks; an objective task lists the
+    // objectives it can sensibly be posted against -- enemy held ones to
+    // capture, friendly ones to resupply. Both lists page at 8 entries,
+    // since DCS only shows about ten items per menu level.
+    let add_task_types = |root: GroupSubMenu, name: String, cfg: &TaskCfg| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
+        for typ in &cfg.types {
+            match typ.target {
+                TaskTarget::Position => {
+                    let tr = p.submenu(&mc, typ.name.clone())?;
+                    let mut tp = Pager::new(arg.snd, tr);
+                    for (text, mk) in &marks {
+                        tp.command(
+                            &mc,
+                            text.clone(),
+                            run_add_task,
+                            ArgPent {
+                                fst: arg.fst,
+                                snd: name.clone(),
+                                trd: LuaVec3(mk.pos),
+                                fth: mk.id,
+                                pnt: typ.name.clone(),
+                            },
+                        )?;
+                    }
+                }
+                TaskTarget::CaptureObjective | TaskTarget::SupplyObjective { .. } => {
+                    let capture = matches!(typ.target, TaskTarget::CaptureObjective);
+                    let mut objs: Vec<(ObjectiveId, CompactString)> = ctx
+                        .db
+                        .objectives()
+                        .filter(|(_, obj)| {
+                            if capture {
+                                obj.owner != player.side && obj.owner != Side::Neutral
+                            } else {
+                                obj.owner == player.side
+                            }
+                        })
+                        .map(|(oid, obj)| (*oid, CompactString::from(obj.name.as_str())))
+                        .collect();
+                    objs.sort_by(|a, b| a.1.cmp(&b.1));
+                    // Reuse the objectives menu's chunked base tree so a
+                    // 40 base map doesn't overflow one menu level.
+                    let page = p.page(&mc)?;
+                    objectives::add_base_list(
+                        &mc,
+                        arg.snd,
+                        &page,
+                        typ.name.as_str(),
+                        objs,
+                        run_add_objective_task,
+                        |oid| ArgQuad {
+                            fst: arg.fst,
+                            snd: name.clone(),
+                            trd: typ.name.clone(),
+                            fth: oid,
+                        },
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    };
+    // "Remove Task" lists the tasks currently on this player's coalition
+    // board -- there is nothing to pick on the map, the task already has a
+    // position. Objective tasks normally take themselves off the board when
+    // the coalition finishes the job, so this is for cancelling.
+    let add_open_tasks = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
+        let tasks: Vec<(TaskId, String)> = ctx
+            .db
+            .tasks(player.side)
+            .map(|t| (t.id, String::from(t.label().as_str())))
+            .collect();
+        for (id, label) in tasks {
+            p.command(
+                &mc,
+                label,
+                run_remove_task,
+                ArgTriple {
+                    fst: arg.fst,
+                    snd: name.clone(),
+                    trd: id,
+                },
+            )?;
+        }
+        Ok(())
+    };
+    // Bomber missions target whatever a JTAC is tracking, so the menu item
+    // expands into a list of friendly JTACs to direct the strike.
+    let add_bomber_jtacs = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
+        for jtac in ctx.jtac.jtacs() {
+            if jtac.side() != player.side {
+                continue;
+            }
+            let label = match jtac.callsign() {
+                Some(cs) => format_compact!("{cs}"),
+                None => format_compact!("{}", jtac.gid()),
+            };
+            let jt_root = p.submenu(&mc, label.into())?;
+            mc.add_command_for_group(
+                arg.snd,
+                "Yes, do it!".into(),
+                Some(jt_root.clone()),
+                call_bomber,
+                ArgTriple {
+                    fst: jtac.gid(),
+                    snd: arg.fst,
+                    trd: name.clone(),
+                },
+            )?;
+        }
+        Ok(())
+    };
+    let mut p = Pager::new(arg.snd, root);
+    for (name, action) in actions {
         let title = if action.cost > 0 {
             String::from(format_compact!("{name}({} pts)", action.cost))
         } else {
             name.clone()
         };
         match &action.kind {
-            ActionKind::Bomber(_) | ActionKind::LogisticsTransfer(_) => (),
+            // Adds no entry, so it must not consume one -- counting it here
+            // used to push a "Next>>" page open several slots early.
+            ActionKind::LogisticsTransfer(_) => continue,
+            ActionKind::Bomber(_) => {
+                let root = p.submenu(&mc, title)?;
+                add_bomber_jtacs(root.clone(), name.clone())?
+            }
             ActionKind::AttackersWaypoint
             | ActionKind::SeadWaypoint
             | ActionKind::AwacsWaypoint
@@ -545,12 +1064,13 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             | ActionKind::CruiseMissileWaypoint
             | ActionKind::FighersWaypoint
             | ActionKind::TankerWaypoint
-            | ActionKind::DroneWaypoint => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+            | ActionKind::DroneWaypoint
+            | ActionKind::CarrierWaypoint => {
+                let root = p.submenu(&mc, title)?;
                 add_pos_group(root.clone(), name.clone(), true)?
             }
             ActionKind::Move(_) => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let root = p.submenu(&mc, title)?;
                 add_pos_group(root.clone(), name.clone(), false)?
             }
             ActionKind::Attackers(_)
@@ -562,16 +1082,60 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             | ActionKind::Fighters(_)
             | ActionKind::Tanker(_)
             | ActionKind::Paratrooper(_)
-            | ActionKind::Nuke(_) => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+            | ActionKind::Nuke(_)
+            | ActionKind::Artillery(_)
+            | ActionKind::Recon(_) => {
+                let root = p.submenu(&mc, title)?;
                 add_pos(root.clone(), name.clone())?
             }
+            ActionKind::CarrierRepair | ActionKind::CarrierRespawn => {
+                let _root = p.submenu(&mc, title)?;
+                // Carrier repair/respawn actions handled via objective-based menus
+            }
             ActionKind::LogisticsRepair(_) => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let root = p.submenu(&mc, title)?;
                 add_objective(root.clone(), name.clone())?
             }
+            ActionKind::NavalCruiseMissileStrike(_) => {
+                let root = p.submenu(&mc, title)?;
+                add_enemy_objective(root.clone(), name.clone())?
+            }
+            ActionKind::AddTask(cfg) => {
+                let root = p.submenu(&mc, title)?;
+                add_task_types(root.clone(), name.clone(), cfg)?
+            }
+            ActionKind::RemoveTask(_) => {
+                let root = p.submenu(&mc, title)?;
+                add_open_tasks(root.clone(), name.clone())?
+            }
         }
-        n += 1;
+    }
+    // Global artillery system: auto-append "Request Fires" if cfg.artillery is set
+    // and the player's side has alive artillery groups — no per-unit action config needed.
+    if ctx.db.ephemeral.cfg.artillery.is_some() {
+        if side_has_artillery(ctx, player.side) {
+            let arty_root = p.submenu(&mc, String::from("Request Fires"))?;
+            let mut ap = Pager::new(arg.snd, arty_root);
+            for (text, mk) in &marks {
+                ap.command(
+                    &mc,
+                    text.clone(),
+                    run_global_artillery,
+                    ArgQuad {
+                        fst: arg.fst,
+                        snd: arg.trd,
+                        trd: LuaVec3(mk.pos),
+                        fth: mk.id,
+                    },
+                )?;
+            }
+        }
+    }
+    // AI helo missions are player-triggered dispatches like every other action,
+    // so they live here rather than in the Objectives report menu.
+    if ctx.db.ephemeral.cfg.helo_insertion.is_some() {
+        let page = p.page(&mc)?;
+        objectives::add_helo_mission_menu(&mc, ctx, lua, arg.snd, &page, player.side)?;
     }
     ctx.subscribed_action_menus.insert(arg.trd);
     Ok(())

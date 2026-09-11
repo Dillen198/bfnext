@@ -19,7 +19,7 @@ use bfprotocols::{
 use chrono::{Duration, prelude::*};
 use compact_str::{CompactString, format_compact};
 use dcso3::{
-    HooksLua, MizLua, String,
+    HooksLua, LuaEnv, MizLua, String,
     coalition::Side,
     net::{Net, PlayerId},
 };
@@ -137,6 +137,100 @@ fn lives_command(ctx: &mut Context, id: PlayerId) -> Result<()> {
     Ok(())
 }
 
+fn gci_command(ctx: &mut Context, id: PlayerId, arg: &str) {
+    use crate::ewr::EwrUnits;
+    let Some(ifo) = ctx.connected.get(&id) else { return };
+    let ucid = ifo.ucid.clone();
+    let reply = |ctx: &mut Context, m: CompactString| {
+        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), m);
+    };
+    match arg.trim().to_lowercase().as_str() {
+        "" | "status" => {
+            let (enabled, units, refm) = ctx.ewr.gci_prefs(&ucid);
+            let auto = ctx.ewr.gci_auto(&ucid);
+            let u = match units {
+                Some(EwrUnits::Metric) => "metric",
+                Some(EwrUnits::Imperial) => "imperial",
+                None => "server default",
+            };
+            let r = match refm {
+                Some(0) => "BRAA (own jet)",
+                Some(1) => "bullseye",
+                Some(2) => "clock",
+                _ => "server default",
+            };
+            reply(
+                ctx,
+                format_compact!(
+                    "GCI voice: {} | auto callouts: {} | units: {} | reference: {}
+  -gci on | off              GCI on or off entirely
+  -gci callouts | quiet      unprompted calls on or off
+  -gci metric | imperial     spoken units
+  -gci braa | bulls | clock   position reference
+  -gci auto                  follow the server defaults",
+                    if enabled { "ON" } else { "OFF" },
+                    if auto { "ON" } else { "OFF" },
+                    u,
+                    r
+                ),
+            );
+        }
+        "on" | "off" => {
+            let want_on = arg.trim().eq_ignore_ascii_case("on");
+            let now = ctx.ewr.gci_prefs(&ucid).0;
+            if now != want_on {
+                ctx.ewr.gci_toggle(&ucid);
+            }
+            reply(
+                ctx,
+                format_compact!("GCI voice calls {}", if want_on { "enabled" } else { "disabled" }),
+            );
+        }
+        "metric" => {
+            ctx.ewr.gci_set_units(&ucid, Some(EwrUnits::Metric));
+            reply(ctx, "GCI calls will use metric units".into());
+        }
+        "imperial" => {
+            ctx.ewr.gci_set_units(&ucid, Some(EwrUnits::Imperial));
+            reply(ctx, "GCI calls will use imperial units".into());
+        }
+        "braa" | "self" => {
+            ctx.ewr.gci_set_reference(&ucid, Some(0));
+            reply(ctx, "GCI calls will use BRAA from your aircraft".into());
+        }
+        "bulls" | "bullseye" => {
+            ctx.ewr.gci_set_reference(&ucid, Some(1));
+            reply(ctx, "GCI calls will use bullseye reference".into());
+        }
+        "clock" => {
+            ctx.ewr.gci_set_reference(&ucid, Some(2));
+            reply(ctx, "GCI calls will use clock position".into());
+        }
+        "auto" | "default" => {
+            ctx.ewr.gci_set_units(&ucid, None);
+            ctx.ewr.gci_set_reference(&ucid, None);
+            reply(ctx, "GCI calls will use the server default units and reference".into());
+        }
+        // Unprompted calls. Separate from on/off: with callouts off the
+        // controller still answers when you key up, it just never speaks first.
+        "callouts" | "callouts on" | "loud" => {
+            ctx.ewr.gci_set_auto(&ucid, true);
+            reply(ctx, "GCI will call you unprompted".into());
+        }
+        "callouts off" | "quiet" | "silent" => {
+            ctx.ewr.gci_set_auto(&ucid, false);
+            reply(
+                ctx,
+                "GCI will stay quiet unless you call it - key up and ask for a bogey dope or picture"
+                    .into(),
+            );
+        }
+        other => {
+            reply(ctx, format_compact!("unknown -gci option '{other}' (try: on, off, metric, imperial, braa, bulls, clock, auto, callouts, quiet)"));
+        }
+    }
+}
+
 fn admin_command(ctx: &mut Context, id: PlayerId, cmd: &str) {
     let ifo = match ctx.connected.get(&id) {
         Some(ifo) => ifo,
@@ -185,6 +279,34 @@ fn time_command(ctx: &mut Context, id: PlayerId, now: DateTime<Utc>) {
     }
 }
 
+fn weather_command(ctx: &mut Context, lua: HooksLua, id: PlayerId) {
+    if let Some(bw) = ctx.bot_weather {
+        let cover = if bw.cloud_density > 0.0 { format!("{:.0}/10", bw.cloud_density) } else { "clear".to_string() };
+        let msg = format!(
+            "SERVER WEATHER\nTemp: {:.0}\u{b0}C / {:.0}\u{b0}F\nSurface wind: {:03}\u{b0} at {:.0} kt\nVisibility: {:.0} km / {:.0} SM\nClouds: base {:.0} ft AGL, {}\nQNH: {:.0} hPa / {:.2} inHg",
+            bw.temp_c, bw.temp_c * 1.8 + 32.0,
+            bw.wind_from_deg as u32, bw.wind_speed_kts,
+            bw.visibility_m / 1000.0, bw.visibility_m / 1609.34,
+            bw.cloud_base_m * 3.281, cover,
+            bw.qnh_hpa, bw.qnh_hpa / 33.8639,
+        );
+        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
+        return;
+    }
+    let Some(ifo) = ctx.connected.get(&id) else { return };
+    let Some(player) = ctx.db.player(&ifo.ucid) else { return };
+    let Some(slot) = player.current_slot.as_ref().map(|(slot, _)| *slot) else {
+        ctx.db.ephemeral.msgs().send(
+            MsgTyp::Chat(Some(id)),
+            "You must be in a slot to request a weather report",
+        );
+        return;
+    };
+    if let Err(e) = crate::atis::send_full_weather(MizLua(lua.inner()), slot) {
+        error!("full weather report failed for {:?}: {:?}", id, e);
+    }
+}
+
 fn balance_command(ctx: &mut Context, id: PlayerId) {
     if let Some(ifo) = ctx.connected.get(&id) {
         if let Some(player) = ctx.db.player(&ifo.ucid) {
@@ -194,6 +316,83 @@ fn balance_command(ctx: &mut Context, id: PlayerId) {
                 format_compact!("You have {points} points"),
             );
         }
+    }
+}
+
+fn status_command(ctx: &mut Context, id: PlayerId) {
+    use std::fmt::Write;
+    let Some(ifo) = ctx.connected.get(&id) else { return };
+    let Some(player) = ctx.db.player(&ifo.ucid) else { return };
+    let side = player.side;
+    let points = player.points;
+    let streak = player.kill_streak;
+    let total_kills = player.total_kills;
+
+    // Count objective ownership for both sides
+    let (mut blue_owned, mut red_owned) = (0u32, 0u32);
+    for (_, obj) in ctx.db.objectives() {
+        match obj.owner {
+            dcso3::coalition::Side::Blue => blue_owned += 1,
+            dcso3::coalition::Side::Red => red_owned += 1,
+            _ => {}
+        }
+    }
+
+    // Count active convoys for the player's side
+    let convoy_count = ctx.db.convoy_count_for_side(side);
+
+    let mut msg = CompactString::new("");
+    let _ = write!(
+        msg,
+        "=== CAMPAIGN STATUS ===\nSide: {:?} | Points: {} | Streak: {} | Career Kills: {}\nObjectives — Blue: {} | Red: {}\nActive {:?} Convoys: {}",
+        side, points, streak, total_kills,
+        blue_owned, red_owned,
+        side, convoy_count
+    );
+    ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
+}
+
+/// `-brief` -- the condensed situational briefing on demand, the same text the
+/// slot-entry panel shows. The full paged report is F10 > Info > Situation.
+fn brief_command(ctx: &mut Context, lua: HooksLua, id: PlayerId) {
+    let Some(ifo) = ctx.connected.get(&id) else { return };
+    let ucid = ifo.ucid;
+    let Some(side) = ctx.db.player(&ucid).map(|p| p.side) else {
+        ctx.db.ephemeral.msgs().send(
+            MsgTyp::Chat(Some(id)),
+            " you aren't registered yet -- type blue or red first",
+        );
+        return;
+    };
+    // Chat runs in the hooks environment; the briefing reads the DCS
+    // coord/weather/timer singletons, which live in the mission one. Same
+    // crossing `-weather` already does.
+    let lua = dcso3::MizLua(lua.inner());
+    let from = ctx
+        .db
+        .player(&ucid)
+        .and_then(|p| p.current_slot.as_ref().map(|(s, _)| s.clone()))
+        .and_then(|slot| crate::menu::player_world_pos(ctx, &slot));
+    let rep = crate::situation::build(
+        ctx,
+        lua,
+        side,
+        crate::situation::Opts { include_map: false, from },
+    );
+    let panel_tasks = ctx
+        .db
+        .ephemeral
+        .cfg
+        .situation_briefing
+        .as_ref()
+        .map(|c| c.panel_tasks)
+        .unwrap_or(3);
+    let text = crate::situation::render_panel(&rep, panel_tasks, None);
+    for line in text.lines() {
+        ctx.db
+            .ephemeral
+            .msgs()
+            .send(MsgTyp::Chat(Some(id)), format_compact!(" {line}"));
     }
 }
 
@@ -278,6 +477,7 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                         moved_by: _,
                         cost_fraction,
                         origin,
+                        jtac: _,
                     } => {
                         let player = player.clone();
                         let points = (spec.cost as f32 / 2.).ceil() as i32;
@@ -306,12 +506,19 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                             },
                         }
                     }
+                    DeployKind::DownedPilot { .. } => {
+                        reply!("can't delete a downed pilot this way")
+                    }
+                    DeployKind::Dismount { .. } => {
+                        reply!("can't delete a dismount group this way")
+                    }
                     DeployKind::Troop {
                         player,
                         spec,
                         moved_by: _,
                         origin,
                         cost_fraction,
+                        ..
                     } => {
                         let player = player.clone();
                         let points = (spec.cost as f32 / 2.).ceil() as i32;
@@ -435,6 +642,31 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
             )),
             ActionKind::TankerWaypoint => Some(format_compact!(
                 "{name}: <group> <key> | Move a tanker to key. Group is the tanker group. cost {}",
+                action.cost
+            )),
+            ActionKind::CarrierWaypoint => None,
+            ActionKind::CarrierRepair => None,
+            ActionKind::CarrierRespawn => None,
+            ActionKind::NavalCruiseMissileStrike(_) => None,
+            ActionKind::Artillery(_) => Some(format_compact!(
+                "{name}: <key> | Request artillery fire support at key, a mark point. cost {}",
+                action.cost
+            )),
+            ActionKind::Recon(_) => Some(format_compact!(
+                "{name}: <key> | Dispatch a recon flight over key, a mark point. cost {}",
+                action.cost
+            )),
+            ActionKind::AddTask(c) => Some(format_compact!(
+                "{name}: <type> <key> | Post a task at key, a mark point. types: {}. cost {}",
+                c.types
+                    .iter()
+                    .map(|t| t.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                action.cost
+            )),
+            ActionKind::RemoveTask(_) => Some(format_compact!(
+                "{name}: <task id> | Remove a task from the coalition board. cost {}",
                 action.cost
             )),
         };
@@ -741,12 +973,16 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
         " -switch <color>: side switch to <color>",
         " -lives: display your current lives",
         " -time: how long until server restart",
+        " -weather: full weather report for your slot, including winds/temp aloft",
         " -balance: show your points balance",
+        " -status: show campaign status (objectives, convoys, streak)",
+        " -brief: auto-generated situational briefing (full report: F10 > Info > Situation)",
         " -transfer <amount> [<player> | objective:<objective>]: transfer points to another player or objective",
         " -delete <groupid>: delete a group you deployed for a partial refund",
         " -action <name> <args>: perform an action, -action help for a list of actions",
         " -bind <token>: bind your ucid to the specified token (for the web gui)",
         " -jtac <jtid> <cmd>",
+        " -gci [on|off|metric|imperial|auto]: control your live GCI voice calls",
         " -help: show this help message",
     ] {
         ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), cmd)
@@ -778,14 +1014,29 @@ pub(super) fn process(
     } else if msg.eq_ignore_ascii_case("-time") {
         time_command(ctx, id, now);
         Ok("".into())
+    } else if msg.eq_ignore_ascii_case("-weather") {
+        weather_command(ctx, lua, id);
+        Ok("".into())
     } else if let Some(msg) = msg.strip_prefix("-admin ") {
         admin_command(ctx, id, msg);
         Ok("".into())
     } else if let Some(msg) = msg.strip_prefix("-action ") {
         action_command(ctx, id, msg);
         Ok("".into())
+    } else if msg.eq_ignore_ascii_case("-gci") {
+        gci_command(ctx, id, "");
+        Ok("".into())
+    } else if let Some(s) = msg.strip_prefix("-gci ") {
+        gci_command(ctx, id, s);
+        Ok("".into())
     } else if msg.starts_with("-balance") {
         balance_command(ctx, id);
+        Ok("".into())
+    } else if msg.starts_with("-status") {
+        status_command(ctx, id);
+        Ok("".into())
+    } else if msg.starts_with("-brief") {
+        brief_command(ctx, lua, id);
         Ok("".into())
     } else if let Some(s) = msg.strip_prefix("-transfer ") {
         transfer_command(ctx, id, s);

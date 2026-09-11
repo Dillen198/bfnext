@@ -1,0 +1,343 @@
+# Fowl Engine DCSServerBot Plugin Configuration
+# Rename this file to `fowlengine.yaml` and place it in your DCSServerBot `config/plugins/` directory.
+
+DEFAULT:
+  # ---------------------------------------------
+  # Presentation Configuration
+  # ---------------------------------------------
+  # The brand name to show in Discord Embeds (e.g. "Vector Strike", "Desert Fury", "Fowl Engine").
+  brand_name: "Vector Strike"
+
+  # ---------------------------------------------
+  # Channel Configurations
+  # ---------------------------------------------
+  # SINGLE DCS SERVER: set them here in DEFAULT and you're done.
+  #
+  # SEVERAL DCS SERVERS behind one bfdb: put every channel below in that
+  # server's OWN per-server section instead (see the bottom of this file).
+  # Anything left in DEFAULT is inherited by EVERY server -- so both post
+  # their campaign status to the same channel and each overwrites the other's
+  # embed, which reads as the bot duplicating itself. The plugin logs a
+  # warning at startup for any of these that two servers share.
+  #
+  # Guild-wide and shared on purpose (always fine in DEFAULT):
+  #   welcome_channel  -- fires on a Discord join, not tied to a DCS server
+  #                       (welcome_server picks which one it describes)
+  #   ops_channel      -- bfdb relaunches / staged binary swaps; one bfdb
+  # The ID of the Discord channel where the live campaign status embed will be updated.
+  status_channel: 123456789012345678
+  
+  # The ID of the Discord channel where killstreak achievements (Ace, Unstoppable,
+  # God of War) will be announced. Detected by polling /api/kills every ~20s and
+  # tracking consecutive kills per pilot (resets when they die); no admin auth needed.
+  achievements_channel: 123456789012345678
+
+  # The ID of the Discord channel where objective captures, neutrals, and
+  # ready-to-capture alerts are sent. Detected by polling /api/objectives every
+  # ~20s and diffing owner/health against the previous poll; no admin auth needed.
+  alerts_channel: 123456789012345678
+
+  # (Optional) When true (the default), the bot auto-creates "Blue Ops" and
+  # "Red Ops" threads under alerts_channel and routes alerts by relevance:
+  # the defending faction gets a "defend it!" warning, the opposing faction
+  # gets an "opportunity!" alert, for the same ready-to-capture event.
+  # Captures post to both. Set to false to post everything to alerts_channel
+  # directly instead. Requires the bot to have "Create Public Threads" and
+  # "Send Messages in Threads" permission on alerts_channel.
+  use_faction_threads: true
+
+  # (Optional) The ID of the Discord channel where the live bflib engine log will be
+  # relayed in real time. A single message is continuously edited with a rolling tail,
+  # and ERROR/WARN lines are additionally posted as standalone alerts. Leave unset to
+  # disable the relay entirely. Requires admin_username/admin_password below.
+  engine_log_channel: 123456789012345678
+
+  # (Optional) The ID of the Discord channel where a live server performance/hardware
+  # embed will be posted and edited every 5 minutes: CPU/RAM/GPU/disk usage, temps,
+  # and the DCS mission script's own frame-time breakdown (from bfdb's
+  # /api/admin/perf). Leave unset to disable. Requires admin_username/admin_password
+  # below, and bfdb must be running on the same machine it's reporting on.
+  perf_channel: 123456789012345678
+
+  # (Optional) Consolidated server-info embed (auto-updated every ~2 min):
+  # connect address/port/password, DCS + mission status, next rotation, GCI
+  # frequencies, and deploy status (engine build sha + any staged update).
+  # Separate from status_channel (campaign) and perf_channel (hardware).
+  server_info_channel: 123456789012345678
+
+  # (Optional) The bot tails bfdb's /ws/gci and posts every GCI (AWACS) call
+  # here as text, prefixed 🔵/🔴 by coalition. Replaces gci.discord_webhook_url.
+  # Requires admin_username/admin_password (the ws is admin-gated).
+  gci_transcript_channel: 123456789012345678
+
+  # (Optional) The ID of the Discord channel where a mission-briefing welcome
+  # message is posted whenever someone joins the Discord server. Pulls the
+  # active scenario, round duration, and current front (objective counts per
+  # faction) from bfdb, same as the live status embed. Leave unset to disable.
+  welcome_channel: 123456789012345678
+
+  # (Optional) With several DCS servers behind one bfdb, which one the welcome
+  # briefing describes -- the DCS server name, matching an instance's
+  # `dcs_server_name` below. Unset -> bfdb's default instance.
+  # welcome_server: "[VS] Vector Strike - Vector Strike | Dynamic Campaign PVP Modern"
+
+  # (Optional) The line posted above the briefing embed. {mention} and
+  # {brand_name} are substituted.
+  welcome_message: "Welcome aboard, {mention}! 🪖"
+
+  # (Optional) Freeform briefing text shown inside the welcome embed
+  # (rules pointer, how to pick a faction, useful commands, etc).
+  welcome_briefing: >-
+    Read the rules, pick your faction, and check the dashboard for your pilot
+    profile and the live map.
+
+    Use /vs dashboard for your secure web login, /vs objectives for the full
+    objective list, and /vs stats to track your kills and captures.
+
+  # ---------------------------------------------
+  # Web Dashboard Configurations
+  # ---------------------------------------------
+  # The base URL to your bfweb or custom Fowl Engine web dashboard.
+  dashboard_url: "https://bfweb.your-domain.com"
+  
+  # A highly secure, secret string used to generate auto-login tokens.
+  # Ensure this matches the secret used in your web backend to verify the HMAC tokens!
+  dashboard_secret: "REPLACE_WITH_A_LONG_SECURE_RANDOM_STRING_HERE"
+  
+  # ---------------------------------------------
+  # Fowl Engine DB (bfdb) Integration
+  # ---------------------------------------------
+  # The base URL to your Fowl Engine REST API (bfdb). ONE bfdb serves every
+  # DCS server on the box -- see the `bfdb.instances:` block below. The plugin
+  # tags each request with `?server=<this DCS server's name>` so bfdb answers
+  # for the right one, which is why every instance needs `dcs_server_name` set.
+  api_url: "http://localhost:8765"
+  # (Optional) Direct path to the mission's ODFv2_CFG json file.
+  # If specified, the bot will parse deployables directly from this file
+  # rather than querying the bfdb API over HTTP.
+  cfg_path: "C:\\path\\to\\your\\miz\\ODFv2_CFG"
+
+  # Admin username/password for bfdb's local-login (matches bfdb's own
+  # --admin-username/--admin-password startup flags). Required for the
+  # engine_log_channel relay above (since /ws/engine-logs is admin-only) and
+  # for the commander terminal / spawn_deployable commands (POST /api/commander/spawn
+  # is also admin-only -- these always fail without it).
+  admin_username: ""
+  admin_password: ""
+
+  # (Optional) Discord channel for ops notices: bfdb relaunched, a staged
+  # engine binary swapped in, etc. Falls back to alerts_channel if unset,
+  # otherwise silent.
+  ops_channel: 123456789012345678
+
+  # ---------------------------------------------
+  # bfdb + netidx process management  (replaces bfsystem.ps1)
+  # ---------------------------------------------
+  # When manage: true the plugin OWNS bfdb.exe and the netidx resolver as
+  # child processes of the bot: it renders gci.json from the `gci:` block
+  # below, builds bfdb's arg list from these keys, starts everything, health-
+  # checks bfdb (GET /api/health) and relaunches it on crash/hang, and swaps
+  # in a staged bfdb.exe on (re)start. bfsystem.ps1 is then only a manual
+  # fallback. Requires the bot to run on the same Windows machine as bfdb.
+  bfdb:
+    manage: true
+    exe: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\bfdb.exe"
+    # everything below (db, gci.json, staging, ...) lives under home:
+    home: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1"
+    staging_dir: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\_staging"
+    listen_address: "0.0.0.0:8880"
+    site_address: "0.0.0.0:8766"
+    netidx_base: "/local/fowl/campaign"          # blank -> run bfdb offline, no resolver
+    sortie: ""                                   # -> bfdb --sortie; blank = auto-detect (set to e.g. "ODFv2" only if RPCs time out)
+    netidx_resolver_config: "E:\\Github\\bfnext-vector\\netidx-resolver.json"
+    own_resolver: false                          # true -> also stop the resolver on bot shutdown
+    engine_config: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\ODFv2_CFG"
+    config: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\campaign.json"
+    stats_jsonl: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats.jsonl"
+    stats_dir: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats"
+    log_file: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\bfdb.log"
+    intel_dir: ""                                # optional --intel-dir
+    admin_username: "admin"                      # -> bfdb --admin-username
+    admin_password: ""                           # -> bfdb --admin-password (falls back to the top-level admin_password)
+    cors_origins:
+      - "https://vectorstrike.org"
+      - "https://dashboard.vectorstrike.org"
+    discord_redirect_uri: "https://api.vectorstrike.org/api/auth/callback"
+    discord_guild_id: ""
+    discord_admin_role_id: ""
+    discord_client_id: ""                        # secret -- bfdb --discord-client-id
+    discord_client_secret: ""                    # secret
+    dcsserverbot_url: "http://127.0.0.1:9876/stats"   # must include the restapi.yaml `prefix`
+    dcsserverbot_api_key: ""                     # secret -- X-API-Key from restapi.yaml
+    health_failures: 3                           # failed checks before a relaunch
+    hung_relaunch_secs: 600                      # if the process is alive but not answering
+    restart_cooldown: 120                        # min seconds between relaunch attempts
+
+    # -------------------------------------------------------------------
+    # MULTIPLE DCS SERVERS ON ONE MACHINE
+    # -------------------------------------------------------------------
+    # Leave `instances:` out entirely to keep the single-server shape above
+    # (netidx_base / stats_jsonl / stats_dir / engine_config / sortie / srs_url
+    # describe the one and only server).
+    #
+    # List it, and those flat keys are IGNORED: every DCS server gets its own
+    # entry here instead, and procman renders <home>\instances.json plus one
+    # <home>\gci.<id>.json per instance and starts bfdb with --instances.
+    # bfdb then serves one dashboard, one site and one wiki off one database,
+    # with an instance selector in the dashboard header.
+    #
+    # Hard rules bfdb enforces at startup (it refuses to start otherwise):
+    #   * `netidx_base` must be unique per instance -- and must match the
+    #     `netidx_base` in THAT instance's engine CFG.
+    #   * `export_port` must be unique per instance -- and must match BF_PORT
+    #     (or Scripts/bf_export_port.lua) in that instance's Export.lua.
+    #   * `stats_jsonl` must be unique per instance.
+    # And each DCS instance needs its own SRS port, in nodes.yaml and in the
+    # `gci:` override below.
+    #
+    # `id` becomes part of the DB (rounds are tagged with it) and appears in
+    # dashboard URLs -- pick it once and never change it.
+    # `dcs_server_name` MUST equal the DCSServerBot server name, or this plugin
+    # cannot map a Discord command on that server to the right instance.
+    #
+    # instances:
+    #   - id: vs1
+    #     label: "Vector Strike #1"
+    #     dcs_server_name: "[VS] Vector Strike - Vector Strike | Dynamic Campaign PVP Modern"
+    #     netidx_base: "/local/fowl/vs1"
+    #     sortie: ""
+    #     stats_jsonl: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\Logs\stats.jsonl"
+    #     stats_dir:   "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\Logs\stats"
+    #     engine_config: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\ODFv2_CFG"
+    #     export_port: 42001
+    #     srs_url: "http://127.0.0.1:5002"
+    #     gci:                     # merged OVER the top-level `gci:` block
+    #       srs_port: 5002
+    #   - id: vs2
+    #     label: "Vector Strike #2"
+    #     dcs_server_name: "[VS] Vector Strike #2 | Training"
+    #     # public: false marks a test/staging server: hidden from the server
+    #     # selector for everyone but a dashboard admin, and its rounds are
+    #     # left out of the all-time leaderboard and pilot profiles. Omit (or
+    #     # true) for a real public server.
+    #     public: false
+    #     netidx_base: "/local/fowl/vs2"
+    #     sortie: ""
+    #     stats_jsonl: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_2\Logs\stats.jsonl"
+    #     stats_dir:   "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_2\Logs\stats"
+    #     engine_config: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_2\ODFv2_CFG"
+    #     export_port: 42002
+    #     srs_url: "http://127.0.0.1:5003"
+    #     gci:
+    #       srs_port: 5003
+    #       blue_freq_mhz: 253.0
+    #       red_freq_mhz: 254.0
+    #
+    # Which instance answers a request that names none (the dashboard's initial
+    # view). Defaults to the first entry.
+    # default_instance: vs1
+
+  # ---------------------------------------------
+  # Live GCI  (rendered to <bfdb.home>\gci.json on every bfdb (re)start)
+  # ---------------------------------------------
+  # Proactive AWACS-style SRS callouts. Keys map 1:1 to bfdb/src/gci.rs
+  # GciConfig (see gci.sample.json for what each does). Omit a key to take
+  # bfdb's default; empty strings are dropped. bfdb only reads gci.json at
+  # startup, so after editing these run /feops bfdb_restart (or wait for the
+  # next rotation). Set enabled: false to delete gci.json and run GCI off.
+  # With `bfdb.instances:` set, this block is the SHARED baseline and each
+  # instance's own `gci:` is merged over it -- so put piper/whisper paths,
+  # units, brevity toggles here once and only the per-server bits (srs_port,
+  # frequencies, callsigns, EAM passwords) in the instance overrides.
+  gci:
+    enabled: true
+    srs_host: "127.0.0.1"
+    srs_port: 5002
+    opus_dll_path: "C:\\Program Files\\DCS-SimpleRadio-Standalone\\opus.dll"
+    blue_freq_mhz: 251.0
+    red_freq_mhz: 252.0
+    modulation: "AM"
+    blue_controller_callsign: "Magic"
+    red_controller_callsign: "Overlord"
+    blue_eam_password: ""      # secret
+    red_eam_password: ""       # secret
+    units: "imperial"
+    reference: "braa"
+    sam_threat_calls: true
+    splash_calls: true
+    piper_exe: ""
+    whisper_exe: ""
+    whisper_model: ""
+    # discord_webhook_url: ""  # legacy -- prefer gci_transcript_channel above (bot-managed)
+
+  # ---------------------------------------------
+  # Staged engine binaries  (drag-and-drop, applied on the next DCS restart)
+  # ---------------------------------------------
+  # Drop `bflib.dll` or `bfdb.exe` into the bot's admin channel: it's staged
+  # under bfdb.staging_dir and swapped in (after a timestamped backup) on the
+  # next scheduled DCS restart -- bflib.dll by the BFBinaries extension (see
+  # nodes.yaml + extensions/bfbinaries), bfdb.exe by this plugin's procman.
+  # Control with /feops stage_status | stage_cancel | stage_apply, and swap
+  # bfdb by hand with /feops bfdb_restart. The BFBinaries extension needs
+  # bflib_dll_path + staging_dir set in nodes.yaml (NOT here).
+
+  # ---------------------------------------------
+  # Localization & Message Formats
+  # ---------------------------------------------
+  # Customize the text used by the bot when posting alerts and achievements.
+  messages:
+    capture: "🏆 **[CAPTURED]** {message}"
+    neutral: "🏳️ **[NEUTRAL]** {message}"
+    ready_to_capture: "⏳ **[READY TO CAPTURE]** {message}"
+    capture_opportunity: "🎯 **[OPPORTUNITY]** {message}"
+    achievement: "🎖️ **[ACHIEVEMENT]** {message}"
+    alert: "🚨 **[ALERT]** {message}"
+    
+  # ---------------------------------------------
+  # Discord Role Syncing
+  # ---------------------------------------------
+  # Automatically assigns Discord roles based on a pilot's total in-game score/points.
+  # Map your EXACT Discord role names to the minimum point threshold required.
+  rank_thresholds:
+    "Pilot Officer": 0
+    "Flight Lieutenant": 500
+    "Squadron Leader": 2000
+    "Wing Commander": 5000
+    "Group Captain": 10000
+
+# ===================================================================
+# Per-DCS-server overrides.  These merge over DEFAULT above.
+# The section key must be the DCSServerBot server name (config/servers.yaml).
+# ===================================================================
+#
+# With several instances, give EACH server its own channels here and leave
+# them out of DEFAULT entirely. An unset key then simply means "this server
+# doesn't post that feed", instead of silently falling back to another
+# server's channel.
+#
+# '[VS] Vector Strike #1':
+#   # Deployables for the commander terminal, from THIS server's CFG.
+#   cfg_path: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\ODFv2_CFG"
+#   bfbinaries:
+#     bflib_dll_path: 'C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\Scripts\bflib.dll'
+#   status_channel: 100000000000000001
+#   alerts_channel: 100000000000000002
+#   achievements_channel: 100000000000000003
+#   engine_log_channel: 100000000000000004
+#   perf_channel: 100000000000000005
+#   gci_transcript_channel: 100000000000000006
+#   server_info_channel: 100000000000000007
+#
+# '[VS] Vector Strike #2 | Training':
+#   cfg_path: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\ODFv2_CFG"
+#   bfbinaries:
+#     bflib_dll_path: 'C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_2\Scripts\bflib.dll'
+#   # Its own channels -- never reuse another server's.
+#   status_channel: 200000000000000001
+#   alerts_channel: 200000000000000002
+#   achievements_channel: 200000000000000003
+#   # null (or omitted) = this server doesn't post that feed at all.
+#   engine_log_channel: null
+#   perf_channel: null
+#   gci_transcript_channel: null
+#   server_info_channel: null
