@@ -4,6 +4,14 @@ Deploy long-range cruise missiles for precision strikes on high-value targets.
 
 ![Bomber launching a long-range cruise missile at a high-value target](/api/wiki/images/7fc9ec2b-79a6-46d1-b61f-27dd1a313ee9)
 
+> **Availability**: the ALCM platform is an optional action. It is **not on the
+> live mission's action list** — if you don't see an ALCM entry under
+> `Actions>>`, this server isn't running it. The page documents how it works
+> where it is enabled. For long-range fires on the live mission, use
+> **Naval Strike** ([Carrier Operations](../gameplay/carrier-ops.md)), the
+> **B-1B / Tu-22M3** bomber action, or
+> [artillery and missile TELs](./artillery.md).
+
 ## Overview
 
 ALCMs provide:
@@ -16,10 +24,10 @@ ALCMs provide:
 
 **Via Actions Menu**:
 ```
-F10 → Actions → Deploy ALCM → [Location]
+F10 → Actions>> → [ALCM action] → [Location]
 ```
 
-**Cost**: Typically 1000-3000 points
+**Cost**: shown in the menu label, as with every action.
 
 **Unit**: Usually bomber/strike aircraft (Tu-95, B-52, etc.)
 
@@ -85,21 +93,21 @@ F10 → JTAC → [JTAC ID] → ALCM → [Unit ID] → [Parameters]
 
 ## ALCM Specifications
 
-**Deployment Cost** (PG Tempest):
-- S-3B: 25 points
-- Tu-95/Tu-160: 150 points
+**Deployment cost**: read the exact figure off the menu label. Typical
+configurations run a cheap light platform (around 25 points) and an expensive
+heavy one (around 150).
 
-**Max Range**: 300 km
-**Time to Impact**: 5-15 minutes (varies by range)
-**RTB Refund**: 25% of deployment cost
+**Max range**: {{cfg:alcm_mission_range|600000}} m on this server
+**Time to impact**: 5–15 minutes, depending on range
+**RTB refund**: a fraction of the deployment cost
 
 ## Limitations
 
 - Limited missiles (check JTAC status for count)
-- Expensive to deploy (25-150 points)
+- Expensive to deploy
 - Depends on JTAC having contacts
 - Not reusable immediately (reload time via logistics)
-- **Max range**: **300 km** (PG Tempest)
+- **Max range**: {{cfg:alcm_mission_range|600000}} m on this server
 - JTAC must have detected targets
 
 ## See Also

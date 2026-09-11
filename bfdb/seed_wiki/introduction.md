@@ -30,6 +30,18 @@ read these in order — they're task-by-task walkthroughs, not reference dumps:
 - Check the [presentation](https://docs.google.com/presentation/d/1EAOe0iK-1s6i0UV5ObxSD86gGBj1Ixz6FOotQn5XPdc/edit#slide=id.g2b6a346170f_1_35)
 - Find the server in the DCS multiplayer browser (name and IP are in Discord)
 
+## Which server am I reading about?
+
+Campaign numbers — what a kill pays, how long a capture takes, what an AWACS
+costs — are set per DCS server, and a wiki page reads them **live from the
+server you have selected**. If this deployment fronts more than one server you
+will see a **server selector in the top bar**, and pages that quote numbers say
+which server's numbers they are showing. Switch it and the figures change with
+it.
+
+If you only see one server, there is nothing to choose and the selector is
+hidden.
+
 ## About This Wiki
 
 This wiki is organized into sections:
@@ -38,5 +50,5 @@ This wiki is organized into sections:
 - **[Playbooks](./playbooks/first-sortie.md)**: Step-by-step walkthroughs for common tasks
 - **[Core Gameplay](./gameplay/objectives.md)**: Campaign mechanics — objectives, logistics, points
 - **[F10 Menu Systems](./f10-menu/overview.md)**: Every in-game menu, explained
-- **[Advanced Topics](./advanced/artillery.md)**: Artillery, cruise missiles, C-130 airdrop, recon intel
+- **[Advanced Topics](./advanced/artillery.md)**: Artillery, cruise missiles, C-130 airdrop, recon intel, AI helo missions
 - **[Reference](./reference/faq.md)**: Command lists, unit tables, and FAQ

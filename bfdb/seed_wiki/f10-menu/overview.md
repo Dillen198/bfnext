@@ -1,279 +1,176 @@
 # F10 Menu Overview
 
-The F10 radio menu is your tactical command center in Fowl Engine. This page provides an overview of all available menus.
+The F10 radio menu is where you actually play Fowl Engine. Everything the
+engine offers a pilot — reports, capture advice, cargo, JTAC, AI dispatches,
+the tasking board — hangs off it.
 
 ![F10 radio menu open in the cockpit showing the Fowl Engine command tree](/api/wiki/images/441295e3-48c3-4737-b308-e5f91812884c)
 
-## Accessing F10 Menus
+## Opening it
 
-**In Aircraft**:
-1. Slot into an aircraft
-2. Press `F10` (or your configured radio menu key)
-3. Navigate using number keys or mouse
+Slot into an aircraft, press `F10` ("Other" / the communications menu), and the
+engine's menus appear alongside the stock DCS ones. Spectators and Combined Arms
+slots get nothing — the menus are built per *aircraft group*, when you occupy
+the slot.
 
-**Requirements**:
-- Must be in a slotted aircraft (not spectator)
-- Menus vary by aircraft type
-- Some menus require specific capabilities
+If a menu looks stale after something changed in the world, leave and re-enter
+the slot. The engine rebuilds the whole tree on slot entry.
 
-## Main Menu Structure
+## The root menu
 
-When you open F10, you'll see Fowl Engine menus:
+Up to nine top-level entries, depending on what you are flying and what the
+server has enabled:
 
 ```
-F10 Radio Menu
-├── Actions          (Deploy units, call missions)
-├── JTAC            (Control targeting units)
-├── Cargo           (Load/unload cargo)
-├── Troops          (Load/unload infantry)
-└── EWR             (Radar reports)
+F10
+├── GCI/EWR      radar picture, ground intel, GCI voice settings   (always)
+├── Recon        player recon pass                    (recon-tagged airframes)
+├── Cargo        crates & base supply             (crate-capable helos, Gazelle)
+│              ...or "C-130 Cargo" instead, if you are in the C-130J-30
+├── CSAR         downed pilots                             (server-enabled)
+├── Troops       infantry load/unload             (troop-capable airframes)
+├── JTAC>>       laser, codes, fire missions, filters
+├── Actions>>    AWACS/tanker/bomber/drone, tasking board, AI helo missions
+├── Objectives   base reports, Capture Advisor, threat list      (always)
+└── Info         your status, situation briefing, navaids, weather, help (always)
 ```
 
-**Note**: Not all menus appear for every aircraft. Availability depends on:
-- Aircraft type and capabilities
-- Server configuration
-- Your permissions
-- Current game state
+**Which ones you get:**
 
-## Menu Types
+| Menu | Appears when |
+| --- | --- |
+| GCI/EWR | always |
+| Recon | your airframe is tagged Recon (see [Aircraft Roster](../reference/aircraft-roster.md)) |
+| C-130 Cargo | you are in the C-130J-30 |
+| Cargo | your airframe has crate slots (Mi-8MT, UH-1H, CH-47F, Mi-24P, Gazelle L/Minigun) |
+| CSAR | CSAR is enabled on the server (it is on the live mission) |
+| Troops | your airframe has troop slots |
+| JTAC / Actions | your account passes the server's rules for that feature |
+| Objectives / Info | always |
 
-### Actions Menu
-**Purpose**: Deploy units and call support missions
+A fixed-wing fast jet therefore sees a short tree (GCI/EWR, JTAC, Actions,
+Objectives, Info). A Mi-8 sees nearly all of it.
 
-**What You Can Do**:
-- Deploy AWACS, tankers, CAP fighters
-- Call SEAD and strike missions
-- Deploy drones and cruise missiles
-- Spawn deployable units
-- Order logistics operations
+### `JTAC>>` and `Actions>>` are buttons, not folders
 
-**Costs**: Most actions cost points
+These two start life as a **command**, not a submenu — you will see
+`Actions>>` sitting at the root with no arrow into it. Select it once and it
+rebuilds itself into the full `Actions` submenu, populated with the world as it
+is *right now*: your current map marks, the JTACs currently alive, the
+objectives currently capturable.
 
-**See**: [Actions Menu](./actions.md) for details
+That is the mechanism, and it is also the fix for most "the menu is out of
+date" problems: **re-open the slot's `Actions>>` / `JTAC>>` to rebuild the
+list.** (If the submenu is already built, leave and re-enter the slot.)
 
----
+## Paging: `More >>`
 
-### JTAC Menu
-**Purpose**: Control Joint Terminal Attack Controllers
+**DCS silently drops anything past the tenth entry in a menu.** No error, no
+warning — the eleventh JTAC, the eleventh deployable, the forty-first objective
+simply is not there.
 
-**What You Can Do**:
-- Check JTAC status
-- Shift laser to next target
-- Change laser codes
-- Request fire missions (artillery/missiles)
-- Mark targets with smoke
-- Configure targeting filters
+Fowl Engine works around this with a pager. When a list outgrows a page, the
+last slot becomes **`More >>`**, which opens the next page of the same list.
+Chains as deep as it needs to.
 
-**Costs**: Fire missions may cost points
-
-**See**: [JTAC System](./jtac.md) for details
-
----
-
-### Cargo Menu
-**Purpose**: Transport equipment and supplies
-
-**What You Can Do**:
-- Load cargo crates
-- Unload cargo at objectives
-- Check cargo capacity
-- View loaded cargo
-
-**Requirements**:
-- Aircraft with cargo capability
-- Proximity to cargo/objective
-
-**See**: [Cargo Operations](./cargo.md) for details
-
----
-
-### Troops Menu
-**Purpose**: Transport infantry units
-
-**What You Can Do**:
-- Load infantry squads
-- Unload troops at objectives
-- Check troop capacity
-- View loaded troops
-
-**Requirements**:
-- Aircraft with troop capability
-- Proximity to troops/objective
-
-**See**: [Troop Transport](./troops.md) for details
-
----
-
-### EWR Menu
-**Purpose**: Early Warning Radar information
-
-**What You Can Do**:
-- Request radar reports
-- Toggle EWR on/off
-- Get friendly unit reports
-- Change unit systems (Imperial/Metric)
-
-**Costs**: Free
-
-**See**: [Early Warning Radar](./ewr.md) for details
-
----
-
-## Menu Navigation
-
-### Number Keys
-- Each menu item has a number (1-9)
-- Press number to select
-- Press `0` or `Escape` to go back
-
-### Pagination
-- Long lists split into pages with "Next>>"
-- Select "Next>>" to see more options
-
-## Context-Sensitive Menus
-
-Menus adapt to your situation:
-
-**Aircraft Type**:
-- Cargo menu only in cargo aircraft
-- Troop menu only in troop transports
-- Different options per aircraft
-
-**Location**:
-- Proximity affects available actions
-- Some menus require being near objectives
-- Landing/ground vs. airborne options differ
-
-**Game State**:
-- Deployed units affect menu options
-- Your point balance limits choices
-- Team situation changes availability
-
-## F10 Map Markers Integration
-
-Many F10 menu actions use your map markers:
-
-**How It Works**:
-1. Place F10 map marker at target location
-2. Name marker (≤24 characters)
-3. Open F10 radio menu
-4. Select action
-5. Your markers appear as destination options
-
-**Best Practices**:
-- Use short, clear names
-- "CAS1", "SEAD", "CAP" work well
-- Delete old markers
-- One marker per name (duplicates won't show)
-
-**Example Workflow**:
-1. Open F10 map
-2. Right-click target area
-3. Add mark "SEAD1"
-4. Return to aircraft
-5. F10 → Actions → Deploy SEAD → "SEAD1"
-6. Mission launched!
-
-## Menu Permissions
-
-Some menus require permissions:
-
-**Standard Players**:
-- EWR (always available)
-- Cargo (if in capable aircraft)
-- Troops (if in capable aircraft)
-
-**With Points**:
-- Actions (need points to deploy)
-- JTAC fire missions (may cost points)
-
-**Server Configuration**:
-- Admins can enable/disable menus
-- Some servers restrict certain features
-- Check server rules
-
-## Menu Costs
-
-Many menu actions cost points:
-
-**Free Actions**:
-- EWR reports
-- JTAC status checks
-- Cargo operations (usually)
-- Troop transport (usually)
-
-**Point Costs**:
-- Deploying units (50-2000+ points)
-- Fire missions (varies)
-- Special actions (varies)
-
-**Check Before Acting**:
-- Menu shows costs: "Deploy AWACS (1500 pts)"
-- Insufficient points = action unavailable
-- No refunds on accidental deployments!
-
-## Common Menu Patterns
-
-### Deploy Action Pattern
 ```
-F10 → Actions → [Action Name] → [Your Marker] → Confirm
+F10 → JTAC
+  1. FF11 ...
+  ...
+  9. FF19 ...
+ 10. More >>   ← the rest of the JTACs live in here
 ```
 
-### JTAC Fire Mission Pattern
+So: **if you cannot find something in a list, look for `More >>` at the bottom
+before assuming it doesn't exist.**
+
+Long base lists are chunked differently — into alphabetical range submenus:
+
 ```
-F10 → JTAC → [JTAC ID] → Fire Mission → [Artillery Group] → [Rounds]
+F10 → Objectives → Base Detail
+  1. Abu Su - Damascu
+  2. Deir ez - Kiryat
+  3. King Hu - Ramat D
 ```
 
-### Cargo Pattern
+Pick the range your base falls in. On very large maps the ranges split again one
+level down.
+
+## The one hard limit
+
+The root menu itself is **not** paged — its entries have fixed paths the engine
+rebuilds from several places. There is room for ten top-level menus and nine are
+in use. That is a server-configuration concern, not a player one, but it is why
+new features land *inside* Actions or Info rather than as new root entries.
+
+## Map marks are your targeting system
+
+Several actions take a position, and the way you give them one is an F10 **map
+mark**:
+
+1. Open the F10 **map** (not the radio menu).
+2. Right-click where you want the thing to happen → Add mark.
+3. Give it a short name (24 characters or less).
+4. Back in the cockpit, `F10` → the action → your mark appears in the list.
+
+Notes that actually matter:
+
+- Marks are listed **per player** — you only see your own.
+- Unnamed marks show up as `Mark 1`, `Mark 2`, … in menu order, so you can skip
+  naming them entirely if you are in a hurry.
+- Duplicate names collide. Use `CAS1`, `CAS2`, not `CAS` twice.
+- Delete marks you are done with — the list is easier to fly with when it is short.
+- The mark list is captured when the Actions menu is *built*. Add a mark, then
+  re-open `Actions>>` to refresh it.
+
+## Costs
+
+Menu entries that cost points show the cost in the label:
+
 ```
-F10 → Cargo → Load/Unload → [Cargo Type] → Confirm
+E-3A AWACS(100 pts)
 ```
+
+Everything else is free. Reports, the Capture Advisor, the situation briefing,
+navaid listings, cargo, troops, CSAR and the tasking board cost nothing — see
+[Points and Lives](../gameplay/points-and-lives.md) for what the paid items run.
+
+## Menu-by-menu
+
+| Menu | Page |
+| --- | --- |
+| GCI/EWR | [Early Warning Radar](./ewr.md) |
+| Recon | [Reconnaissance](./recon.md) |
+| Cargo | [Cargo Operations](./cargo.md) |
+| CSAR | [Combat Search & Rescue](./csar.md) |
+| Troops | [Troop Transport](./troops.md) |
+| JTAC | [JTAC System](./jtac.md) |
+| Actions | [Actions Menu](./actions.md) |
+| Objectives | [Objectives Menu](./objectives.md) |
+| Info | [Info Menu](./info.md) |
 
 ## Troubleshooting
 
-### "Menu not appearing"
-**Possible causes**:
-- Wrong aircraft type
-- Too far from required location
-- Server disabled feature
-- Not slotted in aircraft
+**"The menu I want isn't there."**
+Wrong airframe for that feature, or the server has it off. Check the table
+above. Cargo and Troops in particular are per-airframe capabilities, not
+per-player permissions.
 
-**Solutions**:
-- Check aircraft capabilities
-- Move closer to objective
-- Verify server features
-- Ensure properly slotted
+**"The list is missing entries I know exist."**
+Look for `More >>`. Then check you are not looking at a filtered list — the
+Objectives menu's Base Detail only lists bases *you own*, and Capture Advisor
+only lists ones you don't.
 
-### "Option grayed out"
-**Possible causes**:
-- Insufficient points
-- No valid map markers
-- Action not available
-- Server restrictions
+**"I picked an action and nothing happened."**
+The engine answers every action with a panel message, including failures
+("could not start …", "no such mark"). If you saw no message at all, you were
+probably not recognised as being in a slot — leave and re-enter the slot.
 
-**Solutions**:
-- Check point balance
-- Place appropriate markers
-- Verify conditions met
-- Ask team/admin
-
-### "Action failed"
-**Possible causes**:
-- Invalid target location
-- Insufficient resources
-- Conflict with existing unit
-- Server lag/error
-
-**Solutions**:
-- Choose different location
-- Wait for resources
-- Delete conflicting units
-- Report persistent issues
+**"My map mark isn't in the list."**
+The menu was built before you placed it. Re-open `Actions>>`.
 
 ## See Also
 
-- [Actions Menu](./actions.md) - Deploy units and missions
-- [JTAC System](./jtac.md) - Advanced targeting
-- [Cargo Operations](./cargo.md) - Transport supplies
-- [Troop Transport](./troops.md) - Move infantry
-- [EWR Reports](./ewr.md) - Radar information
+- [Understanding the Menus](../getting-started/hud-and-menus.md) — chat, map, and radio menu basics
+- [The Auto-Generated Briefing](../gameplay/briefing.md) — what the Situation pages contain
+- [Chat Commands](../gameplay/chat-commands.md) — the things that aren't on the F10 menu

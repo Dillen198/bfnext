@@ -277,6 +277,38 @@ body {
 }
 .wiki-search:focus { outline: none; border-color: var(--accent); }
 
+/* ── Instance selector ───────────────────────────────────────────
+   Only rendered when this bfdb fronts more than one DCS server; it
+   picks which server's engine config the page's {{cfg:...}} numbers
+   are read from. */
+.wiki-instance-select {
+  padding: 5px 8px; background: var(--bg-input);
+  border: 1px solid var(--border-light); border-radius: 3px;
+  font-size: 0.72rem; letter-spacing: 0.04em; color: var(--text);
+  font-family: var(--font-mono); cursor: pointer; max-width: 190px;
+}
+.wiki-instance-select:focus { outline: none; border-color: var(--accent); }
+
+/* Instance-specific numbers on a page, and the note that says so. */
+.wiki-instance-note {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 18px; padding: 8px 12px;
+  background: var(--bg-input); border: 1px solid var(--border-light);
+  border-left: 2px solid var(--accent); border-radius: 3px;
+  font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-mono);
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* The topbar gets crowded on a phone -- the selector is the first thing
+   that can go, since a reader on one server rarely switches. */
+@media (max-width: 560px) {
+  .wiki-instance-select { max-width: 108px; }
+}
+
 /* ── Brand logo mark (theme-swapped) ─────────────────────────────
    LogoMark renders both variants; CSS shows the one that fits the
    active theme. Files: /public/logo.png (light-on-dark, default)

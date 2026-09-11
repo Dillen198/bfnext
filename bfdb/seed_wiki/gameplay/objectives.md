@@ -200,6 +200,11 @@ The physical area for capturing:
 - Check F10 map markers for zone location
 - Only one zone per objective
 
-## Next Steps
+## See Also
 
-Learn how to [capture objectives](./capturing-objectives.md) and manage the [logistics system](./logistics.md).
+- [Capturing Objectives](./capturing-objectives.md) — the full capture sequence
+- [Objectives Menu](../f10-menu/objectives.md) — the in-cockpit reports and the **Capture Advisor**, which tells you why a specific base won't flip
+- [Logistics & Supply](./logistics.md) — keeping what you hold
+- [Materiel & the War Economy](./war-economy.md) — why factories and hubs decide the round
+- [Navaids & Approaches](./navaids.md) — finding a FARP or carrier
+- [Carrier Operations](./carrier-ops.md)

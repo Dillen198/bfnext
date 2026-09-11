@@ -39,7 +39,7 @@ After the timer completes the base flips, then your troops **hold for a ~5-minut
 On capture the previous owner's surviving combat units are destroyed and the new owner gets back only a **light garrison — AAA and infantry, ~25% health, no SAMs** (`capture_garrison_revive_fraction` / `capture_garrison_revive_include_sam`). Everything heavier rebuilds slowly through auto-repair or has to be delivered by deployable crate, so a freshly-taken base is a soft target you invest in rather than an instant fortress. SAM sites (the classified ones) still capture instantly with no timer. See [Capturing Objectives](../gameplay/capturing-objectives.md).
 
 **Carrier groups change hands**
-Disable an enemy carrier (sink its escorts to knock its logistics to 0) and take the naval base it's linked to, and the carrier group now **passes to the captor as their own ships** — the enemy task force is replaced by your coalition's carrier group in the same spot, with your deck slots. It comes across at 50% and can be brought back up with **carrier repair crates** (air-dropped or flown in by helo — stack several to repair faster, ~30 min at one crate) or the **Repair / Respawn Carrier** actions off the naval-base menu. An `-admin capture <objective> <blue|red|neutral>` command was also added to force any objective to change hands.
+Disable an enemy carrier (sink its escorts to knock its logistics to 0) and take the naval base it's linked to, and the carrier group now **passes to the captor as their own ships** — the enemy task force is replaced by your coalition's carrier group in the same spot, with your deck slots. It comes across at 50% and can be brought back up with **carrier repair crates** (air-dropped or flown in by helo — stack several to repair faster, ~30 min at one crate) or, where the server configures them, the **Repair / Respawn Carrier** actions off the naval-base menu. A carrier whose linked naval base is still friendly and stocked also repairs automatically. An `-admin capture <objective> <blue|red|neutral>` command was also added to force any objective to change hands.
 
 **Artillery — missile TELs, salvos, auto-turn**
 The JTAC artillery menu now also commands **ballistic/cruise missile launchers** (Scud, Iskander, Silkworm), enforces each unit type's real min/max range, and adds a **"Fire All Groups Together"** salvo and an **"all ammo"** option. Batteries that spawn facing the wrong way now **reposition to bring the launcher onto the target bearing** before firing, so hull-traverse systems that used to silently no-op actually shoot. The **Move** action follows roads instead of driving cross-country. See [Artillery Missions](../advanced/artillery.md).
@@ -59,6 +59,65 @@ When enabled, the division between blue-held and red-held ground is drawn as thr
 **Live Weather Sync**
 Server weather now syncs automatically from the running DCS mission via `bftools`/DCSServerBot integration, instead of being fixed at mission build time.
 
+**Coalition tasking board**
+Any player can post a task — CAP, CAS, SEAD, STRIKE, LOGISTICS, CSAR at a map
+mark, or CAPTURE / SUPPLY against a base — and the whole coalition sees the area
+and its pin on the F10 map, ranked into the briefing and called out on the GCI
+net. Objective tasks **close themselves out** when the coalition actually does
+the job. Free, twelve slots per side. See
+[The Tasking Board](../gameplay/tasking-board.md).
+
+**AI helo missions**
+Order an AI logistics helo to cold-start at a real field, fly, **land**, and
+deliver — capture troops into an objective, or supply into a base running dry.
+Shoot it down en route and nothing arrives. Orderable from any slot. See
+[AI Helo Missions](../advanced/helo-missions.md).
+
+**Capture Advisor**
+`F10 → Objectives` now answers "why won't this base flip?" with a card listing
+the specific blockers, the repair outlook, the post-capture cooldown, whether a
+capture is already running, and which of your troops are in the zone — including
+the ones that **cannot capture because of their troop type**. See
+[Objectives Menu](../f10-menu/objectives.md).
+
+**Materiel & the war economy**
+Repairs and deployments are now paid for in a real commodity that has to
+physically reach the base spending it — no materiel, no repair. Production
+output scales with how much healthy territory a side holds (a factory is worth
+four airbases), hubs keep an operational reserve, and **supply routing follows
+the front line**: a base whose road is cut can only be resupplied by air. See
+[Materiel & the War Economy](../gameplay/war-economy.md).
+
+**Captured airframes**
+Taking a base now inherits a fraction of the aircraft the losing side left on
+the ramp — capped per type, and not flyable until the base is consolidated and
+repaired.
+
+**Auto-generated briefing & comms plan**
+Every round writes its own per-coalition situational briefing — slot-entry
+panel, six F10 pages, and the dashboard map — built from what your side has
+actually detected. A server-wide frequency plan keeps the two coalitions on
+non-overlapping radios. See [The Auto-Generated Briefing](../gameplay/briefing.md)
+and [Comms Plan](../gameplay/comms-plan.md).
+
+**Auto-generated navaids**
+FARPs, FOBs, logistics hubs, naval bases and carrier groups — the objective
+kinds DCS gives nothing — now get generated TACAN, NDB, ICLS, ACLS and Link-4,
+allocated per round from per-coalition channel pools and re-lit when a base
+changes hands. Listed in `F10 → Info → Navaids Directory`. See
+[Navaids & Approaches](../gameplay/navaids.md).
+
+**Objectives and Info menus**
+Two new top-level F10 menus: base reports, threat lists and the Capture Advisor
+under **Objectives**; your status, the situation briefing, support frequencies,
+convoys in transit, navaids, weather and in-cockpit help under **Info**.
+
+**F10 menus page instead of silently truncating**
+DCS drops anything past the tenth entry in a radio menu, with no error. Every
+list in the engine now spends its last slot on **`More >>`** and carries on
+inside it, so the eleventh JTAC, deployable or objective is reachable instead of
+invisible.
+
 ## New Tools & Interfaces
 
 **In-DCS Cockpit UI**
@@ -71,7 +130,7 @@ A full web dashboard: live tactical map with pilot names and NATO-style unit sym
 A shared, coalition-only reconnaissance picture on the dashboard, built from F-14 TARPS photography. Upload your TARPS captures and they're geo-referenced from the filename metadata, perspective-warped onto the map, and made visible only to your own side. Includes a corner-drag align editor for lining a photo up with terrain, and it's wiped with the campaign. See [Recon Intel Map (TARPS)](../advanced/recon-intel-map.md).
 
 **bfwiki**
-This wiki — an admin-editable player reference, separate from the web dashboard, backed by the same login.
+This wiki — an admin-editable player reference, separate from the web dashboard, backed by the same login. Where one bfdb fronts several DCS servers, the wiki carries a **server selector**: the prose is shared, but every campaign number on a page is read live from the selected server's own engine config, so the two never disagree.
 
 **Discord Integration**
 Kill-streak achievement announcements, capture alerts with pilot attribution, and bot plugins for announcements, FAQ, rules, tickets, and server administration.
@@ -82,5 +141,8 @@ A built-in F10 help menu for quick reference without leaving the game.
 ## See Also
 
 - [Introduction](../introduction.md)
+- [F10 Menu Overview](../f10-menu/overview.md)
+- [Materiel & the War Economy](../gameplay/war-economy.md)
+- [The Tasking Board](../gameplay/tasking-board.md)
 - [C-130 Hercules & Airdrop](../advanced/c130-airdrop.md)
 - [Capturing Objectives](../gameplay/capturing-objectives.md)

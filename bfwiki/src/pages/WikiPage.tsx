@@ -4,12 +4,16 @@ import { Pencil } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import WikiMarkdown from '../components/WikiMarkdown'
+import InstanceSelect from '../components/InstanceSelect'
+import { useInstance } from '../context/InstanceContext'
+import { hasCfgTokens } from '../lib/cfgTokens'
 
 export default function WikiPage() {
   const params = useParams()
   const slug = params['*'] ?? ''
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { current, multi } = useInstance()
 
   const { data: page, isLoading, error } = useQuery({
     queryKey: ['wiki', 'page', slug],
@@ -60,6 +64,18 @@ export default function WikiPage() {
           </button>
         )}
       </div>
+
+      {/* Pages that quote campaign numbers are only correct for one server.
+          Say which one, and let the reader switch without hunting for the
+          topbar control. */}
+      {multi && hasCfgTokens(page.content) && (
+        <div className="wiki-instance-note">
+          <span>
+            Numbers on this page are from <strong>{current?.label ?? 'the default server'}</strong>.
+          </span>
+          <InstanceSelect />
+        </div>
+      )}
 
       <div className="wiki-prose">
         <WikiMarkdown>{page.content}</WikiMarkdown>

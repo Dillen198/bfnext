@@ -64,21 +64,78 @@ Logistics Hub → Frontline Objectives → FARPs
 - Distance affects delivery amount
 - Broken routes halt supply flow
 
+### Supply routing follows the front line
+
+A hub is **only a candidate supplier for a base if the ground between them is
+clear of enemy-held objectives**. A base whose road is cut can be resupplied by
+air, by player crate runs, or by an
+[AI helo run](../advanced/helo-missions.md) — and by nothing else.
+
+Enemy-held objectives interdict a belt
+**{{cfg:warehouse.route_block_margin_m|12000}} m** wide either side of
+themselves, on top of their own zone radius. That is wide enough that a handful
+of objectives forms a genuine **supply corridor**, and taking the objectives
+astride an enemy road starves everything behind it without you ever attacking
+the base itself.
+
+### A "logistics detached" base is on its own
+
+An objective the engine has flagged **fully detached** from the supply chain
+gets **no automatic resupply at all** — no convoy, no cargo aircraft, nothing.
+Its base card says so:
+
+```
+NOTE: logistics detached -- no automatic resupply
+```
+
+It has to be sustained by hand: player crate runs, C-130 drops, or an
+[AI helo resupply run](../advanced/helo-missions.md). Know this before you take
+an objective deep behind the line — you are signing up to feed it.
+
+### Hubs keep a reserve
+
+A hub will not ship its last drop forward: **{{cfg:warehouse.hub_reserve_percent|20}}%**
+of its capacity is held back from automatic distribution, so one lost convoy
+doesn't empty the theatre. The reserve is still available for hub-to-hub
+balancing and for the player-driven supply transfer.
+
+### How supplies actually move
+
+Three carriers, each with its own strengths and its own vulnerability:
+
+| Carrier | Live? | Speed | Notes |
+| --- | --- | --- | --- |
+| Ground convoys | {{cfg:warehouse.convoy.enabled|yes}} | {{cfg:warehouse.convoy.speed_kph|60}} km/h | {{cfg:warehouse.convoy.trucks_per_convoy|5}} trucks each, up to {{cfg:warehouse.convoy.max_concurrent_convoys|10}} at once. Follows roads, blocked by the front line, killable. |
+| Air logistics | {{cfg:warehouse.air_logistics.enabled|yes}} | {{cfg:warehouse.air_logistics.speed_kph|400}} km/h | Crosses the front line. Up to {{cfg:warehouse.air_logistics.max_concurrent_routes|6}} routes, triggered when a base drops below {{cfg:warehouse.air_logistics.supply_threshold|50}}% supply. Killable, and a fat target at {{cfg:warehouse.air_logistics.altitude_m|2500}} m. |
+| Sea logistics | {{cfg:warehouse.sea_logistics.enabled|no}} | {{cfg:warehouse.sea_logistics.speed_kph|30}} km/h | Naval resupply, where the map and the server enable it. |
+
+**Every one of these is a target.** Killing an enemy transport aircraft or a
+convoy truck earns points *and* removes supply that was about to arrive
+somewhere. See `F10 → Info → Supply Convoys` for what is in transit on your
+side; the enemy has the same page for theirs.
+
+Ground convoys despawn on arrival, so a convoy still on the map is still
+carrying something.
+
 ### Supply Ticks
 
 The system runs on a **tick cycle**:
 
-**Tick Frequency** (PG Tempest):
-- Every **10 minutes**
-- Supplies distribute during each tick
-- Automatic process, no player action needed
-- Full delivery cycle: **24 ticks** (4 hours)
+| | |
+| --- | --- |
+| Tick interval | every **{{cfg:warehouse.tick|10}} minutes** |
+| Ticks per outside delivery | **{{cfg:warehouse.ticks_per_delivery|12}}** |
 
-**During Each Tick**:
-1. System assesses all objectives
-2. Calculates supply needs
-3. Distributes from logistics hubs
-4. Updates objective supply levels
+Distribution happens on every tick; a fresh delivery from outside the theatre
+arrives every `ticks_per_delivery` ticks. No player action is needed for either.
+
+**During each tick**:
+1. The engine assesses every objective.
+2. It works out who is short.
+3. It ships from the hubs that can legally reach them (see **Supply routing**
+   below) — holding back the hub's operational reserve.
+4. Convoys, transport aircraft or ships actually carry it, and it lands when
+   they arrive.
 
 ## Supply & Fuel Levels
 
@@ -174,64 +231,92 @@ Logi represents the physical infrastructure:
 
 ## Repairing Logistics
 
-### Natural Repair
+### Automatic repair
 
-Logistics gradually repair over time:
-- Automatic process
-- Slow regeneration
-- Requires some supply availability
+An objective with working logistics repairs itself on a pulse, every
+**{{cfg:repair_time|1800}} seconds**, and each repair **costs the base
+supplies** — {{cfg:repair_supply_cost|5}}% of stock per group repaired, plus
+{{cfg:warehouse.materiel.repair_cost|250}} materiel where the server runs the
+materiel economy.
 
-**Repair Rate**:
-- Typically 1-5% per tick
-- Server-configured
-- Requires positive supply level
+**If the base doesn't have it, the repair doesn't happen.** It stays broken
+until something reaches it. This is the single most important consequence of the
+supply system, in both directions:
 
-### Manual Repair
+- A target of yours that stops healing has run dry. **That is the moment to take
+  it** — check `F10 → Objectives → Capture Advisor`, whose `REPAIR:` line tells
+  you whether the base is still repairing and when the next pulse lands.
+- A base of yours that won't repair is not bugged. It is starving. Fix the
+  supply line.
 
-Players can expedite repairs:
+### Repair kits (crates)
 
-**Via Actions Menu**:
+The player-flown fix. Request a **Logistics Repair Kit** crate from the cargo
+menu, fly it to the objective, and unpack it there:
+
 ```
-F10 → Actions → Repair (or Repair-Fast) → [Select Objective]
+F10 → Cargo → Crates → Logistics → Logistics Repair Kit
 ```
 
-**Requirements**:
-- Costs **100 points** (helo) or **200 points** (fast fixed-wing)
-- Must own the objective
-- Repair crate must be delivered to objective
+One crate is enough ({{cfg:repair_crate.Blue.required|1}} required). Delivering
+one also earns **{{cfg:points.logistics_repair|350}} points** — comparable to an
+air kill — and at a base that has just been captured it pushes the
+[consolidation](./capturing-objectives.md) clock forward.
 
-**Benefits**:
-- Immediate logi increase (one step)
-- Prevents capture vulnerability
-- Strategic investment
-- Fast option gets there quicker
+Carrier repairs work the same way with a **Carrier Repair** crate; see
+[Carrier Operations](./carrier-ops.md).
+
+### Supply transfer crates
+
+**Base Fuel Resupply** and **Base Ammo Resupply** crates move
+{{cfg:warehouse.supply_transfer_size|25}}% of a base's supply to another one.
+Delivering one pays {{cfg:points.logistics_transfer|350}} points. This is the
+manual way to push stock into a base the automatic distribution cannot reach —
+a cut-off objective, or one you have just taken.
 
 ## Warehouse System
 
-### Equipment Inventory
+Every objective has a warehouse, and what it holds is what you can actually fly
+and build from there.
 
-Objectives store equipment in warehouses:
+### What's in it
 
-**Types of Equipment**:
-- Aircraft and helicopters
-- Tanks and armored vehicles
-- Artillery systems
-- Infantry units
-- Support equipment
+| Line | Meaning |
+| --- | --- |
+| `S:` Supply | Equipment and munitions |
+| `F:` Fuel | Aviation and vehicle fuel |
+| `A:` Airframes | Aircraft physically on the ramp |
+| Materiel | The generic war-stock that pays for repairs and deployments |
 
-**Capacity**:
-- Each objective has maximum capacity
-- Varies by objective type
-- Display format: `stored / capacity`
+Read them from `F10 → Objectives → Friendly Status`, or the per-base card.
 
-### Liquid Inventory
+### Stock depth
 
-Fuel stored separately:
+| | Hub | Forward base |
+| --- | --- | --- |
+| Supplies | {{cfg:warehouse.hub_max|1}} × delivery | {{cfg:warehouse.airbase_max|1}} × delivery |
+| Airframes | {{cfg:warehouse.airframe_max[0]|3}} × source count | {{cfg:warehouse.airframe_max[1]|1}} × source count |
 
-**Liquid Types**:
-- Jet fuel (aircraft)
-- Aviation gasoline (props)
-- Diesel (vehicles)
+Airframes are capped separately from ammunition on purpose — sharing the supply
+depth would leave a base with a squadron parked on it that never runs short
+however badly the war was going.
+
+**So the airframe you want may not be there.** That isn't a bug; it is the base
+being out of that type. Fly something else, or fly from somewhere else.
+
+### The economy underneath
+
+Materiel, production scaling, captured airframes and the front-line routing
+rules have a page of their own:
+**[Materiel & the War Economy](./war-economy.md)**. If you want to understand
+why a round is being won or lost, that is the page.
+
+### Deployment costs
+
+Unpacking a crate draws {{cfg:deploy_supply_cost|3}}% supply — plus
+{{cfg:warehouse.materiel.deploy_cost|100}} materiel where enabled — from the
+**crate's origin objective**, not from where you unpack it. Building a SAM ring
+in the desert spends the stock of the base you picked the crates up from.
 
 ## Supply Strategies
 
@@ -390,6 +475,11 @@ Possible causes:
 - Use manual repair action
 - Defend objective from attacks
 
-## Next Steps
+## See Also
 
-Learn about the [Points and Lives System](./points-and-lives.md) to understand how resources are earned and used!
+- [Materiel & the War Economy](./war-economy.md) — production, routing, captured airframes
+- [AI Helo Missions](../advanced/helo-missions.md) — the fastest resupply you can order
+- [Cargo Operations](../f10-menu/cargo.md) — flying crates yourself
+- [C-130 Hercules & Airdrop](../advanced/c130-airdrop.md)
+- [The Tasking Board](./tasking-board.md) — posting a SUPPLY task and letting it close itself
+- [Points and Lives](./points-and-lives.md)

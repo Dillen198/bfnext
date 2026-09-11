@@ -262,7 +262,17 @@ weather, GCI, the admin CFG editor, the perf embed, campaign reset.
 
 **Shared across instances:** pilot identities and their lifetime totals (a pilot
 is a person, not a per-server account), the leaderboard, Discord account links,
-the admin ban list, wiki content, and login sessions.
+the admin ban list, wiki *content*, and login sessions.
+
+Wiki content is shared but **the numbers in it are not**. A page never hard-codes
+a campaign figure; it writes `{{cfg:points.air_kill|350}}` and bfwiki resolves
+that against `GET /api/wiki/facts?instance=<id>`, which serves an allow-listed,
+player-safe subset of that instance's own `engine_config` (`WIKI_FACT_KEYS` in
+`bfdb/src/main.rs` — the admin table, ban list, netidx base and CheckWX key are
+excluded). The wiki grows a server selector in its top bar as soon as more than
+one instance is configured, and pages that quote numbers say which server's they
+are showing. An instance with no `engine_config` set returns an empty fact set,
+and every placeholder falls back to the default written into the page.
 
 That split is deliberate: `/api/leaderboard` and `/api/pilots` are global, while
 `/api/rounds`, `/api/objectives`, `/api/kills` and friends default to the

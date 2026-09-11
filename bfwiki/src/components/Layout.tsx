@@ -5,6 +5,7 @@ import { LogOut, Shield, Plus, Search, Menu, X } from 'lucide-react'
 import { api, type WikiPageMeta } from '../api'
 import { useAuth } from '../context/AuthContext'
 import ThemeToggle from './ThemeToggle'
+import InstanceSelect from './InstanceSelect'
 import LogoMark from './LogoMark'
 
 function groupBySection(pages: WikiPageMeta[]) {
@@ -54,6 +55,8 @@ export default function Layout() {
         </NavLink>
 
         <div style={{ flex: 1 }} />
+
+        <InstanceSelect style={{ marginRight: 12 }} />
 
         <ThemeToggle style={{ marginRight: 12 }} />
 

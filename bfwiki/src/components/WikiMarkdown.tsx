@@ -2,6 +2,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Link, useLocation } from 'react-router-dom'
 import { API_ROOT } from '../api'
+import { useInstance } from '../context/InstanceContext'
+import { applyCfgTokens } from '../lib/cfgTokens'
 
 // Rewrites bare "/api/..." image paths (used by seed content and any
 // hand-typed markdown) to include API_ROOT, so images still resolve when
@@ -42,6 +44,9 @@ function resolveHref(href: string, basePath: string): string | null {
 
 export default function WikiMarkdown({ children, slug }: { children: string; slug?: string }) {
   const location = useLocation()
+  // Numbers in a page belong to one DCS server instance -- see lib/cfgTokens.
+  const { facts } = useInstance()
+  const body = applyCfgTokens(children, facts?.facts)
   // Prefer an explicit slug (the edit-page preview passes it) over the router
   // location so relative links resolve against the page being edited, not "/edit".
   const basePath = slug ? `/${slug}` : location.pathname
@@ -75,7 +80,7 @@ export default function WikiMarkdown({ children, slug }: { children: string; slu
         },
       }}
     >
-      {children}
+      {body}
     </ReactMarkdown>
   )
 }

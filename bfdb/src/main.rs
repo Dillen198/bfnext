@@ -563,16 +563,28 @@ async fn api_rounds(
     Ok(json_response(data))
 }
 
-async fn api_leaderboard(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+async fn api_leaderboard(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
         // Use all-time totals so pilot stats are never empty
         let pilots = db.pilot_leaderboard(None)?;
         let entries: Vec<_> = pilots
             .iter()
             .map(|(ucid, name, agg)| {
+                // Coalition drives which service's rank insignia the dashboard
+                // draws for this pilot. Same resolution the recon-intel gate
+                // uses: the active round's registration, else the most recent
+                // side on record. None for a pilot who never registered a side.
+                let side = db
+                    .pilot_current_side(&inst.id, ucid)
+                    .ok()
+                    .flatten()
+                    // Debug, not Display: the rest of the API emits "Blue"/"Red",
+                    // while Side's Display is the DCS-side lowercase spelling.
+                    .map(|s| format!("{s:?}"));
                 serde_json::json!({
                     "ucid": ucid.to_string(),
                     "name": name.to_string(),
+                    "side": side,
                     "air_kills": agg.air_kills,
                     "ground_kills": agg.ground_kills,
                     "captures": agg.captures,
@@ -4774,6 +4786,7 @@ async fn main() -> Result<()> {
 
     let leaderboard = warp::path!("api" / "leaderboard")
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_leaderboard);
 
     let all_pilots = warp::path!("api" / "pilots")

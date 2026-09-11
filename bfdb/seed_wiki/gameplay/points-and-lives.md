@@ -1,219 +1,174 @@
-# Points and Lives System
+# Points and Lives
 
-Fowl Engine uses a points and lives system to reward good play and encourage careful decision-making.
+Points are the campaign's currency. You earn them by doing useful things and
+spend them on support assets, deployables and AI missions. Lives are a separate,
+optional throttle on how often you can fly — **switched off on this server right
+now** (see below).
 
-## Points System
+> The numbers on this page come from the engine config of the server selected at
+> the top of the page. Different servers run different economies.
 
-### What Are Points?
+## Earning points
 
-Points are the campaign currency:
-- Earned through successful missions
-- Spent on deployments and actions
-- Tracked per player
-- Persistent across server restarts
+| What | Points |
+| --- | --- |
+| Air kill | {{cfg:points.air_kill|350}} |
+| Ground kill | {{cfg:points.ground_kill|200}} |
+| Long-range SAM bonus (on top of the ground kill) | {{cfg:points.lr_sam_bonus|50}} |
+| Capturing an objective | {{cfg:points.capture|1000}} |
+| Logistics repair | {{cfg:points.logistics_repair|350}} |
+| Logistics transfer | {{cfg:points.logistics_transfer|350}} |
+| Killing a supply convoy truck | {{cfg:points.convoy_interdiction_points|10}} |
+| CSAR pilot delivered | {{cfg:csar.rescue_reward|50}} |
+| Starting balance, new player | {{cfg:points.new_player_join|30000}} |
 
-### Earning Points
+A few things worth reading off that table:
 
-**Combat Actions**:
-- Destroying enemy units
-- Successful strikes on objectives
-- Air-to-air kills
-- Ground kills
+- **Ground work pays.** A ground kill is a large fraction of an air kill, and a
+  capture is worth several of either. The campaign pays you for moving the front
+  line, not for padding a K:D.
+- **Logistics pays like combat.** Repairing and transferring supply are worth
+  about what an air kill is. The crate run nobody wants to fly is not charity.
+- **Convoy interdiction is small per truck but constant.** It is also the thing
+  that actually starves an enemy sector — see
+  [Materiel & the War Economy](./war-economy.md).
 
-**Strategic Actions**:
-- **Capturing objectives** - 50 points (split among participants)
+### Team kills
 
-**Teamwork**:
-- Multi-player captures share the 50 points equally
-- Example: 3 players capture = ~17 points each
+Friendly fire is penalised, with a short grace window
+({{cfg:points.tk_window|5}} seconds) so a shared kill isn't misattributed. Shoot
+your own side and you lose points.
 
-### Point Values
+## Spending points
 
-Point values vary by:
-- Target type (aircraft > tanks > infantry)
-- Strategic importance
-- Server configuration
-- Objective value
+Costs are always shown in the F10 menu label, e.g. `E-3A AWACS(100 pts)`. That
+label is the authority — it is generated from the same config this page reads.
 
-**Actual Point Values** (PG Tempest):
-- **Ground kill**: **2 points**
-- **Air kill**: **25 points**
-- **LR SAM bonus**: **+5 points** (for killing long-range SAMs)
-- **Objective capture**: **50 points** (split among participants)
-- **New player bonus**: **190 points** (starting balance)
+Typical costs on the live action set:
 
-### Spending Points
+| Action | Cost |
+| --- | --- |
+| E-3A AWACS | 100 |
+| KC-135 tanker (boom or basket) | 50 |
+| B-1B bomber attack | 100 |
+| JTAC drone | 25 |
+| Naval cruise missile strike | 50 |
+| Move units/troops | 10 |
+| AWACS / tanker / drone waypoint | 5–10 |
+| Carrier waypoint | free |
+| Add / Remove Task | free |
 
-**Deployable Units**:
+Plus things that aren't in the action list:
+
+| | Cost |
+| --- | --- |
+| AI helo troop insertion | {{cfg:helo_insertion.troop_mission_cost|0}} + the troop's own cost |
+| AI helo resupply run | {{cfg:helo_insertion.supply_mission_cost|50}} |
+| Player recon pass | {{cfg:player_recon.cost|0}} |
+| Artillery fire mission | free — see [Artillery](../advanced/artillery.md) |
+| Cargo, troops, CSAR, all reports | free |
+
+**Penalties.** Several actions carry a penalty as well as a cost — you are
+charged again if the asset you called is lost early. An AWACS shot down shortly
+after launch costs you twice.
+
+Deployables are paid for in **crates and materiel**, not points. See
+[Deployable Units](../reference/deployables.md) and
+[Materiel & the War Economy](./war-economy.md).
+
+## Checking your balance
+
 ```
-F10 → Actions → [Deploy Action] → [Location]
-```
-
-**Actual Costs** (PG Tempest):
-- **Drone** (Small): **50 points**
-- **Drone** (Large MQ-9): **100 points**
-- **Paratroops**: **100 points**
-- **Light Attack Helicopters**: **120 points**
-- **Naval FARP Destroyer**: **100 points**
-- **Naval FARP Carrier**: **150 points**
-- **Fighters** (CAP): **200 points**
-- **SEAD Package**: **200 points**
-- **Attack Helicopters**: **200-300 points**
-- **Bomber**: **200 points**
-- **ALCM** (Cruise Missile Platform): **25-150 points**
-
-**Special Actions**:
-- **Logistics Repair**: **100 points** (helo), **200 points** (fast)
-- **Logistics Transfer**: **100 points**
-- **Deploy EWR Radar**: **50 points**
-- **AWACS**: **50 points**
-- **Waypoint Commands**: **5-15 points**
-- **RTB (Return to Base)**: **0 points**
-
-### Checking Your Balance
-
-**Via Chat**:
-```
--balance
-```
-
-Response:
-```
-You have 1250 points
-```
-
-**Via Lives Command**:
-```
--lives
+-balance                   chat
+-status                    chat, with more context
+F10 → Info → My Status     in the cockpit
 ```
 
-Shows complete status including points.
+`My Status` shows your balance, kill streak, career kills, and how many side
+switches you have left.
 
-## Lives System
+## Point transfers
 
-### What Are Lives?
-
-Lives represent your ability to continue flying:
-- Limited number per player
-- Lost when you die
-- Prevents reckless behavior
-- Encourages careful planning
-
-### Starting Lives
-
-Lives vary by aircraft type:
-- **Standard** (F-15, F/A-18, Su-27, etc.): **3 lives**
-- **Attack** (A-10, Ka-50, AH-64, etc.): **4 lives**
-- **Intercept** (MiG-21, F-5, Mirage-F1, etc.): **4 lives**
-- **Logistics** (Mi-8, UH-1H, CH-47, etc.): **6 lives**
-- **Recon** (L-39, TF-51, Yak-52, etc.): **6 lives**
-
-**Important**: Lives are tracked **separately per role** — Standard, Intercept, Attack, Recon, and Logistics (see the [Aircraft Roster](../reference/aircraft-roster.md) for exact counts) — so running dry in a Standard-role fighter doesn't ground you from flying Recon or Logistics. Each role's life pool refills on its own rolling timer (typically every 6 hours) rather than at round start — check `-lives` in-game to see your current count and role.
-
-### Losing Lives
-
-You lose a life when:
-- Your aircraft is destroyed (shot down, crash, or accident)
-- You eject and can't be rescued
-- Controlled flight into terrain, mid-air collision, or running out of fuel
-
-**Important**:
-- Deaths in combat count
-- Practice crashes count (be careful!)
-- Friendly fire counts — blue-on-blue results in an immediate life penalty
-
-**Note**: Life limits are a campaign setting and can be switched off entirely — if lives aren't being taken on death, that's the server running with unlimited lives, not a bug. Check `-status` or `-lives` in-game to see what's active.
-
-## CSAR — Combat Search & Rescue
-
-![Rescue helicopter hoisting a downed pilot](/api/wiki/images/f0af8d1d-8ae3-4a78-a361-27d14e55aa33)
-
-When a pilot ejects, a downed pilot unit spawns at their crash site instead of an immediate life loss. A friendly helicopter crew can locate and extract them, **restoring the lost life**. The rescuing pilot also earns bonus campaign points for the recovery. If the rescued role is already at max lives, the credit rolls down to the next role instead of being wasted.
-
-**CSAR Process**:
-1. **Eject**: Pilot ejects — a downed pilot unit spawns at the crash location on the map.
-2. **Locate & Smoke**: A helicopter uses the F10 → CSAR menu to request green smoke on the nearest downed pilot.
-3. **Pick Up & Deliver**: Helicopter lands nearby, picks up the pilot, and delivers them to a friendly base or FARP to restore the life.
-
-**Eject over friendly ground** and the pilot recovers themselves — land inside any friendly airbase, FARP or carrier zone and the life is restored automatically, no helicopter required.
-
-**The clock**: a downed pilot is on a capture countdown (a server setting, 30 minutes by default) — let it run out with an enemy nearby and the pilot is lost. A friendly rescue helicopter sitting on top of the pilot pauses that countdown, so a pickup that runs a little long still counts. A pilot already loaded into a helicopter is safe regardless of the timer.
-
-### What Happens at 0 Lives?
-
-**Spectator Mode**:
-- Cannot occupy slots
-- Can watch the battle
-- Still earn points (on some servers)
-- Can communicate with team
-
-**Life Reset**:
-- Admins can reset your lives
-- May require request via Discord
-- Some servers have automatic reset timers
-- Depends on server policy
-
-### Checking Your Lives
-
-**Via Chat**:
 ```
--lives
+-transfer <amount> <player>
+-transfer <amount> <objective>
 ```
 
-Response example:
-```
-Team: Blue
-Lives: 5
-Points: 1250
-Side Switches: 1
-```
+Transfers to another player on your coalition, or **into an objective's own
+balance** — objectives fund the AI commander's actions, so this is a way for
+players to pay for something the commander can't yet afford. Each side's
+objectives start the round with
+{{cfg:objective_start_points.Blue|500000}} between them.
 
-## Point Transfers
+Use it to:
 
-Some servers allow point transfers between players.
+- Pool for something expensive nobody can afford alone.
+- Hand points to a new player who has just burned their starting balance.
+- Fund the objective that is about to be attacked.
 
-**Transfer Command**:
-```
--transfer <amount> <player-name>
--transfer <amount> objective:<objective-name>
-```
+You cannot transfer to the other coalition.
 
-**Examples**:
-```
--transfer 500 Viper21
--transfer 100 objective:Batumi
-```
+## Lives
 
-**Use Cases**:
-- Help new players
-- Pool for expensive deployment
-- Contribute points to objectives
-- Reimburse friendly fire
-- Strategic coordination
+**Lives are not being enforced on this server.** `limited_lives` is off, which
+means **no life is taken when you take off or when you die**, and the lives
+block does not appear in `My Status`. Fly as often as you like; the cost of
+dying is the points and the time, not a quota.
 
-**Restrictions**:
-- Cannot transfer to enemy team
-- Must have sufficient points
+The system below is what happens when a server turns it on.
 
-## Admin Point Management
+### How it works when enabled
 
-Admins can manage points:
+Lives are tracked **separately per role**, so running dry in a fighter does not
+ground you from flying logistics:
 
-**Check Balance**:
+| Role | Lives | Refill period |
+| --- | --- | --- |
+| Standard | {{cfg:default_lives.Standard[0]|3}} | {{cfg:default_lives.Standard[1]|21600}} s |
+| Intercept | {{cfg:default_lives.Intercept[0]|4}} | {{cfg:default_lives.Intercept[1]|21600}} s |
+| Attack | {{cfg:default_lives.Attack[0]|4}} | {{cfg:default_lives.Attack[1]|21600}} s |
+| Recon | {{cfg:default_lives.Recon[0]|6}} | {{cfg:default_lives.Recon[1]|21600}} s |
+| Logistics | {{cfg:default_lives.Logistics[0]|6}} | {{cfg:default_lives.Logistics[1]|21600}} s |
+
+Which role an airframe belongs to is per-aircraft — see the
+[Aircraft Roster](../reference/aircraft-roster.md).
+
+Each role's pool refills on its own **rolling timer** from when the first life
+was taken, not at round start. `-lives` shows the current count and the clock.
+
+A life is consumed **on takeoff from a friendly objective**, not on death — so
+an aborted sortie still costs one.
+
+### Getting a life back
+
+[CSAR](../f10-menu/csar.md) is how. A downed pilot who is recovered — by a helo,
+or by reaching a friendly zone themselves — gets the life back for the role they
+lost it in. If that role is already full, the credit cascades down a tier rather
+than being wasted.
+
+## Side switching
+
+You get **{{cfg:side_switches|1}}** side switch per round
+(`-switch blue` / `-switch red`).
+
+A server can also lock sides entirely, in which case you fly the side you
+registered with until the round resets and `-switch` is refused.
+`F10 → Info → My Status` states which policy is in force right now — it prints
+either "Sides are LOCKED this round" or how many switches you have left.
+
+## Admin commands
+
 ```
 -admin balance <player>
-```
-
-**Set Points**:
-```
 -admin set-points <amount> <player>
-```
-
-**Reset Lives**:
-```
 -admin reset-lives <player>
+-admin reset-lives-all
 ```
 
-## Next Steps
+## See Also
 
-Now learn about [Chat Commands](./chat-commands.md) to interact with the system!
+- [Chat Commands](./chat-commands.md)
+- [Actions Menu](../f10-menu/actions.md) — what the points buy
+- [Materiel & the War Economy](./war-economy.md) — the economy points *don't* pay for
+- [Combat Search & Rescue](../f10-menu/csar.md)
+- [Aircraft Roster](../reference/aircraft-roster.md) — role per airframe

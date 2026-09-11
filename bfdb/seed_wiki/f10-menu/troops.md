@@ -116,7 +116,7 @@ mortar squad needs a Huey or larger.
 ```
 -bind <troop-id>
 ```
-Then use F10 → Actions → Move (costs 15 points)
+Then use F10 → Actions>> → Move (Units/Troops) — the cost is in the menu label
 
 **Deletion**:
 ```

@@ -10,7 +10,7 @@ enemy ground push. Full system reference: [JTAC System](../f10-menu/jtac.md).
 - A slot that can carry air-to-ground ordnance with a laser or GPS capability —
   LGBs, laser Mavericks, rockets, or just guns and dumb bombs in a pinch.
 - A JTAC in the area. If none is listed, someone has to deploy one first:
-  `F10 → Actions → Recon Drone` (Small, 50 pts, 12 km / Large MQ-9, 100 pts,
+  `F10 → Actions>> → JTAC Drone` (Small, 50 pts, 12 km / Large MQ-9, 100 pts,
   18 km — neither needs line of sight), or a ground
   [JTAC/recon vehicle crate](../advanced/deployables-guide.md).
 

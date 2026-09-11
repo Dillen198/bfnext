@@ -25,15 +25,22 @@ The cargo system lets you:
 
 Access via F10 → Cargo
 
-**Menu Options**:
-- **Load**: Pick up cargo crates
-- **Unload**: Deliver cargo
-- **Status**: Check loaded cargo
+**Menu options** (the exact set depends on your airframe):
+- **Unpack Nearby Crate(s)** — build the deployable from crates on the ground
+- **Load Nearby Crate** / **Unload Crate** — pick up and set down (slung/internal)
+- **List Nearby Crates** / **List Cargo** — what's around you, what's aboard
+- **Destroy Nearby Crate** — clear a mis-dropped or unwanted crate
+- **Crates** — request a new crate set (Logistics, Base Supply, and the
+  deployable categories)
+
+The C-130 gets its own **C-130 Cargo** menu instead, with `List Nearby Crates`,
+`Delete Nearby Crate`, `Delete All Nearby Crates` and a **Vehicles** category —
+see [C-130 Hercules & Airdrop](../advanced/c130-airdrop.md).
 
 ## Loading Cargo
 
 **Steps**:
-1. Land near objective/FARP (within ~50m)
+1. Land near the crate — within **{{cfg:crate_load_distance|100}} m**
 2. F10 → Cargo → Load
 3. Select cargo type
 4. Cargo loads automatically
@@ -44,6 +51,10 @@ Access via F10 → Cargo
 - Equipment crates
 - Fuel bladders
 - Special cargo (server-dependent)
+
+**Crate limit**: you may have up to **{{cfg:max_crates|4}}** crate sets
+outstanding at once. Spawned crates are scattered within
+{{cfg:crate_spread|250}} m.
 
 **Capacity**:
 - **CH-47**: 6 crate slots, 10 troop slots

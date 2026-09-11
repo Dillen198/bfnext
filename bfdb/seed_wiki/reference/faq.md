@@ -8,10 +8,12 @@ Common questions and answers about Fowl Engine.
 **A**: Find the server in the DCS multiplayer browser (see your Discord for the exact name and IP), pick a **BLUFOR** or **REDFOR** aircraft slot, and fly. Taking your first slot registers you to that coalition automatically — you don't have to type anything. You *can* still type `blue` or `red` in chat from spectators if you prefer. See [Your First Sortie](../playbooks/first-sortie.md).
 
 ### Q: Can I change teams?
-**A**: Your coalition is permanent unless the server grants side switches. If it does, go to spectators and use `-switch blue` / `-switch red`. Check your remaining switches with `-lives`.
+**A**: Your coalition is permanent unless the server grants side switches. If it does, go to spectators and use `-switch blue` / `-switch red`. Check your remaining switches with `F10 → Info → My Status`, which also says whether sides are locked this round.
 
 ### Q: Why can't I occupy any slots?
-**A**: Either you're registered to the other coalition (you can only take slots for your side), or you're out of lives for that role — check `-lives`. Registration happens on your first slot pick; if you're still in spectators you can also type `blue` or `red` in chat.
+**A**: Usually you're registered to the other coalition — you can only take slots for your side. Registration happens on your first slot pick; if you're still in spectators you can also type `blue` or `red` in chat.
+
+Two other causes: the **base has no airframes of that type left** (warehouses are finite — see [Materiel & the War Economy](../gameplay/war-economy.md)), or the server is enforcing **lives** and you're out for that role. Lives are switched off on the live mission, so it's almost always one of the first two.
 
 ## Gameplay
 
@@ -41,10 +43,28 @@ See [Capturing Objectives](../gameplay/capturing-objectives.md) for details.
 See [Points System](../gameplay/points-and-lives.md) for full details.
 
 ### Q: What happens when I run out of lives?
-**A**: You're restricted to spectator mode. Contact an admin to request a life reset.
+**A**: Lives are **not enforced on the live mission** — no life is taken on takeoff or death, so you can't run out. Where a server does enforce them, running dry in one role still leaves you the other four (they're tracked separately), each pool refills on its own rolling timer, and a [CSAR](../f10-menu/csar.md) pickup gives a life straight back. See [Points and Lives](../gameplay/points-and-lives.md).
+
+### Q: Why won't this base flip? I've bombed it flat.
+**A**: Ask the engine. `F10 → Objectives → Capture Advisor: Nearest` prints the exact blockers — health still above 20%, infantry defenders alive, a post-capture cooldown running, or your troops sitting outside the zone edge. It also flags **capture troops that cannot capture because of their troop type**, which is the single most common wasted sortie. See [Objectives Menu](../f10-menu/objectives.md).
+
+### Q: We keep bombing a base and it keeps repairing itself.
+**A**: It has working logistics and materiel on hand. The `REPAIR:` line on the Capture Advisor card tells you whether it's repairing and when the next pulse lands. Either out-pace it, or cut its supply first — see [Logistics & Supply](../gameplay/logistics.md).
+
+### Q: How do I tell my team what needs doing without being on voice?
+**A**: Post it on the tasking board: `F10 → Actions>> → Add Task`. It draws on the F10 map for your whole coalition, gets ranked into the briefing, and is called out on the GCI net. Free, and CAPTURE / SUPPLY tasks close themselves when the job is done. See [The Tasking Board](../gameplay/tasking-board.md).
+
+### Q: Nobody wants to fly the crate/troop run. Is there another way?
+**A**: `F10 → Actions>> → AI Helo Missions`. The engine flies a real AI helo that cold-starts, transits, lands and delivers — troops into an objective, or supply into a base. You can order it from a fast jet. It can be shot down, so watch the route. See [AI Helo Missions](../advanced/helo-missions.md).
+
+### Q: How do I find a FARP / carrier in the dark?
+**A**: `F10 → Info → Navaids Directory`. The engine generates a TACAN/NDB (and full carrier suite) for every objective DCS doesn't give one to, per round. Write the channel down before you take off. See [Navaids & Approaches](../gameplay/navaids.md).
+
+### Q: The menu list is missing entries I know exist.
+**A**: Look for **`More >>`** at the bottom. DCS silently drops anything past the tenth entry in a menu, so long lists continue inside a `More >>` page. Long base lists are chunked into alphabetical submenus instead.
 
 ### Q: I captured an enemy carrier — why can't I fly its jets?
-**A**: A captured carrier comes across at 50% health. Aircraft types your coalition doesn't normally produce ("foreign" airframes it had aboard) stay grounded until the carrier's repairs finish — deliver repair crates to it, use the naval base's Repair/Respawn Carrier actions, or park it by a friendly naval base to auto-repair. Your own coalition's aircraft work right away.
+**A**: A captured carrier comes across at 50% health. Aircraft types your coalition doesn't normally produce ("foreign" airframes it had aboard) stay grounded until the carrier's repairs finish — deliver repair crates to it, use the naval base's Repair/Respawn Carrier actions where the server configures them, or leave it linked to a friendly, stocked naval base and let it auto-repair. See [Carrier Operations](../gameplay/carrier-ops.md). Your own coalition's aircraft work right away.
 
 ## F10 Menus
 
@@ -77,7 +97,7 @@ See [JTAC System](../f10-menu/jtac.md) for full guide.
 **A**: The objective's infrastructure is completely destroyed — no repair, rearm or resupply. It does **not** by itself make the objective capturable; that needs health ≤ 20% and no infantry left.
 
 ### Q: How do I repair logistics?
-**A**: Logistics repair slowly over time automatically. Admins can speed this with `-admin repair`. Some servers allow player logistics repair actions.
+**A**: An objective with working logistics repairs itself on a pulse — **but each repair costs it supplies and materiel, and if it doesn't have them the repair simply doesn't happen.** The player fix is a **Logistics Repair Kit** crate flown in and unpacked there, which also pays about what an air kill does. Admins can force one with `-admin repair`. See [Logistics & Supply](../gameplay/logistics.md).
 
 ### Q: Why is my objective low on supply?
 **A**:
@@ -87,7 +107,10 @@ See [JTAC System](../f10-menu/jtac.md) for full guide.
 - Wait for next logistics tick
 
 ### Q: How often does supply update?
-**A**: Typically every 15-30 minutes (server-configured). Admins can force with `-admin tick`.
+**A**: Every **{{cfg:warehouse.tick|10}} minutes**, with a fresh outside delivery every {{cfg:warehouse.ticks_per_delivery|12}} ticks. Admins can force one with `-admin tick`.
+
+### Q: Why is a base of mine getting nothing at all?
+**A**: Its road is probably cut. Supply routing follows the front line — a hub can only supply a base if the ground between them is clear of enemy-held objectives, and enemy bases interdict a belt around themselves. A cut-off base can only be reached by air, by player crates, or by an AI helo run. See [Materiel & the War Economy](../gameplay/war-economy.md).
 
 ## Technical Issues
 
@@ -116,13 +139,15 @@ See [JTAC System](../f10-menu/jtac.md) for full guide.
 ## Points & Economy
 
 ### Q: How much do actions cost?
-**A**: (PG Tempest values):
-- AWACS: 50 points
-- CAP/SEAD: 200 points each
-- Drones: 50-100 points
-- Ground deployables: 5-500 points (see Deployables Reference)
+**A**: Read it off the menu — every action's cost is in its own label
+(`E-3A AWACS(100 pts)`), generated from the same config the engine charges you
+from, so it can never be stale the way a wiki table can.
 
-Check the menu - costs are shown in the action name.
+Rough shape on the live mission: AWACS and bomber 100, tanker and naval strike
+50, JTAC drone 25, waypoint moves 5–10, and the tasking board free. Ground
+deployables are paid for in **crates and materiel**, not points — see
+[Deployable Units](./deployables.md) and
+[Materiel & the War Economy](../gameplay/war-economy.md).
 
 ### Q: Can I get refunds?
 **A**: Yes! Use `-delete <group-id>` to delete your deployed units and get **50% of the cost back**. Action units (AWACS, fighters, etc.) cannot be deleted by players.

@@ -84,7 +84,7 @@ runs away ("clean, resume CAP").
 
 ## Tuning your own calls
 
-Set these in-game with chat commands, or via **F10 → EWR → GCI Voice**:
+Set these in-game with chat commands, or via **F10 → GCI/EWR → GCI Voice**:
 
 | Command | Effect |
 |---|---|

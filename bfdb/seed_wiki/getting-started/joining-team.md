@@ -40,7 +40,7 @@ or
 **Requirements**:
 
 - You must be in **spectator mode** (leave your slot first)
-- You must have side switches remaining (check with `-lives`)
+- You must have side switches remaining (check with `F10 → Info → My Status`, which also says whether sides are locked this round)
 - Once your switches are used up, you are locked to that coalition permanently
 
 ## What Happens After Registration?
@@ -50,7 +50,7 @@ Once registered:
 1. **Slot Selection**: You can occupy any slot for your coalition
 2. **Team Chat**: Your messages are visible to your coalition
 3. **Points Balance**: You start with an initial points balance
-4. **Lives**: You receive a starting number of lives
+4. **Lives**: where a server enforces them you get a pool per role — the live mission does not enforce lives at all (see [Points and Lives](../gameplay/points-and-lives.md))
 5. **F10 Menus**: Team-specific menus become available
 
 ## Checking Your Status

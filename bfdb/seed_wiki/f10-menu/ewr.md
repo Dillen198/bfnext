@@ -1,6 +1,8 @@
-# Early Warning Radar (EWR)
+# GCI / EWR
 
-Get real-time radar reports on enemy and friendly aircraft positions for enhanced situational awareness.
+Your coalition's radar picture, on demand, plus the settings for the
+[live GCI voice net](../gameplay/gci.md). The menu is called **`GCI/EWR`** and
+it is available from every slot.
 
 ![EWR radar operator screen tracking enemy and friendly aircraft contacts](/api/wiki/images/b68ad72b-f981-4957-986d-b301edcc4216)
 
@@ -13,22 +15,48 @@ The EWR system provides:
 - Friendly aircraft locations
 - Tactical intelligence
 
-## EWR Menu
+## The menu
 
-Access via F10 → EWR
+```
+F10 → GCI/EWR
+├── Report                enemy air picture
+├── Toggle                turn automatic EWR calls on/off for you
+├── Friendly Report       where your own side's aircraft are
+├── Units to Imperial     feet / nautical miles
+├── Units to Metric       metres / kilometres
+├── Ground Intel          known enemy ground units and SAMs
+└── GCI Voice
+    ├── Toggle GCI Calls          voice net on/off for you
+    ├── Toggle Auto Callouts      unprompted calls on/off
+    ├── Units: Imperial / Metric / Server Default
+    └── Reference: BRAA / Bullseye / Clock
+```
 
-**Menu Options**:
-- **Report**: Enemy aircraft report
-- **Toggle**: Enable/disable EWR reports
-- **Friendly Report**: Show friendly aircraft
-- **Units to Imperial**: Switch to feet/nautical miles
-- **Units to Metric**: Switch to meters/kilometers
+### Ground Intel
+
+Not an air-picture report — this is what your coalition **knows** about enemy
+ground units and SAM sites, from the ELINT/SIGINT intel database. Contacts decay
+over time and are only as good as your sensors: a SAM nobody has detected is not
+on it.
+
+Feed it by flying [recon passes](./recon.md), keeping an AWACS up, keeping JTACs
+alive, and uploading [TARPS photos](../advanced/recon-intel-map.md).
+
+### GCI Voice
+
+Settings for the AWACS controller that talks to you over SRS. `Toggle Auto
+Callouts` is the one most people want — it turns off unprompted calls while
+keeping the net. Reference mode (BRAA / bullseye / clock) changes how positions
+are spoken to you, and unit preference changes feet-vs-metres.
+
+The same settings are available in chat as `-gci` — see
+[Live GCI](../gameplay/gci.md).
 
 ## Enemy Report
 
 **Request Report**:
 ```
-F10 → EWR → Report
+F10 → GCI/EWR → Report
 ```
 
 **Report Format**:
@@ -60,7 +88,7 @@ BRAA 045/25/15000/HOT
 
 **Request Report**:
 ```
-F10 → EWR → Friendly Report
+F10 → GCI/EWR → Friendly Report
 ```
 
 Shows same format for friendly aircraft:
@@ -71,7 +99,7 @@ Shows same format for friendly aircraft:
 
 **Enable/Disable**:
 ```
-F10 → EWR → Toggle
+F10 → GCI/EWR → Toggle
 ```
 
 **Effect**:
@@ -87,7 +115,7 @@ F10 → EWR → Toggle
 
 **Imperial**:
 ```
-F10 → EWR → Units to Imperial
+F10 → GCI/EWR → Units to Imperial
 ```
 - Feet (altitude)
 - Nautical miles (range)
@@ -95,7 +123,7 @@ F10 → EWR → Units to Imperial
 
 **Metric**:
 ```
-F10 → EWR → Units to Metric
+F10 → GCI/EWR → Units to Metric
 ```
 - Meters (altitude)
 - Kilometers (range)
@@ -103,21 +131,40 @@ F10 → EWR → Units to Metric
 
 **Changes apply immediately**
 
-## EWR Limitations
+## Limitations — read this one
 
-**Not Real-Time**:
-- Report is snapshot at time of request
-- Aircraft move constantly between reports
+**The picture is delayed.** This server runs EWR in
+**{{cfg:ewr_mode|Delayed}}** mode with a
+**{{cfg:ewr_delay|60}} second** delay on track updates. A contact's position is
+where it was, not where it is. At 480 knots that is roughly 8 nm of error —
+enough to turn a "he's at 20 miles" into a merge. Treat every EWR line as a cue
+to look, not as a firing solution.
 
-**Coverage Limits**:
-- Depends on deployed EWR radar sites
-- Terrain affects radar coverage
-- Low-altitude contacts may not appear
+**It is a snapshot.** The report is generated when you ask for it; nothing
+updates on the page.
 
-**No Identification**:
-- Doesn't specify aircraft type
-- All contacts shown generically
+**Coverage is earned.** The picture comes from your side's ground EWR radars,
+airborne EWR-capable aircraft, and any AWACS you have paid for. Lose them and
+you go blind:
+
+- Deploy **AN/FPS-117 / EWR** ground radars from crates —
+  see [Deployable Units](../reference/deployables.md).
+- Keep an **AWACS** up — `Actions>> → E-3A AWACS`.
+- Many fighters count as airborne EWR themselves just by being on station.
+
+**Terrain and altitude matter.** Ground radars miss low contacts; a target in
+the weeds behind a ridge is not in the report. The engine models radar cross
+section by aspect and notching, so a beaming contact can drop out entirely.
+
+**Contacts are generic.** The report does not hand you a type. Identification
+ripens over time and with better sensors — the
+[GCI voice net](../gameplay/gci.md) will upgrade a call from "bogey" to a type
+as confidence grows.
 
 ## See Also
 
-- [Actions Menu](./actions.md) - Deploy AWACS for better coverage
+- [Live GCI (AWACS Calls)](../gameplay/gci.md) — the voice side of the same picture
+- [Reconnaissance](./recon.md) — feeding the ground intel database
+- [Recon Intel Map (TARPS)](../advanced/recon-intel-map.md)
+- [Actions Menu](./actions.md) — deploying AWACS and drones
+- [Deployable Units](../reference/deployables.md) — ground EWR radars

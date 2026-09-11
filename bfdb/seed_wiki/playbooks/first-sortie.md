@@ -50,7 +50,7 @@ lasers them for you.
 ### If you're in a fighter (F-15, F/A-18, MiG-29, Su-27)
 
 **Fly a CAP for your side.** Check the [EWR picture](../f10-menu/ewr.md)
-(`F10 → EWR → Report`), push toward the front, and protect the transport and
+(`F10 → GCI/EWR → Report`), push toward the front, and protect the transport and
 CAS players who are actually moving the front line. Air kills are **25 points**
 each — that's your deployment fund for later.
 

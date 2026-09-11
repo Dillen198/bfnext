@@ -41,15 +41,17 @@ in the zone is dead.** Logistics is *not* the trigger.
 You **cannot pull troops from a base that is itself threatened or capturable.**
 Stage from a friendly airbase/FARP further back.
 
-Troops that **can capture** (Vector Strike / PG Tempest values):
+Troops that **can capture** on the current mission:
 
 | Squad | Cost | Notes |
 |---|---|---|
-| Standard Infantry | 0 pts | the workhorse — bring these |
-| Anti-Tank Infantry | 2 pts | can capture, also kills armor |
-| Mortar Infantry | 5 pts | can capture, indirect fire |
+| Standard | {{cfg:troops.Blue[0].cost|0}} pts | the workhorse — bring these |
+| Anti Tank | {{cfg:troops.Blue[1].cost|1}} pts | can capture, also kills armour |
+| Mortar | {{cfg:troops.Blue[2].cost|5}} pts | can capture, indirect fire |
 
-MANPADS (Igla / Stinger) **cannot capture.**
+MANPADS (Igla / Stinger) **cannot capture.** The
+[Capture Advisor](../f10-menu/objectives.md) flags a squad that can't, so check
+it before you load.
 
 `F10 → Troops → Load → [squad type]`. A Huey lifts one squad; a Mi-8 six; a
 CH-47 ten. Squad weights matter on light helos — see

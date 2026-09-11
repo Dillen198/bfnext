@@ -80,9 +80,14 @@ Side Switches: 1
 
 Shows:
 - Current team
-- Remaining lives
+- Remaining lives, per role
 - Points balance
 - Available side switches
+
+**Note**: lives are a campaign setting and are **switched off on the live
+mission** — no life is taken on takeoff or death. When a server runs with lives
+off, there is nothing for this command to count. See
+[Points and Lives](./points-and-lives.md).
 
 ---
 
@@ -125,6 +130,55 @@ If no restart scheduled:
 ```
 The server isn't configured to restart automatically
 ```
+
+---
+
+#### `-status`
+Campaign status at a glance — yours and the war's.
+
+```
+-status
+```
+
+**Response**:
+```
+=== CAMPAIGN STATUS ===
+Side: Blue | Points: 1250 | Streak: 2 | Career Kills: 41
+Objectives — Blue: 17 | Red: 14
+Active Blue Convoys: 3
+```
+
+The objective count is the scoreboard that actually matters, and the convoy
+count tells you whether your supply system is moving. Details of what's in
+transit: `F10 → Info → Supply Convoys`.
+
+---
+
+#### `-weather`
+Weather brief for where you are.
+
+```
+-weather
+```
+
+On the live mission weather is pulled from real-world METAR, so it changes
+between rounds. Worth checking before a low-level run or a carrier recovery.
+Same data as `F10 → Info → Weather`.
+
+---
+
+#### `-brief`
+The condensed situational briefing on demand — the same text the slot-entry
+panel shows about 20 seconds after you take a slot.
+
+```
+-brief
+```
+
+Gives you the headline, your coalition's top tasks, the nearest known threat and
+the GCI frequency. The full six-page report is `F10 → Info → Situation`; the
+whole system is explained in
+[The Auto-Generated Briefing](./briefing.md).
 
 ---
 
@@ -241,7 +295,7 @@ Control deployed action units via chat.
 
 #### `-gci [option]`
 Tune the [Live GCI](gci.md) voice controller to your preference. Also available
-under **F10 → EWR → GCI Voice**. Your choice is saved to your pilot.
+under **F10 → GCI/EWR → GCI Voice**. Your choice is saved to your pilot.
 
 ```
 -gci             - show your current GCI settings

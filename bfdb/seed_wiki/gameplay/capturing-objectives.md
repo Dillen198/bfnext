@@ -65,15 +65,21 @@ Methods:
 
 Not all troops can capture! You need specific infantry units.
 
-**Getting Capture Troops** (PG Tempest):
+**Getting capture troops**:
 
-Troops that **CAN capture**:
-- **Standard Infantry**: 0 points, 8km JTAC (no line-of-sight)
-- **Anti-Tank Infantry**: 2 points, 8km JTAC (line-of-sight required)
-- **Mortar Infantry**: 5 points, 8km JTAC (line-of-sight required)
+| Squad | Cost | Can capture? | Weight |
+|---|---|---|---|
+| Standard | {{cfg:troops.Blue[0].cost|0}} pts | **yes** — the workhorse | 700 kg |
+| Anti Tank | {{cfg:troops.Blue[1].cost|1}} pts | **yes**, and kills armour | 750 kg |
+| Mortar | {{cfg:troops.Blue[2].cost|5}} pts | **yes**, plus indirect fire | 900 kg |
+| Stinger / Igla (MANPADS) | {{cfg:troops.Blue[3].cost|5}} pts | **no** | 150 kg |
 
-Troops that **CANNOT capture**:
-- **Igla/Stinger (MANPADS)**: 25 points
+All of them act as an 8 km JTAC once on the ground.
+
+**If in doubt, check the Capture Advisor** — `F10 → Objectives → Capture
+Advisor` flags any of your squads near the base with
+`<-- CANNOT capture (troop type)`, which is the fastest way to catch this
+mistake before you have flown 60 nm with the wrong squad.
 
 **Loading Troops**:
 1. Land at friendly objective/FARP
@@ -225,7 +231,7 @@ A disabled carrier flips to whoever holds its naval base, in whichever order the
 On capture the enemy task force is **replaced by your own coalition's carrier group** in the same location, with your deck slots — the carrier group is now yours to sail and fly from. It comes across at **50%** and needs repairing before it's fully operational:
 
 - **Carrier repair crates** — request them from the cargo menu, then air-drop or fly them out to the carrier. Stack several to cut the repair time (roughly 30 minutes on a single crate).
-- **Repair Carrier / Respawn Carrier** actions — off the linked naval base's actions menu, paid for out of that base's supplies. Respawn needs the carrier fully sunk first.
+- **Repair Carrier / Respawn Carrier** actions — where the server configures them, off the linked naval base's actions menu and paid for out of that base's supplies. Respawn needs the carrier fully sunk first. They are not part of the live mission's action set; see [Carrier Operations](./carrier-ops.md).
 - If the carrier's naval base stays friendly and stocked, it also **auto-repairs** on its own over time.
 
 **Note**: A captured carrier keeps whatever aircraft it had aboard, even types your coalition doesn't otherwise have access to — but those "foreign" airframes stay grounded until the carrier's repairs finish (you'll get a "flyable once carrier repairs finish" message if you try to slot one early). Your own coalition's normal aircraft are never affected by this.
@@ -245,7 +251,7 @@ Capture points are awarded based on:
 - Server point configuration
 - Number of participants
 
-**Example** (PG Tempest):
+**Example**:
 ```
 Capture objective: 50 points
 3 participants: ~17 points each
@@ -269,8 +275,20 @@ When capture succeeds:
   start taking it back
 - Points awarded to participants
 
-## Next Steps
+## Stuck? Ask the engine
 
-Learn about the [Logistics & Supply](./logistics.md) system to maintain your captured objectives!
+Before flying another sortie at a base that won't flip, open
+**`F10 → Objectives → Capture Advisor: Nearest`**. It prints the exact blockers,
+whether a cooldown is running, whether the base is out-repairing you, and which
+of your troops are in the zone — including any that **cannot capture because of
+their troop type**. See [Objectives Menu](../f10-menu/objectives.md).
 
-For detailed troop specifications, see the [Deployable Units Reference](../reference/deployables.md).
+## See Also
+
+- [Objectives Menu](../f10-menu/objectives.md) — the Capture Advisor
+- [AI Helo Missions](../advanced/helo-missions.md) — getting capture troops into a zone without flying them yourself
+- [The Tasking Board](./tasking-board.md) — posting a CAPTURE task that closes itself out
+- [Logistics & Supply](./logistics.md) — holding what you took
+- [Materiel & the War Economy](./war-economy.md) — captured airframes, and why a fresh base can't repair
+- [Deployable Units](../reference/deployables.md) — which troop types can actually capture
+- [Carrier Operations](./carrier-ops.md)

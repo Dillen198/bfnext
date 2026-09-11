@@ -63,18 +63,28 @@ The F10 radio menu (not to be confused with the map) provides access to coalitio
 
 ### Main Menu Categories
 
-Fowl Engine adds these top-level menus:
+Fowl Engine adds up to nine top-level menus:
 
-1. **Actions** - Deploy units, call support missions
-2. **JTAC** - Control JTAC units for targeting
-3. **Cargo** - Manage cargo loading/unloading
-4. **Troops** - Load/unload infantry units
-5. **EWR** - Early Warning Radar reports
+1. **GCI/EWR** – radar picture, ground intel, GCI voice settings *(always)*
+2. **Recon** – fly a recon pass *(recon-tagged airframes)*
+3. **Cargo** / **C-130 Cargo** – crates and base supply *(cargo-capable airframes)*
+4. **CSAR** – downed pilots *(server-enabled)*
+5. **Troops** – load/unload infantry *(troop-capable airframes)*
+6. **JTAC>>** – targeting, laser codes, fire missions
+7. **Actions>>** – support aircraft, tasking board, AI helo missions
+8. **Objectives** – base reports and the Capture Advisor *(always)*
+9. **Info** – your status, the situation briefing, navaids, weather, help *(always)*
 
-Each menu is context-sensitive and only appears if:
-- Your aircraft has the necessary capability
-- You have the required permissions
-- The system is enabled for your role
+Each is context-sensitive and only appears if your aircraft has the capability
+and the server has the feature enabled.
+
+**`JTAC>>` and `Actions>>` are buttons, not folders.** They start as a single
+command; select it once and it builds itself into the full menu from the world
+as it is right now. That is also how you refresh a stale list — re-open
+`Actions>>` after placing a new map mark.
+
+The full tree is documented in
+[F10 Menu Overview](../f10-menu/overview.md).
 
 ## F10 Map vs F10 Radio Menu
 
@@ -102,26 +112,31 @@ It's important to understand the difference:
 - Faster than mouse navigation in combat
 
 ### Menu Structure
-Menus use hierarchical structure:
+Menus are hierarchical:
 ```
 F10
-├── Actions
-│   ├── Deploy AWACS (1500 pts)
-│   │   └── [Your Map Markers]
-│   ├── Deploy Fighters (800 pts)
-│   └── Next>>
-├── JTAC
-│   ├── Status
-│   └── Fire Mission
-└── EWR
+├── Actions>>              (select once to build it)
+│   └── Actions
+│       ├── E-3A AWACS(100 pts)
+│       │   └── [your map marks]
+│       ├── Add Task
+│       └── More >>
+├── JTAC>>
+└── GCI/EWR
     ├── Report
     └── Toggle
 ```
 
-### "Next>>" Pagination
-- Long lists are split into pages
-- Select "Next>>" to see more options
-- Common in Actions and JTAC menus
+### `More >>` — the thing that trips people up
+**DCS silently drops anything past the tenth entry in a menu.** No error, no
+warning. Fowl Engine works around it by spending the last slot on **`More >>`**,
+which opens the next page of the same list.
+
+So if something you expect is not in a list, **look for `More >>` at the bottom
+before assuming it isn't there.**
+
+Long base lists are chunked differently — into alphabetical submenus like
+`1. Abu Su - Damascu`. Pick the range your base falls in.
 
 ## On-Screen Messages
 
@@ -141,16 +156,26 @@ Fowl Engine sends you messages through the DCS message system:
 
 ### Units System
 Toggle between Imperial and Metric units:
-- F10 → EWR → "Units to Imperial"
-- F10 → EWR → "Units to Metric"
+- F10 → GCI/EWR → "Units to Imperial" / "Units to Metric"
+- F10 → GCI/EWR → GCI Voice → "Units: Imperial / Metric / Server Default"
+  (for the spoken calls), or `-gci imperial` / `-gci metric` in chat
 
 ## Quick Reference
 
-**Must-Know Commands**:
-- `-help` - Command list
-- `-lives` - Status check
-- `-balance` - Check points
+**Must-know commands**:
+- `-help` — command list
+- `-status` — campaign status: points, objectives held, your convoys
+- `-brief` — the short situational briefing
+- `-balance` — check points
+- `-weather` — weather at your position
+
+**Must-know menus**:
+- `F10 → Info → Situation` — the full six-page briefing
+- `F10 → Objectives → Capture Advisor: Nearest` — why that base won't flip
+- `F10 → Info → Support & Radios` — is there a tanker up, and on what frequency
 
 ## See Also
 
-- [Core Gameplay](../gameplay/objectives.md) - Campaign mechanics
+- [F10 Menu Overview](../f10-menu/overview.md) — every menu, in detail
+- [Core Gameplay](../gameplay/objectives.md) — campaign mechanics
+- [Chat Commands](../gameplay/chat-commands.md)

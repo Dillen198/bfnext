@@ -1,332 +1,154 @@
 # Action Types Reference
 
-Complete reference of all action types available via the F10 Actions menu.
+Every kind of action the engine can offer under `F10 → Actions>>`, what it
+spawns, and how to use it. **Which of these your server actually offers is
+config** — this is the catalogue, not the menu. The menu is the authority for
+what you can call and what it costs.
 
-## Support Aircraft
+> The live mission's action set is listed in [Actions Menu](../f10-menu/actions.md).
 
-### AWACS (Airborne Warning And Control System)
-- **Type**: Early warning radar aircraft (A-50/E-3)
-- **Cost**: **50 points** (PG Tempest)
-- **Waypoint**: **10 points**
-- **RTB Refund**: 25% of cost when returns to base
-- **Limit**: 2 per side
-- **Function**: Provides radar coverage (400km range) and tactical coordination
-- **Best Use**: Central position behind lines
-- **Lifespan**: 8 hours duration
-- **Waypoint Control**: Yes
+## Support aircraft
+
+### AWACS
+Spawns an airborne early-warning aircraft on station at your map mark. Once it
+is up, its frequency and TACAN show in `F10 → Info → Support & Radios`, and it
+feeds the coalition radar picture that [GCI](../gameplay/gci.md) and
+[EWR reports](./../f10-menu/ewr.md) are built on.
+
+*Carries a penalty — losing it early costs you again. Orbit it behind the line.*
 
 ### Tanker
-- **Type**: Aerial refueling aircraft (KC-135/IL-78)
-- **Cost**: **See server** (not specified in Blue actions)
-- **Waypoint**: **5 points**
-- **Function**: Extends mission duration for friendlies
-- **Best Use**: Along flight routes, safe altitude
-- **Lifespan**: Until destroyed or RTB
-- **Waypoint Control**: Yes
+A refuelling aircraft on station. Boom and basket are separate actions; bring
+the one your airframe can use. Frequency and TACAN in `Support & Radios`.
 
-## Fighter Packages
+*Also penalised on early loss.*
 
-### CAP (Combat Air Patrol)
-- **Type**: Air superiority fighters (F-15C)
-- **Cost**: **200 points** (PG Tempest)
-- **Waypoint**: **5 points**
-- **Duration**: 5 hours
-- **Function**: Defend airspace, intercept enemy aircraft
-- **Best Use**: Over friendly territory or objectives
-- **Waypoint Control**: Yes
+### Waypoint actions
+`AWACS Waypoint`, `Air Refuelers Waypoint`, `DRONE Waypoint`,
+`Fighters/Attackers/SEAD Waypoint`, `Cruise Missile Waypoint`,
+`Carrier Waypoint`. Each moves an asset you already have to a new mark, for a
+fraction of the price of calling another one.
 
-### SEAD (Suppression of Enemy Air Defenses)
-- **Type**: Anti-SAM specialized aircraft
-- **Cost**: **200 points** (PG Tempest)
-- **Waypoint**: **5 points**
-- **Duration**: 2 hours
-- **Function**: Destroy/suppress enemy SAM sites
-- **Best Use**: Before strike packages, along ingress routes
-- **Waypoint Control**: Yes
+### RTB
+Sends an asset home. Frees whatever slot or limit it was occupying.
 
-### Attack Helicopters
-- **Type**: Armed helicopters (Mi-24, AH-64)
-- **Cost**: **200-300 points** (PG Tempest)
-- **Waypoint**: **5 points**
-- **Duration**: 2 hours
-- **Function**: Close air support, anti-armor
-- **Best Use**: Ground attack, supporting advances
-- **Waypoint Control**: Yes
+## Strike and fighter packages
 
-### Light Attack Helicopters
-- **Type**: Light attack helicopters
-- **Cost**: **120 points** (PG Tempest)
-- **Duration**: 2 hours
-- **Function**: Light CAS, recon
-- **Best Use**: Low-threat areas
-- **Waypoint Control**: Yes
+### Bomber
+A heavy bomber strike. It does **not** take a map mark — it expands into a list
+of your coalition's live JTACs, and hits whatever the JTAC you pick is currently
+tracking. So the workflow is: get a JTAC on the target first, then call the
+bomber.
 
-## Drones & Missiles
+### Fighters (CAP)
+An AI fighter patrol at your mark. Useful as a screen over a corridor you need
+to keep open, or over a base you expect to be hit.
 
-### Reconnaissance Drone (Large)
-- **Type**: MQ-9 Reaper UAV
-- **Cost**: **100 points** (PG Tempest)
-- **Waypoint**: **5 points**
-- **Duration**: 12 hours
-- **JTAC Range**: **18 km** (no line-of-sight required)
-- **JTAC Capability**: Yes - can laser designate and call fires
-- **Function**: Intelligence gathering, target identification, fire coordination
-- **Best Use**: Over enemy territory, deep reconnaissance, fire support
-- **Waypoint Control**: Yes
+### Attackers
+AI ground-attack aircraft against a marked area.
 
-### Reconnaissance Drone (Small)
-- **Type**: Small UAV
-- **Cost**: **50 points** (PG Tempest)
-- **Waypoint**: **5 points**
-- **Duration**: 12 hours
-- **JTAC Range**: **12 km** (no line-of-sight required)
-- **JTAC Capability**: Yes - can laser designate and call fires
-- **Function**: Budget recon and JTAC capability
-- **Best Use**: Economical surveillance and fire support
-- **Waypoint Control**: Yes
+### SEAD
+AI anti-radiation aircraft against enemy emitters in an area. The usual reason
+to call one is that something is painting your strike package and nobody wants
+to go shopping for it themselves.
 
-### Cruise Missile Platform
-- **Type**: ALCM launcher (S-3B/Tu-95/Tu-160)
-- **Cost**: **25-150 points** (PG Tempest)
-  - S-3B: **25 points**
-  - Tu-95: **150 points**
-  - Tu-160: **150 points**
-- **Waypoint**: **10 points**
-- **Duration**: 8 hours
-- **Function**: Long-range precision cruise missile strikes
-- **Best Use**: High-value, heavily defended targets
-- **Waypoint Control**: Yes
+### Drone
+An orbiting drone over your mark. In practice this is a **JTAC you can put
+anywhere** — it sees, it lases, and it feeds targets to `F10 → JTAC` and to
+bomber missions. The cheapest sensor in the game.
 
-## Ground Units - Defensive
+### Cruise missile platform / Naval strike
+`CruiseMissileSpawn` spawns an ALCM carrier — see
+[Air-Launched Cruise Missiles](../advanced/alcm.md).
+`NavalCruiseMissileStrike` fires from your nearest carrier in range at an enemy
+objective you pick from a list. See [Carrier Operations](../gameplay/carrier-ops.md).
 
-### SAM Battery (Deployable via Cargo)
-- **Type**: Surface-to-air missile systems
-- **Cost**: 5-100 points (PG Tempest)
-  - AAA: 5-50 points (1-2 crates)
-  - IR SAMs: 35-50 points (2 crates)
-  - Radar SAMs: 40-100 points (2-4 crates)
-- **Function**: Area air defense
-- **Best Use**: Protect objectives, strategic positions
-- **Lifespan**: Until destroyed
-- **Movement**: Via Move action (15 points)
-- **Delete Refund**: 50% of cost
+### Nuke
+Exists in the engine; not configured on normal servers.
 
-See [Deployable Units Reference](./deployables.md) for complete list.
+## Ground forces
 
-### MANPADS Team (Troop Type)
-- **Type**: Man-portable air defense (Igla/Stinger)
-- **Cost**: **25 points** (PG Tempest)
-- **Weight**: 400 kg per squad
-- **Can Capture**: NO
-- **Function**: Point air defense
-- **Best Use**: Close-in protection, ambush positions
-- **Lifespan**: Until destroyed
-- **Movement**: Via Move action (15 points)
+### Paratrooper
+Air-drops a squad at a mark. A way to get capture troops onto ground you cannot
+land on — check the [Deployables reference](./deployables.md) for which squad
+types can actually take an objective.
 
-See [Deployable Units Reference](./deployables.md) for all troop types.
+### Deployable
+Spawns a ground unit directly, rather than through the crate system. Where a
+server offers both, crates are usually cheaper and deployables are faster.
 
-## Ground Units - Offensive
+### Move (Units/Troops)
+Sends one of your existing ground groups or squads to a mark. Cheap, and
+penalised if the group dies on the way. This is how you walk capture troops the
+last few hundred metres into a zone when the
+[Capture Advisor](../f10-menu/objectives.md) says they are short of the edge.
 
-### Tank Platoon (Deployable via Cargo)
-- **Type**: Main battle tanks
-- **Cost**: 65-80 points (PG Tempest, 3 crates each)
-  - T-55A, Type 59, Chieftain, Leo 1A3, M60: 65 pts
-  - T-72B, T-64, Leopard 2A4: 80 pts
-- **Function**: Armored assault, defensive anchor
-- **Best Use**: Offensive operations, objective defense
-- **Lifespan**: Until destroyed
-- **Movement**: Via Move action (15 points)
-- **Delete Refund**: 50% of cost
-- **JTAC Range**: 1.5-3 km (line-of-sight required)
+### Artillery
+Player-callable indirect fire from your side's guns. On the live mission this
+appears as **`Request Fires`** in the Actions menu whenever your coalition has
+artillery alive, with per-battery control under `F10 → JTAC`. See
+[Artillery Missions](../advanced/artillery.md).
 
-See [Deployable Units Reference](./deployables.md) for complete list.
-
-### APC/IFV Squad (Deployable via Cargo)
-- **Type**: Armored personnel carriers and infantry fighting vehicles
-- **Cost**: 20-45 points (PG Tempest, 2 crates each)
-  - BTR-80, PT-76: 20 pts
-  - BTR-82A, BTR-RD, LAV-25, Scimitar, Scorpion: 25 pts
-  - BMP-2, M2A2 Bradley: 45 pts
-- **Function**: Infantry transport, fire support, reconnaissance
-- **JTAC Range**: 3-5 km (line-of-sight required)
-- **Best Use**: Combined arms, infantry support, recon
-- **Lifespan**: Until destroyed
-- **Movement**: Via Move action (15 points)
-- **Delete Refund**: 50% of cost
-
-See [Deployable Units Reference](./deployables.md) for complete list.
-
-### Artillery Battery (Deployable via Cargo)
-- **Type**: Self-propelled howitzers and MLRS
-- **Cost**: 50-200 points (PG Tempest, 2-3 crates)
-  - Howitzers (M109, 2S19, L118, 2S9, TOS-1A): 50 pts
-  - Light MLRS (BM-21): 60 pts
-  - Medium MLRS (Uragan): 80 pts
-  - Heavy MLRS (M270, Smerch): 100 pts
-  - Ballistic Missiles (ATACMS, GMLRS, Iskander): 200 pts
-- **Function**: Indirect fire support via JTAC
-- **Max Range**: 300 km
-- **Best Use**: Fire base for JTAC missions
-- **Lifespan**: Until destroyed
-- **Movement**: Via Move action (15 points)
-- **Delete Refund**: 50% of cost
-
-See [Deployable Units Reference](./deployables.md) for complete list.
-
-## Ground Units - Infantry
-
-### Standard Infantry ⭐
-- **Type**: Standard infantry
-- **Cost**: **0 points** (FREE!)
-- **Weight**: 400 kg per squad
-- **Can Capture**: YES
-- **JTAC Range**: 8 km (no line-of-sight!) ⭐
-- **Max Allowed**: 20
-- **Function**: Capture objectives, reconnaissance
-- **Best Use**: Objective capture AND recon through terrain
-- **Lifespan**: Until destroyed
-- **Movement**: Via Move action (15 points) or transport
-
-### Anti-Tank Infantry
-- **Type**: Infantry with anti-tank weapons
-- **Cost**: **2 points**
-- **Weight**: 800 kg per squad
-- **Can Capture**: YES
-- **JTAC Range**: 8 km (line-of-sight required)
-- **Max Allowed**: 30
-- **Function**: Combat operations + capture
-- **Best Use**: Capture + anti-armor
-- **Lifespan**: Until destroyed
-- **Movement**: Via Move action (15 points) or transport
-
-### Mortar Infantry
-- **Type**: Infantry with mortars
-- **Cost**: **5 points**
-- **Weight**: 1000 kg per squad
-- **Can Capture**: YES
-- **JTAC Range**: 8 km (line-of-sight required)
-- **Max Allowed**: 20
-- **Function**: Combat + capture + indirect fire
-- **Best Use**: Capture + fire support
-- **Lifespan**: Until destroyed
-- **Movement**: Via Move action (15 points) or transport
-
-See [Deployable Units Reference](./deployables.md) for complete details.
-
-## Logistics Actions
+## Logistics
 
 ### Logistics Repair
-- **Type**: Infrastructure repair via helicopter or fixed-wing
-- **Cost**: **100 points** (helo) / **200 points** (fast)
-- **Function**: Deliver repair crate, increase objective logi by one step
-- **Target**: Your owned objectives
-- **Effect**: Immediate logi increase upon delivery
-- **Use**: Prevent capture, restore functionality
-- **Speed**: Fast option reaches quickly
+Flies in a repair to an objective's logistics infrastructure. Pays
+{{cfg:points.logistics_repair|350}} points on completion — one of the
+best-paying things in the campaign, and one of the least flown.
 
 ### Logistics Transfer
-- **Type**: Supply redistribution between objectives
-- **Cost**: **100 points**
-- **Function**: Move supplies from one objective to another
-- **Target**: Two owned objectives you select
-- **Effect**: Balances supply levels
-- **Use**: Strategic supply management, emergency resupply
+Moves supply between objectives. Pays
+{{cfg:points.logistics_transfer|350}}.
 
-## Paratrooper Operations
+Both are worth roughly an air kill. See
+[Logistics & Supply](../gameplay/logistics.md) and
+[Materiel & the War Economy](../gameplay/war-economy.md).
 
-### Paratrooper Drop
-- **Type**: Airborne infantry insertion (Standard troops)
-- **Cost**: **100 points** (PG Tempest)
-- **Function**: Rapid helicopter-delivered infantry
-- **Capture Capable**: Yes (Standard troops can capture)
-- **Best Use**: Quick objective capture, behind lines insertion
-- **Lifespan**: Until destroyed
-- **Movement**: Via Move action (**15 points**) after landing
+## Carrier
 
-## Special Actions
+### Carrier Waypoint
+Sails a carrier group to a mark. Free on the live mission.
 
-### Bomber Mission
-- **Type**: Heavy bomber strike (Tu-95/B-52)
-- **Cost**: **200 points** (PG Tempest)
-- **Duration**: Until mission complete
-- **Targets**: 15 targets per mission
-- **Power**: 1000kg equivalent per target
-- **Function**: Massive area bombardment
-- **Best Use**: Logistics complexes, large formations
-- **Waypoint Control**: No (one-way mission)
+### Carrier Repair / Carrier Respawn
+Pays for a carrier's repair, or re-floats a sunk one, out of its linked naval
+base's supplies. **Not configured on the live mission** — use carrier repair
+crates and the automatic repair instead. See
+[Carrier Operations](../gameplay/carrier-ops.md).
 
-### Deploy EWR Radar
-- **Type**: Ground-based Early Warning Radar
-- **Cost**: **50 points** (PG Tempest)
-- **Function**: Deploy AN/FPS-117 radar site
-- **Best Use**: Fill radar coverage gaps
-- **Deployment**: Via helicopter transport
-- **Lifespan**: Until destroyed
+## Intelligence
 
-### Naval Units
-- **Naval FARP Carrier**: **150 points**
-- **Naval FARP Destroyer**: **100 points**
-- **Deploy Ship**: **0 points** (HMS Achilles)
-- **Function**: Forward rearming points at sea
-- **Limit**: Must deploy near friendly objective
+### Recon
+Dispatches an AI recon aircraft to scan an area and feed what it finds into the
+coalition intel picture. Distinct from the **player** recon pass, which you fly
+yourself from `F10 → Recon` — see [Reconnaissance](../f10-menu/recon.md).
 
-## Waypoint Actions
+## Coalition coordination
 
-These control already-deployed units (PG Tempest costs):
+### Add Task
+Posts a task to the coalition tasking board at a map mark, or against an
+objective. Drawn on the F10 map for everyone on your side, ranked into the
+briefing, announced on the GCI net.
 
-- **Move**: **15 points** - Reposition ground units or troops
-- **RTB (Return to Base)**: **0 points** - Recall aircraft
-- **Tanker Waypoint**: **5 points** - Move tanker orbit
-- **AWACS Waypoint**: **10 points** - Reposition AWACS
-- **Fighters Waypoint**: **5 points** - Send fighters to new CAP location
-- **Drone Waypoint**: **5 points** - Redirect drone
-- **SEAD Waypoint**: **5 points** - Retask SEAD mission
-- **Attack Waypoint**: **5 points** - Retask attack helicopters
-- **ALCM Waypoint**: **10 points** - Reposition cruise missile platform
+### Remove Task
+Takes one back off the board.
 
-## Action Costs by Category (PG Tempest)
+Both are free. See [The Tasking Board](../gameplay/tasking-board.md).
 
-**Budget (0-50 pts)**:
-- **Deploy EWR**: 50 pts
-- **Drone (Small)**: 50 pts
-- **AWACS**: 50 pts
-- **ALCM (S-3B)**: 25 pts
+## How costs and limits work
 
-**Economy (100-150 pts)**:
-- **Drone (Large)**: 100 pts
-- **Paratroops**: 100 pts
-- **Logistics Repair**: 100 pts
-- **Logistics Transfer**: 100 pts
-- **Light Attack Helicopters**: 120 pts
-- **Naval FARP Destroyer**: 100 pts
-- **ALCM (Tu-95/Tu-160)**: 150 pts
-- **Naval FARP Carrier**: 150 pts
+| | |
+| --- | --- |
+| **Cost** | Deducted when the action starts. Shown in the menu label. |
+| **Penalty** | Charged *again* if the asset is lost early. |
+| **Limit** | Some actions cap how many of a thing a side may have up at once. |
+| **Geo limit** | Some actions can only be called within a distance of friendly territory. |
 
-**Standard (200-300 pts)**:
-- **Fighters (CAP)**: 200 pts
-- **SEAD Package**: 200 pts
-- **Bomber Mission**: 200 pts
-- **Logistics Repair (Fast)**: 200 pts
-- **Attack Helicopters**: 200-300 pts
-
-**Waypoints (0-15 pts)**:
-- **RTB**: 0 pts
-- **Most Waypoints**: 5 pts
-- **AWACS/ALCM Waypoint**: 10 pts
-- **Move Ground Units**: 15 pts
-
-**Note**: Always check F10 menu for current costs, as server config may change
-
-## Server-Specific Actions
-
-Note: Available actions vary by server configuration. Check:
-- Server Discord
-- F10 Actions menu
-- Server documentation
-
-Your server may have custom actions not listed here.
+An action you cannot afford, or that is at its limit, answers with a panel
+message saying so rather than silently failing.
 
 ## See Also
 
-- [Actions Menu](../f10-menu/actions.md) - How to use actions
-- [Points System](../gameplay/points-and-lives.md) - Earning and spending points
+- [Actions Menu](../f10-menu/actions.md) — the live set and how to drive it
+- [Deployable Units](./deployables.md) — the crate-built ground units
+- [AI Helo Missions](../advanced/helo-missions.md)
+- [Points and Lives](../gameplay/points-and-lives.md)

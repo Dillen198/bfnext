@@ -8,7 +8,7 @@ This page covers initial setup for the Fowl Engine dynamic campaign.
 
 When you first connect to a Fowl Engine server:
 
-1. **Read the briefing**: Check the mission briefing for current campaign status
+1. **Read the briefing**: the engine writes one per round for your coalition — a short panel appears ~20 s after you take a slot, `-brief` gives it on demand, and `F10 → Info → Situation` gives the full six pages. See [The Auto-Generated Briefing](../gameplay/briefing.md).
 2. **Join a team**: You must register for either Blue or Red coalition
 3. **Choose your role**: Select an appropriate aircraft or ground unit
 4. **Learn the basics**: Familiarize yourself with chat commands and F10 menus
@@ -27,9 +27,9 @@ Unlike traditional DCS missions that reset after each flight:
 - Coordinate with teammates for maximum effectiveness
 
 ### Reward System
-- Earn points for successful missions
-- Spend points on deployable units and special actions
-- Limited lives encourage careful planning
+- Earn points for kills, captures **and logistics** — a supply run pays about what an air kill does
+- Spend points on support aircraft, drones, AI helo missions and special actions
+- Servers may also limit lives per role; the live mission does not
 - Team-based objectives reward cooperation
 
 ### Commander System
@@ -37,4 +37,6 @@ Some servers run a dedicated **Commander** role — a player who allocates point
 
 ## Next Steps
 
-See [Joining a Team](./joining-team.md) to register for a coalition.
+See [Joining a Team](./joining-team.md) to register for a coalition, then
+[Understanding the Menus](./hud-and-menus.md) and
+[Your First Sortie](../playbooks/first-sortie.md).
