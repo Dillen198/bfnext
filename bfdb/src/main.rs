@@ -2236,6 +2236,175 @@ async fn api_wiki_get(
     })))
 }
 
+/// Top-level keys of a DCS server instance's engine config that the wiki is
+/// allowed to publish. This is an allow-list on purpose: the config also holds
+/// the admin UCID table, the ban list, the netidx base and the CheckWX API key,
+/// none of which belong in a page anybody can read without logging in.
+///
+/// Deliberately excluded beyond the secrets: the very large per-unit maps
+/// (`life_types`, `unit_classification`, `threatened_distance`,
+/// `airborne_ewrs`, ...). They would multiply the payload by an order of
+/// magnitude for values no wiki page quotes.
+const WIKI_FACT_KEYS: &[&str] = &[
+    "points",
+    "limited_lives",
+    "default_lives",
+    "lock_sides",
+    "side_switches",
+    "repair_time",
+    "repair_supply_cost",
+    "deploy_supply_cost",
+    "repair_crate",
+    "logistics_exclusion",
+    "supply_alert_threshold",
+    "objective_start_points",
+    "capture_consolidation_secs",
+    "consolidation_zone_grace_secs",
+    "consolidation_squad_bonus",
+    "consolidation_crate_progress_secs",
+    "takeoff_delay_secs",
+    "slot_leave_kill_radius_m",
+    "threatened_cooldown",
+    "crate_load_distance",
+    "crate_spread",
+    "max_crates",
+    "cargo",
+    "c130_cargo",
+    "helo_cargo",
+    "warehouse",
+    "helo_insertion",
+    "logi_from_scenery",
+    "csar",
+    "player_recon",
+    "artillery",
+    "artillery_mission_range",
+    "artillery_min_range",
+    "alcm_mission_range",
+    "campaign_events",
+    "smart_commander",
+    "factory",
+    "carrier",
+    "frontline",
+    "navaids",
+    "ewr_mode",
+    "ewr_delay",
+    "gci_briefing",
+    "situation_briefing",
+    "comms_plan",
+    "auto_reset",
+    "elint",
+    "iadn",
+    "radar_physics",
+    "unit_cull_distance",
+    "ground_vehicle_cull_distance",
+    "cull_after",
+    "deployables",
+    "troops",
+];
+
+/// Reduce the `actions` block to what a wiki page ever quotes -- the menu name,
+/// what it costs, and which kind of action it is. The full entry carries the
+/// whole AI template (route, payload, callsigns), which is both large and of no
+/// use to a reader.
+fn wiki_summarize_actions(actions: &serde_json::Value) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    let Some(sides) = actions.as_object() else { return serde_json::Value::Object(out) };
+    for (side, by_name) in sides {
+        let Some(by_name) = by_name.as_object() else { continue };
+        let mut rows = Vec::with_capacity(by_name.len());
+        for (name, action) in by_name {
+            // `kind` is an externally tagged enum: either a bare string for a
+            // unit variant, or a single-key object for everything else.
+            let kind = action.get("kind").and_then(|k| match k {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Object(o) => o.keys().next().cloned(),
+                _ => None,
+            });
+            rows.push(serde_json::json!({
+                "name": name,
+                "cost": action.get("cost"),
+                "penalty": action.get("penalty"),
+                "limit": action.get("limit"),
+                "kind": kind,
+            }));
+        }
+        out.insert(side.clone(), serde_json::Value::Array(rows));
+    }
+    serde_json::Value::Object(out)
+}
+
+/// `GET /api/wiki/facts` -- the selected instance's campaign numbers, for the
+/// `{{cfg:...}}` placeholders in wiki pages.
+///
+/// One bfdb can front several DCS servers and **each one runs its own engine
+/// config**, so the same sentence ("an air kill is worth N points") has a
+/// different answer per instance. Rather than forking the page per server, a
+/// page writes `{{cfg:points.air_kill}}` and bfwiki resolves it against
+/// whichever instance the reader has selected.
+///
+/// Public, like the rest of the read side of the wiki -- see `WIKI_FACT_KEYS`
+/// for what that means it may and may not contain. An instance with no
+/// `engine_config` configured returns an empty fact set rather than an error,
+/// so placeholders fall back to the defaults written into the page.
+async fn api_wiki_facts(_db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+    let mut facts = serde_json::Map::new();
+    let mut source: Option<chrono::DateTime<chrono::Utc>> = None;
+    if let Some(path) = inst.cfg.engine_config.clone() {
+        let read = task::block_in_place(|| -> Option<(std::string::String, Option<chrono::DateTime<chrono::Utc>>)> {
+            let text = std::fs::read_to_string(&path).ok()?;
+            let mtime = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .ok()
+                .map(chrono::DateTime::<chrono::Utc>::from);
+            Some((text, mtime))
+        });
+        match read {
+            None => log::warn!(
+                "wiki facts: cannot read engine config {:?} for instance {}",
+                path, inst.cfg.id
+            ),
+            Some((text, mtime)) => match serde_json::from_str::<serde_json::Value>(&text) {
+                Err(e) => log::warn!(
+                    "wiki facts: engine config {:?} for instance {} is not valid JSON: {e}",
+                    path, inst.cfg.id
+                ),
+                Ok(serde_json::Value::Object(map)) => {
+                    source = mtime;
+                    for key in WIKI_FACT_KEYS {
+                        if let Some(v) = map.get(*key) {
+                            facts.insert((*key).to_string(), v.clone());
+                        }
+                    }
+                    if let Some(actions) = map.get("actions") {
+                        facts.insert("actions".into(), wiki_summarize_actions(actions));
+                    }
+                    // `live_weather` is on the allow-list for lat/lon/station,
+                    // but it also carries the CheckWX key.
+                    if let Some(serde_json::Value::Object(o)) = map.get("live_weather").cloned() {
+                        let mut o = o;
+                        o.remove("checkwx_api_key");
+                        facts.insert("live_weather".into(), serde_json::Value::Object(o));
+                    }
+                }
+                Ok(_) => log::warn!(
+                    "wiki facts: engine config {:?} for instance {} is not a JSON object",
+                    path, inst.cfg.id
+                ),
+            },
+        }
+    }
+    Ok(warp::reply::json(&serde_json::json!({
+        "instance": {
+            "id": inst.cfg.id,
+            "label": inst.cfg.label(),
+        },
+        // When the config was last written -- lets the wiki say how fresh the
+        // numbers on the page are.
+        "updated_at": source,
+        "facts": facts,
+    })))
+}
+
 #[derive(Deserialize)]
 struct SaveWikiPageBody {
     title:   std::string::String,
@@ -5448,6 +5617,13 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_wiki_upload_image);
 
+    // Instance-scoped: the numbers a page quotes come from whichever DCS
+    // server the reader picked in the wiki's instance selector.
+    let wiki_facts_route = warp::path!("api" / "wiki" / "facts")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_wiki_facts);
+
     let wiki_get_image_route = warp::path!("api" / "wiki" / "images" / Uuid)
         .and(with_db(db.clone()))
         .then(api_wiki_get_image);
@@ -5586,6 +5762,7 @@ async fn main() -> Result<()> {
         .or(wiki_list_route)
         .or(wiki_get_route)
         .or(wiki_get_image_route)
+        .or(wiki_facts_route)
         .or(intel_list_route)
         .or(intel_get_image_route)
         .or(intel_markup_list_route)
