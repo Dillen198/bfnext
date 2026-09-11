@@ -487,9 +487,15 @@ body {
   display: flex;
   align-items: center;
   gap: 0;
+  padding: 0 16px;
+  min-width: 0;
   background: var(--bg-chrome);
   border-bottom: 1px solid var(--border);
 }
+/* Inline groups that the mobile rules below collapse as a unit. */
+.topbar-brand,
+.topbar-campaign,
+.topbar-theme { display: flex; align-items: center; }
 .topbar-sep {
   width: 1px;
   height: 20px;
@@ -561,6 +567,9 @@ body {
 
 .topbar-secondary { display: flex; align-items: center; }
 
+/* Campaign picker + theme toggle relocated into the mobile drawer. */
+.drawer-controls { display: none; }
+
 .podium-grid { grid-template-columns: repeat(3, 1fr); }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -573,6 +582,31 @@ body {
      off the topbar on mobile -- there just isn't room, and none of
      them are essential to have visible at all times. */
   .topbar-secondary { display: none; }
+
+  /* The topbar is a single non-wrapping row of flex-shrink:0 items, so
+     anything that doesn't fit is simply pushed off the right edge and
+     clipped -- which is how the login button and theme toggle used to
+     disappear on a phone. Everything below trims the row down to what a
+     ~320px viewport can actually hold: the drawer toggle, the mark, the
+     live/online readout and the account control. The campaign picker and
+     theme toggle aren't dropped, they move into the drawer. */
+  .topbar { padding: 0 10px; gap: 8px; }
+  .topbar-sep { display: none; }
+  .topbar-campaign,
+  .topbar-theme { display: none; }
+
+  /* The brand block sizes itself with inline styles (the logo is a prop on
+     <LogoMark>), so overriding it from here needs the extra specificity. */
+  .topbar-brand { padding-right: 0 !important; gap: 8px !important; }
+  .topbar-brand img { width: 32px !important; height: 32px !important; }
+
+  .drawer-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+  }
 
   .sidebar {
     position: fixed;
@@ -610,6 +644,18 @@ body {
      card is under ~120px wide -- stack the top-3 cards instead. */
   .podium-grid { grid-template-columns: 1fr; }
   .podium-stats { gap: 10px; }
+}
+
+/* ── Phone-width topbar (<= 600px) ──
+   Below this the wordmark and the username no longer fit next to the
+   account control. The logo already carries the brand and the avatar
+   already identifies the account, so both labels drop rather than
+   squeezing the row past its width. */
+@media (max-width: 600px) {
+  .topbar-brandname,
+  .topbar-user-meta,
+  .topbar-login-text { display: none; }
+  .topbar-login { padding: 5px 9px !important; }
 }
 
 .nav-item {
@@ -789,6 +835,93 @@ body {
     linear-gradient(90deg, rgba(106,171,31,0.025) 1px, transparent 1px);
   background-size: 40px 40px;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   ANIMATED BACKDROP
+   Behind the app: a drifting grid and a slow radar sweep.
+   Every animation below is a compositor transform -- the main thread
+   does nothing per frame, which is the whole point. Do not be tempted
+   to animate background-position here (repaints the layer every frame)
+   or to pulse opacity on these full-viewport surfaces.
+   ═══════════════════════════════════════════════════════════════ */
+.vs-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  /* Isolate it: nothing inside can affect layout or paint outside it. */
+  contain: strict;
+}
+
+/* Oversized so the drift never exposes an edge; translated by exactly one
+   40px tile, so the loop is seamless and the keyframe can be linear. */
+.vs-backdrop-grid {
+  position: absolute;
+  inset: -60px;
+  background-image:
+    linear-gradient(rgba(106,171,31,0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(106,171,31,0.045) 1px, transparent 1px);
+  background-size: 40px 40px;
+  will-change: transform;
+  animation: vs-grid-drift 36s linear infinite;
+}
+@keyframes vs-grid-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(40px, 40px, 0); }
+}
+
+/* One conic gradient, rasterised once, rotated by the compositor. */
+.vs-backdrop-sweep {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 150vmax;
+  height: 150vmax;
+  margin: -75vmax 0 0 -75vmax;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    rgba(106,171,31,0.11) 0deg,
+    rgba(106,171,31,0.03) 24deg,
+    transparent 62deg,
+    transparent 360deg
+  );
+  will-change: transform;
+  animation: vs-sweep 24s linear infinite;
+}
+@keyframes vs-sweep {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* A green glow over a white dashboard reads as a fault, not an effect. */
+:root[data-theme="light"] .vs-backdrop-sweep { display: none; }
+:root[data-theme="light"] .vs-backdrop-grid {
+  background-image:
+    linear-gradient(rgba(60,90,20,0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(60,90,20,0.05) 1px, transparent 1px);
+}
+
+/* A 150vmax rotating layer is free on a desktop GPU and not free on a phone
+   battery, and the sweep is barely visible behind a stacked mobile layout
+   anyway. Grid only below the mobile breakpoint. */
+@media (max-width: 860px) {
+  .vs-backdrop-sweep { display: none; }
+}
+
+/* Decoration yields: keep the grid, stop the motion. */
+@media (prefers-reduced-motion: reduce) {
+  .vs-backdrop-grid,
+  .vs-backdrop-sweep { animation: none; }
+  .vs-backdrop-sweep { display: none; }
+}
+
+/* The app shell paints over the backdrop unless it is told not to; body still
+   carries --bg, so nothing below this is actually transparent. */
+.vs-shell,
+.vs-main { background: transparent !important; position: relative; }
+.vs-shell { z-index: 1; }
 
 /* ── Scanline overlay (apply to full app for CRT effect) ── */
 body::after {

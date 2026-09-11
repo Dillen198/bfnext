@@ -985,20 +985,9 @@ export const api = {
     me:           () => get<{ user: AuthUser | null }>('/auth/me').then(r => r.user),
     logout:       () => fetch(`${BASE}/auth/logout`, { credentials: 'include' }),
     loginUrl:     () => `${BASE}/auth/login?return_to=${encodeURIComponent(window.location.origin + '/')}`,
-    localEnabled: () => get<{ enabled: boolean }>('/auth/local-enabled').then(r => r.enabled),
-    localLogin: async (username: string, password: string): Promise<void> => {
-      const res = await fetch(`${BASE}/auth/local-login`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      })
-      if (!res.ok) {
-        let msg = `Error ${res.status}`
-        try { const j = await res.json(); if (j?.error) msg = j.error } catch { /* ignore */ }
-        throw new Error(msg)
-      }
-    },
+    // No local username/password helper on purpose: Discord is the only sign-in
+    // a person gets. bfdb's /api/auth/local-login stays, but as a machine
+    // credential for DCSServerBot -- the dashboard must not offer it.
   },
   admin: {
     sessions:    () => get<AdminSession[]>('/admin/sessions'),

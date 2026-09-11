@@ -1,31 +1,34 @@
 import { useState } from 'react'
 import {
-  AlertTriangle, Crosshair, Package, Plane, Radio, ShieldAlert, Target,
-  Truck, Eye, LifeBuoy, Swords, Clock, Map as MapIcon,
+  AlertTriangle, Package, Radio, Clock, Map as MapIcon,
 } from 'lucide-react'
+import {
+  Aircraft, Capture, Cas, Csar, Defend, Intercept, Logistics, Objective,
+  Recon, Sam, Sead, Strike, type IconComponent,
+} from '../icons'
 import type { SituationReport, Task, Hotspot, Urgency } from '../api'
 import BriefingMap from './BriefingMap'
 
 const URGENCY_COLOR = (u: Urgency) =>
   u === 'critical' ? '#f04747' : u === 'high' ? '#f0a030' : '#8ec83f'
 
-const KIND_ICON: Record<Task['kind'], typeof Radio> = {
-  defend: ShieldAlert,
-  capture: Target,
-  strike: Crosshair,
-  sead: Swords,
-  cas: Crosshair,
-  intercept: Plane,
-  logistics: Truck,
-  recon: Eye,
-  csar: LifeBuoy,
+const KIND_ICON: Record<Task['kind'], IconComponent> = {
+  defend: Defend,
+  capture: Capture,
+  strike: Strike,
+  sead: Sead,
+  cas: Cas,
+  intercept: Intercept,
+  logistics: Logistics,
+  recon: Recon,
+  csar: Csar,
 }
 
 function Card({
   title, icon: Icon, count, children, accent,
 }: {
   title: string
-  icon: typeof Radio
+  icon: IconComponent
   count?: number | string
   children: React.ReactNode
   accent?: string
@@ -79,7 +82,7 @@ function Bar({ value, warn }: { value: number; warn?: boolean }) {
 function TaskRow({
   task, index, selected, onSelect,
 }: { task: Task; index: number; selected: boolean; onSelect: () => void }) {
-  const Icon = KIND_ICON[task.kind] ?? Target
+  const Icon = KIND_ICON[task.kind] ?? Objective
   const color = URGENCY_COLOR(task.urgency)
   return (
     <button
@@ -258,7 +261,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
         </div>
 
         <div style={{ overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, paddingRight: 2 }}>
-          <Card title="Tasking" icon={Target} count={report.tasking.length}>
+          <Card title="Tasking" icon={Objective} count={report.tasking.length}>
             {report.tasking.length === 0 ? (
               <div style={dim}>
                 Nothing pressing. Soften an enemy objective before it can be taken, or resupply your own.
@@ -286,7 +289,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
 
           <Card
             title="Air Picture"
-            icon={Plane}
+            icon={Aircraft}
             count={a.radar_blind ? 'BLIND' : `${a.hostile_tracks} hostile`}
             accent={a.radar_blind ? '#f04747' : undefined}
           >
@@ -316,7 +319,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
             </div>
           </Card>
 
-          <Card title="Known Air Defence" icon={ShieldAlert} count={report.threats.length} accent="#f04747">
+          <Card title="Known Air Defence" icon={Sam} count={report.threats.length} accent="#f04747">
             {report.threats.length === 0 ? (
               <div style={dim}>
                 Nothing held — no recon, SF, JTAC or ELINT contact on enemy air defence. Every strike you
@@ -339,7 +342,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
             )}
           </Card>
 
-          <Card title="Logistics" icon={Truck} count={`${l.hubs.length} hubs`}>
+          <Card title="Logistics" icon={Logistics} count={`${l.hubs.length} hubs`}>
             <div style={{ padding: '8px 13px' }}>
               {l.hubs.length === 0 ? (
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>No logistics hub held.</div>

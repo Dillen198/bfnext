@@ -10,9 +10,11 @@ import {
   Crosshair, Plane, Users, Shield, AlertTriangle,
   Wind, Thermometer, Eye, Gauge, ExternalLink, Activity,
   TrendingUp, MapPin, Radio,
-  Hexagon, Tent, Factory as FactoryIcon, Warehouse, Anchor, Ship, RadioTower,
-  type LucideIcon,
 } from 'lucide-react'
+import {
+  Airbase, Farp, Fob, Factory, LogiHub, NavalBase, Carrier, CommandCenter,
+  type IconComponent,
+} from '../icons'
 import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type SrsClient, type SrsStatus, type Frontlines } from '../api'
 import { campaign } from '../config/campaign'
 import { useTheme } from '../context/ThemeContext'
@@ -249,9 +251,10 @@ function TerritoryBar({ objectives }: { objectives: Objective[] }) {
 
 // ── Critical objectives ───────────────────────────────────────────────────────
 
-const OBJ_ICON: Record<string, LucideIcon> = {
-  Airbase: Plane, FARP: Hexagon, FOB: Tent, Factory: FactoryIcon,
-  'Logistics Hub': Warehouse, 'Naval Base': Anchor, 'Carrier Group': Ship, 'Command Center': RadioTower,
+const OBJ_ICON: Record<string, IconComponent> = {
+  Airbase, FARP: Farp, FOB: Fob, Factory,
+  'Logistics Hub': LogiHub, 'Naval Base': NavalBase,
+  'Carrier Group': Carrier, 'Command Center': CommandCenter,
 }
 
 /** lucide icon for an objective kind, defaulting to MapPin for anything unmapped. */

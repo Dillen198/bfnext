@@ -1,62 +1,26 @@
-import React, { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, KeyRound, User } from 'lucide-react'
 import { api } from '../api'
-import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
 import ThemeToggle from '../components/ThemeToggle'
 import LogoMark from '../components/LogoMark'
+import Backdrop from '../components/Backdrop'
 
+/**
+ * Sign-in. Discord is the only way a person gets into the dashboard: a pilot's
+ * identity here *is* their Discord account (that is what links them to a UCID,
+ * a coalition and their stats), so a separate username/password would create a
+ * second class of user with no pilot behind it.
+ *
+ * bfdb still exposes POST /api/auth/local-login, but only as a machine
+ * credential -- DCSServerBot uses it to reach the admin API for /feops, the log
+ * relay and binary swaps. It is deliberately not offered in this UI.
+ */
 export default function LoginPage() {
-  const { refresh } = useAuth()
-  const navigate    = useNavigate()
-
-  const [localEnabled, setLocalEnabled] = useState(false)
-  const [mode, setMode]                 = useState<'discord' | 'local'>('discord')
-
-  // form state
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [showPw,   setShowPw]   = useState(false)
-  const [loading,  setLoading]  = useState(false)
-  const [error,    setError]    = useState<string | null>(null)
-
-  useEffect(() => {
-    api.auth.localEnabled().then(e => {
-      setLocalEnabled(e)
-      if (e) setMode('local') // prefer local if available (admin convenience)
-    }).catch(() => {})
-  }, [])
-
-  async function handleLocalLogin(e: React.FormEvent) {
-    e.preventDefault()
-    if (!username || !password) return
-    setLoading(true)
-    setError(null)
-    try {
-      await api.auth.localLogin(username, password)
-      await refresh()
-      navigate('/')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '0.55rem 0.75rem',
-    background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-    borderRadius: '3px', color: 'var(--text)', fontSize: '0.82rem',
-    outline: 'none', fontFamily: 'inherit',
-    letterSpacing: '0.04em',
-  }
-
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      height: '100%', background: 'var(--bg)', position: 'relative',
+      height: '100%', position: 'relative',
     }}>
+      <Backdrop />
       <ThemeToggle style={{ position: 'absolute', top: 16, right: 16 }} />
       <div style={{
         padding: '2rem', width: '100%', maxWidth: '340px',
@@ -85,133 +49,25 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Mode tabs — only show if both options available */}
-        {localEnabled && (
-          <div className="flex mb-5" style={{ borderBottom: '1px solid var(--border)' }}>
-            {(['discord', 'local'] as const).map(m => (
-              <button
-                key={m}
-                onClick={() => { setMode(m); setError(null) }}
-                style={{
-                  flex: 1, padding: '0.5rem', fontSize: '0.65rem',
-                  letterSpacing: '0.12em', fontFamily: "'Bebas Neue', sans-serif",
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: mode === m ? 'var(--accent)' : 'var(--text-dim)',
-                  borderBottom: mode === m ? '2px solid var(--accent)' : '2px solid transparent',
-                  marginBottom: '-1px', transition: 'color 0.15s',
-                }}
-              >
-                {m === 'discord' ? '  Discord' : '  Admin Login'}
-              </button>
-            ))}
-          </div>
-        )}
-
         {/* Discord login */}
-        {mode === 'discord' && (
-          <div style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '1.25rem', lineHeight: 1.6 }}>
-              Sign in with Discord to access your pilot profile and stats.
-            </p>
-            <a
-              href={api.auth.loginUrl()}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
-                background: '#5865F2', color: '#fff',
-                padding: '0.65rem 1.5rem', borderRadius: '3px',
-                textDecoration: 'none', fontSize: '0.78rem',
-                letterSpacing: '0.1em', fontFamily: "'Bebas Neue', sans-serif",
-              }}
-            >
-              <DiscordIcon />
-              LOGIN WITH DISCORD
-            </a>
-          </div>
-        )}
-
-        {/* Local admin login */}
-        {mode === 'local' && (
-          <form onSubmit={handleLocalLogin} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-            <p style={{ fontSize: '0.68rem', color: 'var(--text-dim)', letterSpacing: '0.08em', textAlign: 'center', marginBottom: '0.25rem' }}>
-              Admin credentials
-            </p>
-
-            {/* Username */}
-            <div>
-              <label style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: '0.3rem' }}>
-                Username
-              </label>
-              <div style={{ position: 'relative' }}>
-                <User size={13} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
-                <input
-                  type="text"
-                  value={username}
-                  onChange={e => setUsername(e.target.value)}
-                  autoComplete="username"
-                  placeholder="admin"
-                  style={{ ...inputStyle, paddingLeft: '2rem' }}
-                />
-              </div>
-            </div>
-
-            {/* Password */}
-            <div>
-              <label style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: '0.3rem' }}>
-                Password
-              </label>
-              <div style={{ position: 'relative' }}>
-                <KeyRound size={13} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
-                <input
-                  type={showPw ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  style={{ ...inputStyle, paddingLeft: '2rem', paddingRight: '2.2rem' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw(v => !v)}
-                  style={{ position: 'absolute', right: '0.6rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 0 }}
-                >
-                  {showPw ? <EyeOff size={13} /> : <Eye size={13} />}
-                </button>
-              </div>
-            </div>
-
-            {/* Error */}
-            {error && (
-              <div style={{ fontSize: '0.68rem', color: '#ef4444', textAlign: 'center', letterSpacing: '0.06em' }}>
-                {error}
-              </div>
-            )}
-
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={loading || !username || !password}
-              style={{
-                padding: '0.65rem', background: 'var(--accent)', color: '#fff',
-                border: 'none', borderRadius: '3px', cursor: loading ? 'not-allowed' : 'pointer',
-                fontSize: '0.78rem', letterSpacing: '0.12em',
-                fontFamily: "'Bebas Neue', sans-serif",
-                opacity: loading || (!username || !password) ? 0.6 : 1,
-                transition: 'opacity 0.15s',
-              }}
-            >
-              {loading ? 'SIGNING IN…' : 'SIGN IN'}
-            </button>
-
-            {/* Switch to Discord */}
-            <button
-              type="button"
-              onClick={() => { setMode('discord'); setError(null) }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.62rem', color: '#5865F2', letterSpacing: '0.08em', padding: 0 }}
-            >
-              ← Sign in with Discord instead
-            </button>
-          </form>
-        )}
+        <div style={{ textAlign: 'center' }}>
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '1.25rem', lineHeight: 1.6 }}>
+            Sign in with Discord to access your pilot profile and stats.
+          </p>
+          <a
+            href={api.auth.loginUrl()}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+              background: '#5865F2', color: '#fff',
+              padding: '0.65rem 1.5rem', borderRadius: '3px',
+              textDecoration: 'none', fontSize: '0.78rem',
+              letterSpacing: '0.1em', fontFamily: "'Bebas Neue', sans-serif",
+            }}
+          >
+            <DiscordIcon />
+            LOGIN WITH DISCORD
+          </a>
+        </div>
       </div>
     </div>
   )

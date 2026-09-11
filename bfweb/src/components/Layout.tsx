@@ -1,39 +1,43 @@
 import React from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
-  LayoutDashboard, Map, Target, BarChart3, Users, Crosshair,
-  Zap, LogOut, Shield, Settings, Settings2, Info, Server, Radio,
-  ChevronRight, Plane, Menu, X, ChevronsLeft, ChevronsRight, BookOpen, Camera,
+  LogOut, Shield, Settings, Settings2, Server, Radio,
+  ChevronRight, Plane, Menu, X, ChevronsLeft, ChevronsRight,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../api'
+import { api, type Round, type ServerInstance } from '../api'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
 import ThemeToggle from './ThemeToggle'
 import { useInstance } from '../context/InstanceContext'
 import LogoMark from './LogoMark'
+import Backdrop from './Backdrop'
+import {
+  Sitrep, Tacmap, Objective, Briefing, ReconIntel, Rankings, KillFeed,
+  Pilot, Info, Wiki, Support, type IconComponent,
+} from '../icons'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 
 // Operational picture. BRIEFING / RECON INTEL are coalition-locked and only
 // appear once bfdb can resolve the viewer's side (or they're an admin).
 const OPS_NAV = [
-  { to: '/',            icon: LayoutDashboard, label: 'SITREP'     },
-  { to: '/map',         icon: Map,             label: 'TACMAP'     },
-  { to: '/objectives',  icon: Target,          label: 'OBJECTIVES' },
+  { to: '/',            icon: Sitrep,          label: 'SITREP'     },
+  { to: '/map',         icon: Tacmap,          label: 'TACMAP'     },
+  { to: '/objectives',  icon: Objective,       label: 'OBJECTIVES' },
 ]
 const COALITION_NAV = [
-  { to: '/briefing', icon: Radio,  label: 'BRIEFING'     },
-  { to: '/intel',    icon: Camera, label: 'RECON INTEL'  },
+  { to: '/briefing', icon: Briefing,   label: 'BRIEFING'     },
+  { to: '/intel',    icon: ReconIntel, label: 'RECON INTEL'  },
 ]
 // Stats & people.
 const STATS_NAV = [
-  { to: '/leaderboard', icon: BarChart3,  label: 'RANKINGS'  },
-  { to: '/pilots',      icon: Users,      label: 'PILOTS'    },
-  { to: '/kills',       icon: Crosshair,  label: 'KILL FEED' },
+  { to: '/leaderboard', icon: Rankings,   label: 'RANKINGS'  },
+  { to: '/pilots',      icon: Pilot,      label: 'PILOTS'    },
+  { to: '/kills',       icon: KillFeed,   label: 'KILL FEED' },
 ]
-const PROFILE_NAV = (ucid: string) => ({ to: `/pilots?ucid=${ucid}`, icon: Users, label: 'MY PROFILE' })
+const PROFILE_NAV = (ucid: string) => ({ to: `/pilots?ucid=${ucid}`, icon: Pilot, label: 'MY PROFILE' })
 // Meta / system.
 const ABOUT_NAV = { to: '/about', icon: Info, label: 'ABOUT' }
 const ADMIN_NAV = { to: '/admin', icon: Settings, label: 'ADMIN' }
@@ -124,6 +128,68 @@ function DiscordIcon({ size = 11 }: { size?: number }) {
   )
 }
 
+function roundLabel(r: Round) {
+  if (r.active) return `${r.scenario} — Active`
+  const start = new Date(r.start).toLocaleDateString([], { month: 'short', day: 'numeric' })
+  const end   = r.end ? new Date(r.end).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '?'
+  return `${r.scenario} · ${start}–${end}`
+}
+
+/* Campaign selector. With one DCS server this is the round picker it has
+   always been; with several it groups by server, so choosing a campaign
+   also switches which server the whole dashboard is showing.
+
+   Rendered in two places -- the topbar on desktop and the nav drawer on
+   mobile, where the topbar has no room for it. CSS shows exactly one. */
+function CampaignSelect({
+  value, onChange, multi, currentId, activeRound, pastRounds, groups, style,
+}: {
+  value: string
+  onChange: (value: string) => void
+  multi: boolean
+  currentId: string
+  activeRound?: Round
+  pastRounds: Round[]
+  groups: { instance: ServerInstance; rounds: Round[] }[]
+  style?: React.CSSProperties
+}) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="vs-input"
+      title={multi ? 'Server and campaign' : 'Campaign'}
+      style={{ fontSize: '0.68rem', padding: '4px 8px', height: 28, cursor: 'pointer', ...style }}
+    >
+      {/* Single server: same "<instance>|<round>" encoding as the
+          grouped case, so `selectorValue` matches an option and the
+          select shows the right thing when a past round is chosen. */}
+      {!multi && <>
+        {activeRound  && <option value={`${currentId}|`}>{roundLabel(activeRound)}</option>}
+        {!activeRound && <option value={`${currentId}|`}>Latest Round</option>}
+        {pastRounds.map(r => <option key={r.id} value={`${currentId}|${r.id}`}>{roundLabel(r)}</option>)}
+      </>}
+      {multi && groups.map(({ instance, rounds: rs }) => {
+        const live = rs.find(r => r.active)
+        const past = rs.filter(r => !r.active)
+        return (
+          <optgroup
+            key={instance.id}
+            label={`${instance.label}${instance.public === false ? ' [test]' : ''}`}
+          >
+            <option value={`${instance.id}|`}>
+              {live ? roundLabel(live) : 'Latest Round'}
+            </option>
+            {past.map(r => (
+              <option key={r.id} value={`${instance.id}|${r.id}`}>{roundLabel(r)}</option>
+            ))}
+          </optgroup>
+        )
+      })}
+    </select>
+  )
+}
+
 // ── Main Layout ───────────────────────────────────────────────────────────────
 
 export default function Layout() {
@@ -180,7 +246,7 @@ export default function Layout() {
   // Grouped by purpose: operational picture, then stats/people, then
   // meta/system. Empty groups (e.g. no coalition, not admin) are dropped so
   // no stray dividers show.
-  const navGroups: { to: string; icon: typeof Info; label: string }[][] = [
+  const navGroups: { to: string; icon: IconComponent; label: string }[][] = [
     [
       ...OPS_NAV,
       ...(user?.side || user?.is_admin ? COALITION_NAV : []),
@@ -197,20 +263,28 @@ export default function Layout() {
 
   const Sep = () => <div className="topbar-sep" />
 
-  function roundLabel(r: { id: number; scenario: string; start: string; end: string | null; active: boolean }) {
-    if (r.active) return `${r.scenario} — Active`
-    const start = new Date(r.start).toLocaleDateString([], { month: 'short', day: 'numeric' })
-    const end   = r.end ? new Date(r.end).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '?'
-    return `${r.scenario} · ${start}–${end}`
+
+  const hasCampaignSelect = rounds.length > 0 || multi
+  const campaignProps = {
+    value: selectorValue,
+    onChange: onSelectCampaign,
+    multi,
+    currentId: current?.id ?? '',
+    activeRound,
+    pastRounds,
+    groups,
   }
 
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
+    <>
+      <Backdrop />
+    <div className="vs-shell" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
 
       {/* ══════════════════════════════════════════════════════════
           TOP BAR
           ══════════════════════════════════════════════════════════ */}
-      <header className="topbar" style={{ padding: '0 16px', gap: 0 }}>
+      <header className="topbar">
 
         {/* Mobile nav toggle */}
         <button
@@ -223,7 +297,7 @@ export default function Layout() {
         </button>
 
         {/* Brand */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingRight: 16 }}>
+        <div className="topbar-brand" style={{ gap: 10, flexShrink: 0, paddingRight: 16 }}>
           {campaign.logoUrl ? (
             <img src={campaign.logoUrl} alt={campaign.shortName}
               style={{ width: 28, height: 28, objectFit: 'contain', borderRadius: 4, flexShrink: 0 }} />
@@ -231,7 +305,7 @@ export default function Layout() {
             <LogoMark size={46} alt={campaign.name} />
           )}
           <div>
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.9rem', letterSpacing: '0.2em', color: 'var(--text)', lineHeight: 1 }}>
+            <div className="topbar-brandname" style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.9rem', letterSpacing: '0.2em', color: 'var(--text)', lineHeight: 1 }}>
               {campaign.name}
             </div>
             <div style={{ marginTop: 2 }}>
@@ -278,46 +352,15 @@ export default function Layout() {
           </div>
         )}
 
-        {/* Campaign selector. With one DCS server this is the round picker it
-            has always been; with several it groups by server, so choosing a
-            campaign also switches which server the whole dashboard is showing. */}
-        {(rounds.length > 0 || multi) && (
-          <>
+        {/* Campaign selector -- topbar copy (mobile gets the drawer copy) */}
+        {hasCampaignSelect && (
+          <div className="topbar-campaign">
             <Sep />
-            <select
-              value={selectorValue}
-              onChange={e => onSelectCampaign(e.target.value)}
-              className="vs-input"
-              title={multi ? 'Server and campaign' : 'Campaign'}
-              style={{ fontSize: '0.68rem', padding: '4px 8px', height: 28, maxWidth: multi ? 260 : 180, cursor: 'pointer' }}
-            >
-              {/* Single server: same "<instance>|<round>" encoding as the
-                  grouped case, so `selectorValue` matches an option and the
-                  select shows the right thing when a past round is chosen. */}
-              {!multi && <>
-                {activeRound  && <option value={`${current?.id ?? ''}|`}>{roundLabel(activeRound)}</option>}
-                {!activeRound && <option value={`${current?.id ?? ''}|`}>Latest Round</option>}
-                {pastRounds.map(r => <option key={r.id} value={`${current?.id ?? ''}|${r.id}`}>{roundLabel(r)}</option>)}
-              </>}
-              {multi && groups.map(({ instance, rounds: rs }) => {
-                const live = rs.find(r => r.active)
-                const past = rs.filter(r => !r.active)
-                return (
-                  <optgroup
-                    key={instance.id}
-                    label={`${instance.label}${instance.public === false ? ' [test]' : ''}`}
-                  >
-                    <option value={`${instance.id}|`}>
-                      {live ? roundLabel(live) : 'Latest Round'}
-                    </option>
-                    {past.map(r => (
-                      <option key={r.id} value={`${instance.id}|${r.id}`}>{roundLabel(r)}</option>
-                    ))}
-                  </optgroup>
-                )
-              })}
-            </select>
-          </>
+            <CampaignSelect
+              {...campaignProps}
+              style={{ maxWidth: multi ? 260 : 180 }}
+            />
+          </div>
         )}
 
         {/* Server IP */}
@@ -333,15 +376,16 @@ export default function Layout() {
           </div>
         )}
 
-        <Sep />
-
-        <ThemeToggle style={{ marginRight: 4 }} />
-
-        <Sep />
+        {/* Theme toggle -- topbar copy (mobile gets the drawer copy) */}
+        <div className="topbar-theme">
+          <Sep />
+          <ThemeToggle style={{ marginRight: 4 }} />
+          <Sep />
+        </div>
 
         {/* User */}
         {user ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <div className="topbar-user" style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             {user.avatar ? (
               <img
                 src={`https://cdn.discordapp.com/avatars/${user.discord_id}/${user.avatar}.webp?size=32`}
@@ -353,7 +397,7 @@ export default function Layout() {
                 {user.username[0]?.toUpperCase()}
               </div>
             )}
-            <div style={{ lineHeight: 1.2 }}>
+            <div className="topbar-user-meta" style={{ lineHeight: 1.2 }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text)', fontWeight: 600, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {user.username}
               </div>
@@ -372,6 +416,7 @@ export default function Layout() {
         ) : (
           <button
             onClick={() => navigate('/login')}
+            className="topbar-login"
             style={{
               display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
               fontSize: '0.72rem', fontWeight: 600, color: '#7289DA',
@@ -380,7 +425,7 @@ export default function Layout() {
               padding: '5px 12px', borderRadius: 5, letterSpacing: '0.06em', whiteSpace: 'nowrap',
             }}
           >
-            <DiscordIcon size={11} /> Login
+            <DiscordIcon size={11} /> <span className="topbar-login-text">Login</span>
           </button>
         )}
       </header>
@@ -398,6 +443,17 @@ export default function Layout() {
 
         {/* SIDEBAR */}
         <aside className={`sidebar${sidebarOpen ? ' open' : ''}${sidebarCollapsed ? ' collapsed' : ''}`}>
+
+          {/* Mobile-only: the topbar can't fit these at phone widths, so the
+              campaign picker and theme toggle live at the top of the drawer
+              instead of being pushed off the right edge of the header. */}
+          <div className="drawer-controls">
+            {hasCampaignSelect && <CampaignSelect
+                {...campaignProps}
+                style={{ flex: 1, minWidth: 0, height: 32 }}
+              />}
+            <ThemeToggle style={{ width: 32, height: 32 }} />
+          </div>
 
           {/* Nav section */}
           <div className="nav-group-label">Navigation</div>
@@ -436,7 +492,7 @@ export default function Layout() {
                 title={sidebarCollapsed ? 'Wiki' : undefined}
                 style={{ borderRadius: 5, height: 36 }}
               >
-                <BookOpen size={14} style={{ flexShrink: 0 }} />
+                <Wiki size={14} style={{ flexShrink: 0 }} />
                 <span>WIKI</span>
               </a>
             </div>
@@ -453,7 +509,7 @@ export default function Layout() {
                 title={sidebarCollapsed ? 'Support' : undefined}
                 style={{ color: '#fb923c', borderRadius: 5, height: 36 }}
               >
-                <Zap size={14} style={{ flexShrink: 0 }} />
+                <Support size={14} style={{ flexShrink: 0 }} />
                 <span>SUPPORT</span>
               </a>
             </div>
@@ -477,11 +533,12 @@ export default function Layout() {
         </aside>
 
         {/* MAIN */}
-        <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--bg)' }}>
+        <main className="vs-main" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <Outlet />
         </main>
 
       </div>
     </div>
+    </>
   )
 }

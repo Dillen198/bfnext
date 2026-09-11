@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Icon contact sheet, regenerated on demand by scripts/icon-proof.mjs
+public/__icon-*.html

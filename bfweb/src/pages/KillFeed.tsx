@@ -8,6 +8,10 @@ import {
   AreaChart, Area,
 } from 'recharts'
 import { Crosshair, Zap, Activity, Users, Plane } from 'lucide-react'
+import {
+  Aircraft, Helicopter, Ship, Armor, Sam, Arty, Infantry, Logistics, Radar,
+  Structure, type IconComponent,
+} from '../icons'
 import { useRound } from '../context/RoundContext'
 import { useTableSort, SortTh } from '../components/SortableTh'
 
@@ -28,43 +32,43 @@ const TT = {
 }
 
 // Classify from DCS unit type name (target_type field contains the DCS type string)
-function classifyTarget(targetType: string | null): { label: string; color: string; bg: string } {
+function classifyTarget(targetType: string | null): { label: string; color: string; bg: string; icon?: IconComponent } {
   const t = (targetType ?? '').toLowerCase()
   // Aircraft patterns
   if (
     /\bf-\d|\bf\/a-|\bf-16|f-18|f-15|mig-|su-\d|a-10|av-8|eurofighter|typhoon|tornado|rafale|gripen|mirage|hawk|hornet|viper|eagle|flanker|fullback|frogfoot|fencer|foxbat|foxhound|warthog|harrier|phantom|lightning|hercules|globemaster|strategic/.test(t) ||
     /aircraft|plane|jet|fighter|bomber|transport|tanker|awacs|recon/.test(t)
-  ) return { label: 'AIRCRAFT', color: '#60a5fa', bg: '#60a5fa18' }
+  ) return { label: 'AIRCRAFT', color: '#60a5fa', bg: '#60a5fa18', icon: Aircraft }
   // Helicopter patterns
   if (/mi-|uh-|ah-|ch-|ka-|sa-\d|heli|huey|apache|blackhawk|chinook|hind|hip|havoc|hokum|seahawk|lynx|gazelle/.test(t) ||
     /helicopter|helo|rotary/.test(t)
-  ) return { label: 'HELO', color: '#38bdf8', bg: '#38bdf818' }
+  ) return { label: 'HELO', color: '#38bdf8', bg: '#38bdf818', icon: Helicopter }
   // Naval
   if (/ship|boat|frigate|destroyer|carrier|corvette|patrol|naval|lha|cvn|ddg|ffg|slava|kuznetsov|perry|oliver|oliver hazard/.test(t))
-    return { label: 'NAVAL', color: '#06b6d4', bg: '#06b6d418' }
+    return { label: 'NAVAL', color: '#06b6d4', bg: '#06b6d418', icon: Ship }
   // Armor
   if (/t-\d{2,3}|m1|m60|leopard|challenger|abrams|merkava|k1|leclerc|tank|apc|ifv|bmp-|btr-|bradley|marder|warrior|cv90|stryker|armored/.test(t) ||
     /armor|tank/.test(t)
-  ) return { label: 'ARMOR', color: '#f97316', bg: '#f9731618' }
+  ) return { label: 'ARMOR', color: '#f97316', bg: '#f9731618', icon: Armor }
   // Air defence
   if (/sa-\d|s-300|s-400|patriot|hawk|roland|gepard|tunguska|shilka|flak|aaa|vulcan|linebacker|tor|buk|kub|sa-6|sa-8|sa-10|sa-11|sa-13|sa-15|sa-19|radar|tre|str|fan song|search|track|acquisition|crow bar|straight flush|flap lid|clam shell|dog ear|fire dome|low blow/.test(t) ||
     /sam |manpad|stinger|igla|strela|air.def/.test(t)
-  ) return { label: 'AIR DEF', color: '#a78bfa', bg: '#a78bfa18' }
+  ) return { label: 'AIR DEF', color: '#a78bfa', bg: '#a78bfa18', icon: Sam }
   // Artillery / MLRS
   if (/2s\d|m109|paladin|pzh|as-90|caesar|howitzer|mlrs|bm-21|bm-30|smerch|uragan|grad|artillery|mortar/.test(t))
-    return { label: 'ARTY', color: '#fb923c', bg: '#fb923c18' }
+    return { label: 'ARTY', color: '#fb923c', bg: '#fb923c18', icon: Arty }
   // Infantry
   if (/infantry|soldier|troop|manpad|squad|sniper|atgm crew|stinger crew/.test(t))
-    return { label: 'INF', color: '#22c55e', bg: '#22c55e18' }
+    return { label: 'INF', color: '#22c55e', bg: '#22c55e18', icon: Infantry }
   // Logistics / vehicles
   if (/truck|supply|ural|kamaz|zil|hemtt|fmtv|mhz|logistics|cargo|transport|car|suv|jeep|humvee|hmmwv|land rover/.test(t))
-    return { label: 'VEHICLE', color: '#fbbf24', bg: '#fbbf2418' }
+    return { label: 'VEHICLE', color: '#fbbf24', bg: '#fbbf2418', icon: Logistics }
   // Radar / EW
   if (/radar|ew |elint|jammer/.test(t))
-    return { label: 'RADAR', color: '#e879f9', bg: '#e879f918' }
+    return { label: 'RADAR', color: '#e879f9', bg: '#e879f918', icon: Radar }
   // Structure
   if (/building|structure|depot|hangar|bunker|farp|warehouse|fuel|ammo|command|cp |hq /.test(t))
-    return { label: 'STRUCT', color: '#94a3b8', bg: '#94a3b818' }
+    return { label: 'STRUCT', color: '#94a3b8', bg: '#94a3b818', icon: Structure }
   return { label: 'GND', color: '#64748b', bg: '#64748b18' }
 }
 
@@ -264,7 +268,8 @@ export default function KillFeed() {
                         {fmtTime(k.time)}
                       </td>
                       <td style={cell}>
-                        <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: 2, color: cat.color, background: cat.bg, letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: 2, color: cat.color, background: cat.bg, letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
+                          {cat.icon && <cat.icon size={10} strokeWidth={1.75} />}
                           {cat.label}
                         </span>
                       </td>
