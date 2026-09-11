@@ -37,7 +37,9 @@ class EditRulesModal(ui.Modal, title="Edit Community Rules"):
 
         # Perform the rules update using content submitted via the modal
         await self.plugin.update_community_rules(override_text=self.rules_content.value)
-        await interaction.followup.send("Community rules updated successfully!", ephemeral=True)
+        await interaction.followup.send(
+            "Rules updated and saved. This text now overrides `rules.yaml` until an admin "
+            "runs `/post_rules reset:True`.", ephemeral=True)
 
 
 class Rules(Plugin):
@@ -90,6 +92,15 @@ class Rules(Plugin):
                             END IF;
                         END $$;
                     """)
+
+                    # 3. Live edits made through /edit_rules are stored here.
+                    # Without this they lived only in the posted message, and
+                    # the next restart's startup sync silently reverted them to
+                    # whatever rules.yaml said.
+                    await conn.execute("""
+                        ALTER TABLE rules_messages
+                        ADD COLUMN IF NOT EXISTS override_text TEXT
+                    """)
             self.log.info("[Rules] Database table 'rules_messages' verified and migrated.")
         except Exception as e:
             self.log.error(f"[Rules] Failed to initialize/migrate database table: {e}", exc_info=True)
@@ -111,19 +122,53 @@ class Rules(Plugin):
             return []
 
     async def save_message_ids(self, channel_id: int, message_ids: list[int]):
-        """Insert or update channel message IDs array in DB."""
+        """Insert or update channel message IDs array in DB.
+
+        Deliberately names its columns so it can't clobber `override_text`.
+        """
         try:
             async with self.apool.connection() as conn:
                 async with conn.transaction():
                     await conn.execute("""
                         INSERT INTO rules_messages (channel_id, message_ids, updated_at)
                         VALUES (%s, %s, NOW())
-                        ON CONFLICT (channel_id) 
+                        ON CONFLICT (channel_id)
                         DO UPDATE SET message_ids = EXCLUDED.message_ids, updated_at = NOW()
                     """, (channel_id, message_ids))
             self.log.info(f"[Rules] Saved message_ids {message_ids} for channel {channel_id} to DB.")
         except Exception as e:
             self.log.error(f"[Rules] Error saving message IDs to DB: {e}", exc_info=True)
+
+    async def get_override_text(self, channel_id: int):
+        """The live text an admin last submitted through /edit_rules, if any."""
+        try:
+            async with self.apool.connection() as conn:
+                cursor = await conn.execute(
+                    "SELECT override_text FROM rules_messages WHERE channel_id = %s",
+                    (channel_id,)
+                )
+                row = await cursor.fetchone()
+                return row[0] if row and row[0] else None
+        except Exception as e:
+            self.log.error(f"[Rules] Error fetching override text from DB: {e}", exc_info=True)
+            return None
+
+    async def save_override_text(self, channel_id: int, text):
+        """Persist (or with text=None, clear) the live override."""
+        try:
+            async with self.apool.connection() as conn:
+                async with conn.transaction():
+                    await conn.execute("""
+                        INSERT INTO rules_messages (channel_id, message_ids, override_text, updated_at)
+                        VALUES (%s, ARRAY[]::BIGINT[], %s, NOW())
+                        ON CONFLICT (channel_id)
+                        DO UPDATE SET override_text = EXCLUDED.override_text, updated_at = NOW()
+                    """, (channel_id, text))
+            self.log.info(
+                f"[Rules] {'Cleared' if text is None else 'Stored'} live rules override "
+                f"for channel {channel_id}.")
+        except Exception as e:
+            self.log.error(f"[Rules] Error saving override text to DB: {e}", exc_info=True)
 
     @staticmethod
     def build_image_embed(image_url: str | None) -> discord.Embed | None:
@@ -158,14 +203,23 @@ class Rules(Plugin):
 
         lines = [f"{title}\n", f"{description}\n", "---"] if description else [f"{title}\n", "---"]
 
+        # A rule may carry a `section`; the first rule of each one gets a
+        # heading above it. Rules without a section just continue the previous
+        # one, so the old flat list still formats exactly as it used to.
+        current_section = None
         for rule in config.get("rules", []):
+            section = rule.get("section")
+            if section and section != current_section:
+                lines.append(f"\n## {section}")
+                current_section = section
             t = rule.get("title", "")
             d = rule.get("description", "")
             lines.append(f"\n### {t}\n{d}")
 
         return "\n".join(lines)
 
-    async def update_community_rules(self, override_text: str | None = None):
+    async def update_community_rules(self, override_text: str | None = None,
+                                     ignore_override: bool = False):
         await self.bot.wait_until_ready()
         await self.init_db()
 
@@ -190,7 +244,18 @@ class Rules(Plugin):
                 self.log.error(f"[Rules] Could not access channel {channel_id}: {e}")
                 return
 
-        text_content = override_text if override_text is not None else self.format_rules_text(config)
+        # Precedence: an override passed in right now (a fresh /edit_rules
+        # submission, which we also persist) > an override stored from a
+        # previous one > rules.yaml. Without the stored tier, every restart's
+        # startup sync quietly reverted an admin's live edit.
+        if override_text is not None:
+            await self.save_override_text(channel_id, override_text)
+            text_content = override_text
+        else:
+            stored = None if ignore_override else await self.get_override_text(channel_id)
+            if ignore_override:
+                await self.save_override_text(channel_id, None)
+            text_content = stored if stored is not None else self.format_rules_text(config)
         chunks = self.chunk_text(text_content)
         image_embed = self.build_image_embed(config.get("image_url"))
 
@@ -231,13 +296,20 @@ class Rules(Plugin):
         await self.save_message_ids(channel_id, posted_ids)
         self.log.info(f"[Rules] Posted {len(posted_ids)} rules messages in #{channel.name}. IDs saved to DB.")
 
-    @app_commands.command(name="post_rules", description="Post or update the Discord community rules message")
+    @app_commands.command(name="post_rules", description="Post or update the community rules message")
+    @app_commands.describe(
+        reset="Discard any live /edit_rules changes and republish from rules.yaml")
     @app_commands.guild_only()
     @utils.app_has_role("Admin")
-    async def post_rules_cmd(self, interaction: discord.Interaction):
+    async def post_rules_cmd(self, interaction: discord.Interaction, reset: bool = False):
         await interaction.response.defer(ephemeral=True)
-        await self.update_community_rules()
-        await interaction.followup.send("Community rules task executed! Check logs for DB status.", ephemeral=True)
+        await self.update_community_rules(ignore_override=reset)
+        await interaction.followup.send(
+            "Rules republished from `rules.yaml`; any live edits were discarded."
+            if reset else
+            "Rules updated. (Live `/edit_rules` changes, if any, are still in effect — "
+            "use `/post_rules reset:True` to go back to `rules.yaml`.)",
+            ephemeral=True)
 
     @app_commands.command(name="edit_rules", description="Open interactive form to edit community rules")
     @app_commands.guild_only()
@@ -245,6 +317,16 @@ class Rules(Plugin):
     async def edit_rules_cmd(self, interaction: discord.Interaction):
         config = self.get_config() or {}
         current_text = self.format_rules_text(config)
+        try:
+            channel_id = int(config.get("channel") or 0)
+        except ValueError:
+            channel_id = 0
+        if channel_id:
+            # Show what is actually posted right now, so a second edit doesn't
+            # silently revert the first one back to the yaml text.
+            stored = await self.get_override_text(channel_id)
+            if stored is not None:
+                current_text = stored
         if len(current_text) > 4000:
             await interaction.response.send_message(
                 "⚠️ The current rules are longer than the 4000-character modal limit. Editing here would "

@@ -1,26 +1,72 @@
 DEFAULT:
   channel: 1450818994973048872  # Target Discord channel ID
-  title: "📜 **SERVER RULES & REGULATIONS**"
-  description: "Please adhere to the following rules while participating in our community and DCS servers."
+  title: "📜 **VECTOR STRIKE — RULES**"
+  description: >-
+    Two sets of rules: how we behave in Discord, and how we fly. Most of the
+    in-game ones are enforced automatically by the server, so they are worth
+    reading even if you never read a rules channel.
   image_url: "" # Optional header image URL (e.g., https://i.imgur.com/your_banner.png)
+
+  # Rules carry an optional `section`; a new value starts a new heading in the
+  # posted message. Rules with no section are printed under the previous one.
   rules:
-    - title: "1. General Conduct & Maturity"
-      description: "**Be respectful. Don't be toxic.** We expect maturity and camaraderie at all times. Respect your fellow pilots and you will be respected in return. Harassment, excessive trash-talking, or degrading behavior will result in immediate removal."
+    # ── Discord ───────────────────────────────────────────────────────────
+    - section: "COMMUNITY"
+      title: "1. Conduct & Maturity"
+      description: "**Be respectful. Don't be toxic.** We expect maturity and camaraderie at all times. Respect your fellow pilots and you will be respected in return. Harassment, excessive trash-talking, or degrading behaviour will result in removal."
     - title: "2. Chain of Command & Support"
-      description: "**Do not @ping or DM staff members directly.** If you require assistance or need to report an issue, please open a support ticket in the designated channels. Our staff monitors tickets to ensure all issues are handled fairly and efficiently."
-    - title: "3. Content Standards & Relevant Channels"
+      description: "**Do not ping or DM staff directly.** If you need help or want to report something, open a support ticket in the designated channel. Staff monitor tickets so every issue is handled fairly and in order."
+    - title: "3. Content Standards"
       description: |
-        * **NSFW/Edgy Content:** Keep all NSFW content, political debates, war discussions, and "edgy" topics strictly within designated NSFW channels.
-        * **Prohibited Content:** Gore, obscenity, and pornography are strictly prohibited across the entire server.
-        * **Stay On-Topic:** Please use the correct channels for their intended purposes to keep the server organized and relevant for everyone.
+        * **NSFW / edgy content:** keep NSFW, political debate, real-war discussion and edgy topics to the channels designated for them.
+        * **Prohibited outright:** gore, obscenity and pornography, anywhere on the server.
+        * **Stay on topic:** use channels for what they are for.
     - title: "4. Security & OPSEC"
-      description: "**Do not post, reference, or discuss sensitive, confidential, or classified military documents.** This includes \"leaked\" manuals or restricted technical data. We maintain a strict policy to protect the community and the integrity of the simulation hobby."
+      description: "**Do not post, reference, or discuss sensitive, confidential, or classified military documents**, including \"leaked\" manuals or restricted technical data. Zero tolerance — this protects the community and the hobby."
     - title: "5. Spam & Malicious Links"
       description: |
-        * **No Spam:** Avoid mass-mentioning, wall-of-text spamming, or repetitive messaging.
-        * **Security:** Do not post shady, malicious, or "scam" links.
-        * **Report:** If you see suspicious activity, sketchy links, or scam DMs, please alert staff immediately.
+        * **No spam:** no mass-mentions, wall-of-text spam, or repetitive messaging.
+        * **No shady links.** If you get a sketchy link or a scam DM, tell staff.
     - title: "6. Advertising & Partnerships"
-      description: "Unsanctioned advertising is not allowed. We are always open to community partnerships; if you wish to advertise or collaborate, please contact staff for formal permission."
+      description: "Unsanctioned advertising is not allowed. We are open to community partnerships — contact staff for permission first."
     - title: "7. Doxing & Privacy"
-      description: "Posting real-life information (IP addresses, physical locations, full names, etc.) about other users without their express permission is **strictly prohibited**. Doxing is a zero-tolerance offense."
+      description: "Posting anyone's real-life information (IP address, location, full name, workplace) without their express permission is **strictly prohibited**. Zero tolerance."
+
+    # ── In-game ───────────────────────────────────────────────────────────
+    - section: "IN-GAME CONDUCT"
+      title: "8. Team Killing & Friendly Fire"
+      description: |
+        Identify before you shoot. The server tracks friendly fire automatically and applies penalty points:
+        * **Killing a teammate:** 30 points (20 by collision)
+        * **Firing on a teammate:** 12 points (5 for a collision hit)
+        * **40 points** moves you to spectators, **60 points** kicks you from the server.
+        Points fade over time — roughly a quarter gone after 3 days, and clear after 60. New players are weighted more heavily until they have a few hours in; regulars with 10+ hours are weighted more lightly.
+
+        **If someone TKs you by accident, type `-forgive` in chat within 30 seconds** and their penalty is dropped. Accidents happen in a furball; use it.
+    - title: "9. Deliberate Team Damage"
+      description: "Intentional team-killing, intentional ramming, or destroying your own coalition's deployed assets, crates or convoys is a **bannable offence**, separate from the automated penalty points. Report it with a ticket and include the time, so staff can find it in the logs."
+    - title: "10. Slot Discipline"
+      description: |
+        * **Fly your own coalition.** Your first slot pick registers you to that side, and you can only take slots belonging to it.
+        * **You get one side switch per round** (`-switch blue` / `-switch red`), from spectators. Don't switch to scout for the other side — that is a ban.
+        * **There is a 60-second spawn timer.** After taking a slot you must sit for a minute before getting airborne; take off early and you are returned to spectators. This is intended, not a bug.
+        * **Don't slot-hop to dodge a fight.** Leaving your slot while airborne with an enemy within about 15 km credits that enemy the kill anyway.
+    - title: "11. Don't Exploit the Engine"
+      description: "If you find a way to duplicate crates, capture something you shouldn't be able to, spawn assets you didn't pay for, or otherwise get around the campaign's rules — **report it in a ticket instead of using it.** Finding bugs is genuinely helpful; farming them is not, and it is treated as cheating."
+    - title: "12. Play the Campaign"
+      description: |
+        This is a persistent campaign, not a deathmatch. A few expectations rather than hard rules:
+        * **Don't sit on an enemy runway killing people as they spawn.** Take the base or leave it.
+        * **Protect your own logistics** and expect the enemy to hunt theirs. Convoys and transports are legitimate targets.
+        * **Use the tools.** Post tasks on the coalition board, read the briefing (`-brief`), and tell people what you are doing — most of the campaign is won by coordination, not by individual kills.
+    - title: "13. Comms"
+      description: "SRS is expected for coordinated operations — start it before DCS so it syncs with your cockpit radios. Keep tactical frequencies clear of chatter during an engagement, and don't transmit on the enemy's channels."
+
+    # ── Enforcement ───────────────────────────────────────────────────────
+    - section: "ENFORCEMENT & APPEALS"
+      title: "14. How Enforcement Works"
+      description: "Most in-game infractions are handled automatically by penalty points, with no staff involvement, and the points decay on their own. Staff act on top of that for deliberate or repeated behaviour: warnings, kicks, temporary bans, or permanent removal, depending on severity and history."
+    - title: "15. Appeals & Reports"
+      description: "Think a penalty, kick or ban was wrong? **Open a ticket.** Include your in-game name, roughly when it happened, and what you think went on — the server keeps detailed logs and we would rather check them than argue about it. Do not appeal in public channels or by DMing staff."
+    - title: "16. These Rules Change"
+      description: "The campaign is under active development, so this list is updated as systems change. The current version is always the one posted here. For how the campaign itself works — capturing, logistics, tasking, CSAR — see the wiki: https://wiki.vectorstrike.org"
