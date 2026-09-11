@@ -125,6 +125,9 @@ export interface Frontlines {
 export interface Pilot {
   ucid: string
   name: string
+  /** Coalition on record, for rank insignia. Null if the pilot never
+   *  registered a side (bfdb resolves it from Register/Sideswitch stats). */
+  side?: 'Blue' | 'Red' | null
   air_kills: number
   ground_kills: number
   captures: number

@@ -1,12 +1,12 @@
 import {
-  Shield, Coins, HeartPulse, Truck, Flag, Radar, Crosshair, Gauge, Cloud, Trophy,
-  type LucideIcon,
-} from 'lucide-react'
+  Shield, Coins, Health, Logistics, Capture, Radar, Crosshair, Baro, Cloud, Award,
+  type IconComponent,
+} from '../icons'
 
 export interface CfgCategory {
   key: string
   label: string
-  icon: LucideIcon
+  icon: IconComponent
   fields: string[]
 }
 
@@ -26,11 +26,11 @@ export const CFG_CATEGORIES: CfgCategory[] = [
     fields: ['points', 'objective_start_points', 'smart_commander'],
   },
   {
-    key: 'lives', label: 'Lives & Combat Rules', icon: HeartPulse,
+    key: 'lives', label: 'Lives & Combat Rules', icon: Health,
     fields: ['life_types', 'default_lives', 'limited_lives', 'era', 'last_stand', 'under_attack'],
   },
   {
-    key: 'logistics', label: 'Cargo & Logistics', icon: Truck,
+    key: 'logistics', label: 'Cargo & Logistics', icon: Logistics,
     fields: [
       'cargo', 'c130_cargo', 'c130_cargo_template', 'helo_cargo', 'helo_cargo_template',
       'crate_template', 'crate_load_distance', 'crate_spread', 'max_crates', 'ground_vehicle_cargo',
@@ -39,7 +39,7 @@ export const CFG_CATEGORIES: CfgCategory[] = [
     ],
   },
   {
-    key: 'objectives', label: 'Objectives & Deployables', icon: Flag,
+    key: 'objectives', label: 'Objectives & Deployables', icon: Capture,
     fields: ['deployables', 'troops', 'dismount', 'unit_classification', 'extra_fixed_wing_objectives', 'frontline', 'actions', 'capture_consolidation_secs'],
   },
   {
@@ -58,7 +58,7 @@ export const CFG_CATEGORIES: CfgCategory[] = [
     ],
   },
   {
-    key: 'performance', label: 'Culling & Performance', icon: Gauge,
+    key: 'performance', label: 'Culling & Performance', icon: Baro,
     fields: [
       'unit_cull_distance', 'ground_vehicle_cull_distance', 'lr_cull_distance', 'cull_after',
       'slow_timed_events_freq', 'weapon_spawn_radius', 'weapon_spawn_expiry_secs',
@@ -69,7 +69,7 @@ export const CFG_CATEGORIES: CfgCategory[] = [
     fields: ['weather_effects', 'time_of_day_effects'],
   },
   {
-    key: 'campaign', label: 'Campaign & Events', icon: Trophy,
+    key: 'campaign', label: 'Campaign & Events', icon: Award,
     fields: ['campaign_events', 'auto_reset', 'carrier', 'pilot_experience', 'csar'],
   },
 ]

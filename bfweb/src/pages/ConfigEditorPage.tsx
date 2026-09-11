@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Settings2, Search, Save, AlertTriangle, CheckCircle2, FolderCog } from 'lucide-react'
 import { api, type JsonSchema } from '../api'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
 import { SchemaSection, resolve } from '../components/SchemaForm'
 import { CFG_CATEGORIES } from '../config/cfgCategories'
+import {
+  Config,
+  Alert,
+  Search,
+  Save,
+  CheckCircle2,
+  FolderCog,
+} from '../icons'
 
 export default function ConfigEditorPage() {
   const { user, loading } = useAuth()
@@ -102,6 +109,7 @@ export default function ConfigEditorPage() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <PageHeader
+        icon={Config}
         title="CONFIG EDITOR"
         sub="Campaign engine configuration — restricted access"
         right={
@@ -136,7 +144,7 @@ export default function ConfigEditorPage() {
         <div style={{ padding: '1rem' }}>
           <div className="vs-card" style={{ padding: '1.5rem', border: '1px solid rgba(245,158,11,0.4)' }}>
             <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
-              <AlertTriangle size={15} style={{ color: '#f59e0b' }} />
+              <Alert size={15} style={{ color: '#f59e0b' }} />
               <span style={{ fontSize: '0.8rem', color: 'var(--text)', fontWeight: 600 }}>Config editor not enabled</span>
             </div>
             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
@@ -151,7 +159,7 @@ export default function ConfigEditorPage() {
         <div style={{ padding: '1rem' }}>
           <div className="vs-card" style={{ padding: '1.5rem', border: '1px solid rgba(239,68,68,0.4)' }}>
             <div className="flex items-center gap-2">
-              <AlertTriangle size={15} style={{ color: '#ef4444' }} />
+              <Alert size={15} style={{ color: '#ef4444' }} />
               <span style={{ fontSize: '0.75rem', color: 'var(--text)' }}>
                 {String((cfgError ?? schemaError) instanceof Error ? (cfgError ?? schemaError as Error).message : cfgError ?? schemaError)}
               </span>
@@ -203,10 +211,10 @@ export default function ConfigEditorPage() {
           </aside>
 
           {/* ── Content ── */}
-          <div className="flex-1 overflow-auto p-4" style={{ background: 'var(--bg)' }}>
+          <div className="flex-1 overflow-auto p-4">
             <div className="vs-card" style={{ padding: '0.6rem 0.9rem', marginBottom: '0.8rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Settings2 size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                <Config size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                 <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', lineHeight: 1.5 }}>
                   Changes take effect on the <strong style={{ color: 'var(--text-muted)' }}>next mission/server restart</strong> — bflib
                   only reads this file once at startup. Every field is generated straight from the engine's config schema, so it

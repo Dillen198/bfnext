@@ -1,10 +1,23 @@
 import { useState } from 'react'
 import {
-  AlertTriangle, Package, Radio, Clock, Map as MapIcon,
-} from 'lucide-react'
-import {
-  Aircraft, Capture, Cas, Csar, Defend, Intercept, Logistics, Objective,
-  Recon, Sam, Sead, Strike, type IconComponent,
+  Aircraft,
+  Alert,
+  Capture,
+  Cas,
+  Comms,
+  Csar,
+  Defend,
+  Intercept,
+  Logistics,
+  Objective,
+  Recon,
+  Sam,
+  Sead,
+  Strike,
+  Supply,
+  Tacmap,
+  type IconComponent,
+  Clock,
 } from '../icons'
 import type { SituationReport, Task, Hotspot, Urgency } from '../api'
 import BriefingMap from './BriefingMap'
@@ -205,7 +218,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
               color: '#f87171', fontSize: '0.72rem', fontWeight: 700,
             }}
           >
-            <AlertTriangle size={12} style={{ verticalAlign: -2, marginRight: 5 }} />
+            <Alert size={12} style={{ verticalAlign: -2, marginRight: 5 }} />
             {p.last_stand}
           </div>
         )}
@@ -279,7 +292,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
             )}
           </Card>
 
-          <Card title="Hotspots" icon={AlertTriangle} count={report.hotspots.length}>
+          <Card title="Hotspots" icon={Alert} count={report.hotspots.length}>
             {report.hotspots.length === 0 ? (
               <div style={dim}>No objective is in contact or takeable right now.</div>
             ) : (
@@ -376,7 +389,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
             </div>
           </Card>
 
-          <Card title="Comms Card" icon={Radio} count={report.comms.length}>
+          <Card title="Comms Card" icon={Comms} count={report.comms.length}>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 320 }}>
                 <thead>
@@ -438,7 +451,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
             )}
           </Card>
 
-          <Card title="On Station" icon={Package} count={report.support.length}>
+          <Card title="On Station" icon={Supply} count={report.support.length}>
             {report.support.length === 0 ? (
               <div style={dim}>No AWACS, tanker or JTAC up for your coalition.</div>
             ) : (
@@ -479,7 +492,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
           </Card>
 
           <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', padding: '0 2px 4px', display: 'flex', gap: 5, alignItems: 'center' }}>
-            <MapIcon size={10} />
+            <Tacmap size={10} />
             Built for {report.side} only — threat rings and the air picture are your coalition's own sensors.
           </div>
         </div>

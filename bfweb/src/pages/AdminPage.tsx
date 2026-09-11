@@ -7,12 +7,29 @@ import { api, connectLiveLogs, connectEngineLogs, connectGciTranscript, type Gci
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
 import { useTableSort, SortTh } from '../components/SortableTh'
-import {
-  Shield, Users, Trash2, AlertTriangle, RotateCcw,
-  Activity, Ban, UserX, Terminal, Search, ChevronsDown,
-  Server, Play, Square, RotateCw, Pause, PlayCircle, Radio, Heart,
-} from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import {
+  Admin,
+  Shield,
+  Pilot,
+  Alert,
+  Activity,
+  Server,
+  Comms,
+  type IconComponent,
+  Trash2,
+  RotateCcw,
+  Ban,
+  UserX,
+  Terminal,
+  Search,
+  ChevronsDown,
+  Play,
+  Square,
+  RotateCw,
+  Pause,
+  PlayCircle,
+} from '../icons'
 
 // ── shared styles ─────────────────────────────────────────────────────────────
 
@@ -478,7 +495,7 @@ function EngineErrorFeed({ lines }: { lines: string[] }) {
   return (
     <div className="vs-card">
       <CardHeader
-        icon={<AlertTriangle size={13} style={{ color: '#ef4444' }} />}
+        icon={<Alert size={13} style={{ color: '#ef4444' }} />}
         label="Engine Errors & Warnings"
         badge={<span style={{ ...MONO, fontSize: '0.65rem', color: 'var(--text-muted)' }}>{lines.length}</span>}
       />
@@ -533,7 +550,7 @@ function GciTranscriptPanel() {
   return (
     <div className="vs-card" style={{ display: 'flex', flexDirection: 'column', height: 420 }}>
       <CardHeader
-        icon={<Radio size={13} style={{ color: 'var(--accent)' }} />}
+        icon={<Comms size={13} style={{ color: 'var(--accent)' }} />}
         label="Live GCI Transcript"
         badge={
           <span style={{ fontSize: '0.6rem', color: statusCol, fontFamily: 'var(--font-mono)', border: `1px solid ${statusCol}`, padding: '1px 6px', letterSpacing: '0.1em' }}>
@@ -565,7 +582,7 @@ function GciTranscriptPanel() {
 interface BotAction {
   key: string
   label: string
-  icon: typeof Server
+  icon: IconComponent
   fn: () => Promise<BotActionResult>
   danger: boolean
   confirmText: string
@@ -757,14 +774,14 @@ export default function AdminPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader title="ADMIN PANEL" sub="Server management — restricted access" />
+      <PageHeader icon={Admin} title="ADMIN PANEL" sub="Server management — restricted access" />
 
-      <div className="flex-1 overflow-auto p-4 space-y-4" style={{ background: 'var(--bg)' }}>
+      <div className="flex-1 overflow-auto p-4 space-y-4">
 
         {/* ── Online players ── */}
         <div className="vs-card">
           <CardHeader
-            icon={<Users size={13} style={{ color: 'var(--accent)' }} />}
+            icon={<Pilot size={13} style={{ color: 'var(--accent)' }} />}
             label="Online Players"
             badge={<span style={{ ...MONO, fontSize: '0.65rem', color: 'var(--text-muted)' }}>{online.length}</span>}
           />
@@ -959,7 +976,7 @@ export default function AdminPage() {
         {/* ── Active sessions ── */}
         <div className="vs-card">
           <CardHeader
-            icon={<Users size={13} style={{ color: 'var(--accent)' }} />}
+            icon={<Pilot size={13} style={{ color: 'var(--accent)' }} />}
             label="Active Web Sessions"
             badge={<span style={{ ...MONO, fontSize: '0.65rem', color: 'var(--text-muted)' }}>{sessions.length}</span>}
           />
@@ -1055,7 +1072,7 @@ export default function AdminPage() {
         {/* ── Player lives ── */}
         <div className="vs-card">
           <CardHeader
-            icon={<Heart size={13} style={{ color: 'var(--accent)' }} />}
+            icon={<Activity size={13} style={{ color: 'var(--accent)' }} />}
             label="Player Lives"
           />
           <div className="p-4 flex items-start justify-between gap-6">
@@ -1096,7 +1113,7 @@ export default function AdminPage() {
         {/* ── Danger zone ── */}
         <div className="vs-card" style={{ border: '1px solid rgba(239,68,68,0.25)' }}>
           <CardHeader
-            icon={<AlertTriangle size={13} style={{ color: '#ef4444' }} />}
+            icon={<Alert size={13} style={{ color: '#ef4444' }} />}
             label="Danger Zone"
           />
           <div className="p-4 flex items-start justify-between gap-6">

@@ -3,11 +3,23 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill, type PilotDeploy } from '../api'
 import PageHeader from '../components/PageHeader'
-import {
-  Search, Users, Crosshair, Clock, Award, ChevronLeft, ChevronRight,
-  Link, Plane, Shield, RotateCcw, ChevronDown, ChevronUp, Package,
-} from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import {
+  Pilot as PilotIcon,
+  KillFeed as KillIcon,
+  Award,
+  Aircraft,
+  Shield,
+  Supply,
+  Search,
+  Clock,
+  ChevronLeft,
+  ChevronRight,
+  Link,
+  RotateCcw,
+  ChevronDown,
+  ChevronUp,
+} from '../icons'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,7 +90,7 @@ function AircraftImage({ type }: { type: string }) {
   if (err) {
     return (
       <div style={{ width: '100%', aspectRatio: '16 / 9', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.15 }}>
-        <Plane size={64} />
+        <Aircraft size={64} />
       </div>
     )
   }
@@ -277,7 +289,7 @@ function KillLog({ kills, allPilots, breakdown }: {
   return (
     <div className="vs-card">
       <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
-        <Crosshair size={12} style={{ color: 'var(--accent)' }} />
+        <KillIcon size={12} style={{ color: 'var(--accent)' }} />
         <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
           Kill Log
         </span>
@@ -338,7 +350,7 @@ function KillLog({ kills, allPilots, breakdown }: {
                   <td style={{ ...cell, color: '#60a5fa', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
                     {k.killer_airframe ? (
                       <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                        <Plane size={9} style={{ opacity: 0.6 }} />
+                        <Aircraft size={9} style={{ opacity: 0.6 }} />
                         {k.killer_airframe}
                       </span>
                     ) : <span style={{ color: '#374151' }}>—</span>}
@@ -392,7 +404,7 @@ function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }
   return (
     <div className="vs-card">
       <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
-        <Package size={12} style={{ color: 'var(--accent)' }} />
+        <Supply size={12} style={{ color: 'var(--accent)' }} />
         <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
           Deploy Log
         </span>
@@ -564,9 +576,9 @@ export default function Pilots() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader title="PILOTS" sub={`${pilots.length} registered pilots`} />
+      <PageHeader icon={PilotIcon} title="PILOTS" sub={`${pilots.length} registered pilots`} />
 
-      <div className="flex-1 overflow-auto p-4 space-y-4" style={{ background: 'var(--bg)' }}>
+      <div className="flex-1 overflow-auto p-4 space-y-4">
         {/* ── Search ── */}
         <div className="vs-card p-0" style={{ overflow: 'visible', position: 'relative', zIndex: 10 }}>
           <div className="flex items-center gap-2 px-3 py-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
@@ -644,7 +656,7 @@ export default function Pilots() {
 
         {!pilot && !isLoading && (
           <div className="flex flex-col items-center justify-center py-20 gap-3" style={{ color: 'var(--text-dim)' }}>
-            <Users size={40} style={{ opacity: 0.15 }} />
+            <PilotIcon size={40} style={{ opacity: 0.15 }} />
             <div style={{ fontSize: '0.72rem', letterSpacing: '0.16em', textTransform: 'uppercase' }}>Search for a pilot above</div>
           </div>
         )}
@@ -658,7 +670,7 @@ export default function Pilots() {
               {/* ── Pilot name card ── */}
               <div className="vs-card px-4 py-3 flex items-center gap-3">
                 <div style={{ width: 32, height: 32, background: 'rgba(77,124,15,0.12)', border: '1px solid rgba(77,124,15,0.25)', borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Users size={14} style={{ color: 'var(--accent)' }} />
+                  <PilotIcon size={14} style={{ color: 'var(--accent)' }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '0.03em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pilot.name}</div>
@@ -698,7 +710,7 @@ export default function Pilots() {
               {/* ── Career stats ── */}
               <div className="vs-card p-0">
                 <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
-                  <Crosshair size={12} style={{ color: 'var(--accent)' }} />
+                  <KillIcon size={12} style={{ color: 'var(--accent)' }} />
                   <span style={dim}>Career Stats</span>
                 </div>
                 <div className="px-4 py-1">

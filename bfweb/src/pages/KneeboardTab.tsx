@@ -1,6 +1,16 @@
 import { useMemo, useState } from 'react'
 import { jsPDF } from 'jspdf'
-import { Radio, Navigation, Crosshair, Package, ShieldAlert, ArrowUp, ArrowDown, Headphones } from 'lucide-react'
+import {
+  Comms,
+  Heading,
+  Cas,
+  Supply,
+  Sam,
+  type IconComponent,
+  ArrowUp,
+  ArrowDown,
+  Headphones,
+} from '../icons'
 import type { Briefing, SituationReport } from '../api'
 
 export function fmtCoord(lat: number, lon: number): string {
@@ -162,7 +172,7 @@ function DataTable<T>({
 
 function Section({
   title, icon: Icon, count, children,
-}: { title: string; icon: typeof Radio; count: number; children: React.ReactNode }) {
+}: { title: string; icon: IconComponent; count: number; children: React.ReactNode }) {
   return (
     <div className="vs-card" style={{ overflow: 'hidden', flexShrink: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
@@ -463,7 +473,7 @@ export default function KneeboardTab({ briefing: b }: { briefing: Briefing }) {
     <>
       <GciReference />
 
-      <Section title="Navaids" icon={Navigation} count={b.navaids.length}>
+      <Section title="Navaids" icon={Heading} count={b.navaids.length}>
         <DataTable
           rows={b.navaids}
           initialSortKey="objective"
@@ -483,7 +493,7 @@ export default function KneeboardTab({ briefing: b }: { briefing: Briefing }) {
         />
       </Section>
 
-      <Section title="Radios & Support" icon={Radio} count={b.radios.length}>
+      <Section title="Radios & Support" icon={Comms} count={b.radios.length}>
         <DataTable
           rows={b.radios}
           initialSortKey="kind"
@@ -497,7 +507,7 @@ export default function KneeboardTab({ briefing: b }: { briefing: Briefing }) {
         />
       </Section>
 
-      <Section title="Artillery" icon={Crosshair} count={b.artillery.length}>
+      <Section title="Artillery" icon={Cas} count={b.artillery.length}>
         <DataTable
           rows={b.artillery}
           initialSortKey="group"
@@ -513,7 +523,7 @@ export default function KneeboardTab({ briefing: b }: { briefing: Briefing }) {
         />
       </Section>
 
-      <Section title="Deployables" icon={Package} count={b.deployables.length}>
+      <Section title="Deployables" icon={Supply} count={b.deployables.length}>
         <DataTable
           rows={b.deployables}
           initialSortKey="name"
@@ -529,7 +539,7 @@ export default function KneeboardTab({ briefing: b }: { briefing: Briefing }) {
         />
       </Section>
 
-      <Section title="RWR Threats / HARM Codes" icon={ShieldAlert} count={b.threats.length}>
+      <Section title="RWR Threats / HARM Codes" icon={Sam} count={b.threats.length}>
         <DataTable
           rows={b.threats}
           initialSortKey="count"

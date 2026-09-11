@@ -21,7 +21,6 @@
     "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
     "leaflet.heat": "^0.2.0",
-    "lucide-react": "^1.7.0",
     "maplibre-gl": "^4.7.1",
     "mgrs": "^1.0.0",
     "milsymbol": "^3.0.4",

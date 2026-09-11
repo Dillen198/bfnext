@@ -7,10 +7,11 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   AreaChart, Area,
 } from 'recharts'
-import { Crosshair, Zap, Activity, Users, Plane } from 'lucide-react'
+
 import {
   Aircraft, Helicopter, Ship, Armor, Sam, Arty, Infantry, Logistics, Radar,
-  Structure, type IconComponent,
+  Structure, KillFeed as KillFeedIcon, Award, Aircraft as AircraftIcon, Activity, Strike,
+  type IconComponent,
 } from '../icons'
 import { useRound } from '../context/RoundContext'
 import { useTableSort, SortTh } from '../components/SortableTh'
@@ -140,6 +141,7 @@ export default function KillFeed() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <PageHeader
+        icon={KillFeedIcon}
         title="KILL FEED"
         sub={`${kills.length} events · auto-refreshes every 15s`}
         right={
@@ -149,14 +151,14 @@ export default function KillFeed() {
         }
       />
 
-      <div className="flex-1 overflow-auto p-4 space-y-4" style={{ background: 'var(--bg)' }}>
+      <div className="flex-1 overflow-auto p-4 space-y-4">
         {/* ── Stat row ── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {([
-            { label: 'Blue Kills',    value: blueKills,   color: '#3b82f6', icon: Crosshair },
-            { label: 'Red Kills',     value: redKills,    color: '#ef4444', icon: Crosshair },
-            { label: 'Player Kills',  value: playerKills, color: '#22c55e', icon: Users },
-            { label: 'AI Kills',      value: aiKills,     color: '#a78bfa', icon: Zap },
+            { label: 'Blue Kills',    value: blueKills,   color: '#3b82f6', icon: KillFeedIcon },
+            { label: 'Red Kills',     value: redKills,    color: '#ef4444', icon: KillFeedIcon },
+            { label: 'Player Kills',  value: playerKills, color: '#22c55e', icon: Award },
+            { label: 'AI Kills',      value: aiKills,     color: '#a78bfa', icon: AircraftIcon },
           ] as const).map(s => (
             <div key={s.label} className="vs-card p-4" style={{ borderTop: `2px solid ${s.color}` }}>
               <div className="flex items-center justify-between mb-1.5">
@@ -200,7 +202,7 @@ export default function KillFeed() {
 
           <div className="vs-card lg:col-span-2">
             <div className="flex items-center gap-2 px-4 pt-3.5 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
-              <Zap size={12} style={{ color: '#fb923c' }} />
+              <Strike size={12} style={{ color: '#fb923c' }} />
               <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>Top Weapons</span>
             </div>
             <div className="p-4">
@@ -223,7 +225,7 @@ export default function KillFeed() {
         {/* ── Kill event table ── */}
         <div className="vs-card overflow-hidden">
           <div className="flex items-center gap-2 px-4 pt-3.5 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
-            <Crosshair size={12} style={{ color: '#f87171' }} />
+            <KillFeedIcon size={12} style={{ color: '#f87171' }} />
             <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>Event Log</span>
             <span className="ml-auto font-mono" style={{ fontSize: '0.58rem', color: '#374151' }}>{kills.length} events</span>
           </div>
@@ -287,7 +289,7 @@ export default function KillFeed() {
                       <td style={{ ...cell, color: '#60a5fa', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
                         {k.killer?.airframe ? (
                           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <Plane size={10} style={{ opacity: 0.6, flexShrink: 0 }} />
+                            <AircraftIcon size={10} style={{ opacity: 0.6, flexShrink: 0 }} />
                             {k.killer.airframe}
                           </span>
                         ) : <span style={{ color: '#374151' }}>—</span>}

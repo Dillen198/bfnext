@@ -5,11 +5,6 @@ import {
   Tooltip, useMap, useMapEvents, ScaleControl,
 } from 'react-leaflet'
 import L from 'leaflet'
-import {
-  Camera, Trash2, Crosshair, X, Upload, MapPin, Move3d, Eye, EyeOff,
-  Grid3x3, Navigation, Play, Pause, SendToBack, ChevronRight,
-  MousePointer2, Pencil, Minus, Square, Circle as CircleIcon, Download, Maximize2, Eraser,
-} from 'lucide-react'
 import html2canvas from 'html2canvas'
 import { api, type IntelCapture, type IntelMarkupKind, type Objective, type Frontlines } from '../api'
 import { useAuth } from '../context/AuthContext'
@@ -20,6 +15,31 @@ import {
 import { warpedGroundQuad } from '../lib/warp'
 import IntelWarpOverlay from './IntelWarpOverlay'
 import IntelMarkupLayer, { type MarkupTool } from './IntelMarkupLayer'
+import {
+  ReconIntel,
+  Pin,
+  Heading,
+  Trash2,
+  Crosshair,
+  X,
+  Upload,
+  Move3d,
+  Eye,
+  EyeOff,
+  Grid3x3,
+  Play,
+  Pause,
+  SendToBack,
+  ChevronRight,
+  MousePointer2,
+  Pencil,
+  Minus,
+  Square,
+  Circle as CircleIcon,
+  Download,
+  Maximize2,
+  Eraser,
+} from '../icons'
 
 const MARKUP_COLORS = ['#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ffffff']
 const RUN_COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#a855f7', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16']
@@ -421,7 +441,7 @@ export default function IntelPage() {
       }}>
         <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Camera size={15} style={{ color: 'var(--accent)' }} />
+            <ReconIntel size={15} style={{ color: 'var(--accent)' }} />
             <span style={{ fontFamily: FONT_HEAD, letterSpacing: '0.12em', fontSize: '1rem' }}>RECON INTEL</span>
           </div>
           <div style={{ marginTop: 6, fontSize: '0.68rem', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>
@@ -475,7 +495,7 @@ export default function IntelPage() {
                   background: placing?.id === c.id ? 'var(--accent)' : 'transparent',
                   color: placing?.id === c.id ? '#fff' : 'var(--text-dim)', borderRadius: 3,
                 }}>
-                  <MapPin size={11} /> DROP
+                  <Pin size={11} /> DROP
                 </button>
                 <span style={{
                   flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -673,7 +693,7 @@ export default function IntelPage() {
             <Eraser size={11} /> BLEND
           </button>
           <button onClick={() => setShowPath(v => !v)} title="Toggle flight-path markers" style={toggleBtn(showPath)}>
-            <Navigation size={11} /> PATH
+            <Heading size={11} /> PATH
           </button>
           <button onClick={() => setShowGrid(v => !v)} title="Toggle coordinate grid" style={toggleBtn(showGrid)}>
             <Grid3x3 size={11} /> GRID

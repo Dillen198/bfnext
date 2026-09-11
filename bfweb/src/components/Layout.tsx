@@ -1,9 +1,5 @@
 import React from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
-import {
-  LogOut, Shield, Settings, Settings2, Server, Radio,
-  ChevronRight, Plane, Menu, X, ChevronsLeft, ChevronsRight,
-} from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Round, type ServerInstance } from '../api'
 import { useRound } from '../context/RoundContext'
@@ -14,8 +10,30 @@ import { useInstance } from '../context/InstanceContext'
 import LogoMark from './LogoMark'
 import Backdrop from './Backdrop'
 import {
-  Sitrep, Tacmap, Objective, Briefing, ReconIntel, Rankings, KillFeed,
-  Pilot, Info, Wiki, Support, type IconComponent,
+  Sitrep,
+  Tacmap,
+  Objective,
+  Briefing,
+  ReconIntel,
+  Rankings,
+  KillFeed,
+  Pilot,
+  Info,
+  Wiki,
+  Support,
+  Admin,
+  Config,
+  Shield,
+  Server,
+  Comms,
+  Aircraft,
+  type IconComponent,
+  LogOut,
+  ChevronRight,
+  Menu,
+  X,
+  ChevronsLeft,
+  ChevronsRight,
 } from '../icons'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
@@ -40,8 +58,8 @@ const STATS_NAV = [
 const PROFILE_NAV = (ucid: string) => ({ to: `/pilots?ucid=${ucid}`, icon: Pilot, label: 'MY PROFILE' })
 // Meta / system.
 const ABOUT_NAV = { to: '/about', icon: Info, label: 'ABOUT' }
-const ADMIN_NAV = { to: '/admin', icon: Settings, label: 'ADMIN' }
-const CONFIG_NAV = { to: '/admin/config', icon: Settings2, label: 'CONFIG' }
+const ADMIN_NAV = { to: '/admin', icon: Admin, label: 'ADMIN' }
+const CONFIG_NAV = { to: '/admin/config', icon: Config, label: 'CONFIG' }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -517,9 +535,9 @@ export default function Layout() {
 
           {/* Footer */}
           <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Radio size={10} style={{ color: 'var(--accent)', opacity: 0.5 }} />
+            <Comms size={10} style={{ color: 'var(--accent)', opacity: 0.5 }} />
             <span className="sidebar-footer-text" style={{ fontSize: '0.55rem', color: 'var(--text-dim)', letterSpacing: '0.08em' }}>FOWL ENGINE</span>
-            <Plane size={9} style={{ color: 'var(--text-dim)', opacity: 0.4, marginLeft: 'auto' }} />
+            <Aircraft size={9} style={{ color: 'var(--text-dim)', opacity: 0.4, marginLeft: 'auto' }} />
           </div>
 
           {/* Collapse toggle (desktop only) */}

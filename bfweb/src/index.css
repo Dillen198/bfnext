@@ -8,13 +8,21 @@
    MILITARY DESIGN TOKENS
    ═══════════════════════════════════════════════════════════════ */
 :root {
-  /* Backgrounds — dark olive / field drab */
+  /* Backgrounds — dark olive / field drab.
+     The panel surfaces are deliberately translucent: the animated backdrop
+     sits behind the app, and a wall of opaque cards hides it completely.
+     Anything that must stay opaque -- a popup over a map, a dialog over the
+     page -- uses the -solid variants instead. */
   --bg:            #080b06;
-  --bg-card:       #0d1009;
-  --bg-elevated:   #141910;
+  --bg-card:       rgba(13,16,9,0.72);
+  --bg-elevated:   rgba(20,25,16,0.86);
   --bg-hover:      #1b2116;
   --bg-input:      #0a0d07;
-  --bg-chrome:     #060908;   /* topbar / sidebar / kpi strip / page header */
+  --bg-chrome:     rgba(6,9,8,0.78);   /* topbar / sidebar / kpi strip / page header */
+
+  --bg-card-solid:     #0d1009;
+  --bg-elevated-solid: #141910;
+  --bg-chrome-solid:   #060908;
 
   /* OD Green — primary accent */
   --accent:        #6aab1f;   /* olive drab green */
@@ -67,11 +75,15 @@
    ═══════════════════════════════════════════════════════════════ */
 :root[data-theme="light"] {
   --bg:            #e9eae2;
-  --bg-card:       #f5f5ef;
-  --bg-elevated:   #fbfbf6;
+  --bg-card:       rgba(245,245,239,0.80);
+  --bg-elevated:   rgba(251,251,246,0.90);
   --bg-hover:      #e3e5da;
   --bg-input:      #ffffff;
-  --bg-chrome:     #edeee6;
+  --bg-chrome:     rgba(237,238,230,0.84);
+
+  --bg-card-solid:     #f5f5ef;
+  --bg-elevated-solid: #fbfbf6;
+  --bg-chrome-solid:   #edeee6;
 
   --accent:        #5c9219;
   --accent-dim:    #4a7a13;
@@ -115,6 +127,9 @@
   --bg-hover:      #1b2116;
   --bg-input:      #0a0d07;
   --bg-chrome:     #060908;
+  --bg-card-solid:     #0d1009;
+  --bg-elevated-solid: #141910;
+  --bg-chrome-solid:   #060908;
   --accent:        #6aab1f;
   --accent-dim:    #528a17;
   --accent-bright: #8ec83f;
@@ -169,23 +184,23 @@ body {
   font-family: var(--font-body);
 }
 .leaflet-popup-content-wrapper {
-  background: var(--bg-card) !important;
+  background: var(--bg-card-solid) !important;
   color: var(--text) !important;
   border: 1px solid var(--accent-border) !important;
   border-radius: 2px !important;
   box-shadow: 0 8px 40px rgba(0,0,0,0.55) !important;
 }
-.leaflet-popup-tip             { background: var(--bg-card) !important; }
+.leaflet-popup-tip             { background: var(--bg-card-solid) !important; }
 .leaflet-popup-close-button    { color: var(--text-muted) !important; }
 .leaflet-control-zoom a {
-  background: var(--bg-card) !important;
+  background: var(--bg-card-solid) !important;
   color: var(--text-muted) !important;
   border-color: var(--border-light) !important;
   border-radius: 0 !important;
 }
 .leaflet-control-zoom a:hover  { color: var(--accent) !important; }
 .leaflet-control-attribution {
-  background: var(--bg-card) !important;
+  background: var(--bg-card-solid) !important;
   color: var(--text-dim) !important;
   font-size: 10px !important;
 }
@@ -838,11 +853,12 @@ body {
 
 /* ═══════════════════════════════════════════════════════════════
    ANIMATED BACKDROP
-   Behind the app: a drifting grid and a slow radar sweep.
-   Every animation below is a compositor transform -- the main thread
-   does nothing per frame, which is the whole point. Do not be tempted
-   to animate background-position here (repaints the layer every frame)
-   or to pulse opacity on these full-viewport surfaces.
+   Behind the app: an LED dot matrix under a slow scan bar -- a display,
+   not a radar scope.
+   Every animation below is a compositor transform; the main thread does
+   nothing per frame, which is the whole point. Do not animate
+   background-position here (repaints the layer every frame) or pulse
+   opacity on these full-viewport surfaces.
    ═══════════════════════════════════════════════════════════════ */
 .vs-backdrop {
   position: fixed;
@@ -854,63 +870,56 @@ body {
   contain: strict;
 }
 
-/* Oversized so the drift never exposes an edge; translated by exactly one
-   40px tile, so the loop is seamless and the keyframe can be linear. */
+/* The matrix. Inset past the edges so the drift never exposes one, and
+   translated by exactly one 14px cell so the loop is seamless. */
 .vs-backdrop-grid {
   position: absolute;
-  inset: -60px;
-  background-image:
-    linear-gradient(rgba(106,171,31,0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(106,171,31,0.045) 1px, transparent 1px);
-  background-size: 40px 40px;
+  inset: -30px;
+  background-image: radial-gradient(rgba(106,171,31,0.16) 1px, transparent 1px);
+  background-size: 14px 14px;
   will-change: transform;
-  animation: vs-grid-drift 36s linear infinite;
+  animation: vs-matrix-drift 26s linear infinite;
 }
-@keyframes vs-grid-drift {
+@keyframes vs-matrix-drift {
   from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(40px, 40px, 0); }
+  to   { transform: translate3d(14px, 14px, 0); }
 }
 
-/* One conic gradient, rasterised once, rotated by the compositor. */
+/* The scan. One gradient band travelling the viewport height; 100vh of
+   travel plus its own height, so it clears the bottom before it repeats. */
 .vs-backdrop-sweep {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 150vmax;
-  height: 150vmax;
-  margin: -75vmax 0 0 -75vmax;
-  border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    rgba(106,171,31,0.11) 0deg,
-    rgba(106,171,31,0.03) 24deg,
-    transparent 62deg,
-    transparent 360deg
+  left: 0;
+  right: 0;
+  top: -32vh;
+  height: 32vh;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(106,171,31,0.055) 68%,
+    rgba(142,200,63,0.11)
   );
   will-change: transform;
-  animation: vs-sweep 24s linear infinite;
+  animation: vs-scan 11s linear infinite;
 }
-@keyframes vs-sweep {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+@keyframes vs-scan {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(0, 132vh, 0); }
 }
 
-/* A green glow over a white dashboard reads as a fault, not an effect. */
+/* Green over a white dashboard reads as a fault, not an effect. */
 :root[data-theme="light"] .vs-backdrop-sweep { display: none; }
 :root[data-theme="light"] .vs-backdrop-grid {
-  background-image:
-    linear-gradient(rgba(60,90,20,0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(60,90,20,0.05) 1px, transparent 1px);
+  background-image: radial-gradient(rgba(60,90,20,0.12) 1px, transparent 1px);
 }
 
-/* A 150vmax rotating layer is free on a desktop GPU and not free on a phone
-   battery, and the sweep is barely visible behind a stacked mobile layout
-   anyway. Grid only below the mobile breakpoint. */
+/* A full-width band travelling the viewport is free on a desktop GPU and
+   not free on a phone battery. Matrix only below the mobile breakpoint. */
 @media (max-width: 860px) {
   .vs-backdrop-sweep { display: none; }
 }
 
-/* Decoration yields: keep the grid, stop the motion. */
+/* Decoration yields: keep the matrix, stop the motion. */
 @media (prefers-reduced-motion: reduce) {
   .vs-backdrop-grid,
   .vs-backdrop-sweep { animation: none; }
@@ -922,6 +931,21 @@ body {
 .vs-shell,
 .vs-main { background: transparent !important; position: relative; }
 .vs-shell { z-index: 1; }
+
+/* Section glyph in a page header -- boxed so it reads as chrome rather than
+   as a decoration floating next to the title. */
+.page-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-glow);
+  border-radius: 3px;
+}
 
 /* ── Scanline overlay (apply to full app for CRT effect) ── */
 body::after {

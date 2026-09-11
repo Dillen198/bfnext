@@ -3,7 +3,19 @@ import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, type Pilot } from '../api'
 import PageHeader from '../components/PageHeader'
-import { Trophy, Plane, ChevronUp, ChevronDown } from 'lucide-react'
+import {
+  Rankings,
+  Award,
+  Aircraft,
+  ChevronUp,
+  ChevronDown,
+  Intercept,
+  Cas,
+  Logistics,
+  RANK_ICON,
+  type IconComponent,
+} from '../icons'
+import { rankFor, nextRankAt } from '../ranks'
 
 type SortKey = keyof Omit<Pilot, 'ucid' | 'name'> | 'kd' | 'score' | 'logistics'
 
@@ -47,17 +59,23 @@ function fmtVal(col: SortKey, p: Pilot): string {
   return typeof v === 'number' ? v.toLocaleString() : String(v ?? 0)
 }
 
-const MEDAL_ICON  = ['🥇', '🥈', '🥉']
 const MEDAL_COLOR = ['#fbbf24', '#94a3b8', '#d97706']
+
+/** Podium badge for a 0-indexed placing: three stripes for first, one for third. */
+function RankBadge({ rank, size }: { rank: number; size: number }) {
+  const Icon = RANK_ICON[rank]
+  if (!Icon) return null
+  return <Icon size={size} strokeWidth={1.7} style={{ color: MEDAL_COLOR[rank], flexShrink: 0 }} />
+}
 const MEDAL_CLASS = ['rank-gold', 'rank-silver', 'rank-bronze']
 
 // Four leaderboard views: Overall (score), Air-to-Air, Air-to-Ground, Logistics.
 // Selecting a tab drives both the podium ranking and the table's default sort.
-const TABS: { key: SortKey; label: string; color: string }[] = [
-  { key: 'score',       label: 'Overall',     color: '#22d3ee' },
-  { key: 'air_kills',   label: 'A/A',         color: '#60a5fa' },
-  { key: 'ground_kills',label: 'A/G',         color: '#fb923c' },
-  { key: 'logistics',   label: 'Logistics',   color: '#34d399' },
+const TABS: { key: SortKey; label: string; color: string; icon: IconComponent }[] = [
+  { key: 'score',       label: 'Overall',     color: '#22d3ee', icon: Rankings },
+  { key: 'air_kills',   label: 'A/A',         color: '#60a5fa', icon: Intercept },
+  { key: 'ground_kills',label: 'A/G',         color: '#fb923c', icon: Cas },
+  { key: 'logistics',   label: 'Logistics',   color: '#34d399', icon: Logistics },
 ]
 
 export default function Leaderboard() {
@@ -107,6 +125,7 @@ export default function Leaderboard() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       <PageHeader
+        icon={Rankings}
         title="RANKINGS"
         sub={`${pilots.length} pilots registered`}
         right={
@@ -131,8 +150,10 @@ export default function Leaderboard() {
                   background: active ? `${t.color}18` : 'var(--bg-card)',
                   border: `1px solid ${active ? t.color : 'var(--border)'}`,
                   color: active ? t.color : 'var(--text-dim)',
+                  display: 'flex', alignItems: 'center', gap: 7,
                 }}
               >
+                <t.icon size={13} strokeWidth={1.75} />
                 {t.label}
               </button>
             )
@@ -145,6 +166,8 @@ export default function Leaderboard() {
             {top3.map((p, i) => {
               const score = Math.round(computeScore(p))
               const mc = MEDAL_COLOR[i]
+              const prank = rankFor(score, p.side)
+              const PRankIcon = prank.icon
               return (
                 <div key={p.ucid}
                   onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)}
@@ -158,7 +181,7 @@ export default function Leaderboard() {
                   onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: '1.6rem', lineHeight: 1 }}>{MEDAL_ICON[i]}</span>
+                    <RankBadge rank={i} size={26} />
                     <div>
                       <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: mc }}
                         className={MEDAL_CLASS[i]}>
@@ -166,6 +189,12 @@ export default function Leaderboard() {
                       </div>
                       <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text)', lineHeight: 1.2, marginTop: 2 }}>
                         {p.name}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
+                        <PRankIcon size={13} strokeWidth={1.5} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
+                          {prank.title}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -200,7 +229,7 @@ export default function Leaderboard() {
           borderRadius: 6, padding: '10px 16px',
           display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
         }}>
-          <Trophy size={13} style={{ color: '#22d3ee', flexShrink: 0 }} />
+          <Award size={13} style={{ color: '#22d3ee', flexShrink: 0 }} />
           <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>Score:</span>
           <span className="font-mono-vs" style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
             Air×3 + Ground×2 + Cap×5 + FARP×4 + Deploy×2 + Repair + Supply + Troop×0.5 + Action − Death×2
@@ -240,6 +269,9 @@ export default function Leaderboard() {
                   <tr><td colSpan={COLS.length + 2} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>Loading…</td></tr>
                 )}
                 {sorted.map((p, i) => {
+                  const rank      = rankFor(computeScore(p), p.side)
+                  const RankIcon  = rank.icon
+                  const nextAt    = nextRankAt(computeScore(p))
                   const medalIdx = top3.findIndex(x => x.ucid === p.ucid)
                   const isTop3   = medalIdx >= 0
 
@@ -251,7 +283,7 @@ export default function Leaderboard() {
                     >
                       <td style={{ padding: '9px 14px', width: 36 }}>
                         {isTop3 ? (
-                          <span style={{ fontSize: '1rem' }}>{MEDAL_ICON[medalIdx]}</span>
+                          <RankBadge rank={medalIdx} size={16} />
                         ) : (
                           <span className="font-mono-vs" style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{i + 1}</span>
                         )}
@@ -263,15 +295,18 @@ export default function Leaderboard() {
                             background: isTop3 ? `${MEDAL_COLOR[medalIdx]}18` : 'var(--bg-elevated)',
                             border: `1px solid ${isTop3 ? MEDAL_COLOR[medalIdx] + '33' : 'var(--border)'}`,
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: '0.75rem', fontWeight: 700,
                             color: isTop3 ? MEDAL_COLOR[medalIdx] : 'var(--text-dim)',
-                          }}>
-                            {p.name[0]?.toUpperCase()}
+                          }}
+                          title={`${rank.title}${nextAt !== null ? ` — ${nextAt - Math.round(computeScore(p))} score to next rank` : ' — top of the ladder'}`}>
+                            <RankIcon size={18} strokeWidth={1.5} />
                           </div>
                           <div>
                             <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)', lineHeight: 1 }}>{p.name}</div>
+                            <div style={{ fontSize: '0.58rem', color: 'var(--text-muted)', letterSpacing: '0.08em', marginTop: 3 }}>
+                              {rank.title}
+                            </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                              <Plane size={9} style={{ color: 'var(--text-dim)', opacity: 0.7 }} />
+                              <Aircraft size={9} style={{ color: 'var(--text-dim)', opacity: 0.7 }} />
                               <span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>
                                 {p.air_kills}a·{p.ground_kills}g · {p.hours.toFixed(1)}h
                               </span>

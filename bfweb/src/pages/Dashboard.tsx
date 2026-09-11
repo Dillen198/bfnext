@@ -7,13 +7,29 @@ import 'leaflet/dist/leaflet.css'
 import { useNavigate } from 'react-router-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
-  Crosshair, Plane, Users, Shield, AlertTriangle,
-  Wind, Thermometer, Eye, Gauge, ExternalLink, Activity,
-  TrendingUp, MapPin, Radio,
-} from 'lucide-react'
-import {
-  Airbase, Farp, Fob, Factory, LogiHub, NavalBase, Carrier, CommandCenter,
+  Airbase,
+  Farp,
+  Fob,
+  Factory,
+  LogiHub,
+  NavalBase,
+  Carrier,
+  CommandCenter,
+  Aircraft,
+  Pilot as PilotIcon,
+  Shield,
+  Alert,
+  KillFeed as KillIcon,
+  Pin,
+  Comms,
+  Wind,
+  Temp,
+  Baro,
+  Visibility,
+  Activity,
   type IconComponent,
+  ExternalLink,
+  TrendingUp,
 } from '../icons'
 import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type SrsClient, type SrsStatus, type Frontlines } from '../api'
 import { campaign } from '../config/campaign'
@@ -119,7 +135,7 @@ function TacMap({ objectives, fronts, onOpenTacmap }: { objectives: Objective[];
     const c = ownerColor(obj.owner)
     const alive = obj.health > 0
     const size = obj.kind === 'Airbase' ? 22 : (obj.kind === 'Carrier Group' || obj.kind === 'Naval Base') ? 20 : 17
-    const Icon = OBJ_ICON[obj.kind] ?? MapPin
+    const Icon = OBJ_ICON[obj.kind] ?? Pin
     const svg = renderToStaticMarkup(
       <Icon size={size} color={c} strokeWidth={2.25}
         style={{ opacity: alive ? 1 : 0.5, filter: 'drop-shadow(0 1px 1.5px rgba(0,0,0,0.9))' }} />
@@ -257,9 +273,9 @@ const OBJ_ICON: Record<string, IconComponent> = {
   'Carrier Group': Carrier, 'Command Center': CommandCenter,
 }
 
-/** lucide icon for an objective kind, defaulting to MapPin for anything unmapped. */
+/** Icon for an objective kind, defaulting to a plain pin for anything unmapped. */
 function ObjIcon({ kind, size, color, style }: { kind: string; size: number; color: string; style?: React.CSSProperties }) {
-  const Icon = OBJ_ICON[kind] ?? MapPin
+  const Icon = OBJ_ICON[kind] ?? Pin
   return <Icon size={size} color={color} style={style} />
 }
 const OBJ_KIND_SHORT: Record<string, string> = {
@@ -342,7 +358,7 @@ function ObjectiveRoster({ objectives }: { objectives: Objective[] }) {
           <div style={{ width: `${obj.health}%`, height: '100%', background: hc }} />
         </div>
         <span className="font-mono-vs" style={{ fontSize: '0.68rem', color: hc, width: 30, textAlign: 'right', flexShrink: 0 }}>{obj.health}%</span>
-        {obj.health < 40 && <AlertTriangle size={8} style={{ color: 'var(--yellow)', flexShrink: 0 }} />}
+        {obj.health < 40 && <Alert size={8} style={{ color: 'var(--yellow)', flexShrink: 0 }} />}
       </div>
     )
   }
@@ -378,9 +394,9 @@ function WeatherBrief({ stats }: { stats: Stats | undefined }) {
   )
   const items = [
     { icon: Wind,        label: 'WIND',  value: `${Math.round(w.wind_speed_kts)}KT ${windDir(w.wind_from_deg)} (${Math.round(w.wind_from_deg)}°)` },
-    { icon: Thermometer, label: 'TEMP',  value: `${Math.round(w.temp_c)}°C` },
-    { icon: Gauge,       label: 'QNH',   value: `${Math.round(w.qnh_hpa)} hPa` },
-    { icon: Eye,         label: 'VIS',   value: visStr(w.visibility_m) },
+    { icon: Temp,        label: 'TEMP',  value: `${Math.round(w.temp_c)}°C` },
+    { icon: Baro,        label: 'QNH',   value: `${Math.round(w.qnh_hpa)} hPa` },
+    { icon: Visibility,  label: 'VIS',   value: visStr(w.visibility_m) },
     { icon: Activity,    label: 'CLOUD', value: cloudStr(w.cloud_base_m) },
   ]
   return (
@@ -407,7 +423,7 @@ function AirPicture({ online }: { online: OnlinePilot[] }) {
     const col = p.side === 'Blue' ? campaign.blueColor : campaign.redColor
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderBottom: '1px solid var(--border)' }}>
-        <Plane size={9} style={{ color: col, flexShrink: 0 }} />
+        <Aircraft size={9} style={{ color: col, flexShrink: 0 }} />
         <span style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
         <span className="font-mono-vs" style={{ fontSize: '0.65rem', color: col, flexShrink: 0 }}>{p.aircraft}</span>
       </div>
@@ -601,7 +617,7 @@ function SrsPanel({ srs }: { srs: SrsStatus | undefined }) {
         <span style={{ width: 5, height: 5, background: sideColor, flexShrink: 0, marginTop: 1 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            {inAir && <Plane size={8} style={{ color: sideColor, flexShrink: 0, opacity: 0.8 }} />}
+            {inAir && <Aircraft size={8} style={{ color: sideColor, flexShrink: 0, opacity: 0.8 }} />}
             <span style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {c.Name}
             </span>
@@ -747,9 +763,9 @@ export default function Dashboard() {
 
       {/* ── KPI strip ── */}
       <div className="kpi-strip">
-        <KpiCell label="ONLINE" value={online.length} icon={Users}
+        <KpiCell label="ONLINE" value={online.length} icon={PilotIcon}
           sub={`${blue.length} blu · ${red.length} red`} />
-        <KpiCell label="AIRBORNE" value={inAir} icon={Plane} color="var(--accent)"
+        <KpiCell label="AIRBORNE" value={inAir} icon={Aircraft} color="var(--accent)"
           sub={online.length > 0 ? `${Math.round(inAir / online.length * 100)}% of online` : '—'} />
         <KpiCell label={`${campaign.blueLabel} OBJ`} value={blueObj}
           icon={Shield} color={campaign.blueColor} delta={blueDelta}
@@ -757,10 +773,10 @@ export default function Dashboard() {
         <KpiCell label={`${campaign.redLabel} OBJ`} value={redObj}
           icon={Shield} color={campaign.redColor} delta={redDelta}
           sub={`${total > 0 ? Math.round(redObj / total * 100) : 0}% territory`} />
-        <KpiCell label="CRITICAL" value={critCount} icon={AlertTriangle}
+        <KpiCell label="CRITICAL" value={critCount} icon={Alert}
           color={critCount > 0 ? 'var(--red)' : 'var(--text-dim)'}
           sub="obj below 40% HP" />
-        <KpiCell label="KILLS" value={kills.length} icon={Crosshair} color="var(--red)"
+        <KpiCell label="KILLS" value={kills.length} icon={KillIcon} color="var(--red)"
           sub="this session" />
         <KpiCell label="TOTAL PILOTS" value={stats?.total_pilots ?? '—'}
           sub={`${stats?.blue_registered ?? 0} blu · ${stats?.red_registered ?? 0} red`} />
@@ -777,7 +793,7 @@ export default function Dashboard() {
         }}>
           {/* Map header */}
           <div style={{ padding: '5px 12px', background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <MapPin size={9} style={{ color: 'var(--accent)' }} />
+            <Pin size={9} style={{ color: 'var(--accent)' }} />
             <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', flex: 1 }}>
               TACTICAL OVERVIEW
             </span>
@@ -793,7 +809,7 @@ export default function Dashboard() {
             ? { flex: '0 0 auto', maxHeight: 220, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }
             : { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }}>
             <div style={{ padding: '5px 12px', background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Radio size={9} style={{ color: 'var(--accent)' }} />
+              <Comms size={9} style={{ color: 'var(--accent)' }} />
               <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', flex: 1 }}>
                 SRS RADIO NET
               </span>
@@ -831,14 +847,14 @@ export default function Dashboard() {
           </Panel>
 
           {/* Critical assets */}
-          <Panel title="CRITICAL ASSETS" icon={AlertTriangle} iconColor="var(--red)"
+          <Panel title="CRITICAL ASSETS" icon={Alert} iconColor="var(--red)"
             badge={critCount > 0 ? <span className="font-mono-vs" style={{ fontSize: '0.58rem', color: 'var(--red)', background: 'rgba(204,68,68,0.12)', border: '1px solid rgba(204,68,68,0.3)', padding: '1px 6px' }}>{critCount} CRIT</span> : undefined}
             style={{ flexShrink: 0 }}>
             <CriticalObjectives objectives={objectives} />
           </Panel>
 
           {/* Full objective roster — scrollable */}
-          <Panel title="OBJECTIVE ROSTER" icon={MapPin} iconColor="var(--accent)" count={total}
+          <Panel title="OBJECTIVE ROSTER" icon={Pin} iconColor="var(--accent)" count={total}
             style={isMobile ? { flex: '0 0 auto', maxHeight: 320 } : { flex: 1 }}>
             <div style={{ overflowY: 'auto', flex: 1 }}>
               <ObjectiveRoster objectives={objectives} />
@@ -853,7 +869,7 @@ export default function Dashboard() {
         }}>
 
           {/* Air picture */}
-          <Panel title="AIR PICTURE" icon={Plane} iconColor="var(--accent)"
+          <Panel title="AIR PICTURE" icon={Aircraft} iconColor="var(--accent)"
             badge={<LiveBadge />}
             count={inAir}
             style={isMobile ? { flex: '0 0 auto', maxHeight: 220 } : { flex: '0 0 auto', maxHeight: '30%' }}>
@@ -869,7 +885,7 @@ export default function Dashboard() {
           </Panel>
 
           {/* Engagement log */}
-          <Panel title="ENGAGEMENT LOG" icon={Crosshair} iconColor="var(--red)"
+          <Panel title="ENGAGEMENT LOG" icon={KillIcon} iconColor="var(--red)"
             badge={<LiveBadge />}
             count={kills.length}
             style={isMobile ? { flex: '0 0 auto', maxHeight: 320 } : { flex: 1 }}>

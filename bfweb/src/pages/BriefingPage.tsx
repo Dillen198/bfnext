@@ -1,12 +1,16 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Download, RefreshCw } from 'lucide-react'
 import { api, type Briefing, type SituationReport } from '../api'
 import PageHeader from '../components/PageHeader'
 import { useAuth } from '../context/AuthContext'
 import KneeboardTab, { buildPdf } from './KneeboardTab'
 import { mockBriefing, mockSituation } from './briefingMocks'
 import SituationTab from './SituationTab'
+import {
+  Briefing as BriefingIcon,
+  Download,
+  RefreshCw,
+} from '../icons'
 
 type Side = 'Blue' | 'Red'
 type Tab = 'situation' | 'kneeboard'
@@ -86,6 +90,7 @@ export default function BriefingPage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
       <PageHeader
+        icon={BriefingIcon}
         title="BRIEFING"
         sub={
           tab === 'situation'

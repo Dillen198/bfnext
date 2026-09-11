@@ -1,6 +1,11 @@
 import { useState } from 'react'
-import { Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import type { JsonSchema } from '../api'
+import {
+  Plus,
+  Trash2,
+  ChevronDown,
+  ChevronRight,
+} from '../icons'
 
 // ── shared styles ─────────────────────────────────────────────────────────
 

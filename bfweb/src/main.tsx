@@ -126,6 +126,22 @@ function applyBackground(cfg: CampaignConfig) {
 // ── Config application ────────────────────────────────────────────────────────
 
 /** Apply a CampaignConfig to the live `campaign` object and CSS variables. */
+
+/**
+ * Restate a campaign colour at a given alpha, so panels can sit over the
+ * animated backdrop. Only hex is converted -- a colour in any other notation
+ * is passed through opaque rather than guessed at, which loses the effect on
+ * that surface but never produces an invalid declaration.
+ */
+function withAlpha(color: string, alpha: number): string {
+  const hex = color.trim()
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex)
+  if (!m) return hex
+  const h = m[1].length === 3 ? m[1].split('').map(c => c + c).join('') : m[1]
+  const n = parseInt(h, 16)
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
+}
+
 function applyCampaignConfig(cfg: Partial<CampaignConfig>) {
   // Deep-merge: scalar values only (arrays replaced wholesale if provided)
   Object.assign(campaign, cfg)
@@ -145,6 +161,12 @@ function applyCampaignConfig(cfg: Partial<CampaignConfig>) {
   // <html> would beat the light-theme stylesheet override (inline styles win
   // over any selector), so scope the campaign-configured dark surfaces to
   // [data-theme="dark"] instead. The light palette lives in index.css.
+  //
+  // The panel surfaces are emitted translucent: the animated backdrop sits
+  // behind the app and a wall of opaque cards hides it completely. The
+  // campaign still chooses the colour -- this only decides how much of it is
+  // laid down. Anything that must stay opaque (a popup over map tiles, a
+  // dialog over the page) uses the -solid variants.
   let darkTokens = document.getElementById('campaign-dark-tokens') as HTMLStyleElement | null
   if (!darkTokens) {
     darkTokens = document.createElement('style')
@@ -152,11 +174,14 @@ function applyCampaignConfig(cfg: Partial<CampaignConfig>) {
     document.head.appendChild(darkTokens)
   }
   darkTokens.textContent = `:root[data-theme="dark"] {
-    --bg:          ${campaign.bgColor};
-    --bg-card:     ${campaign.bgCardColor};
-    --bg-elevated: ${campaign.bgElevatedColor};
-    --bg-chrome:   ${campaign.bgColor};
-    --border:      ${campaign.borderColor};
+    --bg:                ${campaign.bgColor};
+    --bg-card:           ${withAlpha(campaign.bgCardColor, 0.72)};
+    --bg-elevated:       ${withAlpha(campaign.bgElevatedColor, 0.86)};
+    --bg-chrome:         ${withAlpha(campaign.bgColor, 0.78)};
+    --bg-card-solid:     ${campaign.bgCardColor};
+    --bg-elevated-solid: ${campaign.bgElevatedColor};
+    --bg-chrome-solid:   ${campaign.bgColor};
+    --border:            ${campaign.borderColor};
   }`
 
   // Apply background image and camo pattern

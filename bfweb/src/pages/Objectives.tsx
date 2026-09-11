@@ -5,8 +5,8 @@ import HealthBar from '../components/HealthBar'
 import SideBadge from '../components/SideBadge'
 import PageHeader from '../components/PageHeader'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts'
-import { Target, AlertTriangle, Shield, MapPin } from 'lucide-react'
 import { useRound } from '../context/RoundContext'
+import { Objective, Alert, Shield, Pin } from '../icons'
 
 const TT = {
   contentStyle: { background: 'var(--bg-elevated)', border: '1px solid var(--border-light)', borderRadius: 4, color: 'var(--text)', fontSize: 12 },
@@ -196,6 +196,7 @@ export default function Objectives() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <PageHeader
+        icon={Objective}
         title="OBJECTIVES"
         sub={`${total} total · ${counts.Red} red · ${counts.Blue} blue · ${counts.Neutral} neutral`}
         right={
@@ -216,7 +217,7 @@ export default function Objectives() {
           <div className="vs-card px-5 py-4">
             <div className="flex items-center justify-between mb-2">
               <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.12em', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <MapPin size={11} style={{ color: 'var(--text-dim)' }} />
+                <Pin size={11} style={{ color: 'var(--text-dim)' }} />
                 Territory Control
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: '0.65rem', fontFamily: 'var(--font-mono)' }}>
@@ -254,7 +255,7 @@ export default function Objectives() {
           <Card>
             <CardHeader
               title="Critical Objectives"
-              icon={AlertTriangle}
+              icon={Alert}
               color="text-amber-400"
               right={<span style={{ fontSize: '0.6rem', color: '#f59e0b', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}>{criticalObjs.length} CRITICAL</span>}
             />
@@ -307,7 +308,7 @@ export default function Objectives() {
 
           {/* Health distribution */}
           <Card>
-            <CardHeader title="Health Distribution" icon={Target} color="text-green-400" />
+            <CardHeader title="Health Distribution" icon={Objective} color="text-green-400" />
             <div className="p-5">
               <ResponsiveContainer width="100%" height={100}>
                 <BarChart data={healthBuckets} margin={{ left: -10, right: 4 }}>
@@ -324,7 +325,7 @@ export default function Objectives() {
 
           {/* Objective type breakdown */}
           <Card>
-            <CardHeader title="Types" icon={MapPin} color="text-cyan-400" />
+            <CardHeader title="Types" icon={Pin} color="text-cyan-400" />
             <div className="p-5">
               {kindData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={100}>
@@ -421,7 +422,7 @@ export default function Objectives() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span style={{ color: KIND_COLORS[obj.kind] ?? 'var(--text-dim)' }}>{KIND_ICONS[obj.kind] ?? '■'}</span>
                           <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)' }}>{obj.name}</span>
-                          {isCrit && <AlertTriangle size={11} style={{ color: '#f59e0b', flexShrink: 0 }} />}
+                          {isCrit && <Alert size={11} style={{ color: '#f59e0b', flexShrink: 0 }} />}
                         </div>
                       </td>
                       <td style={{ padding: '9px 14px', fontSize: '0.7rem', color: 'var(--text-dim)' }}>{obj.kind}</td>

@@ -1,6 +1,12 @@
-import { ExternalLink, Server, Users, Zap } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import { campaign } from '../config/campaign'
+import {
+  Info,
+  Server,
+  Pilot,
+  Support,
+  ExternalLink,
+} from '../icons'
 
 // Role badge colour mapping
 const ROLE_COLORS: Record<string, string> = {
@@ -11,8 +17,9 @@ const ROLE_COLORS: Record<string, string> = {
 
 export default function AboutPage() {
   return (
-    <div className="flex-1 overflow-y-auto" style={{ background: 'var(--bg)' }}>
+    <div className="flex-1 overflow-y-auto">
       <PageHeader
+        icon={Info}
         title="ABOUT"
         sub="Campaign system & credits"
       />
@@ -25,7 +32,7 @@ export default function AboutPage() {
 
           <div className="vs-card p-5 space-y-3">
             <div className="flex items-center gap-2 mb-1">
-              <Zap size={16} style={{ color: 'var(--accent)' }} />
+              <Support size={16} style={{ color: 'var(--accent)' }} />
               <span className="font-display" style={{ fontSize: '0.95rem', letterSpacing: '0.14em', color: 'var(--text)' }}>
                 Dynamic Persistent Campaign System for DCS World
               </span>
@@ -174,7 +181,7 @@ export default function AboutPage() {
             <SectionHeading>SERVER TEAM</SectionHeading>
             <div className="vs-card p-5">
               <div className="flex items-center gap-2 mb-3">
-                <Users size={14} style={{ color: 'var(--accent)' }} />
+                <Pilot size={14} style={{ color: 'var(--accent)' }} />
                 <span style={{ fontSize: '0.65rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>
                   Operated By
                 </span>
