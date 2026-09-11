@@ -1,119 +1,223 @@
 DEFAULT:
-  # =============================================================
-  # SECTION 1: CAMPAIGN OVERVIEW & VICTORY CONDITIONS
-  # =============================================================
-  fowl_overview:
-    title: "🦅 Dynamic Campaign Overview (Fowl Engine)"
-    description: "Core mechanics of Operation Fowl Intent and the Fowl Engine."
+  # ---------------------------------------------------------------
+  # Settings. Everything below these that is a mapping with a `title`
+  # becomes a dropdown topic, so adding one needs no code change.
+  # ---------------------------------------------------------------
+  brand_name: "Vector Strike"
+  website: "https://vectorstrike.org"
+  wiki_url: "https://wiki.vectorstrike.org"
+  dashboard_url: "https://dashboard.vectorstrike.org"
+
+  panel:
+    title: "Vector Strike — Information Hub"
+    description: >-
+      Pick a server for live connection details, or a topic for how the
+      campaign actually works. These are the short answers; the wiki has the
+      long ones.
+
+  # ---------------------------------------------------------------
+  # 1. NEW PLAYER
+  # ---------------------------------------------------------------
+  getting_started:
+    title: "Start Here — Your First Sortie"
+    description: "What to do in your first twenty minutes"
+    emoji: "🚀"
+    url: "https://wiki.vectorstrike.org/playbooks/first-sortie"
     fields:
-      - name: "Victory Condition"
-        value: "A side wins by controlling a set percentage of all objectives on the map. If that control holds for long enough, the round ends and a new one begins automatically."
+      - name: "Joining a side"
+        value: "Just take a slot — your first slot pick registers you to that coalition. You can also type `blue` or `red` in chat from spectators. You only get a limited number of side switches per round (`-switch blue` / `-switch red`)."
+        inline: false
+      - name: "Read the briefing before you fly"
+        value: "The engine writes one per round for your side. A short panel appears about 20 seconds after you slot in; `-brief` in chat gives it on demand; **F10 → Info → Situation** has the full six pages — Overview, Tasking, Hotspots, Threats & Air, Logistics, Comms."
+        inline: false
+      - name: "The menu that answers most questions"
+        value: "**F10 → Info** — your status, the briefing, live AWACS/tanker/JTAC frequencies, convoys in transit, navaid channels, weather, and in-cockpit help. All free, from any slot."
+        inline: false
+      - name: "One menu gotcha"
+        value: "DCS silently drops anything past the 10th entry in a radio menu, so long lists continue inside a **`More >>`** entry at the bottom. If something looks missing, look there first. `JTAC>>` and `Actions>>` are buttons, not folders — select once and they build themselves."
+        inline: false
+
+  # ---------------------------------------------------------------
+  # 2. CAMPAIGN
+  # ---------------------------------------------------------------
+  fowl_overview:
+    title: "Campaign Overview & Victory"
+    description: "How a round is won and what carries over"
+    emoji: "🦅"
+    url: "https://wiki.vectorstrike.org/gameplay/objectives"
+    fields:
+      - name: "Victory condition"
+        value: "A side wins by holding a large majority of the map's objectives. Hold it long enough and the round ends and a fresh one starts automatically."
         inline: false
       - name: "Last Stand"
-        value: "If a side is reduced to its last primary objective (an Airbase, Naval Base, or FARP), a countdown timer starts. If they can't retake ground before it expires, that side loses."
+        value: "A coalition reduced to its final primary objective (airbase, naval base or FARP) gets a do-or-die countdown instead of being able to turtle indefinitely."
         inline: false
-      - name: "Persistent Campaign State"
-        value: "**bflib** (the mission engine) saves territory ownership, base health, and warehouse supply to disk continuously — this state survives DCS server restarts and mission reloads. Player stats, kills, and sorties are tracked separately by **bfdb** per campaign round, which starts fresh each time the mission is reloaded."
+      - name: "What persists"
+        value: "**bflib** saves territory, base health and warehouse stock to disk continuously — it survives DCS restarts and mission reloads. **bfdb** tracks kills, sorties and captures per round; link your account and your career totals persist across every round."
         inline: false
-      - name: "Dynamic Frontlines"
-        value: "The active frontline is determined by sector control. Controlling adjacent sectors expands your team's operational envelope and opens forward staging areas."
+      - name: "Objective types matter differently"
+        value: "Airbases and FARPs are where you fly from. **Logistics hubs** feed supply forward. **Factories** produce ground units and weigh heaviest in war production. **Command centres** tie the SAM network together. Hitting a factory or a hub does far more damage than hitting another airfield."
         inline: false
 
-  # =============================================================
-  # SECTION 2: SECTOR CAPTURE & GROUND OPERATIONS
-  # =============================================================
+  # ---------------------------------------------------------------
+  # 3. CAPTURING
+  # ---------------------------------------------------------------
   capture_mechanics:
-    title: "🚩 Sector Capture & Airbase Takeover"
-    description: "Detailed two-stage requirements for claiming enemy territory."
+    title: "Capturing Objectives"
+    description: "Break it, take it, then hold it while it consolidates"
+    emoji: "🚩"
+    url: "https://wiki.vectorstrike.org/gameplay/capturing-objectives"
     fields:
-      - name: "Stage 1: Neutralization (Air Superiority & Strike)"
-        value: "An objective only becomes capturable once its health drops to 20% or below AND all defending infantry inside it are eliminated. Strike its defenses, SAMs, and ground forces until both conditions are met."
+      - name: "Stage 1 — make it eligible"
+        value: "An objective becomes capturable once its **health is at or below 20% and every infantry defender is dead**. Special SAM sites are different: destroy the site outright. A carrier group needs its SUPPLY ship sunk."
         inline: false
-      - name: "Stage 2: Ground Insertion & Deployment"
-        value: "Once capturable, friendly troops must be physically deployed inside the objective's zone (via transport helicopters, ground convoys, or dismounts) to begin the capture. Most objectives then take a configured amount of time to flip while your troops hold the zone — SAM sites are the exception and capture instantly once troops are in the zone."
+      - name: "Stage 2 — put troops in the zone"
+        value: "Capture-capable infantry must physically be inside the zone. The timer is about 3 minutes, divided by how many squads you have in there — more squads, faster flip."
         inline: false
-      - name: "Forward Operating Bases (FOBs)"
-        value: "Capturing neutral or enemy FOBs unlocks forward rearm/refuel locations, tactical repair points, and rapid air transport landing zones for rotary wing aircraft."
+      - name: "Stage 3 — consolidate (people forget this one)"
+        value: "After the flip your troops **hold for about 5 more minutes**. Walk them out and the clock stops. Wipe them out and the base can go Neutral. Delivering a repair kit or supply during the hold pushes the clock forward — that is the fastest way to lock a base down."
+        inline: false
+      - name: "Not every squad can capture"
+        value: "MANPADS (Stinger / Igla) **cannot**. Standard, Anti Tank and Mortar can. Flying the wrong squad 60 nm is the most common wasted sortie on the server."
+        inline: false
+      - name: "Why won't this base flip? Ask the engine"
+        value: "**F10 → Objectives → Capture Advisor: Nearest** prints the exact blockers — health, remaining infantry, a post-capture cooldown, whether the base is repairing faster than you can hurt it, and which of your troops are in the zone (flagging any that can't capture)."
         inline: false
 
-  # =============================================================
-  # SECTION 3: LOGISTICS, SUPPLIES & REARMING
-  # =============================================================
+  # ---------------------------------------------------------------
+  # 4. LOGISTICS
+  # ---------------------------------------------------------------
   logistics_system:
-    title: "📦 Logistics, Cargo & Base Stockpiles"
-    description: "Managing munitions, fuel, and infrastructure resupply."
+    title: "Logistics, Supply & the War Economy"
+    description: "Why a base won't repair, and how to starve theirs"
+    emoji: "📦"
+    url: "https://wiki.vectorstrike.org/gameplay/war-economy"
     fields:
-      - name: "Localized Inventories"
-        value: "Airbases do not have unlimited supplies. High-tier airframes, advanced munitions (FOX-3, PGM, standoff weapons), and fuel are tied to the local airbase stockpile."
+      - name: "Stockpiles are finite"
+        value: "Airframes, munitions and fuel are held per base. When a jet is destroyed the local count drops until something resupplies it — so the slot you want may simply not be there. That is the base being out of that type, not a bug."
         inline: false
-      - name: "Cargo Sling Loading & Transport"
-        value: "Logistics pilots must haul cargo crates from main logistics depots to forward bases to replenish depleted weapon racks, fuel tanks, and airframe counts."
+      - name: "Repairs are paid for"
+        value: "A base repairs itself on a timer, but **each repair costs it supplies and materiel — and if it hasn't got them, the repair does not happen.** A target that stops healing has run dry. That's your window."
         inline: false
-      - name: "Base Repair & Air Defense Rebuilding"
-        value: "Delivering engineering and defense crates allows ground crews to repair damaged structures, deploy new SAM sites, and replenish automated perimeter AAA."
+      - name: "Supply routing follows the front line"
+        value: "A hub can only supply a base if the ground between them is clear of enemy-held objectives, and enemy bases interdict a wide belt around themselves. **Take the objectives astride an enemy road and everything behind it starves without you attacking it.** A cut-off base can only be reached by air, crates, or an AI helo run."
+        inline: false
+      - name: "Convoys and transports are targets"
+        value: "Ground convoys, cargo aircraft and ships carry the supply. Killing them earns points *and* removes supply that was about to arrive. **F10 → Info → Supply Convoys** shows yours in transit — the enemy has the same page for theirs."
+        inline: false
+      - name: "Logistics pays like combat"
+        value: "Delivering a repair kit or a supply transfer is worth roughly what an air kill is. The crate run nobody wants to fly is not charity."
         inline: false
 
-  # =============================================================
-  # SECTION 4: SLOTTING, LIVES & SIDE SELECTION
-  # =============================================================
+  # ---------------------------------------------------------------
+  # 5. SUPPORT & TASKING
+  # ---------------------------------------------------------------
+  support_and_tasking:
+    title: "Support Assets & the Tasking Board"
+    description: "AWACS, tankers, drones, AI helos, coalition tasks"
+    emoji: "🎯"
+    url: "https://wiki.vectorstrike.org/gameplay/tasking-board"
+    fields:
+      - name: "Buying support"
+        value: "**F10 → Actions>>** — AWACS, tankers, a B-1B/Tu-22M3 strike, JTAC drones, naval cruise missiles. Costs are in the menu label. Check **Info → Support & Radios** first: somebody may already have one up."
+        inline: false
+      - name: "Targeting with map marks"
+        value: "Most actions take a position. Drop an F10 **map mark**, then re-open `Actions>>` — your marks appear in the list. You only see your own marks."
+        inline: false
+      - name: "The tasking board"
+        value: "**Actions>> → Add Task** posts CAP / CAS / SEAD / STRIKE / LOGISTICS / CSAR at a mark, or CAPTURE / SUPPLY against a base. Your whole coalition sees the circle and pin on the F10 map, it's ranked into the briefing, and new tasks are called on the GCI net. **Free**, and objective tasks close themselves out when the job is done."
+        inline: false
+      - name: "AI helo missions"
+        value: "**Actions>> → AI Helo Missions** dispatches a real AI helo that cold-starts, flies, lands and delivers — capture troops into an objective, or supply into a base running dry. Orderable from a fast jet. It can be shot down, so look at the route first."
+        inline: false
+
+  # ---------------------------------------------------------------
+  # 6. CSAR
+  # ---------------------------------------------------------------
+  csar:
+    title: "CSAR — Downed Pilots"
+    description: "Getting people back, and getting yourself back"
+    emoji: "🚁"
+    url: "https://wiki.vectorstrike.org/f10-menu/csar"
+    fields:
+      - name: "When a pilot goes down"
+        value: "A downed pilot spawns at the crash site. Friendly helo pilots get the location, repeated every few minutes. There's a 30-minute clock before they're captured, and enemy ground units within 50 m take them immediately."
+        inline: false
+      - name: "If you're the one who ejected"
+        value: "**Glide toward friendly ground.** A pilot inside any friendly objective's zone recovers themselves — no helicopter needed."
+        inline: false
+      - name: "Running the pickup"
+        value: "**F10 → CSAR** — list downed pilots, request smoke on the nearest, land within 100 m, and they board automatically inside 20 m. Deliver by landing at any friendly objective. A helo parked on the pilot pauses their capture clock."
+        inline: false
+      - name: "What you get"
+        value: "Points for the rescue, and a teammate who keeps flying. It's the best-paying thing a helo can do between crate runs."
+        inline: false
+
+  # ---------------------------------------------------------------
+  # 7. COMMS, GCI & NAVAIDS
+  # ---------------------------------------------------------------
+  comms_and_navaids:
+    title: "Radios, GCI & Navaids"
+    description: "Frequencies, AWACS calls, and finding a FARP at night"
+    emoji: "📻"
+    url: "https://wiki.vectorstrike.org/gameplay/comms-plan"
+    fields:
+      - name: "SRS"
+        value: "Start SRS before DCS so it syncs with your cockpit radios. The two coalitions share no working channel."
+        inline: false
+      - name: "Frequencies"
+        value: "There's a server-wide comms plan — GCI, ATC, ATIS and per-flight channels. It's on briefing page 6 (**F10 → Info → Situation → Comms**), in `-brief`, and on the dashboard. Your GCI frequency is also shown on slot entry."
+        inline: false
+      - name: "Live GCI"
+        value: "An AWACS controller calls threats, groups, launches and intercepts to you over SRS, in NATO brevity, limited to what your side has actually detected. Tune it with **F10 → GCI/EWR → GCI Voice** or `-gci` in chat — `-gci quiet` keeps the net but stops unprompted calls."
+        inline: false
+      - name: "Navaids"
+        value: "FARPs, FOBs, hubs, naval bases and carriers get **generated TACAN / NDB / ICLS / ACLS channels each round** — DCS gives those objective types nothing. Look them up in **F10 → Info → Navaids Directory** and write them down *before* you take off."
+        inline: false
+      - name: "The radar picture"
+        value: "**F10 → GCI/EWR → Report**. Note it is delayed by about a minute — treat a contact as a cue to look, not a firing solution. Coverage comes from your side's ground EWR, airborne EWR and any AWACS you've paid for."
+        inline: false
+
+  # ---------------------------------------------------------------
+  # 8. SLOTS, LIVES, STATS
+  # ---------------------------------------------------------------
   lives_and_slotting:
-    title: "✈️ Aircraft Slots, Lives & Side Selection"
-    description: "How aircraft availability, pilot lives, and side selection work."
+    title: "Slots, Lives & Account Linking"
+    description: "Why you can't slot, and how to keep your stats"
+    emoji: "✈️"
+    url: "https://wiki.vectorstrike.org/gameplay/points-and-lives"
     fields:
-      - name: "Choosing a Side"
-        value: "Type `blue` or `red` in in-game chat to register with a faction. You can switch sides a limited number of times per round with `-switch <color>` — check `-status` in chat to see the current campaign state."
+      - name: "Why can't I take this slot?"
+        value: "Usually you're registered to the other coalition. Otherwise the base is **out of that airframe** — stockpiles are finite and drop as jets are lost."
         inline: false
-      - name: "Life Pool"
-        value: "Each airframe belongs to a life category (Standard, Intercept, Attack, Logistics, Recon). When limited lives are active, each category has its own life count that refills after a cooldown period. Type `-lives` in chat at any time to see your current life counts — this can be toggled on or off by admins, so always check in-game rather than assuming."
+      - name: "Lives"
+        value: "Lives are a per-role pool (Standard, Intercept, Attack, Logistics, Recon) that a server can switch on or off. **They are currently off** — no life is taken on takeoff or death. Always check `-lives` in game rather than assuming; when they are on, a CSAR pickup gives one back."
         inline: false
-      - name: "Dynamic Slotting"
-        value: "Available aircraft slots at a base directly reflect what is physically in stock. When an airframe is destroyed, local inventory decreases until resupplied."
+      - name: "Points"
+        value: "Earned for air and ground kills, captures, convoy interdiction, CSAR pickups and logistics work. Spent on support aircraft, drones, AI helo missions and moving units. `-balance`, or **F10 → Info → My Status**."
         inline: false
-      - name: "Specialized Ordnance Restrictions"
-        value: "Heavy ordnance and long-range radar missiles require specific munition crates to be delivered before they can be loaded in the rearm menu."
+      - name: "Link your account"
+        value: "Log into the dashboard with Discord, then enter your DCS UCID on the Pilots page and hit LINK. After that your kills, hours, deliveries and captures persist across every round on your public pilot profile."
         inline: false
 
-  # =============================================================
-  # SECTION 5: SRS & SERVER CONNECTIONS
-  # =============================================================
-  srs_and_comms:
-    title: "🎙️ SRS Configuration & Radio Channels"
-    description: "Voice communication setup for tactical coordination."
-    fields:
-      - name: "Simple Radio Standalone (SRS)"
-        value: "SRS auto-connect is enabled on all active campaign servers. Launch SRS before opening DCS to ensure automatic synchronization with your cockpit radios."
-        inline: false
-      - name: "Tactical Frequencies"
-        value: "Check the in-game kneeboard or Discord `#frequencies` channel for AWACS, JTAC, logistics coordination, and flight-level radio channels."
-        inline: false
-
-  # =============================================================
-  # SECTION 6: ACCOUNT LINKING & STATS
-  # =============================================================
-  account_linking:
-    title: "🔗 Player Account & Stats Linking"
-    description: "Track persistent flight hours, ground kills, and campaign stats."
-    fields:
-      - name: "Linking Your Account"
-        value: "Log into the web dashboard with Discord, then enter your DCS UCID on the Pilots page and click LINK to connect your account."
-        inline: false
-      - name: "Persistent Career Stats"
-        value: "Once linked, your combat statistics, flight hours, cargo deliveries, and sector captures persist across all campaign rounds and are visible on your public pilot profile."
-        inline: false
-
-  # =============================================================
-  # SECTION 7: IN-GAME CHAT COMMANDS
-  # =============================================================
+  # ---------------------------------------------------------------
+  # 9. CHAT COMMANDS
+  # ---------------------------------------------------------------
   chat_commands:
-    title: "⌨️ In-Game Chat Command Reference"
-    description: "Type these directly into the DCS in-game chat window."
+    title: "In-Game Chat Commands"
+    description: "Type these into the DCS chat window"
+    emoji: "⌨️"
+    url: "https://wiki.vectorstrike.org/reference/chat-commands"
     fields:
-      - name: "General"
-        value: "`blue` / `red` — join a faction\n`-switch <color>` — change sides (limited uses per round)\n`-status` — campaign status (objectives, convoys, streak)\n`-time` — time until server restart\n`-help` — show all commands in-game"
+      - name: "Status & info"
+        value: "`-status` — objectives held, your points and streak, your convoys\n`-brief` — the short situational briefing\n`-balance` — points\n`-lives` — life counts (when lives are enabled)\n`-weather` — weather at your position\n`-time` — mission time and restart schedule\n`-help` — the full list in game"
         inline: false
-      - name: "Economy & Logistics"
-        value: "`-balance` — show your points balance\n`-transfer <amount> <player|objective:name>` — transfer points\n`-action <name> <args>` — run a purchasable action (`-action help` for the list)\n`-delete <groupid>` — delete a group you deployed for a partial refund"
+      - name: "Sides"
+        value: "`blue` / `red` — register with a coalition\n`-switch blue` / `-switch red` — change sides (limited per round)"
         inline: false
-      - name: "Combat & JTAC"
-        value: "`-lives` — show your current life counts\n`-jtac <id> <cmd>` — JTAC controls"
+      - name: "Economy & units"
+        value: "`-transfer <amount> <player|objective>` — give points to a teammate or fund an objective\n`-action <name> <args>` — run an action from chat (`-action help` lists them)\n`-delete <group-id>` — remove something you deployed and get **half its cost back**\n`-bind <troop-id>` — bind a troop group for control"
+        inline: false
+      - name: "Combat & comms"
+        value: "`-jtac <id> <cmd>` — JTAC controls\n`-gci` — show your GCI settings; `-gci quiet` / `-gci braa` / `-gci bulls` / `-gci imperial` to tune them"
         inline: false

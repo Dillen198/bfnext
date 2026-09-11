@@ -61,22 +61,46 @@ Discord (step 7).
 
 ---
 
-## 2. Put the plugin + extension into the bot
+## 2. Put the plugins + extensions into the bot
 
-The bot loads code from its own tree, so copy (or symlink) the two folders:
+The bot loads code from its own tree. Our plugins, extensions and plugin config
+live under `bfnext-vector\DCSServerBot\`, which mirrors the bot's own layout —
+so it copies across folder for folder:
 
 ```powershell
-# plugin
-robocopy E:\Github\bfnext-vector\plugins\fowlengine E:\Github\DCSServerBot\plugins\fowlengine /MIR
-# restart-cycle binary-swap extension
-robocopy E:\Github\bfnext-vector\extensions\bfbinaries E:\Github\DCSServerBot\extensions\bfbinaries /MIR
+# custom plugins (fowlengine, about, faq, rules, tickets, announcements, ...)
+robocopy E:\Github\bfnext-vector\DCSServerBot\plugins    E:\Github\DCSServerBot\plugins    /E
+# extensions (restart-cycle binary swap, weather)
+robocopy E:\Github\bfnext-vector\DCSServerBot\extensions E:\Github\DCSServerBot\extensions /E
 ```
 
-(Symlinks are nicer if you rebuild often:
-`New-Item -ItemType Junction -Path E:\Github\DCSServerBot\plugins\fowlengine -Target E:\Github\bfnext-vector\plugins\fowlengine`)
+`/E` rather than `/MIR` on purpose: these are overlays onto the bot's own tree,
+and `/MIR` would delete every upstream plugin and extension that isn't in ours.
 
-`fowlengine` is already in `Server Bot\config\main.yaml` → `opt_plugins`.
-Extensions need no main.yaml entry — they're switched on per-instance in step 4.
+(Symlinks are nicer if you edit often:
+`New-Item -ItemType Junction -Path E:\Github\DCSServerBot\plugins\fowlengine -Target E:\Github\bfnext-vector\DCSServerBot\plugins\fowlengine`,
+and the same per plugin folder.)
+
+### Plugin config lives somewhere else — and it is not in git
+
+A plugin's settings come from **`<bot>\config\plugins\<plugin>.yaml`**. That is
+the only file `Plugin.read_locals()` looks for; the `<plugin>\<plugin>.yaml`
+next to the code is a reference template the bot never reads. So:
+
+- Editing `DCSServerBot\plugins\faq\faq.yaml` in this repo changes **nothing**
+  on the server by itself. Apply the same edit to
+  `E:\Github\DCSServerBot\config\plugins\faq.yaml`.
+- `DCSServerBot\config\` is gitignored here (it holds the bot token, database
+  DSN and Discord IDs), so it never travels with a pull. Copy those files by
+  hand, or keep them symlinked to the repo copies under
+  `bfnext-vector\DCSServerBot\config\plugins\`, which are kept in step.
+
+After changing plugin **code**, restart the bot. After changing only a plugin's
+**yaml**, `/reload <plugin>` is enough.
+
+`fowlengine` is already in `Server Bot\config\main.yaml` → `opt_plugins`, as are
+`about` and `faq`. Extensions need no main.yaml entry — they're switched on
+per-instance in step 4.
 
 Install the plugin's Python deps into the bot's venv if not already there:
 `aiohttp` (already used by the bot). Nothing new is required.
