@@ -217,6 +217,22 @@ pub(crate) fn bearing_to_compass(from: Vector2, to: Vector2) -> &'static str {
     }
 }
 
+/// Air-start watch state for one CAP flight. See `cap_spawn_ts`.
+#[derive(Debug, Clone, Copy)]
+pub struct CapSpawnWatch {
+    pub spawned_at: DateTime<Utc>,
+    /// Consecutive `enforce_cap_ground_start` observations where the lead unit
+    /// was airborne and had *never* been seen on the ground. Two of these
+    /// (or one within the fast-air-start window) scraps the event.
+    pub airborne_strikes: u8,
+}
+
+impl CapSpawnWatch {
+    pub fn new(now: DateTime<Utc>) -> Self {
+        Self { spawned_at: now, airborne_strikes: 0 }
+    }
+}
+
 /// Manages dynamic campaign events
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EventScheduler {
@@ -243,6 +259,15 @@ pub struct EventScheduler {
     /// retargeting takes over).
     #[serde(skip)]
     pub pending_cap_tasks: FxHashMap<GroupId, Vector2>,
+    /// CAP group → air-start watch state. A CAP is meant to ground-start (taxi
+    /// + takeoff take a minute+). `enforce_cap_ground_start` polls the lead
+    /// unit: the instant it is seen ON THE GROUND the watch is dropped (a real
+    /// ground start); if it is only ever seen AIRBORNE it air-started (bad
+    /// template / DCS ignored the parking start) and the whole event is
+    /// despawned. Not wall-clock-boxed, so spawn-queue lag can't wave an
+    /// air-started flight through.
+    #[serde(skip)]
+    pub cap_spawn_ts: FxHashMap<GroupId, CapSpawnWatch>,
     /// CAP event → the ground point its flights are currently stationed over.
     /// Used by retarget_cap_groups to avoid re-issuing an identical CAP-station
     /// task every slow tick (which would interrupt an in-progress intercept).

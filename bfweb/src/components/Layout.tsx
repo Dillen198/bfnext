@@ -11,6 +11,7 @@ import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
 import ThemeToggle from './ThemeToggle'
+import { useInstance } from '../context/InstanceContext'
 import LogoMark from './LogoMark'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
@@ -138,13 +139,43 @@ export default function Layout() {
   }, [sidebarCollapsed])
 
   const { data: stats }       = useQuery({ queryKey: ['stats'],      queryFn: api.stats,      refetchInterval: 30_000 })
-  const { data: rounds = [] } = useQuery({ queryKey: ['rounds'],     queryFn: api.rounds,     refetchInterval: 60_000 })
+  // With several DCS servers behind one bfdb, the campaign selector lists
+  // every server's campaigns (grouped by server) rather than only the selected
+  // server's -- picking one switches server and campaign together, which is
+  // what "go and look at that campaign" actually means.
+  const { instances, selected: selectedInstance, current, multi, select } = useInstance()
+  const { data: rounds = [] } = useQuery({
+    queryKey: ['rounds', multi],
+    queryFn: () => api.rounds(multi),
+    refetchInterval: 60_000,
+  })
 
   const { selectedRound, setSelectedRound } = useRound()
 
   const isLive      = !!stats?.active_round
-  const activeRound = rounds.find(r => r.active)
-  const pastRounds  = rounds.filter(r => !r.active)
+  // `rounds` spans every server in multi-instance mode, so anything that
+  // describes "this server's campaign" has to be filtered to it first.
+  const instanceOf  = (r: { instance?: string }) => r.instance ?? current?.id
+  const ownRounds   = multi ? rounds.filter(r => instanceOf(r) === current?.id) : rounds
+  const activeRound = ownRounds.find(r => r.active)
+  const pastRounds  = ownRounds.filter(r => !r.active)
+
+  // Option values encode both halves: "<instance>|<roundId>", with an empty
+  // round meaning "whatever is live on that server right now".
+  const selectorValue = `${selectedInstance ?? current?.id ?? ''}|${selectedRound ?? ''}`
+
+  function onSelectCampaign(value: string) {
+    const [inst, round] = value.split('|')
+    if (inst && inst !== current?.id) select(inst)
+    setSelectedRound(round === '' ? undefined : Number(round))
+  }
+
+  // One <optgroup> per server, in configured order, each listing that
+  // server's live campaign first and then its history.
+  const groups = (multi ? instances : []).map(i => ({
+    instance: i,
+    rounds: rounds.filter(r => instanceOf(r) === i.id),
+  }))
 
   // Grouped by purpose: operational picture, then stats/people, then
   // meta/system. Empty groups (e.g. no coalition, not admin) are dropped so
@@ -247,19 +278,44 @@ export default function Layout() {
           </div>
         )}
 
-        {/* Round selector */}
-        {rounds.length > 0 && (
+        {/* Campaign selector. With one DCS server this is the round picker it
+            has always been; with several it groups by server, so choosing a
+            campaign also switches which server the whole dashboard is showing. */}
+        {(rounds.length > 0 || multi) && (
           <>
             <Sep />
             <select
-              value={selectedRound ?? ''}
-              onChange={e => setSelectedRound(e.target.value === '' ? undefined : Number(e.target.value))}
+              value={selectorValue}
+              onChange={e => onSelectCampaign(e.target.value)}
               className="vs-input"
-              style={{ fontSize: '0.68rem', padding: '4px 8px', height: 28, maxWidth: 180, cursor: 'pointer' }}
+              title={multi ? 'Server and campaign' : 'Campaign'}
+              style={{ fontSize: '0.68rem', padding: '4px 8px', height: 28, maxWidth: multi ? 260 : 180, cursor: 'pointer' }}
             >
-              {activeRound  && <option value="">{roundLabel(activeRound)}</option>}
-              {!activeRound && <option value="">Latest Round</option>}
-              {pastRounds.map(r => <option key={r.id} value={r.id}>{roundLabel(r)}</option>)}
+              {/* Single server: same "<instance>|<round>" encoding as the
+                  grouped case, so `selectorValue` matches an option and the
+                  select shows the right thing when a past round is chosen. */}
+              {!multi && <>
+                {activeRound  && <option value={`${current?.id ?? ''}|`}>{roundLabel(activeRound)}</option>}
+                {!activeRound && <option value={`${current?.id ?? ''}|`}>Latest Round</option>}
+                {pastRounds.map(r => <option key={r.id} value={`${current?.id ?? ''}|${r.id}`}>{roundLabel(r)}</option>)}
+              </>}
+              {multi && groups.map(({ instance, rounds: rs }) => {
+                const live = rs.find(r => r.active)
+                const past = rs.filter(r => !r.active)
+                return (
+                  <optgroup
+                    key={instance.id}
+                    label={`${instance.label}${instance.public === false ? ' [test]' : ''}`}
+                  >
+                    <option value={`${instance.id}|`}>
+                      {live ? roundLabel(live) : 'Latest Round'}
+                    </option>
+                    {past.map(r => (
+                      <option key={r.id} value={`${instance.id}|${r.id}`}>{roundLabel(r)}</option>
+                    ))}
+                  </optgroup>
+                )
+              })}
             </select>
           </>
         )}

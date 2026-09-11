@@ -1081,10 +1081,37 @@ pub struct LiveWeatherConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 // #[serde(deny_unknown_fields)]
 pub struct WarehouseConfig {
-    /// Logistics hub max supply stock as a multiple of the delivery amount
+    /// Logistics hub max supply stock as a multiple of the delivery amount.
+    /// This is the depth of the theatre stockpile: at 1 a hub can hold
+    /// exactly one delivery, so it fills completely every delivery and
+    /// empties completely on the next distribution tick, and neither side can
+    /// ever build up (or be ground down out of) a reserve. Give it several
+    /// deliveries of headroom if you want the supply situation to be
+    /// something the campaign can actually win or lose.
     pub hub_max: u32,
-    /// Airbase max supply stock as a multiple of the delivery amount
+    /// Airbase max supply stock as a multiple of the delivery amount. The
+    /// depth of a front-line base's own magazine -- how long it can keep
+    /// generating sorties with its supply line cut.
     pub airbase_max: u32,
+    /// Airframe stockpile depth, as a multiple of the supply source's count
+    /// for that type, replacing `hub_max` / `airbase_max` for aircraft only.
+    ///
+    /// Aircraft and bullets want very different depths: a base holding three
+    /// deliveries' worth of AMRAAM is sensible, a base holding three
+    /// deliveries' worth of airframes has an aircraft carrier's worth of jets
+    /// parked on it and will never run short however badly the war is going.
+    /// `(hub, airbase)`. Omit to use `hub_max` / `airbase_max` for airframes
+    /// too, which is the original behaviour.
+    #[serde(default)]
+    pub airframe_max: Option<(u32, u32)>,
+    /// Fraction of a hub's capacity (0-100) that it will not ship forward.
+    /// A depot that empties itself into the first convoy that asks has no
+    /// operational reserve: one lost convoy and the whole theatre is dry
+    /// until the next production delivery. The reserve is still available to
+    /// hub-to-hub balancing and to the player-driven supply transfer -- it
+    /// just isn't handed out automatically.
+    #[serde(default = "default_hub_reserve_percent")]
+    pub hub_reserve_percent: u8,
     /// Logistics tick in minutes. Supplies move automatically every tick
     pub tick: u32,
     /// How many logistics ticks does it take before supplies are delivered
@@ -1125,6 +1152,243 @@ pub struct WarehouseConfig {
     /// Sea logistics configuration (optional, defaults to disabled)
     #[serde(default)]
     pub sea_logistics: Option<SeaLogisticsConfig>,
+    /// Materiel: a single generic war-stock commodity (fuel drums, spares,
+    /// engineering plant, ammunition that isn't a specific pylon load) that
+    /// repairs and deployments are actually paid for in. Optional; when it is
+    /// absent, repair and deploy fall back to shaving a flat percentage off
+    /// every item type in the warehouse, which is what the campaign did
+    /// before -- patching a runway would consume 5% of your fighter airframes
+    /// and 5% of every missile type on the base.
+    #[serde(default)]
+    pub materiel: Option<MaterielConfig>,
+    /// Ties each side's production output to how the war is going. Without
+    /// it, production is a fixed constant: losing half the map, or having
+    /// every factory flattened, changes nothing about how much materiel
+    /// arrives at the hubs.
+    #[serde(default)]
+    pub production_scaling: Option<ProductionScalingConfig>,
+    /// Make supply routes something the enemy can cut. A hub is only a
+    /// candidate supplier for a base if the ground between them is clear of
+    /// enemy-held objectives, and a base whose road is severed can only be
+    /// resupplied by air. With this off, supply is assigned by straight-line
+    /// distance alone -- a depot on the far side of the front line will
+    /// happily truck fuel through it.
+    #[serde(default = "default_true")]
+    pub front_line_routing: bool,
+    /// How far either side of an enemy-held objective the ground is treated
+    /// as interdicted, on top of that objective's own zone radius. Zone radii
+    /// are small enough that on their own they only block a road running
+    /// almost through the base; this is the width of the belt its garrison
+    /// actually denies.
+    #[serde(default = "default_route_block_margin")]
+    pub route_block_margin_m: f64,
+    /// What happens to the aircraft the losing side left behind when an
+    /// objective changes hands. Omit (the default) and they are destroyed on
+    /// capture, which is the original behaviour.
+    #[serde(default)]
+    pub captured_airframes: Option<CapturedAirframeConfig>,
+}
+
+fn default_route_block_margin() -> f64 {
+    12000.
+}
+
+/// Salvage rules for enemy aircraft left on a captured objective.
+///
+/// A base that changes hands is holding whatever the previous owner had
+/// parked on it. Without this, `capture_warehouse` zeroes every airframe the
+/// new owner does not itself produce, so taking a fully-stocked enemy airbase
+/// yields nothing but the ramp. With it, a fraction of that stock survives
+/// and the captors can fly it -- until it runs out, because nothing in the
+/// supply system will ever replace an airframe the side does not produce.
+///
+/// This only decides what is in the *warehouse*. Whether anyone can actually
+/// climb into one depends on the mission having client slots of that type on
+/// the captor's coalition at that base -- see bftools' `captured` slot-zone
+/// property, which generates them -- or on the base using DCS dynamic slots,
+/// which read their roster straight out of the warehouse.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CapturedAirframeConfig {
+    /// Percentage of the previous owner's stock that survives the capture
+    /// (0-100). The rest is assumed destroyed on the ramp, sabotaged, or
+    /// flown out ahead of the assault. Anything that rounds down to zero
+    /// leaves no entry at all.
+    #[serde(default = "default_salvage_percent")]
+    pub salvage_percent: u8,
+    /// Hard ceiling on how many of any one type can be salvaged, regardless
+    /// of `salvage_percent`. Stops the capture of a deep rear airbase from
+    /// handing over a whole extra squadron.
+    #[serde(default)]
+    pub max_per_type: Option<u32>,
+    /// Minimum objective health (0-100) before salvaged airframes can be
+    /// slotted. Captured jets are not flyable the instant the last defender
+    /// dies -- the base has to be consolidated and repaired first. 100 mirrors
+    /// the rule captured carriers already use; set 0 to make them available
+    /// immediately.
+    #[serde(default = "default_captured_min_health")]
+    pub min_health: u8,
+    /// Airframe types that never survive a capture, whatever the roll. Use it
+    /// for modules you do not want appearing on the wrong coalition at all.
+    #[serde(default)]
+    pub exclude: FxHashSet<String>,
+}
+
+fn default_salvage_percent() -> u8 {
+    25
+}
+
+fn default_captured_min_health() -> u8 {
+    100
+}
+
+impl Default for CapturedAirframeConfig {
+    fn default() -> Self {
+        Self {
+            salvage_percent: default_salvage_percent(),
+            max_per_type: None,
+            min_health: default_captured_min_health(),
+            exclude: FxHashSet::default(),
+        }
+    }
+}
+
+impl CapturedAirframeConfig {
+    /// How many of `stored` survive the capture, after the percentage and the
+    /// per-type ceiling. Zero means don't keep an entry at all.
+    pub fn salvaged(&self, stored: u32) -> u32 {
+        // An UNLIMITED_AIRCRAFTS objective has no real count to take a
+        // fraction of -- 25% of `UNLIMITED_CAPACITY` is a quarter of a
+        // million jets. Fall back to the explicit ceiling, and salvage
+        // nothing at all if the mission never set one.
+        if stored >= UNLIMITED_CAPACITY {
+            return self.max_per_type.unwrap_or(0);
+        }
+        let kept = (stored as f32 * (self.salvage_percent.min(100) as f32 / 100.)) as u32;
+        match self.max_per_type {
+            None => kept,
+            Some(cap) => kept.min(cap),
+        }
+    }
+}
+
+/// The warehouse item name the materiel commodity is stored under.
+///
+/// The `campaign.` prefix marks it as model-only: it deliberately has no
+/// entry in DCS's resource map, and the warehouse sync skips every item with
+/// this prefix in both directions, so it lives purely in the campaign model
+/// and is never pushed into (or read back from, and thereby zeroed by) a DCS
+/// warehouse.
+pub const MATERIEL_ITEM: &str = "campaign.materiel";
+
+/// True for synthetic campaign-model items that have no DCS counterpart.
+pub fn is_model_only_item(name: &str) -> bool {
+    name.starts_with("campaign.")
+}
+
+/// The generic materiel commodity. See `WarehouseConfig::materiel`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MaterielConfig {
+    /// Master switch. When false the whole commodity is inert and repair /
+    /// deploy keep using the old flat-percentage draw.
+    pub enabled: bool,
+    /// Units produced per side per production delivery, before production
+    /// scaling. This is the strategic tap: everything a coalition repairs or
+    /// deploys ultimately comes out of it.
+    pub hub_production: u32,
+    /// Hub stockpile capacity, as a multiple of `hub_production`.
+    #[serde(default = "default_materiel_hub_capacity")]
+    pub hub_capacity: u32,
+    /// Forward-base stockpile capacity, as a multiple of `hub_production`.
+    #[serde(default = "default_materiel_airbase_capacity")]
+    pub airbase_capacity: u32,
+    /// Units consumed each time an objective repairs one group. If the
+    /// objective doesn't have this much materiel on hand the repair does not
+    /// happen -- the base stays broken until a convoy gets through, which is
+    /// the entire point of running a supply line.
+    pub repair_cost: u32,
+    /// Units drawn from a crate's origin objective for every crate consumed
+    /// when a deployable is unpacked.
+    pub deploy_cost: u32,
+}
+
+fn default_materiel_hub_capacity() -> u32 {
+    6
+}
+
+fn default_materiel_airbase_capacity() -> u32 {
+    3
+}
+
+/// Ties production output to territory held and factories still standing.
+/// See `WarehouseConfig::production_scaling`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProductionScalingConfig {
+    pub enabled: bool,
+    /// Output floor as a percentage of nominal. However badly a coalition is
+    /// losing, it keeps producing at least this much -- a side that gets
+    /// ground down to zero production can never come back, which makes for a
+    /// miserable campaign rather than a realistic one.
+    #[serde(default = "default_production_floor")]
+    pub floor_percent: u8,
+    /// Output ceiling as a percentage of nominal, for a side that has taken
+    /// more than it started with. Keep this close to 100 -- an unbounded
+    /// bonus for winning turns every campaign into a runaway.
+    #[serde(default = "default_production_ceiling")]
+    pub ceiling_percent: u8,
+    /// Territory weights. Each objective a side holds contributes its weight
+    /// scaled by that objective's logistics health, and the side's output is
+    /// the ratio of its current score to the score it started the campaign
+    /// with.
+    #[serde(default = "default_weight_airbase")]
+    pub airbase_weight: f64,
+    #[serde(default = "default_weight_logistics")]
+    pub logistics_weight: f64,
+    #[serde(default = "default_weight_factory")]
+    pub factory_weight: f64,
+    #[serde(default = "default_weight_command_center")]
+    pub command_center_weight: f64,
+}
+
+fn default_production_floor() -> u8 {
+    35
+}
+
+fn default_production_ceiling() -> u8 {
+    125
+}
+
+fn default_weight_airbase() -> f64 {
+    1.0
+}
+
+fn default_weight_logistics() -> f64 {
+    3.0
+}
+
+fn default_weight_factory() -> f64 {
+    4.0
+}
+
+fn default_weight_command_center() -> f64 {
+    2.0
+}
+
+impl Default for ProductionScalingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            floor_percent: default_production_floor(),
+            ceiling_percent: default_production_ceiling(),
+            airbase_weight: default_weight_airbase(),
+            logistics_weight: default_weight_logistics(),
+            factory_weight: default_weight_factory(),
+            command_center_weight: default_weight_command_center(),
+        }
+    }
+}
+
+fn default_hub_reserve_percent() -> u8 {
+    20
 }
 
 /// Effectively unlimited for gameplay purposes, but small enough that
@@ -1133,11 +1397,47 @@ pub struct WarehouseConfig {
 pub const UNLIMITED_CAPACITY: u32 = 1_000_000;
 
 impl WarehouseConfig {
+    /// How much of `inv` a hub is willing to release to forward bases: its
+    /// stock less the reserve floor. Returns 0 for a hub sitting at or below
+    /// its reserve.
+    pub fn releasable(&self, stored: u32, capacity: u32) -> u32 {
+        let reserve = (capacity as f32 * (self.hub_reserve_percent.min(100) as f32 / 100.)) as u32;
+        stored.saturating_sub(reserve)
+    }
+
     pub fn capacity(&self, hub: bool, qty: u32) -> u32 {
         if hub {
             qty * self.hub_max
         } else {
             qty * self.airbase_max
+        }
+    }
+
+    /// Like `capacity`, but for airframes, which get their own depth so they
+    /// can be scarce while munitions are deep. Falls back to `capacity` when
+    /// `airframe_max` isn't configured.
+    pub fn airframe_capacity(&self, hub: bool, qty: u32) -> u32 {
+        match self.airframe_max {
+            None => self.capacity(hub, qty),
+            Some((h, a)) => qty * if hub { h } else { a },
+        }
+    }
+
+    /// `capacity_for`, routed to whichever depth applies to this item.
+    pub fn capacity_for_item(
+        &self,
+        obj_name: &str,
+        is_airframe: bool,
+        unlimited: bool,
+        hub: bool,
+        qty: u32,
+    ) -> u32 {
+        if qty > 0 && (unlimited || self.unlimited_objectives.contains(obj_name)) {
+            UNLIMITED_CAPACITY
+        } else if is_airframe {
+            self.airframe_capacity(hub, qty)
+        } else {
+            self.capacity(hub, qty)
         }
     }
 
@@ -1178,6 +1478,25 @@ pub struct ConvoyConfig {
     /// How often to check convoy status (in seconds)
     #[serde(default = "default_convoy_check_interval")]
     pub check_interval_secs: u32,
+    /// How long a convoy may stay on the road before it is written off as
+    /// wedged. DCS ground pathing strands convoys on terrain regularly; when
+    /// this expires the trucks are despawned and the load is returned to the
+    /// hub it came from, so the supply isn't lost to a pathing bug.
+    #[serde(default = "default_convoy_max_transit")]
+    pub max_transit_minutes: u32,
+    /// Minimum gap between two convoys bound for the same destination, in
+    /// logistics ticks. Without it every hub dispatched a fresh pair of
+    /// convoys to every under-stocked destination on every tick.
+    #[serde(default = "default_dispatch_cooldown")]
+    pub dispatch_cooldown_ticks: u32,
+}
+
+fn default_convoy_max_transit() -> u32 {
+    90
+}
+
+fn default_dispatch_cooldown() -> u32 {
+    2
 }
 
 fn default_convoy_delivery_distance() -> f64 {
@@ -1199,6 +1518,8 @@ impl Default for ConvoyConfig {
             max_concurrent_convoys: 10,
             delivery_distance: default_convoy_delivery_distance(),
             check_interval_secs: default_convoy_check_interval(),
+            max_transit_minutes: default_convoy_max_transit(),
+            dispatch_cooldown_ticks: default_dispatch_cooldown(),
         }
     }
 }
@@ -1230,6 +1551,14 @@ pub struct AirLogisticsConfig {
     /// Supply % threshold below which a destination qualifies for an air run (0–100)
     #[serde(default = "default_air_supply_threshold")]
     pub supply_threshold: u8,
+    /// How long a cargo flight may stay airborne before it is written off and
+    /// its load returned to the origin.
+    #[serde(default = "default_air_max_transit")]
+    pub max_transit_minutes: u32,
+}
+
+fn default_air_max_transit() -> u32 {
+    60
 }
 
 fn default_air_altitude() -> f64 {
@@ -1260,6 +1589,7 @@ impl Default for AirLogisticsConfig {
             delivery_distance: default_air_delivery_distance(),
             check_interval_secs: default_air_check_interval(),
             supply_threshold: default_air_supply_threshold(),
+            max_transit_minutes: default_air_max_transit(),
         }
     }
 }
@@ -1288,6 +1618,14 @@ pub struct SeaLogisticsConfig {
     /// Supply % threshold below which a carrier group qualifies for a sea run (0–100)
     #[serde(default = "default_sea_supply_threshold")]
     pub supply_threshold: u8,
+    /// How long a supply ship may stay at sea before it is written off and
+    /// its load returned to the naval base.
+    #[serde(default = "default_sea_max_transit")]
+    pub max_transit_minutes: u32,
+}
+
+fn default_sea_max_transit() -> u32 {
+    180
 }
 
 fn default_sea_delivery_distance() -> f64 {
@@ -1313,6 +1651,7 @@ impl Default for SeaLogisticsConfig {
             delivery_distance: default_sea_delivery_distance(),
             check_interval_secs: default_sea_check_interval(),
             supply_threshold: default_sea_supply_threshold(),
+            max_transit_minutes: default_sea_max_transit(),
         }
     }
 }
@@ -1568,6 +1907,12 @@ pub enum ActionKind {
     /// Player-callable ground artillery / indirect fire support.
     Artillery(ArtilleryCfg),
     Recon(ReconCfg),
+    /// Post a task (CAP, CAS, LOGISTICS, ...) to the coalition tasking
+    /// board at a map mark. The task area is drawn on the F10 map for the
+    /// whole coalition.
+    AddTask(TaskCfg),
+    /// Take a task back off the coalition tasking board.
+    RemoveTask(RemoveTaskCfg),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1773,6 +2118,103 @@ fn default_recon_duration() -> u32 {
     300
 }
 
+/// What a task type is posted against, and how the engine decides it is
+/// done.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum TaskTarget {
+    /// Posted at one of the posting player's F10 map marks. Nothing the
+    /// engine can measure finishes it, so it stays up until somebody takes
+    /// it off the board or its ttl runs out.
+    Position,
+    /// Posted against an objective the coalition does not own. Completes by
+    /// itself the moment the posting coalition owns it.
+    CaptureObjective,
+    /// Posted against an objective the coalition owns. Completes by itself
+    /// once that objective's supply and fuel are both back at `threshold`
+    /// percent -- whether that was done by an AI helo supply run, a convoy,
+    /// or players flying crates.
+    SupplyObjective {
+        #[serde(default = "default_supply_task_threshold")]
+        threshold: u8,
+    },
+}
+
+impl Default for TaskTarget {
+    fn default() -> Self {
+        Self::Position
+    }
+}
+
+fn default_supply_task_threshold() -> u8 {
+    80
+}
+
+/// One selectable mission type on the coalition tasking board (see
+/// `ActionKind::AddTask`).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TaskTypeCfg {
+    /// Short label shown in the menu, in the map pin, and used as the task's
+    /// type. e.g. "CAP", "CAS", "LOGISTICS".
+    pub name: String,
+    /// What the task is posted against. Position tasks pick one of the
+    /// player's map marks; the objective kinds pick an objective from a list
+    /// and complete on their own when the coalition has done the job.
+    #[serde(default)]
+    pub target: TaskTarget,
+    /// Radius in meters of the task area circle drawn on the F10 map.
+    #[serde(default = "default_task_radius")]
+    pub radius_m: f64,
+    /// RGBA colour of the task area, 0..1 per channel. If unset the task is
+    /// drawn in the posting coalition's colour.
+    #[serde(default)]
+    pub color: Option<[f32; 4]>,
+    /// Optional longer description shown in the F10 map pin under the label.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+fn default_task_radius() -> f64 {
+    15_000.0
+}
+
+/// The coalition tasking board: players post tasks (CAP, CAS, LOGISTICS, ...)
+/// at a map mark and every player on their side sees the task area and its
+/// pin on the F10 map.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TaskCfg {
+    /// The task types players can post, in menu order.
+    pub types: Vec<TaskTypeCfg>,
+    /// Maximum number of open tasks a coalition may have at once. Default: 12.
+    #[serde(default = "default_max_tasks")]
+    pub max_per_side: usize,
+    /// Tasks are removed automatically this many seconds after being posted.
+    /// 0 means they stay until somebody removes them. Default: 7200 (2h).
+    #[serde(default = "default_task_ttl")]
+    pub ttl_secs: u32,
+    /// Broadcast newly posted tasks over the GCI voice net (SRS) as well as
+    /// on the F10 map. Default: true.
+    #[serde(default = "default_true")]
+    pub announce_gci: bool,
+}
+
+fn default_max_tasks() -> usize {
+    12
+}
+
+fn default_task_ttl() -> u32 {
+    7200
+}
+
+/// Removing a task from the coalition tasking board (see
+/// `ActionKind::RemoveTask`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RemoveTaskCfg {
+    /// When true only the player who posted a task (or an admin) may remove
+    /// it. When false anyone on the posting coalition may. Default: false.
+    #[serde(default)]
+    pub owner_only: bool,
+}
+
 /// Player-flown reconnaissance ("Recon Pass").
 ///
 /// A player in a `UnitTag::Recon` aircraft starts a timed pass from the F10
@@ -1842,6 +2284,18 @@ fn default_cull_after() -> u32 {
 
 fn default_capture_consolidation_secs() -> u32 {
     300
+}
+
+fn default_consolidation_zone_grace_secs() -> u32 {
+    15
+}
+
+fn default_consolidation_squad_bonus() -> f32 {
+    0.5
+}
+
+fn default_consolidation_crate_progress_secs() -> u32 {
+    120
 }
 
 fn default_slot_leave_kill_radius_m() -> f64 {
@@ -2381,11 +2835,26 @@ pub struct CampaignEventsCfg {
     /// a real incursion of 2+ aircraft will. Default: 2.
     #[serde(default = "default_cap_min_threat")]
     pub cap_min_threat_count: u32,
-    /// Cooldown (seconds) before a new reactive CAP can spawn for an objective after
-    /// the previous reactive CAP was destroyed mid-mission. Prevents instant respawn
-    /// of CAP and gives the attacker a window. Default: 120 (2 minutes).
+    /// Cooldown (seconds) after a side's reactive CAP wave ends -- shot down OR
+    /// flown its full duration and RTB'd -- before that side may scramble
+    /// another. Gives the attacking side a real window between waves.
+    /// Default: 1800 (30 minutes).
     #[serde(default = "default_cap_respawn_cooldown")]
     pub cap_respawn_cooldown_secs: u64,
+    /// When true, reactive CAP triggers on the actual count of enemy fixed-wing
+    /// PLAYERS airborne on the attacking side, not on what the defending side's
+    /// radar network has painted. Use this if a side (usually Red) never
+    /// scrambles because its EWR / SAM search radars are down, dark (EMCON), or
+    /// have coverage gaps. Costs the fog-of-war realism -- CAP will vector
+    /// toward players the defender can't "see". Default: false.
+    #[serde(default)]
+    pub cap_trigger_on_known_players: bool,
+    /// Air-balance CAP: also scramble for whichever side has this many FEWER
+    /// fixed-wing players airborne than the other -- so if Blue puts up 4 and
+    /// Red 1, Red gets a CAP even without a specific detected incursion. Uses
+    /// actual player counts (radar-independent). 0 disables. Default: 2.
+    #[serde(default = "default_cap_balance_gap")]
+    pub cap_balance_gap: u32,
     /// How often (seconds) to call world.removeJunk to clean up debris. Default: 300 (5 min).
     /// Set to 0 to disable.
     #[serde(default = "default_junk_removal_interval")]
@@ -2396,7 +2865,8 @@ pub struct CampaignEventsCfg {
 
 }
 
-fn default_cap_respawn_cooldown() -> u64 { 120 }
+fn default_cap_respawn_cooldown() -> u64 { 1800 }
+fn default_cap_balance_gap() -> u32 { 2 }
 
 fn default_event_check_interval() -> u32 { 300 }
 fn default_event_probability() -> f64 { 0.15 }
@@ -2463,6 +2933,8 @@ impl Default for CampaignEventsCfg {
             cap_max_per_side: default_cap_max_per_side(),
             cap_min_threat_count: default_cap_min_threat(),
             cap_respawn_cooldown_secs: default_cap_respawn_cooldown(),
+            cap_trigger_on_known_players: false,
+            cap_balance_gap: default_cap_balance_gap(),
             junk_removal_interval_secs: default_junk_removal_interval(),
             junk_removal_radius_m: default_junk_removal_radius(),
         }
@@ -2576,6 +3048,256 @@ impl GciBriefingCfg {
     }
 }
 
+/// The auto-generated situational briefing: a short "what is going on right
+/// now" panel on slot entry, the paged F10 -> Info -> Situation report, and
+/// the dashboard BRIEFING page. All three render the same engine-built
+/// [`bfprotocols::situation::SituationReport`], so they cannot disagree.
+///
+/// Omit the whole block to keep the slot-entry panel off; the F10 report and
+/// the dashboard page are always available (they are pull, not push).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SituationBriefingCfg {
+    /// Show the condensed briefing panel when a player takes a slot.
+    /// Default true.
+    #[serde(default = "default_true")]
+    pub on_slot_entry: bool,
+    /// Seconds the slot-entry panel stays on screen. Default 40 -- long
+    /// enough to read a dozen lines while the engines spool.
+    #[serde(default = "default_situation_display_secs")]
+    pub display_secs: i64,
+    /// Seconds after slot entry before the panel fires. Sequenced after the
+    /// ATIS (15s) so the two don't overwrite each other. Default 22.
+    #[serde(default = "default_situation_delay_secs")]
+    pub delay_secs: u32,
+    /// Tasking lines on the slot-entry panel. The full list is always on the
+    /// F10 report and the dashboard. Default 3.
+    #[serde(default = "default_situation_panel_tasks")]
+    pub panel_tasks: usize,
+    /// Tasking lines the engine will generate at all, across every category.
+    /// Default 12.
+    #[serde(default = "default_situation_max_tasks")]
+    pub max_tasks: usize,
+    /// Include known enemy air-defence areas (from this side's own recon /
+    /// ELINT / JTAC intel -- never omniscient) in the report. Default true.
+    #[serde(default = "default_true")]
+    pub include_threats: bool,
+    /// Free-form line appended to the briefing, e.g. a campaign premise or a
+    /// Discord link.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+fn default_situation_display_secs() -> i64 {
+    40
+}
+
+fn default_situation_delay_secs() -> u32 {
+    22
+}
+
+fn default_situation_panel_tasks() -> usize {
+    3
+}
+
+fn default_situation_max_tasks() -> usize {
+    12
+}
+
+impl Default for SituationBriefingCfg {
+    fn default() -> Self {
+        Self {
+            on_slot_entry: true,
+            display_secs: default_situation_display_secs(),
+            delay_secs: default_situation_delay_secs(),
+            panel_tasks: default_situation_panel_tasks(),
+            max_tasks: default_situation_max_tasks(),
+            include_threats: true,
+            note: None,
+        }
+    }
+}
+
+/// One line of the coalition comms card.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CommsChannelCfg {
+    /// Radio preset/channel number a pilot dials up, when the airframe has
+    /// presets. Purely for the card -- nothing writes it into the .miz.
+    #[serde(default)]
+    pub preset: Option<u8>,
+    /// Who is on it: "AWACS / GCI -- MAGIC".
+    pub label: String,
+    pub freq_mhz: f64,
+    /// "AM" or "FM". UHF and VHF-air are AM; the 30-76 MHz ground net is FM.
+    #[serde(default = "default_modulation")]
+    pub modulation: String,
+    /// What it is for, one short line. Shown under the label on the briefing.
+    #[serde(default)]
+    pub purpose: Option<String>,
+}
+
+fn default_modulation() -> String {
+    String::from("AM")
+}
+
+/// Coalition frequency allocation -- the comms card every pilot flies with.
+///
+/// The defaults are a deconflicted plan for a mixed DCS module set: blue lives
+/// in UHF 251-270 (every western jet's 225-400 AM radio) plus VHF-FM 30-31 for
+/// the helo/A-10 ground net; red lives in VHF-AM 124-145 and UHF 228-237,
+/// inside the 100-150 / 220-400 coverage of the Russian R-862/R-863 radios.
+/// The two sides never share a working channel, and 243.000 / 121.500 are
+/// reserved as guard on both.
+///
+/// The engine overlays the *live* frequencies it actually knows -- the AWACS
+/// and tanker radios from the running action specs, the JTAC laser codes --
+/// on top of this plan when it builds a briefing, so a channel that is really
+/// up shows as on-station and one that is only planned shows as planned.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CommsPlanCfg {
+    #[serde(default = "default_blue_comms")]
+    pub blue: Vec<CommsChannelCfg>,
+    #[serde(default = "default_red_comms")]
+    pub red: Vec<CommsChannelCfg>,
+    /// First intra-flight frequency, MHz. FLIGHT 1 gets this, FLIGHT 2 gets
+    /// `+ flight_step_mhz`, and so on. Kept clear of every channel above.
+    #[serde(default = "default_blue_flight_base")]
+    pub blue_flight_base_mhz: f64,
+    #[serde(default = "default_red_flight_base")]
+    pub red_flight_base_mhz: f64,
+    #[serde(default = "default_flight_step")]
+    pub flight_step_mhz: f64,
+    /// How many numbered intra-flight channels to publish. Default 8.
+    #[serde(default = "default_flight_count")]
+    pub flight_count: u8,
+}
+
+fn default_modulation_fm() -> String {
+    String::from("FM")
+}
+
+fn ch(preset: u8, label: &str, freq_mhz: f64, purpose: &str) -> CommsChannelCfg {
+    CommsChannelCfg {
+        preset: Some(preset),
+        label: String::from(label),
+        freq_mhz,
+        modulation: default_modulation(),
+        purpose: Some(String::from(purpose)),
+    }
+}
+
+fn ch_fm(preset: u8, label: &str, freq_mhz: f64, purpose: &str) -> CommsChannelCfg {
+    CommsChannelCfg {
+        preset: Some(preset),
+        label: String::from(label),
+        freq_mhz,
+        modulation: default_modulation_fm(),
+        purpose: Some(String::from(purpose)),
+    }
+}
+
+fn default_blue_comms() -> Vec<CommsChannelCfg> {
+    vec![
+        ch(1, "AWACS / GCI -- MAGIC", 251.0, "Primary control: picture, bogey dope, commit, declare"),
+        ch(2, "GCI VHF relay -- MAGIC", 119.0, "Same controller for VHF-only airframes"),
+        ch(3, "AWACS alternate -- DARKSTAR", 252.0, "Second controller / overflow when MAGIC is saturated"),
+        ch(4, "Tanker TEXACO (boom)", 253.0, "Pre-strike and post-strike refuel, fixed-wing boom"),
+        ch(5, "Tanker ARCO (boom)", 254.0, "Second boom track"),
+        ch(6, "Tanker SHELL (drogue)", 255.0, "Probe-and-drogue: Hornet, Tomcat, Harrier, Viggen"),
+        ch(7, "JTAC 1", 256.0, "Nine-line, talk-on, laser for the first active JTAC"),
+        ch(8, "JTAC 2", 257.0, "Second active JTAC"),
+        ch(9, "JTAC 3", 258.0, "Third active JTAC"),
+        ch(10, "JTAC 4", 259.0, "Fourth active JTAC"),
+        ch(11, "CSAR -- SANDY", 260.0, "Downed-pilot pickup: on-scene commander and the helo"),
+        ch(12, "Package common -- STRIKE", 265.0, "Strike package internal, all flights"),
+        ch(13, "Package common -- SEAD", 266.0, "SEAD/DEAD package internal"),
+        ch(14, "Package common -- CAP", 267.0, "Sweep and escort internal"),
+        ch(15, "Package common -- CAS", 268.0, "CAS stack check-in and deconfliction"),
+        ch(16, "Carrier MARSHAL", 270.0, "Carrier approach control, marshal stack, case II/III"),
+        ch(17, "Carrier TOWER / LSO", 127.5, "Ball call, paddles, deck ops"),
+        ch(18, "GUARD (UHF)", 243.0, "Emergency only -- never used for traffic"),
+        ch(19, "GUARD (VHF)", 121.5, "Emergency only"),
+        ch_fm(20, "Ground / logistics net", 30.0, "Convoy, crate and warehouse coordination"),
+        ch_fm(21, "Troop & crate ops", 31.0, "Helo lift working channel, troop drops"),
+    ]
+}
+
+fn default_red_comms() -> Vec<CommsChannelCfg> {
+    vec![
+        ch(1, "GCI -- OVERLORD", 124.0, "Primary control: picture, bogey dope, commit, declare"),
+        ch(2, "GCI UHF relay -- OVERLORD", 228.0, "Same controller for UHF-preferred airframes"),
+        ch(3, "AWACS A-50 -- DRAGNET", 125.0, "Airborne early warning when an A-50 is up"),
+        ch(4, "Tanker IL-78 -- KUZNETS", 126.0, "Probe-and-drogue refuel"),
+        ch(5, "JTAC 1", 133.0, "Nine-line, talk-on, laser for the first active JTAC"),
+        ch(6, "JTAC 2", 134.0, "Second active JTAC"),
+        ch(7, "JTAC 3", 135.0, "Third active JTAC"),
+        ch(8, "JTAC 4", 136.0, "Fourth active JTAC"),
+        ch(9, "CSAR -- rescue", 137.0, "Downed-pilot pickup"),
+        ch(10, "Package common -- STRIKE", 142.0, "Strike package internal, all flights"),
+        ch(11, "Package common -- SEAD", 143.0, "SEAD/DEAD package internal"),
+        ch(12, "Package common -- CAP", 144.0, "Sweep and escort internal"),
+        ch(13, "Package common -- CAS", 145.0, "CAS stack check-in and deconfliction"),
+        ch(14, "GUARD (UHF)", 243.0, "Emergency only -- never used for traffic"),
+        ch(15, "GUARD (VHF)", 121.5, "Emergency only"),
+        ch_fm(16, "Ground / logistics net", 40.0, "Convoy, crate and warehouse coordination"),
+        ch_fm(17, "Troop & crate ops", 41.0, "Helo lift working channel, troop drops"),
+    ]
+}
+
+fn default_blue_flight_base() -> f64 {
+    305.0
+}
+
+fn default_red_flight_base() -> f64 {
+    230.0
+}
+
+fn default_flight_step() -> f64 {
+    1.0
+}
+
+fn default_flight_count() -> u8 {
+    8
+}
+
+impl Default for CommsPlanCfg {
+    fn default() -> Self {
+        Self {
+            blue: default_blue_comms(),
+            red: default_red_comms(),
+            blue_flight_base_mhz: default_blue_flight_base(),
+            red_flight_base_mhz: default_red_flight_base(),
+            flight_step_mhz: default_flight_step(),
+            flight_count: default_flight_count(),
+        }
+    }
+}
+
+impl CommsPlanCfg {
+    pub fn for_side(&self, side: Side) -> &[CommsChannelCfg] {
+        match side {
+            Side::Red => &self.red,
+            _ => &self.blue,
+        }
+    }
+
+    /// The numbered intra-flight channels for a side, as
+    /// `("FLIGHT 3", 307.0)`.
+    pub fn flight_channels(&self, side: Side) -> Vec<(std::string::String, f64)> {
+        let base = match side {
+            Side::Red => self.red_flight_base_mhz,
+            _ => self.blue_flight_base_mhz,
+        };
+        (0..self.flight_count)
+            .map(|i| {
+                (
+                    format!("FLIGHT {}", i + 1),
+                    base + self.flight_step_mhz * i as f64,
+                )
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 // #[serde(deny_unknown_fields)]
 pub struct Cfg {
@@ -2684,6 +3406,24 @@ pub struct Cfg {
     /// consolidation (old behaviour).
     #[serde(default = "default_capture_consolidation_secs")]
     pub capture_consolidation_secs: u32,
+    /// Seconds the holding troops may be outside the objective zone before
+    /// the consolidation clock stops accruing. Covers position-update gaps and
+    /// short repositioning; leave the zone for longer and progress simply
+    /// pauses (it is never lost) until they come back. Default 15.
+    #[serde(default = "default_consolidation_zone_grace_secs")]
+    pub consolidation_zone_grace_secs: u32,
+    /// Extra holding squads in the zone speed consolidation up, mirroring the
+    /// way extra squads shorten the capture timer. Each squad past the first
+    /// adds this fraction to the accrual rate (0.5 = a second squad
+    /// consolidates at 1.5x, a third at 2x). 0 disables the bonus.
+    #[serde(default = "default_consolidation_squad_bonus")]
+    pub consolidation_squad_bonus: f32,
+    /// Seconds of consolidation progress granted outright by landing a
+    /// logistics repair kit or a supply crate at a base that is mid-hold. This
+    /// is what lets a crew beat the wall clock by actually flying the
+    /// logistics sortie. 0 disables it. Default 120.
+    #[serde(default = "default_consolidation_crate_progress_secs")]
+    pub consolidation_crate_progress_secs: u32,
     /// Seconds a player must sit in a freshly-taken slot before they're allowed
     /// to get airborne. They get a once-a-second "time remaining" message; take
     /// off early and they're sent straight back to spectators. 0 disables it.
@@ -2880,8 +3620,10 @@ pub struct Cfg {
     /// objective they own becomes threatened by enemy units.
     #[serde(default)]
     pub under_attack: Option<UnderAttackCfg>,
-    /// Counter-battery: when an enemy artillery/launcher unit fires, report its
-    /// approximate position to the opposing coalition.
+    /// Deprecated / ignored. This once drew an "ARTY / COUNTER-BATTERY" text
+    /// mark at a firing enemy battery, but it had no gameplay behind it and
+    /// stacked overlapping copies when batteries repositioned, so the cue was
+    /// removed. The key is still parsed (so old configs load) but does nothing.
     #[serde(default)]
     pub counter_battery: Option<CounterBatteryCfg>,
     /// Era restrictions: limit which airframes are available based on the active era.
@@ -2910,6 +3652,108 @@ pub struct Cfg {
     /// show nothing. The GCI system itself is configured in bfdb's `gci.json`.
     #[serde(default)]
     pub gci_briefing: Option<GciBriefingCfg>,
+    /// Auto-generated situational briefing -- the slot-entry "what is going on"
+    /// panel, the F10 -> Info -> Situation report and the dashboard BRIEFING
+    /// page. Omit to keep the slot-entry panel off (the pull paths still work
+    /// on defaults).
+    #[serde(default)]
+    pub situation_briefing: Option<SituationBriefingCfg>,
+    /// Coalition frequency allocation shown on the briefing and the kneeboard
+    /// PDF. Omit to use the built-in deconflicted plan (blue UHF 251-270 +
+    /// VHF-FM 30-31, red VHF-AM 124-145 + UHF 228-237, guard on 243.0/121.5).
+    #[serde(default)]
+    pub comms_plan: Option<CommsPlanCfg>,
+    /// When set, an objective's logistics rating is derived from the real
+    /// map-terrain buildings inside its zone (the scenery scan -- warehouses,
+    /// fuel depots, industrial structures) instead of from spawned
+    /// LOGI/LOGIA/LOGIB/DEPOT template groups, and those template groups are
+    /// not spawned at all. Repairing logistics clears the objective's
+    /// destroyed-building count (DCS can't rebuild terrain, so the rubble
+    /// stays but the rating recovers). Absent = legacy behaviour (spawned
+    /// logi groups).
+    #[serde(default)]
+    pub logi_from_scenery: Option<LogiFromSceneryCfg>,
+    /// AI helicopter missions callable from the F10 menu: insert fresh troops
+    /// at a capturable objective, or fly a batch of surplus supply from the
+    /// nearest friendly hub to any objective. Both cold-start from the
+    /// nearest eligible friendly airbase (same TakeOffParkingHot mechanism as
+    /// reactive CAP) and actually land at the destination before doing
+    /// anything -- unlike the Paratrooper/LogisticsTransfer actions, which
+    /// just fly within range and deliver mid-air. Needs its own
+    /// `HeloInsertionCfg.aircraft_template` per side. Absent = feature
+    /// disabled.
+    #[serde(default)]
+    pub helo_insertion: Option<HeloInsertionCfg>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LogiFromSceneryCfg {
+    /// Logi rating (0-100) for an objective where the scenery scan found no
+    /// trackable buildings at all. Default 100 (treated as fully supplied).
+    #[serde(default = "default_scenery_fallback_logi")]
+    pub fallback_logi: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HeloInsertionCfg {
+    /// Helicopter group template name per side (must be a Helicopter group in
+    /// the miz file). Deliberately separate from
+    /// `warehouse.air_logistics.aircraft_template` -- that feature flies
+    /// fixed-wing cargo planes between logistics hubs and shouldn't be
+    /// repointed at a helicopter, and these missions land at arbitrary
+    /// objectives in the open, not just at airfields, so they need an
+    /// airframe that can actually do that. A side with no entry here can't
+    /// launch either mission -- the F10 command tells the player why.
+    #[serde(default)]
+    pub aircraft_template: FxHashMap<Side, String>,
+    /// Cruise altitude in meters (BARO) for the transit leg.
+    #[serde(default = "default_helo_altitude_m")]
+    pub altitude_m: f64,
+    /// Cruise speed in km/h for the transit leg.
+    #[serde(default = "default_helo_speed_kph")]
+    pub speed_kph: f64,
+    /// Which `troops[side]` entry (looked up by name) the troop-insertion
+    /// mission carries. Must exist for both sides; wants `can_capture: true`
+    /// to actually be useful at the destination.
+    #[serde(default = "default_helo_troop_name")]
+    pub troop_name: String,
+    /// Points charged to call the troop-insertion mission, ON TOP of the
+    /// troop's own `cost` (which is charged too, same as a normal deploy).
+    #[serde(default)]
+    pub troop_mission_cost: i32,
+    /// Points charged to call the resource-delivery mission.
+    #[serde(default = "default_helo_supply_cost")]
+    pub supply_mission_cost: i32,
+    /// Max units of each equipment/liquid item moved per resource-delivery
+    /// run (further capped by what the origin objective actually has stored).
+    #[serde(default = "default_helo_supply_per_item")]
+    pub supply_amount_per_item: u32,
+    /// Neither mission will launch if the chosen origin/destination pair is
+    /// farther apart than this (metres). Default 150km.
+    #[serde(default = "default_helo_max_range_m")]
+    pub max_range_m: f64,
+    /// How close to the destination point, while on the ground, counts as
+    /// "landed and delivered". Default 200m.
+    #[serde(default = "default_helo_landing_radius_m")]
+    pub landing_radius_m: f64,
+}
+
+fn default_helo_troop_name() -> String { String::from("Standard") }
+fn default_helo_altitude_m() -> f64 { 500.0 }
+fn default_helo_speed_kph() -> f64 { 220.0 }
+fn default_helo_supply_cost() -> i32 { 50 }
+fn default_helo_supply_per_item() -> u32 { 50 }
+fn default_helo_max_range_m() -> f64 { 150_000.0 }
+fn default_helo_landing_radius_m() -> f64 { 200.0 }
+
+fn default_scenery_fallback_logi() -> u8 {
+    100
+}
+
+impl Default for LogiFromSceneryCfg {
+    fn default() -> Self {
+        Self { fallback_logi: default_scenery_fallback_logi() }
+    }
 }
 
 fn default_supply_alert_threshold() -> u8 {
@@ -3003,6 +3847,19 @@ pub struct SmartCommanderCfg {
     /// spawning another one. Default: 300 (5 min).
     #[serde(default = "default_cap_cooldown_secs")]
     pub cap_cooldown_secs: u32,
+    /// Treasury each side keeps in reserve for military actions -- the passive
+    /// objective point-funding pass will not spend a side's treasury below
+    /// this floor. Without it, a losing side with many damaged/threatened
+    /// objectives drains its entire income into point-drips every tick and can
+    /// never accumulate enough for a counterattack, barrage, ambush or CAP
+    /// (observed: Red pinned at treasury 0 for a whole session, "no affordable
+    /// action" every tick). Default: 300 (covers the priciest default action).
+    #[serde(default = "default_commander_action_reserve")]
+    pub action_reserve: i64,
+}
+
+fn default_commander_action_reserve() -> i64 {
+    300
 }
 
 impl Cfg {

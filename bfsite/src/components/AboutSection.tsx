@@ -7,7 +7,7 @@ import Reveal from './Reveal'
 export default function AboutSection() {
   const { data: stats } = useQuery({
     queryKey: ['site-stats'],
-    queryFn: api.stats,
+    queryFn: () => api.stats(),
     refetchInterval: 60_000,
   })
 

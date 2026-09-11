@@ -103,6 +103,11 @@ pub struct AirTrack {
     pub vspd_ms: f64,
     pub iff: Iff,
     pub class: AirClass,
+    /// DCS unit type name (e.g. `"F-16C_50"`), when the engine can resolve
+    /// it — lets the client draw an exact aircraft-type icon instead of the
+    /// coarse `class` bucket. `None` when the type can't be identified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_type: Option<String>,
     /// Seconds since the last sensor hit.
     pub age_s: u32,
     /// Past the drop-age threshold — render dimmed / coasting.
@@ -219,6 +224,7 @@ mod tests {
                     vspd_ms: 5.0,
                     iff: Iff::Hostile,
                     class: AirClass::Fighter,
+                    unit_type: Some("F-16C_50".into()),
                     age_s: 3,
                     stale: false,
                     jammed: true,
@@ -258,6 +264,7 @@ mod tests {
         assert_eq!(a["source"], "groundradar");
         assert_eq!(a["side"], "Red");
         assert_eq!(a["jammed"], true);
+        assert_eq!(a["unit_type"], "F-16C_50");
         assert!(a.get("label").is_none(), "None label must be omitted");
         let g = &p["ground"][0];
         assert_eq!(g["class"], "airdefense");

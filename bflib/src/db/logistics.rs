@@ -23,7 +23,7 @@ use super::{
 use crate::{admin::WarehouseKind, maybe, objective, objective_mut, group, Task};
 use anyhow::{anyhow, bail, Context, Result};
 use bfprotocols::{
-    cfg::Vehicle,
+    cfg::{is_model_only_item, ProductionScalingConfig, Vehicle, MATERIEL_ITEM},
     db::objective::{ObjectiveId, ObjectiveKind},
     perf::{Perf, PerfInner},
     stats::Stat,
@@ -230,6 +230,67 @@ impl Transfer {
         }
         Ok(())
     }
+
+    /// Put the cargo back where it came from. Used when a load never
+    /// actually left (spawn failed) or can never arrive (server restarted
+    /// mid-transit, convoy wedged on terrain and timed out). Capped at the
+    /// source's capacity via `AddAssign`, so a refund can't overfill a
+    /// warehouse that was topped up while the load was away.
+    fn refund(&self, db: &mut Persisted, to_bg: &Option<UnboundedSender<Task>>) -> Result<()> {
+        let src = db
+            .objectives
+            .get_mut_cow(&self.source)
+            .ok_or_else(|| anyhow!("no such objective {:?}", self.source))?;
+        match &self.item {
+            TransferItem::Equipment(name) => {
+                let inv = src.warehouse.equipment.get_or_default_cow(name.clone());
+                *inv += self.amount;
+                let stored = inv.stored;
+                if let Some(to_bg) = to_bg.as_ref() {
+                    let _ = to_bg.send(Task::Stat(Stat::EquipmentInventory {
+                        id: src.id,
+                        item: name.clone(),
+                        amount: stored,
+                    }));
+                }
+            }
+            TransferItem::Liquid(name) => {
+                let inv = src.warehouse.liquids.get_or_default_cow(*name);
+                *inv += self.amount;
+                let stored = inv.stored;
+                if let Some(to_bg) = to_bg.as_ref() {
+                    let _ = to_bg.send(Task::Stat(Stat::LiquidInventory {
+                        id: src.id,
+                        item: *name,
+                        amount: stored,
+                    }));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Cargo that has been debited from a source objective and handed to an
+/// in-flight convoy / air route / sea route, but has not been delivered yet.
+///
+/// The route structs themselves live in ephemeral state, because their DCS
+/// groups die with the mission -- so without this ledger every server
+/// restart silently destroyed whatever happened to be on the road at the
+/// time (the stock was already taken out of the hub, and the only thing
+/// that would ever have put it back was a delivery that can no longer
+/// happen). `reconcile_pending_cargo` refunds anything still outstanding
+/// at load.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingCargo {
+    /// Objective the cargo was taken out of.
+    pub origin: ObjectiveId,
+    /// Objective it was on its way to (for logging).
+    pub destination: ObjectiveId,
+    /// The transfers that will be executed if it arrives.
+    pub transfers: Vec<Transfer>,
+    /// When it left. Also drives the in-transit timeout.
+    pub departed: DateTime<Utc>,
 }
 
 // ============================================================================
@@ -493,6 +554,94 @@ impl SeaLogisticsRoute {
     }
 }
 
+/// Unique identifier for an AI helo mission (troop insertion / resource
+/// delivery).
+pub type HeloMissionId = CompactString;
+
+/// Current state of an AI helo mission.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HeloMissionState {
+    InTransit,
+    Delivered,
+    Destroyed,
+}
+
+/// What an AI helo mission does once it has landed at its destination.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HeloMissionKind {
+    /// Deploy a fresh troop group of the configured type (same spawn path as
+    /// the Paratrooper action) once the helo is down.
+    TroopInsertion,
+    /// Transfer a pre-computed batch of warehouse supply to the destination
+    /// once the helo is down.
+    ResourceDelivery { transfers: Vec<Transfer> },
+}
+
+/// An F10-callable AI helicopter mission: cold-starts from a friendly
+/// airbase, flies to and actually lands at the destination, then either
+/// deploys troops or hands off supply before despawning. See
+/// `Db::call_helo_troop_insertion` / `Db::call_helo_resource_delivery`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeloMission {
+    pub id: HeloMissionId,
+    pub group_id: bfprotocols::db::group::GroupId,
+    pub kind: HeloMissionKind,
+    pub origin: ObjectiveId,
+    pub destination: ObjectiveId,
+    pub side: Side,
+    pub player: dcso3::net::Ucid,
+    pub spawn_time: DateTime<Utc>,
+    pub state: HeloMissionState,
+    pub last_pos: Vector2,
+    pub last_check: DateTime<Utc>,
+}
+
+impl HeloMission {
+    /// Poll the DCS group: track its position, detect destruction, and
+    /// detect "landed and delivered" -- on the ground (`in_air() == false`)
+    /// AND within `landing_radius` of `destination_pos`. Distance alone
+    /// isn't enough; a helo passing low over the point at cruise speed on
+    /// its way somewhere else shouldn't count.
+    pub fn poll(
+        &mut self,
+        lua: MizLua,
+        group_name: &str,
+        destination_pos: Vector2,
+        landing_radius: f64,
+    ) -> HeloMissionState {
+        use dcso3::group::Group;
+        match Group::get_by_name(lua, group_name) {
+            Ok(group) => match group.get_units() {
+                Ok(units) if units.len() > 0 => {
+                    if let Ok(unit) = units.get(1) {
+                        if let Ok(pos) = unit.get_point() {
+                            self.last_pos = Vector2::new(pos.x, pos.z);
+                        }
+                        // Unknown in-air state is treated as airborne -- never
+                        // declare a delivery we aren't sure actually landed.
+                        let in_air = unit.in_air().unwrap_or(true);
+                        if !in_air {
+                            let dist = (self.last_pos - destination_pos).norm();
+                            if dist <= landing_radius {
+                                self.state = HeloMissionState::Delivered;
+                            }
+                        }
+                    }
+                    self.state
+                }
+                _ => {
+                    self.state = HeloMissionState::Destroyed;
+                    HeloMissionState::Destroyed
+                }
+            },
+            Err(_) => {
+                self.state = HeloMissionState::Destroyed;
+                HeloMissionState::Destroyed
+            }
+        }
+    }
+}
+
 struct Needed<'a> {
     oid: &'a ObjectiveId,
     obj: &'a Objective,
@@ -526,16 +675,25 @@ impl Warehouse {
 /// this is the established way (already used by the supply-transfer
 /// exemption logic) to tell them apart within that shared map.
 fn is_airframe_item(name: &str) -> bool {
-    !name.starts_with("weapons.") && !name.starts_with("vehicles.") && !name.starts_with("Fortifications.")
+    !is_model_only_item(name)
+        && !name.starts_with("weapons.")
+        && !name.starts_with("vehicles.")
+        && !name.starts_with("Fortifications.")
 }
 
 pub(super) fn sync_obj_to_warehouse(obj: &Objective, warehouse: &warehouse::Warehouse) -> Result<()> {
     let perf = unsafe { Perf::get_mut() };
     let perf = Arc::make_mut(&mut perf.inner);
     for (item, inv) in &obj.warehouse.equipment {
+        // Model-only commodities (materiel) have no DCS resource-map entry.
+        // Pushing them would at best be ignored and at worst error, and the
+        // read-back would zero them.
+        if is_model_only_item(item.as_str()) {
+            continue;
+        }
         perf.logistics_items.insert((item.clone(), obj.id));
         if item.as_str() == "AJS37" || item.as_str() == "C-130J-30" || item.as_str().starts_with("CH-47F") {
-            info!("[WAREHOUSE_SYNC] pushing obj={} owner={:?} {item}=stored:{}",
+            debug!("[WAREHOUSE_SYNC] pushing obj={} owner={:?} {item}=stored:{}",
                   obj.name, obj.owner, inv.stored);
         }
         warehouse
@@ -572,6 +730,9 @@ pub(super) fn sync_obj_to_warehouse_with_zeroing(
 
     // Then set the items that ARE in the objective's warehouse
     for (item, inv) in &obj.warehouse.equipment {
+        if is_model_only_item(item.as_str()) {
+            continue;
+        }
         perf.logistics_items.insert((item.clone(), obj.id));
         warehouse
             .set_item(item.clone(), inv.stored)
@@ -585,12 +746,54 @@ pub(super) fn sync_obj_to_warehouse_with_zeroing(
     Ok(())
 }
 
+/// Like `sync_obj_to_warehouse`, but first zeros every *airframe* entry in the
+/// DCS resource map that the objective's model doesn't carry. Land bases spawn
+/// with whatever aircraft roster the .miz / DCS defaults gave them, which
+/// routinely includes the other coalition's jets; bflib only ever `set_item`s
+/// the airframes it tracks, so those foreign jets stay slottable at a captured
+/// or mis-templated base forever. Weapons/liquids are left to the normal sync
+/// (those are side-neutral and already driven by production). No-op against an
+/// unlimited-aircraft warehouse -- DCS ignores `setItem` there.
+pub(super) fn sync_obj_to_warehouse_zeroing_foreign_airframes(
+    obj: &Objective,
+    warehouse: &warehouse::Warehouse,
+    resource_map: &warehouse::ResourceMap,
+) -> Result<()> {
+    resource_map.for_each(|name, _| {
+        if is_airframe_item(name.as_str()) && obj.warehouse.equipment.get(&name).is_none() {
+            warehouse
+                .set_item(name, 0)
+                .context("zeroing foreign airframe not in objective warehouse")?;
+        }
+        Ok(())
+    })?;
+    sync_obj_to_warehouse(obj, warehouse)
+}
+
 fn sync_warehouse_to_obj(obj: &mut Objective, warehouse: &warehouse::Warehouse) -> Result<()> {
+    // Read back, but never above the objective's own capacity.
+    //
+    // Anything DCS manufactures on its own between two logistics ticks --
+    // an airbase warehouse with a nonzero OperatingLevel_*, a mission-editor
+    // default, a rearm that credited more than it took -- lands in this read
+    // and used to be absorbed into the model verbatim. Stock then drifted
+    // upward forever with nothing to stop it, which is how a base ends up
+    // holding more of something than its warehouse is supposed to be able to
+    // hold and never runs short no matter what the supply line is doing.
+    // Capacity is the model's ceiling by definition, so enforce it here.
+    let clamp = |inv: &mut Inventory, dcs: u32| {
+        inv.stored = min(dcs, inv.capacity);
+    };
     for (name, inv) in obj.warehouse.equipment.iter_mut_cow() {
-        inv.stored = warehouse.get_item_count(name.clone())?;
+        // DCS knows nothing about model-only commodities, so asking it for a
+        // count would just wipe them on every logistics tick.
+        if is_model_only_item(name.as_str()) {
+            continue;
+        }
+        clamp(inv, warehouse.get_item_count(name.clone())?);
     }
     for (name, inv) in obj.warehouse.liquids.iter_mut_cow() {
-        inv.stored = warehouse.get_liquid_amount(*name)?;
+        clamp(inv, warehouse.get_liquid_amount(*name)?);
     }
     Ok(())
 }
@@ -600,6 +803,56 @@ fn get_supplier<'lua>(lua: MizLua<'lua>, template: String) -> Result<warehouse::
         .with_context(|| format_compact!("getting airbase {}", template))?
         .get_warehouse()
         .context("getting warehouse")
+}
+
+/// Shortest distance from `p` to the segment `a`-`b`. Used to decide whether
+/// an enemy-held objective sits on the ground route between two friendly
+/// ones, without having to sample the line.
+fn distance_to_segment(p: Vector2, a: Vector2, b: Vector2) -> f64 {
+    let ab = b - a;
+    let len2 = ab.norm_squared();
+    if len2 <= f64::EPSILON {
+        return (p - a).norm();
+    }
+    let t = ((p - a).dot(&ab) / len2).clamp(0., 1.);
+    (p - (a + ab * t)).norm()
+}
+
+/// Is the ground route between `from` and `to` interdicted for `side`?
+///
+/// True when any enemy-held objective that still has a functioning garrison
+/// sits within its own zone radius plus `margin` of the straight line between
+/// them. It is a coarse model of a front line, but it is the difference
+/// between a supply network that can be cut and one where a depot behind
+/// enemy lines keeps trucking fuel through it because it happens to be the
+/// nearest one by ruler.
+fn route_interdicted(
+    persisted: &super::persisted::Persisted,
+    side: Side,
+    from: Vector2,
+    to: Vector2,
+    margin: f64,
+) -> bool {
+    for (_, obj) in &persisted.objectives {
+        if obj.owner == side || obj.owner == Side::Neutral {
+            continue;
+        }
+        // A flattened base doesn't hold ground, and things that aren't on the
+        // ground at all can't cut a road.
+        if obj.logi == 0
+            || matches!(
+                obj.kind,
+                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. }
+            )
+        {
+            continue;
+        }
+        let block = obj.zone.radius() + margin;
+        if distance_to_segment(obj.zone.pos(), from, to) <= block {
+            return true;
+        }
+    }
+    false
 }
 
 /// Resolve a carrier deck airbase (named after its ship unit) to the
@@ -701,7 +954,8 @@ impl Db {
                         Some(tmpl) => tmpl,
                         None => {
                             if !warned_neutral && side == dcso3::coalition::Side::Neutral {
-                                warn!("[WAREHOUSE] No supply_source configured for Neutral side - skipping");
+                                // Expected -- Neutral has no production/supply by design.
+                                debug!("[WAREHOUSE] No supply_source configured for Neutral side - skipping");
                                 warned_neutral = true;
                             } else if side != dcso3::coalition::Side::Neutral {
                                 warn!("[WAREHOUSE] No supply_source configured for side {:?} - warehouses will be empty!", side);
@@ -773,8 +1027,8 @@ impl Db {
             for (side, production) in &self.ephemeral.production_by_side {
                 for probe in ["AJS37", "C-130J-30", "CH-47Fbl1"] {
                     match production.equipment.get(probe) {
-                        Some(equip) => info!("[WAREHOUSE_PROBE] {side:?} {probe}: production={}", equip.production),
-                        None => info!("[WAREHOUSE_PROBE] {side:?} {probe}: not tracked at all"),
+                        Some(equip) => debug!("[WAREHOUSE_PROBE] {side:?} {probe}: production={}", equip.production),
+                        None => debug!("[WAREHOUSE_PROBE] {side:?} {probe}: not tracked at all"),
                     }
                 }
             }
@@ -795,10 +1049,17 @@ impl Db {
             None => return Ok(()),
         };
         for (name, equip) in &production.equipment {
-            let unlimited = if is_airframe_item(name) { obj.unlimited_aircraft } else { obj.unlimited_supply };
+            let is_airframe = is_airframe_item(name);
+            let unlimited = if is_airframe { obj.unlimited_aircraft } else { obj.unlimited_supply };
             let inv = Inventory {
                 stored: 0,
-                capacity: whcfg.capacity_for(&obj.name, unlimited, false, equip.production),
+                capacity: whcfg.capacity_for_item(
+                    &obj.name,
+                    is_airframe,
+                    unlimited,
+                    false,
+                    equip.production,
+                ),
             };
             obj.warehouse.equipment.insert_cow(name.clone(), inv);
         }
@@ -856,7 +1117,7 @@ impl Db {
                         }
                         let hub = self.persisted.logistics_hubs.contains(&oid) || is_carrier;
                         let unlimited = if is_airframe { obj.unlimited_aircraft } else { obj.unlimited_supply };
-                        let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, equip.production);
+                        let capacity = whcfg.capacity_for_item(&obj.name, is_airframe, unlimited, hub, equip.production);
                         let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
                         inv.capacity = capacity;
                         inv.stored = capacity;
@@ -885,6 +1146,7 @@ impl Db {
             }
             info!("[WAREHOUSE] Initialized {} carrier warehouse stock entries for side {:?}", initialized_count, side);
         }
+        self.sync_materiel_capacity();
         self.ephemeral.dirty();
         Ok(())
     }
@@ -924,7 +1186,7 @@ impl Db {
                 continue;
             }
             let unlimited = if is_airframe { obj.unlimited_aircraft } else { obj.unlimited_supply };
-            let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, equip.production);
+            let capacity = whcfg.capacity_for_item(&obj.name, is_airframe, unlimited, hub, equip.production);
             let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
             inv.capacity = capacity;
             inv.stored = capacity;
@@ -1142,6 +1404,7 @@ impl Db {
                 })
         };
         load_and_sync_airbases().context("loading and syncing airbases")?;
+        let salvage_enabled = whcfg.captured_airframes.is_some();
         let mut adjust_warehouses_for_miz_changes = || -> Result<()> {
             for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
                 let mut del_eq: SmallVec<[String; 8]> = smallvec![];
@@ -1155,7 +1418,7 @@ impl Db {
                     let hub = self.persisted.logistics_hubs.contains(oid) || is_carrier;
                     // A captured carrier keeps the previous owner's airframes so
                     // the new owner can operate them once repairs finish (see
-                    // capture_warehouse's carrier branch + the CarrierNotRepaired
+                    // capture_warehouse's carrier branch + the CapturedNotReady
                     // gate in try_occupy_slot_deferred). Don't let this pass
                     // delete those "foreign" entries just because they're not in
                     // the current owner's production -- that left a captured
@@ -1167,6 +1430,12 @@ impl Db {
                         .get(&obj.owner.opposite())
                         .cloned();
                     for (name, inv) in &obj.warehouse.equipment {
+                        // Materiel is a campaign commodity, not something the
+                        // side "produces" in the resource-map sense, so it is
+                        // never in `prod.equipment` -- don't prune it.
+                        if is_model_only_item(name.as_str()) {
+                            continue;
+                        }
                         if !prod.equipment.contains_key(name) {
                             // On a carrier, never drop an airframe entry that
                             // actually has stock (a captured carrier's retained
@@ -1179,7 +1448,22 @@ impl Db {
                                         .as_ref()
                                         .map(|p| p.equipment.contains_key(name))
                                         .unwrap_or(false));
-                            if !keep_carrier {
+                            // Same reasoning on land: an airframe this side
+                            // doesn't produce but still has stock of is the
+                            // salvage from a capture (see capture_warehouse).
+                            // Pruning it here would quietly delete the prize
+                            // on the next mission load -- the base would show
+                            // "does not have any F-16C_50 in stock" for jets
+                            // it is visibly parked on.
+                            let keep_salvage = !is_carrier
+                                && salvage_enabled
+                                && is_airframe_item(name.as_str())
+                                && inv.stored > 0
+                                && other_prod
+                                    .as_ref()
+                                    .map(|p| p.equipment.contains_key(name))
+                                    .unwrap_or(false);
+                            if !keep_carrier && !keep_salvage {
                                 del_eq.push(name.clone());
                             }
                         }
@@ -1205,7 +1489,7 @@ impl Db {
                             continue;
                         }
                         let unlimited = if is_airframe { obj.unlimited_aircraft } else { obj.unlimited_supply };
-                        let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, eqip.production);
+                        let capacity = whcfg.capacity_for_item(&obj.name, is_airframe, unlimited, hub, eqip.production);
                         let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
                         inv.capacity = capacity;
                     }
@@ -1265,6 +1549,12 @@ impl Db {
         if !missing.is_empty() {
             bail!("objectives missing a warehouse {:?}", missing)
         }
+        // Anything still sitting in the in-flight ledger belonged to a
+        // convoy/aircraft/ship from the previous mission run; those groups
+        // are gone, so give the stock back before anything else touches the
+        // warehouses.
+        self.sync_materiel_capacity();
+        self.reconcile_pending_cargo();
         self.update_supply_status()
             .context("updating supply status")?;
         self.setup_supply_lines()
@@ -1290,6 +1580,191 @@ impl Db {
     pub fn admin_deliver_now(&mut self) {
         self.admin_tick_now();
         self.persisted.logistics_ticks_since_delivery = u32::MAX;
+    }
+
+    /// What `from` could hand to `to` right now: for every equipment item and
+    /// liquid the source actually holds, the smaller of the destination's
+    /// remaining headroom and `max_frac` of the source's stock. Mirrors what
+    /// the scheduled hub distribution does, but for a single point-to-point
+    /// load.
+    ///
+    /// Deliberately ignores the hub reserve: this builds emergency relief
+    /// loads for a base that has been sitting supply-critical, and breaking
+    /// into the reserve for exactly that is what the reserve is for. Routine
+    /// scheduled distribution goes through the `releasable` path instead.
+    fn build_transfers(
+        &self,
+        from: ObjectiveId,
+        to: ObjectiveId,
+        max_frac: f32,
+    ) -> Vec<Transfer> {
+        let (Some(src), Some(dst)) = (
+            self.persisted.objectives.get(&from),
+            self.persisted.objectives.get(&to),
+        ) else {
+            return vec![];
+        };
+        let mut out = vec![];
+        let share = |stored: u32| -> u32 {
+            if max_frac >= 1.0 {
+                stored
+            } else {
+                max(1, (stored as f32 * max_frac) as u32)
+            }
+        };
+        for (name, inv) in &src.warehouse.equipment {
+            if inv.stored == 0 {
+                continue;
+            }
+            let d = dst.get_equipment(name);
+            let headroom = d.capacity.saturating_sub(d.stored);
+            let amount = min(headroom, share(inv.stored));
+            if amount > 0 {
+                out.push(Transfer {
+                    source: from,
+                    target: to,
+                    amount,
+                    item: TransferItem::Equipment(name.clone()),
+                });
+            }
+        }
+        for (name, inv) in &src.warehouse.liquids {
+            if inv.stored == 0 {
+                continue;
+            }
+            let d = dst.get_liquids(name);
+            let headroom = d.capacity.saturating_sub(d.stored);
+            let amount = min(headroom, share(inv.stored));
+            if amount > 0 {
+                out.push(Transfer {
+                    source: from,
+                    target: to,
+                    amount,
+                    item: TransferItem::Liquid(*name),
+                });
+            }
+        }
+        out
+    }
+
+    /// Hand a load to a route: debit the source warehouses and record the
+    /// cargo in the persisted ledger under `id`. Call this only once the
+    /// transport has actually spawned -- see the dispatch sites, which used
+    /// to debit first and silently destroy the stock whenever the spawn
+    /// turned out to be a no-op (no truck/aircraft template for the side).
+    fn escrow_cargo(
+        &mut self,
+        id: &str,
+        origin: ObjectiveId,
+        destination: ObjectiveId,
+        transfers: &[Transfer],
+        now: DateTime<Utc>,
+    ) {
+        let (from, to) = (
+            self.persisted
+                .objectives
+                .get(&origin)
+                .map(|o| o.name.clone())
+                .unwrap_or_default(),
+            self.persisted
+                .objectives
+                .get(&destination)
+                .map(|o| o.name.clone())
+                .unwrap_or_default(),
+        );
+        let units: u32 = transfers.iter().map(|t| t.amount).sum();
+        for tr in transfers {
+            if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
+                error!("[LOGI_CARGO] escrowing cargo for {id}: {e:?}");
+            }
+        }
+        info!(
+            "[LOGI_CARGO] {id} loaded at {from} for {to}: {} item type(s), {units} unit(s) total \
+             (now held in the in-flight ledger, {} load(s) outstanding)",
+            transfers.len(),
+            self.persisted.pending_cargo.len() + 1
+        );
+        debug!("[LOGI_CARGO] {id} manifest: {transfers:?}");
+        self.persisted.pending_cargo.insert_cow(
+            CompactString::from(id),
+            PendingCargo {
+                origin,
+                destination,
+                transfers: transfers.to_vec(),
+                departed: now,
+            },
+        );
+        self.ephemeral.dirty();
+    }
+
+    /// The load arrived (or was destroyed with it): drop the ledger entry so
+    /// a later restart doesn't refund cargo that has already been accounted
+    /// for one way or the other.
+    fn settle_cargo(&mut self, id: &str) {
+        let key = CompactString::from(id);
+        if let Some(p) = self.persisted.pending_cargo.get(&key).cloned() {
+            let units: u32 = p.transfers.iter().map(|t| t.amount).sum();
+            info!(
+                "[LOGI_CARGO] {id} settled after {} min ({units} unit(s) no longer outstanding)",
+                (Utc::now() - p.departed).num_minutes()
+            );
+            self.persisted.pending_cargo.remove_cow(&key);
+            self.ephemeral.dirty();
+        } else {
+            debug!("[LOGI_CARGO] {id} settled with no ledger entry (pre-ledger load)");
+        }
+    }
+
+    /// The load can never arrive (spawn failed, transport wedged and timed
+    /// out, mission reloaded out from under it): put the stock back in the
+    /// origin warehouse and drop the ledger entry.
+    fn refund_cargo(&mut self, id: &str) {
+        let key = CompactString::from(id);
+        let Some(pending) = self.persisted.pending_cargo.get(&key).cloned() else {
+            debug!("[LOGI_CARGO] {id} had nothing to refund");
+            return;
+        };
+        for tr in &pending.transfers {
+            if let Err(e) = tr.refund(&mut self.persisted, &self.ephemeral.to_bg) {
+                error!("[LOGI_CARGO] refunding cargo for {id}: {e:?}");
+            }
+        }
+        let units: u32 = pending.transfers.iter().map(|t| t.amount).sum();
+        info!(
+            "[LOGI_CARGO] {id} refunded to {}: {units} unit(s) returned after {} min in transit",
+            self.persisted
+                .objectives
+                .get(&pending.origin)
+                .map(|o| o.name.clone())
+                .unwrap_or_default(),
+            (Utc::now() - pending.departed).num_minutes()
+        );
+        self.persisted.pending_cargo.remove_cow(&key);
+        self.ephemeral.dirty();
+    }
+
+    /// Called once at mission load. Every ledger entry that survived into a
+    /// new mission belongs to a transport that no longer exists, so its
+    /// cargo goes back to the origin warehouse. Without this, each restart
+    /// permanently deleted whatever was in transit -- a steady, invisible
+    /// drain on both coalitions' supply.
+    pub(super) fn reconcile_pending_cargo(&mut self) {
+        let outstanding: Vec<CompactString> = self
+            .persisted
+            .pending_cargo
+            .into_iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+        if outstanding.is_empty() {
+            return;
+        }
+        info!(
+            "[WAREHOUSE] refunding {} in-flight cargo load(s) orphaned by the mission restart",
+            outstanding.len()
+        );
+        for id in outstanding {
+            self.refund_cargo(&id);
+        }
     }
 
     pub fn logistics_step(
@@ -1455,21 +1930,37 @@ impl Db {
                                 let dest_name = self.persisted.objectives.get(&dest_oid)
                                     .map(|o| o.name.clone())
                                     .unwrap_or_default();
-                                let _side = self.persisted.objectives.get(&dest_oid)
-                                    .map(|o| o.owner)
-                                    .unwrap_or(dcso3::coalition::Side::Neutral);
+                                // Work out what the hub can actually send. This
+                                // used to pass an empty transfer list, so the
+                                // relief convoy drove the length of the map and
+                                // delivered precisely nothing.
+                                let load = self.build_transfers(hub, dest_oid, 1.0);
+                                if load.is_empty() {
+                                    debug!(
+                                        "AUTO-DISPATCH: nothing to send to {} (hub empty or destination full)",
+                                        dest_name
+                                    );
+                                    continue;
+                                }
                                 match self.spawn_supply_convoy(
                                     lua,
                                     hub,
                                     dest_oid,
                                     ConvoyCargoType::Mixed,
-                                    vec![],
+                                    load.clone(),
                                     ts,
                                 ) {
-                                    Ok(()) => {
-                                        info!("AUTO-DISPATCH: supply convoy → {}", dest_name);
+                                    Ok(Some(id)) => {
+                                        self.escrow_cargo(&id, hub, dest_oid, &load, ts);
+                                        self.ephemeral.last_dispatch_to.insert(dest_oid, ts);
+                                        info!(
+                                            "AUTO-DISPATCH: supply convoy → {} ({} item(s))",
+                                            dest_name,
+                                            load.len()
+                                        );
                                         self.ephemeral.supply_warned.insert(dest_oid, ts);
                                     }
+                                    Ok(None) => (),
                                     Err(e) => {
                                         error!("auto convoy dispatch to {} failed: {e:?}", dest_name);
                                     }
@@ -1519,10 +2010,27 @@ impl Db {
 
                     if let Some(cfg) = convoy_cfg {
                         let delivery_distance = cfg.delivery_distance;
+                        let max_transit = Duration::minutes(cfg.max_transit_minutes as i64);
                         let mut completed_convoys = Vec::new();
+                        let mut timed_out: Vec<ConvoyId> = Vec::new();
+                        let mut despawn: Vec<bfprotocols::db::group::GroupId> = Vec::new();
 
                         for convoy_id in self.ephemeral.active_convoys.keys().cloned().collect::<Vec<_>>() {
                             if let Some(convoy) = self.ephemeral.active_convoys.get_mut(&convoy_id) {
+                                let convoy_group_id = convoy.group_id;
+                                // A convoy that has been on the road far longer
+                                // than the trip could take is wedged on terrain
+                                // -- DCS ground pathing does this routinely.
+                                // Turn it back rather than leaving it parked
+                                // forever holding cargo that can never arrive.
+                                if max_transit > Duration::zero()
+                                    && ts - convoy.spawn_time > max_transit
+                                {
+                                    timed_out.push(convoy_id.clone());
+                                    despawn.push(convoy_group_id);
+                                    completed_convoys.push(convoy_id.clone());
+                                    continue;
+                                }
                                 // Check if enough time has passed since last check
                                 if (ts - convoy.last_check).num_seconds() < cfg.check_interval_secs as i64 {
                                     continue;
@@ -1563,7 +2071,11 @@ impl Db {
                                                 error!("Failed to execute convoy transfers: {:?}", e);
                                             }
 
-                                            // Mark convoy as completed (group will eventually be cleaned up)
+                                            // Despawn the trucks -- same as air/sea routes.
+                                            // Without this they park at the destination
+                                            // forever and every well-supplied base ends
+                                            // up ringed with dead convoys.
+                                            despawn.push(convoy_group_id);
                                             completed_convoys.push(convoy_id.clone());
                                         }
                                     }
@@ -1591,9 +2103,24 @@ impl Db {
                             }
                         }
 
-                        // Remove completed convoys
+                        // Remove completed convoys. A delivered convoy has
+                        // already moved its cargo and a destroyed one has lost
+                        // it, so both just drop their ledger entry; a timed-out
+                        // one gets its load handed back to the hub.
                         for convoy_id in completed_convoys {
                             self.ephemeral.active_convoys.remove(&convoy_id);
+                            if timed_out.contains(&convoy_id) {
+                                warn!("Convoy {convoy_id} timed out in transit, returning its load");
+                                self.refund_cargo(&convoy_id);
+                            } else {
+                                self.settle_cargo(&convoy_id);
+                            }
+                        }
+                        // Despawn delivered convoy groups (mirrors air/sea routes).
+                        for gid in despawn {
+                            if let Err(e) = self.delete_group(&gid) {
+                                warn!("failed to despawn delivered convoy group {gid}: {e:?}");
+                            }
                         }
                     }
 
@@ -1618,17 +2145,26 @@ impl Db {
                 }
                 LogiStage::ManageAirRoutes => {
                     let st = Utc::now();
-                    let (delivery_distance, check_interval_secs) = match self
+                    let (delivery_distance, check_interval_secs, max_transit) = match self
                         .ephemeral
                         .cfg
                         .warehouse
                         .as_ref()
                         .and_then(|w| w.air_logistics.as_ref())
                     {
-                        Some(cfg) => (cfg.delivery_distance, cfg.check_interval_secs),
+                        Some(cfg) => (
+                            cfg.delivery_distance,
+                            cfg.check_interval_secs,
+                            Duration::minutes(cfg.max_transit_minutes as i64),
+                        ),
                         None => {
                             // Air logistics disabled/unconfigured — clear and move on
+                            let orphaned: Vec<LogiRouteId> =
+                                self.ephemeral.active_air_routes.keys().cloned().collect();
                             self.ephemeral.active_air_routes.clear();
+                            for id in orphaned {
+                                self.refund_cargo(&id);
+                            }
                             let objectives = self
                                 .persisted
                                 .objectives
@@ -1642,14 +2178,26 @@ impl Db {
                     };
 
                     let mut completed = Vec::new();
+                    let mut timed_out: Vec<LogiRouteId> = Vec::new();
                     let mut despawn: Vec<bfprotocols::db::group::GroupId> = Vec::new();
                     for route_id in self.ephemeral.active_air_routes.keys().cloned().collect::<Vec<_>>() {
                         if let Some(route) = self.ephemeral.active_air_routes.get_mut(&route_id) {
+                            let route_group_id: bfprotocols::db::group::GroupId = route.group_id;
+                            // Airborne far longer than the leg can possibly
+                            // take: the flight is stuck holding or orbiting.
+                            // Recall it and give the load back.
+                            if max_transit > Duration::zero()
+                                && ts - route.spawn_time > max_transit
+                            {
+                                timed_out.push(route_id.clone());
+                                despawn.push(route_group_id);
+                                completed.push(route_id.clone());
+                                continue;
+                            }
                             if (ts - route.last_check).num_seconds() < check_interval_secs as i64 {
                                 continue;
                             }
                             route.last_check = ts;
-                            let route_group_id: bfprotocols::db::group::GroupId = route.group_id;
 
                             let group_name = match group!(self, &route.group_id) {
                                 Ok(g) => g.name.clone(),
@@ -1713,6 +2261,12 @@ impl Db {
 
                     for route_id in completed {
                         self.ephemeral.active_air_routes.remove(&route_id);
+                        if timed_out.contains(&route_id) {
+                            warn!("Air route {route_id} timed out in transit, returning its load");
+                            self.refund_cargo(&route_id);
+                        } else {
+                            self.settle_cargo(&route_id);
+                        }
                     }
                     // Despawn the cargo aircraft once it has delivered -- otherwise
                     // it loiters at the destination forever and they pile up.
@@ -1740,16 +2294,25 @@ impl Db {
                 }
                 LogiStage::ManageSeaRoutes => {
                     let st = Utc::now();
-                    let (delivery_distance, check_interval_secs) = match self
+                    let (delivery_distance, check_interval_secs, max_transit) = match self
                         .ephemeral
                         .cfg
                         .warehouse
                         .as_ref()
                         .and_then(|w| w.sea_logistics.as_ref())
                     {
-                        Some(cfg) => (cfg.delivery_distance, cfg.check_interval_secs),
+                        Some(cfg) => (
+                            cfg.delivery_distance,
+                            cfg.check_interval_secs,
+                            Duration::minutes(cfg.max_transit_minutes as i64),
+                        ),
                         None => {
+                            let orphaned: Vec<LogiRouteId> =
+                                self.ephemeral.active_sea_routes.keys().cloned().collect();
                             self.ephemeral.active_sea_routes.clear();
+                            for id in orphaned {
+                                self.refund_cargo(&id);
+                            }
                             let objectives = self
                                 .persisted
                                 .objectives
@@ -1763,14 +2326,23 @@ impl Db {
                     };
 
                     let mut completed = Vec::new();
+                    let mut timed_out: Vec<LogiRouteId> = Vec::new();
                     let mut despawn: Vec<bfprotocols::db::group::GroupId> = Vec::new();
                     for route_id in self.ephemeral.active_sea_routes.keys().cloned().collect::<Vec<_>>() {
                         if let Some(route) = self.ephemeral.active_sea_routes.get_mut(&route_id) {
+                            let route_group_id: bfprotocols::db::group::GroupId = route.group_id;
+                            if max_transit > Duration::zero()
+                                && ts - route.spawn_time > max_transit
+                            {
+                                timed_out.push(route_id.clone());
+                                despawn.push(route_group_id);
+                                completed.push(route_id.clone());
+                                continue;
+                            }
                             if (ts - route.last_check).num_seconds() < check_interval_secs as i64 {
                                 continue;
                             }
                             route.last_check = ts;
-                            let route_group_id: bfprotocols::db::group::GroupId = route.group_id;
 
                             let group_name = match group!(self, &route.group_id) {
                                 Ok(g) => g.name.clone(),
@@ -1834,6 +2406,12 @@ impl Db {
 
                     for route_id in completed {
                         self.ephemeral.active_sea_routes.remove(&route_id);
+                        if timed_out.contains(&route_id) {
+                            warn!("Sea route {route_id} timed out in transit, returning its load");
+                            self.refund_cargo(&route_id);
+                        } else {
+                            self.settle_cargo(&route_id);
+                        }
                     }
                     for gid in despawn {
                         if let Err(e) = self.delete_group(&gid) {
@@ -1892,6 +2470,7 @@ impl Db {
             Some(q) => Arc::clone(q),
             None => return Ok(()),
         };
+        let salvage = whcfg.captured_airframes.clone();
         let map = warehouse::Warehouse::get_resource_map(lua).context("getting resource map")?;
         let is_carrier = matches!(obj.kind, ObjectiveKind::CarrierGroup { .. });
         // Carriers aren't ObjectiveKind::Logistics so is_hub() alone says
@@ -1928,7 +2507,7 @@ impl Db {
                 Some(equip) => {
                     let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
                     let unlimited = if is_airframe { obj.unlimited_aircraft } else { obj.unlimited_supply };
-                    let capacity = whcfg.capacity_for(&obj.name, unlimited, hub, equip.production);
+                    let capacity = whcfg.capacity_for_item(&obj.name, is_airframe, unlimited, hub, equip.production);
                     inv.capacity = capacity;
                     // Also (re)stock, not just resize -- this only ran on
                     // capacity before, so a freshly-captured base never got
@@ -1946,22 +2525,58 @@ impl Db {
                 }
                 None => {
                     if let Some(equip) = other_production.equipment.get(&name) {
-                        let inv = obj.warehouse.equipment.get_or_default_cow(name);
                         if is_carrier {
+                            let inv = obj.warehouse.equipment.get_or_default_cow(name);
                             // captured carrier: keep the previous owner's aircraft available
                             // with hub capacity so the new owner can operate them
                             let cap = whcfg.capacity(true, equip.production);
                             inv.capacity = cap;
                             // a retained foreign jet with 0 stock can never be
                             // slotted -- give the captor a usable load (the
-                            // CarrierNotRepaired gate still holds it until
+                            // CapturedNotReady gate still holds it until
                             // repairs finish).
                             if inv.stored == 0 {
                                 inv.stored = cap;
                             }
                         } else {
-                            inv.stored = 0;
-                            inv.capacity = 0;
+                            // A land base changes hands with the losing side's
+                            // aircraft still parked on it. Salvage a fraction
+                            // of what was actually there (this runs after the
+                            // owner flip but before anything touches the
+                            // model, so `stored` is still the previous owner's
+                            // count) and let the captors fly it.
+                            //
+                            // capacity == the salvaged count on purpose: it is
+                            // the model's ceiling, so the read-back clamp in
+                            // sync_warehouse_to_obj can't let DCS inflate it,
+                            // and nothing refills it -- every resupply path
+                            // iterates the *source's* production, which by
+                            // definition doesn't contain this type. Captured
+                            // jets are a finite prize that drains to nothing.
+                            let salvaged = match salvage.as_ref() {
+                                Some(sc) if is_airframe && !sc.exclude.contains(name.as_str()) => {
+                                    sc.salvaged(obj
+                                        .warehouse
+                                        .equipment
+                                        .get(&name)
+                                        .map(|i| i.stored)
+                                        .unwrap_or(0))
+                                }
+                                Some(_) | None => 0,
+                            };
+                            if salvaged > 0 {
+                                let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
+                                inv.stored = salvaged;
+                                inv.capacity = salvaged;
+                                info!(
+                                    "[WAREHOUSE_CAPTURE] {:?} obj={} salvaged {salvaged} {name} from the previous owner",
+                                    obj.owner, obj.name
+                                );
+                            } else if obj.warehouse.equipment.get(&name).is_some() {
+                                let inv = obj.warehouse.equipment.get_or_default_cow(name);
+                                inv.stored = 0;
+                                inv.capacity = 0;
+                            }
                         }
                     }
                 }
@@ -1999,34 +2614,86 @@ impl Db {
     /// they never get any supplier and so never receive any delivery, not
     /// even a convoy.
     pub(super) fn compute_supplier(&self, obj: &Objective) -> Result<Option<ObjectiveId>> {
-        Ok(self
-            .persisted
-            .logistics_hubs
-            .into_iter()
-            .fold(Ok::<_, anyhow::Error>(None), |acc, id| {
-                let logi = objective!(self, id)?;
-                if logi.owner != obj.owner {
-                    acc
-                } else {
-                    let dist =
-                        na::distance_squared(&obj.zone.pos().into(), &logi.zone.pos().into());
-                    match acc {
-                        Err(e) => Err(e),
-                        Ok(None) => Ok(Some((dist, *id))),
-                        Ok(Some((pdist, _))) if dist < pdist => Ok(Some((dist, *id))),
-                        Ok(Some((dist, id))) => Ok(Some((dist, id))),
+        let (front_line_routing, margin) = match self.ephemeral.cfg.warehouse.as_ref() {
+            Some(w) => (w.front_line_routing, w.route_block_margin_m),
+            None => (false, 0.),
+        };
+        // Rank candidates by (route cut, distance): a hub further back that
+        // can actually get a convoy through beats a nearer one on the wrong
+        // side of the front. Only if every hub is cut off do we fall back to
+        // the nearest, and that base then relies on airlift.
+        let mut best: Option<(bool, f64, ObjectiveId)> = None;
+        for id in &self.persisted.logistics_hubs {
+            let logi = objective!(self, id)?;
+            if logi.owner != obj.owner {
+                continue;
+            }
+            let dist = na::distance_squared(&obj.zone.pos().into(), &logi.zone.pos().into());
+            let cut = front_line_routing
+                && route_interdicted(
+                    &self.persisted,
+                    obj.owner,
+                    logi.zone.pos(),
+                    obj.zone.pos(),
+                    margin,
+                );
+            let candidate = (cut, dist, *id);
+            match best {
+                None => best = Some(candidate),
+                Some((bcut, bdist, _)) => {
+                    if (cut, dist) < (bcut, bdist) {
+                        best = Some(candidate);
                     }
                 }
-            })?
-            .map(|(_, id)| id))
+            }
+        }
+        match best {
+            Some((true, _, id)) => {
+                // Picked anyway, because every hub is behind the front, so
+                // this base is airlift-only until the ground situation
+                // changes. Debug rather than info: setup_supply_lines re-runs
+                // on every capture, so during an offensive this would repeat
+                // for every cut-off base every few minutes. The per-tick
+                // [LOGI_DISPATCH] CUT OFF line is the one that matters.
+                debug!(
+                    "[LOGI_ROUTE] {} has no hub with a clear ground route -- nearest is {} and the \
+                     road is cut, so it depends on airlift",
+                    obj.name,
+                    self.persisted
+                        .objectives
+                        .get(&id)
+                        .map(|o| o.name.as_str())
+                        .unwrap_or("?")
+                );
+            }
+            Some((false, dist, id)) => debug!(
+                "[LOGI_ROUTE] {} <- {} ({:.0} km, route clear)",
+                obj.name,
+                self.persisted
+                    .objectives
+                    .get(&id)
+                    .map(|o| o.name.as_str())
+                    .unwrap_or("?"),
+                dist.sqrt() / 1000.
+            ),
+            None => debug!("[LOGI_ROUTE] {} has no friendly hub at all", obj.name),
+        }
+        Ok(best.map(|(_, _, id)| id))
     }
 
     pub fn setup_supply_lines(&mut self) -> Result<()> {
         let mut suppliers: SmallVec<[(ObjectiveId, Option<ObjectiveId>); 64]> = smallvec![];
         for (oid, obj) in &self.persisted.objectives {
             match obj.kind {
-                ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. } => (),
-                ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob => {
+                ObjectiveKind::Logistics | ObjectiveKind::Factory { .. } => (),
+                // A naval base is a hub for its carrier group but it is also a
+                // destination in its own right -- carrier repair and respawn
+                // are paid for out of its materiel stock, and nothing was ever
+                // routed there, so that stock could only ever be zero.
+                ObjectiveKind::NavalBase
+                | ObjectiveKind::Airbase
+                | ObjectiveKind::Farp { .. }
+                | ObjectiveKind::Fob => {
                     let hub = self.compute_supplier(obj)?;
                     suppliers.push((*oid, hub));
                 }
@@ -2040,12 +2707,29 @@ impl Db {
         }
         for (oid, supplier) in suppliers {
             let obj = objective_mut!(self, oid)?;
+            let previous = obj.warehouse.supplier;
             obj.warehouse.supplier = supplier;
             if let Some(id) = supplier {
                 objective_mut!(self, id)?
                     .warehouse
                     .destination
                     .insert_cow(oid);
+            }
+            // A base's supply line moving is a strategic event -- the front
+            // shifted, or its depot was taken -- so it belongs in the log at
+            // info, not buried in a per-tick dump.
+            if previous != supplier {
+                let name = |o: Option<ObjectiveId>| {
+                    o.and_then(|id| self.persisted.objectives.get(&id))
+                        .map(|o| o.name.to_string())
+                        .unwrap_or_else(|| String::from("none").to_string())
+                };
+                info!(
+                    "[LOGI_ROUTE] {} re-homed: supplier {} -> {}",
+                    objective!(self, oid)?.name,
+                    name(previous),
+                    name(supplier)
+                );
             }
         }
 
@@ -2085,40 +2769,209 @@ impl Db {
         Ok(())
     }
 
+    /// A side's territory score: every objective it holds, weighted by what
+    /// kind of objective it is and scaled by that objective's logistics
+    /// health. A base that has been bombed flat contributes almost nothing
+    /// even while the side still nominally owns it.
+    fn territory_score(&self, side: Side, cfg: &ProductionScalingConfig) -> f64 {
+        let mut score = 0.;
+        for (_, obj) in &self.persisted.objectives {
+            if obj.owner != side {
+                continue;
+            }
+            let weight = match obj.kind {
+                ObjectiveKind::Logistics => cfg.logistics_weight,
+                ObjectiveKind::Factory { .. } => cfg.factory_weight,
+                ObjectiveKind::CommandCenter => cfg.command_center_weight,
+                ObjectiveKind::Airbase
+                | ObjectiveKind::Farp { .. }
+                | ObjectiveKind::Fob
+                | ObjectiveKind::NavalBase => cfg.airbase_weight,
+                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. } => 0.,
+            };
+            if weight > 0. {
+                score += weight * (obj.logi as f64 / 100.);
+            }
+        }
+        score
+    }
+
+    /// What fraction of nominal production a side is actually managing right
+    /// now, as the ratio of its current territory score to the score it
+    /// started the campaign with, clamped to the configured floor and
+    /// ceiling. Returns 1.0 when scaling is off, which is exactly the old
+    /// fixed-constant behaviour.
+    fn production_output_frac(&mut self, side: Side) -> f64 {
+        let cfg = match self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.production_scaling.as_ref())
+        {
+            Some(c) if c.enabled => c.clone(),
+            _ => return 1.0,
+        };
+        let score = self.territory_score(side, &cfg);
+        // Baseline is whatever the side held the first time this ran, i.e.
+        // mission start for a fresh campaign. Persisted so a restart doesn't
+        // silently re-baseline a side onto whatever it happens to hold now
+        // and hand it back full production after losing half the map.
+        let baseline = match self.persisted.production_baseline.get(&side) {
+            Some(b) if *b > 0. => *b,
+            _ => {
+                if score <= 0. {
+                    return cfg.floor_percent as f64 / 100.;
+                }
+                self.persisted.production_baseline.insert_cow(side, score);
+                self.ephemeral.dirty();
+                score
+            }
+        };
+        let floor = cfg.floor_percent as f64 / 100.;
+        let ceiling = (cfg.ceiling_percent as f64 / 100.).max(floor);
+        (score / baseline).clamp(floor, ceiling)
+    }
+
     pub fn deliver_production(&mut self, lua: MizLua, now: DateTime<Utc>) -> Result<Vec<Transfer>> {
         if self.ephemeral.cfg.warehouse.is_none() {
             return Ok(vec![]);
         }
         self.setup_supply_lines()
             .context("setting up supply lines")?;
-        let mut deliver_produced_supplies = || -> Result<()> {
-            for side in Side::ALL {
-                let production = match self.ephemeral.production_by_side.get(&side) {
-                    Some(e) => e,
-                    None => continue,
-                };
-                for oid in &self.persisted.logistics_hubs {
-                    let logi = objective_mut!(self, oid)?;
-                    if logi.owner == side {
-                        for (name, inv) in logi.warehouse.equipment.iter_mut_cow() {
-                            if let Some(eq) = production.equipment.get(name) {
-                                *inv += eq.production;
-                            }
-                        }
-                        for (name, inv) in logi.warehouse.liquids.iter_mut_cow() {
-                            if let Some(pr) = production.liquids.get(name) {
-                                *inv += *pr;
-                            }
-                        }
+        let materiel_production = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.materiel.as_ref())
+            .filter(|m| m.enabled)
+            .map(|m| m.hub_production)
+            .unwrap_or(0);
+        for side in Side::ALL {
+            let production = match self.ephemeral.production_by_side.get(&side) {
+                Some(e) => Arc::clone(e),
+                None => continue,
+            };
+            let scale = self.production_output_frac(side);
+            if scale < 0.999 || scale > 1.001 {
+                info!(
+                    "[WAREHOUSE] {side:?} production running at {:.0}% of nominal",
+                    scale * 100.
+                );
+            }
+            let hubs: SmallVec<[ObjectiveId; 16]> =
+                self.persisted.logistics_hubs.into_iter().copied().collect();
+            for oid in hubs {
+                let logi = objective_mut!(self, &oid)?;
+                if logi.owner != side {
+                    continue;
+                }
+                // A hub that has been bombed off the map doesn't receive a
+                // full delivery. Previously a flattened logistics hub kept
+                // taking in production at 100% -- there was no point striking
+                // one beyond denying the capture.
+                let intake = scale * (logi.logi as f64 / 100.);
+                if intake <= 0. {
+                    continue;
+                }
+                let portion = |qty: u32| -> u32 { (qty as f64 * intake).round() as u32 };
+                let materiel_before = logi
+                    .warehouse
+                    .equipment
+                    .get(MATERIEL_ITEM)
+                    .map(|inv| inv.stored)
+                    .unwrap_or(0);
+                for (name, inv) in logi.warehouse.equipment.iter_mut_cow() {
+                    if name.as_str() == MATERIEL_ITEM {
+                        *inv += portion(materiel_production);
+                    } else if let Some(eq) = production.equipment.get(name) {
+                        *inv += portion(eq.production);
                     }
                 }
+                for (name, inv) in logi.warehouse.liquids.iter_mut_cow() {
+                    if let Some(pr) = production.liquids.get(name) {
+                        *inv += portion(*pr);
+                    }
+                }
+                let materiel_after = logi
+                    .warehouse
+                    .equipment
+                    .get(MATERIEL_ITEM)
+                    .map(|inv| inv.stored)
+                    .unwrap_or(0);
+                info!(
+                    "[WAREHOUSE] delivery to hub {} ({:?}): intake {:.0}% of nominal \
+                     (production scale {:.0}%, hub logi {}%), materiel {materiel_before} -> {materiel_after} / {}",
+                    logi.name,
+                    side,
+                    intake * 100.,
+                    scale * 100.,
+                    logi.logi,
+                    logi.warehouse
+                        .equipment
+                        .get(MATERIEL_ITEM)
+                        .map(|inv| inv.capacity)
+                        .unwrap_or(0)
+                );
             }
-            Ok(())
-        };
-        deliver_produced_supplies().context("delivering produced supplies")?;
+        }
         self.ephemeral.dirty();
         self.deliver_supplies_from_logistics_hubs(lua, now)
             .context("delivering supplies from logistics hubs")
+    }
+
+    /// Make sure every objective has a materiel stockpile sized to its role.
+    /// Cheap and idempotent, so it's safe to call after init, after a load and
+    /// after every capture.
+    pub(super) fn sync_materiel_capacity(&mut self) {
+        let Some(m) = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.materiel.as_ref())
+            .filter(|m| m.enabled)
+            .cloned()
+        else {
+            return;
+        };
+        let hub_cap = m.hub_production * m.hub_capacity;
+        let base_cap = m.hub_production * m.airbase_capacity;
+        let (mut sized, mut seeded, mut clamped) = (0u32, 0u32, 0u32);
+        for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
+            let is_hub = obj.kind.is_hub()
+                || matches!(obj.kind, ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. });
+            let _ = oid;
+            let capacity = if obj.unlimited_supply {
+                bfprotocols::cfg::UNLIMITED_CAPACITY
+            } else if is_hub {
+                hub_cap
+            } else {
+                base_cap
+            };
+            let inv = obj
+                .warehouse
+                .equipment
+                .get_or_default_cow(dcso3::String::from(MATERIEL_ITEM));
+            let fresh = inv.capacity == 0;
+            inv.capacity = capacity;
+            // A brand new stockpile starts full, the same way every other
+            // warehouse entry does at init; an existing one just gets resized.
+            if fresh {
+                inv.stored = capacity;
+                seeded += 1;
+            } else if inv.stored > capacity {
+                inv.stored = capacity;
+                clamped += 1;
+            }
+            sized += 1;
+        }
+        info!(
+            "[MATERIEL] sized {sized} stockpile(s) (hub {hub_cap} / base {base_cap} units): \
+             {seeded} newly seeded full, {clamped} clamped down to the new capacity"
+        );
+        self.ephemeral.dirty();
     }
 
     pub fn sync_vehicle_at_obj(
@@ -2149,15 +3002,15 @@ impl Db {
         cargo_type: ConvoyCargoType,
         transfers: Vec<Transfer>,
         now: DateTime<Utc>,
-    ) -> Result<()> {
+    ) -> Result<Option<CompactString>> {
         let cfg = match &self.ephemeral.cfg.warehouse {
             Some(w) => w,
-            None => return Ok(()),
+            None => return Ok(None),
         };
 
         let convoy_cfg = match &cfg.convoy {
             Some(c) if c.enabled => c,
-            _ => return Ok(()),
+            _ => return Ok(None),
         };
 
         let origin_obj = objective!(self, &origin)?;
@@ -2173,7 +3026,7 @@ impl Db {
             Some(t) => (t.clone(), convoy_cfg.speed_kph, convoy_cfg.trucks_per_convoy),
             None => {
                 warn!("No truck template configured for side {:?}, skipping convoy spawn", side);
-                return Ok(());
+                return Ok(None);
             }
         };
 
@@ -2402,7 +3255,7 @@ impl Db {
             trucks_per_convoy
         );
 
-        Ok(())
+        Ok(Some(convoy_id))
     }
 
     /// Spawn an AI cargo aircraft to deliver supplies from a logistics hub to a destination
@@ -2414,15 +3267,15 @@ impl Db {
         cargo_type: ConvoyCargoType,
         transfers: Vec<Transfer>,
         now: DateTime<Utc>,
-    ) -> Result<()> {
+    ) -> Result<Option<CompactString>> {
         let cfg = match &self.ephemeral.cfg.warehouse {
             Some(w) => w,
-            None => return Ok(()),
+            None => return Ok(None),
         };
 
         let air_cfg = match &cfg.air_logistics {
             Some(c) if c.enabled => c,
-            _ => return Ok(()),
+            _ => return Ok(None),
         };
 
         let origin_obj = objective!(self, &origin)?;
@@ -2441,7 +3294,7 @@ impl Db {
                         "No aircraft template configured for side {:?}, skipping air route spawn",
                         side
                     );
-                    return Ok(());
+                    return Ok(None);
                 }
             };
 
@@ -2558,6 +3411,505 @@ impl Db {
             dest_name
         );
 
+        Ok(Some(route_id))
+    }
+
+    /// Nearest objective owned by `side` that can actually launch a
+    /// ground-starting flight, for use as a helo mission's launch point.
+    /// `exclude` skips the destination itself -- ferrying troops onto a base's
+    /// own runway makes no sense.
+    ///
+    /// `is_airbase()` alone is not enough: it is a static check on the
+    /// objective's kind, and an Airbase-kind objective whose live DCS airbase
+    /// doesn't resolve gives `spawn_group` nothing to build a parking start
+    /// from, so the helo air-starts. Candidates are checked nearest-first
+    /// against the same resolver the spawn path uses, so the field we pick is
+    /// one that will really put the helo on the ramp.
+    /// The closest friendly field a helo mission can launch from. Deliberately
+    /// does NOT require a live DCS airbase: most FOBs have no airbase or FARP
+    /// pad object at all, and demanding one walked past every nearby field to
+    /// launch from one 150km away. A helicopter with no pad to park on starts
+    /// from open ground instead (`ephemeral::spawn_group`'s `TakeOffGroundHot`
+    /// fallback), so the only thing that matters here is that we own the place
+    /// and it's the kind of place helicopters operate out of. Carrier decks are
+    /// left out: their deck airbase moves with the ship.
+    fn nearest_helo_launch_field(
+        &self,
+        lua: MizLua,
+        side: Side,
+        near: Vector2,
+        exclude: Option<ObjectiveId>,
+    ) -> Option<ObjectiveId> {
+        let mut candidates: Vec<(&ObjectiveId, f64)> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(oid, o)| {
+                o.owner() == side
+                    && matches!(
+                        o.kind,
+                        ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob
+                    )
+                    && exclude.map(|e| **oid != e).unwrap_or(true)
+            })
+            .map(|(oid, o)| (oid, na::distance_squared(&o.pos().into(), &near.into())))
+            .collect();
+        candidates.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let (oid, d2) = candidates.first()?;
+        let pad = self
+            .ephemeral
+            .resolve_airbase(lua, &self.persisted, oid)
+            .is_some();
+        info!(
+            "[HELO_MISSION] launch field {} ({:.0}km from the target, {}) chosen from {} friendly field(s)",
+            self.persisted.objectives.get(oid).map(|o| o.name.as_str()).unwrap_or("?"),
+            d2.sqrt() / 1000.,
+            if pad { "has a DCS pad" } else { "no DCS pad, ground start" },
+            candidates.len()
+        );
+        Some(**oid)
+    }
+
+    /// A batch of whatever surplus supply `origin`'s warehouse has on hand,
+    /// capped per item, for a resource-delivery helo mission to carry.
+    fn build_helo_supply_transfer(
+        &self,
+        origin: ObjectiveId,
+        destination: ObjectiveId,
+        per_item_cap: u32,
+    ) -> Result<Vec<Transfer>> {
+        let origin_obj = objective!(self, &origin)?;
+        let mut transfers = Vec::new();
+        for (name, inv) in origin_obj.warehouse().equipment() {
+            if inv.stored > 0 {
+                transfers.push(Transfer {
+                    source: origin,
+                    target: destination,
+                    amount: inv.stored.min(per_item_cap),
+                    item: TransferItem::Equipment(name.clone()),
+                });
+            }
+        }
+        for (name, inv) in origin_obj.warehouse().liquids() {
+            if inv.stored > 0 {
+                transfers.push(Transfer {
+                    source: origin,
+                    target: destination,
+                    amount: inv.stored.min(per_item_cap),
+                    item: TransferItem::Liquid(*name),
+                });
+            }
+        }
+        Ok(transfers)
+    }
+
+    /// Spawn the AI helicopter for a helo mission: cold-starts from `origin`
+    /// (same `TakeOffParkingHot` mechanism as reactive CAP -- see the
+    /// `UnitTag::HotStart` handling in `ephemeral::spawn_group`) and flies to
+    /// a real landing at `destination`. Uses `helo_insertion.aircraft_template`
+    /// -- deliberately its own field, separate from
+    /// `warehouse.air_logistics.aircraft_template` (fixed-wing cargo planes
+    /// between hubs; these missions land at arbitrary objectives in the
+    /// open, not just airfields, so they need a real helicopter).
+    fn spawn_helo_mission(
+        &mut self,
+        lua: MizLua,
+        origin: ObjectiveId,
+        destination: ObjectiveId,
+        player: dcso3::net::Ucid,
+        kind: HeloMissionKind,
+        now: DateTime<Utc>,
+    ) -> Result<HeloMissionId> {
+        let helo_cfg = self
+            .ephemeral
+            .cfg
+            .helo_insertion
+            .clone()
+            .ok_or_else(|| anyhow!("AI helo missions are not enabled"))?;
+
+        let origin_obj = objective!(self, &origin)?;
+        let dest_obj = objective!(self, &destination)?;
+        let side = origin_obj.owner();
+        let origin_pos = origin_obj.pos();
+        let dest_pos = dest_obj.pos();
+        let origin_name = origin_obj.name.clone();
+        let dest_name = dest_obj.name.clone();
+
+        let (aircraft_template, altitude_m, speed_kph) =
+            match helo_cfg.aircraft_template.get(&side) {
+                Some(t) => (t.clone(), helo_cfg.altitude_m, helo_cfg.speed_kph),
+                None => bail!(
+                    "no helo_insertion.aircraft_template configured for side {:?}",
+                    side
+                ),
+            };
+
+        let mission_id: HeloMissionId = format_compact!(
+            "HELO_{}_{}_{}",
+            side.to_str(),
+            self.ephemeral.helo_mission_counter,
+            now.timestamp()
+        );
+        self.ephemeral.helo_mission_counter += 1;
+
+        let delta = dest_pos - origin_pos;
+        let heading = delta.y.atan2(delta.x);
+        let speed_mps = speed_kph / 3.6;
+
+        use crate::db::group::DeployKind;
+        use crate::spawnctx::{SpawnCtx, SpawnLoc};
+        use bfprotocols::cfg::UnitTag;
+        use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, TurnMethod};
+        use dcso3::env::miz::Miz;
+        use dcso3::LuaVec2;
+
+        let spawn_ctx = SpawnCtx::new(lua)?;
+        let miz = Miz::singleton(lua)?;
+        let idx = miz.index()?;
+
+        // `DeployKind::Objective { origin }` + the `HotStart` tag is what
+        // makes `ephemeral::spawn_group` rewrite waypoint 0 into a real
+        // parking start at the resolved origin airbase -- same path reactive
+        // CAP uses. WP0 below is a placeholder the rewrite replaces; WP1 is
+        // the only waypoint that matters as written, an actual Land at the
+        // destination (not a "get within N metres while still flying" cruise
+        // point like the auto-dispatch air logistics route uses).
+        let group_id = self.add_group(
+            &spawn_ctx,
+            &idx,
+            side,
+            SpawnLoc::AtPos {
+                pos: origin_pos,
+                offset_direction: Vector2::new(1., 0.),
+                group_heading: heading,
+            },
+            &aircraft_template,
+            DeployKind::Objective { origin },
+            UnitTag::HotStart.into(),
+        )?;
+
+        // Terrain elevation at the destination: a Land waypoint's altitude is
+        // the ground it lands on, not sea level.
+        let dest_alt = dcso3::land::Land::singleton(lua)
+            .and_then(|l| l.get_height(LuaVec2(dest_pos)))
+            .unwrap_or(0.0);
+
+        let route_points = vec![
+            MissionPoint {
+                // Overwritten by the HotStart rewrite in `spawn_group` when the
+                // origin field resolves; a plain fly-over is the sane fallback
+                // if it doesn't, since an action-less waypoint is one DCS may
+                // decline to fly at all.
+                action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
+                airdrome_id: None,
+                helipad: None,
+                typ: PointType::TurningPoint,
+                link_unit: None,
+                pos: LuaVec2(origin_pos),
+                alt: altitude_m,
+                alt_typ: Some(AltType::BARO),
+                time_re_fu_ar: None,
+                eta: Some(dcso3::Time(0.)),
+                eta_locked: Some(true),
+                speed: speed_mps,
+                speed_locked: Some(true),
+                name: None,
+                task: Box::new(Task::ComboTask(vec![])),
+            },
+            MissionPoint {
+                // A Land waypoint DCS will actually fly needs the same shape
+                // the mission editor writes: action "Landing", the field
+                // elevation as its altitude, and a real transit speed. Left as
+                // action-less at zero speed the group spawns on the ramp with
+                // a route it won't fly -- engines running, never lifts off.
+                action: Some(ActionTyp::Air(TurnMethod::Landing)),
+                airdrome_id: None,
+                helipad: None,
+                typ: PointType::Land,
+                link_unit: None,
+                pos: LuaVec2(dest_pos),
+                alt: dest_alt,
+                alt_typ: Some(AltType::BARO),
+                // Sit on the ground for up to 10 minutes -- plenty of margin
+                // for the mission-poll tick (every ~10s) to see it landed and
+                // apply the payoff before DCS would otherwise send it home.
+                time_re_fu_ar: Some(600),
+                eta: None,
+                eta_locked: None,
+                speed: speed_mps,
+                speed_locked: None,
+                name: None,
+                task: Box::new(Task::ComboTask(vec![])),
+            },
+        ];
+
+        {
+            let perf = unsafe { Perf::get_mut() };
+            let perf = Arc::make_mut(&mut perf.inner);
+            self.ephemeral.spawn_group(
+                perf,
+                &self.persisted,
+                &idx,
+                &spawn_ctx,
+                group!(self, group_id)?,
+                route_points,
+            )?;
+        }
+
+        let mission = HeloMission {
+            id: mission_id.clone(),
+            group_id,
+            kind,
+            origin,
+            destination,
+            side,
+            player,
+            spawn_time: now,
+            state: HeloMissionState::InTransit,
+            last_pos: origin_pos,
+            last_check: now,
+        };
+        info!(
+            "[HELO_MISSION] {} dispatched from {} to {}",
+            mission_id, origin_name, dest_name
+        );
+        self.ephemeral.active_helo_missions.insert(mission_id.clone(), mission);
+        Ok(mission_id)
+    }
+
+    /// F10-callable: send an AI helicopter to insert a fresh troop group at
+    /// `destination`. Costs the troop's own `cost` plus
+    /// `helo_insertion.troop_mission_cost`. Cold-starts from the nearest
+    /// friendly airbase and only deploys the troops once actually landed.
+    pub fn call_helo_troop_insertion(
+        &mut self,
+        lua: MizLua,
+        side: Side,
+        ucid: dcso3::net::Ucid,
+        destination: ObjectiveId,
+        now: DateTime<Utc>,
+    ) -> Result<HeloMissionId> {
+        let cfg = self
+            .ephemeral
+            .cfg
+            .helo_insertion
+            .clone()
+            .ok_or_else(|| anyhow!("AI helo missions are not enabled"))?;
+        let dest_obj = objective!(self, &destination)?;
+        if dest_obj.owner() == side && !dest_obj.captureable() {
+            bail!("{} is already yours and isn't under threat", dest_obj.name);
+        }
+        let dest_pos = dest_obj.pos();
+        let origin = self
+            .nearest_helo_launch_field(lua, side, dest_pos, Some(destination))
+            .ok_or_else(|| {
+                anyhow!("no friendly field able to launch the mission (a launch field has to be an airbase, FARP or FOB with a live DCS pad)")
+            })?;
+        let origin_obj = objective!(self, &origin)?;
+        let range = na::distance(&origin_obj.pos().into(), &dest_pos.into());
+        if range > cfg.max_range_m {
+            bail!(
+                "nearest friendly launch field ({}) is {:.0}km away, past the {:.0}km max range",
+                origin_obj.name,
+                range / 1000.,
+                cfg.max_range_m / 1000.
+            );
+        }
+        let troop_cfg = self
+            .ephemeral
+            .deployable_idx
+            .get(&side)
+            .ok_or_else(|| anyhow!("no troops configured for {:?}", side))?
+            .squads_by_name
+            .get(cfg.troop_name.as_str())
+            .ok_or_else(|| {
+                anyhow!(
+                    "configured helo_insertion troop '{}' not found for {:?}",
+                    cfg.troop_name,
+                    side
+                )
+            })?
+            .clone();
+        let total_cost = troop_cfg.cost as i32 + cfg.troop_mission_cost;
+        let available = self.player(&ucid).map(|p| p.points).unwrap_or(0);
+        if available < total_cost {
+            bail!(
+                "not enough points for a helo troop insertion ({total_cost} needed, {available} \
+                 available)"
+            );
+        }
+        let mission_id = self.spawn_helo_mission(
+            lua,
+            origin,
+            destination,
+            ucid.clone(),
+            HeloMissionKind::TroopInsertion,
+            now,
+        )?;
+        self.adjust_points(&ucid, -total_cost, "AI helo troop insertion");
+        Ok(mission_id)
+    }
+
+    /// F10-callable: send an AI helicopter loaded with surplus supply from
+    /// the nearest friendly hub to `destination`. Costs
+    /// `helo_insertion.supply_mission_cost`.
+    pub fn call_helo_resource_delivery(
+        &mut self,
+        lua: MizLua,
+        side: Side,
+        ucid: dcso3::net::Ucid,
+        destination: ObjectiveId,
+        now: DateTime<Utc>,
+    ) -> Result<HeloMissionId> {
+        let cfg = self
+            .ephemeral
+            .cfg
+            .helo_insertion
+            .clone()
+            .ok_or_else(|| anyhow!("AI helo missions are not enabled"))?;
+        let dest_obj = objective!(self, &destination)?;
+        let dest_pos = dest_obj.pos();
+        let origin = self
+            .nearest_helo_launch_field(lua, side, dest_pos, Some(destination))
+            .ok_or_else(|| {
+                anyhow!("no friendly field able to launch the mission (a launch field has to be an airbase, FARP or FOB with a live DCS pad)")
+            })?;
+        let origin_obj = objective!(self, &origin)?;
+        let range = na::distance(&origin_obj.pos().into(), &dest_pos.into());
+        if range > cfg.max_range_m {
+            bail!(
+                "nearest friendly hub ({}) is {:.0}km away, past the {:.0}km max range",
+                origin_obj.name,
+                range / 1000.,
+                cfg.max_range_m / 1000.
+            );
+        }
+        let transfers =
+            self.build_helo_supply_transfer(origin, destination, cfg.supply_amount_per_item)?;
+        if transfers.is_empty() {
+            bail!("{} has no surplus supply on hand to send", origin_obj.name);
+        }
+        let available = self.player(&ucid).map(|p| p.points).unwrap_or(0);
+        if available < cfg.supply_mission_cost {
+            bail!(
+                "not enough points for a helo supply run ({} needed, {available} available)",
+                cfg.supply_mission_cost
+            );
+        }
+        let mission_id = self.spawn_helo_mission(
+            lua,
+            origin,
+            destination,
+            ucid.clone(),
+            HeloMissionKind::ResourceDelivery { transfers },
+            now,
+        )?;
+        self.adjust_points(&ucid, -cfg.supply_mission_cost, "AI helo resource delivery");
+        Ok(mission_id)
+    }
+
+    /// Poll all active helo missions: despawn destroyed ones, and on landing
+    /// apply the payoff (deploy troops / transfer supply) before despawning.
+    /// Called once per slow tick from `lib.rs`, same cadence as convoys.
+    pub fn tick_helo_missions(&mut self, lua: MizLua, now: DateTime<Utc>) -> Result<()> {
+        let Some(cfg) = self.ephemeral.cfg.helo_insertion.clone() else {
+            return Ok(());
+        };
+        let landing_radius = cfg.landing_radius_m;
+
+        let mut completed: SmallVec<[HeloMissionId; 4]> = smallvec![];
+        let mut despawn: SmallVec<[bfprotocols::db::group::GroupId; 4]> = smallvec![];
+        #[allow(clippy::type_complexity)]
+        let mut to_deploy_troops: SmallVec<
+            [(Vector2, dcso3::String, Side, dcso3::net::Ucid, ObjectiveId); 2],
+        > = smallvec![];
+        let mut to_transfer: SmallVec<[Vec<Transfer>; 2]> = smallvec![];
+
+        for mission_id in self
+            .ephemeral
+            .active_helo_missions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            let Some(mission) = self.ephemeral.active_helo_missions.get_mut(&mission_id) else {
+                continue;
+            };
+            if (now - mission.last_check).num_seconds() < 10 {
+                continue;
+            }
+            mission.last_check = now;
+
+            let group_name = match group!(self, &mission.group_id) {
+                Ok(g) => g.name.clone(),
+                Err(_) => {
+                    warn!("[HELO_MISSION] {} group not found in database", mission_id);
+                    completed.push(mission_id.clone());
+                    continue;
+                }
+            };
+            let dest_pos = match self.persisted.objectives.get(&mission.destination) {
+                Some(o) => o.pos(),
+                None => {
+                    warn!("[HELO_MISSION] {} destination no longer exists", mission_id);
+                    completed.push(mission_id.clone());
+                    continue;
+                }
+            };
+
+            match mission.poll(lua, &group_name, dest_pos, landing_radius) {
+                HeloMissionState::InTransit => {}
+                HeloMissionState::Destroyed => {
+                    info!("[HELO_MISSION] {} destroyed en route", mission_id);
+                    completed.push(mission_id.clone());
+                }
+                HeloMissionState::Delivered => {
+                    info!("[HELO_MISSION] {} landed and delivered", mission_id);
+                    match &mission.kind {
+                        HeloMissionKind::TroopInsertion => {
+                            to_deploy_troops.push((
+                                dest_pos,
+                                cfg.troop_name.clone(),
+                                mission.side,
+                                mission.player,
+                                mission.origin,
+                            ));
+                        }
+                        HeloMissionKind::ResourceDelivery { transfers } => {
+                            to_transfer.push(transfers.clone());
+                        }
+                    }
+                    despawn.push(mission.group_id);
+                    completed.push(mission_id.clone());
+                }
+            }
+        }
+
+        for id in completed {
+            self.ephemeral.active_helo_missions.remove(&id);
+        }
+        for gid in despawn {
+            if let Err(e) = self.delete_group(&gid) {
+                warn!("failed to despawn delivered helo mission group {gid}: {e:?}");
+            }
+        }
+        if !to_deploy_troops.is_empty() {
+            let miz = dcso3::env::miz::Miz::singleton(lua)?;
+            let idx = miz.index()?;
+            for (pos, troop, side, ucid, origin) in to_deploy_troops {
+                if let Err(e) = self.paratroops_to_point(lua, &idx, pos, troop, side, ucid, origin)
+                {
+                    warn!("helo troop insertion failed to deploy: {e:?}");
+                }
+            }
+        }
+        for transfers in to_transfer {
+            for t in &transfers {
+                if let Err(e) = t.execute(&mut self.persisted, &self.ephemeral.to_bg) {
+                    warn!("helo resource delivery transfer failed: {e:?}");
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2570,15 +3922,15 @@ impl Db {
         cargo_type: ConvoyCargoType,
         transfers: Vec<Transfer>,
         now: DateTime<Utc>,
-    ) -> Result<()> {
+    ) -> Result<Option<CompactString>> {
         let cfg = match &self.ephemeral.cfg.warehouse {
             Some(w) => w,
-            None => return Ok(()),
+            None => return Ok(None),
         };
 
         let sea_cfg = match &cfg.sea_logistics {
             Some(c) if c.enabled => c,
-            _ => return Ok(()),
+            _ => return Ok(None),
         };
 
         let origin_obj = objective!(self, &origin)?;
@@ -2596,7 +3948,7 @@ impl Db {
                     "No ship template configured for side {:?}, skipping sea route spawn",
                     side
                 );
-                return Ok(());
+                return Ok(None);
             }
         };
 
@@ -2712,7 +4064,7 @@ impl Db {
             dest_name
         );
 
-        Ok(())
+        Ok(Some(route_id))
     }
 
     pub fn deliver_supplies_from_logistics_hubs(&mut self, lua: MizLua, now: DateTime<Utc>) -> Result<Vec<Transfer>> {
@@ -2752,6 +4104,92 @@ impl Db {
         let mut convoys_to_spawn: Vec<RouteSpawnInfo> = Vec::new();
         let mut air_routes_to_spawn: Vec<RouteSpawnInfo> = Vec::new();
 
+        // ── Transport budget for this tick ────────────────────────────────
+        // `max_concurrent_convoys`, the convoy `spawn_interval_ticks` and the
+        // new per-destination cooldown are read here. They were configured
+        // but never actually consulted, so dispatch was completely
+        // unthrottled: every hub launched a fresh weapons convoy AND a fresh
+        // fuel convoy to every destination that was even one round short, on
+        // every tick. Air routes get the same treatment, as a budget that
+        // decrements as we hand loads out rather than a per-hub snapshot.
+        let tick_minutes = self.ephemeral.cfg.warehouse.as_ref().map(|w| w.tick).unwrap_or(10) as i64;
+        let (
+            convoy_max_concurrent,
+            convoy_spawn_interval_ticks,
+            convoy_cooldown_ticks,
+        ) = match self.ephemeral.cfg.warehouse.as_ref().and_then(|w| w.convoy.as_ref()) {
+            Some(c) => (
+                c.max_concurrent_convoys as usize,
+                c.spawn_interval_ticks as i64,
+                c.dispatch_cooldown_ticks as i64,
+            ),
+            None => (10, 2, 2),
+        };
+        let (air_supply_threshold, air_max_concurrent, air_spawn_interval_ticks) =
+            match self.ephemeral.cfg.warehouse.as_ref().and_then(|w| w.air_logistics.as_ref()) {
+                Some(a) => (
+                    a.supply_threshold,
+                    a.max_concurrent_routes as usize,
+                    a.spawn_interval_ticks as i64,
+                ),
+                None => (50, 6, 3),
+            };
+        // A hub keeps an operational reserve rather than emptying itself into
+        // the first convoy that asks. Without it one lost convoy leaves the
+        // whole theatre dry until the next production delivery.
+        let reserve_frac = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .map(|w| w.hub_reserve_percent.min(100) as f32 / 100.)
+            .unwrap_or(0.);
+        let releasable = move |inv: &Inventory| -> u32 {
+            inv.stored
+                .saturating_sub((inv.capacity as f32 * reserve_frac) as u32)
+        };
+        let (front_line_routing, route_margin) = match self.ephemeral.cfg.warehouse.as_ref() {
+            Some(w) => (w.front_line_routing, w.route_block_margin_m),
+            None => (false, 0.),
+        };
+        let dispatch_cooldown = Duration::minutes(tick_minutes * convoy_cooldown_ticks);
+        let convoy_spawn_interval = Duration::minutes(tick_minutes * convoy_spawn_interval_ticks);
+        let air_spawn_interval = Duration::minutes(tick_minutes * air_spawn_interval_ticks);
+        let mut convoy_budget: FxHashMap<Side, usize> = FxHashMap::default();
+        let mut air_budget: FxHashMap<Side, usize> = FxHashMap::default();
+        for side in Side::ALL {
+            let convoys_out = self.ephemeral.active_convoys.values().filter(|c| c.side == side).count();
+            let side_ready = self
+                .ephemeral
+                .last_convoy_spawn
+                .get(&side)
+                .map(|t| now - *t >= convoy_spawn_interval)
+                .unwrap_or(true);
+            convoy_budget.insert(
+                side,
+                if convoy_enabled && side_ready {
+                    convoy_max_concurrent.saturating_sub(convoys_out)
+                } else {
+                    0
+                },
+            );
+            let air_out = self.ephemeral.active_air_routes.values().filter(|r| r.side == side).count();
+            let air_ready = self
+                .ephemeral
+                .last_air_route_spawn
+                .get(&side)
+                .map(|t| now - *t >= air_spawn_interval)
+                .unwrap_or(true);
+            air_budget.insert(
+                side,
+                if air_enabled && air_ready {
+                    air_max_concurrent.saturating_sub(air_out)
+                } else {
+                    0
+                },
+            );
+        }
+
         for lid in hub_ids {
             let logi = objective!(self, &lid)?;
             let hub_side = logi.owner;
@@ -2761,72 +4199,171 @@ impl Db {
             let mut convoy_needed: SmallVec<[Needed; 64]> = SmallVec::new();
             let mut air_needed: SmallVec<[Needed; 64]> = SmallVec::new();
 
-            // Check air route throttle for this hub's side
-            let air_supply_threshold = self.ephemeral.cfg.warehouse
-                .as_ref()
-                .and_then(|w| w.air_logistics.as_ref())
-                .map(|a| a.supply_threshold)
-                .unwrap_or(50);
-            let air_max_concurrent = self.ephemeral.cfg.warehouse
-                .as_ref()
-                .and_then(|w| w.air_logistics.as_ref())
-                .map(|a| a.max_concurrent_routes as usize)
-                .unwrap_or(6);
-            let air_spawn_interval_ticks = self.ephemeral.cfg.warehouse
-                .as_ref()
-                .and_then(|w| w.air_logistics.as_ref())
-                .map(|a| a.spawn_interval_ticks)
-                .unwrap_or(3);
-            let tick_minutes = self.ephemeral.cfg.warehouse
-                .as_ref()
-                .map(|w| w.tick)
-                .unwrap_or(10);
-            let air_active_count = self.ephemeral.active_air_routes.values()
-                .filter(|r| r.side == hub_side)
-                .count();
-            let air_last_spawn = self.ephemeral.last_air_route_spawn.get(&hub_side).copied();
-            let air_spawn_interval = Duration::minutes(tick_minutes as i64 * air_spawn_interval_ticks as i64);
-            let air_can_spawn = air_enabled
-                && air_active_count < air_max_concurrent
-                && air_last_spawn.map(|t| now - t >= air_spawn_interval).unwrap_or(true);
-
+            // Service the most starved destinations first, so a limited number
+            // of transports goes where it actually matters instead of to
+            // whichever objective happened to iterate first.
+            let mut candidates: SmallVec<[(&ObjectiveId, &Objective, u8, bool); 64]> =
+                SmallVec::new();
+            // Why each destination did or didn't get a run this tick. The
+            // dispatch rules are a stack of budgets, cooldowns and route
+            // checks, and without this the only observable symptom of any of
+            // them firing is a base that quietly never gets resupplied.
+            let mut n_dest = 0usize;
+            let mut n_full = 0usize;
+            let mut n_detached = 0usize;
+            let mut n_inbound = 0usize;
+            let mut n_cooling = 0usize;
+            let mut n_cut_nolift = 0usize;
+            let mut n_no_transport = 0usize;
             for oid in logi.warehouse.destination.into_iter() {
                 if let Some(obj) = self.persisted.objectives.get(oid) {
-                    if logi.owner == obj.owner && (obj.supply < 100 || obj.fuel < 100) {
-                        // LOGISTICS_DETACHED = the objective is cut off from
-                        // the automatic supply chain: no convoy, no air, no
-                        // instant. Players resupply it by hand (Base Supply
-                        // crates, C-130 airdrop). A CONNECTED objective gets a
-                        // convoy (interdictable), or a cargo plane if it's
-                        // very low and a convoy slot isn't free; instant
-                        // transfer only when the convoy system is disabled.
-                        if obj.logistics_detached {
-                            continue;
-                        }
-
-                        let needed = Needed {
-                            oid,
-                            obj,
-                            demanded: 0,
-                            allocated: 0,
-                        };
-
-                        if convoy_enabled {
-                            convoy_needed.push(needed);
-                        } else if air_can_spawn && (obj.supply < air_supply_threshold || obj.fuel < air_supply_threshold) {
-                            air_needed.push(needed);
-                        } else {
-                            instant_needed.push(needed);
-                        }
+                    if logi.owner != obj.owner {
+                        continue;
                     }
+                    n_dest += 1;
+                    if obj.supply >= 100 && obj.fuel >= 100 && obj.aircraft >= 100 {
+                        n_full += 1;
+                        continue;
+                    }
+                    // LOGISTICS_DETACHED = the objective is cut off from the
+                    // automatic supply chain: no convoy, no air, no instant.
+                    // Players resupply it by hand (Base Supply crates, C-130
+                    // airdrop).
+                    if obj.logistics_detached {
+                        n_detached += 1;
+                        continue;
+                    }
+                    // Don't stack a second load on a destination that already
+                    // has one inbound, and leave a cooldown between runs so a
+                    // base isn't served by a fresh convoy pair every tick.
+                    let inbound = self
+                        .ephemeral
+                        .active_convoys
+                        .values()
+                        .any(|c| c.destination == *oid)
+                        || self
+                            .ephemeral
+                            .active_air_routes
+                            .values()
+                            .any(|r| r.destination == *oid);
+                    let cooling = self
+                        .ephemeral
+                        .last_dispatch_to
+                        .get(oid)
+                        .map(|t| now - *t < dispatch_cooldown)
+                        .unwrap_or(false);
+                    if inbound || cooling {
+                        if inbound {
+                            n_inbound += 1;
+                        } else {
+                            n_cooling += 1;
+                        }
+                        debug!(
+                            "[LOGI_DISPATCH] {} -> {}: skipped ({})",
+                            logi.name,
+                            obj.name,
+                            if inbound { "load already inbound" } else { "in dispatch cooldown" }
+                        );
+                        continue;
+                    }
+                    // Can a convoy physically get there? If enemy ground
+                    // sits astride the route, the road is closed and the only
+                    // way in is by air.
+                    let road_cut = front_line_routing
+                        && route_interdicted(
+                            &self.persisted,
+                            obj.owner,
+                            logi.zone.pos(),
+                            obj.zone.pos(),
+                            route_margin,
+                        );
+                    candidates.push((
+                        oid,
+                        obj,
+                        min(obj.supply, min(obj.fuel, obj.aircraft)),
+                        road_cut,
+                    ));
                 }
             }
+            candidates.sort_by_key(|(_, _, worst, _)| *worst);
+
+            for (oid, obj, worst, road_cut) in candidates {
+                let needed = Needed {
+                    oid,
+                    obj,
+                    demanded: 0,
+                    allocated: 0,
+                };
+                // An airlift is the priority-relief mode: it goes to the
+                // destinations that are genuinely starving, and it works over
+                // ground the enemy holds. Everything else goes by road. These
+                // used to be mutually exclusive -- with convoys enabled the
+                // air branch was unreachable, so the cargo aircraft never
+                // flew at all no matter how low a base got.
+                let critical = worst < air_supply_threshold;
+                let air_left = air_budget.get(&hub_side).copied().unwrap_or(0);
+                let convoy_left = convoy_budget.get(&hub_side).copied().unwrap_or(0);
+                if air_enabled && (critical || road_cut) && air_left > 0 {
+                    air_budget.insert(hub_side, air_left - 1);
+                    air_needed.push(needed);
+                    debug!(
+                        "[LOGI_DISPATCH] {} -> {}: AIR (worst {worst}%, critical={critical}, road_cut={road_cut}, {} slot(s) left)",
+                        logi.name,
+                        obj.name,
+                        air_left - 1
+                    );
+                } else if convoy_enabled && !road_cut && convoy_left > 0 {
+                    convoy_budget.insert(hub_side, convoy_left - 1);
+                    convoy_needed.push(needed);
+                    debug!(
+                        "[LOGI_DISPATCH] {} -> {}: ROAD (worst {worst}%, {} slot(s) left)",
+                        logi.name,
+                        obj.name,
+                        convoy_left - 1
+                    );
+                } else if road_cut {
+                    n_cut_nolift += 1;
+                    info!(
+                        "[LOGI_DISPATCH] {} -> {}: CUT OFF -- enemy ground astride the route and no airlift slot free (worst {worst}%, air budget {air_left})",
+                        logi.name, obj.name
+                    );
+                } else if !convoy_enabled && !air_enabled {
+                    // No transport system at all: fall back to the original
+                    // instant warehouse-to-warehouse transfer.
+                    instant_needed.push(needed);
+                } else {
+                    n_no_transport += 1;
+                    info!(
+                        "[LOGI_DISPATCH] {} -> {}: WAITING -- every transport slot is busy (worst {worst}%, road {convoy_left}, air {air_left})",
+                        logi.name, obj.name
+                    );
+                }
+                // Otherwise every transport slot is busy -- the supplies stay
+                // at the hub and wait for the next tick, which is the point of
+                // having a finite transport fleet.
+            }
+
+            // One line per hub per tick: the whole dispatch decision, greppable
+            // as [LOGI_DISPATCH]. Turn on debug for the per-destination detail.
+            info!(
+                "[LOGI_DISPATCH] {} ({:?}): {n_dest} destination(s) -- {} sent by road, {} by air, \
+                 {} instant | skipped: {n_full} full, {n_detached} detached, {n_inbound} inbound, \
+                 {n_cooling} cooling, {n_cut_nolift} cut off, {n_no_transport} no transport | \
+                 budget left road {} air {}",
+                logi.name,
+                hub_side,
+                convoy_needed.len(),
+                air_needed.len(),
+                instant_needed.len(),
+                convoy_budget.get(&hub_side).copied().unwrap_or(0),
+                air_budget.get(&hub_side).copied().unwrap_or(0),
+            );
 
             let mut needed = instant_needed;
             macro_rules! schedule_transfers {
                 ($typ:expr, $from:ident, $get:ident) => {
                     for (name, inv) in &logi.warehouse.$from {
-                        if inv.stored == 0 {
+                        if releasable(inv) == 0 {
                             continue;
                         }
                         needed.sort_by(|n0, n1| {
@@ -2846,7 +4383,7 @@ impl Db {
                             n.demanded = demanded;
                             n.allocated = 0;
                         }
-                        let mut have = inv.stored;
+                        let mut have = releasable(inv);
                         let mut total_filled = 0;
                         while have > 0 && total_filled < total_demanded {
                             for n in &mut needed {
@@ -2885,7 +4422,7 @@ impl Db {
                 let mut needed = convoy_needed;
                 // Schedule fuel transfers (for convoys)
                 for (name, inv) in &logi.warehouse.liquids {
-                    if inv.stored == 0 {
+                    if releasable(inv) == 0 {
                         continue;
                     }
                     needed.sort_by(|n0, n1| {
@@ -2905,7 +4442,7 @@ impl Db {
                         n.demanded = demanded;
                         n.allocated = 0;
                     }
-                    let mut have = inv.stored;
+                    let mut have = releasable(inv);
                     let mut total_filled = 0;
                     while have > 0 && total_filled < total_demanded {
                         for n in &mut needed {
@@ -2934,7 +4471,7 @@ impl Db {
 
                 // Schedule equipment transfers (for convoys)
                 for (name, inv) in &logi.warehouse.equipment {
-                    if inv.stored == 0 {
+                    if releasable(inv) == 0 {
                         continue;
                     }
                     needed.sort_by(|n0, n1| {
@@ -2954,7 +4491,7 @@ impl Db {
                         n.demanded = demanded;
                         n.allocated = 0;
                     }
-                    let mut have = inv.stored;
+                    let mut have = releasable(inv);
                     let mut total_filled = 0;
                     while have > 0 && total_filled < total_demanded {
                         for n in &mut needed {
@@ -3012,7 +4549,7 @@ impl Db {
 
                 let mut needed = air_needed;
                 for (name, inv) in &logi.warehouse.liquids {
-                    if inv.stored == 0 {
+                    if releasable(inv) == 0 {
                         continue;
                     }
                     needed.sort_by(|n0, n1| {
@@ -3027,7 +4564,7 @@ impl Db {
                         n.demanded = demanded;
                         n.allocated = 0;
                     }
-                    let mut have = inv.stored;
+                    let mut have = releasable(inv);
                     let mut total_filled = 0;
                     while have > 0 && total_filled < total_demanded {
                         for n in &mut needed {
@@ -3051,7 +4588,7 @@ impl Db {
                     }
                 }
                 for (name, inv) in &logi.warehouse.equipment {
-                    if inv.stored == 0 {
+                    if releasable(inv) == 0 {
                         continue;
                     }
                     needed.sort_by(|n0, n1| {
@@ -3066,7 +4603,7 @@ impl Db {
                         n.demanded = demanded;
                         n.allocated = 0;
                     }
-                    let mut have = inv.stored;
+                    let mut have = releasable(inv);
                     let mut total_filled = 0;
                     while have > 0 && total_filled < total_demanded {
                         for n in &mut needed {
@@ -3111,42 +4648,61 @@ impl Db {
             }
         }
 
-        // Spawn all collected convoys (after we're done with objective references)
+        // Spawn the collected convoys and air routes. The stock is debited
+        // only once the transport has actually spawned -- doing it the other
+        // way round meant a spawn that turned into a no-op (no truck or
+        // aircraft template configured for that side) silently destroyed the
+        // load. On success it goes into the persisted in-flight ledger so a
+        // mission restart refunds it instead of deleting it.
         for route_info in convoys_to_spawn {
-            // Deduct supplies from source immediately (convoy takes them)
-            for tr in &route_info.transfers {
-                if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
-                    error!("Failed to deduct supplies for convoy: {:?}", e);
-                }
-            }
-            if let Err(e) = self.spawn_supply_convoy(
+            match self.spawn_supply_convoy(
                 lua,
                 route_info.origin,
                 route_info.destination,
                 route_info.cargo_type,
-                route_info.transfers,
+                route_info.transfers.clone(),
                 now,
             ) {
-                error!("Failed to spawn {:?} convoy: {:?}", route_info.cargo_type, e);
+                Ok(Some(id)) => {
+                    self.escrow_cargo(
+                        &id,
+                        route_info.origin,
+                        route_info.destination,
+                        &route_info.transfers,
+                        now,
+                    );
+                    self.ephemeral
+                        .last_dispatch_to
+                        .insert(route_info.destination, now);
+                }
+                Ok(None) => (),
+                Err(e) => error!("Failed to spawn {:?} convoy: {:?}", route_info.cargo_type, e),
             }
         }
 
-        // Spawn all collected air routes
         for route_info in air_routes_to_spawn {
-            for tr in &route_info.transfers {
-                if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
-                    error!("Failed to deduct supplies for air route: {:?}", e);
-                }
-            }
-            if let Err(e) = self.spawn_air_logistics_route(
+            match self.spawn_air_logistics_route(
                 lua,
                 route_info.origin,
                 route_info.destination,
                 route_info.cargo_type,
-                route_info.transfers,
+                route_info.transfers.clone(),
                 now,
             ) {
-                error!("Failed to spawn {:?} air route: {:?}", route_info.cargo_type, e);
+                Ok(Some(id)) => {
+                    self.escrow_cargo(
+                        &id,
+                        route_info.origin,
+                        route_info.destination,
+                        &route_info.transfers,
+                        now,
+                    );
+                    self.ephemeral
+                        .last_dispatch_to
+                        .insert(route_info.destination, now);
+                }
+                Ok(None) => (),
+                Err(e) => error!("Failed to spawn {:?} air route: {:?}", route_info.cargo_type, e),
             }
         }
 
@@ -3293,20 +4849,30 @@ impl Db {
             }
 
             for route_info in sea_routes_to_spawn {
-                for tr in &route_info.transfers {
-                    if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
-                        error!("Failed to deduct supplies for sea route: {:?}", e);
-                    }
-                }
-                if let Err(e) = self.spawn_sea_logistics_route(
+                match self.spawn_sea_logistics_route(
                     lua,
                     route_info.origin,
                     route_info.destination,
                     route_info.cargo_type,
-                    route_info.transfers,
+                    route_info.transfers.clone(),
                     now,
                 ) {
-                    error!("Failed to spawn {:?} sea route: {:?}", route_info.cargo_type, e);
+                    Ok(Some(id)) => {
+                        self.escrow_cargo(
+                            &id,
+                            route_info.origin,
+                            route_info.destination,
+                            &route_info.transfers,
+                            now,
+                        );
+                        self.ephemeral
+                            .last_dispatch_to
+                            .insert(route_info.destination, now);
+                    }
+                    Ok(None) => (),
+                    Err(e) => {
+                        error!("Failed to spawn {:?} sea route: {:?}", route_info.cargo_type, e)
+                    }
                 }
             }
         }
@@ -3315,38 +4881,123 @@ impl Db {
     }
 
     pub fn run_factory_production(&mut self, now: DateTime<Utc>) -> Result<()> {
-        let cfg = match &self.ephemeral.cfg.factory {
-            Some(c) => c,
+        let interval = match &self.ephemeral.cfg.factory {
+            Some(c) => Duration::seconds(c.production_interval as i64),
             None => return Ok(()),
         };
-
-        for (_, obj) in self.persisted.objectives.iter_mut_cow() {
-            if let ObjectiveKind::Factory { production_rate, last_production_ts } = &mut obj.kind {
-                // Only produce if operational: health > 0, logi > 0, not neutral
-                if obj.health > 0 && obj.logi > 0 && obj.owner != Side::Neutral {
-                    let should_produce = last_production_ts
-                        .map(|ts| now - ts >= Duration::seconds(cfg.production_interval as i64))
-                        .unwrap_or(true);
-
-                    if should_produce {
-                        // Add to generic equipment inventory
-                        if let Some(inv) = obj.warehouse.equipment.get_mut_cow("SUPPLIES") {
-                            inv.stored += *production_rate;
-                        } else {
-                            obj.warehouse.equipment.insert_cow(
-                                "SUPPLIES".into(),
-                                Inventory {
-                                    stored: *production_rate,
-                                    capacity: u32::MAX,
-                                },
-                            );
-                        }
-                        *last_production_ts = Some(now);
-                    }
-                }
+        let materiel_enabled = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.materiel.as_ref())
+            .map(|m| m.enabled)
+            .unwrap_or(false);
+        // Which factories produced this cycle, and how much. Their output is
+        // then trucked to the nearest friendly hub -- a factory used to pile
+        // stock into its own warehouse where nothing could ever collect it,
+        // so building or bombing one changed nothing at all.
+        let mut produced: SmallVec<[(ObjectiveId, Side, u32); 8]> = smallvec![];
+        for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
+            let ObjectiveKind::Factory { production_rate, last_production_ts } = &mut obj.kind else {
+                continue;
+            };
+            // Only produce if operational: health > 0, logi > 0, not neutral
+            if obj.health == 0 || obj.logi == 0 || obj.owner == Side::Neutral {
+                continue;
+            }
+            let should_produce = last_production_ts
+                .map(|ts| now - ts >= interval)
+                .unwrap_or(true);
+            if !should_produce {
+                continue;
+            }
+            // A damaged factory runs at reduced output rather than either
+            // full rate or nothing.
+            let qty = ((*production_rate as f64) * (obj.logi as f64 / 100.)).round() as u32;
+            *last_production_ts = Some(now);
+            if qty == 0 {
+                continue;
+            }
+            let inv = obj
+                .warehouse
+                .equipment
+                .get_or_default_cow(dcso3::String::from(MATERIEL_ITEM));
+            if inv.capacity == 0 {
+                inv.capacity = qty.saturating_mul(4);
+            }
+            *inv += qty;
+            produced.push((*oid, obj.owner, qty));
+        }
+        if produced.is_empty() {
+            return Ok(());
+        }
+        self.ephemeral.dirty();
+        if !materiel_enabled {
+            // Without the materiel commodity there is nowhere for factory
+            // output to usefully go, so leave it in the factory (the old
+            // behaviour) rather than shipping a commodity nothing spends.
+            return Ok(());
+        }
+        for (fid, side, qty) in produced {
+            let Some(hub) = self.nearest_hub_for(fid, side) else {
+                continue;
+            };
+            // Only the materiel it just made moves -- a factory is also a
+            // normal objective with a full warehouse, and shipping all of it
+            // would strip the factory bare every cycle.
+            let headroom = self
+                .persisted
+                .objectives
+                .get(&hub)
+                .and_then(|h| h.warehouse.equipment.get(MATERIEL_ITEM))
+                .map(|inv| inv.capacity.saturating_sub(inv.stored))
+                .unwrap_or(0);
+            let amount = min(qty, headroom);
+            if amount == 0 {
+                continue;
+            }
+            let tr = Transfer {
+                source: fid,
+                target: hub,
+                amount,
+                item: TransferItem::Equipment(dcso3::String::from(MATERIEL_ITEM)),
+            };
+            let (fname, hname) = (
+                self.persisted.objectives.get(&fid).map(|o| o.name.clone()).unwrap_or_default(),
+                self.persisted.objectives.get(&hub).map(|o| o.name.clone()).unwrap_or_default(),
+            );
+            if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
+                error!("[MATERIEL] moving factory output {fname} -> {hname}: {e:?}");
+            } else {
+                info!(
+                    "[MATERIEL] factory {fname} produced {qty}, shipped {amount} to {hname} \
+                     (hub headroom was {headroom})"
+                );
             }
         }
+        self.ephemeral.dirty();
         Ok(())
+    }
+
+    /// Nearest same-side logistics hub to `oid`, used to route factory output
+    /// into the supply network.
+    fn nearest_hub_for(&self, oid: ObjectiveId, side: Side) -> Option<ObjectiveId> {
+        let pos = self.persisted.objectives.get(&oid)?.zone.pos();
+        let mut best: Option<(ObjectiveId, f64)> = None;
+        for hid in &self.persisted.logistics_hubs {
+            let Some(hub) = self.persisted.objectives.get(hid) else {
+                continue;
+            };
+            if hub.owner != side {
+                continue;
+            }
+            let d = na::distance_squared(&pos.into(), &hub.zone.pos().into());
+            if best.map_or(true, |(_, bd)| d < bd) {
+                best = Some((*hid, d));
+            }
+        }
+        best.map(|(id, _)| id)
     }
 
     fn balance_logistics_hubs(&mut self) -> Result<()> {
@@ -3438,28 +5089,77 @@ impl Db {
         Ok(())
     }
 
+    /// Recompute every objective's readiness numbers.
+    ///
+    /// Each item is weighted by how much of it the side produces, which is a
+    /// decent proxy for how fast it gets burned through. The old unweighted
+    /// mean gave a rare store the same say as a chaff cartridge, so a base
+    /// that was out of the only missile anyone actually flies with still read
+    /// as comfortably supplied -- and that number is what drives convoy
+    /// dispatch and the commander's target selection. Airframes are scored
+    /// separately from munitions for the same reason: blended together, an
+    /// empty ramp disappeared into a full magazine.
     pub(super) fn update_supply_status(&mut self) -> Result<()> {
+        // Materiel has no production-map entry of its own, and it is the
+        // commodity repairs and deployments are actually paid for in, so give
+        // it a standing weight rather than letting it drop out of the average.
+        const MATERIEL_WEIGHT: f64 = 1000.;
         for (_, obj) in self.persisted.objectives.iter_mut_cow() {
             let current_supply = obj.supply;
             let current_fuel = obj.fuel;
-            let mut n = 0;
-            let mut sum: u32 = 0;
-            for (_, inv) in &obj.warehouse.equipment {
-                if let Some(pct) = inv.percent() {
-                    sum += pct as u32;
-                    n += 1;
+            let production = self.ephemeral.production_by_side.get(&obj.owner);
+            let mut mun_sum = 0.;
+            let mut mun_weight = 0.;
+            let mut air_sum = 0.;
+            let mut air_weight = 0.;
+            for (name, inv) in &obj.warehouse.equipment {
+                let Some(pct) = inv.percent() else { continue };
+                let weight = if name.as_str() == MATERIEL_ITEM {
+                    MATERIEL_WEIGHT
+                } else {
+                    production
+                        .and_then(|p| p.equipment.get(name))
+                        .map(|e| e.production as f64)
+                        .unwrap_or(0.)
+                };
+                if weight <= 0. {
+                    continue;
+                }
+                if is_airframe_item(name.as_str()) {
+                    air_sum += weight * pct as f64;
+                    air_weight += weight;
+                } else {
+                    mun_sum += weight * pct as f64;
+                    mun_weight += weight;
                 }
             }
-            obj.supply = if n == 0 { 0 } else { (sum / n) as u8 };
-            n = 0;
-            sum = 0;
-            for (_, inv) in &obj.warehouse.liquids {
-                if let Some(pct) = inv.percent() {
-                    sum += pct as u32;
-                    n += 1;
-                }
+            let mut liq_sum = 0.;
+            let mut liq_weight = 0.;
+            for (name, inv) in &obj.warehouse.liquids {
+                let Some(pct) = inv.percent() else { continue };
+                let weight = production
+                    .and_then(|p| p.liquids.get(name))
+                    .map(|q| *q as f64)
+                    .unwrap_or(1.);
+                liq_sum += weight * pct as f64;
+                liq_weight += weight;
             }
-            obj.fuel = if n == 0 { 0 } else { (sum / n) as u8 };
+            let mean = |sum: f64, weight: f64| -> u8 {
+                if weight <= 0. {
+                    0
+                } else {
+                    (sum / weight).round().clamp(0., 100.) as u8
+                }
+            };
+            obj.supply = mean(mun_sum, mun_weight);
+            obj.fuel = mean(liq_sum, liq_weight);
+            // A base with no airframe entries at all (a FOB, a logistics hub)
+            // isn't short of aircraft -- it just doesn't operate any.
+            obj.aircraft = if air_weight <= 0. {
+                100
+            } else {
+                mean(air_sum, air_weight)
+            };
             if current_supply != obj.supply || current_fuel != obj.fuel {
                 self.ephemeral.stat(Stat::ObjectiveSupply {
                     id: obj.id,
@@ -3506,7 +5206,15 @@ impl Db {
             .context("getting airbase")?
             .get_warehouse()
             .context("getting warehouse")?;
-        sync_obj_to_warehouse(obj, &warehouse).context("syncing warehouse to objective")?;
+        match warehouse::Warehouse::get_resource_map(lua) {
+            Ok(map) => sync_obj_to_warehouse_zeroing_foreign_airframes(obj, &warehouse, &map)
+                .context("syncing objective to warehouse")?,
+            Err(e) => {
+                // Fall back to the plain sync rather than skipping it entirely.
+                warn!("no resource map, foreign airframes not zeroed: {e:?}");
+                sync_obj_to_warehouse(obj, &warehouse).context("syncing objective to warehouse")?
+            }
+        }
         Ok((obj, warehouse))
     }
 
@@ -3548,11 +5256,13 @@ impl Db {
             .unwrap_or_default();
 
         for (name, inv) in &from_obj.warehouse.equipment {
-            // Skip airframes - they should never be transferred via supply crates
-            // Airframes don't have prefixes like "weapons.", "vehicles." - they're just aircraft type names
-            let is_airframe = !name.starts_with("weapons.")
-                && !name.starts_with("vehicles.")
-                && !name.starts_with("Fortifications.");
+            // Skip airframes - they should never be transferred via supply crates.
+            // Airframes don't have prefixes like "weapons." or "vehicles." --
+            // they're just aircraft type names, which is also true of the
+            // synthetic materiel item, so use the shared predicate rather than
+            // repeating the prefix test and accidentally excluding materiel
+            // from the one mechanic players have for moving it by hand.
+            let is_airframe = is_airframe_item(name.as_str());
 
             if is_airframe || exempt_airframes.contains(name.as_str()) {
                 debug!("[SUPPLY_TRANSFER] Skipping airframe: {} (stored: {})", name, inv.stored);
@@ -3690,6 +5400,120 @@ impl Db {
         self.update_supply_status()
             .context("updating supply status")?;
         self.ephemeral.dirty();
+        Ok(())
+    }
+
+    /// Dump the whole logistics picture to the log on demand, so a problem
+    /// can be diagnosed without waiting up to a full tick for the periodic
+    /// lines to come round -- and without needing every one of them turned up
+    /// to debug. Reachable from chat as `-logistics`.
+    pub fn admin_log_logistics(&self) -> Result<()> {
+        use std::fmt::Write;
+        let whcfg = match self.ephemeral.cfg.warehouse.as_ref() {
+            Some(w) => w,
+            None => {
+                warn!("[LOGI_REPORT] no warehouse config -- the logistics system is off entirely");
+                return Ok(());
+            }
+        };
+        let mut msg = CompactString::new("logistics report\n");
+        let _ = write!(
+            msg,
+            "tick {} min, delivery every {} tick(s), hub reserve {}%, front-line routing {}\n",
+            whcfg.tick,
+            whcfg.ticks_per_delivery,
+            whcfg.hub_reserve_percent,
+            whcfg.front_line_routing
+        );
+        let materiel = whcfg.materiel.as_ref().filter(|m| m.enabled);
+        match materiel {
+            Some(m) => {
+                let _ = write!(
+                    msg,
+                    "materiel: {} per delivery, repair {} / deploy {} per use\n",
+                    m.hub_production, m.repair_cost, m.deploy_cost
+                );
+            }
+            None => {
+                let _ = write!(msg, "materiel: disabled (repair/deploy use the legacy % draw)\n");
+            }
+        }
+        for side in Side::ALL {
+            if side == Side::Neutral {
+                continue;
+            }
+            let baseline = self.persisted.production_baseline.get(&side).copied();
+            let _ = write!(
+                msg,
+                "-- {side:?}: convoys {}, air routes {}, sea routes {}, production baseline {}\n",
+                self.ephemeral.active_convoys.values().filter(|c| c.side == side).count(),
+                self.ephemeral.active_air_routes.values().filter(|r| r.side == side).count(),
+                self.ephemeral.active_sea_routes.values().filter(|r| r.side == side).count(),
+                baseline.map(|b| format_compact!("{b:.1}")).unwrap_or_else(|| "unset".into()),
+            );
+        }
+        for (oid, obj) in &self.persisted.objectives {
+            if !self.persisted.logistics_hubs.contains(oid)
+                && !matches!(obj.kind, ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. })
+            {
+                continue;
+            }
+            let mat = obj
+                .warehouse
+                .equipment
+                .get(MATERIEL_ITEM)
+                .map(|i| format_compact!("{}/{}", i.stored, i.capacity))
+                .unwrap_or_else(|| "none".into());
+            let _ = write!(
+                msg,
+                "hub {} ({:?}, {:?}): logi {}%, materiel {mat}, feeds {} destination(s)\n",
+                obj.name,
+                obj.owner,
+                obj.kind,
+                obj.logi,
+                obj.warehouse.destination.into_iter().count()
+            );
+        }
+        if self.persisted.pending_cargo.len() == 0 {
+            let _ = write!(msg, "no cargo in flight\n");
+        } else {
+            for (id, p) in &self.persisted.pending_cargo {
+                let units: u32 = p.transfers.iter().map(|t| t.amount).sum();
+                let _ = write!(
+                    msg,
+                    "in flight {id}: {} -> {}, {units} unit(s), {} min out\n",
+                    self.persisted.objectives.get(&p.origin).map(|o| o.name.as_str()).unwrap_or("?"),
+                    self.persisted.objectives.get(&p.destination).map(|o| o.name.as_str()).unwrap_or("?"),
+                    (Utc::now() - p.departed).num_minutes()
+                );
+            }
+        }
+        // Bases that are actually in trouble, which is what anyone running
+        // this command is looking for.
+        for (_, obj) in &self.persisted.objectives {
+            if obj.owner == Side::Neutral || obj.kind.is_special_sam_site() {
+                continue;
+            }
+            let worst = min(obj.supply, min(obj.fuel, obj.aircraft));
+            if worst >= 50 {
+                continue;
+            }
+            let _ = write!(
+                msg,
+                "LOW {}: munitions {}%, fuel {}%, aircraft {}%, supplier {}{}\n",
+                obj.name,
+                obj.supply,
+                obj.fuel,
+                obj.aircraft,
+                obj.warehouse
+                    .supplier
+                    .and_then(|id| self.persisted.objectives.get(&id))
+                    .map(|o| o.name.as_str())
+                    .unwrap_or("NONE"),
+                if obj.logistics_detached { " [DETACHED]" } else { "" }
+            );
+        }
+        warn!("[LOGI_REPORT] {msg}");
         Ok(())
     }
 

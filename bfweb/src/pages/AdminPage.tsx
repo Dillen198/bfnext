@@ -10,7 +10,7 @@ import { useTableSort, SortTh } from '../components/SortableTh'
 import {
   Shield, Users, Trash2, AlertTriangle, RotateCcw,
   Activity, Ban, UserX, Terminal, Search, ChevronsDown,
-  Server, Play, Square, RotateCw, Pause, PlayCircle, Radio,
+  Server, Play, Square, RotateCw, Pause, PlayCircle, Radio, Heart,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
@@ -674,6 +674,10 @@ export default function AdminPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
+  const [livesConfirm,  setLivesConfirm]  = useState(false)
+  const [livesLoading,  setLivesLoading]  = useState(false)
+  const [livesResult,   setLivesResult]   = useState<string | null>(null)
+  const [livesError,    setLivesError]    = useState<string | null>(null)
   const [resetConfirm,  setResetConfirm]  = useState(false)
   const [resetLoading,  setResetLoading]  = useState(false)
   const [resetDone,     setResetDone]     = useState(false)
@@ -717,6 +721,24 @@ export default function AdminPage() {
       setResetConfirm(false)
     } finally {
       setResetLoading(false)
+    }
+  }
+
+  async function handleResetLives() {
+    setLivesLoading(true)
+    setLivesError(null)
+    try {
+      const r = await api.admin.resetLivesAll()
+      setLivesResult(r.message || 'Lives reset')
+      setLivesConfirm(false)
+      queryClient.invalidateQueries({ queryKey: ['admin'] })
+    } catch (e) {
+      // The engine RPC is the only way to touch live campaign state -- if the
+      // server is down or netidx is unreachable, say so instead of silently
+      // pretending the reset happened.
+      setLivesError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLivesLoading(false)
     }
   }
 
@@ -1029,6 +1051,47 @@ export default function AdminPage() {
 
         {/* ── DCSServerBot server control ── */}
         <ServerControlPanel />
+
+        {/* ── Player lives ── */}
+        <div className="vs-card">
+          <CardHeader
+            icon={<Heart size={13} style={{ color: 'var(--accent)' }} />}
+            label="Player Lives"
+          />
+          <div className="p-4 flex items-start justify-between gap-6">
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text)', fontWeight: 600, marginBottom: '0.3rem' }}>Reset Lives For Everyone</div>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 420 }}>
+                Clears the consumed-lives counter for every player on the server, as if each life
+                timer had just expired. Applies immediately; players already in a slot keep flying.
+                Requires a live engine connection.
+              </div>
+            </div>
+            <div className="flex flex-col items-end gap-2 flex-shrink-0">
+              {livesResult && <div style={{ fontSize: '0.65rem', color: 'var(--accent)', letterSpacing: '0.06em' }}>✓ {livesResult}</div>}
+              {livesError && <div style={{ fontSize: '0.65rem', color: '#ef4444', letterSpacing: '0.06em', maxWidth: 260, textAlign: 'right' }}>{livesError}</div>}
+              {!livesConfirm ? (
+                <button onClick={() => { setLivesConfirm(true); setLivesResult(null); setLivesError(null) }}
+                  className="flex items-center gap-1.5"
+                  style={{ fontSize: '0.68rem', color: 'var(--accent)', background: 'none', border: '1px solid var(--border)', padding: '0.4rem 0.9rem', borderRadius: 3, cursor: 'pointer', letterSpacing: '0.08em' }}>
+                  <RotateCcw size={11} /> RESET ALL LIVES
+                </button>
+              ) : (
+                <div className="flex flex-col items-end gap-1.5">
+                  <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>Restore lives for every player?</div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setLivesConfirm(false)}
+                      style={{ fontSize: '0.65rem', color: 'var(--text-dim)', background: 'none', border: '1px solid var(--border)', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: 'pointer' }}>Cancel</button>
+                    <button onClick={handleResetLives} disabled={livesLoading}
+                      style={{ fontSize: '0.65rem', color: '#000', background: 'var(--accent)', border: 'none', padding: '0.3rem 0.8rem', borderRadius: 3, cursor: livesLoading ? 'not-allowed' : 'pointer', opacity: livesLoading ? 0.7 : 1 }}>
+                      {livesLoading ? 'Resetting…' : 'YES, RESET LIVES'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* ── Danger zone ── */}
         <div className="vs-card" style={{ border: '1px solid rgba(239,68,68,0.25)' }}>

@@ -187,7 +187,10 @@ export function useScopeFeed(): ScopeFeed {
 
     for (const t of picture.air) {
       const id = remap(`a${t.id}`)
-      const nm = t.label ?? AIR_NAME[t.class]
+      // Prefer the exact DCS type name so entity.ts's AircraftToSidcIcon
+      // lookup can draw a real aircraft-specific symbol; fall back to the
+      // coarse class label when the engine couldn't identify the type.
+      const nm = t.unit_type ?? t.label ?? AIR_NAME[t.class]
       objects[id] = {
         estimatedSpeed: t.speed_kts,
         estimatedAltitudeRate: t.vspd_ms * 0.19685, // m/s -> kft/min

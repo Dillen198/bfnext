@@ -15,6 +15,7 @@ Quick reference for all Fowl Engine chat commands.
 | `-lives` | Check lives, points, status | `-lives` |
 | `-balance` | Check point balance | `-balance` |
 | `-time` | Check server restart time | `-time` |
+| `-brief` | Auto-generated situational briefing (full report: F10 > Info > Situation) | `-brief` |
 | `-help` | Show command list | `-help` |
 
 ### Unit Management

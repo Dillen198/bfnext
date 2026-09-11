@@ -2,19 +2,23 @@ use super::{ArgPent, ArgQuad, ArgTriple};
 use crate::{
     Context,
     db::{
-        actions::{ActionArgs, ActionCmd, WithObj, WithPos, WithPosAndGroup},
+        actions::{
+            ActionArgs, ActionCmd, AddTaskArgs, TaskAt, WithObj, WithPos, WithPosAndGroup,
+            WithTask,
+        },
         group::DeployKind,
+        tasks::TaskId,
     },
-    menu::jtac::call_bomber,
+    menu::{jtac::call_bomber, objectives},
     spawnctx::SpawnCtx,
 };
 use anyhow::{Context as ErrContext, Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{Action, ActionGeoLimit, ActionKind, UnitTag},
+    cfg::{Action, ActionGeoLimit, ActionKind, TaskCfg, TaskTarget, UnitTag},
     db::{group::GroupId as DbGid, objective::ObjectiveId},
     perf::{Perf, PerfInner},
 };
-use compact_str::format_compact;
+use compact_str::{CompactString, format_compact};
 use dcso3::{
     LuaVec3, MizLua, String, Vector2, Vector3,
     coalition::Side,
@@ -119,6 +123,8 @@ fn do_pos_action(
             pos,
         }),
         ActionKind::Bomber(_)
+        | ActionKind::AddTask(_)
+        | ActionKind::RemoveTask(_)
         | ActionKind::LogisticsTransfer(_)
         | ActionKind::LogisticsRepair(_)
         | ActionKind::Move(_)
@@ -261,6 +267,8 @@ fn do_pos_group_action(
             group,
         }),
         ActionKind::Attackers(_)
+        | ActionKind::AddTask(_)
+        | ActionKind::RemoveTask(_)
         | ActionKind::Sead(_)
         | ActionKind::Awacs(_)
         | ActionKind::Deployable(_)
@@ -336,6 +344,8 @@ fn do_objective_action(
             oid,
         }),
         ActionKind::TankerWaypoint
+        | ActionKind::AddTask(_)
+        | ActionKind::RemoveTask(_)
         | ActionKind::AwacsWaypoint
         | ActionKind::CruiseMissileWaypoint
         | ActionKind::FighersWaypoint
@@ -451,6 +461,178 @@ fn run_enemy_objective_action(
             10,
             &arg.fst,
             format_compact!("could not start {}, {e:?}", arg.snd),
+        ),
+    }
+    Ok(())
+}
+
+fn do_add_task(
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    lua: MizLua,
+    side: Side,
+    slot: SlotId,
+    ucid: Ucid,
+    name: String,
+    kind: String,
+    pos: LuaVec3,
+    mark: MarkId,
+    action: Action,
+) -> Result<()> {
+    let args = match &action.kind {
+        ActionKind::AddTask(cfg) => ActionArgs::AddTask(AddTaskArgs {
+            cfg: cfg.clone(),
+            kind,
+            at: TaskAt::Pos(Vector2::new(pos.0.x, pos.0.z)),
+        }),
+        _ => bail!("invalid action type for this menu item"),
+    };
+    let cmd = ActionCmd { name, action, args };
+    run_action(ctx, perf, lua, side, slot, ucid, Some(mark), cmd)
+}
+
+/// Post an objective task (CAPTURE / SUPPLY). There is no map mark to
+/// consume -- the objective is the target.
+fn do_add_objective_task(
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    lua: MizLua,
+    side: Side,
+    slot: SlotId,
+    ucid: Ucid,
+    name: String,
+    kind: String,
+    oid: ObjectiveId,
+    action: Action,
+) -> Result<()> {
+    let args = match &action.kind {
+        ActionKind::AddTask(cfg) => ActionArgs::AddTask(AddTaskArgs {
+            cfg: cfg.clone(),
+            kind,
+            at: TaskAt::Obj(oid),
+        }),
+        _ => bail!("invalid action type for this menu item"),
+    };
+    let cmd = ActionCmd { name, action, args };
+    run_action(ctx, perf, lua, side, slot, ucid, None, cmd)
+}
+
+fn run_add_objective_task(
+    lua: MizLua,
+    arg: ArgQuad<Ucid, String, String, ObjectiveId>,
+) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
+    match do_add_objective_task(
+        ctx,
+        perf,
+        lua,
+        side,
+        slot,
+        arg.fst,
+        arg.snd.clone(),
+        arg.trd.clone(),
+        arg.fth,
+        action,
+    ) {
+        Ok(()) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("{} task posted", arg.trd),
+        ),
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("could not post {} task, {e:?}", arg.trd),
+        ),
+    }
+    Ok(())
+}
+
+fn run_add_task(lua: MizLua, arg: ArgPent<Ucid, String, LuaVec3, MarkId, String>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
+    match do_add_task(
+        ctx,
+        perf,
+        lua,
+        side,
+        slot,
+        arg.fst,
+        arg.snd.clone(),
+        arg.pnt.clone(),
+        arg.trd,
+        arg.fth,
+        action,
+    ) {
+        Ok(()) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("{} task posted", arg.pnt),
+        ),
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("could not post {} task, {e:?}", arg.pnt),
+        ),
+    }
+    Ok(())
+}
+
+fn do_remove_task(
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    lua: MizLua,
+    side: Side,
+    slot: SlotId,
+    ucid: Ucid,
+    name: String,
+    task: TaskId,
+    action: Action,
+) -> Result<()> {
+    let args = match &action.kind {
+        ActionKind::RemoveTask(cfg) => ActionArgs::RemoveTask(WithTask {
+            cfg: cfg.clone(),
+            task,
+        }),
+        _ => bail!("invalid action type for this menu item"),
+    };
+    let cmd = ActionCmd { name, action, args };
+    run_action(ctx, perf, lua, side, slot, ucid, None, cmd)
+}
+
+fn run_remove_task(lua: MizLua, arg: ArgTriple<Ucid, String, TaskId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
+    match do_remove_task(
+        ctx,
+        perf,
+        lua,
+        side,
+        slot,
+        arg.fst,
+        arg.snd.clone(),
+        arg.trd,
+        action,
+    ) {
+        Ok(()) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("task {} removed", arg.trd),
+        ),
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("could not remove task {}, {e:?}", arg.trd),
         ),
     }
     Ok(())
@@ -586,8 +768,16 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     for (i, mk) in blank.into_iter().enumerate() {
         marks.insert(String::from(format_compact!("Mark {}", i + 1)), mk);
     }
-    let add_pos = |root: GroupSubMenu, name: String| -> Result<()> {
+    // Mark lists page at 8 like every other list in this menu -- a player
+    // who has dropped a dozen marks would otherwise get a menu level DCS
+    // silently truncates.
+    let add_pos = |mut root: GroupSubMenu, name: String| -> Result<()> {
+        let mut n = 0;
         for (text, mk) in &marks {
+            if n >= 8 {
+                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
+                n = 0;
+            }
             mc.add_command_for_group(
                 arg.snd,
                 text.clone(),
@@ -600,6 +790,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     fth: mk.id,
                 },
             )?;
+            n += 1;
         }
         Ok(())
     };
@@ -686,16 +877,21 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 | DeployKind::Dismount { .. } => None,
             };
             if let Some(key) = key {
-                let root = mc.add_submenu_for_group(
+                let mut groot = mc.add_submenu_for_group(
                     arg.snd,
                     format_compact!("{gid}({key})").into(),
                     Some(root.clone()),
                 )?;
+                let mut m = 0;
                 for (text, mk) in &marks {
+                    if m >= 8 {
+                        groot = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(groot))?;
+                        m = 0;
+                    }
                     mc.add_command_for_group(
                         arg.snd,
                         text.clone(),
-                        Some(root.clone()),
+                        Some(groot.clone()),
                         run_pos_group_action,
                         ArgPent {
                             fst: arg.fst,
@@ -705,6 +901,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                             pnt: mk.id,
                         },
                     )?;
+                    m += 1;
                 }
             }
             n += 1;
@@ -756,6 +953,113 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 )?;
                 n += 1;
             }
+        }
+        Ok(())
+    };
+    // The tasking board. "Add Task" fans out to the configured task types
+    // (CAP / CAS / LOGISTICS / CAPTURE / SUPPLY / ...). A Position task then
+    // lists this player's own map marks; an objective task lists the
+    // objectives it can sensibly be posted against -- enemy held ones to
+    // capture, friendly ones to resupply. Both lists page at 8 entries,
+    // since DCS only shows about ten items per menu level.
+    let add_task_types = |mut root: GroupSubMenu, name: String, cfg: &TaskCfg| -> Result<()> {
+        let mut n = 0;
+        for typ in &cfg.types {
+            if n >= 8 {
+                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
+                n = 0;
+            }
+            match typ.target {
+                TaskTarget::Position => {
+                    let mut tr =
+                        mc.add_submenu_for_group(arg.snd, typ.name.clone(), Some(root.clone()))?;
+                    let mut i = 0;
+                    for (text, mk) in &marks {
+                        if i >= 8 {
+                            tr = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(tr))?;
+                            i = 0;
+                        }
+                        mc.add_command_for_group(
+                            arg.snd,
+                            text.clone(),
+                            Some(tr.clone()),
+                            run_add_task,
+                            ArgPent {
+                                fst: arg.fst,
+                                snd: name.clone(),
+                                trd: LuaVec3(mk.pos),
+                                fth: mk.id,
+                                pnt: typ.name.clone(),
+                            },
+                        )?;
+                        i += 1;
+                    }
+                }
+                TaskTarget::CaptureObjective | TaskTarget::SupplyObjective { .. } => {
+                    let capture = matches!(typ.target, TaskTarget::CaptureObjective);
+                    let mut objs: Vec<(ObjectiveId, CompactString)> = ctx
+                        .db
+                        .objectives()
+                        .filter(|(_, obj)| {
+                            if capture {
+                                obj.owner != player.side && obj.owner != Side::Neutral
+                            } else {
+                                obj.owner == player.side
+                            }
+                        })
+                        .map(|(oid, obj)| (*oid, CompactString::from(obj.name.as_str())))
+                        .collect();
+                    objs.sort_by(|a, b| a.1.cmp(&b.1));
+                    // Reuse the objectives menu's chunked base tree so a
+                    // 40 base map doesn't overflow one menu level.
+                    objectives::add_base_list(
+                        &mc,
+                        arg.snd,
+                        &root,
+                        typ.name.as_str(),
+                        objs,
+                        run_add_objective_task,
+                        |oid| ArgQuad {
+                            fst: arg.fst,
+                            snd: name.clone(),
+                            trd: typ.name.clone(),
+                            fth: oid,
+                        },
+                    )?;
+                }
+            }
+            n += 1;
+        }
+        Ok(())
+    };
+    // "Remove Task" lists the tasks currently on this player's coalition
+    // board -- there is nothing to pick on the map, the task already has a
+    // position. Objective tasks normally take themselves off the board when
+    // the coalition finishes the job, so this is for cancelling.
+    let add_open_tasks = |mut root: GroupSubMenu, name: String| -> Result<()> {
+        let mut n = 0;
+        let tasks: Vec<(TaskId, String)> = ctx
+            .db
+            .tasks(player.side)
+            .map(|t| (t.id, String::from(t.label().as_str())))
+            .collect();
+        for (id, label) in tasks {
+            if n >= 8 {
+                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
+                n = 0;
+            }
+            mc.add_command_for_group(
+                arg.snd,
+                label,
+                Some(root.clone()),
+                run_remove_task,
+                ArgTriple {
+                    fst: arg.fst,
+                    snd: name.clone(),
+                    trd: id,
+                },
+            )?;
+            n += 1;
         }
         Ok(())
     };
@@ -852,6 +1156,14 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
                 add_enemy_objective(root.clone(), name.clone())?
             }
+            ActionKind::AddTask(cfg) => {
+                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                add_task_types(root.clone(), name.clone(), cfg)?
+            }
+            ActionKind::RemoveTask(_) => {
+                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                add_open_tasks(root.clone(), name.clone())?
+            }
         }
         n += 1;
     }
@@ -859,9 +1171,19 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     // and the player's side has alive artillery groups — no per-unit action config needed.
     if ctx.db.ephemeral.cfg.artillery.is_some() {
         if side_has_artillery(ctx, player.side) {
+            if n >= 8 {
+                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
+                n = 0;
+            }
             let label = String::from("Request Fires");
-            let arty_root = mc.add_submenu_for_group(arg.snd, label, Some(root.clone()))?;
+            let mut arty_root = mc.add_submenu_for_group(arg.snd, label, Some(root.clone()))?;
+            let mut m = 0;
             for (text, mk) in &marks {
+                if m >= 8 {
+                    arty_root =
+                        mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(arty_root))?;
+                    m = 0;
+                }
                 mc.add_command_for_group(
                     arg.snd,
                     text.clone(),
@@ -874,8 +1196,18 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                         fth: mk.id,
                     },
                 )?;
+                m += 1;
             }
+            n += 1;
         }
+    }
+    // AI helo missions are player-triggered dispatches like every other action,
+    // so they live here rather than in the Objectives report menu.
+    if ctx.db.ephemeral.cfg.helo_insertion.is_some() {
+        if n >= 8 {
+            root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
+        }
+        objectives::add_helo_mission_menu(&mc, ctx, lua, arg.snd, &root, player.side)?;
     }
     ctx.subscribed_action_menus.insert(arg.trd);
     Ok(())

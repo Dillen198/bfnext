@@ -19,6 +19,7 @@ use crate::db::{Db, group::DeployKind};
 use anyhow::Result;
 use bfprotocols::shots::{Dead, Shot, Who};
 use chrono::{Duration, prelude::*};
+use bfprotocols::cfg::UnitTag;
 use dcso3::{
     String,
     event::Shot as ShotEvent,
@@ -154,7 +155,22 @@ impl ShotDb {
             return Ok(());
         }
         let initiator_oid = ok!(e.initiator.object_id());
-        if db.ephemeral.get_uid_by_object_id(&initiator_oid).is_none() {
+        let initiator_uid = some!(db.ephemeral.get_uid_by_object_id(&initiator_oid)).clone();
+        let initiator_unit = ok!(db.unit(&initiator_uid));
+        // Second line of defence for the crash the comment above describes.
+        // `get_category()` on a China-Asset-Pack / modded ballistic launcher
+        // (Scud_B, CHAP_9K720, ...) has been seen to come back as Airplane,
+        // which slips a ground SSM shot past the category gate and straight
+        // into the get_target() access violation that takes the whole server
+        // down (`weapon_target_exclusions` only matches by display name and
+        // missed e.g. "Scud R-17"). Surface-to-surface artillery and SSM/coastal
+        // launchers fire at ground points, never at a unit we attribute a kill
+        // to -- skip their shots outright. SAM launchers also carry `Launcher`
+        // but they DO target aircraft, so keep tracking those.
+        let itags = &initiator_unit.tags.0;
+        if itags.contains(UnitTag::Artillery)
+            || (itags.contains(UnitTag::Launcher) && !itags.contains(UnitTag::SAM))
+        {
             return Ok(());
         }
         let target = ok!(some!(e.weapon.get_target()?).as_unit());

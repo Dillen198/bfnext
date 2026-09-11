@@ -7,6 +7,17 @@
   This script sends live unit positions to bfdb via UDP on localhost:42001.
   bfdb receives them and broadcasts to WebSocket clients for the live map.
 
+  MULTIPLE DCS INSTANCES ON ONE MACHINE
+  Each DCS instance needs its own UDP port, matching the `export_port` of its
+  entry in bfdb's --instances file. Two instances sharing a port means one of
+  bfdb's listeners fails to bind and that server's live map stays empty. Set it
+  either by editing BF_PORT below in that instance's copy of this file, or -- so
+  the same file can be dropped into every instance -- by creating
+    %USERPROFILE%\Saved Games\DCS.<instance>\Scripts\bf_export_port.lua
+  containing a single line, e.g.:
+    return 42002
+  which is read in preference to BF_PORT if present.
+
   Data is sent as newline-terminated JSON, split into 50-unit batches to
   stay within UDP's practical payload limits.
 
@@ -34,6 +45,18 @@
 local BF_HOST = "127.0.0.1"
 local BF_PORT = 42001
 local BF_INTERVAL = 0.25  -- seconds between exports
+
+-- Per-instance override: Scripts/bf_export_port.lua returning a port number.
+-- Lets one Export.lua be copied to every DCS instance unchanged, with only a
+-- one-line file distinguishing them. Missing or malformed -> BF_PORT above.
+do
+  local ok, port = pcall(function()
+    return dofile(lfs.writedir() .. "Scripts/bf_export_port.lua")
+  end)
+  if ok and type(port) == "number" and port > 0 and port < 65536 then
+    BF_PORT = port
+  end
+end
 
 local bf_socket = nil
 

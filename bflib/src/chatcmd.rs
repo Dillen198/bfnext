@@ -147,6 +147,7 @@ fn gci_command(ctx: &mut Context, id: PlayerId, arg: &str) {
     match arg.trim().to_lowercase().as_str() {
         "" | "status" => {
             let (enabled, units, refm) = ctx.ewr.gci_prefs(&ucid);
+            let auto = ctx.ewr.gci_auto(&ucid);
             let u = match units {
                 Some(EwrUnits::Metric) => "metric",
                 Some(EwrUnits::Imperial) => "imperial",
@@ -161,8 +162,14 @@ fn gci_command(ctx: &mut Context, id: PlayerId, arg: &str) {
             reply(
                 ctx,
                 format_compact!(
-                    "GCI voice: {} | units: {} | reference: {}\n  -gci on | off              toggle GCI calls\n  -gci metric | imperial     spoken units\n  -gci braa | bulls | clock   position reference\n  -gci auto                  follow the server defaults",
+                    "GCI voice: {} | auto callouts: {} | units: {} | reference: {}
+  -gci on | off              GCI on or off entirely
+  -gci callouts | quiet      unprompted calls on or off
+  -gci metric | imperial     spoken units
+  -gci braa | bulls | clock   position reference
+  -gci auto                  follow the server defaults",
                     if enabled { "ON" } else { "OFF" },
+                    if auto { "ON" } else { "OFF" },
                     u,
                     r
                 ),
@@ -204,8 +211,22 @@ fn gci_command(ctx: &mut Context, id: PlayerId, arg: &str) {
             ctx.ewr.gci_set_reference(&ucid, None);
             reply(ctx, "GCI calls will use the server default units and reference".into());
         }
+        // Unprompted calls. Separate from on/off: with callouts off the
+        // controller still answers when you key up, it just never speaks first.
+        "callouts" | "callouts on" | "loud" => {
+            ctx.ewr.gci_set_auto(&ucid, true);
+            reply(ctx, "GCI will call you unprompted".into());
+        }
+        "callouts off" | "quiet" | "silent" => {
+            ctx.ewr.gci_set_auto(&ucid, false);
+            reply(
+                ctx,
+                "GCI will stay quiet unless you call it - key up and ask for a bogey dope or picture"
+                    .into(),
+            );
+        }
         other => {
-            reply(ctx, format_compact!("unknown -gci option '{other}' (try: on, off, metric, imperial, braa, bulls, clock, auto)"));
+            reply(ctx, format_compact!("unknown -gci option '{other}' (try: on, off, metric, imperial, braa, bulls, clock, auto, callouts, quiet)"));
         }
     }
 }
@@ -329,6 +350,50 @@ fn status_command(ctx: &mut Context, id: PlayerId) {
         side, convoy_count
     );
     ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
+}
+
+/// `-brief` -- the condensed situational briefing on demand, the same text the
+/// slot-entry panel shows. The full paged report is F10 > Info > Situation.
+fn brief_command(ctx: &mut Context, lua: HooksLua, id: PlayerId) {
+    let Some(ifo) = ctx.connected.get(&id) else { return };
+    let ucid = ifo.ucid;
+    let Some(side) = ctx.db.player(&ucid).map(|p| p.side) else {
+        ctx.db.ephemeral.msgs().send(
+            MsgTyp::Chat(Some(id)),
+            " you aren't registered yet -- type blue or red first",
+        );
+        return;
+    };
+    // Chat runs in the hooks environment; the briefing reads the DCS
+    // coord/weather/timer singletons, which live in the mission one. Same
+    // crossing `-weather` already does.
+    let lua = dcso3::MizLua(lua.inner());
+    let from = ctx
+        .db
+        .player(&ucid)
+        .and_then(|p| p.current_slot.as_ref().map(|(s, _)| s.clone()))
+        .and_then(|slot| crate::menu::player_world_pos(ctx, &slot));
+    let rep = crate::situation::build(
+        ctx,
+        lua,
+        side,
+        crate::situation::Opts { include_map: false, from },
+    );
+    let panel_tasks = ctx
+        .db
+        .ephemeral
+        .cfg
+        .situation_briefing
+        .as_ref()
+        .map(|c| c.panel_tasks)
+        .unwrap_or(3);
+    let text = crate::situation::render_panel(&rep, panel_tasks, None);
+    for line in text.lines() {
+        ctx.db
+            .ephemeral
+            .msgs()
+            .send(MsgTyp::Chat(Some(id)), format_compact!(" {line}"));
+    }
 }
 
 fn transfer_command(ctx: &mut Context, id: PlayerId, s: &str) {
@@ -589,6 +654,19 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
             )),
             ActionKind::Recon(_) => Some(format_compact!(
                 "{name}: <key> | Dispatch a recon flight over key, a mark point. cost {}",
+                action.cost
+            )),
+            ActionKind::AddTask(c) => Some(format_compact!(
+                "{name}: <type> <key> | Post a task at key, a mark point. types: {}. cost {}",
+                c.types
+                    .iter()
+                    .map(|t| t.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                action.cost
+            )),
+            ActionKind::RemoveTask(_) => Some(format_compact!(
+                "{name}: <task id> | Remove a task from the coalition board. cost {}",
                 action.cost
             )),
         };
@@ -898,6 +976,7 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
         " -weather: full weather report for your slot, including winds/temp aloft",
         " -balance: show your points balance",
         " -status: show campaign status (objectives, convoys, streak)",
+        " -brief: auto-generated situational briefing (full report: F10 > Info > Situation)",
         " -transfer <amount> [<player> | objective:<objective>]: transfer points to another player or objective",
         " -delete <groupid>: delete a group you deployed for a partial refund",
         " -action <name> <args>: perform an action, -action help for a list of actions",
@@ -955,6 +1034,9 @@ pub(super) fn process(
         Ok("".into())
     } else if msg.starts_with("-status") {
         status_command(ctx, id);
+        Ok("".into())
+    } else if msg.starts_with("-brief") {
+        brief_command(ctx, lua, id);
         Ok("".into())
     } else if let Some(s) = msg.strip_prefix("-transfer ") {
         transfer_command(ctx, id, s);

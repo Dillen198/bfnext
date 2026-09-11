@@ -27,14 +27,14 @@ export const CFG_CATEGORIES: CfgCategory[] = [
   },
   {
     key: 'lives', label: 'Lives & Combat Rules', icon: HeartPulse,
-    fields: ['life_types', 'default_lives', 'limited_lives', 'era', 'last_stand', 'under_attack', 'counter_battery'],
+    fields: ['life_types', 'default_lives', 'limited_lives', 'era', 'last_stand', 'under_attack'],
   },
   {
     key: 'logistics', label: 'Cargo & Logistics', icon: Truck,
     fields: [
       'cargo', 'c130_cargo', 'c130_cargo_template', 'helo_cargo', 'helo_cargo_template',
       'crate_template', 'crate_load_distance', 'crate_spread', 'max_crates', 'ground_vehicle_cargo',
-      'warehouse', 'logistics_exclusion', 'supply_alert_threshold', 'supply_auto_convoy_delay_secs',
+      'warehouse', 'logi_from_scenery', 'helo_insertion', 'logistics_exclusion', 'supply_alert_threshold', 'supply_auto_convoy_delay_secs',
       'factory', 'repair_crate', 'repair_time', 'repair_supply_cost', 'deploy_supply_cost',
     ],
   },

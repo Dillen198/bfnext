@@ -31,7 +31,9 @@ mod menu;
 mod msgq;
 mod navaids;
 mod shots;
+mod situation;
 mod spawnctx;
+mod unitdb;
 
 extern crate nalgebra as na;
 use crate::db::{events::{EventEffect, EventScheduler}, player::SlotAuth};
@@ -72,7 +74,7 @@ use dcso3::{
     trigger::Trigger,
     unit::{ClassUnit, Unit},
     world::{HandlerId, MarkPanel, World},
-    HooksLua, LuaEnv, LuaVec3, MizLua, String, Vector2, Vector3,
+    HooksLua, LuaEnv, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
 };
 use ewr::Ewr;
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
@@ -93,6 +95,36 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
+
+/// Build identity, embedded at compile time by `build.rs`.
+pub const BUILD_GIT: &str = env!("BFNEXT_BUILD_GIT");
+pub const BUILD_EPOCH: &str = env!("BFNEXT_BUILD_EPOCH");
+pub const BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// RFC3339 UTC build time from the embedded epoch.
+fn build_time() -> std::string::String {
+    BUILD_EPOCH
+        .parse::<i64>()
+        .ok()
+        .and_then(|s| chrono::DateTime::from_timestamp(s, 0))
+        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Log this build's identity and drop a `Logs/bfnext-bflib-build.json` sidecar
+/// next to the DCS logs so the DCSServerBot plugin can show which engine is
+/// actually loaded (vs. the file staged on disk).
+fn report_build(write_dir: &std::path::Path) {
+    let built = build_time();
+    info!("[BUILD] bflib v{BUILD_VERSION} git:{BUILD_GIT} built:{built}");
+    let path = write_dir.join("Logs").join("bfnext-bflib-build.json");
+    let body = format!(
+        r#"{{"name":"bflib","version":"{BUILD_VERSION}","git":"{BUILD_GIT}","built":"{built}"}}"#
+    );
+    if let Err(e) = std::fs::write(&path, body) {
+        warn!("could not write build sidecar {path:?}: {e:?}");
+    }
+}
 
 #[derive(Debug, Clone)]
 struct PlayerInfo {
@@ -298,6 +330,11 @@ struct Context {
     last_commander_tick: DateTime<Utc>,
     last_unit_position: usize,
     last_player_position: usize,
+    /// Page cursor for the paged Objectives status reports, per menu group.
+    /// DCS radio menus can't be relabeled in place, so the current page lives
+    /// here and the Next/Prev Page commands move it, instead of the menu
+    /// carrying one command per page.
+    objective_pages: FxHashMap<dcso3::env::miz::GroupId, menu::objectives::StatusPages>,
     subscribed_jtac_menus: FxHashMap<SlotId, JtacSlotIfo>,
     subscribed_action_menus: FxHashSet<SlotId>,
     connected: Connected,
@@ -489,9 +526,16 @@ fn process_slot_rejection(ctx: &mut Context, id: PlayerId, ucid: Ucid, rej: Slot
             let msg = format_compact!("Objective is capturable");
             ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
         }
-        SlotAuth::CarrierNotRepaired(vehicle) => {
+        SlotAuth::Consolidating(secs) => {
             let msg = format_compact!(
-                "{} was captured with the carrier -- it will be flyable once carrier repairs finish",
+                "Objective is still consolidating ({}s left) -- hold it with troops,                  or land a logistics crate to speed it up",
+                secs
+            );
+            ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
+        }
+        SlotAuth::CapturedNotReady(vehicle) => {
+            let msg = format_compact!(
+                "{} was captured here -- it will be flyable once this objective is repaired",
                 vehicle.0
             );
             ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
@@ -735,7 +779,11 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         // that campaign logic doesn't consume -- and it fires several of them
         // twice per tick. Don't spam the log with them.
         Event::Invalid => (),
-        ev => info!("onEvent: {:?}", ev),
+        // High-frequency trace (Birth/Hit/Bda alone are ~1500 lines in a two
+        // hour session). The events campaign logic actually consumes are
+        // matched and logged on their own below where it matters -- keep this
+        // catch-all at debug.
+        ev => debug!("onEvent: {:?}", ev),
     }
     match ev {
         Event::Birth(b) => {
@@ -745,8 +793,13 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                     Ok(BirthRes::None) => (),
                     Ok(BirthRes::OccupiedSlot(slot)) => {
                         ctx.menu_init_queue.insert(slot.clone());
-                        if let Err(e) = atis::schedule_atis(lua, slot) {
+                        if let Err(e) = atis::schedule_atis(lua, slot.clone()) {
                             error!("could not schedule atis: {:?}", e);
+                        }
+                        // The auto-generated situational briefing, sequenced
+                        // after the ATIS so they don't overwrite each other.
+                        if let Err(e) = situation::schedule_slot_briefing(lua, slot) {
+                            error!("could not schedule situation briefing: {:?}", e);
                         }
                         // Force EPLRS on for every player group so fixed-wing
                         // slots show up on the coalition F10 map / datalink the
@@ -835,7 +888,11 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                     error!("player left unit failed {:?}", e)
                 }
             } else {
-                error!("player leave unit with no unit")
+                // DCS fires PlayerLeaveUnit with no initiator when the slot it
+                // left can't be resolved to a unit any more (spectator
+                // transition, unit already despawned). Nothing to do -- not an
+                // error, just noise in the ERROR feed / bot alert relay.
+                debug!("PlayerLeaveUnit with no initiator (benign)")
             }
         }
         Event::Hit(e) | Event::Kill(e) => {
@@ -913,29 +970,10 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                     }
                 }
             }
-            // Counter-battery detection
-            let cb_params = ctx.db.ephemeral.cfg.counter_battery.as_ref()
-                .map(|c| (c.grid_resolution_m, c.cooldown_secs));
-            if let Some((cb_res, cb_cooldown)) = cb_params {
-                if let Ok(obj_id) = e.initiator.object_id() {
-                    let shooter_info = ctx.db.ephemeral.get_uid_by_object_id(&obj_id)
-                        .and_then(|uid| ctx.db.unit(uid).ok())
-                        .map(|u| (u.side, u.tags.0, u.pos));
-                    if let Some((side, tags, pos2)) = shooter_info {
-                        if tags.contains(UnitTag::Artillery) || tags.contains(UnitTag::Launcher) {
-                            let res = cb_res.max(1.0);
-                            let cell = ((pos2.x / res) as i64, (pos2.y / res) as i64);
-                            let cooldown = Duration::seconds(cb_cooldown as i64);
-                            let last = ctx.db.ephemeral.counter_battery_reports.get(&cell).copied();
-                            if last.map(|t| start_ts - t >= cooldown).unwrap_or(true) {
-                                ctx.db.ephemeral.counter_battery_reports.insert(cell, start_ts);
-                                let friendly = side.opposite();
-                                ctx.db.ephemeral.on_counter_battery(pos2, friendly, start_ts);
-                            }
-                        }
-                    }
-                }
-            }
+            // (Counter-battery map cue removed -- it only ever drew an
+            // "ARTY / COUNTER-BATTERY" text mark with no gameplay behind it,
+            // and repositioning batteries stacked overlapping copies. The
+            // `counter_battery` cfg key is now ignored.)
             ()
         }
         Event::Dead(e) | Event::UnitLost(e) => {
@@ -1138,6 +1176,15 @@ pub(crate) fn lives(db: &mut Db, ucid: &Ucid, typfilter: Option<LifeType>) -> Re
 /// test is run for BOTH `course` and `-course` and the point counts as "on the
 /// runway" if either orientation accepts it.
 fn took_off_off_runway(lua: MizLua, airbase_name: &str, pos: Vector2) -> Option<bool> {
+    // Trust DCS first: if the terrain says the lift-off point is runway
+    // surface, it was a runway departure. The rectangle projection below has
+    // been over-eager -- getRunways() reports an odd centre/course on some
+    // diagonal or multi-runway fields, which flagged legitimate takeoffs.
+    if let Ok(land) = dcso3::land::Land::singleton(lua) {
+        if land.get_surface_type(LuaVec2(pos)).ok() == Some(dcso3::land::SurfaceType::Runway) {
+            return Some(false);
+        }
+    }
     let ab = dcso3::airbase::Airbase::get_by_name(lua, airbase_name.into()).ok()?;
     let runways = ab.get_runways().ok()?;
     let mut saw_runway = false;
@@ -1148,16 +1195,25 @@ fn took_off_off_runway(lua: MizLua, airbase_name: &str, pos: Vector2) -> Option<
         else {
             continue;
         };
+        // Carriers / LHAs (and the odd heliport) come back from getRunways()
+        // with length == 0, width == 0 and a junk course. There is no runway
+        // rectangle to be off of -- a catapult shot or a ski-jump launch is
+        // never a "taxiway departure". Treat any such field as on-runway.
+        if length < 1.0 || width < 1.0 {
+            return Some(false);
+        }
         saw_runway = true;
         // DCS world frame: x = north, z = east. get_ground_position gives a
         // Vector2 of (x = north, y = east).
         let dn = pos.x - center.0.x;
         let de = pos.y - center.0.z;
-        // Fast jets rotate near the far threshold and S_EVENT_TAKEOFF can lag,
-        // so allow a lot of slack past the ends; keep the side margin tight so
-        // a parallel taxiway/apron departure is still caught.
-        let end_margin = length / 2.0 + 600.0;
-        let side_margin = width / 2.0 + 45.0;
+        // Fast jets float well past the far threshold before S_EVENT_TAKEOFF
+        // fires, and getRunways()'s reported length/centre isn't always the
+        // full paved surface -- be very generous along the axis. The side
+        // margin stays tighter so a parallel-taxiway departure is still caught,
+        // but with enough room for line-up + shoulder.
+        let end_margin = length / 2.0 + 1500.0;
+        let side_margin = width / 2.0 + 60.0;
         let mut best: Option<(f64, f64)> = None;
         for course in [course, -course] {
             let (s, c) = course.sin_cos();
@@ -1348,16 +1404,21 @@ fn return_lives(lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
     let db = &mut ctx.db;
     let mut returned: SmallVec<[(LifeType, SlotId); 4]> = smallvec![];
     ctx.recently_landed.retain(|id, landed_ts| {
-        if ts - *landed_ts >= Duration::seconds(10) {
-            let unit = or_false!(Unit::get_instance(lua, id));
-            let pos = or_false!(unit.get_ground_position());
-            let slot = or_false!(unit.slot());
-            if let Some(typ) = db.land(slot.clone(), pos.0, &unit) {
-                returned.push((typ, slot));
-                return false;
-            }
+        if ts - *landed_ts < Duration::seconds(10) {
+            return true;
         }
-        true
+        let unit = or_false!(Unit::get_instance(lua, id));
+        let pos = or_false!(unit.get_ground_position());
+        let slot = or_false!(unit.slot());
+        if let Some(typ) = db.land(slot.clone(), pos.0, &unit) {
+            returned.push((typ, slot));
+        }
+        // The landing is processed either way, so always drop the entry.
+        // Keeping it whenever no life came back -- landed outside an owned
+        // objective, or already at full lives -- re-ran `db.land` on every slow
+        // tick and left the unit permanently "recently landed", which silently
+        // swallowed its next takeoff.
+        false
     });
     for (typ, slot) in returned {
         if let Err(e) = message_life(ctx, &slot, Some(typ), "life returned\n") {
@@ -1997,23 +2058,13 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 // takeoff is what gives flights their time separation). If the
                 // objective has no resolvable runtime airbase, don't spawn an
                 // air-started flight as a fallback -- cancel the event instead.
-                // Same two-step resolve spawn_group uses: the load-time
-                // airbase_by_oid registration, then a name match against a live
-                // DCS airbase (Airbase-kind objectives are named after the field).
-                let airbase_resolvable = ctx.db.ephemeral.get_airbase_by_oid(&objective).is_some()
-                    || ctx
-                        .db
-                        .objective(&objective)
-                        .ok()
-                        .and_then(|o| {
-                            dcso3::airbase::Airbase::get_by_name(
-                                lua,
-                                dcso3::String::from(o.name()),
-                            )
-                            .ok()
-                        })
-                        .map(|ab| ab.is_exist().unwrap_or(false))
-                        .unwrap_or(false);
+                // Exactly the resolver spawn_group uses, so a field can't pass
+                // here and then fail to produce a parking start at spawn time.
+                let airbase_resolvable = ctx
+                    .db
+                    .ephemeral
+                    .resolve_airbase(lua, &ctx.db.persisted, &objective)
+                    .is_some();
                 if !airbase_resolvable {
                     warn!(
                         "SpawnCap: objective {:?} has no resolvable airbase -- cancelling CAP event, not spawning",
@@ -2060,6 +2111,10 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 ) {
                     Ok(gid) => {
                         info!("SpawnCap: spawned CAP {:?} for {:?} over {:?}", gid, cap_side, objective);
+                        ctx.event_scheduler.cap_spawn_ts.insert(
+                            gid,
+                            crate::db::events::CapSpawnWatch::new(Utc::now()),
+                        );
                         ctx.event_scheduler.cap_groups
                             .entry(event_id)
                             .or_default()
@@ -2138,25 +2193,28 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     })
                     .unwrap_or(false); // no groups registered = natural expiry
 
-                if was_shot_down {
-                    // Unify cooldown: record global shootdown time for the side
-                    match cap_side {
-                        Side::Blue => ctx.event_scheduler.last_commander_cap_ended_blue = Some(now),
-                        Side::Red => ctx.event_scheduler.last_commander_cap_ended_red = Some(now),
-                        _ => {}
-                    }
-                    info!(
-                        "DespawnCap: {:?} CAP at was shot down \
-                         — global respawn cooldown started",
-                        cap_side
-                    );
+                // Start the per-side respawn cooldown whenever a CAP wave ends
+                // -- shot down OR flown its full duration and RTB'd. This is
+                // the "gap between waves" the cooldown is meant to enforce;
+                // gating it on shootdown only let a fresh wave spawn the
+                // instant the previous one timed out.
+                match cap_side {
+                    Side::Blue => ctx.event_scheduler.last_commander_cap_ended_blue = Some(now),
+                    Side::Red => ctx.event_scheduler.last_commander_cap_ended_red = Some(now),
+                    _ => {}
                 }
+                info!(
+                    "DespawnCap: {:?} CAP wave ended ({}) — respawn cooldown started",
+                    cap_side,
+                    if was_shot_down { "shot down" } else { "timed out / RTB" }
+                );
                 
 
 
                 ctx.event_scheduler.cap_station_by_event.remove(&event_id);
                 if let Some(gids) = ctx.event_scheduler.cap_groups.remove(&event_id) {
                     for gid in gids {
+                        ctx.event_scheduler.cap_spawn_ts.remove(&gid);
                         let group_name = match ctx.db.persisted.groups.get(&gid) {
                             Some(g) => g.name.clone(),
                             None => continue,
@@ -2327,6 +2385,15 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
             Ok(g) => g,
             Err(_) => continue, // Not in DCS yet — retry next tick
         };
+        // Don't task the flight until it's actually airborne. A CAP group
+        // ground-starts with a TakeOffParkingHot first waypoint; issuing an
+        // Orbit/EngageTargetsInZone task with `set_task` while it's still parked
+        // wipes that waypoint, so DCS abandons startup/taxi/takeoff and the
+        // flight pops into the air. Leave it pending and retry next tick --
+        // `retarget_cap_groups` guards the same way.
+        if !dcs_group.get_unit(1).and_then(|u| u.in_air()).unwrap_or(false) {
+            continue;
+        }
         let controller = match dcs_group.get_controller() {
             Ok(c) => c,
             Err(e) => {
@@ -2570,6 +2637,143 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     }
 }
 
+/// Below this age, one airborne sighting with no prior ground sighting is
+/// already conclusive -- nothing hot-starts and gets its wheels up this fast.
+const CAP_FAST_AIRSTART_SECS: i64 = 40;
+/// Hard stop: stop watching a CAP group we still can't query after this long
+/// (its spawn failed or it was cleaned up some other way).
+const CAP_WATCH_GIVEUP_SECS: i64 = 240;
+
+/// Despawn any CAP event whose flight air-started instead of taxiing out from
+/// a runway (bad template WP0, or DCS ignoring the parking start).
+///
+/// Not time-boxed: the watch is dropped the instant the lead unit is seen on
+/// the ground (a real ground start). A flight that is only ever seen airborne
+/// -- fast, or over two consecutive checks -- air-started and the whole event
+/// is scrapped. Spawn-queue lag therefore can't wave one through the way the
+/// old wall-clock grace window did.
+fn enforce_cap_ground_start(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
+    let checks: Vec<(GroupId, crate::db::events::CapSpawnWatch)> = ctx
+        .event_scheduler
+        .cap_spawn_ts
+        .iter()
+        .map(|(g, w)| (*g, *w))
+        .collect();
+    for (gid, watch) in checks {
+        let age = (now - watch.spawned_at).num_seconds();
+        let group_name = match ctx.db.persisted.groups.get(&gid) {
+            Some(g) => g.name.clone(),
+            None => {
+                ctx.event_scheduler.cap_spawn_ts.remove(&gid);
+                continue;
+            }
+        };
+        // None = couldn't query the unit yet (not spawned / not alive). Keep
+        // waiting -- do NOT treat "unknown" as "fine".
+        let in_air: Option<bool> = dcso3::group::Group::get_by_name(lua, group_name.as_str())
+            .ok()
+            .and_then(|g| g.get_unit(1).ok())
+            .and_then(|u| u.in_air().ok());
+        match in_air {
+            None => {
+                if age >= CAP_WATCH_GIVEUP_SECS {
+                    ctx.event_scheduler.cap_spawn_ts.remove(&gid);
+                }
+                continue;
+            }
+            Some(false) => {
+                // On the ground -- genuine ground start. Stop watching; it will
+                // taxi and take off normally.
+                ctx.event_scheduler.cap_spawn_ts.remove(&gid);
+                continue;
+            }
+            Some(true) => {
+                let strikes = watch.airborne_strikes + 1;
+                let conclusive = age < CAP_FAST_AIRSTART_SECS || strikes >= 2;
+                if !conclusive {
+                    // First airborne sighting, and late enough that it *might*
+                    // have hot-started and taken off inside a gap between
+                    // checks. Give it one more look before scrapping.
+                    if let Some(w) = ctx.event_scheduler.cap_spawn_ts.get_mut(&gid) {
+                        w.airborne_strikes = strikes;
+                    }
+                    continue;
+                }
+            }
+        }
+        // Fell through => air-started. Tear down the owning event entirely.
+        {
+            let event_id = ctx
+                .event_scheduler
+                .cap_groups
+                .iter()
+                .find(|(_, gids)| gids.contains(&gid))
+                .map(|(eid, _)| *eid);
+            warn!(
+                "[CAP_SPAWN] {group_name} air-started ({age}s after spawn, never seen on the \
+                 ground) -- despawning the CAP event",
+            );
+            if let Some(eid) = event_id {
+                for g in ctx.event_scheduler.cap_groups.remove(&eid).unwrap_or_default() {
+                    let _ = ctx.db.delete_group(&g);
+                    ctx.event_scheduler.pending_cap_tasks.remove(&g);
+                    ctx.event_scheduler.cap_spawn_ts.remove(&g);
+                }
+                ctx.event_scheduler.active_events.retain(|ev| ev.id() != eid);
+                ctx.event_scheduler.cap_side_by_event.remove(&eid);
+                ctx.event_scheduler.cap_station_by_event.remove(&eid);
+                if let Some(marks) = ctx.event_scheduler.event_marks.remove(&eid) {
+                    for mid in marks {
+                        ctx.db.ephemeral.msgs().delete_mark(mid);
+                    }
+                }
+            } else {
+                let _ = ctx.db.delete_group(&gid);
+                ctx.event_scheduler.cap_spawn_ts.remove(&gid);
+            }
+        }
+    }
+}
+
+/// Count of `enemy_side` players airborne in fixed-wing aircraft, straight from
+/// the DB (radar-independent). Backs `cap_trigger_on_known_players`.
+fn enemy_fixedwing_players_airborne(db: &db::Db, enemy_side: Side) -> usize {
+    use bfprotocols::cfg::UnitTag;
+    db.instanced_players()
+        .filter(|(_, p, inst)| {
+            p.side == enemy_side
+                && inst.in_air
+                && db
+                    .ephemeral
+                    .cfg
+                    .unit_classification
+                    .get(&inst.typ)
+                    .map(|t| t.contains(UnitTag::Aircraft) && !t.contains(UnitTag::Helicopter))
+                    .unwrap_or(true)
+        })
+        .count()
+}
+
+/// Positions of `enemy_side` fixed-wing players in the air (radar-independent).
+fn enemy_fixedwing_player_positions(db: &db::Db, enemy_side: Side) -> Vec<Vector2> {
+    use bfprotocols::cfg::UnitTag;
+    db.instanced_players()
+        .filter_map(|(_, p, inst)| {
+            if p.side != enemy_side || !inst.in_air {
+                return None;
+            }
+            let ok = db
+                .ephemeral
+                .cfg
+                .unit_classification
+                .get(&inst.typ)
+                .map(|t| t.contains(UnitTag::Aircraft) && !t.contains(UnitTag::Helicopter))
+                .unwrap_or(true);
+            ok.then(|| Vector2::new(inst.position.p.x, inst.position.p.z))
+        })
+        .collect()
+}
+
 /// Reactive CAP: detect in-air enemy players near owned objectives and spawn CAP intercepts.
 /// CAP is no longer an economic commander action — it fires automatically when real threats appear.
 fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
@@ -2643,29 +2847,62 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
             break; // global cap hit mid-loop
         }
 
-        // ── Step 1: gate on detected fixed-wing PLAYER count ─────────────────────
-        // Only enemy PLAYERS in fixed-wing aircraft trigger reactive CAP.
-        // AI aircraft, scouts, and helicopter players are excluded:
-        //   - helicopters are low-altitude threats handled by SAMs
-        //   - AI aircraft (e.g. transports) should not trigger CAP
-        // Require at least `min_threat` (default: 2) qualifying player contacts.
-        let player_fw_count =
-            ctx.ewr.detected_enemy_fixedwing_player_count(defending_side, now, &ctx.db);
-        if player_fw_count < min_threat {
-            debug!(
-                "Reactive CAP: {:?} side has only {} fixed-wing player contact(s) — below threshold {}, skipping",
-                defending_side, player_fw_count, min_threat
+        // ── Step 1: gate on fixed-wing PLAYER count ─────────────────────────────
+        // Only enemy PLAYERS in fixed-wing aircraft trigger reactive CAP (AI
+        // and helicopters excluded). Normally this is what the defending
+        // side's radar network has actually painted; with
+        // `cap_trigger_on_known_players` it's the real count of enemy
+        // fixed-wing players in the air, so a radar-blind / EMCON side still
+        // scrambles. Require at least `min_threat` (default 2).
+        let attacking = match defending_side {
+            Side::Red => Side::Blue,
+            Side::Blue => Side::Red,
+            _ => continue,
+        };
+        let player_fw_count = if events_cfg.cap_trigger_on_known_players {
+            enemy_fixedwing_players_airborne(&ctx.db, attacking)
+        } else {
+            ctx.ewr
+                .detected_enemy_fixedwing_player_count(defending_side, now, &ctx.db)
+        };
+        // Air-balance: scramble for the outnumbered side even without a
+        // detected incursion (Blue 4 up, Red 1 up → Red gets a CAP).
+        let my_air = enemy_fixedwing_players_airborne(&ctx.db, defending_side);
+        let their_air = enemy_fixedwing_players_airborne(&ctx.db, attacking);
+        let outnumbered = events_cfg.cap_balance_gap > 0
+            && their_air >= my_air + events_cfg.cap_balance_gap as usize;
+        if player_fw_count < min_threat && !outnumbered {
+            info!(
+                "Reactive CAP: {:?} not scrambling — {} enemy fixed-wing player(s) {} (need {}), \
+                 air balance {}v{} (gap {})",
+                defending_side,
+                player_fw_count,
+                if events_cfg.cap_trigger_on_known_players { "airborne" } else { "on radar" },
+                min_threat,
+                my_air,
+                their_air,
+                events_cfg.cap_balance_gap
             );
-            continue; // not enough real fixed-wing players to justify CAP
+            continue;
+        }
+        if outnumbered && player_fw_count < min_threat {
+            info!(
+                "Reactive CAP: {:?} scrambling to balance the air ({}v{} fixed-wing players)",
+                defending_side, my_air, their_air
+            );
         }
 
-        // ── Step 2: get EWR-detected enemy positions for cluster geometry ────────
-        // ALL detected aircraft (players + AI) are used for spatial clustering
-        // so the CAP is placed nearest the actual incursion area, but only
-        // PLAYER fixed-wing count was used to decide *whether* to scramble.
-        let detected = ctx.ewr.detected_enemy_positions(defending_side, now);
+        // ── Step 2: enemy positions for cluster geometry ────────────────────────
+        // Normally the radar picture (players + AI) so the CAP is placed
+        // nearest the real incursion. With cap_trigger_on_known_players, fall
+        // back to the actual airborne-player positions when radar shows
+        // nothing -- otherwise a radar-blind side gates out here.
+        let mut detected = ctx.ewr.detected_enemy_positions(defending_side, now);
+        if detected.is_empty() && (events_cfg.cap_trigger_on_known_players || outnumbered) {
+            detected = enemy_fixedwing_player_positions(&ctx.db, attacking);
+        }
         if detected.is_empty() {
-            continue; // no radar contacts → no CAP (shouldn't happen if player count > 0)
+            continue;
         }
 
         // ── Step 3 (was 2): greedy spatial clustering ─────────────────────────────
@@ -2697,7 +2934,9 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
         // ── Step 4 (was 3): filter clusters below the minimum threat threshold ─────
         // Even though we already checked player_fw_count, filter any cluster whose
         // raw position count is below min_threat (edge case: positions from AI only).
-        clusters.retain(|(_, count)| *count >= min_threat);
+        // When scrambling purely to balance the air, a single-contact cluster is fine.
+        let cluster_floor = if outnumbered { 1 } else { min_threat };
+        clusters.retain(|(_, count)| *count >= cluster_floor);
         if clusters.is_empty() {
             continue;
         }
@@ -2750,16 +2989,17 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
             let (oid, obj) = match best_obj {
                 Some(o) => o,
                 None => {
-                    debug!(
-                        "Reactive CAP: no friendly airbase/FARP available for {:?} — skipping cluster",
+                    info!(
+                        "Reactive CAP: {:?} has no owned airbase without active CAP near the incursion — skipping",
                         defending_side
                     );
                     continue;
                 }
             };
 
-            // ── Step 6: respawn cooldown check ───────────────────────────────────
-            // If the previous CAP for this side was destroyed, enforce a global cool-down.
+            // ── Step 6: between-waves cooldown ──────────────────────────────────
+            // A side that just had a CAP wave end (shot down or RTB'd) waits
+            // `cap_respawn_cooldown_secs` before scrambling another.
             let died_at = match defending_side {
                 Side::Blue => ctx.event_scheduler.last_commander_cap_ended_blue,
                 Side::Red => ctx.event_scheduler.last_commander_cap_ended_red,
@@ -2768,9 +3008,11 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
             if let Some(died_at) = died_at {
                 if now - died_at < respawn_cooldown {
                     let secs_remaining = (respawn_cooldown - (now - died_at)).num_seconds();
-                    debug!(
-                        "Reactive CAP: {:?} global cooldown active — {}s remaining, skipping",
-                        defending_side, secs_remaining
+                    info!(
+                        "Reactive CAP: {:?} between-waves cooldown — {}s ({}m) left, not scrambling",
+                        defending_side,
+                        secs_remaining,
+                        secs_remaining / 60
                     );
                     continue;
                 }
@@ -3233,6 +3475,7 @@ fn run_slow_timed_events(
         update_frontline(ctx, ts, false);
         record_perf(&mut perf.frontline, ts);
         let ts = Utc::now();
+        ctx.db.tick_tasks(ts);
         ctx.db.ephemeral.update_map_layer(&ctx.db.persisted, ts);
         update_jtac_contacts(ctx, lua);
         record_perf(&mut perf.update_jtac_contacts, ts);
@@ -3265,6 +3508,13 @@ fn run_slow_timed_events(
                 flush_pending_moves(lua, ctx);
                 // Reactive CAP: spawn intercepts wherever enemy aircraft are detected
                 check_air_threats(ctx, start_ts);
+                // Kill any CAP that air-started instead of taxiing out.
+                enforce_cap_ground_start(lua, ctx, start_ts);
+                // AI helo missions: poll in-flight troop-insertion / resource-delivery
+                // helos, apply the payoff and despawn the ones that have landed.
+                if let Err(e) = ctx.db.tick_helo_missions(lua, start_ts) {
+                    error!("error ticking helo missions {e:?}");
+                }
                 // Dynamic CAP retargeting: redirect active CAP groups toward enemy aircraft.
                 // Isolated in its own panic boundary -- a panic in here must not
                 // take down the rest of this tick (positions, logistics, stats
@@ -3450,6 +3700,9 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
 
 fn delayed_init_miz(lua: MizLua) -> Result<()> {
     info!("init_miz: welcome to blue flag v3");
+    if let Ok(wd) = Lfs::singleton(lua).and_then(|l| l.writedir()) {
+        report_build(std::path::Path::new(wd.as_str()));
+    }
     let ctx = unsafe { Context::get_mut() };
     info!("indexing the miz");
     let miz = Miz::singleton(lua)?;
@@ -3582,6 +3835,11 @@ fn on_mission_load_end(lua: HooksLua) -> Result<()> {
         Ok(path) => ctx.mission_file_path = Some(PathBuf::from(path.as_str())),
         Err(e) => warn!("could not get mission filename {e:?}"),
     }
+    if !unitdb::is_loaded() {
+        if let Err(e) = unitdb::init(lua) {
+            warn!("could not harvest the unit db, using config ranges only: {e:?}");
+        }
+    }
     info!("mission loaded");
     Ok(())
 }
@@ -3623,6 +3881,12 @@ fn on_simulation_frame(_: HooksLua) -> Result<()> {
 
 fn init_hooks(lua: HooksLua) -> Result<()> {
     info!("setting user hooks");
+    // The hooks lua state still has _G.db, which the mission scripting state
+    // hasn't since 2.7. Harvest the installed unit ranges here; if db isn't
+    // populated this early, on_mission_load_end retries.
+    if let Err(e) = unitdb::init(lua) {
+        warn!("could not harvest the unit db at init: {e:?}");
+    }
     UserHooks::new(lua)
         .on_player_try_change_slot(on_player_try_change_slot)?
         .on_mission_load_end(on_mission_load_end)?

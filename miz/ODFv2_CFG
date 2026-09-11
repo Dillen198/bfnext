@@ -43,6 +43,11 @@
     "R-400A Oka",
     "Scud-B",
     "Scud-A",
+    "Scud R-17",
+    "Scud R-11",
+    "9M79",
+    "9M79M",
+    "9M79-1",
     "9K79 Tochka-U",
     "P-800 Oniks",
     "3M55 Oniks",
@@ -140,7 +145,9 @@
       "spawn_interval_ticks": 2,
       "max_concurrent_convoys": 10,
       "delivery_distance": 500,
-      "check_interval_secs": 10
+      "check_interval_secs": 10,
+      "max_transit_minutes": 90,
+      "dispatch_cooldown_ticks": 2
     },
     "air_logistics": {
       "enabled": true,
@@ -154,7 +161,8 @@
       "max_concurrent_routes": 6,
       "delivery_distance": 2000,
       "check_interval_secs": 15,
-      "supply_threshold": 50
+      "supply_threshold": 50,
+      "max_transit_minutes": 60
     },
     "sea_logistics": {
       "enabled": false,
@@ -167,7 +175,8 @@
       "max_concurrent_routes": 4,
       "delivery_distance": 1500,
       "check_interval_secs": 20,
-      "supply_threshold": 50
+      "supply_threshold": 50,
+      "max_transit_minutes": 180
     },
     "carrier_repair_crate": {
       "Red": {
@@ -195,13 +204,63 @@
     },
     "exempt_airframes": [
       "Su-30SM"
+    ],
+    "hub_reserve_percent": 20,
+    "front_line_routing": true,
+    "route_block_margin_m": 12000,
+    "captured_airframes": {
+      "salvage_percent": 25,
+      "max_per_type": 4,
+      "min_health": 100,
+      "exclude": []
+    },
+    "materiel": {
+      "enabled": true,
+      "hub_production": 2000,
+      "hub_capacity": 6,
+      "airbase_capacity": 3,
+      "repair_cost": 250,
+      "deploy_cost": 100
+    },
+    "production_scaling": {
+      "enabled": true,
+      "floor_percent": 35,
+      "ceiling_percent": 125,
+      "airbase_weight": 1.0,
+      "logistics_weight": 3.0,
+      "factory_weight": 4.0,
+      "command_center_weight": 2.0
+    },
+    "airframe_max": [
+      3,
+      1
     ]
+  },
+  "helo_insertion": {
+    "aircraft_template": {
+      "Blue": "BHELO_LOGI",
+      "Red": "RHELO_LOGI"
+    },
+    "altitude_m": 500,
+    "speed_kph": 220,
+    "troop_name": "Standard",
+    "troop_mission_cost": 0,
+    "supply_mission_cost": 50,
+    "supply_amount_per_item": 50,
+    "max_range_m": 150000,
+    "landing_radius_m": 200
+  },
+  "logi_from_scenery": {
+    "fallback_logi": 100
   },
   "logistics_exclusion": 10000,
   "unit_cull_distance": 37040,
   "ground_vehicle_cull_distance": 10000,
   "cull_after": 1800,
   "capture_consolidation_secs": 300,
+  "consolidation_zone_grace_secs": 15,
+  "consolidation_squad_bonus": 0.5,
+  "consolidation_crate_progress_secs": 120,
   "takeoff_delay_secs": 60,
   "slot_leave_kill_radius_m": 15000,
   "slow_timed_events_freq": 10,
@@ -403,7 +462,7 @@
         "min_range_m": 20000
       },
       "Uragan_BM-27": {
-        "max_range_m": 36000,
+        "max_range_m": 35800,
         "min_range_m": 11500
       },
       "Grad-URAL": {
@@ -459,7 +518,7 @@
         "min_range_m": 30
       },
       "SpGH_Dana": {
-        "max_range_m": 18500,
+        "max_range_m": 18700,
         "min_range_m": 30
       },
       "M-109": {
@@ -488,6 +547,42 @@
       },
       "hy_launcher": {
         "max_range_m": 100000,
+        "min_range_m": 0
+      },
+      "SK_C_28_naval_gun": {
+        "max_range_m": 20000,
+        "min_range_m": 0
+      },
+      "M12_GMC": {
+        "max_range_m": 18300,
+        "min_range_m": 0
+      },
+      "L118_Unit": {
+        "max_range_m": 17200,
+        "min_range_m": 0
+      },
+      "M2A1-105": {
+        "max_range_m": 11500,
+        "min_range_m": 0
+      },
+      "LeFH_18-40-105": {
+        "max_range_m": 10500,
+        "min_range_m": 0
+      },
+      "Wespe124": {
+        "max_range_m": 10500,
+        "min_range_m": 0
+      },
+      "2B11 mortar": {
+        "max_range_m": 7000,
+        "min_range_m": 30
+      },
+      "SturmPzIV": {
+        "max_range_m": 4500,
+        "min_range_m": 0
+      },
+      "Pak40": {
+        "max_range_m": 3000,
         "min_range_m": 0
       }
     },
@@ -910,6 +1005,132 @@
         "penalty": null,
         "limit": null,
         "geo_limit": "Unlimited"
+      },
+      "Add Task": {
+        "kind": {
+          "AddTask": {
+            "types": [
+              {
+                "name": "CAP",
+                "target": "Position",
+                "radius_m": 40000.0,
+                "color": [
+                  0.2,
+                  0.5,
+                  1.0,
+                  0.8
+                ],
+                "description": "Combat air patrol -- hold this area"
+              },
+              {
+                "name": "CAS",
+                "target": "Position",
+                "radius_m": 15000.0,
+                "color": [
+                  1.0,
+                  0.4,
+                  0.0,
+                  0.8
+                ],
+                "description": "Close air support -- friendlies in contact"
+              },
+              {
+                "name": "SEAD",
+                "target": "Position",
+                "radius_m": 25000.0,
+                "color": [
+                  1.0,
+                  0.0,
+                  0.6,
+                  0.8
+                ],
+                "description": "Suppress enemy air defences"
+              },
+              {
+                "name": "STRIKE",
+                "target": "Position",
+                "radius_m": 10000.0,
+                "color": [
+                  1.0,
+                  0.1,
+                  0.1,
+                  0.8
+                ],
+                "description": "Strike the target in this area"
+              },
+              {
+                "name": "LOGISTICS",
+                "target": "Position",
+                "radius_m": 10000.0,
+                "color": [
+                  0.2,
+                  0.9,
+                  0.2,
+                  0.8
+                ],
+                "description": "Crates / troops needed here"
+              },
+              {
+                "name": "CSAR",
+                "target": "Position",
+                "radius_m": 10000.0,
+                "color": [
+                  1.0,
+                  1.0,
+                  0.2,
+                  0.8
+                ],
+                "description": "Recover the downed pilot"
+              },
+              {
+                "name": "CAPTURE",
+                "target": "CaptureObjective",
+                "radius_m": 8000.0,
+                "color": [
+                  1.0,
+                  0.6,
+                  0.0,
+                  0.8
+                ],
+                "description": "Take this objective -- completes on capture"
+              },
+              {
+                "name": "SUPPLY",
+                "target": {
+                  "SupplyObjective": {
+                    "threshold": 80
+                  }
+                },
+                "radius_m": 8000.0,
+                "color": [
+                  0.4,
+                  0.8,
+                  1.0,
+                  0.8
+                ],
+                "description": "Resupply this objective -- AI helo supply, convoy or crates"
+              }
+            ],
+            "max_per_side": 12,
+            "ttl_secs": 7200,
+            "announce_gci": true
+          }
+        },
+        "cost": 0,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "Remove Task": {
+        "kind": {
+          "RemoveTask": {
+            "owner_only": false
+          }
+        },
+        "cost": 0,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
       }
     },
     "Blue": {
@@ -1089,6 +1310,132 @@
       },
       "Carrier Waypoint": {
         "kind": "CarrierWaypoint",
+        "cost": 0,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "Add Task": {
+        "kind": {
+          "AddTask": {
+            "types": [
+              {
+                "name": "CAP",
+                "target": "Position",
+                "radius_m": 40000.0,
+                "color": [
+                  0.2,
+                  0.5,
+                  1.0,
+                  0.8
+                ],
+                "description": "Combat air patrol -- hold this area"
+              },
+              {
+                "name": "CAS",
+                "target": "Position",
+                "radius_m": 15000.0,
+                "color": [
+                  1.0,
+                  0.4,
+                  0.0,
+                  0.8
+                ],
+                "description": "Close air support -- friendlies in contact"
+              },
+              {
+                "name": "SEAD",
+                "target": "Position",
+                "radius_m": 25000.0,
+                "color": [
+                  1.0,
+                  0.0,
+                  0.6,
+                  0.8
+                ],
+                "description": "Suppress enemy air defences"
+              },
+              {
+                "name": "STRIKE",
+                "target": "Position",
+                "radius_m": 10000.0,
+                "color": [
+                  1.0,
+                  0.1,
+                  0.1,
+                  0.8
+                ],
+                "description": "Strike the target in this area"
+              },
+              {
+                "name": "LOGISTICS",
+                "target": "Position",
+                "radius_m": 10000.0,
+                "color": [
+                  0.2,
+                  0.9,
+                  0.2,
+                  0.8
+                ],
+                "description": "Crates / troops needed here"
+              },
+              {
+                "name": "CSAR",
+                "target": "Position",
+                "radius_m": 10000.0,
+                "color": [
+                  1.0,
+                  1.0,
+                  0.2,
+                  0.8
+                ],
+                "description": "Recover the downed pilot"
+              },
+              {
+                "name": "CAPTURE",
+                "target": "CaptureObjective",
+                "radius_m": 8000.0,
+                "color": [
+                  1.0,
+                  0.6,
+                  0.0,
+                  0.8
+                ],
+                "description": "Take this objective -- completes on capture"
+              },
+              {
+                "name": "SUPPLY",
+                "target": {
+                  "SupplyObjective": {
+                    "threshold": 80
+                  }
+                },
+                "radius_m": 8000.0,
+                "color": [
+                  0.4,
+                  0.8,
+                  1.0,
+                  0.8
+                ],
+                "description": "Resupply this objective -- AI helo supply, convoy or crates"
+              }
+            ],
+            "max_per_side": 12,
+            "ttl_secs": 7200,
+            "announce_gci": true
+          }
+        },
+        "cost": 0,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "Remove Task": {
+        "kind": {
+          "RemoveTask": {
+            "owner_only": false
+          }
+        },
         "cost": 0,
         "penalty": null,
         "limit": null,
@@ -5635,7 +5982,7 @@
     "show_unit_class": true,
     "show_confidence_on_map": true
   },
-    "player_recon": {
+  "player_recon": {
     "range_m": 25000,
     "dwell_secs": 120,
     "scan_radius_m": 12000,
@@ -5646,12 +5993,297 @@
     "max_altitude_m": 0
   },
   "gci_briefing": {
-    "blue_freq": "251.0 AM",
-    "red_freq": "252.0 AM",
+    "blue_freq": "251.0 AM / 119.0 AM",
+    "red_freq": "124.0 AM / 228.0 AM",
     "blue_callsign": "Magic",
     "red_callsign": "Overlord",
     "note": "Broadcast only — no check-in required. Key up to ask for BOGEY DOPE / PICTURE / DECLARE.",
     "display_secs": 20
+  },
+  "situation_briefing": {
+    "on_slot_entry": true,
+    "display_secs": 40,
+    "delay_secs": 22,
+    "panel_tasks": 3,
+    "max_tasks": 12,
+    "include_threats": true
+  },
+  "_comms_plan_note": "Frequency allocation. Blue lives in UHF 251-270 (every western jet's 225-400 AM radio) plus VHF-FM 30-31 for the helo/A-10 ground net and 119.0 for VHF-only airframes; red lives in VHF-AM 124-145 and UHF 228, inside the 100-150/220-400 coverage of the Russian R-862/R-863. Intra-flight: blue 305-312, red 230-237. Reserved elsewhere: 243.0/121.5 guard (both sides), 340-360 spoken ATC tower and 370-390 ATIS (gci.json atc block). The two sides share no working channel. Keep gci.json's blueFreqs/redFreqs in step with presets 1-2 here.",
+  "comms_plan": {
+    "blue": [
+      {
+        "preset": 1,
+        "label": "AWACS / GCI -- MAGIC",
+        "freq_mhz": 251.0,
+        "modulation": "AM",
+        "purpose": "Primary control: picture, bogey dope, commit, declare"
+      },
+      {
+        "preset": 2,
+        "label": "GCI VHF relay -- MAGIC",
+        "freq_mhz": 119.0,
+        "modulation": "AM",
+        "purpose": "Same controller for VHF-only airframes"
+      },
+      {
+        "preset": 3,
+        "label": "AWACS alternate -- DARKSTAR",
+        "freq_mhz": 252.0,
+        "modulation": "AM",
+        "purpose": "Second controller / overflow when MAGIC is saturated"
+      },
+      {
+        "preset": 4,
+        "label": "Tanker TEXACO (boom)",
+        "freq_mhz": 253.0,
+        "modulation": "AM",
+        "purpose": "Pre-strike and post-strike refuel, fixed-wing boom"
+      },
+      {
+        "preset": 5,
+        "label": "Tanker ARCO (boom)",
+        "freq_mhz": 254.0,
+        "modulation": "AM",
+        "purpose": "Second boom track"
+      },
+      {
+        "preset": 6,
+        "label": "Tanker SHELL (drogue)",
+        "freq_mhz": 255.0,
+        "modulation": "AM",
+        "purpose": "Probe-and-drogue: Hornet, Tomcat, Harrier, Viggen"
+      },
+      {
+        "preset": 7,
+        "label": "JTAC 1",
+        "freq_mhz": 256.0,
+        "modulation": "AM",
+        "purpose": "Nine-line, talk-on, laser for the first active JTAC"
+      },
+      {
+        "preset": 8,
+        "label": "JTAC 2",
+        "freq_mhz": 257.0,
+        "modulation": "AM",
+        "purpose": "Second active JTAC"
+      },
+      {
+        "preset": 9,
+        "label": "JTAC 3",
+        "freq_mhz": 258.0,
+        "modulation": "AM",
+        "purpose": "Third active JTAC"
+      },
+      {
+        "preset": 10,
+        "label": "JTAC 4",
+        "freq_mhz": 259.0,
+        "modulation": "AM",
+        "purpose": "Fourth active JTAC"
+      },
+      {
+        "preset": 11,
+        "label": "CSAR -- SANDY",
+        "freq_mhz": 260.0,
+        "modulation": "AM",
+        "purpose": "Downed-pilot pickup: on-scene commander and the helo"
+      },
+      {
+        "preset": 12,
+        "label": "Package common -- STRIKE",
+        "freq_mhz": 265.0,
+        "modulation": "AM",
+        "purpose": "Strike package internal, all flights"
+      },
+      {
+        "preset": 13,
+        "label": "Package common -- SEAD",
+        "freq_mhz": 266.0,
+        "modulation": "AM",
+        "purpose": "SEAD/DEAD package internal"
+      },
+      {
+        "preset": 14,
+        "label": "Package common -- CAP",
+        "freq_mhz": 267.0,
+        "modulation": "AM",
+        "purpose": "Sweep and escort internal"
+      },
+      {
+        "preset": 15,
+        "label": "Package common -- CAS",
+        "freq_mhz": 268.0,
+        "modulation": "AM",
+        "purpose": "CAS stack check-in and deconfliction"
+      },
+      {
+        "preset": 16,
+        "label": "Carrier MARSHAL",
+        "freq_mhz": 270.0,
+        "modulation": "AM",
+        "purpose": "Carrier approach control, marshal stack, case II/III"
+      },
+      {
+        "preset": 17,
+        "label": "Carrier TOWER / LSO",
+        "freq_mhz": 127.5,
+        "modulation": "AM",
+        "purpose": "Ball call, paddles, deck ops"
+      },
+      {
+        "preset": 18,
+        "label": "GUARD (UHF)",
+        "freq_mhz": 243.0,
+        "modulation": "AM",
+        "purpose": "Emergency only -- never used for traffic"
+      },
+      {
+        "preset": 19,
+        "label": "GUARD (VHF)",
+        "freq_mhz": 121.5,
+        "modulation": "AM",
+        "purpose": "Emergency only"
+      },
+      {
+        "preset": 20,
+        "label": "Ground / logistics net",
+        "freq_mhz": 30.0,
+        "modulation": "FM",
+        "purpose": "Convoy, crate and warehouse coordination"
+      },
+      {
+        "preset": 21,
+        "label": "Troop & crate ops",
+        "freq_mhz": 31.0,
+        "modulation": "FM",
+        "purpose": "Helo lift working channel, troop drops"
+      }
+    ],
+    "red": [
+      {
+        "preset": 1,
+        "label": "GCI -- OVERLORD",
+        "freq_mhz": 124.0,
+        "modulation": "AM",
+        "purpose": "Primary control: picture, bogey dope, commit, declare"
+      },
+      {
+        "preset": 2,
+        "label": "GCI UHF relay -- OVERLORD",
+        "freq_mhz": 228.0,
+        "modulation": "AM",
+        "purpose": "Same controller for UHF-preferred airframes"
+      },
+      {
+        "preset": 3,
+        "label": "AWACS A-50 -- DRAGNET",
+        "freq_mhz": 125.0,
+        "modulation": "AM",
+        "purpose": "Airborne early warning when an A-50 is up"
+      },
+      {
+        "preset": 4,
+        "label": "Tanker IL-78 -- KUZNETS",
+        "freq_mhz": 126.0,
+        "modulation": "AM",
+        "purpose": "Probe-and-drogue refuel"
+      },
+      {
+        "preset": 5,
+        "label": "JTAC 1",
+        "freq_mhz": 133.0,
+        "modulation": "AM",
+        "purpose": "Nine-line, talk-on, laser for the first active JTAC"
+      },
+      {
+        "preset": 6,
+        "label": "JTAC 2",
+        "freq_mhz": 134.0,
+        "modulation": "AM",
+        "purpose": "Second active JTAC"
+      },
+      {
+        "preset": 7,
+        "label": "JTAC 3",
+        "freq_mhz": 135.0,
+        "modulation": "AM",
+        "purpose": "Third active JTAC"
+      },
+      {
+        "preset": 8,
+        "label": "JTAC 4",
+        "freq_mhz": 136.0,
+        "modulation": "AM",
+        "purpose": "Fourth active JTAC"
+      },
+      {
+        "preset": 9,
+        "label": "CSAR -- rescue",
+        "freq_mhz": 137.0,
+        "modulation": "AM",
+        "purpose": "Downed-pilot pickup"
+      },
+      {
+        "preset": 10,
+        "label": "Package common -- STRIKE",
+        "freq_mhz": 142.0,
+        "modulation": "AM",
+        "purpose": "Strike package internal, all flights"
+      },
+      {
+        "preset": 11,
+        "label": "Package common -- SEAD",
+        "freq_mhz": 143.0,
+        "modulation": "AM",
+        "purpose": "SEAD/DEAD package internal"
+      },
+      {
+        "preset": 12,
+        "label": "Package common -- CAP",
+        "freq_mhz": 144.0,
+        "modulation": "AM",
+        "purpose": "Sweep and escort internal"
+      },
+      {
+        "preset": 13,
+        "label": "Package common -- CAS",
+        "freq_mhz": 145.0,
+        "modulation": "AM",
+        "purpose": "CAS stack check-in and deconfliction"
+      },
+      {
+        "preset": 14,
+        "label": "GUARD (UHF)",
+        "freq_mhz": 243.0,
+        "modulation": "AM",
+        "purpose": "Emergency only -- never used for traffic"
+      },
+      {
+        "preset": 15,
+        "label": "GUARD (VHF)",
+        "freq_mhz": 121.5,
+        "modulation": "AM",
+        "purpose": "Emergency only"
+      },
+      {
+        "preset": 16,
+        "label": "Ground / logistics net",
+        "freq_mhz": 40.0,
+        "modulation": "FM",
+        "purpose": "Convoy, crate and warehouse coordination"
+      },
+      {
+        "preset": 17,
+        "label": "Troop & crate ops",
+        "freq_mhz": 41.0,
+        "modulation": "FM",
+        "purpose": "Helo lift working channel, troop drops"
+      }
+    ],
+    "blue_flight_base_mhz": 305.0,
+    "red_flight_base_mhz": 230.0,
+    "flight_step_mhz": 1.0,
+    "flight_count": 8
   },
   "ground_vehicle_cargo": {
     "M-2 Bradley": {
@@ -5767,7 +6399,9 @@
     "cap_max_concurrent": 3,
     "cap_max_per_side": 2,
     "cap_min_threat_count": 2,
-    "cap_respawn_cooldown_secs": 120,
+    "cap_respawn_cooldown_secs": 1800,
+    "cap_balance_gap": 2,
+    "cap_trigger_on_known_players": true,
     "cap_probability": 0.35,
     "barrage_enabled": false,
     "ambush_enabled": false,
@@ -5808,6 +6442,7 @@
     "treasury_income_period_secs": 300,
     "objective_fund_max_per_tick": 200,
     "objective_fund_period_secs": 120,
+    "action_reserve": 300,
     "holding_bonus_per_objective": 5,
     "mission_rewards": {
       "strike": 200,
@@ -5936,17 +6571,6 @@
       }
     },
     "delay": 120
-  },
-  "last_stand": {
-    "countdown_secs": 3600,
-    "trigger_count": 1
-  },
-  "under_attack": {
-    "cooldown_secs": 120
-  },
-  "counter_battery": {
-    "cooldown_secs": 60,
-    "grid_resolution_m": 2000
   },
   "special_sam_sites": [
     {

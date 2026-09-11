@@ -5,7 +5,7 @@ import { Radio } from 'lucide-react'
 export default function AlertBanner() {
   const { data: stats } = useQuery({
     queryKey: ['site-stats'],
-    queryFn: api.stats,
+    queryFn: () => api.stats(),
     refetchInterval: 30_000,
   })
 

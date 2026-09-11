@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Dillen Weerasinghe. All rights reserved. Proprietary — no license granted. See the repository NOTICE file. -->
-
 # Live GCI (AWACS Radio Calls)
 
 On servers that run it, a **live GCI controller** watches your coalition's

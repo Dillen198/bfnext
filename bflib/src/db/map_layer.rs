@@ -38,6 +38,7 @@ use super::{
     intel::{IntelContact, IntelDatabase},
     logistics::{AirLogisticsRoute, ConvoyId, LogiRouteId, SeaLogisticsRoute, SupplyConvoy},
     persisted::Persisted,
+    tasks::TaskId,
 };
 use bfprotocols::db::objective::ObjectiveId;
 use bfprotocols::db::group::GroupId;
@@ -570,6 +571,43 @@ impl JtacLayerMarks {
 // MapLayer â€” top-level owner of all marks
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+/// The two marks that make up one coalition tasking board entry: the area
+/// circle and the pin carrying its details. Posted from the Actions menu,
+/// see `crate::db::tasks`.
+#[derive(Debug)]
+struct TaskMarks {
+    area: MarkId,
+    pin: MarkId,
+}
+
+impl TaskMarks {
+    fn new(task: &crate::db::tasks::Task, msgs: &mut MsgQ) -> Self {
+        let [r, g, b, a] = task.color;
+        let color = Color::new(r, g, b, a);
+        let area = MarkId::new();
+        msgs.circle_to_all(
+            side_filter(task.side),
+            area,
+            CircleSpec {
+                center: v3(task.pos.x, task.pos.y),
+                radius: task.radius,
+                color,
+                fill_color: Color::new(r, g, b, 0.05),
+                line_type: LineType::Dashed,
+                read_only: true,
+            },
+            None,
+        );
+        let pin = msgs.mark_to_side(task.side, task.pos, true, task.pin_text().as_str());
+        Self { area, pin }
+    }
+
+    fn remove(self, msgs: &mut MsgQ) {
+        msgs.delete_mark(self.area);
+        msgs.delete_mark(self.pin);
+    }
+}
+
 /// Generic timed mark bundle â€” up to 3 MarkIds that expire together.
 #[derive(Debug)]
 struct TimedMark {
@@ -604,6 +642,7 @@ pub struct MapLayer {
     csar_marks: FxHashMap<GroupId, CsarMarks>,
     pub jtac_marks: FxHashMap<GroupId, JtacLayerMarks>,
     supply_critical_marks: FxHashMap<ObjectiveId, MarkId>,
+    task_marks: FxHashMap<TaskId, TaskMarks>,
     timed_marks: Vec<TimedMark>,
 }
 
@@ -814,36 +853,6 @@ impl MapLayer {
         if let Some(id) = label { msgs.delete_mark(id); }
     }
 
-    /// Text cue at the detected enemy arty position so the friendly side can
-    /// call counter-fire. (The NATO hostile diamond that used to sit under
-    /// this label was removed -- it read as map clutter.)
-    pub fn on_counter_battery(
-        &mut self,
-        enemy_pos: Vector2,
-        friendly_side: Side,
-        now: DateTime<Utc>,
-        msgs: &mut MsgQ,
-    ) {
-        let sf = side_filter(friendly_side);
-        let enemy_col = match friendly_side {
-            Side::Blue => Color::red(0.95),
-            _ => Color::blue(0.95),
-        };
-        let label = MarkId::new();
-        msgs.text_to_all(
-            sf,
-            label,
-            TextSpec {
-                pos: v3(enemy_pos.x, enemy_pos.y),
-                color: enemy_col,
-                fill_color: Color::black(0.0),
-                font_size: 11,
-                read_only: true,
-                text: "ARTY\nCOUNTER-BATTERY".into(),
-            },
-        );
-        self.timed_marks.push(TimedMark::one(label, 60, now));
-    }
 
     /// "ENEMY CONTACT" label at an objective that just became threatened.
     /// Previously also drew a fixed-bearing "axis of advance" arrow into the
@@ -950,6 +959,7 @@ impl MapLayer {
         self.update_air_routes(persisted, active_air_routes, msgs);
         self.update_sea_routes(persisted, active_sea_routes, msgs);
         self.update_csar(persisted, csar_capture_mins, now, msgs);
+        self.update_tasks(persisted, msgs);
         self.expire_fire_marks(now, msgs);
         self.expire_timed_marks(now, msgs);
     }
@@ -1220,6 +1230,30 @@ impl MapLayer {
         });
     }
 
+    // â”€â”€ Coalition tasking board â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    /// Draw tasks that have been posted since the last pass and erase the
+    /// ones that have been removed or have expired. Diffing against
+    /// `persisted` (rather than drawing at post time) is what redraws the
+    /// whole board after a mission restart, when the DCS marks are gone but
+    /// the tasks are still in the save.
+    fn update_tasks(&mut self, persisted: &Persisted, msgs: &mut MsgQ) {
+        for (id, task) in persisted.tasks.into_iter() {
+            if !self.task_marks.contains_key(id) {
+                self.task_marks.insert(*id, TaskMarks::new(task, msgs));
+            }
+        }
+        self.task_marks.retain(|id, marks| {
+            if persisted.tasks.get(id).is_some() {
+                true
+            } else {
+                msgs.delete_mark(marks.area);
+                msgs.delete_mark(marks.pin);
+                false
+            }
+        });
+    }
+
     // â”€â”€ Fire mark expiry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn expire_fire_marks(&mut self, now: DateTime<Utc>, msgs: &mut MsgQ) {
@@ -1267,6 +1301,9 @@ impl MapLayer {
         }
         for (_, m) in self.supply_critical_marks.drain() {
             msgs.delete_mark(m);
+        }
+        for (_, t) in self.task_marks.drain() {
+            t.remove(msgs);
         }
         for m in self.timed_marks.drain(..) {
             m.remove(msgs);

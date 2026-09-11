@@ -1,3 +1,7 @@
+// The warp route chain is very deep; the default limit is not enough once a
+// `.recover` layer sits on top of it.
+#![recursion_limit = "512"]
+
 use anyhow::Result;
 use bfprotocols::cfg::UnitTag;
 use clap::Parser;
@@ -22,6 +26,22 @@ use warp::{
     Filter,
 };
 
+/// Build identity, embedded at compile time by `build.rs`.
+pub const BUILD_GIT: &str = env!("BFNEXT_BUILD_GIT");
+pub const BUILD_EPOCH: &str = env!("BFNEXT_BUILD_EPOCH");
+pub const BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `{ version, git, built }` for this binary. `built` is an RFC3339 UTC string.
+fn build_info_json() -> serde_json::Value {
+    let built = BUILD_EPOCH
+        .parse::<i64>()
+        .ok()
+        .and_then(|s| chrono::DateTime::from_timestamp(s, 0))
+        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(|| "unknown".to_string());
+    serde_json::json!({ "version": BUILD_VERSION, "git": BUILD_GIT, "built": built })
+}
+
 #[derive(RustEmbed)]
 #[folder = "../bfweb/dist/"]
 struct Assets;
@@ -32,8 +52,17 @@ struct SiteAssets;
 
 mod db;
 mod db_id;
+mod atc;
 mod gci;
+mod voice;
 mod intel;
+mod instance;
+
+use crate::db::InstanceState;
+use crate::instance::{InstanceCfg, InstanceId, Registry, DEFAULT_INSTANCE};
+
+/// One DCS server instance's runtime state, as handlers see it.
+type Inst = Arc<InstanceState>;
 
 /// Load stats and serve the Fowl Engine API
 #[derive(Parser, Debug)]
@@ -51,6 +80,23 @@ struct Args {
     /// Check with: `netidx resolver list <base>`.
     #[arg(long)]
     sortie: Option<String>,
+    /// Path to a JSON file describing every DCS server instance this bfdb
+    /// fronts (see `deploy/multi-instance.md` and `instances.sample.json`).
+    /// Each entry carries its own netidx base, stats.jsonl/archive, engine
+    /// CFG, UDP export port, SRS URL and GCI config, and every API route
+    /// accepts `?instance=<id>` to pick one.
+    ///
+    /// Mutually exclusive with the single-server flags below (`--base`,
+    /// `--stats-jsonl`, `--stats-dir`, `--sortie`, `--engine-config`,
+    /// `--srs-url`, `--gci-config`, `--export-port`) -- pass either this or
+    /// those, not both. Omit it and those flags synthesize one instance called
+    /// "default", which is exactly the pre-multi-instance behaviour.
+    #[arg(long)]
+    instances: Option<PathBuf>,
+    /// UDP port the DCS `Export.lua` live-unit feed arrives on (single-server
+    /// mode only -- with `--instances`, set `export_port` per instance).
+    #[arg(long, default_value_t = crate::instance::DEFAULT_EXPORT_PORT)]
+    export_port: u16,
     /// The path to the database
     #[arg(short, long)]
     db: PathBuf,
@@ -78,8 +124,10 @@ struct Args {
     /// TARPS PNGs are large and a busy round can hold hundreds.
     #[arg(long)]
     intel_dir: Option<PathBuf>,
-    /// The web address to listen on
-    #[arg(long)]
+    /// The web address to listen on. Defaulted so the one-off maintenance
+    /// modes (`--clear-sessions`, `--rebuild-stats`, `--merge-rounds`) don't
+    /// need it -- the normal server run always gets it from procman anyway.
+    #[arg(long, default_value = "0.0.0.0:8880")]
     listen_address: SocketAddr,
     /// Discord OAuth2 client ID
     #[arg(long)]
@@ -185,6 +233,21 @@ struct Args {
     /// --stats-dir to still be present.
     #[arg(long = "rebuild-stats")]
     rebuild_stats: bool,
+    /// One-off maintenance: collapse every round recorded under the given
+    /// sortie into a single round -- re-keying all round-scoped data (pilot
+    /// stats, kills, sorties, deploys, captures, objectives, trails, recon
+    /// intel) onto the earliest one -- then exit. Repairs a campaign that an
+    /// older bug split into dozens of near-identical "rounds" in the
+    /// dashboard: bfdb used to close the live round on every restart whenever
+    /// the sortie was named the same as the last path segment of --base (the
+    /// documented default netidx_base is "/local/fowl/campaign" + sortie
+    /// "campaign"), and the next SessionStart forked a fresh round. Summable
+    /// counters are summed; the newest fork wins any other key collision.
+    /// The replay cursor, auth sessions, Discord links, the ban list, wiki
+    /// content and the stats archive are untouched. Pass the exact sortie
+    /// name shown in GET /api/rounds (usually "campaign").
+    #[arg(long = "merge-rounds", value_name = "SORTIE")]
+    merge_rounds: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -390,6 +453,7 @@ impl From<anyhow::Error> for Error {
     }
 }
 
+
 // ── Real-time log broadcaster ─────────────────────────────────────────────────
 
 // Large enough that `GET /api/logs/bfdb` (token-gated, for remote debugging)
@@ -463,20 +527,35 @@ async fn api_config(cfg_json: Arc<String>) -> impl warp::Reply {
 
 // ── API handlers ────────────────────────────────────────────────────
 
-async fn api_rounds(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+/// GET /api/rounds — the round history for one DCS server instance.
+///
+/// `?instance=all` returns every instance's rounds instead; each row carries
+/// its own `instance` id either way, so the dashboard's round picker can label
+/// (or group) them without a second request.
+async fn api_rounds(
+    db: StatsDb,
+    q: std::collections::HashMap<std::string::String, std::string::String>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let all = q.get("instance").map(|s| s == "all").unwrap_or(false);
     let data = task::block_in_place(|| -> Result<String> {
         let rounds = db.all_rounds()?;
         let entries: Vec<_> = rounds
             .iter()
-            .map(|(scenario, rid, round)| {
-                serde_json::json!({
+            .filter_map(|(scenario, rid, round)| {
+                let owner = db.round_instance_of(*rid);
+                if !all && owner != inst.id {
+                    return None;
+                }
+                Some(serde_json::json!({
                     "id": rid.0,
+                    "instance": owner.to_string(),
                     "scenario": scenario.to_string(),
                     "start": round.start.to_rfc3339(),
                     "end": round.end.map(|d| d.to_rfc3339()),
                     "active": round.end.is_none(),
                     "winner": round.winner.map(|s| format!("{s:?}")),
-                })
+                }))
             })
             .collect();
         Ok(serde_json::to_string(&entries)?)
@@ -550,11 +629,12 @@ fn rotate_log(path: &std::path::Path) {
 
 async fn call_engine_rpc_str(
     db: &StatsDb,
+    inst: &InstanceState,
     proc_name: &str,
     args: Vec<(&str, netidx::publisher::Value)>,
 ) -> std::result::Result<std::string::String, Error> {
     use netidx::publisher::Value;
-    match db.call_engine_rpc(proc_name, args).await? {
+    match db.call_engine_rpc(inst, proc_name, args).await? {
         Value::Error(e) => Err(Error(anyhow::anyhow!("{e}"))),
         Value::String(s) => Ok(s.to_string()),
         other => Err(Error(anyhow::anyhow!("unexpected RPC reply: {other:?}"))),
@@ -564,9 +644,10 @@ async fn call_engine_rpc_str(
 async fn api_objectives(
     db: StatsDb,
     round_id: Option<u64>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let (mut entries, is_active) = task::block_in_place(|| -> Result<(Vec<serde_json::Value>, bool)> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let active_rid = rounds.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, _)| *rid);
         let rid = match round_id {
             Some(id) => db::RoundId(id),
@@ -607,6 +688,15 @@ async fn api_objectives(
                     "priority": false,
                     "threatened": false,
                     "captureable": false,
+                    // Whether owner/health/... below came from the running
+                    // engine or from the (possibly stale) persisted snapshot.
+                    // A consumer that diffs successive polls to detect state
+                    // CHANGES -- the Discord alert poller -- must ignore a
+                    // response where this is false: mixing live and stale
+                    // values across polls looks exactly like an objective
+                    // flipping owner or crossing a health threshold, and
+                    // produces an endless stream of phantom alerts.
+                    "live": false,
                 }))
             })
             .collect();
@@ -621,10 +711,16 @@ async fn api_objectives(
     // within a few seconds, falling back to the persisted (possibly stale)
     // priority flags on timeout rather than blocking every caller (including
     // the Discord bot's poller, which has its own 10s client timeout).
+    let mut live_ok = false;
     if is_active {
         match tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            call_engine_rpc_str(&db, "query-objectives", vec![]),
+            // netidx RPC round-trips under a populated mission routinely run
+            // past 3s even though the engine frame time is fine (batch commit
+            // + poll contention with the tacmap/gci pollers). 8s matches the
+            // gci client and stops the every-30s "timed out" spam; we still
+            // fall back to persisted flags if it really is unreachable.
+            std::time::Duration::from_secs(8),
+            call_engine_rpc_str(&db, &inst, "query-objectives", vec![]),
         ).await {
             Ok(Ok(json)) => {
                 if let Ok(live) = serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(&json) {
@@ -646,18 +742,26 @@ async fn api_objectives(
                                 entry["owner"] = serde_json::json!(format!("{:?}", o.owner));
                                 entry["threatened"] = serde_json::Value::Bool(o.threatened);
                                 entry["captureable"] = serde_json::Value::Bool(o.captureable);
+                                entry["live"] = serde_json::Value::Bool(true);
                             }
                         }
                     }
+                    live_ok = true;
                 }
             }
             Ok(Err(e)) => log::warn!("api_objectives: query-objectives RPC failed: {}", e.0),
-            Err(_) => log::warn!("api_objectives: query-objectives RPC timed out after 3s, engine may be unreachable"),
+            Err(_) => log::warn!("api_objectives: query-objectives RPC timed out after 8s, engine may be unreachable"),
         }
     }
 
     let data = serde_json::to_string(&entries).map_err(|e| Error(e.into()))?;
-    Ok(json_response(data))
+    // Also as a header, so a consumer can tell a degraded response from an
+    // empty one without inspecting every element.
+    Ok(warp::reply::with_header(
+        json_response(data),
+        "x-fowl-live",
+        if live_ok { "1" } else { "0" },
+    ))
 }
 
 /// GET /api/frontline?round=N — the dividing line between blue-held and
@@ -668,9 +772,10 @@ async fn api_objectives(
 async fn api_frontline(
     db: StatsDb,
     round_id: Option<u64>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match round_id {
             Some(id) => db::RoundId(id),
             None => match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
@@ -739,9 +844,10 @@ async fn api_briefing(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
     query: std::collections::HashMap<std::string::String, std::string::String>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     use netidx::publisher::Value;
-    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
     // dcso3's Side::from_str only accepts lowercase.
     let side = match c.side {
         dcso3::coalition::Side::Red => "red",
@@ -749,7 +855,7 @@ async fn api_briefing(
     };
     match tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        call_engine_rpc_str(&db, "query-briefing", vec![("side", Value::from(side.to_string()))]),
+        call_engine_rpc_str(&db, &inst, "query-briefing", vec![("side", Value::from(side.to_string()))]),
     )
     .await
     {
@@ -765,13 +871,139 @@ async fn api_briefing(
     }
 }
 
+/// GET /api/situation — the caller's own coalition auto-generated situational
+/// briefing: posture, ranked tasking, hotspots, the air-defence areas *that
+/// side* has actually earned intel on, the air picture, logistics and the comms
+/// card, plus a positioned objective layer for the briefing map.
+///
+/// Coalition-locked exactly like `/api/briefing`: the viewer's session cookie
+/// resolves to a coalition and the engine builds the report for that side only,
+/// so a browser can never pull the other side's intel. Admins with no in-game
+/// side may pass `?side=blue|red`.
+///
+/// The engine has no campaign history of its own, so `recent` comes back as an
+/// in-session derivation; we replace it with the real persisted capture log
+/// before answering.
+async fn api_situation(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use netidx::publisher::Value;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    // dcso3's Side::from_str only accepts lowercase.
+    let side_str = match c.side {
+        dcso3::coalition::Side::Red => "red",
+        _ => "blue",
+    };
+    // The engine walks every objective, the intel db and the radar net to build
+    // this -- it is heavier than query-briefing, so allow the same 8s the
+    // objectives poll uses rather than 5s.
+    let raw = match tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        call_engine_rpc_str(
+            &db,
+            &inst,
+            "query-situation",
+            vec![("side", Value::from(side_str.to_string()))],
+        ),
+    )
+    .await
+    {
+        Ok(Ok(data)) => data,
+        Ok(Err(e)) => {
+            log::warn!("api_situation: query-situation RPC failed ({side_str}): {}", e.0);
+            return Err(e);
+        }
+        Err(_) => {
+            log::warn!(
+                "api_situation: query-situation RPC timed out after 8s ({side_str}) -- engine unreachable or old bflib.dll"
+            );
+            return Err(Error(anyhow::anyhow!(
+                "engine did not answer query-situation (unreachable, or bflib.dll predates this feature)"
+            )));
+        }
+    };
+
+    // Swap the engine's in-session guess at "recent" for the persisted capture
+    // log, which survives mission restarts and names the pilots involved.
+    let mut rep: bfprotocols::situation::SituationReport = match serde_json::from_str(&raw) {
+        Ok(r) => r,
+        Err(e) => {
+            // Don't fail the request over an enrichment step -- hand the
+            // engine's own JSON through unchanged.
+            log::warn!("api_situation: could not parse engine report for enrichment: {e}");
+            return Ok(json_response(raw));
+        }
+    };
+    let captures = task::block_in_place(|| -> Result<Vec<serde_json::Value>> {
+        let rounds = db.latest_rounds_for(&inst.id)?;
+        let Some((_, rid, _)) = rounds.iter().find(|(_, _, r)| r.end.is_none()) else {
+            return Ok(vec![]);
+        };
+        Ok(db
+            .recent_captures(*rid, 20)?
+            .iter()
+            .map(|cap| {
+                serde_json::json!({
+                    "at": cap.time.to_rfc3339(),
+                    "objective": cap.objective_name.to_string(),
+                    "side": format!("{:?}", cap.side),
+                    "by": cap.by.iter()
+                        .map(|u| db.pilot_name(u).unwrap_or_else(|| u.to_string()))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect())
+    })
+    .unwrap_or_default();
+    if !captures.is_empty() {
+        let mut recent = vec![];
+        for cap in &captures {
+            let obj = cap["objective"].as_str().unwrap_or("?");
+            let by_side = cap["side"].as_str().unwrap_or("?");
+            let pilots: Vec<&str> = cap["by"].as_array().map_or(vec![], |a| {
+                a.iter().filter_map(|v| v.as_str()).collect()
+            });
+            let who = if pilots.is_empty() {
+                std::string::String::new()
+            } else {
+                format!(" by {}", pilots.join(", "))
+            };
+            let at = cap["at"]
+                .as_str()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|d| d.with_timezone(&chrono::Utc))
+                .unwrap_or_else(chrono::Utc::now);
+            recent.push(bfprotocols::situation::SituationEvent {
+                at,
+                text: format!("{obj} captured by {by_side}{who}"),
+                good: Some(by_side == format!("{:?}", c.side)),
+                lat: None,
+                lon: None,
+            });
+        }
+        // Keep the engine's damage/neutral lines too -- they aren't captures and
+        // nothing else records them. Newest first.
+        recent.extend(rep.recent.into_iter());
+        recent.sort_by(|a, b| b.at.cmp(&a.at));
+        recent.truncate(20);
+        rep.recent = recent;
+    }
+    let data = serde_json::to_string(&rep).map_err(|e| Error(e.into()))?;
+    Ok(json_response(data))
+}
+
 async fn api_kills(
     db: StatsDb,
     round_id: Option<u64>,
     limit: Option<usize>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match round_id {
             Some(id) => db::RoundId(id),
             None => match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
@@ -975,9 +1207,10 @@ async fn api_pilot_deploys(
 async fn api_stats(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let mut value = task::block_in_place(|| -> Result<serde_json::Value> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let active_round = rounds.iter().find(|(_, _, r)| r.end.is_none());
         let active_rid = active_round.map(|(_, rid, _)| *rid);
         let pilots = db.pilot_leaderboard(active_rid)?;
@@ -1000,7 +1233,7 @@ async fn api_stats(
         let local_restart_at = active_round
             .and_then(|(_, rid, _)| db.active_session_stop(*rid))
             .map(|t| t.to_rfc3339());
-        let weather = db.latest_weather().map(|w| serde_json::json!({
+        let weather = db.latest_weather(&inst).map(|w| serde_json::json!({
             "temp_c": w.temp_c,
             "wind_speed_kts": w.wind_speed_kts,
             "wind_from_deg": w.wind_from_deg,
@@ -1014,9 +1247,19 @@ async fn api_stats(
         } else {
             (0, 0, 0, 0)
         };
+        // Round history shown as a headline figure is the public one, so a
+        // test instance's rounds don't inflate it. (`rounds` above is already
+        // this instance's own, but when a private instance is selected by an
+        // admin we still report the public total for consistency with the
+        // leaderboard beside it.)
+        let public_rounds = db.public_rounds()?;
+        let total_rounds = match &public_rounds {
+            None => rounds.len(),
+            Some(allowed) => rounds.iter().filter(|(_, rid, _)| allowed.contains(rid)).count(),
+        };
         Ok(serde_json::json!({
             "total_pilots": pilots.len(),
-            "total_rounds": rounds.len(),
+            "total_rounds": total_rounds,
             "active_round": active_round.map(|(s, rid, r)| serde_json::json!({
                 "id": rid.0,
                 "scenario": s.to_string(),
@@ -1092,6 +1335,7 @@ async fn api_stats(
             std::time::Duration::from_secs(2),
             call_engine_rpc_str(
                 &db,
+                &inst,
                 "set-server-info",
                 vec![("info", netidx::publisher::Value::from(payload))],
             ),
@@ -1102,9 +1346,9 @@ async fn api_stats(
     Ok(json_response(serde_json::to_string(&value).map_err(anyhow::Error::from)?))
 }
 
-async fn api_points(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+async fn api_points(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
             None => return Ok("[]".to_string()),
@@ -1118,9 +1362,9 @@ async fn api_points(db: StatsDb) -> std::result::Result<impl warp::Reply, Error>
     Ok(json_response(data))
 }
 
-async fn api_captures(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+async fn api_captures(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
             None => return Ok("[]".to_string()),
@@ -1141,9 +1385,10 @@ async fn api_capture_events(
     db: StatsDb,
     round_id: Option<u64>,
     limit: Option<usize>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match round_id {
             Some(id) => db::RoundId(id),
             None => match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
@@ -1175,9 +1420,9 @@ async fn api_capture_events(
     Ok(json_response(data))
 }
 
-async fn api_aircraft_usage(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+async fn api_aircraft_usage(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
             None => return Ok("[]".to_string()),
@@ -1191,9 +1436,9 @@ async fn api_aircraft_usage(db: StatsDb) -> std::result::Result<impl warp::Reply
     Ok(json_response(data))
 }
 
-async fn api_online(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+async fn api_online(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
             None => return Ok("[]".to_string()),
@@ -1218,10 +1463,11 @@ async fn api_online(db: StatsDb) -> std::result::Result<impl warp::Reply, Error>
 async fn api_units(
     session_id: Option<Uuid>,
     db: StatsDb,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
     let data = task::block_in_place(|| -> Result<String> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
             None => match rounds.first() {
@@ -1398,6 +1644,7 @@ async fn api_auth_me(
     session_id: Option<Uuid>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     // Return 200 with null user when not logged in — avoids browser console errors
     // since this endpoint is polled on every page load to check auth state
@@ -1411,7 +1658,7 @@ async fn api_auth_me(
     let ucid = resolve_ucid_via_bot(&bot_cfg, &s.discord_id).await;
     // Coalition in the active round -- gates access to the recon intel page.
     let side = match &ucid {
-        Some(u) => task::block_in_place(|| db.pilot_current_side(u))?.map(|s| format!("{s:?}")),
+        Some(u) => task::block_in_place(|| db.pilot_current_side(&inst.id, u))?.map(|s| format!("{s:?}")),
         None => None,
     };
     Ok(json_response(serde_json::to_string(&serde_json::json!({
@@ -1504,9 +1751,9 @@ async fn require_admin(session_id: Option<Uuid>, db: StatsDb) -> std::result::Re
 //  - a browser session cookie linked to a Discord account, for testing the
 //    standalone /cockpit page outside DCS.
 
-async fn resolve_by_player_id(id: i64, db: &StatsDb) -> std::result::Result<dcso3::net::Ucid, Error> {
+async fn resolve_by_player_id(id: i64, db: &StatsDb, inst: &InstanceState) -> std::result::Result<dcso3::net::Ucid, Error> {
     use netidx::publisher::Value;
-    let s = call_engine_rpc_str(db, "resolve-player-id", vec![("id", Value::from(id))]).await?;
+    let s = call_engine_rpc_str(db, inst, "resolve-player-id", vec![("id", Value::from(id))]).await?;
     s.parse::<dcso3::net::Ucid>().map_err(|e| anyhow::anyhow!("bad ucid from engine: {e:?}").into())
 }
 
@@ -1515,9 +1762,10 @@ async fn require_linked_player(
     session_id: Option<Uuid>,
     db: StatsDb,
     bot_cfg: &Arc<Option<BotLinkConfig>>,
+    inst: &InstanceState,
 ) -> std::result::Result<dcso3::net::Ucid, Error> {
     if let Some(id) = query.get("playerid").and_then(|s| s.parse::<i64>().ok()) {
-        return resolve_by_player_id(id, &db).await;
+        return resolve_by_player_id(id, &db, inst).await;
     }
     let Some(id) = session_id else {
         return Err(anyhow::anyhow!("not logged in").into());
@@ -1534,11 +1782,12 @@ async fn api_cockpit_ewr_report(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst).await?;
     let friendly = query.get("friendly").map(|s| s == "true").unwrap_or(false);
     use netidx::publisher::Value;
-    let report = call_engine_rpc_str(&db, "ewr-report", vec![
+    let report = call_engine_rpc_str(&db, &inst, "ewr-report", vec![
         ("ucid", Value::from(ucid.to_string())),
         ("friendly", Value::from(friendly)),
     ]).await?;
@@ -1550,10 +1799,11 @@ async fn api_cockpit_ewr_toggle(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst).await?;
     use netidx::publisher::Value;
-    let state = call_engine_rpc_str(&db, "ewr-toggle", vec![
+    let state = call_engine_rpc_str(&db, &inst, "ewr-toggle", vec![
         ("ucid", Value::from(ucid.to_string())),
     ]).await?;
     Ok(warp::reply::json(&serde_json::json!({ "state": state })))
@@ -1570,10 +1820,11 @@ async fn api_cockpit_ewr_units(
     body: EwrUnitsBody,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst).await?;
     use netidx::publisher::Value;
-    let units = call_engine_rpc_str(&db, "ewr-set-units", vec![
+    let units = call_engine_rpc_str(&db, &inst, "ewr-set-units", vec![
         ("ucid", Value::from(ucid.to_string())),
         ("imperial", Value::from(body.imperial)),
     ]).await?;
@@ -1585,10 +1836,11 @@ async fn api_cockpit_ewr_intel(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst).await?;
     use netidx::publisher::Value;
-    let report = call_engine_rpc_str(&db, "ewr-ground-intel", vec![
+    let report = call_engine_rpc_str(&db, &inst, "ewr-ground-intel", vec![
         ("ucid", Value::from(ucid.to_string())),
     ]).await?;
     Ok(warp::reply::json(&serde_json::json!({ "report": report })))
@@ -1602,14 +1854,15 @@ async fn api_cockpit_carp_solve(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst).await?;
     let key = query.get("key").cloned().ok_or_else(|| anyhow::anyhow!("missing key"))?;
     let alt_ft: f64 = query.get("altft")
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| anyhow::anyhow!("missing or invalid altft"))?;
     use netidx::publisher::Value;
-    let json = call_engine_rpc_str(&db, "carp-solve", vec![
+    let json = call_engine_rpc_str(&db, &inst, "carp-solve", vec![
         ("ucid", Value::from(ucid.to_string())),
         ("mark_key", Value::from(key)),
         ("drop_altitude_agl_ft", Value::from(alt_ft)),
@@ -1627,8 +1880,9 @@ async fn api_cockpit_carp_solve_latlon(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst).await?;
     let lat: f64 = query.get("lat")
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| anyhow::anyhow!("missing or invalid lat"))?;
@@ -1639,7 +1893,7 @@ async fn api_cockpit_carp_solve_latlon(
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| anyhow::anyhow!("missing or invalid altft"))?;
     use netidx::publisher::Value;
-    let json = call_engine_rpc_str(&db, "carp-solve-latlon", vec![
+    let json = call_engine_rpc_str(&db, &inst, "carp-solve-latlon", vec![
         ("ucid", Value::from(ucid.to_string())),
         ("lat", Value::from(lat)),
         ("lon", Value::from(lon)),
@@ -1667,13 +1921,14 @@ async fn api_cockpit_cargo_spawn(
     body: CargoSpawnBody,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg).await?;
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst).await?;
     if body.qty < 1 {
         return Err(anyhow::anyhow!("qty must be at least 1").into());
     }
     use netidx::publisher::Value;
-    let msg = call_engine_rpc_str(&db, "cargo-spawn-crate", vec![
+    let msg = call_engine_rpc_str(&db, &inst, "cargo-spawn-crate", vec![
         ("ucid", Value::from(ucid.to_string())),
         ("crate_name", Value::from(body.crate_name)),
         ("qty", Value::from(body.qty as i64)),
@@ -1709,11 +1964,64 @@ async fn api_admin_sessions(
 async fn api_admin_reset(
     session_id: Option<Uuid>,
     db: StatsDb,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
-    task::block_in_place(|| db.reset_campaign_data())?;
+    task::block_in_place(|| db.reset_campaign_data_for(&inst))?;
     log::info!("ADMIN: campaign data reset by admin");
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
+/// POST /api/admin/reset-lives-all  — give every player their lives back.
+/// Proxies bflib's reset-lives-all RPC; requires a live engine connection.
+async fn api_admin_reset_lives_all(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let reply = call_engine_rpc_str(&db, &inst, "reset-lives-all", vec![]).await?;
+    log::info!("ADMIN: reset all player lives: {reply}");
+    Ok(warp::reply::json(
+        &serde_json::json!({"ok": true, "message": reply}),
+    ))
+}
+
+/// POST /api/admin/merge-rounds  — collapse every round id in the stats DB
+/// into one, repairing the "one campaign shows as dozens of rounds" damage
+/// from the old fork-on-restart bug. `?dry_run=true` (the default) only
+/// reports what it would do; `?dry_run=false` actually does it.
+async fn api_admin_merge_rounds(
+    query: std::collections::HashMap<String, String>,
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let dry_run = query
+        .get("dry_run")
+        .map(|v| v != "false" && v != "0")
+        .unwrap_or(true);
+    let msg = task::block_in_place(|| db.merge_all_rounds(dry_run))?;
+    log::warn!("ADMIN: merge-rounds (dry_run={dry_run}): {msg}");
+    Ok(warp::reply::json(&serde_json::json!({ "ok": true, "dry_run": dry_run, "message": msg })))
+}
+
+/// POST /api/admin/rebuild-stats  — queue an in-process rebuild: the JSONL
+/// reader wipes every stats-derived tree and re-ingests stats.jsonl from the
+/// top on its next tick. Corrects counters inflated by the old whole-file
+/// re-reads without taking bfdb down. Auth, Discord links, bans, wiki and
+/// recon intel are preserved.
+async fn api_admin_rebuild_stats(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    task::block_in_place(|| db.request_jsonl_rebuild())?;
+    log::warn!("ADMIN: in-process stats rebuild queued");
+    Ok(warp::reply::json(&serde_json::json!({
+        "ok": true,
+        "message": "rebuild queued -- bfdb will wipe derived stats and re-ingest the log over the next few minutes"
+    })))
 }
 
 /// GET /api/admin/bot/status  — current DCS server name/status via
@@ -1805,8 +2113,9 @@ async fn api_admin_bot_mission_unpause(
 async fn api_admin_cfg_get(
     session_id: Option<Uuid>,
     db: StatsDb,
-    path: Arc<Option<PathBuf>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
+    let path: Arc<Option<PathBuf>> = Arc::new(inst.cfg.engine_config.clone());
     require_admin(session_id, db.clone()).await?;
     let path = path
         .as_ref()
@@ -1846,8 +2155,9 @@ async fn api_admin_cfg_post(
     session_id: Option<Uuid>,
     body: SaveCfgBody,
     db: StatsDb,
-    path: Arc<Option<PathBuf>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
+    let path: Arc<Option<PathBuf>> = Arc::new(inst.cfg.engine_config.clone());
     require_admin(session_id, db.clone()).await?;
     let path = path
         .as_ref()
@@ -2057,6 +2367,7 @@ async fn require_coalition(
     session_id: Option<Uuid>,
     db: &StatsDb,
     bot_cfg: &Arc<Option<BotLinkConfig>>,
+    inst: &InstanceState,
 ) -> std::result::Result<Caller, Error> {
     let Some(id) = session_id else {
         return Err(anyhow::anyhow!("not logged in").into());
@@ -2065,7 +2376,7 @@ async fn require_coalition(
         .ok_or_else(|| anyhow::anyhow!("session expired"))?;
     let ucid = resolve_ucid_via_bot(bot_cfg, &session.discord_id).await;
     let own_side = match &ucid {
-        Some(u) => task::block_in_place(|| db.pilot_current_side(u))?,
+        Some(u) => task::block_in_place(|| db.pilot_current_side(&inst.id, u))?,
         None => None,
     };
     match own_side {
@@ -2084,8 +2395,8 @@ async fn require_coalition(
     }
 }
 
-fn active_round_or_err(db: &StatsDb) -> std::result::Result<db::RoundId, Error> {
-    task::block_in_place(|| db.active_round_id())?
+fn active_round_or_err(db: &StatsDb, inst: &InstanceState) -> std::result::Result<db::RoundId, Error> {
+    task::block_in_place(|| db.active_round_id(&inst.id))?
         .ok_or_else(|| anyhow::anyhow!("no active round").into())
 }
 
@@ -2120,9 +2431,10 @@ async fn api_intel_list(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
-    let round = active_round_or_err(&db)?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let round = active_round_or_err(&db, &inst)?;
     let filter = if c.god_mode {
         match query.get("side").map(|s| s.as_str()) {
             Some("all") => None,
@@ -2150,15 +2462,16 @@ async fn api_intel_upload(
     body: bytes::Bytes,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
     if !content_type.starts_with("image/") {
         return Err(anyhow::anyhow!("only image uploads are allowed (got '{content_type}')").into());
     }
     // A registered player uploads into their own side; only a no-coalition
     // admin may direct an upload with `?side=`.
     let side = c.side;
-    let round = active_round_or_err(&db)?;
+    let round = active_round_or_err(&db, &inst)?;
     if task::block_in_place(|| db.intel_count_side(round, side))? >= MAX_INTEL_CAPTURES_PER_SIDE {
         return Err(anyhow::anyhow!(
             "recon intel limit reached for this coalition this round ({MAX_INTEL_CAPTURES_PER_SIDE})"
@@ -2220,8 +2533,9 @@ async fn api_intel_get_image(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
     let cap = task::block_in_place(|| db.intel_get_by_id(&id))?
         .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
     if !c.god_mode && cap.side != c.side {
@@ -2254,8 +2568,9 @@ async fn api_intel_adjust(
     body: IntelAdjustBody,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
     let cap_id: Uuid = body.id.parse().map_err(|e| anyhow::anyhow!("bad id: {e}"))?;
     let mut cap = task::block_in_place(|| db.intel_get_by_id(&cap_id))?
         .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
@@ -2305,8 +2620,9 @@ async fn api_intel_delete(
     body: IntelDeleteBody,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
     let cap_id: Uuid = body.id.parse().map_err(|e| anyhow::anyhow!("bad id: {e}"))?;
     let cap = task::block_in_place(|| db.intel_get_by_id(&cap_id))?
         .ok_or_else(|| anyhow::anyhow!("capture not found"))?;
@@ -2326,10 +2642,19 @@ async fn api_intel_delete(
 async fn api_intel_purge(
     session_id: Option<Uuid>,
     db: StatsDb,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
-    task::block_in_place(|| db.intel_purge_all())?;
-    log::info!("ADMIN: recon intel purged");
+    task::block_in_place(|| -> Result<()> {
+        if db.instances().is_single() {
+            db.intel_purge_all()
+        } else {
+            // Leave the other servers' recon pictures alone.
+            let rounds = db.rounds_of(&inst.id)?;
+            db.intel_purge_all_for(&rounds)
+        }
+    })?;
+    log::info!("[{}] ADMIN: recon intel purged", inst.id);
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -2355,9 +2680,10 @@ async fn api_intel_markup_list(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
-    let round = active_round_or_err(&db)?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let round = active_round_or_err(&db, &inst)?;
     let filter = if c.god_mode {
         match query.get("side").map(|s| s.as_str()) {
             Some("all") => None,
@@ -2391,9 +2717,10 @@ async fn api_intel_markup_add(
     body: IntelMarkupBody,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
-    let round = active_round_or_err(&db)?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let round = active_round_or_err(&db, &inst)?;
     if body.points.is_empty() || body.points.len() > 4000 {
         return Err(anyhow::anyhow!("markup needs 1..4000 points").into());
     }
@@ -2425,8 +2752,9 @@ async fn api_intel_markup_delete(
     body: IntelDeleteBody,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let c = require_coalition(&query, session_id, &db, &bot_cfg).await?;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
     let id: Uuid = body.id.parse().map_err(|e| anyhow::anyhow!("bad id: {e}"))?;
     let m = task::block_in_place(|| db.intel_markup_get(&id))?
         .ok_or_else(|| anyhow::anyhow!("markup not found"))?;
@@ -2530,7 +2858,14 @@ fn collect_gpu() -> serde_json::Value {
     match result {
         Ok(v) => v,
         Err(e) => {
-            log::warn!("GPU stats unavailable: {e:?}");
+            // This endpoint is polled on a timer; a box with no NVIDIA GPU
+            // would otherwise log an identical warning every cycle forever.
+            // Say it once.
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            if !WARNED.swap(true, Ordering::Relaxed) {
+                log::warn!("GPU stats unavailable (NVML not loadable): {e:?} -- not logging this again");
+            }
             serde_json::json!({ "available": false })
         }
     }
@@ -2539,6 +2874,7 @@ fn collect_gpu() -> serde_json::Value {
 async fn api_admin_perf(
     session_id: Option<Uuid>,
     db: StatsDb,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
 
@@ -2550,7 +2886,7 @@ async fn api_admin_perf(
     // -- same degraded behavior as before this existed.
     let live: Option<SessionEnd> = match tokio::time::timeout(
         std::time::Duration::from_secs(3),
-        call_engine_rpc_str(&db, "query-perf", vec![]),
+        call_engine_rpc_str(&db, &inst, "query-perf", vec![]),
     ).await {
         Ok(Ok(json)) => match serde_json::from_str(&json) {
             Ok(e) => Some(e),
@@ -2682,9 +3018,10 @@ async fn api_admin_banned(
 async fn api_admin_engine_errors(
     session_id: Option<Uuid>,
     db: StatsDb,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
-    let lines = db.engine_error_snapshot();
+    let lines = db.engine_error_snapshot(&inst);
     Ok(json_response(serde_json::to_string(&lines).map_err(|e| Error(e.into()))?))
 }
 
@@ -2705,6 +3042,7 @@ async fn api_logs(
     expected_token: Arc<Option<std::string::String>>,
     db: StatsDb,
     bfdb_log: LogHistory,
+    inst: Inst,
 ) -> Response {
     fn text(status: warp::http::StatusCode, body: impl Into<String>) -> Response {
         warp::http::Response::builder()
@@ -2742,8 +3080,8 @@ async fn api_logs(
         .clamp(1, 50_000);
 
     let mut lines: Vec<std::string::String> = match source.as_str() {
-        "engine" if level == "error" => db.engine_error_snapshot(),
-        "engine" => db.engine_log_snapshot(),
+        "engine" if level == "error" => db.engine_error_snapshot(&inst),
+        "engine" => db.engine_log_snapshot(&inst),
         "bfdb" => {
             // stored as JSON LogLine objects -- flatten to "ts LEVEL target: msg"
             bfdb_log
@@ -2849,6 +3187,7 @@ async fn api_commander_spawn(
     session_id: Option<Uuid>,
     body: SpawnBody,
     db: StatsDb,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
     log::info!("COMMANDER: spawning {} at {}", body.item_type, body.airbase);
@@ -2856,14 +3195,14 @@ async fn api_commander_spawn(
     use netidx::publisher::Value;
 
     let details_json = call_engine_rpc_str(
-        &db, "query-objective", vec![("name", Value::from(body.airbase.clone()))],
+        &db, &inst, "query-objective", vec![("name", Value::from(body.airbase.clone()))],
     ).await?;
     let details: bfprotocols::api::ObjectiveDetails = serde_json::from_str(&details_json)
         .map_err(|e| Error(anyhow::anyhow!("bad objective details from engine: {e}")))?;
     let (x, z) = details.info.pos;
     let side = details.info.owner;
 
-    let spawn_json = call_engine_rpc_str(&db, "spawn-deployable", vec![
+    let spawn_json = call_engine_rpc_str(&db, &inst, "spawn-deployable", vec![
         ("side", Value::from(side.to_str())),
         ("name", Value::from(body.item_type.clone())),
         ("x", Value::from(x)),
@@ -2887,10 +3226,11 @@ async fn api_admin_priority(
     session_id: Option<Uuid>,
     body: PriorityBody,
     db: StatsDb,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
     use netidx::publisher::Value;
-    call_engine_rpc_str(&db, "set-objective-priority", vec![
+    call_engine_rpc_str(&db, &inst, "set-objective-priority", vec![
         ("objective", Value::from(body.objective.clone())),
         ("priority", Value::from(body.priority)),
     ]).await?;
@@ -2952,10 +3292,11 @@ async fn api_admin_perf_history(
 async fn api_trails(
     session_id: Option<Uuid>,
     db: StatsDb,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
     let data = task::block_in_place(|| -> Result<String> {
-        let rounds = db.latest_rounds()?;
+        let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
             None => match rounds.first() {
@@ -3130,6 +3471,7 @@ async fn ws_engine_logs_handler(
     ws: warp::ws::Ws,
     session_id: Option<Uuid>,
     db: StatsDb,
+    inst: Inst,
 ) -> impl Reply {
     let authed = match session_id {
         Some(id) => task::block_in_place(|| db.get_session(id))
@@ -3144,7 +3486,7 @@ async fn ws_engine_logs_handler(
             .on_upgrade(|sock| async move { drop(sock) })
             .into_response();
     }
-    let (rx, history) = db.engine_log_subscribe();
+    let (rx, history) = db.engine_log_subscribe(&inst);
     ws.on_upgrade(move |socket| ws_engine_logs(socket, rx, history))
         .into_response()
 }
@@ -3183,15 +3525,26 @@ async fn ws_engine_logs(
 /// Background task: listens on UDP 42001, accumulates batches, and
 /// broadcasts the full unit list to all WebSocket clients each tick.
 /// Also samples unit positions every ~10s into the trail_points DB.
-async fn udp_export_listener(state: LiveState, tx: broadcast::Sender<String>, db: StatsDb) {
-    let sock = match tokio::net::UdpSocket::bind("0.0.0.0:42001").await {
+async fn udp_export_listener(
+    state: LiveState,
+    tx: broadcast::Sender<String>,
+    db: StatsDb,
+    inst: Inst,
+    port: u16,
+) {
+    let sock = match tokio::net::UdpSocket::bind(("0.0.0.0", port)).await {
         Ok(s) => s,
         Err(e) => {
-            log::error!("Failed to bind UDP 42001 for DCS export: {e}");
+            log::error!(
+                "[{}] failed to bind UDP {port} for DCS export: {e} -- is another instance \
+                 (or another bfdb) already using this port? Each instance needs its own \
+                 export_port, matching BF_PORT in its Export.lua",
+                inst.id
+            );
             return;
         }
     };
-    log::info!("DCS export listener on UDP 0.0.0.0:42001");
+    log::info!("[{}] DCS export listener on UDP 0.0.0.0:{port}", inst.id);
 
     let mut buf = vec![0u8; 65536];
     // Accumulate batches for one tick before broadcasting
@@ -3232,12 +3585,13 @@ async fn udp_export_listener(state: LiveState, tx: broadcast::Sender<String>, db
             let now_secs = chrono::Utc::now().timestamp();
             if now_secs % 10 == 0 {
                 let db2 = db.clone();
+                let inst2 = inst.clone();
                 let units_snapshot = {
                     let r = state.read().await;
                     r.1.clone()
                 };
                 task::spawn_blocking(move || {
-                    let rounds = db2.latest_rounds().ok();
+                    let rounds = db2.latest_rounds_for(&inst2.id).ok();
                     let rid = rounds.as_deref().and_then(|rs| {
                         rs.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, _)| *rid)
                     });
@@ -3348,12 +3702,214 @@ enum TacView {
     Denied(&'static str),
 }
 
-/// Background task: poll `query-tacmap` for both coalitions every second and
-/// cache the results. Cheap on the engine side (in-memory sensor maps).
-/// No-op when bfdb has no live engine.
-async fn tacmap_poller(db: StatsDb, state: TacState) {
+
+/// Background task: pull the unit range database out of the engine and keep a
+/// snapshot per DCS version.
+///
+/// This is the piece that replaces "datamine the game after every ED update":
+/// the server harvests its own install on every boot, so instead of polling a
+/// release feed and hoping a third-party dump catches up, we get told the
+/// version that is actually running -- mods included -- and diff it.
+///
+/// Slow on purpose. The data only changes when DCS or a mod updates, which
+/// means a restart, which means we re-read it anyway.
+async fn unitdb_refresher(db: StatsDb, inst: Inst) {
     use netidx::publisher::Value;
-    let mut tick = tokio::time::interval(std::time::Duration::from_millis(1000));
+    // Let the engine finish loading the mission before the first ask.
+    tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(30 * 60));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last_err: Option<std::string::String> = None;
+    loop {
+        tick.tick().await;
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            call_engine_rpc_str(&db, &inst, "query-unitdb", vec![("arg", Value::Null)]),
+        )
+        .await;
+        let json = match res {
+            Ok(Ok(json)) => json,
+            Ok(Err(e)) => {
+                let msg = format!("RPC error: {} -- is bflib.dll current?", e.0);
+                if last_err.as_deref() != Some(msg.as_str()) {
+                    log::warn!("[{}] unitdb_refresher: {msg}", inst.id);
+                    last_err = Some(msg);
+                }
+                continue;
+            }
+            Err(_) => {
+                let msg = "RPC timed out after 20s".to_string();
+                if last_err.as_deref() != Some(msg.as_str()) {
+                    log::warn!("[{}] unitdb_refresher: {msg}", inst.id);
+                    last_err = Some(msg);
+                }
+                continue;
+            }
+        };
+        last_err = None;
+        let snap: db::UnitDbSnapshot = match serde_json::from_str(&json) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("[{}] unitdb_refresher: unparseable snapshot: {e}", inst.id);
+                continue;
+            }
+        };
+        let Some(version) = snap.dcs_version.clone() else {
+            log::warn!(
+                "[{}] unitdb_refresher: snapshot has no DCS version, not storing it",
+                inst.id
+            );
+            continue;
+        };
+        let inst_id = inst.id.to_string();
+        let stored = task::block_in_place(|| -> Result<_> {
+            let prev = db.store_unit_db(&inst_id, &version, &json)?;
+            let prev_snap = match &prev {
+                Some(p) => db
+                    .unit_db_json(&inst_id, p)?
+                    .and_then(|j| serde_json::from_str::<db::UnitDbSnapshot>(&j).ok()),
+                None => None,
+            };
+            Ok((prev, prev_snap))
+        });
+        let (prev, prev_snap) = match stored {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("[{}] unitdb_refresher: could not store snapshot: {e:?}", inst.id);
+                continue;
+            }
+        };
+        let Some(prev_version) = prev else { continue };
+        log::info!(
+            "[{}] DCS version changed: {prev_version} -> {version} ({} unit types harvested)",
+            inst.id,
+            snap.by_type.len()
+        );
+        let Some(prev_snap) = prev_snap else {
+            log::info!(
+                "[{}] no readable snapshot for {prev_version}, nothing to diff against",
+                inst.id
+            );
+            continue;
+        };
+        let changes = db::diff_unit_db(&prev_snap, &snap);
+        if changes.is_empty() {
+            log::info!("[{}] no unit ranges changed in {version}", inst.id);
+        } else {
+            log::info!(
+                "[{}] {} unit range change(s) in {version}:",
+                inst.id,
+                changes.len()
+            );
+            for c in changes.iter().take(40) {
+                match c {
+                    db::UnitDbChange::RangeChanged { typ, field, from, to, .. } => {
+                        log::info!("[{}]   {typ} {field}: {:?} -> {:?}", inst.id, from, to)
+                    }
+                    db::UnitDbChange::Added { typ, threat_range_m, .. } => {
+                        log::info!("[{}]   + {typ} (threat range {:?})", inst.id, threat_range_m)
+                    }
+                    db::UnitDbChange::Removed { typ, .. } => {
+                        log::info!("[{}]   - {typ}", inst.id)
+                    }
+                }
+            }
+            if changes.len() > 40 {
+                log::info!("[{}]   ... and {} more", inst.id, changes.len() - 40);
+            }
+        }
+        // The expensive part of a DCS update is not the changed ranges, it is
+        // the ones we override in config and would therefore never notice.
+        match task::block_in_place(|| db.unit_db_stale_overrides(&inst_id)) {
+            Ok(stale) if !stale.is_empty() => {
+                log::warn!(
+                    "[{}] {} artillery config override(s) no longer match DCS {version}:",
+                    inst.id,
+                    stale.len()
+                );
+                for o in &stale {
+                    log::warn!(
+                        "[{}]   {} cfg {}/{} vs dcs {:?}/{:?}",
+                        inst.id,
+                        o.typ,
+                        o.cfg_max_range_m,
+                        o.cfg_min_range_m,
+                        o.dcs_max_range_m,
+                        o.dcs_min_range_m
+                    );
+                }
+            }
+            Ok(_) => (),
+            Err(e) => log::warn!("[{}] could not check config overrides: {e:?}", inst.id),
+        }
+    }
+}
+
+async fn api_unitdb(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+    let snap = task::block_in_place(|| db.unit_db_latest(&inst.id.to_string()))?;
+    let body = match snap {
+        Some((_, json)) => json,
+        None => String::from("{\"dcs_version\":null,\"harvested_at\":null,\"by_type\":{}}"),
+    };
+    Ok(warp::reply::with_header(
+        body,
+        "content-type",
+        "application/json",
+    ))
+}
+
+async fn api_unitdb_versions(
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let versions = task::block_in_place(|| db.unit_db_versions(&inst.id.to_string()))?;
+    Ok(warp::reply::json(&versions))
+}
+
+async fn api_unitdb_stale(
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let stale = task::block_in_place(|| db.unit_db_stale_overrides(&inst.id.to_string()))?;
+    Ok(warp::reply::json(&stale))
+}
+
+#[derive(serde::Deserialize)]
+struct UnitDbDiffQuery {
+    from: std::string::String,
+    to: std::string::String,
+}
+
+async fn api_unitdb_diff(
+    q: UnitDbDiffQuery,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let inst_id = inst.id.to_string();
+    let changes = task::block_in_place(|| -> Result<Vec<db::UnitDbChange>> {
+        let load = |v: &str| -> Result<db::UnitDbSnapshot> {
+            match db.unit_db_json(&inst_id, v)? {
+                Some(j) => Ok(serde_json::from_str(&j)?),
+                None => anyhow::bail!("no unit db snapshot for DCS {v}"),
+            }
+        };
+        Ok(db::diff_unit_db(&load(&q.from)?, &load(&q.to)?))
+    })?;
+    Ok(warp::reply::json(&changes))
+}
+
+/// Background task: poll `query-tacmap` for both coalitions and cache the
+/// results. Cheap on the engine side (in-memory sensor maps). No-op when
+/// bfdb has no live engine.
+async fn tacmap_poller(db: StatsDb, inst: Inst, state: TacState) {
+    use netidx::publisher::Value;
+    // 1 Hz was hammering the engine's single admin-RPC queue (blue + red every
+    // second, on top of query-gci and on-demand query-objectives) which made
+    // *every* RPC on that queue miss its deadline. 2 Hz total (one query-tacmap
+    // call per side per 2s = 1 query/sec average) stays well under that
+    // threshold while roughly halving perceived TACMAP staleness vs. the old
+    // 3s tick.
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(2000));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // Diagnostics, logged at most once every ~30s per side so the log stays
     // useful for "why is the scope empty" without spamming.
@@ -3364,8 +3920,8 @@ async fn tacmap_poller(db: StatsDb, state: TacState) {
         tick.tick().await;
         for (i, side) in ["blue", "red"].into_iter().enumerate() {
             let res = tokio::time::timeout(
-                std::time::Duration::from_secs(3),
-                call_engine_rpc_str(&db, "query-tacmap", vec![("side", Value::from(side))]),
+                std::time::Duration::from_secs(6),
+                call_engine_rpc_str(&db, &inst, "query-tacmap", vec![("side", Value::from(side))]),
             )
             .await;
             let (pic, kind, detail) = match res {
@@ -3377,7 +3933,7 @@ async fn tacmap_poller(db: StatsDb, state: TacState) {
                     Err(e) => (None, 3u8, format!("unparseable JSON ({e})")),
                 },
                 Ok(Err(e)) => (None, 1u8, format!("RPC error: {} -- is bflib.dll current?", e.0)),
-                Err(_) => (None, 2u8, "RPC timed out (engine unreachable / old bflib.dll)".to_string()),
+                Err(_) => (None, 2u8, "RPC timed out after 6s (engine overloaded, restarting, or bflib.dll not current)".to_string()),
             };
             // Report on a state change, or every 30s.
             let now = chrono::Utc::now();
@@ -3495,6 +4051,7 @@ async fn ws_tacmap_handler(
     query: std::collections::HashMap<std::string::String, std::string::String>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
     tac: TacState,
     live: LiveState,
 ) -> impl Reply {
@@ -3506,7 +4063,7 @@ async fn ws_tacmap_handler(
             Some(session) => {
                 let ucid = resolve_ucid_via_bot(&bot_cfg, &session.discord_id).await;
                 let own = match &ucid {
-                    Some(u) => task::block_in_place(|| db.pilot_current_side(u)).ok().flatten(),
+                    Some(u) => task::block_in_place(|| db.pilot_current_side(&inst.id, u)).ok().flatten(),
                     None => None,
                 };
                 match own {
@@ -3688,29 +4245,281 @@ fn with_bot_link_cfg(
     warp::any().map(move || cfg.clone())
 }
 
+/// Resolve `?instance=<id>` to that DCS server's runtime state.
+///
+/// Omitted (or empty) picks the default instance, which is what a
+/// single-instance deployment and every pre-existing client sends. An id that
+/// is not configured is already answered with a 400 by `bad_instance_guard`,
+/// which runs ahead of every route -- so this filter is deliberately
+/// **infallible**.
+///
+/// That matters on the POST routes: several of them mount this after
+/// `warp::body::json()`, and a rejection there would move warp on to the next
+/// `.or(...)` branch with the request body already consumed. Falling back to
+/// the default instance in the (unreachable) unknown-id case keeps that from
+/// ever being possible. (The `Rejection` in the signature is only
+/// `warp::query`'s own malformed-query-string rejection, which every route
+/// here already hits on an earlier query filter, before its body is read.)
+fn with_instance(db: StatsDb) -> impl Filter<Extract = (Inst,), Error = warp::Rejection> + Clone {
+    warp::query::<std::collections::HashMap<std::string::String, std::string::String>>()
+        .and(warp::any().map(move || db.clone()))
+        .map(
+            |q: std::collections::HashMap<std::string::String, std::string::String>, db: StatsDb| {
+                // `?server=` lets a caller that only knows the DCSServerBot
+                // server name (the Discord plugin) address an instance without
+                // having to learn its bfdb id first.
+                let by_server = q.get("server").and_then(|name| {
+                    db.instances()
+                        .by_dcs_server_name(name)
+                        .map(|cfg| cfg.id.clone())
+                });
+                let requested = by_server
+                    .as_deref()
+                    .or_else(|| q.get("instance").map(|s| s.as_str()));
+                db.resolve_state(requested)
+                    .unwrap_or_else(|_| db.state(db.instances().default_id()))
+            },
+        )
+}
+
+/// A front-of-chain guard that turns an unroutable `?instance=` / `?server=`
+/// into a 400 instead of letting it fall through.
+///
+/// `with_instance` rejects on an unknown id, but a warp rejection just moves on
+/// to the next `.or(...)` branch -- and the chain ends in the SPA catch-all,
+/// which happily answers 200 with `index.html`. A stale bookmark would then
+/// look like it worked while showing nothing. This filter sits ahead of every
+/// other route, matches only `/api/...` requests whose instance cannot be
+/// resolved, and answers them directly; anything valid rejects here and
+/// continues down the chain as normal.
+fn bad_instance_guard(
+    db: StatsDb,
+) -> impl Filter<Extract = (Response,), Error = warp::Rejection> + Clone {
+    warp::path("api")
+        .and(warp::path::tail())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::any().map(move || db.clone()))
+        .and_then(
+            |_tail: warp::path::Tail,
+             q: std::collections::HashMap<std::string::String, std::string::String>,
+             db: StatsDb| async move {
+                let named = q.get("server").or_else(|| q.get("instance"));
+                let Some(name) = named.map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+                    return Err(warp::reject::reject());
+                };
+                // `?instance=all` is meaningful on the aggregate routes; let
+                // those handle it themselves.
+                if name == "all" {
+                    return Err(warp::reject::reject());
+                }
+                let known = db.instances().by_dcs_server_name(name).is_some()
+                    || db.instances().get(name).is_some();
+                if known {
+                    return Err(warp::reject::reject());
+                }
+                let ids: Vec<&str> = db.instances().all().iter().map(|i| i.id.as_str()).collect();
+                Ok(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "error": format!("unknown instance {name:?}"),
+                        "instances": ids,
+                    })),
+                    warp::http::StatusCode::BAD_REQUEST,
+                )
+                .into_response())
+            },
+        )
+}
+
+/// Per-instance live-telemetry state owned by the web layer: the `Export.lua`
+/// unit feed and the fog-of-war tactical picture. One of these exists per
+/// configured instance, so two DCS servers never bleed contacts into each
+/// other's scope.
+#[derive(Clone)]
+struct InstanceLive {
+    live: LiveState,
+    live_tx: broadcast::Sender<String>,
+    tac: TacState,
+}
+
+type LiveMap = Arc<std::collections::HashMap<InstanceId, InstanceLive>>;
+
+fn live_for(map: &LiveMap, inst: &InstanceState) -> InstanceLive {
+    map.get(&inst.id)
+        .cloned()
+        .expect("every instance gets an InstanceLive at startup")
+}
+
+fn with_live(map: LiveMap) -> impl Filter<Extract = (LiveMap,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || map.clone())
+}
+
+/// `GET /api/instances` -- the DCS servers this bfdb fronts, for the
+/// dashboard's instance selector. Public: it is just names and ids, the same
+/// information the server browser shows.
+///
+/// An instance with `public: false` (a test/staging server) is omitted unless
+/// the caller is a dashboard admin, so it never shows up in a player's server
+/// selector. See `InstanceCfg::public` -- this hides it, it does not lock it.
+async fn api_instances(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let is_admin = match session_id {
+        Some(id) => task::block_in_place(|| db.get_session(id))
+            .ok()
+            .flatten()
+            .map(|s| s.is_admin)
+            .unwrap_or(false),
+        None => false,
+    };
+    let default = db.instances().default_id().to_string();
+    let rows: Vec<serde_json::Value> = db
+        .instances()
+        .all()
+        .iter()
+        .filter(|cfg| cfg.public || is_admin)
+        .map(|cfg| {
+            let id: InstanceId = Arc::from(cfg.id.as_str());
+            let st = db.state(&id);
+            let active = task::block_in_place(|| db.latest_rounds_for(&id))
+                .ok()
+                .and_then(|rounds| {
+                    rounds
+                        .into_iter()
+                        .find(|(_, _, r)| r.end.is_none())
+                        .map(|(scenario, rid, r)| {
+                            serde_json::json!({
+                                "id": rid.0,
+                                "scenario": scenario.to_string(),
+                                "start": r.start,
+                            })
+                        })
+                });
+            serde_json::json!({
+                "id": cfg.id,
+                "label": cfg.label(),
+                "default": cfg.id == default,
+                // Whether this instance has a live engine we can query at all
+                // (vs. a stats-only / offline instance).
+                "live": cfg.base.is_some(),
+                // The mission currently publishing, if any -- the dashboard
+                // greys out a selector entry whose server is down.
+                "sortie": st.live_sortie_public(),
+                "active_round": active,
+                "dcs_server_name": cfg.dcs_server_name,
+                // false only ever reaches an admin (see the filter above) --
+                // the dashboard uses it to mark the entry as internal.
+                "public": cfg.public,
+            })
+        })
+        .collect();
+    Ok(warp::reply::json(&serde_json::json!({
+        "default": default,
+        "instances": rows,
+    })))
+}
+
+/// Build the instance registry from the CLI: either `--instances <file>`, or
+/// the legacy single-server flags synthesized into one instance called
+/// `DEFAULT_INSTANCE` (which is also the id every pre-existing round in the DB
+/// is treated as belonging to, so an upgrade is a no-op).
+fn registry_from_args(args: &Args) -> Result<Registry> {
+    let legacy_used = args.base.is_some()
+        || args.stats_jsonl.is_some()
+        || args.stats_dir.is_some()
+        || args.sortie.is_some()
+        || args.engine_config.is_some()
+        || args.gci_config.is_some();
+    match &args.instances {
+        Some(path) => {
+            if legacy_used {
+                anyhow::bail!(
+                    "--instances cannot be combined with the single-server flags \
+                     (--base/--sortie/--stats-jsonl/--stats-dir/--engine-config/--gci-config); \
+                     move those settings into the instances file"
+                );
+            }
+            let reg = Registry::load(path)?;
+            log::info!(
+                "multi-instance mode: {} instance(s) from {}",
+                reg.all().len(),
+                path.display()
+            );
+            Ok(reg)
+        }
+        None => Ok(Registry::single(InstanceCfg {
+            id: DEFAULT_INSTANCE.to_string(),
+            label: None,
+            base: args.base.clone(),
+            sortie: args.sortie.clone(),
+            stats_jsonl: args.stats_jsonl.clone(),
+            stats_dir: args.stats_dir.clone(),
+            export_port: Some(args.export_port),
+            engine_config: args.engine_config.clone(),
+            srs_url: args.srs_url.clone(),
+            gci_config: args.gci_config.clone(),
+            dcs_server_name: None,
+            public: true,
+        })),
+    }
+}
+
+/// Open the DB with no ingestion and no netidx, for the one-off maintenance
+/// modes (`--clear-sessions`, `--rebuild-stats`, `--merge-rounds`). They only
+/// touch trees, never a live engine, so a bare default instance is enough --
+/// but it must be the *real* default id so the per-instance cursors it rewinds
+/// are the ones the next normal start will read.
+fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
+    let mut reg = registry_from_args(args)?;
+    if args.instances.is_none() {
+        reg = Registry::single(InstanceCfg {
+            id: DEFAULT_INSTANCE.to_string(),
+            label: None,
+            base: None,
+            sortie: None,
+            stats_jsonl: None,
+            stats_dir: None,
+            export_port: None,
+            engine_config: None,
+            srs_url: None,
+            gci_config: None,
+            dcs_server_name: None,
+            public: true,
+        });
+    }
+    StatsDb::new(None, db_path, reg, None, None)
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
     if args.clear_sessions {
-        let db = StatsDb::new_offline(args.db, None, None)?;
+        let db = open_db_offline(&args, args.db.clone())?;
         db.clear_stale_sessions()?;
         println!("cleared the session tree -- perf history and cfg-derived ban entries are gone, round/kill/objective/pilot data is untouched");
         return Ok(());
     }
 
     if args.rebuild_stats {
-        if args.stats_dir.is_none() && args.stats_jsonl.is_none() {
-            eprintln!("--rebuild-stats needs --stats-dir (or --stats-jsonl) present so the next start can re-ingest the archive");
+        if args.instances.is_none() && args.stats_dir.is_none() && args.stats_jsonl.is_none() {
+            eprintln!("--rebuild-stats needs --stats-dir (or --stats-jsonl), or --instances, present so the next start can re-ingest the archive");
             std::process::exit(1);
         }
-        let db = StatsDb::new_offline(args.db, None, None)?;
+        let db = open_db_offline(&args, args.db.clone())?;
         db.rebuild_stats_from_archive()?;
         println!(
             "rebuilt: wiped every archive-derived tree and rewound the replay cursor. \
              Restart bfdb normally to re-ingest -- auth sessions, Discord links, bans, \
              wiki content and recon intel are preserved."
         );
+        return Ok(());
+    }
+
+    if let Some(sortie) = args.merge_rounds.as_deref() {
+        let db = open_db_offline(&args, args.db.clone())?;
+        let msg = db.merge_rounds(sortie)?;
+        println!("{msg}");
         return Ok(());
     }
 
@@ -3755,18 +4564,34 @@ async fn main() -> Result<()> {
         log::set_boxed_logger(Box::new(logger)).expect("logger already set");
         log::set_max_level(max_level);
     }
-    let has_engine = args.base.is_some();
-    let db = match args.base {
-        Some(base) => {
-            let subscriber = SubscriberBuilder::new()
-                .config(Config::load_default()?)
-                .build()?;
-            StatsDb::new(subscriber, args.db, base, args.sortie.map(Into::into), args.stats_dir, args.stats_jsonl, args.include, args.exclude)?
-        }
-        None => {
-            log::info!("Running in offline mode (no --base specified, Netidx disabled)");
-            StatsDb::new_offline(args.db, args.stats_dir, args.stats_jsonl)?
-        }
+
+    log::info!(
+        "bfdb v{} git:{} built:{}",
+        BUILD_VERSION,
+        BUILD_GIT,
+        build_info_json()["built"].as_str().unwrap_or("unknown")
+    );
+    let registry = registry_from_args(&args)?;
+    // True when *any* instance has a live engine to talk to.
+    let has_engine = registry.all().iter().any(|i| i.base.is_some());
+    let db = {
+        let subscriber = if has_engine {
+            Some(
+                SubscriberBuilder::new()
+                    .config(Config::load_default()?)
+                    .build()?,
+            )
+        } else {
+            log::info!("Running in offline mode (no instance has a netidx base, Netidx disabled)");
+            None
+        };
+        StatsDb::new(
+            subscriber,
+            args.db.clone(),
+            registry,
+            args.include.clone(),
+            args.exclude.clone(),
+        )?
     };
     db.set_intel_dir(args.intel_dir.clone())?;
     if let Some(d) = &args.intel_dir {
@@ -3777,12 +4602,17 @@ async fn main() -> Result<()> {
     // Fire-and-forget: the engine may be unreachable, and a failed push just
     // retries next tick. Only runs when there's a live engine (--base).
     if has_engine {
+        for cfg in db.instances().all() {
+        if cfg.base.is_none() {
+            continue;
+        }
         let intel_db = db.clone();
+        let intel_inst = db.state(&Arc::from(cfg.id.as_str()));
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
             loop {
                 tick.tick().await;
-                let payload = match task::block_in_place(|| intel_db.intel_marks_payload()) {
+                let payload = match task::block_in_place(|| intel_db.intel_marks_payload(&intel_inst.id)) {
                     Ok(Some(p)) => p,
                     Ok(None) => continue,
                     Err(e) => {
@@ -3794,6 +4624,7 @@ async fn main() -> Result<()> {
                     std::time::Duration::from_secs(3),
                     call_engine_rpc_str(
                         &intel_db,
+                        &intel_inst,
                         "intel-marks",
                         vec![("data", netidx::publisher::Value::from(payload))],
                     ),
@@ -3801,6 +4632,7 @@ async fn main() -> Result<()> {
                 .await;
             }
         });
+        }
     }
 
     let auth_cfg: Option<AuthConfig> = match (
@@ -3900,10 +4732,14 @@ async fn main() -> Result<()> {
         .and_then(|p| gci::from_file(p))
         .or(gci_cfg);
 
-    let engine_config_path: Arc<Option<PathBuf>> = Arc::new(args.engine_config.clone());
-    match &args.engine_config {
-        Some(p) => log::info!("Engine config editor enabled → {p:?}"),
-        None => log::info!("No --engine-config specified; the admin config editor is disabled"),
+    for cfg in db.instances().all() {
+        match &cfg.engine_config {
+            Some(p) => log::info!("[{}] engine config editor enabled → {p:?}", cfg.id),
+            None => log::info!(
+                "[{}] no engine config set; the admin config editor is disabled for this instance",
+                cfg.id
+            ),
+        }
     }
 
     let cross_origin = !args.cors_origins.is_empty();
@@ -3923,8 +4759,17 @@ async fn main() -> Result<()> {
         log::info!("Cross-origin mode enabled for: {:?} (cookies use SameSite=None; Secure — bfdb must be served over TLS)", args.cors_origins);
     }
 
+    // The DCS server instances this bfdb fronts -- backs the dashboard's
+    // instance selector. Must come before the routes that take ?instance=.
+    let instances_route = warp::path!("api" / "instances")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(api_instances);
+
     let rounds = warp::path!("api" / "rounds")
         .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_instance(db.clone()))
         .then(api_rounds);
 
     let leaderboard = warp::path!("api" / "leaderboard")
@@ -3938,17 +4783,19 @@ async fn main() -> Result<()> {
     let objectives = warp::path!("api" / "objectives")
         .and(with_db(db.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
-        .then(|db, q: std::collections::HashMap<String, String>| {
+        .and(with_instance(db.clone()))
+        .then(|db, q: std::collections::HashMap<String, String>, inst| {
             let round_id = q.get("round").and_then(|s| s.parse().ok());
-            api_objectives(db, round_id)
+            api_objectives(db, round_id, inst)
         });
 
     let frontline = warp::path!("api" / "frontline")
         .and(with_db(db.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
-        .then(|db, q: std::collections::HashMap<String, String>| {
+        .and(with_instance(db.clone()))
+        .then(|db, q: std::collections::HashMap<String, String>, inst| {
             let round_id = q.get("round").and_then(|s| s.parse().ok());
-            api_frontline(db, round_id)
+            api_frontline(db, round_id, inst)
         });
 
     let briefing = warp::path!("api" / "briefing")
@@ -3956,24 +4803,35 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
         .then(api_briefing);
+
+    let situation = warp::path!("api" / "situation")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_situation);
 
     let kills = warp::path!("api" / "kills")
         .and(with_db(db.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
-        .then(|db, q: std::collections::HashMap<String, String>| {
+        .and(with_instance(db.clone()))
+        .then(|db, q: std::collections::HashMap<String, String>, inst| {
             let round_id = q.get("round").and_then(|s| s.parse().ok());
             let limit = q.get("limit").and_then(|s| s.parse().ok());
-            api_kills(db, round_id, limit)
+            api_kills(db, round_id, limit, inst)
         });
 
     let capture_events = warp::path!("api" / "capture-events")
         .and(with_db(db.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
-        .then(|db, q: std::collections::HashMap<String, String>| {
+        .and(with_instance(db.clone()))
+        .then(|db, q: std::collections::HashMap<String, String>, inst| {
             let round_id = q.get("round").and_then(|s| s.parse().ok());
             let limit = q.get("limit").and_then(|s| s.parse().ok());
-            api_capture_events(db, round_id, limit)
+            api_capture_events(db, round_id, limit, inst)
         });
 
     let pilot = warp::path!("api" / "pilot" / String)
@@ -4003,80 +4861,183 @@ async fn main() -> Result<()> {
     let health = warp::path!("api" / "health")
         .map(|| warp::reply::with_status("ok", warp::http::StatusCode::OK));
 
+    // This bfdb binary's own build identity (git rev + build time), compiled
+    // in by build.rs. Public -- it's just build metadata.
+    let version = warp::path!("api" / "version")
+        .map(|| warp::reply::json(&build_info_json()));
+
+    let unitdb = warp::path!("api" / "unitdb")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_unitdb);
+
+    let unitdb_versions = warp::path!("api" / "unitdb" / "versions")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_unitdb_versions);
+
+    let unitdb_stale = warp::path!("api" / "unitdb" / "stale-overrides")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_unitdb_stale);
+
+    let unitdb_diff = warp::path!("api" / "unitdb" / "diff")
+        .and(warp::query::<UnitDbDiffQuery>())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_unitdb_diff);
+
     let stats = warp::path!("api" / "stats")
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_stats);
 
     let units = warp::path!("api" / "units")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_units);
 
     let online = warp::path!("api" / "online")
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_online);
 
     let points = warp::path!("api" / "points")
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_points);
 
     let captures = warp::path!("api" / "captures")
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_captures);
 
     let aircraft_usage = warp::path!("api" / "aircraft-usage")
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_aircraft_usage);
 
-    // ── Live unit WebSocket ────────────────────────────────────────────
-    let live_state: LiveState = Arc::new(tokio::sync::RwLock::new((0.0, Vec::new(), Vec::new())));
-    let (live_tx, _) = broadcast::channel::<String>(64);
+    // ── Live telemetry, per DCS server instance ────────────────────────
+    // Each instance gets its own Export.lua UDP listener (on its own port),
+    // its own live-unit broadcast, and its own fog-of-war tactical cache. The
+    // websocket routes resolve `?instance=` and pick the matching one, so two
+    // servers never bleed contacts into each other's scope.
+    let live_map: LiveMap = {
+        let mut m = std::collections::HashMap::new();
+        for cfg in db.instances().all() {
+            let id: InstanceId = Arc::from(cfg.id.as_str());
+            let inst = db.state(&id);
+            let live: LiveState = Arc::new(tokio::sync::RwLock::new((0.0, Vec::new(), Vec::new())));
+            let (live_tx, _) = broadcast::channel::<String>(64);
+            let tac: TacState = Arc::new(tokio::sync::RwLock::new(TacCache::default()));
 
-    // Spawn UDP listener
-    tokio::spawn(udp_export_listener(live_state.clone(), live_tx.clone(), db.clone()));
+            match cfg.export_port {
+                Some(port) => {
+                    tokio::spawn(udp_export_listener(
+                        live.clone(),
+                        live_tx.clone(),
+                        db.clone(),
+                        inst.clone(),
+                        port,
+                    ));
+                }
+                None => log::info!(
+                    "[{}] no export_port configured -- the live unit feed (/ws/units) is off for this instance",
+                    cfg.id
+                ),
+            }
+            if cfg.base.is_some() {
+                tokio::spawn(tacmap_poller(db.clone(), inst.clone(), tac.clone()));
+                tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
+            }
+            m.insert(id, InstanceLive { live, live_tx, tac });
+        }
+        Arc::new(m)
+    };
 
-    let ws_state = live_state.clone();
-    let ws_tx    = live_tx.clone();
     let ws_units_route = warp::path!("ws" / "units")
         .and(warp::ws())
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
-        .and(warp::any().map(move || ws_state.clone()))
-        .and(warp::any().map(move || ws_tx.clone()))
-        .then(ws_units_handler);
+        .and(with_instance(db.clone()))
+        .and(with_live(live_map.clone()))
+        .then(|ws, sid, db, inst: Inst, map: LiveMap| async move {
+            let l = live_for(&map, &inst);
+            ws_units_handler(ws, sid, db, l.live, l.live_tx).await
+        });
 
-    // ── Fog-of-war tactical picture WebSocket (/ws/tacmap) ─────────────
-    let tac_state: TacState = Arc::new(tokio::sync::RwLock::new(TacCache::default()));
-    if has_engine {
-        tokio::spawn(tacmap_poller(db.clone(), tac_state.clone()));
-    }
-
-    // ── Live GCI: proactive AWACS-style SRS callouts ──────────────────────
+    // ── Live GCI: proactive AWACS-style SRS callouts, per instance ────────
     // A broadcast stream of every GCI call, for the dashboard transcript panel
-    // (/ws/gci) and the last-N snapshot (/api/gci/transcript).
-    let (gci_tx, _) = broadcast::channel::<String>(128);
-    let gci_history: LogHistory = Arc::new(Mutex::new(VecDeque::new()));
-    match (has_engine, gci_cfg) {
-        (true, Some(cfg)) => {
-            tokio::spawn(gci::run(db.clone(), cfg, gci_tx.clone(), gci_history.clone()));
+    // (/ws/gci) and the last-N snapshot (/api/gci/transcript). Each instance
+    // runs its own GCI (its own SRS server, frequencies and callsigns) and so
+    // gets its own transcript channel.
+    let mut gci_map: std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)> =
+        std::collections::HashMap::new();
+    for cfg in db.instances().all() {
+        let id: InstanceId = Arc::from(cfg.id.as_str());
+        let inst = db.state(&id);
+        let (tx, _) = broadcast::channel::<String>(128);
+        let hist: LogHistory = Arc::new(Mutex::new(VecDeque::new()));
+        // A dedicated per-instance gci_config wins; otherwise the single-server
+        // --gci-config / campaign.json `gci` block applies to the default
+        // instance only (there is only one of it).
+        let cfg_for_inst = cfg
+            .gci_config
+            .as_ref()
+            .and_then(|p| gci::from_file(p))
+            .or_else(|| {
+                if id == *db.instances().default_id() {
+                    gci_cfg.clone()
+                } else {
+                    None
+                }
+            });
+        match (cfg.base.is_some(), cfg_for_inst) {
+            (true, Some(c)) => {
+                log::info!("[{}] live GCI enabled", cfg.id);
+                // ATC rides the same config file and the same voice bus, on
+                // its own SRS clients so a busy tower can never delay a threat
+                // call on the GCI net.
+                if let Some(atc_cfg) = c.atc.clone() {
+                    let atc_transcript: atc::AtcTranscript = Default::default();
+                    tokio::spawn(atc::run(
+                        db.clone(),
+                        inst.clone(),
+                        c.clone(),
+                        atc_cfg,
+                        atc_transcript,
+                    ));
+                }
+                tokio::spawn(gci::run(db.clone(), inst, c, tx.clone(), hist.clone()));
+            }
+            (false, Some(_)) => {
+                log::warn!(
+                    "[{}] GCI configured but disabled: this instance has no netidx base (no live engine to query)",
+                    cfg.id
+                );
+            }
+            _ => {}
         }
-        (false, Some(_)) => {
-            log::warn!("GCI configured but disabled: bfdb has no --base (no live engine to query)");
-        }
-        _ => {}
+        gci_map.insert(id, (tx, hist));
     }
-    let tac_state_ws = tac_state.clone();
-    let tac_live_ws  = live_state.clone();
+    let gci_map = Arc::new(gci_map);
+
     let ws_tacmap_route = warp::path!("ws" / "tacmap")
         .and(warp::ws())
         .and(extract_session_cookie())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(warp::any().map(move || tac_state_ws.clone()))
-        .and(warp::any().map(move || tac_live_ws.clone()))
-        .then(ws_tacmap_handler);
+        .and(with_instance(db.clone()))
+        .and(with_live(live_map.clone()))
+        .then(
+            |ws, sid, q, db, bot, inst: Inst, map: LiveMap| async move {
+                let l = live_for(&map, &inst);
+                ws_tacmap_handler(ws, sid, q, db, bot, inst, l.tac, l.live).await
+            },
+        );
 
     // ── Log WebSocket (/ws/logs) — admin only ────────────────────────
     let log_tx_ws  = log_tx.clone();
@@ -4090,21 +5051,25 @@ async fn main() -> Result<()> {
         .then(ws_logs_handler);
 
     // ── GCI transcript (/ws/gci live, /api/gci/transcript snapshot) — admin ──
-    let gci_tx_ws = gci_tx.clone();
-    let gci_hist_ws = gci_history.clone();
+    let gci_map_ws = gci_map.clone();
     let ws_gci_route = warp::path!("ws" / "gci")
         .and(warp::ws())
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
-        .and(warp::any().map(move || gci_tx_ws.clone()))
-        .and(warp::any().map(move || gci_hist_ws.clone()))
-        .then(ws_logs_handler);
-    let gci_hist_api = gci_history.clone();
+        .and(with_instance(db.clone()))
+        .and(warp::any().map(move || gci_map_ws.clone()))
+        .then(|ws, sid, db, inst: Inst, map: Arc<std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)>>| async move {
+            let (tx, hist) = map.get(&inst.id).expect("gci channel per instance").clone();
+            ws_logs_handler(ws, sid, db, tx, hist).await
+        });
+    let gci_map_api = gci_map.clone();
     let gci_transcript_route = warp::path!("api" / "gci" / "transcript")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
-        .and(warp::any().map(move || gci_hist_api.clone()))
-        .then(|sid: Option<Uuid>, db: StatsDb, hist: LogHistory| async move {
+        .and(with_instance(db.clone()))
+        .and(warp::any().map(move || gci_map_api.clone()))
+        .then(|sid: Option<Uuid>, db: StatsDb, inst: Inst, map: Arc<std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)>>| async move {
+            let hist = map.get(&inst.id).expect("gci channel per instance").1.clone();
             let authed = match sid {
                 Some(id) => task::block_in_place(|| db.get_session(id))
                     .ok()
@@ -4134,6 +5099,7 @@ async fn main() -> Result<()> {
         .and(warp::ws())
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(ws_engine_logs_handler);
 
     // ── Auth routes ──────────────────────────────────────────────────
@@ -4155,6 +5121,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_auth_me);
 
     let auth_logout = warp::path!("api" / "auth" / "logout")
@@ -4186,7 +5153,28 @@ async fn main() -> Result<()> {
         .and(warp::post())
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_reset);
+
+    let admin_reset_lives_all = warp::path!("api" / "admin" / "reset-lives-all")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_reset_lives_all);
+
+    let admin_merge_rounds = warp::path!("api" / "admin" / "merge-rounds")
+        .and(warp::post())
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(api_admin_merge_rounds);
+
+    let admin_rebuild_stats = warp::path!("api" / "admin" / "rebuild-stats")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .then(api_admin_rebuild_stats);
 
     let admin_bot_status = warp::path!("api" / "admin" / "bot" / "status")
         .and(extract_session_cookie())
@@ -4239,6 +5227,7 @@ async fn main() -> Result<()> {
     let admin_perf = warp::path!("api" / "admin" / "perf")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_perf);
 
     let admin_perf_history = warp::path!("api" / "admin" / "perf-history")
@@ -4254,6 +5243,7 @@ async fn main() -> Result<()> {
     let admin_engine_errors = warp::path!("api" / "admin" / "engine-errors")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_engine_errors);
 
     // ── Plain-text log tail (/api/logs/:source) — static-token auth ──────────
@@ -4266,6 +5256,7 @@ async fn main() -> Result<()> {
         .and(warp::any().map(move || log_read_token.clone()))
         .and(with_db(db.clone()))
         .and(warp::any().map(move || logs_hist_api.clone()))
+        .and(with_instance(db.clone()))
         .then(api_logs);
 
     let admin_ban_route = warp::path!("api" / "admin" / "ban")
@@ -4287,6 +5278,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(warp::body::json::<SpawnBody>())
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_commander_spawn);
 
     let admin_priority_route = warp::path!("api" / "admin" / "priority")
@@ -4294,6 +5286,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(warp::body::json::<PriorityBody>())
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_priority);
 
     let cockpit_ewr_report_route = warp::path!("api" / "cockpit" / "ewr" / "report")
@@ -4301,6 +5294,7 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_cockpit_ewr_report);
 
     let cockpit_ewr_intel_route = warp::path!("api" / "cockpit" / "ewr" / "intel")
@@ -4308,6 +5302,7 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_cockpit_ewr_intel);
 
     let cockpit_ewr_toggle_route = warp::path!("api" / "cockpit" / "ewr" / "toggle")
@@ -4316,6 +5311,7 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_cockpit_ewr_toggle);
 
     let cockpit_ewr_units_route = warp::path!("api" / "cockpit" / "ewr" / "units")
@@ -4325,6 +5321,7 @@ async fn main() -> Result<()> {
         .and(warp::body::json::<EwrUnitsBody>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_cockpit_ewr_units);
 
     let cockpit_carp_solve_route = warp::path!("api" / "cockpit" / "carp" / "solve")
@@ -4332,6 +5329,7 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_cockpit_carp_solve);
 
     let cockpit_carp_solve_latlon_route = warp::path!("api" / "cockpit" / "carp" / "solve-latlon")
@@ -4339,6 +5337,7 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_cockpit_carp_solve_latlon);
 
     let cockpit_cargo_spawn_route = warp::path!("api" / "cockpit" / "cargo" / "spawn")
@@ -4348,29 +5347,38 @@ async fn main() -> Result<()> {
         .and(warp::body::json::<CargoSpawnBody>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_cockpit_cargo_spawn);
 
     let trails = warp::path!("api" / "trails")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_trails);
 
     let config_route = warp::path!("api" / "config")
         .and(warp::any().map(move || campaign_json.clone()))
         .then(api_config);
 
-    let srs_url_arc: Arc<Option<String>> = Arc::new(effective_srs_url);
+    // Each DCS instance runs its own SRS server, so the client list is
+    // resolved per instance -- falling back to the single-server --srs-url /
+    // campaign.json `srsUrl` for the default instance.
+    let srs_fallback: Arc<Option<String>> = Arc::new(effective_srs_url);
     let srs_route = warp::path!("api" / "srs")
-        .and(warp::any().map(move || srs_url_arc.clone()))
-        .then(api_srs);
+        .and(with_instance(db.clone()))
+        .and(warp::any().map(move || srs_fallback.clone()))
+        .then(|inst: Inst, fallback: Arc<Option<String>>| async move {
+            let url: Arc<Option<String>> = match &inst.cfg.srs_url {
+                Some(u) => Arc::new(Some(u.clone())),
+                None => fallback,
+            };
+            api_srs(url).await
+        });
 
     let admin_cfg_get_route = warp::path!("api" / "admin" / "cfg")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
-        .and(warp::any().map({
-            let p = engine_config_path.clone();
-            move || p.clone()
-        }))
+        .and(with_instance(db.clone()))
         .then(api_admin_cfg_get);
 
     let admin_cfg_schema_route = warp::path!("api" / "admin" / "cfg" / "schema")
@@ -4383,7 +5391,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(warp::body::json::<SaveCfgBody>())
         .and(with_db(db.clone()))
-        .and(warp::any().map(move || engine_config_path.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_cfg_post);
 
     let wiki_list_route = warp::path!("api" / "wiki" / "pages")
@@ -4437,6 +5445,7 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_intel_list);
 
     let intel_get_image_route = warp::path!("api" / "intel" / "images" / Uuid)
@@ -4444,6 +5453,7 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_intel_get_image);
 
     let intel_upload_route = warp::path!("api" / "intel" / "upload")
@@ -4456,6 +5466,7 @@ async fn main() -> Result<()> {
         .and(warp::body::bytes())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_intel_upload);
 
     let intel_adjust_route = warp::path!("api" / "intel" / "adjust")
@@ -4465,6 +5476,7 @@ async fn main() -> Result<()> {
         .and(warp::body::json::<IntelAdjustBody>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_intel_adjust);
 
     let intel_delete_route = warp::path!("api" / "intel" / "delete")
@@ -4474,12 +5486,14 @@ async fn main() -> Result<()> {
         .and(warp::body::json::<IntelDeleteBody>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_intel_delete);
 
     let intel_purge_route = warp::path!("api" / "intel" / "purge")
         .and(warp::post())
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
         .then(api_intel_purge);
 
     let intel_markup_list_route = warp::path!("api" / "intel" / "markup")
@@ -4487,6 +5501,7 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_intel_markup_list);
 
     let intel_markup_add_route = warp::path!("api" / "intel" / "markup")
@@ -4497,6 +5512,7 @@ async fn main() -> Result<()> {
         .and(warp::body::json::<IntelMarkupBody>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_intel_markup_add);
 
     let intel_markup_delete_route = warp::path!("api" / "intel" / "markup" / "delete")
@@ -4506,6 +5522,7 @@ async fn main() -> Result<()> {
         .and(warp::body::json::<IntelDeleteBody>())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_intel_markup_delete);
 
     // /site/* → embedded bfsite SPA
@@ -4519,12 +5536,19 @@ async fn main() -> Result<()> {
         .map(|tail: warp::path::Tail| serve_asset(tail.as_str()));
 
     // Box sub-chains to avoid warp filter type overflow
-    let api_routes = rounds
+    let api_routes = instances_route
+        .or(rounds)
         .or(health)
+        .or(version)
+        .or(unitdb_versions)
+        .or(unitdb_stale)
+        .or(unitdb_diff)
+        .or(unitdb)
         .or(leaderboard)
         .or(objectives)
         .or(frontline)
         .or(briefing)
+        .or(situation)
         .or(kills)
         .or(capture_events)
         .or(pilot_sorties)
@@ -4570,7 +5594,11 @@ async fn main() -> Result<()> {
         .or(admin_cfg_schema_route)
         .boxed();
 
-    let routes = warp::get()
+    let routes = bad_instance_guard(db.clone())
+        // Ahead of everything, and outside the `warp::get()` group, so a POST
+        // with an unroutable ?instance= gets the same 400 a GET does instead
+        // of silently falling back to the default server.
+        .or(warp::get()
         .and(
             api_routes
                 .or(auth_routes)
@@ -4582,9 +5610,12 @@ async fn main() -> Result<()> {
                 .or(ws_engine_logs_route)
                 .or(site_files)
                 .or(static_files),
-        )
+        ))
         .or(auth_local_login)
         .or(admin_reset)
+        .or(admin_merge_rounds)
+        .or(admin_rebuild_stats)
+        .or(admin_reset_lives_all)
         .or(admin_ban_route)
         .or(admin_unban_route)
         .or(admin_cfg_post_route)

@@ -1,20 +1,47 @@
 {
-  "_copyright": "Live GCI © 2026 Dillen Weerasinghe. All rights reserved. Proprietary — no license granted. See the repository NOTICE file.",
-  "_comment": "Live GCI — proactive AWACS-style callouts over SRS, addressed by flight callsign. Copy this file to gci.json next to bfdb.exe (the path bfsystem.ps1's $gciConfigPath points at), fill in your values, and restart bfdb. Delete/rename gci.json to disable GCI.",
-  "_requires_engine": "bfdb must run with --base (a live engine to query) — see $netidxBase in bfsystem.ps1.",
-  "_requires_srs": "bfdb opens TWO persistent SRS connections (blue + red) and stays in the client list. It needs opus.dll — set opusDllPath to the one in your DCS-SimpleRadio-Standalone folder (e.g. C:\\Program Files\\DCS-SimpleRadio-Standalone\\opus.dll), or copy that file next to bfdb.exe and leave opusDllPath blank.",
+  "_copyright": "Live GCI \u00a9 2026 Dillen Weerasinghe. All rights reserved. Proprietary \u2014 no license granted. See the repository NOTICE file.",
+  "_comment": "Live GCI \u2014 proactive AWACS-style callouts over SRS, addressed by flight callsign. Copy this file to gci.json next to bfdb.exe (the path bfsystem.ps1's $gciConfigPath points at), fill in your values, and restart bfdb. Delete/rename gci.json to disable GCI.",
+  "_requires_engine": "bfdb must run with --base (a live engine to query) \u2014 see $netidxBase in bfsystem.ps1.",
+  "_requires_srs": "bfdb opens TWO persistent SRS connections (blue + red) and stays in the client list. It needs opus.dll \u2014 set opusDllPath to the one in your DCS-SimpleRadio-Standalone folder (e.g. C:\\Program Files\\DCS-SimpleRadio-Standalone\\opus.dll), or copy that file next to bfdb.exe and leave opusDllPath blank.",
   "_requires_eam": "On a server with External AWACS Mode, set blueEamPassword / redEamPassword to the coalition passwords (EXTERNAL_AWACS_MODE_BLUE_PASSWORD / _RED_PASSWORD in your SRS server.cfg). Leave blank if the server does not require EAM auth.",
   "_players": "Each player controls their own calls in-game: -gci on|off|metric|imperial|auto (chat), or F10 -> EWR -> GCI Voice.",
   "_slot_briefing": "To show players the GCI frequency when they take a slot, set `gci_briefing` in the MISSION config (ODFv2_CFG / the bfweb Config Editor -> SAM Sites & Air Defense), NOT here: { \"blue_freq\": \"251.0 AM\", \"red_freq\": \"252.0 AM\", \"note\": \"Broadcast only, no check-in needed\" }. bflib does not read this file.",
-
-  "_section_srs": "──── SRS SERVER ──────────────────────────────────────────────",
+  "_section_srs": "\u2500\u2500\u2500\u2500 SRS SERVER \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
   "srsHost": "127.0.0.1",
   "srsPort": 5002,
   "opusDllPath": "",
-
-  "_section_radio": "──── RADIO ───────────────────────────────────────────────────",
+  "_section_radio": "\u2500\u2500\u2500\u2500 RADIO \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
   "blueFreqMhz": 251.0,
   "redFreqMhz": 252.0,
+  "_freqs_note": "blueFreqs/redFreqs put the controller on several bands at once -- ONE transmission is heard on every frequency listed. Overrides blueFreqMhz/redFreqMhz. modulation may be omitted: it defaults to FM below 108 MHz and AM above.",
+  "blueFreqs": [
+    {
+      "mhz": 251.0,
+      "modulation": "AM"
+    },
+    {
+      "mhz": 119.0,
+      "modulation": "AM"
+    },
+    {
+      "mhz": 30.0,
+      "modulation": "FM"
+    }
+  ],
+  "redFreqs": [
+    {
+      "mhz": 124.0,
+      "modulation": "AM"
+    },
+    {
+      "mhz": 228.0,
+      "modulation": "AM"
+    },
+    {
+      "mhz": 40.0,
+      "modulation": "FM"
+    }
+  ],
   "modulation": "AM",
   "blueControllerCallsign": "Magic",
   "redControllerCallsign": "Overlord",
@@ -23,8 +50,7 @@
   "_bullseye_note": "Spoken name for the bullseye reference point. Leave blank for the literal word 'bullseye'; set a mission codeword (e.g. 'WHISKEY') to have GCI use it in bullseye/faded/picture calls.",
   "blueBullseyeName": "",
   "redBullseyeName": "",
-
-  "_section_voice": "──── VOICE ───────────────────────────────────────────────────",
+  "_section_voice": "\u2500\u2500\u2500\u2500 VOICE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
   "_voice_note": "Leave piperExe blank to use Windows SAPI. Set piperExe + a per-side model for a Piper neural voice. bluePiperModel / redPiperModel let each side sound different (e.g. point redPiperModel at a Russian-accent en model). piperModel / ttsVoice are the shared fallback. blueTtsVoice / redTtsVoice pick named SAPI voices per side when Piper isn't set.",
   "piperExe": "",
   "piperModel": "",
@@ -33,15 +59,17 @@
   "ttsVoice": "",
   "blueTtsVoice": "",
   "redTtsVoice": "",
-
-  "_stt_note": "Speech recognition — players key up on the GCI freq and ask (BOGEY DOPE / PICTURE / DECLARE / SNAPLOCK / ALPHA CHECK / RADIO CHECK / COMMIT). Set whisperExe to whisper-cli.exe (or main.exe) from a whisper.cpp release, and whisperModel to a ggml model (ggml-base.en.bin is a good start). Leave blank to disable — GCI stays broadcast-only. They must name the controller: 'Magic, bogey dope'.",
+  "_stt_note": "Speech recognition \u2014 players key up on the GCI freq and ask (BOGEY DOPE / PICTURE / DECLARE / SNAPLOCK / ALPHA CHECK / RADIO CHECK / COMMIT). Set whisperExe to whisper-cli.exe (or main.exe) from a whisper.cpp release, and whisperModel to a ggml model (ggml-base.en.bin is a good start). Leave blank to disable \u2014 GCI stays broadcast-only. They must name the controller: 'Magic, bogey dope'.",
   "whisperExe": "",
   "whisperModel": "",
-
+  "_whisper_server_note": "Preferred once ATC is also listening: whisperExe reloads the model on every transmission, whisper-server keeps it resident. Start: whisper-server.exe -m ggml-small.en.bin --host 127.0.0.1 --port 8910. When set, whisperExe/whisperModel are ignored.",
+  "whisperServerUrl": "",
   "_transcript_note": "discordWebhookUrl: paste a channel webhook (Channel Settings -> Integrations -> Webhooks -> New Webhook -> Copy URL) to also post every GCI call there as text. Leave blank to disable.",
   "discordWebhookUrl": "",
-
-  "_section_behaviour": "──── BEHAVIOUR ───────────────────────────────────────────────",
+  "_discord_split_note": "Leave the blue/red URLs blank for one shared channel. Set both for a channel per coalition. Set one and the other side falls back to discordWebhookUrl. discordTagInstance prefixes each line with the server label; it defaults to on when bfdb fronts more than one DCS server.",
+  "blueDiscordWebhookUrl": "",
+  "redDiscordWebhookUrl": "",
+  "_section_behaviour": "\u2500\u2500\u2500\u2500 BEHAVIOUR \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
   "_units_note": "Default spoken units when a player hasn't chosen: imperial (nm/kft) or metric (km/m).",
   "units": "imperial",
   "_ref_note": "Default position reference: braa (from the player's jet), bullseye, or clock. Players override with -gci braa|bulls|clock.",
@@ -57,5 +85,34 @@
   "pictureIntervalSecs": 300,
   "pollSecs": 5,
   "_gap_note": "interCallGapSecs: quiet time on the freq between GCI transmissions so players can key up. GCI also listens before transmitting and waits for the channel to clear.",
-  "interCallGapSecs": 6
+  "interCallGapSecs": 6,
+  "_section_atc": "======== SPOKEN ATC + ATIS ========",
+  "_atc_note": "Its own SRS clients (Blue ATC / Red ATC) so a busy tower never delays a GCI threat call. Inherits srsHost, srsPort, the EAM passwords, opusDllPath, piper and whisper from above.",
+  "_atc_freq_note": "DCS does NOT expose airfield ATC frequencies to scripting -- they are static terrain data, and the stock numbers would not work over SRS without mirroring them. Each field is assigned a frequency from towerBaseMhz upward, ordered BY FIELD NAME, so a field keeps its number across capture and restart. Pin a specific one under `fields`. Brief the numbers to your players.",
+  "atc": {
+    "enabled": false,
+    "towerBaseMhz": 340.0,
+    "towerStepMhz": 0.5,
+    "towerModulation": "AM",
+    "atisBaseMhz": 370.0,
+    "atisStepMhz": 0.5,
+    "atisModulation": "AM",
+    "atisIntervalSecs": 45,
+    "pollSecs": 20,
+    "patternAltitudeFt": 1500,
+    "_fields_note": "Keyed by the field's CAMPAIGN name (the objective name), not the DCS airbase name.",
+    "fields": {
+      "Incirlik": {
+        "tower": {
+          "mhz": 341.0,
+          "modulation": "AM"
+        },
+        "atis": {
+          "mhz": 371.0,
+          "modulation": "AM"
+        }
+      }
+    },
+    "atisExclude": []
+  }
 }

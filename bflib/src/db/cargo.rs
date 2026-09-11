@@ -24,7 +24,10 @@ use crate::{
 };
 use anyhow::{Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{C130Vehicle, CargoConfig, Crate, Deployable, DeployableKind, DismountSpec, GroundVehicleCargo, LifeType, LimitEnforceTyp, Troop, UnitTag, Vehicle},
+    cfg::{
+        C130Vehicle, CargoConfig, Crate, Deployable, DeployableKind, DismountSpec,
+        GroundVehicleCargo, LifeType, LimitEnforceTyp, Troop, UnitTag, Vehicle, MATERIEL_ITEM,
+    },
     db::{
         group::GroupId,
         objective::{ObjectiveId, ObjectiveKind},
@@ -373,6 +376,50 @@ impl Db {
         }
     }
 
+    /// Can `oid` still issue supply -- crates, troops, repair kits?
+    ///
+    /// A depot that has run its materiel down to nothing has nothing left to
+    /// hand out. Without this the warehouse economy had no bearing at all on
+    /// the crate and troop pipeline: a base could be stripped bare and still
+    /// pump out deployables indefinitely, because the cost was only taken at
+    /// unpack time and floored at zero.
+    fn check_can_issue_supply(&self, oid: ObjectiveId) -> Result<()> {
+        let Some(m) = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.materiel.as_ref())
+            .filter(|m| m.enabled)
+        else {
+            return Ok(());
+        };
+        if m.deploy_cost == 0 {
+            return Ok(());
+        }
+        let Some(obj) = self.persisted.objectives.get(&oid) else {
+            return Ok(());
+        };
+        let have = obj
+            .warehouse
+            .equipment
+            .get(MATERIEL_ITEM)
+            .map(|inv| inv.stored)
+            .unwrap_or(0);
+        if have < m.deploy_cost {
+            info!(
+                "[MATERIEL] {} refused a supply issue: {have} on hand, {} needed",
+                obj.name, m.deploy_cost
+            );
+            bail!(
+                "{} is out of materiel ({have} on hand, {} needed) -- it can't issue supply until a convoy gets through",
+                obj.name,
+                m.deploy_cost
+            )
+        }
+        Ok(())
+    }
+
     pub fn spawn_crate(
         &mut self,
         lua: MizLua,
@@ -454,6 +501,7 @@ impl Db {
                 }
                 e
             })?;
+        self.check_can_issue_supply(oid)?;
         let dep_idx = self
             .ephemeral
             .deployable_idx
@@ -773,10 +821,23 @@ impl Db {
                 }
             }
         }
+        /// A crate that is still parachuting down is not on the ground and
+        /// must not be counted toward -- or consumed by -- an unpack. The
+        /// C-130 scan in `unpack_c130_crate` already excludes these; this path
+        /// did not, so a helo could unpack a set using a crate that was still
+        /// in the air and delete it mid-drop.
+        fn grounded(db: &Db, nc: &NearbyCrate) -> bool {
+            db.ephemeral
+                .c130_crates
+                .get(&nc.group.name)
+                .map(|c| !matches!(c.state, C130CargoState::Airborne))
+                .unwrap_or(true)
+        }
         fn nearby(db: &Db, st: &SlotStats) -> Result<SmallVec<[Cifo; 8]>> {
             let nearby_player = db
                 .list_nearby_crates(st)?
                 .into_iter()
+                .filter(|nc| grounded(db, nc))
                 .map(Cifo::from)
                 .collect::<SmallVec<[Cifo; 8]>>();
             if nearby_player.is_empty() {
@@ -788,6 +849,7 @@ impl Db {
                     for cr in db
                         .list_crates_near_point(cr.pos, sp)?
                         .into_iter()
+                        .filter(|nc| grounded(db, nc))
                         .map(Cifo::from)
                     {
                         crates.entry(cr.group).or_insert(cr);
@@ -1092,6 +1154,10 @@ impl Db {
                 base_repairs.iter().map(|(_, c)| c)
             });
             if let Some(oid) = oid {
+                // A repair kit landed at a base that is still consolidating
+                // counts even if its logi is already topped out -- the point is
+                // the sortie, not the logi delta.
+                self.bump_consolidation(oid, "logistics repair kit delivered")?;
                 let obj = objective!(self, oid)?;
                 if obj.logi == 100 {
                     reasons.push("objective logistics are completely repaired".into());
@@ -1135,6 +1201,7 @@ impl Db {
                 } = self.persisted.groups[&gid].origin
                 {
                     self.transfer_supplies(lua, from, to)?;
+                    self.bump_consolidation(to, "supplies delivered")?;
                     self.delete_group(&gid)?;
                     self.ephemeral.stat(Stat::SupplyTransfer {
                         from,
@@ -1498,6 +1565,7 @@ impl Db {
         let pos = self.ephemeral.slot_instance_pos(lua, slot)?;
         let point = Vector2::new(pos.p.x, pos.p.z);
         let (origin, _) = self.point_near_logistics(side, point)?;
+        self.check_can_issue_supply(origin)?;
         let troop_cfg = self
             .ephemeral
             .deployable_idx
@@ -3026,6 +3094,7 @@ impl Db {
                     anyhow!("you must be inside a friendly logistics objective to spawn crates")
                 })?
         };
+        self.check_can_issue_supply(origin)?;
 
         // Scan for a spot clear of any existing crate, from any player, so two
         // players dropping cargo near the same spot don't compute overlapping
@@ -3379,6 +3448,7 @@ impl Db {
                     anyhow!("you must be inside a friendly logistics objective to spawn crates")
                 })?
         };
+        self.check_can_issue_supply(origin)?;
 
         let num_to_spawn = crate_list.len().min(max_spawn);
         let mut spawn_time = Utc::now();
@@ -4296,6 +4366,9 @@ impl Db {
                         .map(|o| (o.name.clone(), o.logi))
                         .ok_or_else(|| anyhow!("Objective not found"))?;
 
+                    // Counts toward consolidation whether or not logi moves --
+                    // see the helo unpack path.
+                    self.bump_consolidation(oid, "logistics repair kit delivered")?;
                     if logi == 100 {
                         self.ephemeral.c130_crates.remove(crate_name);
                         self.delete_group(&crate_data.group_id)?;

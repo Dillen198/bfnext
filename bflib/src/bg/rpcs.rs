@@ -37,6 +37,7 @@ pub struct Rpcs {
     _search: Proc,
     _log_warehouse: Proc,
     _reset_lives: Proc,
+    _reset_lives_all: Proc,
     _add_admin: Proc,
     _remove_admin: Proc,
     _balance: Proc,
@@ -59,8 +60,12 @@ pub struct Rpcs {
     _query_campaign_state: Proc,
     _query_perf: Proc,
     _query_briefing: Proc,
+    _query_situation: Proc,
     _query_tacmap: Proc,
+    _query_unitdb: Proc,
     _query_gci: Proc,
+    _query_cas: Proc,
+    _query_atc: Proc,
     // Action API
     _spawn_deployable: Proc,
     _spawn_troop: Proc,
@@ -374,6 +379,19 @@ impl Rpcs {
             player: Chars = Value::Null; "The player to reset"
         )?;
         let _q = Arc::clone(&q);
+        let reset_lives_all = define_rpc!(
+            publisher,
+            base.append("reset-lives-all"),
+            "Reset every player's lives",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::ResetLivesAll, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(&q);
         let add_admin = define_rpc!(
             publisher,
             base.append("add-admin"),
@@ -683,6 +701,39 @@ impl Rpcs {
             side: Chars = Value::Null; "The side (blue, red, neutral)"
         )?;
         let _q = Arc::clone(&q);
+        let query_situation = define_rpc!(
+            publisher,
+            base.append("query-situation"),
+            "Query the per-side auto-generated situational briefing: posture, ranked tasking, hotspots, known threats, air picture, logistics, comms card, objective map layer (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QuerySituation { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red, neutral)"
+        )?;
+        let _q = Arc::clone(&q);
+        let query_unitdb = define_rpc!(
+            publisher,
+            base.append("query-unitdb"),
+            "Query the unit range database harvested from the running DCS install -- engagement and detection ranges per unit type, tagged with the DCS version (returns JSON)",
+            |c: RpcCall, _: Value| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((AdminCommand::QueryUnitDb, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(&q);
         let query_tacmap = define_rpc!(
             publisher,
             base.append("query-tacmap"),
@@ -717,6 +768,46 @@ impl Rpcs {
                     }
                 };
                 _q.push((AdminCommand::QueryGci { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)"
+        )?;
+        let _q = Arc::clone(&q);
+        let query_cas = define_rpc!(
+            publisher,
+            base.append("query-cas"),
+            "Query the live close air support picture for one side: every JTAC, what it is looking at and lasing, plus the human flights that could work with it (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryCas { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)"
+        )?;
+        let _q = Arc::clone(&q);
+        let query_atc = define_rpc!(
+            publisher,
+            base.append("query-atc"),
+            "Query the air traffic control picture for one side: every field it holds with weather, active runway and serviceability, plus its aircraft (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryAtc { side }, tx));
                 Some((c, rx))
             },
             Some(wait.clone()),
@@ -1067,6 +1158,7 @@ impl Rpcs {
             _search: search,
             _log_warehouse: log_warehouse,
             _reset_lives: reset_lives,
+            _reset_lives_all: reset_lives_all,
             _add_admin: add_admin,
             _remove_admin: remove_admin,
             _balance: balance,
@@ -1089,8 +1181,12 @@ impl Rpcs {
             _query_campaign_state: query_campaign_state,
             _query_perf: query_perf,
             _query_briefing: query_briefing,
+            _query_situation: query_situation,
             _query_tacmap: query_tacmap,
+            _query_unitdb: query_unitdb,
             _query_gci: query_gci,
+            _query_cas: query_cas,
+            _query_atc: query_atc,
             // Action API
             _spawn_deployable: spawn_deployable,
             _spawn_troop: spawn_troop,

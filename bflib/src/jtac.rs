@@ -1456,6 +1456,17 @@ impl Jtac {
         &self.nearby_artillery
     }
 
+    /// Everything this JTAC can currently see. Read-only — used to build the
+    /// spoken situation update and target description.
+    pub fn visible_contacts(&self) -> impl Iterator<Item = &Contact> {
+        self.contacts.values()
+    }
+
+    /// Is the laser actually firing on the current target?
+    pub fn is_lasing(&self) -> bool {
+        self.target.is_some()
+    }
+
     pub fn nearby_alcm(&self) -> &[(GroupId, i32)] {
         &self.nearby_alcm
     }
@@ -1504,17 +1515,29 @@ impl Jtacs {
         // Prefer the per-unit-type range from cfg.artillery.units (keyed by DCS
         // type, e.g. "Scud_B") -- a ballistic TEL has a huge minimum range the
         // flat artillery_min_range doesn't capture. Fall back to the flat pair.
-        let per_unit = group
+        let typ = group
             .and_then(|g| g.units.into_iter().next())
             .and_then(|uid| db.unit(uid).ok())
-            .and_then(|u| {
-                cfg.artillery
-                    .as_ref()
-                    .and_then(|a| a.units.get(u.typ.as_str()))
-            });
+            .map(|u| u.typ.clone());
+        let per_unit = typ.as_ref().and_then(|t| {
+            cfg.artillery
+                .as_ref()
+                .and_then(|a| a.units.get(t.as_str()))
+        });
         let (min, max) = match per_unit {
             Some(r) => (r.min_range_m, r.max_range_m),
-            None => (cfg.artillery_min_range as f64, cfg.artillery_mission_range as f64),
+            // Nothing configured for this type -- ask the harvested DCS unit
+            // db before falling back to the flat pair, which has no idea a
+            // ballistic TEL can't shoot anything inside 50km.
+            None => typ
+                .as_ref()
+                .and_then(|t| {
+                    let udb = crate::unitdb::get();
+                    let info = udb.get(t.as_str())?;
+                    let max = info.threat_range_m?;
+                    Some((info.threat_range_min_m.unwrap_or(0.0), max))
+                })
+                .unwrap_or((cfg.artillery_min_range as f64, cfg.artillery_mission_range as f64)),
         };
         if dist < min {
             Some(format_compact!(

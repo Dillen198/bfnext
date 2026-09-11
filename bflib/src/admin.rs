@@ -140,10 +140,12 @@ pub enum AdminCommand {
         kind: WarehouseKind,
         airbase: String,
     },
+    LogLogistics,
     Logdesc,
     ResetLives {
         player: String,
     },
+    ResetLivesAll,
     AddAdmin {
         player: String,
     },
@@ -197,12 +199,24 @@ pub enum AdminCommand {
     QueryBriefing {
         side: Side,
     },
+    QuerySituation {
+        side: Side,
+    },
     QueryTacmap {
         side: Side,
     },
     QueryGci {
         side: Side,
     },
+    QueryCas {
+        side: Side,
+    },
+    QueryAtc {
+        side: Side,
+    },
+    /// The unit range database harvested out of the running DCS install,
+    /// tagged with its version so bfdb can snapshot and diff it across updates.
+    QueryUnitDb,
     // Action API commands
     SpawnDeployable {
         side: Side,
@@ -299,6 +313,7 @@ impl AdminCommand {
             "transfer <from-objective> <to-objective>: transfer supplies between two objectives",
             "tick: execute a logistics tick now",
             "deliver: execute a logistics delivery now",
+            "logistics: dump the whole logistics picture (hubs, materiel, cargo in flight, starving bases) to the log",
             "repair <airbase>: repair one step at the specified airbase",
             "capture <objective> <blue|red|neutral>: force an objective to change hands",
             "tim <key> [size] [alt]: create explosions of [size] default 3000 at every f10 mark with text <key>",
@@ -308,6 +323,7 @@ impl AdminCommand {
             "unban <alias|ucid>: unban a player",
             "kick <alias|playerid|ucid>: kick a player",
             "reset-lives <alias|playerid|ucid>",
+            "reset-lives-all: reset every player's lives",
             "connected: list connected players",
             "banned: list banned players",
             "search <regex>: search the player list by regular expression",
@@ -354,6 +370,8 @@ impl FromStr for AdminCommand {
                     to: to.into(),
                 }),
             }
+        } else if let Some(_) = s.strip_prefix("logistics") {
+            Ok(Self::LogLogistics)
         } else if let Some(_) = s.strip_prefix("tick") {
             Ok(Self::LogisticsTickNow)
         } else if let Some(_) = s.strip_prefix("deliver") {
@@ -446,6 +464,8 @@ impl FromStr for AdminCommand {
             }
         } else if let Some(_) = s.strip_prefix("log-desc") {
             Ok(Self::Logdesc)
+        } else if let Some(_) = s.strip_prefix("reset-lives-all") {
+            Ok(Self::ResetLivesAll)
         } else if let Some(s) = s.strip_prefix("reset-lives ") {
             Ok(Self::ResetLives { player: s.into() })
         } else if let Some(_) = s.strip_prefix("shutdown") {
@@ -881,12 +901,19 @@ pub(super) fn admin_shutdown(
         }
     };
     ctx.db.ephemeral.remove_map_layer();
+    // Shutdown ends the slot session for everyone still slotted, but nothing
+    // here runs `player_deslot`, so close the sorties of pilots sitting on the
+    // ground -- otherwise they stay open forever and credit no hours. It has to
+    // come after `return_lives`, which is what marks a just-landed pilot as
+    // being on the ground in the first place.
     if let Some(winner) = reset {
+        ctx.db.close_open_sorties();
         ctx.do_bg_task(Task::ResetState(ctx.miz_state_path.clone()));
         ctx.do_bg_task(Task::Stat(se));
         ctx.do_bg_task(Task::Stat(Stat::RoundEnd { winner }));
     } else {
         return_lives(lua, ctx, DateTime::<Utc>::MAX_UTC);
+        ctx.db.close_open_sorties();
         ctx.do_bg_task(Task::SaveState(
             ctx.miz_state_path.clone(),
             ctx.db.persisted.clone(),
@@ -1500,10 +1527,7 @@ pub(crate) fn query_briefing(ctx: &Context, lua: MizLua, side: Side) -> Briefing
             continue
         };
         let typ = arty_unit.typ.0.to_string();
-        let (min_r, max_r) = art_cfg
-            .and_then(|a| a.units.get(typ.as_str()).map(|u| (u.min_range_m, u.max_range_m)))
-            .or_else(|| art_cfg.map(|a| (a.default_min_range_m, a.default_max_range_m)))
-            .unwrap_or((4000.0, 30000.0));
+        let (max_r, min_r) = crate::unitdb::artillery_range(art_cfg, typ.as_str());
         let center = db.group_center(gid).unwrap_or(arty_unit.pos);
         let (lat, lon) = to_ll(center);
         artillery.push(ArtilleryEntry {
@@ -1674,11 +1698,12 @@ pub(crate) fn query_tacmap(ctx: &Context, lua: MizLua, side: Side) -> bfprotocol
                     ContactClass::Helicopter => AirClass::Helo,
                     ContactClass::Unknown => AirClass::Unknown,
                 },
+                unit_type: c.typ.as_ref().map(|t| t.to_string()),
                 age_s: c.age_s,
                 stale: c.stale,
                 jammed: false,
                 source,
-                label: None,
+                label: c.player_name.as_ref().map(|n| n.to_string()),
             }
         })
         .collect();
@@ -1821,6 +1846,7 @@ pub(crate) fn query_gci(
     use bfprotocols::cfg::SensorType;
     use bfprotocols::gci::{
         GciAspect, GciContact, GciControlPicture, GciFlight, GciRef, GciSamThreat, GciSupport,
+        GciTask,
         GciUnits,
     };
     use crate::ewr::{Aspect, ContactClass, EwrUnits};
@@ -1861,10 +1887,22 @@ pub(crate) fn query_gci(
         if !gci_enabled {
             continue;
         }
-        let callsign = player
+        // One lookup for both the spoken callsign and the DCS unit id. The unit
+        // id is what an in-cockpit SRS client reports as `RadioInfo.unitId`, so
+        // it lets a spoken request be tied to this flight exactly, instead of
+        // fuzzy-matching the player's SRS display name against their DCS name.
+        let unit = player
             .current_slot
             .as_ref()
-            .and_then(|(slot, _)| db.ephemeral.slot_instance_unit(lua, slot).ok())
+            .and_then(|(slot, _)| db.ephemeral.slot_instance_unit(lua, slot).ok());
+        let unit_id = unit
+            .as_ref()
+            .and_then(|u| u.id().ok())
+            .map(|id| id.inner())
+            .filter(|id| *id > 0)
+            .map(|id| id as u64);
+        let callsign = unit
+            .as_ref()
             .and_then(|u| u.get_callsign().ok())
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty())
@@ -1972,6 +2010,8 @@ pub(crate) fn query_gci(
             ucid: ucid.to_string(),
             callsign,
             player_name: player.name.to_string(),
+            unit_id,
+            auto: ctx.ewr.gci_auto(ucid),
             lat,
             lon,
             alt_m: inst.position.p.y as i32,
@@ -2040,6 +2080,26 @@ pub(crate) fn query_gci(
             .collect()
     };
 
+    // Tasking board entries posted since the last poll, so the controller
+    // can read new tasking out over the voice net.
+    let tasks = db
+        .ephemeral
+        .gci_tasks
+        .iter()
+        .filter(|(_, t)| t.side == side)
+        .map(|(_, t)| {
+            let (lat, lon) = to_ll(t.pos.x, t.pos.y);
+            GciTask {
+                id: t.id.inner(),
+                kind: t.kind.to_string(),
+                location: t.location.to_string(),
+                lat,
+                lon,
+                by: Some(t.created_by_name.to_string()),
+            }
+        })
+        .collect();
+
     GciControlPicture {
         side,
         time: now,
@@ -2048,6 +2108,212 @@ pub(crate) fn query_gci(
         radar_up,
         ejections,
         support,
+        tasks,
+    }
+}
+
+/// Build one coalition's close-air-support picture: every JTAC it owns, what
+/// each is looking at, and the human flights that might work with them.
+///
+/// Everything the spoken controller says is derived from here, so this is
+/// deliberately generous about context (contact breakdown, nearby threats,
+/// nearest friendly) — the voice side does no map queries of its own.
+pub(crate) fn query_cas(ctx: &Context, lua: MizLua, side: Side) -> bfprotocols::cas::CasPicture {
+    use bfprotocols::cas::{CasContactGroup, CasFlight, CasJtac, CasPicture, CasTarget};
+    use bfprotocols::cfg::UnitTag;
+    use std::collections::HashMap;
+    // admin.rs imports dcso3's String at module scope; the protocol types want
+    // the std one.
+    use std::string::String;
+
+    let db = &ctx.db;
+    let coord = dcso3::coord::Coord::singleton(lua).ok();
+    let to_ll = |x: f64, z: f64| -> (f64, f64) {
+        coord
+            .as_ref()
+            .and_then(|c| c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(x, 0.0, z))).ok())
+            .map(|ll| (ll.latitude, ll.longitude))
+            .unwrap_or((0.0, 0.0))
+    };
+    let bearing_range = |from: Vector2, to: Vector2| -> (u16, u32) {
+        let dn = to.x - from.x;
+        let de = to.y - from.y;
+        (
+            ((de.atan2(dn).to_degrees() + 360.0) % 360.0) as u16,
+            (dn * dn + de * de).sqrt() as u32,
+        )
+    };
+    // Collapse a list of type names into "4 BMP-2, 2 T-72", biggest group first.
+    let summarize = |counts: HashMap<String, u16>| -> Vec<CasContactGroup> {
+        let mut v: Vec<CasContactGroup> = counts
+            .into_iter()
+            .map(|(typ, count)| CasContactGroup { typ, count })
+            .collect();
+        v.sort_by(|a, b| b.count.cmp(&a.count).then(a.typ.cmp(&b.typ)));
+        v.truncate(6);
+        v
+    };
+
+    let mut jtacs: Vec<CasJtac> = vec![];
+    for jt in ctx.jtac.jtacs().filter(|j| j.side() == side) {
+        let loc = jt.location();
+        let (lat, lon) = to_ll(loc.pos.x, loc.pos.y);
+        let location_name = db
+            .objective(&loc.oid)
+            .map(|o| o.name.to_string())
+            .unwrap_or_default();
+
+        let mut all: HashMap<String, u16> = HashMap::new();
+        let mut threat: HashMap<String, u16> = HashMap::new();
+        let mut contact_count: u16 = 0;
+        for ct in jt.visible_contacts() {
+            contact_count += 1;
+            *all.entry(ct.typ.to_string()).or_default() += 1;
+            if ct.tags.contains(UnitTag::SAM) || ct.tags.contains(UnitTag::AAA) {
+                *threat.entry(ct.typ.to_string()).or_default() += 1;
+            }
+        }
+
+        let target = jt.target().as_ref().map(|t| {
+            let tp = Vector2::new(t.pos.x, t.pos.z);
+            let (brg, rng_m) = bearing_range(loc.pos, tp);
+            let (tlat, tlon) = to_ll(t.pos.x, t.pos.z);
+            // Like vehicles within a couple of hundred metres — the difference
+            // between "one tank" and "tank platoon" in the target description.
+            let group_size = jt
+                .visible_contacts()
+                .filter(|c| {
+                    c.typ == t.typ && (Vector2::new(c.pos.x, c.pos.z) - tp).magnitude() < 250.0
+                })
+                .count() as u16;
+            CasTarget {
+                typ: t.typ.to_string(),
+                lat: tlat,
+                lon: tlon,
+                elev_ft: (t.pos.y * 3.28084) as i32,
+                brg,
+                rng_m,
+                lasing: true,
+                group_size: group_size.max(1),
+            }
+        });
+
+        // Nearest friendly ground unit to the target — nine-line line 8, and
+        // the danger-close test.
+        let (nearest_friendly_m, nearest_friendly_brg) = match jt.target().as_ref() {
+            None => (None, 0),
+            Some(t) => {
+                let tp = Vector2::new(t.pos.x, t.pos.z);
+                let mut best: Option<(f64, u16)> = None;
+                for (_, unit) in &db.persisted.units {
+                    if unit.side != side || unit.tags.contains(UnitTag::Aircraft) {
+                        continue;
+                    }
+                    let up = Vector2::new(unit.position.p.x, unit.position.p.z);
+                    let d = (up - tp).magnitude();
+                    if best.map_or(true, |(bd, _)| d < bd) {
+                        let (brg, _) = bearing_range(tp, up);
+                        best = Some((d, brg));
+                    }
+                }
+                match best {
+                    Some((d, brg)) => (Some(d as u32), brg),
+                    None => (None, 0),
+                }
+            }
+        };
+
+        let location_brg = loc.bearing.to_degrees().rem_euclid(360.0) as u16;
+        let location_rng_m = loc.distance as u32;
+
+        jtacs.push(CasJtac {
+            id: format_compact!("{}", jt.gid()).to_string(),
+            callsign: jt
+                .callsign()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format_compact!("{}", jt.gid()).to_string()),
+            lat,
+            lon,
+            alt_m: 0,
+            airborne: false,
+            laser_code: jt.code(),
+            ir_pointer: jt.ir_pointer(),
+            location_name,
+            location_brg,
+            location_rng_m,
+            target,
+            contacts: summarize(all),
+            contact_count,
+            nearest_friendly_m,
+            nearest_friendly_brg,
+            artillery_available: !jt.nearby_artillery().is_empty(),
+            threats: summarize(threat),
+        });
+    }
+
+    // Human flights on this side, with the JTAC nearest to each.
+    let mut flights: Vec<CasFlight> = vec![];
+    for (ucid, player, inst) in db.instanced_players() {
+        if player.side != side || !inst.in_air {
+            continue;
+        }
+        let unit = player
+            .current_slot
+            .as_ref()
+            .and_then(|(slot, _)| db.ephemeral.slot_instance_unit(lua, slot).ok());
+        let unit_id = unit
+            .as_ref()
+            .and_then(|u| u.id().ok())
+            .map(|id| id.inner())
+            .filter(|id| *id > 0)
+            .map(|id| id as u64);
+        let callsign = unit
+            .as_ref()
+            .and_then(|u| u.get_callsign().ok())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| player.name.to_string());
+        let fp = Vector2::new(inst.position.p.x, inst.position.p.z);
+        let v = inst.velocity;
+        let heading = if v.x.abs() > f64::EPSILON || v.z.abs() > f64::EPSILON {
+            ((v.z.atan2(v.x).to_degrees() + 360.0) % 360.0) as u16
+        } else {
+            0
+        };
+        let mut nearest: Option<(u32, u16, String)> = None;
+        for jt in ctx.jtac.jtacs().filter(|j| j.side() == side) {
+            let (brg, rng) = bearing_range(fp, jt.location().pos);
+            if nearest.as_ref().map_or(true, |(r, _, _)| rng < *r) {
+                nearest = Some((rng, brg, format_compact!("{}", jt.gid()).to_string()));
+            }
+        }
+        let (lat, lon) = to_ll(fp.x, fp.y);
+        flights.push(CasFlight {
+            ucid: ucid.to_string(),
+            unit_id,
+            callsign,
+            player_name: player.name.to_string(),
+            lat,
+            lon,
+            alt_m: inst.position.p.y as i32,
+            heading,
+            speed_ms: (v.x * v.x + v.y * v.y + v.z * v.z).sqrt() as u16,
+            nearest_jtac: nearest.as_ref().map(|(_, _, id)| id.clone()),
+            jtac_brg: nearest.as_ref().map_or(0, |(_, b, _)| *b),
+            jtac_rng_m: nearest.as_ref().map_or(0, |(r, _, _)| *r),
+        });
+    }
+
+    let bullseye = dcso3::env::miz::Miz::singleton(lua)
+        .ok()
+        .and_then(|miz| miz.coalition(side).ok())
+        .and_then(|c| c.bullseye().ok())
+        .map(|be| to_ll(be.x, be.y));
+
+    CasPicture {
+        jtacs,
+        flights,
+        bullseye,
     }
 }
 
@@ -2336,6 +2602,10 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     Ok(()) => reply_ok!("transfer complete. disconnect"),
                 }
             }
+            AdminCommand::LogLogistics => match ctx.db.admin_log_logistics() {
+                Ok(()) => reply_ok!("logistics report written to the log"),
+                Err(e) => reply_err!("logistics report failed: {e:?}"),
+            },
             AdminCommand::LogisticsTickNow => {
                 ctx.db.admin_tick_now();
                 reply_ok!("tick scheduled")
@@ -2439,6 +2709,10 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                         Err(e) => reply_err!("could not log admin desc {:?}", e),
                     },
                 },
+            },
+            AdminCommand::ResetLivesAll => match ctx.db.reset_all_lives() {
+                Ok(n) => reply_ok!("reset lives for {n} player(s)"),
+                Err(e) => reply_err!("could not reset all lives {:?}", e),
             },
             AdminCommand::ResetLives { player } => match admin_reset_lives(ctx, &player) {
                 Ok(()) => reply_ok!("{player} lives reset"),
@@ -2580,11 +2854,53 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     Err(e) => reply_err!("failed to serialize briefing: {e:?}"),
                 }
             }
+            AdminCommand::QuerySituation { side } => {
+                // Dashboard path: include the positioned objective layer for the
+                // briefing map, and no bearings (there is no single viewer jet
+                // to measure from).
+                let rep = crate::situation::build(
+                    ctx,
+                    lua,
+                    side,
+                    crate::situation::Opts { include_map: true, from: None },
+                );
+                match serde_json::to_string(&rep) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize situation: {e:?}"),
+                }
+            }
             AdminCommand::QueryTacmap { side } => {
                 let picture = query_tacmap(ctx, lua, side);
                 match serde_json::to_string(&picture) {
                     Ok(json) => replies.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize tacmap: {e:?}"),
+                }
+            }
+            AdminCommand::QueryUnitDb => {
+                let db = crate::unitdb::get();
+                if db.is_empty() {
+                    reply_err!(
+                        "the unit db is empty -- the harvest either hasn't run or couldn't reach _G.db"
+                    )
+                } else {
+                    match serde_json::to_string(&*db) {
+                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize the unit db: {e:?}"),
+                    }
+                }
+            }
+            AdminCommand::QueryAtc { side } => {
+                let picture = crate::atis::query_atc(lua, ctx, side);
+                match serde_json::to_string(&picture) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize atc picture: {e:?}"),
+                }
+            }
+            AdminCommand::QueryCas { side } => {
+                let picture = query_cas(ctx, lua, side);
+                match serde_json::to_string(&picture) {
+                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize cas picture: {e:?}"),
                 }
             }
             AdminCommand::QueryGci { side } => {

@@ -20,7 +20,10 @@ use super::{
     player::Player,
     Map, MapM, MapS, Set, SetM, SetS,
 };
+use super::logistics::PendingCargo;
+use super::tasks::{Task, TaskId};
 use crate::navaids::Navaid;
+use compact_str::CompactString;
 use bfprotocols::db::{
     group::{GroupId, UnitId},
     objective::ObjectiveId,
@@ -98,6 +101,35 @@ pub struct Persisted {
     /// older save.
     #[serde(default, deserialize_with = "de_navaids_compat")]
     pub navaids: MapS<ObjectiveId, Vec<Navaid>>,
+    /// Cargo taken out of a warehouse and handed to an in-flight convoy /
+    /// air route / sea route, keyed by that route's id. The routes
+    /// themselves are ephemeral (their DCS groups don't survive a mission
+    /// load), so this ledger is what lets a restart refund the stock that
+    /// was on the road instead of deleting it. See
+    /// `Db::reconcile_pending_cargo`.
+    #[serde(default)]
+    pub pending_cargo: MapS<CompactString, PendingCargo>,
+    /// Each side's territory score at the start of the campaign. Production
+    /// scaling is the ratio of a side's current score to this, so it has to
+    /// survive restarts -- re-baselining on load would hand a side that has
+    /// lost half the map its full production back.
+    #[serde(default)]
+    pub production_baseline: MapS<Side, f64>,
+    /// How many of each objective's logistics buildings have been bombed out,
+    /// under `logi_from_scenery`.
+    ///
+    /// DCS's own terrain destruction does not survive a server restart, so
+    /// without this the campaign's whole logistics picture healed itself every
+    /// time the mission reloaded: a hub you spent a night flattening was back
+    /// at 100% after the next scheduled restart. The rubble does come back
+    /// standing in-game -- this is the campaign remembering that it shouldn't
+    /// count.
+    #[serde(default)]
+    pub scenery_destroyed: MapS<ObjectiveId, u32>,
+    /// The coalition tasking boards -- player posted CAP / CAS / LOGISTICS
+    /// requests drawn on the F10 map. See `crate::db::tasks`.
+    #[serde(default)]
+    pub tasks: MapS<TaskId, Task>,
 }
 
 /// Backward compatibility: saves written before the per-ship rework stored

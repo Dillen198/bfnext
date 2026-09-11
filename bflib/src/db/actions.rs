@@ -1,7 +1,7 @@
 use super::{Db, MapM, objective::Objective};
 use crate::{
     admin,
-    db::{cargo::Oldest, group::DeployKind},
+    db::{cargo::Oldest, group::DeployKind, tasks::TaskId},
     group, group_mut,
     jtac::{aim_and_fire_route, group_facing, JtId, Jtacs},
     objective,
@@ -13,7 +13,7 @@ use bfprotocols::{
     cfg::{
         Action, ActionGeoLimit, ActionKind, AiPlaneCfg, AiPlaneKind, ArtilleryCfg, AwacsCfg, BomberCfg,
         DeployableCfg, DeployableKind, DroneCfg, LimitEnforceTyp, MoveCfg, NavalCruiseMissileCfg,
-        NukeCfg, ReconCfg, UnitTag,
+        NukeCfg, ReconCfg, RemoveTaskCfg, TaskCfg, TaskTarget, UnitTag, MATERIEL_ITEM,
     },
     db::{
         group::GroupId,
@@ -129,6 +129,28 @@ pub struct WithJtac<T> {
     pub jtac: JtId,
 }
 
+/// Where a tasking board entry is being posted: at one of the player's map
+/// marks, or against an objective.
+#[derive(Debug, Clone)]
+pub enum TaskAt {
+    Pos(Vector2),
+    Obj(ObjectiveId),
+}
+
+#[derive(Debug, Clone)]
+pub struct AddTaskArgs {
+    pub cfg: TaskCfg,
+    /// Task type name from the config, e.g. "CAP".
+    pub kind: String,
+    pub at: TaskAt,
+}
+
+#[derive(Debug, Clone)]
+pub struct WithTask<T> {
+    pub cfg: T,
+    pub task: TaskId,
+}
+
 #[derive(Debug, Clone)]
 pub enum ActionArgs {
     Tanker(WithPos<AiPlaneCfg>),
@@ -161,6 +183,10 @@ pub enum ActionArgs {
     Artillery(WithPos<ArtilleryCfg>),
     /// Player-triggered reconnaissance flight over a map-mark position.
     Recon(WithPos<ReconCfg>),
+    /// Post a task to the coalition tasking board.
+    AddTask(AddTaskArgs),
+    /// Take a task back off the coalition tasking board.
+    RemoveTask(WithTask<RemoveTaskCfg>),
 }
 
 impl ActionArgs {
@@ -334,6 +360,34 @@ impl ActionArgs {
             ActionKind::NavalCruiseMissileStrike(c) => Ok(Self::NavalCruiseMissileStrike(obj(db, c, s)?)),
             ActionKind::Artillery(c) => Ok(Self::Artillery(pos(db, lua, side, c, s)?)),
             ActionKind::Recon(c) => Ok(Self::Recon(pos(db, lua, side, c, s)?)),
+            ActionKind::AddTask(c) => match s.split_once(" ") {
+                None => Err(anyhow!("expected <task type> <key|objective>")),
+                Some((kind, rest)) => {
+                    // Position tasks take a map mark key, objective tasks
+                    // take an objective name -- which one is decided by the
+                    // task type, not by the player.
+                    let typ = c
+                        .types
+                        .iter()
+                        .find(|t| t.name.eq_ignore_ascii_case(kind))
+                        .ok_or_else(|| anyhow!("no such task type {kind}"))?;
+                    let at = match typ.target {
+                        TaskTarget::Position => TaskAt::Pos(get_key_pos(db, lua, side, rest)?),
+                        TaskTarget::CaptureObjective | TaskTarget::SupplyObjective { .. } => {
+                            TaskAt::Obj(admin::get_airbase(db, rest)?)
+                        }
+                    };
+                    Ok(Self::AddTask(AddTaskArgs {
+                        kind: kind.into(),
+                        cfg: c.clone(),
+                        at,
+                    }))
+                }
+            },
+            ActionKind::RemoveTask(c) => Ok(Self::RemoveTask(WithTask {
+                cfg: c,
+                task: s.trim().parse()?,
+            })),
         }
     }
 
@@ -367,6 +421,11 @@ impl ActionArgs {
             Self::NavalCruiseMissileStrike(_) => None,
             Self::Artillery(c) => Some(c.pos),
             Self::Recon(c) => Some(c.pos),
+            Self::AddTask(c) => match &c.at {
+                TaskAt::Pos(pos) => Some(*pos),
+                TaskAt::Obj(_) => None,
+            },
+            Self::RemoveTask(_) => None,
         }
     }
 }
@@ -640,6 +699,29 @@ impl Db {
             ActionArgs::Recon(args) => self
                 .recon_flight(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
                 .context("calling recon flight")?,
+            ActionArgs::AddTask(args) => {
+                match args.at {
+                    TaskAt::Pos(pos) => self
+                        .add_task(&args.cfg, side, ucid.clone(), args.kind.as_str(), pos, Utc::now())
+                        .context("posting task")?,
+                    TaskAt::Obj(oid) => self
+                        .add_objective_task(
+                            &args.cfg,
+                            side,
+                            ucid.clone(),
+                            args.kind.as_str(),
+                            oid,
+                            Utc::now(),
+                        )
+                        .context("posting objective task")?,
+                };
+                None
+            }
+            ActionArgs::RemoveTask(args) => {
+                self.remove_task(&args.cfg, side, ucid.clone(), &args.task)
+                    .context("removing task")?;
+                None
+            }
         };
         if let Some(ucid) = ucid.as_ref() {
             self.ephemeral.stat(Stat::Action {
@@ -1627,7 +1709,7 @@ impl Db {
                 ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. } => {
                     let repair_cost = self.ephemeral.cfg.carrier.as_ref().map(|c| c.repair_cost).unwrap_or(5000);
                     let nb = objective!(self, nb_id)?;
-                    let available = nb.warehouse.equipment.get("SUPPLIES").map(|inv| inv.stored).unwrap_or(0);
+                    let available = nb.warehouse.equipment.get(MATERIEL_ITEM).map(|inv| inv.stored).unwrap_or(0);
                     (*nb_id, repair_cost, available)
                 }
                 _ => bail!("Objective is not a carrier group")
@@ -1637,7 +1719,7 @@ impl Db {
         if available >= repair_cost {
             // Now mutate
             if let Some(nb_mut) = self.persisted.objectives.get_mut_cow(&nb_id) {
-                if let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow("SUPPLIES") {
+                if let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow(MATERIEL_ITEM) {
                     inv.stored -= repair_cost;
                 }
             }
@@ -1661,7 +1743,7 @@ impl Db {
                 ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. } => {
                     let respawn_cost = self.ephemeral.cfg.carrier.as_ref().map(|c| c.respawn_cost).unwrap_or(15000);
                     let nb = objective!(self, nb_id)?;
-                    let available = nb.warehouse.equipment.get("SUPPLIES").map(|inv| inv.stored).unwrap_or(0);
+                    let available = nb.warehouse.equipment.get(MATERIEL_ITEM).map(|inv| inv.stored).unwrap_or(0);
                     (*nb_id, respawn_cost, available, cg.health)
                 }
                 _ => bail!("Objective is not a carrier group")
@@ -1675,7 +1757,7 @@ impl Db {
         if available >= respawn_cost {
             // Now mutate
             if let Some(nb_mut) = self.persisted.objectives.get_mut_cow(&nb_id) {
-                if let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow("SUPPLIES") {
+                if let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow(MATERIEL_ITEM) {
                     inv.stored -= respawn_cost;
                 }
             }
@@ -2642,6 +2724,8 @@ impl Db {
                     | ActionKind::CarrierRepair
                     | ActionKind::CarrierRespawn
                     | ActionKind::Artillery(_)
+                    | ActionKind::AddTask(_)
+                    | ActionKind::RemoveTask(_)
                     | ActionKind::NavalCruiseMissileStrike(_) => bail!("not a race tracker"),
                 }
             }
@@ -2989,7 +3073,10 @@ impl Db {
         }
     }
 
-    fn paratroops_to_point(
+    /// `pub(super)` (not private) -- also called from `db::logistics` for the
+    /// AI helo troop-insertion mission, which spawns the same troop group
+    /// once the helo has landed instead of air-dropping it.
+    pub(super) fn paratroops_to_point(
         &mut self,
         lua: MizLua,
         idx: &MizIndex,
@@ -3283,6 +3370,8 @@ impl Db {
                     | ActionKind::CarrierRepair
                     | ActionKind::CarrierRespawn
                     | ActionKind::Artillery(_)
+                    | ActionKind::AddTask(_)
+                    | ActionKind::RemoveTask(_)
                     | ActionKind::NavalCruiseMissileStrike(_) => {
                         bail!("should not be a group")
                     }
@@ -3389,12 +3478,7 @@ impl Db {
                             && (u.tags.0.contains(UnitTag::Artillery)
                                 || u.tags.0.contains(UnitTag::Launcher))
                     })
-                    .map(|u| {
-                        cfg.units
-                            .get(u.typ.as_str())
-                            .map(|r| (r.max_range_m, r.min_range_m))
-                            .unwrap_or((cfg.default_max_range_m, cfg.default_min_range_m))
-                    })
+                    .map(|u| crate::unitdb::artillery_range(Some(&cfg), u.typ.as_str()))
                     .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
                 let (max_range, min_range) = match best_range {

@@ -477,6 +477,14 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
         .await
         .expect("could not open log files");
     let mut _rpcs: Option<Rpcs> = None;
+    // The netidx publisher's lifetime has to outlive this match arm and every
+    // fallible thing in it. `Rpcs`/`Proc` don't keep it alive on their own, and
+    // in the happy path only the stats Recorder (inside `logs`) does -- so if
+    // `switch_to_netidx` fails (e.g. a corrupt archive segment: "compressing
+    // archive: Src size is incorrect") the publisher used to drop at the end of
+    // the arm, taking every engine query RPC with it and leaving the dashboard
+    // dark. Holding a clone here keeps the RPCs up regardless.
+    let mut _publisher: Option<Publisher> = None;
     while let Some(msg) = rx.recv().await {
         match msg {
             Task::CfgLoaded {
@@ -487,6 +495,12 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
             } => {
                 if let Some(base) = cfg.netidx_base.as_ref() {
                     let base = base.append(&sortie);
+                    info!(
+                        "netidx: publishing under {base} (netidx_base={} + sortie={sortie:?}); \
+                         bfdb must use --base {} and see this exact sortie",
+                        cfg.netidx_base.as_ref().unwrap(),
+                        cfg.netidx_base.as_ref().unwrap(),
+                    );
                     let cfg = match Config::load_default() {
                         Ok(c) => c,
                         Err(e) => {
@@ -501,6 +515,8 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
                             continue;
                         }
                     };
+                    info!("netidx: publisher bound to {:?}", publisher.addr());
+                    _publisher = Some(publisher.clone());
                     _rpcs = match Rpcs::new(&publisher, &admin_channel, &base).await {
                         Ok(r) => Some(r),
                         Err(e) => {
@@ -512,7 +528,55 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
                         .switch_to_netidx(publisher.clone(), &cfg, base.clone(), sortie.clone(), fresh)
                         .await
                     {
-                        error!("failed to initialize netidx logs {e:?}")
+                        // The netidx stats archive picks up a torn segment
+                        // whenever bfdb (or the mission) is hard-killed --
+                        // "compressing archive: Src size is incorrect" -- and a
+                        // cold reopen then chokes on it every restart until
+                        // someone renames Logs/stats by hand. Quarantine it and
+                        // retry once so the dashboard heals on its own. The
+                        // publisher and RPCs are already held open above, so a
+                        // second failure just means file-mode stats (bfdb reads
+                        // the JSONL regardless).
+                        let es = format!("{e:?}");
+                        let corrupt = es.contains("Src size is incorrect")
+                            || es.contains("compressing archive")
+                            || es.contains("corrupt");
+                        let stats_dir = write_dir.join("Logs").join("stats");
+                        if corrupt && stats_dir.exists() {
+                            let aside = write_dir.join("Logs").join(format_compact!(
+                                "stats.corrupt-{}",
+                                Utc::now().timestamp()
+                            ).as_str());
+                            match fs::rename(&stats_dir, &aside) {
+                                Ok(()) => {
+                                    error!(
+                                        "netidx stats archive corrupt ({e:?}); quarantined to \
+                                         {aside:?}, retrying"
+                                    );
+                                    if let Err(e2) = logs
+                                        .switch_to_netidx(
+                                            publisher.clone(),
+                                            &cfg,
+                                            base.clone(),
+                                            sortie.clone(),
+                                            fresh,
+                                        )
+                                        .await
+                                    {
+                                        error!(
+                                            "failed to initialize netidx logs after quarantine \
+                                             {e2:?}"
+                                        )
+                                    }
+                                }
+                                Err(re) => error!(
+                                    "failed to quarantine corrupt stats archive {aside:?}: {re:?} \
+                                     (original error {e:?})"
+                                ),
+                            }
+                        } else {
+                            error!("failed to initialize netidx logs {e:?}")
+                        }
                     }
                 }
                 match &logs {

@@ -6,12 +6,60 @@
 // deploy/README.md. VITE_API_BASE must NOT have a trailing slash.
 export const API_ROOT: string = import.meta.env.VITE_API_BASE ?? ''
 
+// ── Selected DCS server instance ────────────────────────────────────
+// One bfdb can front several DCS servers (see deploy/multi-instance.md).
+// Every instance-scoped API route takes `?instance=<id>`; rather than thread
+// that through ~80 call sites, it is appended centrally by `withInstance`
+// below, which `get`/`post`/`wsUrl` and the raw `fetch` calls all run through.
+//
+// `undefined` means "let bfdb pick its default instance", which is exactly
+// what a single-server deployment wants and what every older client sent.
+
+const INSTANCE_STORAGE_KEY = 'bfweb.instance'
+
+let currentInstance: string | undefined = (() => {
+  try {
+    // A URL param wins over the remembered choice, so a link can point
+    // straight at one server: /?instance=vs2
+    const fromUrl = new URLSearchParams(window.location.search).get('instance')
+    if (fromUrl) return fromUrl
+    return localStorage.getItem(INSTANCE_STORAGE_KEY) ?? undefined
+  } catch {
+    return undefined
+  }
+})()
+
+/** The instance every request is currently scoped to, if any. */
+export function getInstance(): string | undefined {
+  return currentInstance
+}
+
+/** Switch which DCS server the dashboard is looking at. Callers are expected
+ *  to invalidate their query cache afterwards -- nothing here is reactive. */
+export function setInstance(id: string | undefined): void {
+  currentInstance = id
+  try {
+    if (id) localStorage.setItem(INSTANCE_STORAGE_KEY, id)
+    else localStorage.removeItem(INSTANCE_STORAGE_KEY)
+  } catch { /* private mode / storage disabled */ }
+}
+
+/** Append `instance=<id>` to a path, respecting any query string it already
+ *  has. A path that names an instance explicitly (`?instance=all`) is left
+ *  alone. */
+export function withInstance(path: string): string {
+  if (!currentInstance) return path
+  if (/[?&]instance=/.test(path)) return path
+  return path + (path.includes('?') ? '&' : '?') + `instance=${encodeURIComponent(currentInstance)}`
+}
+
 function wsUrl(path: string): string {
+  const p = withInstance(path)
   if (API_ROOT) {
-    return API_ROOT.replace(/^http/, 'ws') + path
+    return API_ROOT.replace(/^http/, 'ws') + p
   }
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${proto}://${window.location.host}${path}`
+  return `${proto}://${window.location.host}${p}`
 }
 
 // ── JSON Schema (draft-07, as produced by the `schemars` crate) ───────
@@ -39,6 +87,8 @@ export interface JsonSchema {
 
 export interface Round {
   id: number
+  /** Which DCS server instance ran this round. */
+  instance?: string
   scenario: string
   start: string
   end: string | null
@@ -151,6 +201,205 @@ export interface Briefing {
   threats: ThreatEntry[]
 }
 
+// ── Auto-generated situational briefing (from /api/situation) ─────────
+// Mirrors `bfprotocols::situation` -- the golden JSON test there
+// (`situation_json_shape`) is what keeps these two in sync.
+
+export type Side = 'Blue' | 'Red' | 'Neutral'
+export type Urgency = 'critical' | 'high' | 'routine'
+export type TaskKind =
+  | 'defend' | 'capture' | 'strike' | 'sead' | 'cas'
+  | 'intercept' | 'logistics' | 'recon' | 'csar'
+
+export interface Task {
+  id: string
+  kind: TaskKind
+  urgency: Urgency
+  title: string
+  detail: string
+  success?: string
+  objective?: string
+  lat: number
+  lon: number
+  bearing_deg?: number
+  range_nm?: number
+  roles: string[]
+}
+
+export interface Posture {
+  friendly_objectives: number
+  enemy_objectives: number
+  neutral_objectives: number
+  friendly_primary: number
+  enemy_primary: number
+  territory_pct: number
+  gained_recent: number
+  lost_recent: number
+  treasury: number
+  players_friendly: number
+  players_enemy: number
+  last_stand?: string
+  victory_condition?: string
+}
+
+export interface SituationWeather {
+  wind_from_deg: number
+  wind_kts: number
+  temp_c: number
+  qnh_inhg: number
+  qnh_hpa: number
+  cloud_base_m?: number
+  visibility_m?: number
+  precip: boolean
+  summary: string
+}
+
+export interface Hotspot {
+  objective: string
+  kind: string
+  owner: Side
+  lat: number
+  lon: number
+  health: number
+  logi: number
+  supply: number
+  threatened: boolean
+  /** [capturing side, seconds held, seconds needed] */
+  capture_progress?: [Side, number, number]
+  captureable: boolean
+  in_capture_hold: boolean
+  status: string
+  repair_outlook?: string
+  risk: Urgency
+}
+
+export interface ThreatArea {
+  label: string
+  lat: number
+  lon: number
+  radius_m?: number
+  uncertainty_m: number
+  confidence: number
+  source: string
+  age_s: number
+  count: number
+  near?: string
+}
+
+export interface SitAirThreat {
+  lat: number
+  lon: number
+  alt_ft: number
+  heading: number
+  speed_kts: number
+  class: string
+  near: string
+  bearing_deg: number
+  range_nm: number
+}
+
+export interface AirPicture {
+  hostile_tracks: number
+  friendly_airborne: number
+  stale_tracks: number
+  axis?: string
+  nearest?: SitAirThreat
+  radar_blind: boolean
+}
+
+export interface HubState {
+  objective: string
+  lat: number
+  lon: number
+  supply: number
+  fuel: number
+  health: number
+  logi: number
+  feeding: number
+  threatened: boolean
+}
+
+export interface SupplyGap {
+  objective: string
+  lat: number
+  lon: number
+  supply: number
+  fuel: number
+  health: number
+  note: string
+}
+
+export interface LogisticsPosture {
+  hubs: HubState[]
+  gaps: SupplyGap[]
+  convoys_active: number
+  stage: string
+}
+
+export interface SupportStation {
+  label: string
+  kind: string
+  freq_mhz?: number
+  tacan?: string
+  note?: string
+  lat?: number
+  lon?: number
+}
+
+export interface CommsChannel {
+  preset?: number
+  label: string
+  freq_mhz: number
+  modulation: string
+  purpose?: string
+  live: boolean
+  note?: string
+}
+
+export interface SituationEvent {
+  at: string
+  text: string
+  good?: boolean
+  lat?: number
+  lon?: number
+}
+
+export interface MapObjective {
+  name: string
+  kind: string
+  owner: Side
+  lat: number
+  lon: number
+  health: number
+  logi: number
+  supply?: number
+  fuel?: number
+  threatened: boolean
+  captureable: boolean
+  priority: boolean
+  primary: boolean
+}
+
+export interface SituationReport {
+  side: Side
+  generated: string
+  mission_time?: string
+  headline: string
+  posture: Posture
+  weather?: SituationWeather
+  tasking: Task[]
+  hotspots: Hotspot[]
+  threats: ThreatArea[]
+  air: AirPicture
+  logistics: LogisticsPosture
+  support: SupportStation[]
+  comms: CommsChannel[]
+  /** [label, MHz] */
+  flight_channels: [string, number][]
+  recent: SituationEvent[]
+  map: MapObjective[]
+}
+
 export interface Weather {
   temp_c: number
   wind_speed_kts: number
@@ -242,6 +491,8 @@ export interface AirTrack {
   vspd_ms:    number
   iff:        TacIff
   class:      TacAirClass
+  /** Exact DCS type name (e.g. "F-16C_50") when the engine can identify it. */
+  unit_type:  string | null
   age_s:      number
   stale:      boolean
   jammed:     boolean
@@ -648,13 +899,13 @@ async function errorMessage(res: Response): Promise<string> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { credentials: 'include' })
+  const res = await fetch(`${BASE}${withInstance(path)}`, { credentials: 'include' })
   if (!res.ok) throw new Error(await errorMessage(res))
   return res.json()
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${BASE}${withInstance(path)}`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'content-type': 'application/json' },
@@ -664,9 +915,39 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
+/** One DCS server instance this bfdb fronts. */
+export interface ServerInstance {
+  id: string
+  label: string
+  default: boolean
+  /** false for a stats-only instance with no live engine to query. */
+  live: boolean
+  /** The mission currently publishing, or null when the server is down. */
+  sortie: string | null
+  active_round: { id: number; scenario: string; start: string } | null
+  dcs_server_name: string | null
+  /** false = a test/staging server. Only ever returned to an admin: it is
+   *  filtered out of /api/instances for everyone else, and its rounds are
+   *  excluded from the all-time leaderboard and pilot profiles. */
+  public: boolean
+}
+
+export interface InstanceList {
+  default: string
+  instances: ServerInstance[]
+}
+
 export const api = {
+  /** The DCS servers this bfdb fronts. Never instance-scoped itself. */
+  instances: async (): Promise<InstanceList> => {
+    const res = await fetch(`${BASE}/instances`, { credentials: 'include' })
+    if (!res.ok) throw new Error(await errorMessage(res))
+    return res.json()
+  },
   gciTranscript: () => get<GciCall[]>('/gci/transcript'),
-  rounds: () => get<Round[]>('/rounds'),
+  /** Round history for the selected instance, or every instance's when
+   *  `all` is set (each row carries its own `instance` id either way). */
+  rounds: (all = false) => get<Round[]>(all ? '/rounds?instance=all' : '/rounds'),
   leaderboard: () => get<Pilot[]>('/leaderboard'),
   allPilots: () => get<PilotName[]>('/pilots'),
   objectives: (roundId?: number) =>
@@ -681,6 +962,10 @@ export const api = {
   // briefing; only admins may request a specific side.
   briefing: (side?: 'Blue' | 'Red') =>
     get<Briefing>(side ? `/briefing?side=${side}` : '/briefing'),
+  // Same coalition lock as `briefing`: the engine builds the report for the
+  // side the session resolves to, so the enemy's intel never reaches a browser.
+  situation: (side?: 'Blue' | 'Red') =>
+    get<SituationReport>(side ? `/situation?side=${side}` : '/situation'),
   kills: (roundId?: number, limit = 50) =>
     get<Kill[]>(`/kills?limit=${limit}${roundId ? `&round=${roundId}` : ''}`),
   pilot: (ucid: string) => get<Pilot>(`/pilot/${ucid}`),
@@ -718,6 +1003,9 @@ export const api = {
   admin: {
     sessions:    () => get<AdminSession[]>('/admin/sessions'),
     reset:       () => post<{ ok: boolean }>('/admin/reset', {}),
+    /** Give every player all their lives back (proxies bflib's reset-lives-all
+     *  RPC, so it needs a live engine connection). */
+    resetLivesAll: () => post<{ ok: boolean; message: string }>('/admin/reset-lives-all', {}),
     perf:        () => get<PerfData>('/admin/perf'),
     perfHistory: () => get<PerfHistory>('/admin/perf-history'),
     banned:      () => get<BanRecord[]>('/admin/banned'),
@@ -777,9 +1065,9 @@ export const api = {
     captures: (side?: 'all' | 'blue' | 'red') =>
       get<IntelCapture[]>(`/intel/captures${side ? `?side=${side}` : ''}`),
     /** Absolute URL for a capture's photo (same-coalition gated server-side). */
-    imageUrl: (id: string) => `${BASE}/intel/images/${id}`,
+    imageUrl: (id: string) => `${BASE}${withInstance(`/intel/images/${id}`)}`,
     upload: async (file: File, side?: 'blue' | 'red'): Promise<IntelCapture> => {
-      const res = await fetch(`${BASE}/intel/upload${side ? `?side=${side}` : ''}`, {
+      const res = await fetch(`${BASE}${withInstance(`/intel/upload${side ? `?side=${side}` : ''}`)}`, {
         method: 'POST',
         credentials: 'include',
         headers: {

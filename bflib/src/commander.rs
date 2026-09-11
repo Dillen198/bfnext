@@ -638,8 +638,12 @@ fn tick_objective_funding(db: &mut Db, cfg: &SmartCommanderCfg, ts: DateTime<Utc
         })
         .collect();
 
+    // Never let passive point-funding pull a side below the action reserve --
+    // otherwise a losing side spends its whole income on drips and can never
+    // afford a counterattack / barrage / CAP.
+    let reserve = cfg.action_reserve.max(0);
     for (oid, side, grant, name) in grants {
-        let available = db.persisted.treasury(side);
+        let available = db.persisted.treasury(side) - reserve;
         if available <= 0 {
             continue;
         }

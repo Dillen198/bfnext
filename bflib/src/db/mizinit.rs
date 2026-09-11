@@ -187,6 +187,7 @@ impl Db {
             health: 0,
             logi: 0,
             infantry: 0,
+            aircraft: 100,
             supply: 0,
             fuel: 0,
             last_change_ts: Utc::now(),
@@ -195,6 +196,10 @@ impl Db {
             points: 0,
             capture_hold: vec![],
             capture_hold_ts: None,
+            capture_hold_progress: 0.,
+            capture_hold_tick: None,
+            capture_hold_in_zone_ts: None,
+            capture_hold_stalled: false,
             logistics_detached,
             unlimited_supply,
             unlimited_aircraft,
@@ -302,7 +307,111 @@ impl Db {
     /// for a repair crate or auto-repair to ever revive. This makes correct
     /// logistics coverage a property of the engine, not something every
     /// mission version has to get exactly right by hand.
+    /// Remove LOGI / LOGIA / LOGIB / DEPOT / FUEL groups that are already in
+    /// the save from a campaign that started before `logi_from_scenery` was
+    /// turned on.
+    ///
+    /// `init_objective_groups` only skips spawning these on a *fresh* campaign
+    /// init. An existing save still carries them in `persisted.groups`, so they
+    /// keep respawning on every load, keep counting against objective health,
+    /// and keep dropping invisible FARP pads on runways -- the mode looks like
+    /// it isn't working at all. This runs at load, before anything is queued
+    /// for spawn, so an in-progress campaign converts without a reset.
+    ///
+    /// Deliberately also drops the units from their objective's group set: the
+    /// health fraction is computed over that set, and leaving stale ids in it
+    /// would make every affected objective read as permanently damaged.
+    pub(super) fn purge_logi_family_groups(&mut self) -> Result<()> {
+        if self.ephemeral.cfg.logi_from_scenery.is_none() {
+            return Ok(());
+        }
+        let doomed: SmallVec<[GroupId; 64]> = self
+            .persisted
+            .groups
+            .into_iter()
+            .filter(|(_, g)| {
+                // Only objective garrison groups -- never a player deployable,
+                // a crate, or a troop squad that happens to be named similarly.
+                matches!(
+                    g.origin,
+                    DeployKind::Objective { .. } | DeployKind::ObjectiveDeprecated
+                ) && super::objective::is_logi_family_template(g.template_name.as_str())
+            })
+            .map(|(gid, _)| *gid)
+            .collect();
+        if doomed.is_empty() {
+            return Ok(());
+        }
+        for gid in &doomed {
+            if let Some(oid) = self.persisted.objectives_by_group.get(gid).copied() {
+                if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+                    for (_, gids) in obj.groups.iter_mut_cow() {
+                        gids.remove_cow(gid);
+                    }
+                }
+            }
+            self.persisted.objectives_by_group.remove_cow(gid);
+            if let Err(e) = self.delete_group(gid) {
+                warn!("[LOGI_SCENERY] could not drop logi group {gid}: {e:?}");
+            }
+        }
+        info!(
+            "[LOGI_SCENERY] dropped {} carried-over LOGI/DEPOT/FUEL group(s) from the save -- \
+             objective logistics now comes from the map's own buildings",
+            doomed.len()
+        );
+        self.ephemeral.dirty();
+        self.warn_objectives_without_substance();
+        Ok(())
+    }
+
+    /// Flag objectives that now have neither garrison units nor any tracked
+    /// map building. Their health can never fall, so they can never reach the
+    /// `captureable()` threshold and can never be taken -- an invisible dead
+    /// end in the campaign. It is a mission-design problem (a trigger zone
+    /// sitting on empty terrain), not something the engine can paper over, so
+    /// say so loudly at load rather than letting players find out by bombing a
+    /// base for an hour with nothing happening.
+    fn warn_objectives_without_substance(&self) {
+        let mut orphans: SmallVec<[CompactString; 8]> = SmallVec::new();
+        for (oid, obj) in &self.persisted.objectives {
+            if obj.kind().is_special_sam_site()
+                || matches!(obj.kind(), ObjectiveKind::CarrierGroup { .. })
+            {
+                continue;
+            }
+            let units = obj
+                .groups()
+                .get(&obj.owner)
+                .map(|g| g.into_iter().count())
+                .unwrap_or(0);
+            let buildings = self
+                .ephemeral
+                .scenery_total_by_objective
+                .get(oid)
+                .copied()
+                .unwrap_or(0);
+            if units == 0 && buildings == 0 {
+                orphans.push(CompactString::from(obj.name.as_str()));
+            }
+        }
+        if !orphans.is_empty() {
+            warn!(
+                "[LOGI_SCENERY] {} objective(s) have no garrison units AND no logistics buildings \
+                 in their zone, so they can never be bombed down to a capturable state: {}. Move \
+                 the trigger zone over real map infrastructure, or give it a garrison template.",
+                orphans.len(),
+                orphans.join(", ")
+            );
+        }
+    }
+
     pub fn ensure_default_logi_coverage(&mut self, spctx: &SpawnCtx, idx: &MizIndex) -> Result<()> {
+        // logi_from_scenery replaces spawned logi groups with the map-building
+        // mechanic -- there is deliberately nothing to fall back to here.
+        if self.ephemeral.cfg.logi_from_scenery.is_some() {
+            return Ok(());
+        }
         let targets: SmallVec<[(ObjectiveId, Side, Vector2); 64]> = self
             .persisted
             .objectives
@@ -504,6 +613,7 @@ impl Db {
                                     health: 100,
                                     logi: 100,
                                     infantry: 0,
+                                    aircraft: 100,
                                     supply: 100,
                                     fuel: 100,
                                     last_change_ts: Utc::now(),
@@ -512,6 +622,10 @@ impl Db {
                                     points: 0,
                                     capture_hold: vec![],
                                     capture_hold_ts: None,
+                                    capture_hold_progress: 0.,
+                                    capture_hold_tick: None,
+                                    capture_hold_in_zone_ts: None,
+                                    capture_hold_stalled: false,
                                     logistics_detached: true,
                                     unlimited_supply: false,
                                     unlimited_aircraft: false,
@@ -969,6 +1083,7 @@ impl Db {
                 health: 0,
                 logi: 0,
                 infantry: 0,
+                aircraft: 100,
                 supply: 0,
                 fuel: 0,
                 last_change_ts: Utc::now(),
@@ -977,6 +1092,10 @@ impl Db {
                 points: 0,
                 capture_hold: vec![],
                 capture_hold_ts: None,
+                capture_hold_progress: 0.,
+                capture_hold_tick: None,
+                capture_hold_in_zone_ts: None,
+                capture_hold_stalled: false,
                 logistics_detached: false,
                 unlimited_supply: false,
                 unlimited_aircraft: false,
@@ -1211,7 +1330,27 @@ impl Db {
                 self.ephemeral
                     .scenery_total_by_objective
                     .insert(oid, found.len() as u32);
-                for (label, pos, id) in found.iter() {
+                // Buildings this objective had already lost before the restart.
+                // They come back standing in DCS, so skip registering that many
+                // (nearest first, the same deterministic order the scan
+                // produces) -- they stay counted as destroyed instead of
+                // silently repairing themselves every mission load.
+                let already_lost = self
+                    .persisted
+                    .scenery_destroyed
+                    .get(&oid)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(found.len() as u32);
+                if already_lost > 0 {
+                    self.ephemeral
+                        .scenery_destroyed_by_objective
+                        .insert(oid, already_lost);
+                    info!(
+                        "[SCENERY_SCAN] {name}: {already_lost} building(s) carried over as destroyed from the previous run"
+                    );
+                }
+                for (label, pos, id) in found.iter().skip(already_lost as usize) {
                     // Registered for logi tracking always; the F10 marker itself is
                     // created/removed by sync_scenery_markers, tied to the parent
                     // objective's spawn state exactly like its units (culled when
@@ -1276,11 +1415,12 @@ impl Db {
                 self.ephemeral.msgs().delete_mark(mk);
             }
             let (marker, marker_side) = if want {
+                // Shown to both coalitions, like the objective markup itself:
+                // these pins ARE the objective's logistics infrastructure now,
+                // so an attacker needs to see what to hit and a defender needs
+                // to see what they've lost.
                 let text = format_compact!("{oname} logi: {label}");
-                let mk = match side {
-                    Side::Neutral => self.ephemeral.msgs().mark_to_all(pos, true, text),
-                    s => self.ephemeral.msgs().mark_to_side(s, pos, true, text),
-                };
+                let mk = self.ephemeral.msgs().mark_to_all(pos, true, text);
                 (Some(mk), Some(side))
             } else {
                 (None, None)
@@ -1334,11 +1474,15 @@ impl Db {
                 if let Some(mk) = marker {
                     self.ephemeral.msgs().delete_mark(mk);
                 }
-                *self
+                let n = self
                     .ephemeral
                     .scenery_destroyed_by_objective
                     .entry(oid)
-                    .or_insert(0) += 1;
+                    .or_insert(0);
+                *n += 1;
+                let n = *n;
+                self.persisted.scenery_destroyed.insert_cow(oid, n);
+                self.ephemeral.dirty();
                 info!("[SCENERY_SCAN] destroyed: {label} (objective {:?})", oid);
                 affected.push(oid);
             }
@@ -1361,12 +1505,22 @@ impl Db {
         for point in slot.route()?.points()? {
             let point = point?;
             match point.typ {
-                PointType::TakeOffGround | PointType::TakeOffGroundHot | PointType::TakeOffParkingHot => ground_start = true,
+                // Every start that puts the aircraft on the ground at the base
+                // draws its airframe, stores and fuel out of that base's
+                // warehouse (and gets them credited back on landing, see
+                // player.rs). `TakeOffParking` -- a cold ramp start, which on a
+                // campaign server is the most common start of all -- and
+                // `TakeOff` (runway) were both classified as *not* ground
+                // starts, so those slots consumed nothing whatsoever: free
+                // aircraft, free loadout, free fuel.
+                PointType::TakeOffGround
+                | PointType::TakeOffGroundHot
+                | PointType::TakeOffParking
+                | PointType::TakeOffParkingHot
+                | PointType::TakeOff => ground_start = true,
                 PointType::Land
-                | PointType::TakeOff
                 | PointType::Custom(_)
                 | PointType::Nil
-                | PointType::TakeOffParking
                 | PointType::TurningPoint => (),
             }
             // Check for link_unit (carrier-based slots have this set to the carrier unit)
@@ -1512,6 +1666,14 @@ impl Db {
                         if spctx
                             .get_template_ref(idx, GroupKind::Any, side, name.as_str())
                             .is_err()
+                        {
+                            continue;
+                        }
+                        // logi_from_scenery: don't spawn the LOGI/LOGIA/LOGIB/
+                        // DEPOT template groups at all -- the map's own terrain
+                        // buildings stand in for them (see compute_objective_status).
+                        if t.ephemeral.cfg.logi_from_scenery.is_some()
+                            && super::objective::is_logi_family_template(name.as_str())
                         {
                             continue;
                         }
@@ -1665,6 +1827,11 @@ impl Db {
             .context("re-init protected statics")?;
         self.scan_objective_scenery(lua)
             .context("scan_objective_scenery failed")?;
+        // Before anything is queued for spawn: convert a save that predates
+        // logi_from_scenery, so its carried-over LOGI/DEPOT/FUEL groups don't
+        // respawn (and don't drop invisible FARP pads on runways).
+        self.purge_logi_family_groups()
+            .context("purging carried-over logi groups")?;
         info!("[CARRIER_LOAD] Spawning carrier groups before other entities");
         while self.ephemeral.spawnq_len() > 0 {
             self.ephemeral.process_spawn_queue(perf, &self.persisted, Utc::now(), idx, spctx)?

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RoundProvider } from './context/RoundContext'
+import { InstanceProvider } from './context/InstanceContext'
 import { AuthProvider } from './context/AuthContext'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
@@ -58,6 +59,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        <InstanceProvider>
         <RoundProvider>
           <BrowserRouter>
             <Routes>
@@ -83,6 +85,7 @@ export default function App() {
             </Routes>
           </BrowserRouter>
         </RoundProvider>
+        </InstanceProvider>
       </AuthProvider>
     </QueryClientProvider>
   )

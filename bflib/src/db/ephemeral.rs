@@ -68,7 +68,7 @@ use dcso3::{
 };
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use indexmap::{IndexMap, IndexSet};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use mlua::prelude::*;
 use smallvec::{SmallVec, smallvec};
 use std::{
@@ -157,6 +157,16 @@ pub struct Ephemeral {
     pub cfg: Arc<Cfg>,
     pub(super) to_bg: Option<UnboundedSender<Task>>,
     pub(super) players_by_slot: IndexMap<SlotId, Ucid, FxBuildHasher>,
+    /// Open sortie state, one entry per pilot per slot session. An entry means
+    /// a `Stat::Takeoff` has gone out and the sortie is still open in bfdb; the
+    /// value is when the pilot last touched down, or `None` while airborne.
+    ///
+    /// A sortie spans the whole slot session, not a single takeoff-to-landing
+    /// leg: a pilot who lands to rearm and launches again is still flying the
+    /// same sortie. Only the first takeoff of a session opens one (see
+    /// `Db::takeoff`) and only the deslot that follows a landing closes it (see
+    /// `Db::player_deslot`), so land-rearm-launch counts once instead of twice.
+    pub(super) open_sorties: FxHashMap<Ucid, Option<DateTime<Utc>>>,
     pub(super) cargo: FxHashMap<SlotId, Cargo>,
     /// C-130 physical cargo tracking: crate_name -> C130Cargo (tracked by name because DCS changes object ID when loading/dropping)
     pub(super) c130_crates: FxHashMap<String, C130Cargo>,
@@ -175,6 +185,11 @@ pub struct Ephemeral {
     pub(super) active_convoys: FxHashMap<super::logistics::ConvoyId, super::logistics::SupplyConvoy>,
     /// Track last convoy spawn time per side to throttle spawning
     pub(super) last_convoy_spawn: FxHashMap<Side, DateTime<Utc>>,
+    /// When a supply run was last dispatched to each objective, whatever the
+    /// transport mode. Enforces `ConvoyConfig::dispatch_cooldown_ticks` so a
+    /// destination isn't served by a fresh pair of convoys on every single
+    /// logistics tick.
+    pub(super) last_dispatch_to: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Counter for generating unique convoy IDs
     pub(super) convoy_counter: u32,
     /// Air logistics route tracking: route_id -> AirLogisticsRoute
@@ -190,6 +205,11 @@ pub struct Ephemeral {
     pub(super) last_sea_route_spawn: FxHashMap<Side, DateTime<Utc>>,
     /// Counter for generating unique sea route IDs
     pub(super) sea_route_counter: u32,
+    /// AI helo mission tracking (F10-callable troop insertion / resource
+    /// delivery): mission_id -> HeloMission
+    pub(super) active_helo_missions: FxHashMap<super::logistics::HeloMissionId, super::logistics::HeloMission>,
+    /// Counter for generating unique helo mission IDs
+    pub(super) helo_mission_counter: u32,
     pub(super) deployable_idx: FxHashMap<Side, Arc<DeployableIndex>>,
     pub(super) group_marks: FxHashMap<GroupId, MarkId>,
     objective_markup: FxHashMap<ObjectiveId, ObjectiveMarkup>,
@@ -278,6 +298,11 @@ pub struct Ephemeral {
     pub(crate) last_objective_fund: DateTime<Utc>,
     /// Centralised F10 map drawing layer.
     pub(super) map_layer: MapLayer,
+    /// Tasks posted in the last couple of minutes, waiting to be picked up
+    /// by the next `query-gci` poll so the GCI voice can read them out.
+    /// Pruned by `Db::tick_tasks`; this is a broadcast queue, not state --
+    /// the board itself lives in `Persisted::tasks`.
+    pub(crate) gci_tasks: Vec<(DateTime<Utc>, crate::db::tasks::Task)>,
     /// Registry of groups whose unit definitions came from inline config rather than a .miz template.
     /// Keyed by the group's template_name (which encodes the group's name prefix).
     /// Used by spawn_group to build synthetic Lua tables for DCS when there is no .miz template.
@@ -286,8 +311,6 @@ pub struct Ephemeral {
     pub(crate) last_stand_state: Option<(DateTime<Utc>, Side)>,
     /// Last time an under-attack notification was sent per objective (for cooldown).
     pub(crate) last_under_attack_notif: FxHashMap<ObjectiveId, DateTime<Utc>>,
-    /// Last time a counter-battery report was sent per grid cell (x_cell, y_cell).
-    pub(crate) counter_battery_reports: FxHashMap<(i64, i64), DateTime<Utc>>,
     /// How many repair crates are stacked on each carrier's in-progress
     /// repair. Divides the repair timer (see check_carrier_repairs). Not
     /// persisted -- a repair spanning a restart just reverts to base speed.
@@ -313,11 +336,13 @@ impl Default for Ephemeral {
             cfg: Arc::new(Cfg::default()),
             to_bg: None,
             players_by_slot: IndexMap::default(),
+            open_sorties: FxHashMap::default(),
             cargo: FxHashMap::default(),
             c130_crates: FxHashMap::default(),
             c130_spawn_queue: BTreeMap::default(),
             active_convoys: FxHashMap::default(),
             last_convoy_spawn: FxHashMap::default(),
+            last_dispatch_to: FxHashMap::default(),
             convoy_counter: 0,
             active_air_routes: FxHashMap::default(),
             last_air_route_spawn: FxHashMap::default(),
@@ -326,6 +351,8 @@ impl Default for Ephemeral {
             active_sea_routes: FxHashMap::default(),
             last_sea_route_spawn: FxHashMap::default(),
             sea_route_counter: 0,
+            active_helo_missions: FxHashMap::default(),
+            helo_mission_counter: 0,
             deployable_idx: FxHashMap::default(),
             group_marks: FxHashMap::default(),
             objective_markup: FxHashMap::default(),
@@ -376,10 +403,10 @@ impl Default for Ephemeral {
             last_treasury_income: DateTime::<Utc>::default(),
             last_objective_fund: DateTime::<Utc>::default(),
             map_layer: MapLayer::default(),
+            gci_tasks: Vec::new(),
             synthetic_templates: FxHashMap::default(),
             last_stand_state: None,
             last_under_attack_notif: FxHashMap::default(),
-            counter_battery_reports: FxHashMap::default(),
             carrier_repair_crates: FxHashMap::default(),
             intel_db: IntelDatabase::default(),
             ground_vehicle_passengers: FxHashMap::default(),
@@ -388,6 +415,24 @@ impl Default for Ephemeral {
             intel_map_marks: FxHashMap::default(),
         }
     }
+}
+
+/// F10 objective labels are re-issued whenever any displayed field changes, so
+/// a raw per-second countdown would rewrite every label on every tick -- a real
+/// contributor to F10 draw lag once several bases are repairing at once.
+/// Quantising the countdown means a label redraws a handful of times a minute
+/// instead of sixty, at no cost to how useful the number is to a player.
+const ETA_BUCKET_SECS: i64 = 15;
+
+fn bucket_eta(secs: i64) -> i64 {
+    if secs <= 0 {
+        return 0;
+    }
+    ((secs + ETA_BUCKET_SECS - 1) / ETA_BUCKET_SECS) * ETA_BUCKET_SECS
+}
+
+fn bucket_pct(pct: u8) -> u8 {
+    (pct / 5) * 5
 }
 
 impl Ephemeral {
@@ -406,6 +451,38 @@ impl Ephemeral {
 
     pub fn get_slot_info(&self, slot: &SlotId) -> Option<&SlotInfo> {
         self.slot_info.get(slot)
+    }
+
+    /// The live DCS airbase an objective launches ground-starting flights
+    /// from, or `None` if it can't provide one.
+    ///
+    /// Two steps, and both are needed: the load-time `airbase_by_oid`
+    /// registration, then a name match against a live DCS airbase, because
+    /// bflib names Airbase-kind objectives after the field and a zone overlap
+    /// can leave `airbase_by_oid` keyed to a neighbouring SAM / command-center
+    /// objective instead.
+    ///
+    /// Every caller that needs a parking start goes through here -- the spawn
+    /// path that builds the start and the dispatch paths that pick a launch
+    /// field -- so a field can't pass the dispatch check and then fail at
+    /// spawn time, which just air-starts the flight.
+    pub fn resolve_airbase<'lua>(
+        &self,
+        lua: MizLua<'lua>,
+        persisted: &Persisted,
+        oid: &ObjectiveId,
+    ) -> Option<Airbase<'lua>> {
+        self.airbase_by_oid
+            .get(oid)
+            .and_then(|abid| Airbase::get_instance(lua, abid).ok())
+            .filter(|ab| ab.is_exist().unwrap_or(false))
+            .or_else(|| {
+                persisted.objectives.get(oid).and_then(|o| {
+                    Airbase::get_by_name(lua, dcso3::String::from(o.name.as_str()))
+                        .ok()
+                        .filter(|ab| ab.is_exist().unwrap_or(false))
+                })
+            })
     }
 
     pub fn get_airbase_by_oid(&self, oid: &ObjectiveId) -> Option<&DcsOid<ClassAirbase>> {
@@ -464,6 +541,13 @@ impl Ephemeral {
     /// when something actually changes (combat, crate delivery, scenery
     /// loss), so during a quiet stretch this is just as much a clean
     /// countdown as the carrier's is.
+    /// Consolidation progress for a base still in its post-capture hold, as
+    /// (percent, seconds remaining), bucketed like `repair_pct_for`.
+    fn hold_pct_for(&self, obj: &Objective) -> Option<(u8, i64)> {
+        obj.capture_hold_pct(self.cfg.capture_consolidation_secs)
+            .map(|(pct, secs)| (bucket_pct(pct), bucket_eta(secs)))
+    }
+
     fn repair_pct_for(&self, obj: &Objective) -> Option<(u8, i64)> {
         if let ObjectiveKind::CarrierGroup { repair_start_time: Some(start), .. } = &obj.kind {
             let total = self.cfg.carrier.as_ref().map(|c| c.repair_time).unwrap_or(600) as f64;
@@ -472,7 +556,10 @@ impl Ephemeral {
             }
             let elapsed = (Utc::now() - *start).num_seconds().max(0) as f64;
             let pct = ((elapsed / total) * 100.0).clamp(0.0, 100.0) as u8;
-            return Some((pct, (total - elapsed).max(0.0) as i64));
+            return Some((
+                bucket_pct(pct),
+                bucket_eta((total - elapsed).max(0.0) as i64),
+            ));
         }
         // Match maybe_do_repairs: a threatened / actively-contested objective
         // does not auto-repair, so don't show a phantom repair ETA. (A merely
@@ -496,7 +583,10 @@ impl Ephemeral {
                 return None;
             }
             let pct = ((elapsed / total) * 100.0).clamp(0.0, 100.0) as u8;
-            return Some((pct, (total - elapsed).max(0.0) as i64));
+            return Some((
+                bucket_pct(pct),
+                bucket_eta((total - elapsed).max(0.0) as i64),
+            ));
         }
         None
     }
@@ -513,9 +603,18 @@ impl Ephemeral {
         }
         let capture_pct = self.capture_pct_for(&obj.id);
         let repair_pct = self.repair_pct_for(obj);
+        let hold_pct = self.hold_pct_for(obj);
         self.objective_markup.insert(
             obj.id,
-            ObjectiveMarkup::new(&self.cfg, &mut self.msgs, obj, persisted, capture_pct, repair_pct),
+            ObjectiveMarkup::new(
+                &self.cfg,
+                &mut self.msgs,
+                obj,
+                persisted,
+                capture_pct,
+                repair_pct,
+                hold_pct,
+            ),
         );
     }
 
@@ -538,10 +637,17 @@ impl Ephemeral {
         }
         let capture_pct = self.capture_pct_for(&obj.id);
         let repair_pct = self.repair_pct_for(obj);
+        let hold_pct = self.hold_pct_for(obj);
         match self.objective_markup.entry(obj.id) {
-            Entry::Occupied(mut e) => {
-                e.get_mut().update(persisted, &mut self.msgs, obj, moved, capture_pct, repair_pct)
-            }
+            Entry::Occupied(mut e) => e.get_mut().update(
+                persisted,
+                &mut self.msgs,
+                obj,
+                moved,
+                capture_pct,
+                repair_pct,
+                hold_pct,
+            ),
             Entry::Vacant(e) => {
                 e.insert(ObjectiveMarkup::new(
                     &self.cfg,
@@ -550,6 +656,7 @@ impl Ephemeral {
                     persisted,
                     capture_pct,
                     repair_pct,
+                    hold_pct,
                 ));
             }
         }
@@ -628,15 +735,6 @@ impl Ephemeral {
         now: DateTime<Utc>,
     ) {
         self.map_layer.on_recon_result(target_pos, scan_radius_m, unit_count, side, now, &mut self.msgs);
-    }
-
-    pub fn on_counter_battery(
-        &mut self,
-        enemy_pos: dcso3::Vector2,
-        friendly_side: dcso3::coalition::Side,
-        now: DateTime<Utc>,
-    ) {
-        self.map_layer.on_counter_battery(enemy_pos, friendly_side, now, &mut self.msgs);
     }
 
     pub fn on_objective_threatened(
@@ -1053,7 +1151,11 @@ impl Ephemeral {
                     return Some((uid, ucid));
                 }
             }
-            error!("have ucid but no unitid for dead slot {slot} {ucid}");
+            // Benign: the player left / died before the slot ever finished
+            // instancing (ramp death, quick disconnect), or the unit mapping
+            // was already torn down by an earlier event. The caller handles
+            // None. Not worth an ERROR every time it happens.
+            debug!("deslot {slot} {ucid}: no unit id (never instanced or already cleaned)");
         }
         None
     }
@@ -1265,6 +1367,10 @@ impl Ephemeral {
                     // Artillery uses existing Armor/Mr/Lr groups; no template validation needed.
                     | ActionKind::Artillery(_)
                     | ActionKind::NavalCruiseMissileStrike(_)
+                    // The tasking board draws F10 marks, it spawns nothing,
+                    // so there is no template to validate.
+                    | ActionKind::AddTask(_)
+                    | ActionKind::RemoveTask(_)
                     | ActionKind::Recon(_) => (),
                 }
             }
@@ -1588,6 +1694,17 @@ impl Ephemeral {
 
         // Check whether this is a synthetic (inline-config) group.  If so, build a Lua
         // group table from scratch instead of cloning a .miz template.
+        // Filled in by the CAP / hot-start branch below when a real parking
+        // start is built. DCS only honours a `TakeOffParking*` waypoint 0 if
+        // the units it applies to are actually sitting at the field: the whole
+        // group table has to agree (group x/y, unit x/y/alt, unit `parking`),
+        // or DCS quietly discards the ground start and spawns the flight
+        // airborne over the waypoint instead.
+        let mut parking_plan: Vec<dcso3::airbase::ParkingSpot> = vec![];
+        // Where to put units we couldn't get a dedicated spot for: the field
+        // itself, with any template parking assignment cleared so DCS picks.
+        let mut parking_fallback: Option<(Vector2, f64)> = None;
+        let mut parking_anchor: Option<Vector2> = None;
         let (template, alive) = if let Some(spec) = self.synthetic_templates.get(group.template_name.as_str()).cloned() {
             if alive_units.is_empty() {
                 record_perf(&mut perf.spawn, ts);
@@ -1690,54 +1807,201 @@ impl Ephemeral {
             };
 
             if group.tags.contains(UnitTag::CAP) || group.tags.contains(UnitTag::HotStart) {
-                if let Some(first) = points.first_mut() {
-                    first.typ = dcso3::controller::PointType::TakeOffParkingHot;
-                    first.action = Some(dcso3::controller::ActionTyp::Air(dcso3::controller::TurnMethod::FromParkingAreaHot));
-                    first.alt = 0.0;
-                    first.alt_typ = Some(dcso3::controller::AltType::BARO);
-                    // Without an airdromeId on a TakeOffParkingHot waypoint DCS
-                    // can't resolve which base to spawn at and falls back to an
-                    // air start -- which is why commander/reactive CAP was
-                    // appearing airborne with no startup/taxi/takeoff time
-                    // between flights. CAP always originates from a friendly
-                    // airbase objective, so pull that base's id here.
-                    if let DeployKind::Objective { origin } = &group.origin {
-                        // Primary: the runtime airbase registered for this
-                        // objective at load. Fallback: match the objective name
-                        // to a DCS airbase directly -- bflib names Airbase-kind
-                        // objectives after the airfield, and a zone-overlap can
-                        // leave `airbase_by_oid` keyed to a neighbouring SAM /
-                        // command-center objective instead.
-                        let ab = self
-                            .airbase_by_oid
-                            .get(origin)
-                            .and_then(|abid| Airbase::get_instance(spctx.lua(), abid).ok())
-                            .or_else(|| {
-                                persisted.objectives.get(origin).and_then(|o| {
-                                    Airbase::get_by_name(
-                                        spctx.lua(),
-                                        dcso3::String::from(o.name.as_str()),
-                                    )
-                                    .ok()
-                                    .filter(|ab| ab.is_exist().unwrap_or(false))
-                                })
+                // Resolve the origin airbase FIRST -- we need its id AND its
+                // position to build a valid parking start. A `TakeOffParkingHot`
+                // waypoint with no airdromeId (or one whose x/y/alt point
+                // nowhere near the field) makes DCS air-start the flight, which
+                // is exactly the bug we're fighting. If we can't resolve the
+                // base, leave WP0 alone (ugly air start, but survivable) and
+                // let `enforce_cap_ground_start` scrap the event.
+                let airbase = match &group.origin {
+                    DeployKind::Objective { origin } => {
+                        self.resolve_airbase(spctx.lua(), persisted, origin)
+                    }
+                    _ => None,
+                };
+                let helicopter = template.category == GroupKind::Helicopter;
+                // Set when we fall back to starting a helicopter on open
+                // ground; the group-table fixups below key off it the same way
+                // they key off a parking start.
+                let mut ground_start = false;
+                let ab_start = airbase.as_ref().and_then(|ab| {
+                    let id = ab.get_id().ok()?;
+                    let p = ab.get_point().ok()?;
+                    // A FARP or a carrier deck is an Airbase too, but DCS
+                    // resolves it through `helipadId` + `linkUnit`; feeding its
+                    // id to `airdromeId` finds no airdrome, and the flight
+                    // spawns wrong. `getDesc().category` is not reliable for a
+                    // FARP -- an HL## FOB came back as Airdrome and put a helo
+                    // in the ground -- so what the campaign says this objective
+                    // is wins, and DCS's answer is only the fallback.
+                    let kind = match &group.origin {
+                        DeployKind::Objective { origin } => {
+                            persisted.objectives.get(origin).map(|o| o.kind.clone())
+                        }
+                        _ => None,
+                    };
+                    let cat = match kind {
+                        Some(ObjectiveKind::Farp { .. }) | Some(ObjectiveKind::Fob) => {
+                            dcso3::airbase::AirbaseCategory::Helipad
+                        }
+                        Some(ObjectiveKind::CarrierGroup { .. }) => {
+                            dcso3::airbase::AirbaseCategory::Ship
+                        }
+                        _ => ab
+                            .get_category()
+                            .unwrap_or(dcso3::airbase::AirbaseCategory::Airdrome),
+                    };
+                    Some((id, p, cat))
+                });
+
+                // Build the parking plan. `getParking(true)` is DCS's own
+                // free-spot list; a spot is only a legal start if it can take
+                // an aircraft at all (`TO_AC`) and its terminal type matches
+                // the airframe -- fixed wing want shelters / open medium /
+                // open big, helicopters want pads / open ramp, and the runway
+                // "spots" are not parking. Nearest-to-runway first so a flight
+                // isn't strung across the whole field.
+                if let (Some(ab), Some((_, p, _))) = (airbase.as_ref(), ab_start.as_ref()) {
+                    let want = alive_units.len().max(1);
+                    match ab.get_parking_spots(true) {
+                        Ok(spots) => {
+                            let total = spots.len();
+                            let mut usable: Vec<dcso3::airbase::ParkingSpot> = spots
+                                .into_iter()
+                                .filter(|s| s.usable_by(helicopter))
+                                .collect();
+                            usable.sort_by(|a, b| {
+                                a.preference(helicopter)
+                                    .cmp(&b.preference(helicopter))
+                                    .then_with(|| {
+                                        a.dist_to_rw
+                                            .partial_cmp(&b.dist_to_rw)
+                                            .unwrap_or(std::cmp::Ordering::Equal)
+                                    })
                             });
-                        match ab.and_then(|ab| ab.get_id().ok()) {
-                            Some(abid) => {
-                                first.airdrome_id = Some(abid);
-                                first.helipad = None;
-                                first.link_unit = None;
-                                info!(
-                                    "[CAP_SPAWN] {} ground-starting from airbase id {:?}",
-                                    group.name, abid
+                            usable.truncate(want);
+                            if usable.len() < want {
+                                warn!(
+                                    "[GROUND_START] {} wanted {want} parking spots, only {} of {total} free spots are usable by this airframe -- the rest go on the field for DCS to assign",
+                                    group.name,
+                                    usable.len()
                                 );
                             }
-                            None => warn!(
-                                "[CAP_SPAWN] {} has no resolvable airbase for objective {:?} -- \
-                                 DCS will air-start it",
-                                group.name, origin
-                            ),
+                            parking_plan = usable;
                         }
+                        Err(e) => warn!(
+                            "[GROUND_START] {} could not read parking at its origin field ({e:?}) -- placing on the field and letting DCS assign spots",
+                            group.name
+                        ),
+                    }
+                    parking_fallback = Some((Vector2::new(p.0.x, p.0.z), p.0.y));
+                    parking_anchor = Some(match parking_plan.first() {
+                        Some(spot) => Vector2::new(spot.pos.0.x, spot.pos.0.z),
+                        None => Vector2::new(p.0.x, p.0.z),
+                    });
+                }
+
+                if points.is_empty() {
+                    warn!(
+                        "[GROUND_START] {} template has no route waypoints -- cannot rewrite a parking start, so this flight will air-start (a CAP is then scrapped by enforce_cap_ground_start)",
+                        group.name
+                    );
+                }
+                if let Some(first) = points.first_mut() {
+                    match (&ab_start, parking_anchor) {
+                        (Some((abid, p, cat)), Some(anchor)) => {
+                            // The exact shape DCS itself uses when it spawns a
+                            // ground-starting flight at runtime (see
+                            // Scripts/GeneratedTasks/modules/one_plane_attack_*.lua):
+                            // TakeOffParkingHot + "From Parking Area Hot",
+                            // airdromeId, a waypoint sitting on the field at
+                            // field elevation BARO, and zero locked speed with
+                            // a zero locked ETA. Leave any of those out and DCS
+                            // falls back to an air start.
+                            first.typ = dcso3::controller::PointType::TakeOffParkingHot;
+                            first.action = Some(dcso3::controller::ActionTyp::Air(
+                                dcso3::controller::TurnMethod::FromParkingAreaHot,
+                            ));
+                            // FARP/helipad airbases hand back getPoint() with
+                            // y = 0. A parking start at 0m BARO under hundreds
+                            // of metres of terrain spawns the flight inside the
+                            // ground, which is how the first HL## helo mission
+                            // died 15 seconds after dispatch. A carrier deck is
+                            // genuinely just above the sea, so leave it alone.
+                            let mut elev = p.0.y;
+                            if elev <= 0.0
+                                && *cat != dcso3::airbase::AirbaseCategory::Ship
+                            {
+                                if let Ok(h) = dcso3::land::Land::singleton(spctx.lua())
+                                    .and_then(|l| l.get_height(LuaVec2(anchor)))
+                                {
+                                    elev = h;
+                                }
+                            }
+                            first.pos = LuaVec2(anchor);
+                            first.alt = elev;
+                            first.alt_typ = Some(dcso3::controller::AltType::BARO);
+                            match cat {
+                                dcso3::airbase::AirbaseCategory::Airdrome => {
+                                    first.airdrome_id = Some(*abid);
+                                    first.helipad = None;
+                                    first.link_unit = None;
+                                }
+                                dcso3::airbase::AirbaseCategory::Helipad
+                                | dcso3::airbase::AirbaseCategory::Ship => {
+                                    first.airdrome_id = None;
+                                    first.helipad = Some(*abid);
+                                    first.link_unit = Some(dcso3::env::miz::UnitId::from(abid.inner()));
+                                }
+                            }
+                            first.speed = 0.0;
+                            first.speed_locked = Some(true);
+                            first.eta = Some(dcso3::Time(0.));
+                            first.eta_locked = Some(true);
+                            info!(
+                                "[GROUND_START] {} ground-starting from {cat:?} id {:?} at ({:.0},{:.0}) elev {:.0}, {} assigned parking spot(s)",
+                                group.name,
+                                abid,
+                                anchor.x,
+                                anchor.y,
+                                elev,
+                                parking_plan.len()
+                            );
+                        }
+                        _ if helicopter => {
+                            // Most FOBs have no DCS airbase or FARP pad at all,
+                            // so there is nothing to park at -- but a helicopter
+                            // does not need one. "From Ground Area Hot" starts
+                            // it on the open ground where the campaign put it,
+                            // rotors turning, which is the whole reason a helo
+                            // mission can launch from a field a jet could not.
+                            let alt = dcso3::land::Land::singleton(spctx.lua())
+                                .and_then(|l| l.get_height(first.pos))
+                                .unwrap_or(0.0);
+                            first.typ = dcso3::controller::PointType::TakeOffGroundHot;
+                            first.action = Some(dcso3::controller::ActionTyp::Air(
+                                dcso3::controller::TurnMethod::FromGroundAreaHot,
+                            ));
+                            first.airdrome_id = None;
+                            first.helipad = None;
+                            first.link_unit = None;
+                            first.alt = alt;
+                            first.alt_typ = Some(dcso3::controller::AltType::BARO);
+                            first.speed = 0.0;
+                            first.speed_locked = Some(true);
+                            first.eta = Some(dcso3::Time(0.));
+                            first.eta_locked = Some(true);
+                            ground_start = true;
+                            info!(
+                                "[GROUND_START] {} has no resolvable airbase for {:?} -- starting from open ground at ({:.0},{:.0}) elev {alt:.0}",
+                                group.name, group.origin, first.pos.x, first.pos.y
+                            );
+                        }
+                        _ => warn!(
+                            "[GROUND_START] {} has no resolvable airbase for {:?} -- leaving template waypoint 0, so this flight will air-start (a CAP is then scrapped by enforce_cap_ground_start)",
+                            group.name, group.origin
+                        ),
                     }
 
                     if group.tags.contains(UnitTag::CAP) {
@@ -1751,10 +2015,55 @@ impl Ephemeral {
                         first.task = Box::new(dcso3::controller::Task::ComboTask(opts));
                     }
                 }
+
+                if points.is_empty() {
+                    // No waypoint 0 to turn into a parking start, so the rest
+                    // of the group table must not claim one either -- units
+                    // pinned to parking spots under a route that never says
+                    // "take off from parking" spawns worse than the plain
+                    // template does.
+                    parking_plan.clear();
+                    parking_fallback = None;
+                    parking_anchor = None;
+                    ground_start = false;
+                }
+
+                if parking_anchor.is_some() || ground_start {
+                    // An `uncontrolled` flight parks and never starts its
+                    // engines, and a non-zero `start_time` makes DCS hold the
+                    // group as a scheduled spawn instead of putting it on the
+                    // ramp now.
+                    template.group.raw_set("uncontrolled", false)?;
+                    template.group.raw_set("start_time", 0)?;
+                }
             }
 
+            if parking_anchor.is_none() {
+                // Waypoint 0 only round-trips its field binding now that the
+                // `airdromeId` key is spelled the way DCS spells it. Everywhere
+                // we are NOT deliberately building a parking start, drop the
+                // template's own binding the way the old misspelling did:
+                // bflib places these groups where the campaign says, and a
+                // stale airdromeId would drag the spawn back to whatever field
+                // the mission editor parked the template at.
+                if let Some(first) = points.first_mut() {
+                    first.airdrome_id = None;
+                    first.helipad = None;
+                }
+            }
             if points.len() > 0 {
                 route.set_points(points).context("setting points")?;
+            }
+            if parking_anchor.is_some() {
+                // `formation_template` is part of every waypoint DCS writes and
+                // it has no MissionPoint field, so stamp it on the raw table.
+                // An absent one is not fatal on its own, but a parking start is
+                // exactly where DCS is fussiest about a well-formed waypoint.
+                if let Ok(pts) = route.raw_get::<_, LuaTable>("points") {
+                    if let Ok(wp0) = pts.raw_get::<_, LuaTable>(1) {
+                        let _ = wp0.raw_set("formation_template", "");
+                    }
+                }
             }
             let by_tname: FxHashMap<&str, &SpawnedUnit> = alive_units
                 .iter()
@@ -1776,8 +2085,37 @@ impl Ephemeral {
                                 }
                             }
                             unit.raw_remove("unitId")?;
-                            unit.set_pos(su.pos)?;
-                            unit.set_alt(su.position.p.y)?;
+                            // A parking start is a property of the whole group
+                            // table, not just waypoint 0: DCS wants each unit
+                            // physically on its spot, at field elevation BARO,
+                            // with `parking` naming the spot. Units left at
+                            // their persisted position out over the objective
+                            // are what makes DCS throw the ground start away
+                            // and spawn the flight in the air.
+                            match parking_plan.get(i as usize - 1) {
+                                Some(spot) => {
+                                    unit.set_pos(Vector2::new(spot.pos.0.x, spot.pos.0.z))?;
+                                    unit.set_alt(spot.pos.0.y)?;
+                                    unit.set_alt_type("BARO")?;
+                                    unit.set_parking(spot.term_index)?;
+                                }
+                                None => match parking_fallback {
+                                    Some((pos, elev)) => {
+                                        // Ground start with no spot of our own
+                                        // -- sit on the field and let DCS place
+                                        // us. Any parking id inherited from the
+                                        // template points at another airfield.
+                                        unit.clear_parking()?;
+                                        unit.set_pos(pos)?;
+                                        unit.set_alt(elev)?;
+                                        unit.set_alt_type("BARO")?;
+                                    }
+                                    None => {
+                                        unit.set_pos(su.pos)?;
+                                        unit.set_alt(su.position.p.y)?;
+                                    }
+                                },
+                            }
                             unit.set_heading(su.heading)?;
                             unit.set_name(su.name.clone())?;
                             i += 1;
@@ -1792,7 +2130,15 @@ impl Ephemeral {
             record_perf(&mut perf.spawn, ts);
             Ok(None)
         } else {
-            let point = centroid2d(points.iter().map(|p| *p));
+            // For a parking start the group's own x/y has to be the lead
+            // unit's spot. The centroid of the persisted unit positions is
+            // wherever the flight was notionally created (out over the
+            // objective) and disagrees with waypoint 0, which DCS resolves by
+            // air-starting.
+            let point = match parking_anchor {
+                Some(anchor) => anchor,
+                None => centroid2d(points.iter().map(|p| *p)),
+            };
             template.group.set_pos(point)?;
             /*
             let radius = points

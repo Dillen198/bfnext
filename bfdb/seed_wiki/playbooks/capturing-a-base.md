@@ -74,8 +74,18 @@ CH-47 ten. Squad weights matter on light helos — see
 ## Step 5 — Consolidate (don't fly away yet)
 
 The base flips owner when the timer completes, but it is **not fully yours** for
-a **~5-minute consolidation window**. The F10 label reads
-**"NOT CONSOLIDATED — hold with troops or it goes Neutral."**
+a **~5-minute consolidation window**. The F10 label runs a live countdown —
+**"CONSOLIDATING 42% (3m left) — hold the zone with troops"** — and you can't
+slot in at the base until it finishes.
+
+**Keep the troops in the zone.** Fly them out and the clock stops
+(**"CONSOLIDATION PAUSED"**); progress is held, not lost, and resumes when they
+return.
+
+**Don't just orbit — shorten it.** Bring a second squad into the zone (each
+extra squad adds 50% to the rate), or land a **Logistics Repair Kit** or
+**supply crate** at the base for an outright **~2-minute jump**. The logistics
+sortie is faster than waiting.
 
 - The enemy **cannot start a fresh capture timer** during this window — they
   have to physically kill your holding troops to take it back.

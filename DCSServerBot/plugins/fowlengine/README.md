@@ -12,9 +12,12 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 - **Mission-Briefing Welcome Message:** Posts an embed to `welcome_channel` when someone joins the Discord server, pulling the active scenario, round duration, and current front (objective counts per faction) from bfdb — same data as the live status embed — plus a customizable briefing blurb and dashboard link.
 - **Server Performance Embed:** Posts and edits a live CPU/RAM/GPU/disk/temp + DCS frame-time embed every 5 minutes, pulled from bfdb's admin-only `/api/admin/perf`.
 - **Dual-Login Dashboard:** Supports both standard Discord OAuth web-login and securely generated HMAC bot-tokens to seamlessly bridge the `bfweb` dashboard.
-- **Interactive Commander Terminal:** A slick UI terminal allowing commanders to drop crates and infantry squads at airbases directly from Discord.
-- **bfdb Crash Supervision:** Optionally health-checks bfdb.exe every ~30s and relaunches it via `bfsystem.ps1` if it stops responding, so a bfdb crash doesn't need someone to RDP in and restart it by hand. See `bfdb_supervisor` in Configuration.
-- **bflib.dll Upload:** Admin-only `/vs fe_upload_bflib` command lets you ship a new engine build straight from Discord -- server must already be shut down, then it backs up the current DLL, overwrites it with your upload, and restarts the server.
+- **Interactive Commander Terminal:** A UI terminal (`/fe_terminal`) to drop crates/infantry at airbases **and** set objective priority, directly from Discord.
+- **bfdb + netidx Process Ownership:** With `bfdb.manage: true` the plugin runs `bfdb.exe` and the netidx resolver as child processes of the bot: renders `gci.json` from YAML, builds bfdb's arg list, health-checks it, and relaunches on crash/hang. Replaces `bfsystem.ps1`. Combined with running the bot as a Windows service (`deploy/windows-service/`), a reboot brings the whole stack back with no RDP.
+- **GCI from YAML:** the `gci:` block in `fowlengine.yaml` is rendered to `<bfdb.home>\gci.json` on every bfdb start (bfdb reads it only at startup). `/feops gci_show` prints the effective config with secrets masked; `/feops bfdb_restart` reloads it.
+- **GCI transcript relay:** set `gci_transcript_channel` and the bot tails bfdb's `/ws/gci`, posting every AWACS call to that channel prefixed 🔵/🔴 (replaces the raw `discord_webhook_url`).
+- **Consolidated server-info embed:** set `server_info_channel` for one auto-updating embed with the connect address/port/password, DCS + mission status, next rotation, GCI frequencies and deploy status. `/fe_gci` gives any player the current GCI freqs on demand.
+- **Staged engine updates:** drag `bflib.dll` or `bfdb.exe` into the bot's admin channel -> staged, then swapped in (after a timestamped backup) on the next scheduled DCS restart. `bflib.dll` via the `BFBinaries` extension, `bfdb.exe` via this plugin. `/feops stage_status | stage_cancel | stage_apply` to control it. No manual server shutdown needed to stage.
 - **Engine Error Feed:** bfdb keeps a rolling buffer of ERROR/WARN lines from the live engine log and exposes it at the admin-only `/api/admin/engine-errors` endpoint, shown as a persistent panel on the `bfweb` admin page -- so recent errors are visible even if nobody had the dashboard or Discord open when they happened, alongside the existing Discord relay (Live Engine Log Relay, above).
 
 ## Installation
@@ -68,31 +71,50 @@ DEFAULT:
   # bfdb's own --admin-username/--admin-password startup flags.
   admin_username: "admin"
   admin_password: "YOUR_BFDB_ADMIN_PASSWORD"
+
+  # Ops notices (bfdb relaunched, staged binary applied). Falls back to
+  # alerts_channel if unset.
+  ops_channel: 123456789012345678
 ```
+
+See `fowlengine.sample.yaml` for the full `bfdb:` (process management) and
+`gci:` (Live GCI) blocks. The `BFBinaries` extension (staged `bflib.dll`
+swap) is configured in `nodes.yaml`, not here.
 
 ## Slash Commands
 
-### Player Commands
-- `/vs dashboard` - Retrieves your secure Vector Strike web dashboard login link.
-- `/vs join [Red|Blue|Neutral]` - Pre-selects your faction before slotting into a DCS aircraft.
-- `/vs stats [@user]` - Shows pilot kills, highest streak, and points available.
-- `/vs online` - Shows who's currently in a slot, grouped by faction.
-- `/vs leaderboard [top]` - Shows the top pilots by kills, with captures and K/D.
-- `/vs objective [name]` - Shows detailed status (owner, health, priority) for one objective; matches by substring.
+### Player
+- `/fe_dashboard` - your secure web-dashboard login link (Discord OAuth + 1-hour HMAC auto-login).
+- `/fe_objective <name>` - owner / health / priority for one objective (substring match).
+- `/fe_gci` - current GCI (AWACS) frequencies, callsigns and usage.
 
-### Commander & Admin Commands
-- `/vs terminal` - Deploys the interactive Commander Terminal (UI buttons and dropdowns) allowing you to deploy logistics from Discord.
-- `/vs spawn_deployable [type] [airbase]` - Direct command to spawn cargo/infantry at a specific airbase.
-- `/vs priority [objective]` - Marks an objective as a high priority target for your team.
-- `/vs ban [ucid] [name] [reason] [until]` - Bans a pilot from the campaign (requires admin_username/admin_password).
-- `/vs unban [ucid]` - Removes a ban.
-- `/vs fe_upload_bflib [server] [file] [restart]` - Uploads a `.dll` attachment and overwrites `bflib_dll_path` with it (after a timestamped backup of the current file), then restarts the server unless `restart:False` is passed. The server must already be shut down -- DCS.exe holds a file lock on bflib.dll while running, so there's no way to replace it live; shut the server down first (e.g. via DCSServerBot's own server stop/shutdown command), then run this. Requires `bflib_dll_path` to be set.
+Live stats, the leaderboard, who's online and the full objective list all
+live on the web dashboard now -- `/fe_dashboard` points there.
+
+### Commander & Admin (`DCS Admin`)
+- `/fe_terminal` - interactive Commander Terminal: drop cargo/infantry at an airbase, and set/clear objective priority.
+- `/fe_ban <ucid> <name> [reason] [until]` / `/fe_unban <ucid>` - campaign ban management.
+- `/feops bfdb_restart` - restart bfdb (re-renders `gci.json`, picks up a staged `bfdb.exe`).
+- `/feops gci_show` - print the effective `gci.json` (secrets masked).
+- `/feops stage_status | stage_cancel <which> | stage_apply <server> <which>` - manage staged engine binaries.
+- **Upload:** drop `bflib.dll` / `bfdb.exe` into the admin channel (DCS Admin only) to stage it.
 
 ## Architecture & Integration
-This plugin talks to bfdb, not directly to the DCS process. Three integration paths:
 
-- **Read-only data** (`/status`, `fe_objectives`, `fe_stats`, capture/achievement polling, the engine log relay's history replay): plain HTTP/WebSocket calls to bfdb, no DCS-side setup needed beyond running bfdb itself.
-- **Commander actions** (`fe_priority`, `fe_spawn_deployable`, `fe_terminal`): bfdb calls into bflib's live netidx RPC server (`bflib/src/bg/rpcs.rs`) -- e.g. `spawn-deployable`, `set-objective-priority` -- which requires `admin_username`/`admin_password` to authenticate against bfdb, and requires bfdb to have been started with `--base` pointing at the mission's netidx path so it can reach bflib's RPCs.
-- **Server/process control** (`fe_upload_bflib`, and the `bfdb_supervisor` background task): neither goes through bfdb at all. `fe_upload_bflib` only accepts servers that are already `SHUTDOWN`/`STOPPED` (DCS.exe holds a file lock on bflib.dll while running), overwrites it directly, and calls `server.startup()` on DCSServerBot's own `Server` object to bring the server back up. The bfdb supervisor shells out to `bfsystem_script` (`bfsystem.ps1`) in its own console when bfdb's `/api/stats` stops responding. Both run with whatever OS privileges the bot process itself has, on the machine it's running on -- `fe_upload_bflib` is gated to `DCS Admin`.
+- **Read-only data** (status/welcome embeds, capture & achievement polling, engine-log relay): plain HTTP/WebSocket to bfdb.
+- **Commander actions** (`/fe_terminal`): bfdb -> bflib netidx RPCs (`bflib/src/bg/rpcs.rs`); needs `admin_username`/`admin_password` and bfdb started with `--base`.
+- **Process ownership** (`bfdb.manage`, `procman.py`): the bot runs `bfdb.exe` + the netidx resolver as children, health-checks bfdb, renders `gci.json` from YAML.
+- **Restart-cycle binary swap** (`extensions/bfbinaries`): `prepare()` swaps a staged `bflib.dll` while DCS is down; a staged `bfdb.exe` is applied by procman on its next restart. Both back up the previous binary and never block a restart.
 
-`lua/callbacks.lua` and `lua/commands.lua` are legacy from an earlier design (a direct Lua-hooks bridge) and are not used by any of the above -- they're unwired stubs kept only in case a lower-latency native bridge is built later.
+- **Multiple DCS servers on one machine:** one bfdb fronts them all. Add a
+  `bfdb.instances:` list to `fowlengine.yaml` and procman renders bfdb's
+  `instances.json` (plus one `gci.<id>.json` per server) and starts it with
+  `--instances`. Every request the plugin makes carries
+  `?server=<DCS server name>`, which bfdb maps to an instance via that
+  instance's `dcs_server_name` -- so each server's status embed, alerts,
+  achievements, engine-log relay, GCI transcript, perf embed and commander
+  terminal are about that server only. Channel ids can be split per server
+  using DCSServerBot's normal per-server config sections. See
+  [`deploy/multi-instance.md`](../../deploy/multi-instance.md).
+
+`lua/callbacks.lua` / `lua/commands.lua` are unwired legacy stubs.

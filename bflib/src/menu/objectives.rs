@@ -14,25 +14,59 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{brg_rng, player_world_pos, slot_for_group, ArgTriple, ArgTuple};
+use super::{brg_rng, player_world_pos, slot_for_group, ArgQuad, ArgTriple, ArgTuple};
 use crate::{
     db::{objective::Objective, Db},
     Context,
 };
 use anyhow::{Context as ErrContext, Result};
 use bfprotocols::db::objective::{ObjectiveId, ObjectiveKind};
+use chrono::Utc;
 use compact_str::{format_compact, CompactString};
 use dcso3::{
     coalition::Side,
     coord::Coord,
     env::miz::GroupId,
     mission_commands::{GroupSubMenu, MissionCommands},
-    net::SlotId,
+    net::{SlotId, Ucid},
     LuaVec3, MizLua, Vector2, Vector3,
 };
+use mlua::prelude::{FromLua, IntoLua};
 use std::fmt::Write;
 
 const PAGE_SIZE: usize = 10;
+
+/// Which paged status report a menu command drives.
+const RPT_FRIENDLY: u8 = 0;
+const RPT_ENEMY: u8 = 1;
+
+/// What a paged status report command does to the page cursor.
+const PG_FIRST: u8 = 0;
+const PG_NEXT: u8 = 1;
+const PG_PREV: u8 = 2;
+
+/// Page cursor for the paged status reports, one per menu group. DCS radio
+/// menu entries can't be relabeled once created, so instead of listing a
+/// command per page (which eats the 10-entry-per-level budget and grows with
+/// the map) the menu carries fixed Next/Previous Page commands that move this
+/// cursor and re-send the report.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct StatusPages {
+    friendly: usize,
+    enemy: usize,
+}
+
+/// Advance/rewind/reset a cursor, wrapping at the ends and tolerating a page
+/// count that shrank since the last click (bases get captured mid-sortie).
+fn step_page(cur: usize, pages: usize, how: u8) -> usize {
+    let pages = pages.max(1);
+    let cur = cur.min(pages - 1);
+    match how {
+        PG_NEXT => (cur + 1) % pages,
+        PG_PREV => (cur + pages - 1) % pages,
+        _ => 0,
+    }
+}
 
 fn fmt_kind(kind: &ObjectiveKind) -> &'static str {
     match kind {
@@ -103,7 +137,15 @@ fn flags(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
         s.push_str(" [THREAT]");
     }
     if obj.in_capture_hold() {
-        s.push_str(" [CONSOLIDATING]");
+        if obj.capture_hold_stalled() {
+            s.push_str(" [CONSOLIDATION PAUSED]");
+        } else {
+            let pct = obj
+                .capture_hold_pct(db.ephemeral.cfg.capture_consolidation_secs)
+                .map(|(p, _)| p)
+                .unwrap_or(0);
+            let _ = write!(s, " [CONSOLIDATING {pct}%]");
+        }
     } else if obj.captureable() {
         s.push_str(" [CAP]");
     }
@@ -126,7 +168,12 @@ fn objective_line(db: &Db, oid: &ObjectiveId, obj: &Objective, from: Option<Vect
         None => CompactString::from(""),
     };
     let stock = if full {
-        format_compact!(" S:{:>3}% F:{:>3}%", obj.supply(), obj.fuel())
+        format_compact!(
+            " S:{:>3}% F:{:>3}% A:{:>3}%",
+            obj.supply(),
+            obj.fuel(),
+            obj.aircraft()
+        )
     } else {
         CompactString::from("")
     };
@@ -245,12 +292,24 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
     )
 }
 
-fn capture_state(frac: f64, obj: &Objective) -> CompactString {
+fn capture_state(frac: f64, consolidation: u32, obj: &Objective) -> CompactString {
     if obj.in_capture_hold() {
-        return CompactString::from(
-            "HELD -- new owner is consolidating; you can't start a capture timer here, \
-             wipe the holding troops to force it Neutral",
-        );
+        if obj.capture_hold_stalled() {
+            return CompactString::from(
+                "HELD, but consolidation is PAUSED -- the holding troops are outside \
+                 the zone; get them back in, or wipe them to force it Neutral",
+            );
+        }
+        return match obj.capture_hold_pct(consolidation) {
+            Some((pct, remaining)) => format_compact!(
+                "HELD -- consolidating {pct}% ({remaining}s left); you can't start a \
+                 capture timer here, wipe the holding troops to force it Neutral"
+            ),
+            None => CompactString::from(
+                "HELD -- new owner is consolidating; you can't start a capture timer \
+                 here, wipe the holding troops to force it Neutral",
+            ),
+        };
     }
     if obj.kind().is_special_sam_site() {
         return if obj.health() == 0 {
@@ -318,9 +377,10 @@ fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side
     if friendly {
         let _ = write!(
             s,
-            "Supply {:>3}%   Fuel {:>3}%{}\n",
+            "Munitions {:>3}%   Fuel {:>3}%   Aircraft {:>3}%{}\n",
             obj.supply(),
             obj.fuel(),
+            obj.aircraft(),
             if obj.unlimited_supply() { "  (UNLIMITED)" } else { "" }
         );
         let _ = write!(s, "Infantry defenders: {}\n", obj.infantry());
@@ -340,7 +400,8 @@ fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side
         .as_ref()
         .map(|c| c.capture_min_unit_pct_destroyed)
         .unwrap_or(0.0);
-    let _ = write!(s, "Capture: {}\n", capture_state(frac, obj));
+    let consolidation = db.ephemeral.cfg.capture_consolidation_secs;
+    let _ = write!(s, "Capture: {}\n", capture_state(frac, consolidation, obj));
     if obj.threatened() {
         let _ = write!(s, "THREAT: enemy units within sight of the base\n");
     }
@@ -359,18 +420,27 @@ fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side
 // menu callbacks
 // ---------------------------------------------------------------------------
 
-fn friendly_status_page(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+/// Show a page of the friendly/enemy status report. `trd` picks the report,
+/// `fth` says whether to jump to the first page or step the cursor.
+fn status_page(lua: MizLua, arg: ArgQuad<GroupId, Side, u8, u8>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
+    let enemy = arg.trd == RPT_ENEMY;
+    let want = if enemy { arg.snd.opposite() } else { arg.snd };
+    let pages = ctx
+        .db
+        .objectives()
+        .filter(|(_, o)| o.owner() == want)
+        .count()
+        .div_ceil(PAGE_SIZE)
+        .max(1);
+    let page = {
+        let cursor = ctx.objective_pages.entry(arg.fst).or_default();
+        let slot = if enemy { &mut cursor.enemy } else { &mut cursor.friendly };
+        *slot = step_page(*slot, pages, arg.fth);
+        *slot
+    };
     let from = from_pos(ctx, lua, &arg.fst);
-    let report = build_side_report(&ctx.db, arg.snd, arg.snd, from, arg.trd as usize, true);
-    ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
-    Ok(())
-}
-
-fn enemy_status_page(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
-    let from = from_pos(ctx, lua, &arg.fst);
-    let report = build_side_report(&ctx.db, arg.snd, arg.snd.opposite(), from, arg.trd as usize, false);
+    let report = build_side_report(&ctx.db, arg.snd, want, from, page, !enemy);
     ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
     Ok(())
 }
@@ -525,6 +595,18 @@ fn build_capture_advisor_card(
             s,
             "STATUS: post-capture hold -- takeable NOW by either side.\n"
         );
+        let consolidation = db.ephemeral.cfg.capture_consolidation_secs;
+        if obj.capture_hold_stalled() {
+            let _ = write!(
+                s,
+                "  the holder's troops are OUT of the zone -- their clock is stopped.\n"
+            );
+        } else if let Some((pct, remaining)) = obj.capture_hold_pct(consolidation) {
+            let _ = write!(
+                s,
+                "  consolidation {pct}% -- about {remaining}s before the garrison spawns.\n"
+            );
+        }
     } else if diag.obj_eligible {
         let _ = write!(s, "STATUS: objective is ELIGIBLE for capture.\n");
     } else {
@@ -626,6 +708,127 @@ fn capture_advisor_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Re
     Ok(())
 }
 
+/// Resolve the calling player's `Ucid` from their F10-menu group id, or
+/// message them and return `None` if it can't be done (e.g. they're not
+/// actually in a slot right now).
+fn ucid_for_menu_call(ctx: &Context, lua: MizLua, gid: &GroupId) -> Option<Ucid> {
+    let (_, slot) = slot_for_group(lua, ctx, gid).ok()?;
+    ctx.db.ephemeral.player_in_slot(&slot).copied()
+}
+
+/// Whether a helo mission carries troops (`true`) or supply (`false`).
+const HELO_TROOPS: u8 = 0;
+const HELO_SUPPLY: u8 = 1;
+
+/// Dispatch an AI helo mission to `oid` on behalf of whoever is flying `gid`,
+/// and describe the outcome for the panel message.
+fn dispatch_helo(
+    ctx: &mut Context,
+    lua: MizLua,
+    gid: GroupId,
+    side: Side,
+    oid: ObjectiveId,
+    kind: u8,
+) -> CompactString {
+    let Some(ucid) = ucid_for_menu_call(ctx, lua, &gid) else {
+        return CompactString::from("could not identify you as a player -- are you in a slot?");
+    };
+    let now = Utc::now();
+    let (what, res) = if kind == HELO_TROOPS {
+        (
+            "Helo troop insertion",
+            ctx.db.call_helo_troop_insertion(lua, side, ucid, oid, now),
+        )
+    } else {
+        (
+            "Helo resupply run",
+            ctx.db.call_helo_resource_delivery(lua, side, ucid, oid, now),
+        )
+    };
+    match res {
+        Ok(id) => format_compact!("{what} dispatched ({id})."),
+        Err(e) => format_compact!("Could not dispatch: {e}"),
+    }
+}
+
+/// F10: dispatch an AI helo to a specific objective the player picked off the
+/// menu. `trd` is `HELO_TROOPS` or `HELO_SUPPLY`.
+fn helo_mission_by_oid(lua: MizLua, arg: ArgTriple<GroupId, ObjectiveId, u8>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let side = match slot_for_group(lua, ctx, &arg.fst) {
+        Ok((side, _)) => side,
+        Err(e) => {
+            ctx.db.ephemeral.msgs().panel_to_group(
+                15,
+                false,
+                arg.fst,
+                format_compact!("could not work out which side you are on: {e}"),
+            );
+            return Ok(());
+        }
+    };
+    let report = dispatch_helo(ctx, lua, arg.fst, side, arg.snd, arg.trd);
+    ctx.db.ephemeral.msgs().panel_to_group(15, false, arg.fst, report);
+    Ok(())
+}
+
+/// F10: dispatch an AI helo to insert a fresh troop group at the nearest
+/// capturable objective (falling back to the nearest non-owned one if
+/// nothing is currently capturable, so the failure reason is explicit).
+fn helo_troop_insertion_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let side = arg.snd;
+    let from = from_pos(ctx, lua, &arg.fst);
+    let pick = {
+        let mut best: Option<(u8, f64, ObjectiveId)> = None;
+        for (oid, obj) in ctx.db.objectives() {
+            if obj.owner() == side {
+                continue;
+            }
+            let rank = if obj.captureable() { 0u8 } else { 1u8 };
+            let dist = from.map(|p| brg_rng(p, obj.pos()).1).unwrap_or(0.0);
+            if best.map(|(br, bd, _)| (rank, dist) < (br, bd)).unwrap_or(true) {
+                best = Some((rank, dist, *oid));
+            }
+        }
+        best.map(|(_, _, oid)| oid)
+    };
+    let report = match pick {
+        None => CompactString::from("No enemy or neutral objectives on the map."),
+        Some(oid) => dispatch_helo(ctx, lua, arg.fst, side, oid, HELO_TROOPS),
+    };
+    ctx.db.ephemeral.msgs().panel_to_group(15, false, arg.fst, report);
+    Ok(())
+}
+
+/// F10: dispatch an AI helo loaded with surplus supply from the nearest
+/// friendly hub to the nearest friendly objective (the one closest to the
+/// player -- presumably the one they're worried about).
+fn helo_resource_delivery_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let side = arg.snd;
+    let from = from_pos(ctx, lua, &arg.fst);
+    let pick = {
+        let mut best: Option<(f64, ObjectiveId)> = None;
+        for (oid, obj) in ctx.db.objectives() {
+            if obj.owner() != side {
+                continue;
+            }
+            let dist = from.map(|p| brg_rng(p, obj.pos()).1).unwrap_or(0.0);
+            if best.map(|(bd, _)| dist < bd).unwrap_or(true) {
+                best = Some((dist, *oid));
+            }
+        }
+        best.map(|(_, oid)| oid)
+    };
+    let report = match pick {
+        None => CompactString::from("No friendly objectives on the map."),
+        Some(oid) => dispatch_helo(ctx, lua, arg.fst, side, oid, HELO_SUPPLY),
+    };
+    ctx.db.ephemeral.msgs().panel_to_group(15, false, arg.fst, report);
+    Ok(())
+}
+
 fn detail_by_oid(lua: MizLua, arg: ArgTuple<GroupId, ObjectiveId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (viewer, from) = match slot_for_group(lua, ctx, &arg.fst) {
@@ -641,39 +844,199 @@ fn detail_by_oid(lua: MizLua, arg: ArgTuple<GroupId, ObjectiveId>) -> Result<()>
 // menu construction
 // ---------------------------------------------------------------------------
 
-fn add_paged(
+/// A paged status report: three fixed commands (show / next / previous) that
+/// drive the group's page cursor, instead of one command per page.
+fn add_status_report(
     mc: &MissionCommands,
     gid: GroupId,
     parent: &GroupSubMenu,
     label: &str,
-    count: usize,
     side: Side,
-    cb: fn(MizLua, ArgTriple<GroupId, Side, u8>) -> Result<()>,
+    kind: u8,
 ) -> Result<()> {
-    let pages = count.div_ceil(PAGE_SIZE).max(1);
-    if pages <= 1 {
-        mc.add_command_for_group(
-            gid,
-            label.into(),
-            Some(parent.clone()),
-            cb,
-            ArgTriple { fst: gid, snd: side, trd: 0u8 },
-        )?;
-        return Ok(());
-    }
     let root = mc.add_submenu_for_group(gid, label.into(), Some(parent.clone()))?;
-    for page in 0..pages {
-        let start = page * PAGE_SIZE + 1;
-        let end = ((page + 1) * PAGE_SIZE).min(count);
+    for (text, how) in [
+        ("Show (First Page)", PG_FIRST),
+        ("Next Page >>", PG_NEXT),
+        ("<< Previous Page", PG_PREV),
+    ] {
         mc.add_command_for_group(
             gid,
-            format_compact!("Page {} ({}-{})", page + 1, start, end).into(),
+            text.into(),
             Some(root.clone()),
-            cb,
-            ArgTriple { fst: gid, snd: side, trd: page as u8 },
+            status_page,
+            ArgQuad { fst: gid, snd: side, trd: kind, fth: how },
         )?;
     }
     Ok(())
+}
+
+/// Objective picks for the helo menus: labelled with range from the player
+/// when we know where they are, and ordered nearest-first, so the targets a
+/// helo could actually reach are on the first page instead of whatever happens
+/// to sort first alphabetically across the whole map.
+fn helo_picks(
+    ctx: &Context,
+    from: Option<Vector2>,
+    keep: impl Fn(&ObjectiveId, &Objective) -> bool,
+) -> Vec<(ObjectiveId, CompactString)> {
+    let mut v: Vec<(f64, ObjectiveId, CompactString)> = ctx
+        .db
+        .objectives()
+        .filter(|(oid, o)| keep(oid, o))
+        .map(|(oid, o)| {
+            let rng = from.map(|p| brg_rng(p, o.pos()).1).unwrap_or(0.0);
+            let cap = if o.captureable() { " [CAP]" } else { "" };
+            let label = match from {
+                Some(_) => format_compact!("{} {rng:.0}nm{cap}", o.name()),
+                None => format_compact!("{}{cap}", o.name()),
+            };
+            (rng, *oid, label)
+        })
+        .collect();
+    match from {
+        Some(_) => v.sort_by(|a, b| a.0.total_cmp(&b.0)),
+        None => v.sort_by(|a, b| a.2.cmp(&b.2)),
+    }
+    v.into_iter().map(|(_, oid, l)| (oid, l)).collect()
+}
+
+/// The AI helo dispatch commands. Lives here with its callbacks, but is hung
+/// off the Actions menu (see `menu::action`) -- these are player-triggered
+/// dispatches, not objective reports.
+pub(super) fn add_helo_mission_menu(
+    mc: &MissionCommands,
+    ctx: &Context,
+    lua: MizLua,
+    gid: GroupId,
+    parent: &GroupSubMenu,
+    side: Side,
+) -> Result<()> {
+    let from = from_pos(ctx, lua, &gid);
+    let root = mc.add_submenu_for_group(gid, "AI Helo Missions".into(), Some(parent.clone()))?;
+    mc.add_command_for_group(
+        gid,
+        "Insert Troops: Nearest Capturable".into(),
+        Some(root.clone()),
+        helo_troop_insertion_nearest,
+        ArgTriple { fst: gid, snd: side, trd: 0u8 },
+    )?;
+    // The short list of objectives troops can actually take right now. Absent
+    // from the menu when nothing is capturable.
+    let capturable = helo_picks(ctx, from, |oid, o| {
+        o.owner() != side && (o.captureable() || ctx.db.capture_in_progress(oid))
+    });
+    add_base_list(
+        mc,
+        gid,
+        &root,
+        "Insert Troops: Capturable Now",
+        capturable,
+        helo_mission_by_oid,
+        |oid| ArgTriple { fst: gid, snd: oid, trd: HELO_TROOPS },
+    )?;
+    // Everything else that isn't ours, for softening a base up ahead of time.
+    let any_target = helo_picks(ctx, from, |_, o| o.owner() != side);
+    add_base_list(
+        mc,
+        gid,
+        &root,
+        "Insert Troops: Any Objective",
+        any_target,
+        helo_mission_by_oid,
+        |oid| ArgTriple { fst: gid, snd: oid, trd: HELO_TROOPS },
+    )?;
+    mc.add_command_for_group(
+        gid,
+        "Resupply: Nearest Friendly".into(),
+        Some(root.clone()),
+        helo_resource_delivery_nearest,
+        ArgTriple { fst: gid, snd: side, trd: 0u8 },
+    )?;
+    let friendly = helo_picks(ctx, from, |_, o| o.owner() == side);
+    add_base_list(
+        mc,
+        gid,
+        &root,
+        "Resupply: Friendly Base",
+        friendly,
+        helo_mission_by_oid,
+        |oid| ArgTriple { fst: gid, snd: oid, trd: HELO_SUPPLY },
+    )?;
+    Ok(())
+}
+
+/// Leading characters of a base name, for chunk labels.
+fn short_name(name: &str) -> CompactString {
+    name.chars().take(10).collect()
+}
+
+/// A list of per-base commands, split into `1. Abu Su - Damasc` submenus so no
+/// menu level goes past the ~10 entries DCS radio menus handle. Splits again
+/// one level down when a map has more bases than a single split can hold, so
+/// nothing falls off the end of the list.
+fn add_base_tree<'lua, A>(
+    mc: &MissionCommands<'lua>,
+    gid: GroupId,
+    parent: &GroupSubMenu,
+    bases: &[(ObjectiveId, CompactString)],
+    cb: fn(MizLua, A) -> Result<()>,
+    mk_arg: &impl Fn(ObjectiveId) -> A,
+) -> Result<()>
+where
+    A: IntoLua<'lua> + FromLua<'lua> + 'static,
+{
+    if bases.len() <= PAGE_SIZE {
+        for (oid, name) in bases {
+            mc.add_command_for_group(
+                gid,
+                name.clone().into(),
+                Some(parent.clone()),
+                cb,
+                mk_arg(*oid),
+            )?;
+        }
+        return Ok(());
+    }
+    // Smallest chunk size that keeps this level down to PAGE_SIZE submenus.
+    let mut chunk = PAGE_SIZE;
+    while bases.len().div_ceil(chunk) > PAGE_SIZE {
+        chunk *= PAGE_SIZE;
+    }
+    for (n, group) in bases.chunks(chunk).enumerate() {
+        // The index leads so two chunks can't collide on the same label when a
+        // run of bases shares a name prefix.
+        let label = format_compact!(
+            "{}. {} - {}",
+            n + 1,
+            short_name(&group[0].1),
+            short_name(&group[group.len() - 1].1)
+        );
+        let sub = mc.add_submenu_for_group(gid, label.into(), Some(parent.clone()))?;
+        add_base_tree(mc, gid, &sub, group, cb, mk_arg)?;
+    }
+    Ok(())
+}
+
+/// `add_base_tree` under its own named submenu. Adds nothing at all when the
+/// list is empty, so an empty submenu never shows up in the menu.
+pub(super) fn add_base_list<'lua, A>(
+    mc: &MissionCommands<'lua>,
+    gid: GroupId,
+    parent: &GroupSubMenu,
+    label: &str,
+    bases: Vec<(ObjectiveId, CompactString)>,
+    cb: fn(MizLua, A) -> Result<()>,
+    mk_arg: impl Fn(ObjectiveId) -> A,
+) -> Result<()>
+where
+    A: IntoLua<'lua> + FromLua<'lua> + 'static,
+{
+    if bases.is_empty() {
+        return Ok(());
+    }
+    let root = mc.add_submenu_for_group(gid, label.into(), Some(parent.clone()))?;
+    add_base_tree(mc, gid, &root, &bases, cb, &mk_arg)
 }
 
 pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Result<()> {
@@ -689,11 +1052,6 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
         .map(|(oid, o)| (*oid, CompactString::from(o.name())))
         .collect();
     friendly.sort_by(|a, b| a.1.cmp(&b.1));
-    let enemy_count = ctx
-        .db
-        .objectives()
-        .filter(|(_, o)| o.owner() == side.opposite())
-        .count();
     // Enemy + neutral objectives, for the per-base Capture Advisor cards.
     let mut takeable: Vec<(ObjectiveId, CompactString)> = ctx
         .db
@@ -704,6 +1062,8 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
     takeable.sort_by(|a, b| a.1.cmp(&b.1));
 
     mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Objectives".into()]))?;
+    // The rebuilt menu starts at page 1 of every report.
+    ctx.objective_pages.remove(&miz_gid);
     let root = mc.add_submenu_for_group(miz_gid, "Objectives".into(), None)?;
 
     mc.add_command_for_group(
@@ -735,72 +1095,24 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
         ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
     )?;
 
-    add_paged(&mc, miz_gid, &root, "Friendly Status", friendly.len(), side, friendly_status_page)?;
-    add_paged(&mc, miz_gid, &root, "Enemy Status", enemy_count, side, enemy_status_page)?;
+    add_status_report(&mc, miz_gid, &root, "Friendly Status", side, RPT_FRIENDLY)?;
+    add_status_report(&mc, miz_gid, &root, "Enemy Status", side, RPT_ENEMY)?;
 
-    // Per-base detail cards, paged so no single submenu gets wide (DCS radio
-    // menus misbehave past ~10 entries per level). Capped so a pathological map
-    // can't flood the menu tree -- Nearest Base + the Status lists still cover
-    // everything past the cap.
-    const DETAIL_CAP: usize = 50;
-    if !friendly.is_empty() {
-        friendly.truncate(DETAIL_CAP);
-        let detail_root = mc.add_submenu_for_group(miz_gid, "Base Detail".into(), Some(root.clone()))?;
-        let pages = friendly.len().div_ceil(PAGE_SIZE);
-        for page in 0..pages {
-            let parent = if pages > 1 {
-                mc.add_submenu_for_group(
-                    miz_gid,
-                    format_compact!("Page {}", page + 1).into(),
-                    Some(detail_root.clone()),
-                )?
-            } else {
-                detail_root.clone()
-            };
-            for (oid, name) in friendly.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
-                mc.add_command_for_group(
-                    miz_gid,
-                    name.clone().into(),
-                    Some(parent.clone()),
-                    detail_by_oid,
-                    ArgTuple { fst: miz_gid, snd: *oid },
-                )?;
-            }
-        }
-    }
-
-    // Per-base Capture Advisor cards for enemy / neutral objectives. Same
-    // paging + cap as Base Detail; the "Capture Advisor: Nearest" command and
-    // "Capturable / Contested" list cover anything past the cap or that flips
-    // owner mid-slot.
-    if !takeable.is_empty() {
-        // Higher cap than Base Detail: capturable bases are the whole point of
-        // this menu, so an alphabetical tail shouldn't fall off on a big map.
-        const ADVISOR_CAP: usize = 120;
-        takeable.truncate(ADVISOR_CAP);
-        let adv_root = mc.add_submenu_for_group(miz_gid, "Capture Advisor".into(), Some(root.clone()))?;
-        let pages = takeable.len().div_ceil(PAGE_SIZE);
-        for page in 0..pages {
-            let parent = if pages > 1 {
-                mc.add_submenu_for_group(
-                    miz_gid,
-                    format_compact!("Page {}", page + 1).into(),
-                    Some(adv_root.clone()),
-                )?
-            } else {
-                adv_root.clone()
-            };
-            for (oid, name) in takeable.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
-                mc.add_command_for_group(
-                    miz_gid,
-                    name.clone().into(),
-                    Some(parent.clone()),
-                    capture_advisor_by_oid,
-                    ArgTuple { fst: miz_gid, snd: *oid },
-                )?;
-            }
-        }
-    }
+    add_base_list(&mc, miz_gid, &root, "Base Detail", friendly, detail_by_oid, |oid| {
+        ArgTuple { fst: miz_gid, snd: oid }
+    })?;
+    // Capture Advisor cards for enemy / neutral objectives. "Capture Advisor:
+    // Nearest" and "Capturable / Contested" cover anything past the list cap or
+    // that flips owner mid-slot.
+    add_base_list(
+        &mc,
+        miz_gid,
+        &root,
+        "Capture Advisor",
+        takeable,
+        capture_advisor_by_oid,
+        |oid| ArgTuple { fst: miz_gid, snd: oid },
+    )?;
 
     Ok(())
 }

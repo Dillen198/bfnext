@@ -595,6 +595,60 @@ at amount 0 are ignored. Names overridable with
 `--blue-navy-production-template` / `--red-navy-production-template`; omit the
 two ships entirely and carriers keep whatever roster is on them in the editor.
 
+**Captured aircraft (optional):** a base that changes hands is holding
+whatever the losing side had parked on it, and with this configured the
+captors can fly some of it.
+
+DCS fixes a slot's coalition when the mission loads — there is no runtime API
+to flip a slot from blue to red — so the enemy-side slots have to be in the
+.miz from the start. Add `captured = N` to a slot zone (`TS*`, or a `TTS*`
+template it includes) and `bftools miz` emits, on the **opposite** coalition,
+up to N slots per airframe of everything that zone gives its own side, using
+the same weapon-template loadout, radio plan and Link-16 config (there is no
+red F-16 template, so the blue one is what a captured F-16 flies with).
+
+```
+Blue
+F-16C_50 = 4
+FA-18C_hornet = 2
+captured = 2
+```
+
+gives Blue its 4 + 2 as usual and puts 2 F-16 and 2 Hornet slots on Red at the
+same base. Those extra jets take extra parking out of the same zone, so widen
+the zone if `bftools` reports "zone X is full".
+
+The slots are inert until an actual capture: bflib only authorizes one when
+that side owns the objective **and** the objective is holding salvaged stock
+of the type, which only `captured_airframes` in the campaign config ever
+creates.
+
+```json
+"captured_airframes": {
+  "salvage_percent": 25,
+  "max_per_type": 4,
+  "min_health": 100,
+  "exclude": []
+}
+```
+
+`salvage_percent` is how much of the previous owner's stock survives the
+assault (the rest is destroyed on the ramp, sabotaged, or flown out);
+`max_per_type` caps the windfall from taking a deep rear base; `min_health` is
+how far the base must be repaired before the captors can put one in the air
+(100 matches the rule captured carriers already use — set 0 for immediately).
+Nothing ever restocks a salvaged type, because every resupply path ships only
+what the *source* produces, so captured jets are a finite prize that drains to
+zero. Omit the block entirely and captured aircraft are destroyed on capture,
+which is the original behaviour.
+
+Bases on **DCS dynamic slots** need no `captured = N` at all — a dynamic slot
+list is read from the warehouse, so the salvaged airframes show up on their
+own.
+
+Expect friendly fire. A Red player in an F-16 is exactly as confusing to his
+own side as that sounds, and the jet keeps its original livery.
+
 The generated mission's campaign config (the JSON file `bflib` loads at
 startup — e.g. `ODFv2_CFG`, named whatever you point bflib's state path at,
 not a fixed filename) can also be edited live from the web dashboard's

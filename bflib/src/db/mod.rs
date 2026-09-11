@@ -49,6 +49,7 @@ pub mod objective;
 pub mod persisted;
 pub mod player;
 pub mod recon;
+pub mod tasks;
 
 pub type Map<K, V> = immutable_chunkmap::map::Map<K, V, 256>;
 pub type MapM<K, V> = immutable_chunkmap::map::Map<K, V, 64>;

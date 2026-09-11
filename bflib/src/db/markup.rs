@@ -365,6 +365,9 @@ pub(super) struct ObjectiveMarkup {
     /// 100% health), so the label has to key off this flag directly or it
     /// freezes on "NOT CONSOLIDATED".
     capture_hold: bool,
+    /// Consolidation progress as (percent, seconds remaining), bucketed by
+    /// `hold_pct_for` so the countdown doesn't rewrite the label every tick.
+    hold_pct: Option<(u8, i64)>,
     points: i32,
     capture_pct: Option<u8>,
     /// (percent complete, seconds remaining)
@@ -411,6 +414,7 @@ fn objective_label(
     navaid: &str,
     capture_pct: Option<u8>,
     repair_pct: Option<(u8, i64)>,
+    hold_pct: Option<(u8, i64)>,
 ) -> CompactString {
     use std::fmt::Write;
     // A * on the line above the name marks an objective with an
@@ -447,7 +451,27 @@ fn objective_label(
     // Tell players why a battered objective is or isn't takeable yet -- the
     // health bar alone doesn't reveal that the last infantry must also be dead.
     if obj.in_capture_hold() {
-        let _ = write!(s, "\n>> NOT CONSOLIDATED - hold with troops or it goes Neutral");
+        // A live countdown, so a crew can tell a running hold from a stuck
+        // one -- and a plain statement of what is stopping it when the
+        // holding troops wander out of the zone.
+        match (hold_pct, obj.capture_hold_stalled()) {
+            (_, true) => {
+                let _ = write!(s, "\n>> CONSOLIDATION PAUSED - no troops in the zone");
+            }
+            (Some((pct, remaining)), false) => {
+                let _ = write!(
+                    s,
+                    "\n>> CONSOLIDATING {pct}% ({} left) - hold the zone with troops",
+                    fmt_eta(remaining)
+                );
+            }
+            (None, false) => {
+                let _ = write!(
+                    s,
+                    "\n>> NOT CONSOLIDATED - hold with troops or it goes Neutral"
+                );
+            }
+        }
     } else if obj.captureable() {
         let _ = write!(s, "\n>> CAPTURABLE - land troops in the zone");
     } else if obj.health <= 20 && obj.infantry > 0 {
@@ -490,6 +514,7 @@ impl ObjectiveMarkup {
             supply: _,
             fuel: _,
             capture_hold: _,
+            hold_pct: _,
             points: _,
             capture_pct: _,
             repair_pct: _,
@@ -521,6 +546,7 @@ impl ObjectiveMarkup {
         moved: &[ObjectiveId],
         capture_pct: Option<u8>,
         repair_pct: Option<(u8, i64)>,
+        hold_pct: Option<(u8, i64)>,
     ) {
         if obj.owner != self.side {
             let text_color = |a| text_color(obj.owner, a);
@@ -574,6 +600,7 @@ impl ObjectiveMarkup {
             || self.points != obj.points
             || self.capture_pct != capture_pct
             || self.repair_pct != repair_pct
+            || self.hold_pct != hold_pct
             || self.navaid != navaid
             || hold_changed
             || capturable_changed
@@ -598,10 +625,12 @@ impl ObjectiveMarkup {
             self.points = obj.points;
             self.capture_pct = capture_pct;
             self.repair_pct = repair_pct;
+            self.hold_pct = hold_pct;
             self.navaid = navaid;
             msgq.set_markup_text(
                 self.label,
-                objective_label(&self.name, obj, &self.navaid, capture_pct, repair_pct).into(),
+                objective_label(&self.name, obj, &self.navaid, capture_pct, repair_pct, hold_pct)
+                    .into(),
             );
         }
         if let Zone::Circle { pos, .. } = obj.zone
@@ -636,14 +665,17 @@ impl ObjectiveMarkup {
         persisted: &Persisted,
         capture_pct: Option<u8>,
         repair_pct: Option<(u8, i64)>,
+        hold_pct: Option<(u8, i64)>,
     ) -> Self {
         let text_color = |a| text_color(obj.owner, a);
-        let all_spec = match obj.kind {
-            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics | ObjectiveKind::NavalBase | ObjectiveKind::Factory { .. } | ObjectiveKind::CommandCenter => {
-                SideFilter::All
-            }
-            ObjectiveKind::Farp { .. } | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. } => obj.owner.into(),
-        };
+        // Every objective is drawn for both coalitions. Hiding the enemy's
+        // FARPs and carrier groups didn't conceal much -- a FARP is a visible
+        // pad you fly over and a carrier task force is the most conspicuous
+        // thing on the water -- while it did leave attacking players unable to
+        // see what they were being asked to take. Special SAM sites are the
+        // deliberate exception and get no markup at all (they are never
+        // reached here; see `create_objective_markup`).
+        let all_spec = SideFilter::All;
         let mut t = ObjectiveMarkup::default();
         t.side = obj.owner;
         t.threatened = obj.threatened;
@@ -655,6 +687,7 @@ impl ObjectiveMarkup {
         t.fuel = obj.fuel;
         t.capture_pct = capture_pct;
         t.repair_pct = repair_pct;
+        t.hold_pct = hold_pct;
         t.navaid = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
             CompactString::default()
         } else {
@@ -793,7 +826,8 @@ impl ObjectiveMarkup {
                 fill_color: Color::black(0.),
                 font_size: 10,
                 read_only: true,
-                text: objective_label(&t.name, obj, &t.navaid, capture_pct, repair_pct).into(),
+                text: objective_label(&t.name, obj, &t.navaid, capture_pct, repair_pct, hold_pct)
+                    .into(),
             },
         );
         // Draw kind-specific icon symbol inside the objective zone
@@ -838,11 +872,7 @@ impl ObjectiveMarkup {
                     let dobj = &persisted.objectives[oid];
                     let (spos, dpos) = arrow_coords(obj, dobj);
                     msgq.arrow_to(
-                        if dobj.is_farp() {
-                            dobj.owner.into()
-                        } else {
-                            all_spec
-                        },
+                        all_spec,
                         id,
                         ArrowSpec {
                             start: LuaVec3(Vector3::new(dpos.x, 0., dpos.y)),
@@ -864,7 +894,7 @@ impl ObjectiveMarkup {
                         let id = MarkId::new();
                         let (spos, dpos) = arrow_coords(obj, dst_obj);
                         msgq.arrow_to(
-                            dst_obj.owner.into(),
+                            all_spec,
                             id,
                             ArrowSpec {
                                 start: LuaVec3(Vector3::new(dpos.x, 0., dpos.y)),

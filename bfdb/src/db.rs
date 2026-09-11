@@ -32,17 +32,22 @@ use serde::{Deserialize, Serialize};
 use sled::{transaction::TransactionError, Db};
 use smallvec::SmallVec;
 use std::{
-    collections::{Bound, VecDeque},
+    collections::{Bound, HashMap, HashSet, VecDeque},
     io::{Read as IoRead, Write as IoWrite},
     ops::Deref,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, Mutex as StdMutex, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex as StdMutex, RwLock,
+    },
     time::Duration,
 };
 use tokio::{sync::broadcast, task};
 use uuid::Uuid;
 use yats::Tree;
+
+use crate::instance::{InstanceCfg, InstanceId, Registry};
 
 db_id!(KillId);
 db_id!(RoundId);
@@ -357,7 +362,28 @@ impl Pilots {
         Ok(())
     }
 
-    fn with_pilot_and_aggregates<F, G>(&self, ucid: Ucid, round: RoundId, f: F, g: G) -> Result<()>
+    /// Credit a pilot for something that happened in `round`.
+    ///
+    /// `f` updates their **lifetime** total, `g` the per-round, per-vehicle
+    /// aggregate. `lifetime` is false for a round on a non-public (test)
+    /// instance: the per-round row is still written -- so an admin looking at
+    /// that server's round still sees real numbers -- but the lifetime total
+    /// is left alone, which is what keeps the public leaderboard and pilot
+    /// profiles free of test-server activity.
+    ///
+    /// Note the asymmetry this preserves: `Pilot.total` is written on every
+    /// call, but the aggregate row only when the pilot is in a slot with a
+    /// known vehicle. That is why the public total cannot be re-derived by
+    /// summing `aggregates` -- it would silently under-count. `Pilot.total`
+    /// IS the public total, by construction.
+    fn with_pilot_and_aggregates<F, G>(
+        &self,
+        ucid: Ucid,
+        round: RoundId,
+        lifetime: bool,
+        f: F,
+        g: G,
+    ) -> Result<()>
     where
         F: FnMut(&mut Pilot),
         G: FnMut(&mut Aggregates),
@@ -366,7 +392,9 @@ impl Pilots {
             .round_info
             .get(&(ucid, round))?
             .and_then(|ri| ri.slot.and_then(|s| s.vehicle));
-        self.with_pilot(ucid, f)?;
+        if lifetime {
+            self.with_pilot(ucid, f)?;
+        }
         if let Some(vehicle) = vehicle {
             self.with_aggregates((ucid, vehicle, round), g)?
         }
@@ -453,6 +481,122 @@ pub(crate) struct SessionEnd {
     pub(crate) engine: PerfInner,
 }
 
+/// One unit type out of a harvested snapshot. Mirrors `bflib::unitdb::UnitInfo`
+/// over JSON deliberately: bfdb must still be able to read old snapshots after
+/// the engine's struct grows a field, so unknown keys are ignored and every
+/// known one is optional.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct UnitDbEntry {
+    #[serde(default)]
+    pub(crate) display_name: Option<std::string::String>,
+    #[serde(default)]
+    pub(crate) category: Option<std::string::String>,
+    #[serde(default)]
+    pub(crate) attributes: Vec<std::string::String>,
+    #[serde(default)]
+    pub(crate) threat_range_m: Option<f64>,
+    #[serde(default)]
+    pub(crate) threat_range_min_m: Option<f64>,
+    #[serde(default)]
+    pub(crate) detection_range_m: Option<f64>,
+    #[serde(default)]
+    pub(crate) max_target_detection_range_m: Option<f64>,
+}
+
+/// A unit range database as harvested from one DCS install.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct UnitDbSnapshot {
+    #[serde(default)]
+    pub(crate) dcs_version: Option<std::string::String>,
+    #[serde(default)]
+    pub(crate) harvested_at: Option<std::string::String>,
+    #[serde(default)]
+    pub(crate) by_type: HashMap<std::string::String, UnitDbEntry>,
+}
+
+/// What happened to one unit type between two snapshots.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum UnitDbChange {
+    Added {
+        typ: std::string::String,
+        display_name: Option<std::string::String>,
+        threat_range_m: Option<f64>,
+        detection_range_m: Option<f64>,
+    },
+    Removed {
+        typ: std::string::String,
+        display_name: Option<std::string::String>,
+    },
+    /// A range moved. This is the one that matters: it means a unit the
+    /// campaign is balanced around now shoots or sees further than it did.
+    RangeChanged {
+        typ: std::string::String,
+        display_name: Option<std::string::String>,
+        field: &'static str,
+        from: Option<f64>,
+        to: Option<f64>,
+    },
+}
+
+/// A `cfg.artillery.units` entry that disagrees with the harvested DCS values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct StaleOverride {
+    pub(crate) typ: std::string::String,
+    pub(crate) cfg_max_range_m: f64,
+    pub(crate) cfg_min_range_m: f64,
+    pub(crate) dcs_max_range_m: Option<f64>,
+    pub(crate) dcs_min_range_m: Option<f64>,
+}
+
+/// Compare two snapshots. Only range fields are compared -- display names and
+/// attributes churn across DCS patches for reasons nobody needs paging about.
+pub(crate) fn diff_unit_db(old: &UnitDbSnapshot, new: &UnitDbSnapshot) -> Vec<UnitDbChange> {
+    let mut out = vec![];
+    for (typ, n) in &new.by_type {
+        match old.by_type.get(typ) {
+            None => out.push(UnitDbChange::Added {
+                typ: typ.clone(),
+                display_name: n.display_name.clone(),
+                threat_range_m: n.threat_range_m,
+                detection_range_m: n.detection_range_m,
+            }),
+            Some(o) => {
+                let fields: [(&'static str, Option<f64>, Option<f64>); 3] = [
+                    ("threat_range_m", o.threat_range_m, n.threat_range_m),
+                    ("threat_range_min_m", o.threat_range_min_m, n.threat_range_min_m),
+                    ("detection_range_m", o.detection_range_m, n.detection_range_m),
+                ];
+                for (field, from, to) in fields {
+                    if from != to {
+                        out.push(UnitDbChange::RangeChanged {
+                            typ: typ.clone(),
+                            display_name: n.display_name.clone(),
+                            field,
+                            from,
+                            to,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    for (typ, o) in &old.by_type {
+        if !new.by_type.contains_key(typ) {
+            out.push(UnitDbChange::Removed {
+                typ: typ.clone(),
+                display_name: o.display_name.clone(),
+            });
+        }
+    }
+    out.sort_by_key(|c| match c {
+        UnitDbChange::Added { typ, .. }
+        | UnitDbChange::Removed { typ, .. }
+        | UnitDbChange::RangeChanged { typ, .. } => typ.clone(),
+    });
+    out
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Session {
     pub(crate) stop_time: Option<DateTime<Utc>>,
@@ -485,6 +629,10 @@ pub(crate) struct Group {
 
 #[derive(Debug, Clone)]
 struct StatCtxInner {
+    /// Whether this round's activity counts towards lifetime pilot totals --
+    /// false for a round on an instance with `public: false`. Resolved once
+    /// when the round context is established rather than per stat.
+    public: bool,
     sortie: Scenario,
     round: RoundId,
     seq: DateTime<Utc>
@@ -510,16 +658,97 @@ impl StatCtx {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct StatsDbInner {
+/// Everything that is per-DCS-server rather than per-database.
+///
+/// One of these exists for each entry in the `--instances` file (or exactly one,
+/// id [`DEFAULT_INSTANCE`], for a legacy single-server bfdb). It owns that
+/// server's netidx subscription, its own copy of the ingestion loops' live
+/// state, and its own engine-log ring buffers -- so two DCS servers fronted by
+/// the same bfdb never share a sortie, a log stream or a weather snapshot.
+///
+/// Anything *persisted* stays on [`StatsDbInner`]: rounds are tagged with an
+/// [`InstanceId`] in the `round_instance` tree rather than being stored in
+/// separate per-instance trees, which keeps a pre-multi-instance DB readable
+/// (an untagged round belongs to the default instance).
+pub(crate) struct InstanceState {
+    /// Static config this instance was started with.
+    pub(crate) cfg: Arc<InstanceCfg>,
+    /// `cfg.id`, pre-shared for cheap cloning into keys and log lines.
+    pub(crate) id: InstanceId,
     #[allow(dead_code)]
     subscriber: Option<Subscriber>,
-    #[allow(dead_code)]
+    /// `cfg.base` -- the netidx base this instance's bflib publishes under.
     base: Option<NetidxPath>,
-    /// `--sortie` override: when set, the LIVE engine subscriptions (RPC + log)
-    /// use this instead of the sortie learned from the stats stream.
-    sortie_override: Option<String>,
+    /// Per-instance `sortie` override: when set, the LIVE engine subscriptions
+    /// (RPC + log) use this instead of the sortie learned from the stats stream.
+    sortie_override: Option<Scenario>,
     stats_dir: Option<PathBuf>,
+    stats_jsonl: Option<PathBuf>,
+    /// The sortie name of this instance's currently/most-recently active round,
+    /// learned from Stat::NewRound. bflib publishes its engine log and RPC procs
+    /// under `<netidx_base>/<sortie>/...` (see bflib/src/bg/mod.rs), so this
+    /// must be appended to `base` before subscribing -- a bare `base` path
+    /// will never resolve.
+    current_sortie: StdMutex<Option<Scenario>>,
+    latest_weather: RwLock<Option<WeatherSnapshot>>,
+    /// Live bflib engine log for this instance, streamed over netidx from its
+    /// running DCS mission (distinct from bfdb's own process log).
+    engine_log_tx: broadcast::Sender<std::string::String>,
+    engine_log_history: StdMutex<VecDeque<std::string::String>>,
+    /// Subset of engine_log_history matching an ERROR/WARN level tag -- kept
+    /// separately so the admin dashboard can show a short, high-signal error
+    /// feed without the client having to filter the full (much larger,
+    /// frequently-scrolling) log history itself.
+    engine_error_history: StdMutex<VecDeque<std::string::String>>,
+    /// Set by `POST /api/admin/rebuild-stats`. This instance's JSONL reader
+    /// loop notices it on its next tick, wipes the derived trees and re-ingests
+    /// its `stats.jsonl` from the top.
+    jsonl_reset: AtomicBool,
+}
+
+impl InstanceState {
+    fn new(cfg: Arc<InstanceCfg>, subscriber: Option<Subscriber>) -> Self {
+        let id: InstanceId = Arc::from(cfg.id.as_str());
+        if let Some(s) = &cfg.sortie {
+            log::info!("[{id}] live engine subscriptions pinned to sortie {s:?}");
+        }
+        Self {
+            id,
+            subscriber,
+            base: cfg.base.clone(),
+            sortie_override: cfg.sortie.as_deref().map(Scenario::from),
+            stats_dir: cfg.stats_dir.clone(),
+            stats_jsonl: cfg.stats_jsonl.clone(),
+            current_sortie: StdMutex::new(None),
+            latest_weather: RwLock::new(None),
+            engine_log_tx: broadcast::channel(1024).0,
+            engine_log_history: StdMutex::new(VecDeque::new()),
+            engine_error_history: StdMutex::new(VecDeque::new()),
+            jsonl_reset: AtomicBool::new(false),
+            cfg,
+        }
+    }
+
+    /// The live sortie as a plain String, for JSON responses.
+    pub(crate) fn live_sortie_public(&self) -> Option<std::string::String> {
+        self.live_sortie().map(|s| s.to_string())
+    }
+
+    /// The sortie to point live subscriptions at, or `None` while the mission
+    /// hasn't reported in yet.
+    fn live_sortie(&self) -> Option<Scenario> {
+        self.sortie_override
+            .clone()
+            .or_else(|| self.current_sortie.lock().unwrap().clone())
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct StatsDbInner {
+    /// Every DCS server instance this bfdb fronts, in configured order.
+    instances: Registry,
+    /// Runtime state per instance, keyed by `InstanceCfg::id`.
+    states: Arc<HashMap<InstanceId, Arc<InstanceState>>>,
     #[allow(dead_code)]
     include: Option<Regex>,
     #[allow(dead_code)]
@@ -552,13 +781,28 @@ pub(crate) struct StatsDbInner {
     objectives: Tree<(RoundId, ObjectiveId), Objective>,
     equipment: Tree<(RoundId, ObjectiveId, String), u32>,
     liquids: Tree<(RoundId, ObjectiveId, LiquidType), u32>,
-    stats_jsonl: Option<PathBuf>,
+    /// Which instance a round belongs to. Written by `new_round`; a round with
+    /// no entry predates multi-instance support and is treated as the default
+    /// instance's (see `round_instance_of`). This is how every round-scoped
+    /// query -- kills, sorties, objectives, captures -- gets filtered per DCS
+    /// server without changing any existing bincode record layout.
+    round_instance: Tree<RoundId, std::string::String>,
+    /// Byte offset of the last line consumed from each instance's
+    /// `stats_jsonl`, persisted so a bfdb restart resumes there instead of
+    /// re-reading the whole file from the top and re-applying every stat (which
+    /// inflated every counter that has no idempotency guard -- captures,
+    /// points, repairs, troops, ...). Keyed by instance id. Rewound by
+    /// `rebuild_stats_from_archive`. Supersedes the pre-multi-instance
+    /// `jsonl_cursor` tree, whose single `0u8` entry is migrated into this one
+    /// under the default instance at startup.
+    jsonl_cursor: Tree<std::string::String, u64>,
+    /// The old single-server JSONL cursor, kept only long enough to migrate it.
+    legacy_jsonl_cursor: Tree<u8, u64>,
     // Auth
     auth_sessions:    Tree<Uuid, SessionData>,
     auth_states:      Tree<Uuid, OAuthState>,
     // Trail history
     trail_points: Tree<(RoundId, std::string::String, i64), (f64, f64, f64, f64)>,
-    latest_weather: Arc<RwLock<Option<WeatherSnapshot>>>,
     // Capture counts per objective per round
     objective_captures: Tree<(RoundId, ObjectiveId), u32>,
     // Capture events (who, what, when) per round -- see CaptureRecord
@@ -585,27 +829,24 @@ pub(crate) struct StatsDbInner {
     // When set (--intel-dir), recon photos are stored as files here rather
     // than as blobs in the DB. Set once at startup via set_intel_dir.
     intel_dir: Arc<RwLock<Option<PathBuf>>>,
-    // Live bflib engine log, streamed over netidx from the running DCS mission
-    // (distinct from bfdb's own process log)
-    engine_log_tx: broadcast::Sender<std::string::String>,
-    engine_log_history: Arc<StdMutex<VecDeque<std::string::String>>>,
-    // Subset of engine_log_history matching an ERROR/WARN level tag -- kept
-    // separately so the admin dashboard can show a short, high-signal error
-    // feed without the client having to filter the full (much larger,
-    // frequently-scrolling) log history itself.
-    engine_error_history: Arc<StdMutex<VecDeque<std::string::String>>>,
-    // The sortie name of the currently/most-recently active round, learned
-    // from Stat::NewRound. bflib publishes its engine log and RPC procs
-    // under `<netidx_base>/<sortie>/...` (see bflib/src/bg/mod.rs), so this
-    // must be appended to `base` before subscribing -- a bare `base` path
-    // will never resolve.
-    current_sortie: Arc<StdMutex<Option<Scenario>>>,
-    // Timestamp of the last stats-archive batch fully processed by
-    // background_loop, persisted so a restart resumes from there instead of
-    // replaying the entire historical archive from the beginning every time
-    // (see background_loop -- a corrupted/duplicate-spammed archive segment
-    // otherwise gets re-read in full on every single bfdb startup).
-    replay_cursor: Tree<u8, DateTime<Utc>>,
+    // Timestamp of the last stats-archive batch fully processed by each
+    // instance's background_loop, persisted so a restart resumes from there
+    // instead of replaying the entire historical archive from the beginning
+    // every time (see background_loop -- a corrupted/duplicate-spammed archive
+    // segment otherwise gets re-read in full on every single bfdb startup).
+    // Keyed by instance id; supersedes the single-entry `legacy_replay_cursor`,
+    // which is migrated into it at startup.
+    replay_cursor: Tree<std::string::String, DateTime<Utc>>,
+    /// The old single-server archive cursor, kept only long enough to migrate it.
+    legacy_replay_cursor: Tree<u8, DateTime<Utc>>,
+    // Unit range databases harvested from the running DCS install, keyed
+    // (instance id, DCS version). Stored as the raw JSON the engine sent
+    // rather than a bincode struct: these are snapshots we diff across DCS
+    // updates and want to still be readable if the struct changes shape.
+    unit_db: Tree<(std::string::String, std::string::String), std::string::String>,
+    // Most recently harvested DCS version per instance. Not derivable from
+    // `unit_db`'s key order -- "2.9.3.100" sorts after "2.9.29.27468".
+    unit_db_latest: Tree<std::string::String, std::string::String>,
 }
 
 // Kept deliberately large: the dashboard's Engine Log viewer only shows a
@@ -753,25 +994,49 @@ fn txn_err(e: TransactionError<anyhow::Error>) -> anyhow::Error {
 }
 
 impl StatsDb {
+    /// Open the database and start one ingestion pipeline per configured
+    /// instance.
+    ///
+    /// `subscriber` is shared by every instance -- a netidx Subscriber
+    /// multiplexes any number of paths, and the instances are kept apart by
+    /// their distinct `base` paths, not by separate connections. It is `None`
+    /// in offline mode (no instance has a `base`).
     pub(crate) fn new<P: AsRef<Path>>(
-        subscriber: Subscriber,
+        subscriber: Option<Subscriber>,
         db: P,
-        base: NetidxPath,
-        sortie_override: Option<String>,
-        stats_dir: Option<PathBuf>,
-        stats_jsonl: Option<PathBuf>,
+        instances: Registry,
         include: Option<Regex>,
         exclude: Option<Regex>,
     ) -> Result<Self> {
         let db = sled::open(db.as_ref())?;
-        if let Some(s) = &sortie_override {
-            log::info!("live engine subscriptions pinned to sortie {s:?} (--sortie override)");
+        let states: HashMap<InstanceId, Arc<InstanceState>> = instances
+            .all()
+            .iter()
+            .map(|cfg| {
+                let st = Arc::new(InstanceState::new(
+                    cfg.clone(),
+                    // Only hand the subscriber to instances that actually have
+                    // a live engine to talk to.
+                    cfg.base.as_ref().and(subscriber.clone()),
+                ));
+                (st.id.clone(), st)
+            })
+            .collect();
+        for cfg in instances.all() {
+            log::info!(
+                "instance {:?} ({}): base={} sortie={} jsonl={} archive={} export_port={}",
+                cfg.id,
+                cfg.label(),
+                cfg.base.as_ref().map(|b| format!("{b}")).unwrap_or_else(|| "-".into()),
+                cfg.sortie.clone().unwrap_or_else(|| "auto".into()),
+                cfg.stats_jsonl.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "-".into()),
+                cfg.stats_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "-".into()),
+                cfg.export_port.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
+            );
         }
         let t = Self(Arc::new(StatsDbInner {
-            subscriber: Some(subscriber),
-            base: Some(base),
-            sortie_override,
-            stats_dir,
+            instances: instances.clone(),
+            states: Arc::new(states),
             include,
             exclude,
             db: db.clone(),
@@ -790,11 +1055,12 @@ impl StatsDb {
             objectives: Tree::open(&db, "objectives")?,
             equipment: Tree::open(&db, "equipment")?,
             liquids: Tree::open(&db, "liquids")?,
-            stats_jsonl,
+            round_instance: Tree::open(&db, "round_instance")?,
+            jsonl_cursor: Tree::open(&db, "jsonl_cursor_v2")?,
+            legacy_jsonl_cursor: Tree::open(&db, "jsonl_cursor")?,
             auth_sessions: Tree::open(&db, "auth_sessions")?,
             auth_states: Tree::open(&db, "auth_states")?,
             trail_points: Tree::open(&db, "trail_points")?,
-            latest_weather: Arc::new(RwLock::new(None)),
             objective_captures: Tree::open(&db, "objective_captures")?,
             captures: Tree::open(&db, "captures")?,
             deploys: Tree::open(&db, "deploys")?,
@@ -806,128 +1072,189 @@ impl StatsDb {
             intel_images: Tree::open(&db, "intel_images")?,
             intel_markup: Tree::open(&db, "intel_markup")?,
             intel_dir: Arc::new(RwLock::new(None)),
-            engine_log_tx: broadcast::channel(1024).0,
-            engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
-            engine_error_history: Arc::new(StdMutex::new(VecDeque::new())),
-            replay_cursor: Tree::open(&db, "replay_cursor")?,
-            current_sortie: Arc::new(StdMutex::new(None)),
+            replay_cursor: Tree::open(&db, "replay_cursor_v2")?,
+            legacy_replay_cursor: Tree::open(&db, "replay_cursor")?,
+            unit_db: Tree::open(&db, "unit_db")?,
+            unit_db_latest: Tree::open(&db, "unit_db_latest")?,
         }));
+        t.migrate_legacy_cursors()?;
         t.seed_wiki_if_empty()?;
         t.seed_wiki_images_if_empty()?;
-        // A older bug fabricated a round named after the last segment of the
-        // netidx base (e.g. "campaign" from "/local/fowl/campaign") whenever a
-        // SessionStart was replayed without a NewRound. Those bogus rounds are
-        // never the real sortie and, being left open, hijack round selection.
-        // Close any that are still open so they stop shadowing the real round.
-        let base_tail = t
-            .0
-            .base
-            .as_ref()
-            .and_then(|p| format!("{p}").rsplit('/').next().map(String::from));
-        if let Some(bogus) = &base_tail {
-            let open_bogus: Vec<(RoundId, Round)> = t
-                .round
-                .scan_prefix(bogus)?
-                .filter_map(|r| r.ok())
-                .filter(|((_, _), rd)| rd.end.is_none())
-                .map(|((_, rid), rd)| (rid, rd))
-                .collect();
-            for (rid, mut rd) in open_bogus {
-                warn!("closing bogus open round {rid:?} (scenario {bogus:?} == netidx base tail, not a real sortie)");
+        t.close_stale_open_rounds()?;
+        for st in t.0.states.values() {
+            let _t = t.clone();
+            let _st = st.clone();
+            task::spawn(async move {
+                if let Err(e) = _t.background_loop(_st.clone()).await {
+                    error!("[{}] background task failed {e:?}", _st.id)
+                }
+            });
+            if st.base.is_some() {
+                let _t = t.clone();
+                let _st = st.clone();
+                task::spawn(async move {
+                    if let Err(e) = _t.engine_log_loop(_st.clone()).await {
+                        error!("[{}] engine log subscription failed {e:?}", _st.id)
+                    }
+                });
+            }
+        }
+        if t.0.states.values().all(|s| s.base.is_none()) {
+            info!("running in offline mode (no instance has a netidx base)");
+        }
+        Ok(t)
+    }
+
+    /// Move the pre-multi-instance single-entry cursors into the per-instance
+    /// trees under the default instance id, once. Without this, an upgraded
+    /// bfdb would see an empty cursor and re-ingest the entire stats history
+    /// from the top -- exactly the round-fragmentation/duplicate-kill problem
+    /// the cursors were added to fix.
+    fn migrate_legacy_cursors(&self) -> Result<()> {
+        let default = self.0.instances.default_id().to_string();
+        if let Some(pos) = self.0.legacy_jsonl_cursor.get(&0u8)? {
+            if self.0.jsonl_cursor.get(&default)?.is_none() {
+                info!("migrating legacy JSONL cursor (offset {pos}) to instance {default:?}");
+                self.0.jsonl_cursor.insert(&default, &pos)?;
+            }
+            self.0.legacy_jsonl_cursor.remove(&0u8)?;
+        }
+        if let Some(ts) = self.0.legacy_replay_cursor.get(&0u8)? {
+            if self.0.replay_cursor.get(&default)?.is_none() {
+                info!("migrating legacy archive replay cursor ({ts}) to instance {default:?}");
+                self.0.replay_cursor.insert(&default, &ts)?;
+            }
+            self.0.legacy_replay_cursor.remove(&0u8)?;
+        }
+        Ok(())
+    }
+
+    /// Exactly one round is ever legitimately open at a time *per instance*.
+    /// Older builds could leave extras open: a placeholder round fabricated
+    /// from a SessionStart that replayed without its NewRound (it took the last
+    /// segment of the netidx base, e.g. "campaign" from "/local/fowl/campaign",
+    /// as a stand-in sortie name), or -- worse -- the *real* round, which the
+    /// previous name-based cleanup here closed on every restart whenever the
+    /// genuine sortie happened to be named the same as that last path segment
+    /// (the documented default is netidx_base "/local/fowl/campaign" + sortie
+    /// "campaign"). Each time it closed the live round, the next SessionStart
+    /// forked a brand-new one, so a single long campaign fragmented into dozens
+    /// of near-identical rounds in the dashboard.
+    ///
+    /// Name-blind fix: per instance, keep only the newest open round (by start
+    /// time) and close any older opens so they stop shadowing round selection.
+    /// The survivor is whatever is actually live, regardless of its name.
+    fn close_stale_open_rounds(&self) -> Result<()> {
+        let mut open_by_instance: HashMap<InstanceId, Vec<(Scenario, RoundId, Round)>> =
+            HashMap::new();
+        for r in self.round.iter() {
+            let ((s, rid), rd) = r?;
+            if rd.end.is_some() {
+                continue;
+            }
+            let inst = self.round_instance_of(rid);
+            open_by_instance.entry(inst).or_default().push((s, rid, rd));
+        }
+        for (inst, mut open) in open_by_instance {
+            open.sort_by(|a, b| a.2.start.cmp(&b.2.start).then(a.1.cmp(&b.1)));
+            let keep = open.pop();
+            for (s, rid, mut rd) in open {
+                warn!(
+                    "[{inst}] closing stale open round {rid:?} (scenario {s:?}) -- only the newest open round is kept"
+                );
                 rd.end = Some(chrono::Utc::now());
-                let _ = t.round.insert(&(bogus.clone(), rid), &rd)?;
+                let _ = self.round.insert(&(s, rid), &rd)?;
+            }
+            // Prime current_sortie from the surviving open round. On restart
+            // the archive replay resumes from replay_cursor and may never
+            // re-witness the NewRound/SessionStart that started this round, so
+            // without this the engine log/RPC subscriptions would wait forever
+            // for a sortie that already exists.
+            if let (Some((sortie, _, _)), Some(st)) = (keep, self.0.states.get(&inst)) {
+                info!("[{inst}] resuming with active round sortie={sortie:?}");
+                *st.current_sortie.lock().unwrap() = Some(sortie);
             }
         }
-        // Prime current_sortie from whatever *real* round is already open in the
-        // DB. On restart, the archive replay resumes from replay_cursor and may
-        // never re-witness the NewRound/SessionStart stat that originally
-        // started the active round (they're before the cursor) -- without this,
-        // the engine log/RPC subscriptions would wait forever for a sortie that
-        // already exists.
-        if let Some((sortie, _, _)) = t
-            .latest_rounds()?
-            .into_iter()
-            .filter(|(s, _, _)| base_tail.as_ref().map(|t| t.as_str()) != Some(s.as_str()))
-            .find(|(_, _, r)| r.end.is_none())
-        {
-            info!("resuming with active round sortie={sortie:?}");
-            *t.current_sortie.lock().unwrap() = Some(sortie);
+        Ok(())
+    }
+
+    // ── instance accessors ────────────────────────────────────────────────
+
+    /// Every instance this bfdb fronts, in configured order.
+    pub(crate) fn instances(&self) -> &Registry {
+        &self.0.instances
+    }
+
+    /// Runtime state for one instance id, or the default instance's when the
+    /// id is unknown to us (which can only happen for a round tagged with an
+    /// instance that has since been removed from the config).
+    pub(crate) fn state(&self, id: &InstanceId) -> Arc<InstanceState> {
+        self.0
+            .states
+            .get(id)
+            .or_else(|| self.0.states.get(self.0.instances.default_id()))
+            .expect("registry always has its default instance")
+            .clone()
+    }
+
+    /// Resolve a `?instance=` query value to that instance's runtime state.
+    pub(crate) fn resolve_state(&self, requested: Option<&str>) -> Result<Arc<InstanceState>> {
+        let cfg = self.0.instances.resolve(requested)?;
+        let id: InstanceId = Arc::from(cfg.id.as_str());
+        Ok(self.state(&id))
+    }
+
+    /// Which instance owns a round. Rounds written before multi-instance
+    /// support carry no tag and belong to the default instance.
+    pub(crate) fn round_instance_of(&self, round: RoundId) -> InstanceId {
+        match self.round_instance.get(&round) {
+            Ok(Some(id)) => Arc::from(id.as_str()),
+            _ => self.0.instances.default_id().clone(),
         }
-        let _t = t.clone();
-        task::spawn(async move {
-            if let Err(e) = _t.background_loop().await {
-                error!("background task failed {e:?}")
-            }
-        });
-        let _t = t.clone();
-        task::spawn(async move {
-            if let Err(e) = _t.engine_log_loop().await {
-                error!("engine log subscription failed {e:?}")
-            }
-        });
-        Ok(t)
     }
 
-    /// Create a database in offline mode (no Netidx subscription)
-    pub(crate) fn new_offline<P: AsRef<Path>>(db: P, stats_dir: Option<PathBuf>, stats_jsonl: Option<PathBuf>) -> Result<Self> {
-        let db = sled::open(db.as_ref())?;
-        let t = Self(Arc::new(StatsDbInner {
-            subscriber: None,
-            base: None,
-            sortie_override: None,
-            stats_dir,
-            include: None,
-            exclude: None,
-            db: db.clone(),
-            pilots: Pilots::new(&db)?,
-            seq: Tree::open(&db, "seq")?,
-            round: Tree::open(&db, "round")?,
-            session: Tree::open(&db, "session")?,
-            kills: Tree::open(&db, "kills")?,
-            shared_kills: Tree::open(&db, "shared_kills")?,
-            kill_seen: Tree::open(&db, "kill_seen")?,
-            sortie_seen: Tree::open(&db, "sortie_seen")?,
-            deploy_seen: Tree::open(&db, "deploy_seen")?,
-            units: Tree::open(&db, "units")?,
-            groups: Tree::open(&db, "groups")?,
-            detected: Tree::open(&db, "detected")?,
-            objectives: Tree::open(&db, "objectives")?,
-            equipment: Tree::open(&db, "equipment")?,
-            liquids: Tree::open(&db, "liquids")?,
-            stats_jsonl,
-            auth_sessions: Tree::open(&db, "auth_sessions")?,
-            auth_states: Tree::open(&db, "auth_states")?,
-            trail_points: Tree::open(&db, "trail_points")?,
-            latest_weather: Arc::new(RwLock::new(None)),
-            objective_captures: Tree::open(&db, "objective_captures")?,
-            captures: Tree::open(&db, "captures")?,
-            deploys: Tree::open(&db, "deploys")?,
-            aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
-            admin_bans: Tree::open(&db, "admin_bans")?,
-            wiki_pages: Tree::open(&db, "wiki_pages")?,
-            wiki_images: Tree::open(&db, "wiki_images")?,
-            intel_captures: Tree::open(&db, "intel_captures")?,
-            intel_images: Tree::open(&db, "intel_images")?,
-            intel_markup: Tree::open(&db, "intel_markup")?,
-            intel_dir: Arc::new(RwLock::new(None)),
-            engine_log_tx: broadcast::channel(1024).0,
-            engine_log_history: Arc::new(StdMutex::new(VecDeque::new())),
-            engine_error_history: Arc::new(StdMutex::new(VecDeque::new())),
-            replay_cursor: Tree::open(&db, "replay_cursor")?,
-            current_sortie: Arc::new(StdMutex::new(None)),
-        }));
-        t.seed_wiki_if_empty()?;
-        t.seed_wiki_images_if_empty()?;
-        let _t = t.clone();
-        task::spawn(async move {
-            if let Err(e) = _t.background_loop().await {
-                error!("background task failed {e:?}")
+    /// The rounds that count towards the public, all-time picture: those
+    /// belonging to an instance with `public: true`.
+    ///
+    /// `None` means "every round" -- returned whenever no instance is marked
+    /// private, so the usual single-purpose deployment never pays for the
+    /// filtering (and keeps using the pre-aggregated pilot totals).
+    pub(crate) fn public_rounds(&self) -> Result<Option<HashSet<RoundId>>> {
+        if !self.0.instances.has_private() {
+            return Ok(None);
+        }
+        let private: HashSet<InstanceId> = self
+            .0
+            .instances
+            .all()
+            .iter()
+            .filter(|i| !i.public)
+            .map(|i| InstanceId::from(i.id.as_str()))
+            .collect();
+        let mut out = HashSet::new();
+        for r in self.round.iter() {
+            let ((_, rid), _) = r?;
+            if !private.contains(&self.round_instance_of(rid)) {
+                out.insert(rid);
             }
-        });
-        info!("running in offline mode (no Netidx subscription)");
-        Ok(t)
+        }
+        Ok(Some(out))
     }
 
+    /// Every round id belonging to `inst`. Used to filter the round-scoped
+    /// stats trees, which are keyed by RoundId and carry no instance of their
+    /// own. Cheap: the round tree holds one entry per campaign round, not per
+    /// event.
+    pub(crate) fn rounds_of(&self, inst: &InstanceId) -> Result<HashSet<RoundId>> {
+        let mut out = HashSet::new();
+        for r in self.round.iter() {
+            let ((_, rid), _) = r?;
+            if &self.round_instance_of(rid) == inst {
+                out.insert(rid);
+            }
+        }
+        Ok(out)
+    }
     /// A live subscription to the running bflib engine's log stream,
     /// published over netidx at `<base>/<sortie>/log` by `bflib::bg::logpub`
     /// (bflib appends its mission sortie name to `netidx_base` before
@@ -937,23 +1264,18 @@ impl StatsDb {
     /// new line), so we track how much we've already seen and only forward
     /// the newly-appended lines. Waits for the sortie to become known via
     /// Stat::NewRound, and resubscribes if it changes (new mission/round).
-    async fn engine_log_loop(self) -> Result<()> {
+    async fn engine_log_loop(self, inst: Arc<InstanceState>) -> Result<()> {
         use futures::{channel::mpsc, StreamExt};
         use netidx::subscriber::{Event, UpdatesFlags};
         use netidx::publisher::Value;
 
-        let (subscriber, base) = match (&self.0.subscriber, &self.0.base) {
+        let (subscriber, base) = match (&inst.subscriber, &inst.base) {
             (Some(s), Some(b)) => (s.clone(), b.clone()),
             _ => return Ok(()),
         };
         loop {
             let sortie = loop {
-                if let Some(s) = self
-                    .0
-                    .sortie_override
-                    .clone()
-                    .or_else(|| self.0.current_sortie.lock().unwrap().clone())
-                {
+                if let Some(s) = inst.live_sortie() {
                     break s;
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -965,8 +1287,8 @@ impl StatsDb {
             while let Some(batch) = rx.next().await {
                 // With a --sortie override the target never changes; otherwise
                 // resubscribe when the live sortie moves (new mission/round).
-                if self.0.sortie_override.is_none()
-                    && self.0.current_sortie.lock().unwrap().as_ref() != Some(&sortie)
+                if inst.sortie_override.is_none()
+                    && inst.current_sortie.lock().unwrap().as_ref() != Some(&sortie)
                 {
                     break;
                 }
@@ -979,30 +1301,30 @@ impl StatsDb {
                     seen_len = full.len();
                     for line in new_part.lines().filter(|l| !l.is_empty()) {
                         let line = std::string::String::from(line);
-                        let mut hist = self.0.engine_log_history.lock().unwrap();
+                        let mut hist = inst.engine_log_history.lock().unwrap();
                         if hist.len() >= ENGINE_LOG_HISTORY_CAP {
                             hist.pop_front();
                         }
                         hist.push_back(line.clone());
                         drop(hist);
                         if is_engine_error_line(&line) {
-                            let mut errs = self.0.engine_error_history.lock().unwrap();
+                            let mut errs = inst.engine_error_history.lock().unwrap();
                             if errs.len() >= ENGINE_ERROR_HISTORY_CAP {
                                 errs.pop_front();
                             }
                             errs.push_back(line.clone());
                         }
-                        let _ = self.0.engine_log_tx.send(line);
+                        let _ = inst.engine_log_tx.send(line);
                     }
                 }
             }
-            if self.0.sortie_override.is_some() {
+            if inst.sortie_override.is_some() {
                 // Sortie is pinned: the subscription just ended (engine restart
                 // / mission reload). Pause, then resubscribe on the next loop.
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             }
-            if self.0.current_sortie.lock().unwrap().as_ref() == Some(&sortie) {
+            if inst.current_sortie.lock().unwrap().as_ref() == Some(&sortie) {
                 // subscription itself ended (not a sortie change) -- nothing left to do
                 return Ok(());
             }
@@ -1011,22 +1333,25 @@ impl StatsDb {
 
     /// Subscribe to the live engine log stream, plus a snapshot of recent
     /// history for a newly-connected client to catch up with.
-    pub(crate) fn engine_log_subscribe(&self) -> (broadcast::Receiver<std::string::String>, Vec<std::string::String>) {
-        let rx = self.0.engine_log_tx.subscribe();
-        let hist = self.0.engine_log_history.lock().unwrap().iter().cloned().collect();
+    pub(crate) fn engine_log_subscribe(
+        &self,
+        inst: &InstanceState,
+    ) -> (broadcast::Receiver<std::string::String>, Vec<std::string::String>) {
+        let rx = inst.engine_log_tx.subscribe();
+        let hist = inst.engine_log_history.lock().unwrap().iter().cloned().collect();
         (rx, hist)
     }
 
     /// Recent ERROR/WARN lines from the engine log, oldest first -- backs the
     /// admin dashboard's error feed (see api_admin_engine_errors in main.rs).
-    pub(crate) fn engine_error_snapshot(&self) -> Vec<std::string::String> {
-        self.0.engine_error_history.lock().unwrap().iter().cloned().collect()
+    pub(crate) fn engine_error_snapshot(&self, inst: &InstanceState) -> Vec<std::string::String> {
+        inst.engine_error_history.lock().unwrap().iter().cloned().collect()
     }
 
     /// Full in-memory engine-log backlog, oldest first (cap
     /// `ENGINE_LOG_HISTORY_CAP`). Backs `GET /api/logs/engine`.
-    pub(crate) fn engine_log_snapshot(&self) -> Vec<std::string::String> {
-        self.0.engine_log_history.lock().unwrap().iter().cloned().collect()
+    pub(crate) fn engine_log_snapshot(&self, inst: &InstanceState) -> Vec<std::string::String> {
+        inst.engine_log_history.lock().unwrap().iter().cloned().collect()
     }
 
     /// Call one of bflib's netidx RPC procs (published under
@@ -1041,26 +1366,30 @@ impl StatsDb {
     /// `reply_err!` macro) -- callers should check the returned Value's variant.
     pub(crate) async fn call_engine_rpc(
         &self,
+        inst: &InstanceState,
         proc_name: &str,
         args: Vec<(&str, netidx::publisher::Value)>,
     ) -> Result<netidx::publisher::Value> {
         use netidx_protocols::rpc::client::Proc;
-        let (subscriber, base) = match (&self.0.subscriber, &self.0.base) {
+        let (subscriber, base) = match (&inst.subscriber, &inst.base) {
             (Some(s), Some(b)) => (s, b),
-            _ => bail!("netidx is disabled (bfdb started without --base)"),
+            _ => bail!("instance {:?} has no netidx base configured", inst.cfg.id),
         };
-        let sortie = self.0.sortie_override.clone()
-            .or_else(|| self.0.current_sortie.lock().unwrap().clone())
-            .ok_or_else(|| anyhow!("no active sortie yet (mission hasn't reported in)"))?;
+        let sortie = inst.live_sortie().ok_or_else(|| {
+            anyhow!(
+                "instance {:?}: no active sortie yet (mission has not reported in)",
+                inst.cfg.id
+            )
+        })?;
         let path = base.append(&sortie).append("api").append(proc_name);
         let proc = Proc::new(subscriber, path)?;
         proc.call(args).await
     }
 
-    async fn background_loop(self) -> Result<()> {
+    async fn background_loop(self, inst: Arc<InstanceState>) -> Result<()> {
         // If stats_jsonl is configured, use the JSONL reader instead of archive
-        if let Some(jsonl_path) = self.stats_jsonl.clone() {
-            return self.jsonl_loop(jsonl_path).await;
+        if let Some(jsonl_path) = inst.stats_jsonl.clone() {
+            return self.jsonl_loop(inst, jsonl_path).await;
         }
 
         use arcstr::ArcStr;
@@ -1068,10 +1397,11 @@ impl StatsDb {
         use netidx_archive::logfile::BatchItem;
         use tokio::time;
 
-        let stats_dir = match &self.stats_dir {
+        let stats_dir = match &inst.stats_dir {
             Some(d) => d.clone(),
             None => return Ok(()), // no archive configured
         };
+        let inst_key = inst.id.to_string();
 
         let shard: ArcStr = "0".into();
         let mut archive_cfg = ArchiveFileCfg::default();
@@ -1084,9 +1414,9 @@ impl StatsDb {
         // Resume from wherever we last left off instead of always replaying
         // the entire historical archive from the beginning -- see
         // replay_cursor's doc comment on StatsDbInner.
-        let resume_from = self.0.replay_cursor.get(&0u8)?;
+        let resume_from = self.0.replay_cursor.get(&inst_key)?;
         if let Some(ts) = resume_from {
-            info!("resuming stats archive replay after {ts}");
+            info!("[{}] resuming stats archive replay after {ts}", inst.id);
         }
 
         let mut ctx = StatCtx::default();
@@ -1204,8 +1534,10 @@ impl StatsDb {
                                 if total_batches <= 10 || total_batches % 100 == 0 {
                                     info!("adding stat variant={}", stat_variant_name(&st));
                                 }
-                                if let Err(e) = task::block_in_place(|| self.add_stat(&mut ctx, ts, st)) {
-                                    error!("failed to add stat {e:?}")
+                                if let Err(e) =
+                                    task::block_in_place(|| self.add_stat(&inst, &mut ctx, ts, st))
+                                {
+                                    error!("[{}] failed to add stat {e:?}", inst.id)
                                 }
                             }
                         }
@@ -1215,7 +1547,7 @@ impl StatsDb {
             // Persist how far we've gotten so a restart resumes here instead
             // of replaying the whole archive from scratch.
             if let Some(ts) = last_seen_ts {
-                if let Err(e) = self.0.replay_cursor.insert(&0u8, &ts) {
+                if let Err(e) = self.0.replay_cursor.insert(&inst_key, &ts) {
                     error!("failed to save replay cursor: {e:?}");
                 }
             }
@@ -1223,18 +1555,57 @@ impl StatsDb {
     }
 
     /// Read stats from a JSONL file (one JSON object per line)
-    async fn jsonl_loop(self, jsonl_path: PathBuf) -> Result<()> {
+    async fn jsonl_loop(self, inst: Arc<InstanceState>, jsonl_path: PathBuf) -> Result<()> {
         use std::io::BufRead;
         use tokio::time;
 
+        let inst_key = inst.id.to_string();
         let mut ctx = StatCtx::default();
         let mut timer = time::interval(Duration::from_secs(5));
-        let mut last_pos: u64 = 0;
+        let mut last_pos: u64 = self.0.jsonl_cursor.get(&inst_key)?.unwrap_or(0);
 
-        info!("starting JSONL reader from {jsonl_path:?}");
+        // Resume ctx from whatever round is still open, so stats that land
+        // before the next SessionStart (e.g. after a bfdb-only restart) still
+        // get attributed instead of being dropped as "no NewSession before
+        // stats".
+        if last_pos > 0 {
+            if let Ok(rounds) = self.latest_rounds_for(&inst.id) {
+                if let Some((sortie, round, _)) =
+                    rounds.into_iter().find(|(_, _, r)| r.end.is_none())
+                {
+                    if let Ok(Some(seq)) = self.seq.get(&(sortie.clone(), round)) {
+                        ctx.0 = Some(StatCtxInner { public: inst.cfg.public, sortie, round, seq });
+                    }
+                }
+            }
+        }
+
+        info!("[{}] starting JSONL reader from {jsonl_path:?} at offset {last_pos}", inst.id);
 
         loop {
             timer.tick().await;
+
+            // Live rebuild requested (POST /api/admin/rebuild-stats): wipe the
+            // derived trees and start reading the file over from the top. Done
+            // here, in the loop thread, so it can't interleave with add_stat.
+            if inst.jsonl_reset.swap(false, Ordering::SeqCst) {
+                warn!(
+                    "[{}] jsonl rebuild requested -- wiping derived stats and re-ingesting {jsonl_path:?} from offset 0",
+                    inst.id
+                );
+                if let Err(e) = task::block_in_place(|| self.wipe_stats_derived_trees()) {
+                    error!(
+                        "[{}] jsonl rebuild: wipe failed ({e:?}) -- aborting rebuild, keeping current data",
+                        inst.id
+                    );
+                } else {
+                    let _ = self.0.jsonl_cursor.insert(&inst_key, &0u64);
+                    *inst.current_sortie.lock().unwrap() = None;
+                    last_pos = 0;
+                    ctx = StatCtx::default();
+                }
+            }
+
             let read_result = task::block_in_place(|| -> Result<(u64, Vec<(DateTime<Utc>, Stat)>)> {
                 let file = match std::fs::File::open(&jsonl_path) {
                     Ok(f) => f,
@@ -1288,11 +1659,21 @@ impl StatsDb {
                     if !stats.is_empty() {
                         let count = stats.len();
                         for (ts, st) in stats {
-                            if let Err(e) = task::block_in_place(|| self.add_stat(&mut ctx, ts, st)) {
-                                warn!("failed to add stat from JSONL: {e:?}");
+                            if let Err(e) =
+                                task::block_in_place(|| self.add_stat(&inst, &mut ctx, ts, st))
+                            {
+                                warn!("[{}] failed to add stat from JSONL: {e:?}", inst.id);
                             }
                         }
-                        info!("processed {count} stats from JSONL (pos {last_pos} -> {pos})");
+                        info!(
+                            "[{}] processed {count} stats from JSONL (pos {last_pos} -> {pos})",
+                            inst.id
+                        );
+                    }
+                    if pos != last_pos {
+                        if let Err(e) = self.0.jsonl_cursor.insert(&inst_key, &pos) {
+                            error!("failed to persist JSONL cursor: {e:?}");
+                        }
                     }
                     last_pos = pos;
                 }
@@ -1303,6 +1684,7 @@ impl StatsDb {
 
     fn new_round(
         &self,
+        inst: &InstanceState,
         ctx: &mut StatCtx,
         start: DateTime<Utc>,
         sortie: String,
@@ -1315,12 +1697,16 @@ impl StatsDb {
             end: None,
             winner: None,
         };
-        info!("new_round: inserting round id={id:?} sortie={sortie:?}");
+        info!("[{}] new_round: inserting round id={id:?} sortie={sortie:?}", inst.id);
         self.seq.insert(&key, &seqnum)?;
         self.round.insert(&key, &r)?;
+        // Tag the round with the DCS server it belongs to. Every round-scoped
+        // query filters through this -- see `round_instance_of`.
+        self.round_instance.insert(&id, &inst.id.to_string())?;
         info!("new_round: round inserted successfully");
-        *self.current_sortie.lock().unwrap() = Some(sortie.clone());
+        *inst.current_sortie.lock().unwrap() = Some(sortie.clone());
         ctx.0 = Some(StatCtxInner {
+            public: inst.cfg.public,
             sortie,
             round: id,
             seq: seqnum,
@@ -1423,6 +1809,7 @@ impl StatsDb {
                 self.pilots.with_pilot_and_aggregates(
                     *ucid,
                     ctx.round,
+                    ctx.public,
                     |p| p.total.deaths += 1,
                     |a| a.deaths += 1,
                 )?;
@@ -1466,6 +1853,7 @@ impl StatsDb {
                         self.pilots.with_pilot_and_aggregates(
                             *ucid,
                             ctx.round,
+                            ctx.public,
                             |p| up(&mut p.total),
                             |a| up(a),
                         )?;
@@ -1504,7 +1892,9 @@ impl StatsDb {
     pub(crate) fn pilot_leaderboard(&self, round: Option<RoundId>) -> Result<Vec<(Ucid, String, Aggregates)>> {
         match round {
             None => {
-                // All-time: use pre-aggregated totals
+                // All-time: use pre-aggregated totals. These are already the
+                // *public* totals -- a non-public (test) instance's rounds
+                // never touch `Pilot.total` (see with_pilot_and_aggregates).
                 let mut entries = Vec::new();
                 for r in self.pilots.pilots.iter() {
                     let (ucid, pilot) = r?;
@@ -1679,8 +2069,8 @@ impl StatsDb {
         Ok((blue_reg, red_reg, blue_online, red_online))
     }
 
-    pub(crate) fn latest_weather(&self) -> Option<WeatherSnapshot> {
-        self.latest_weather.read().ok()?.clone()
+    pub(crate) fn latest_weather(&self, inst: &InstanceState) -> Option<WeatherSnapshot> {
+        inst.latest_weather.read().ok()?.clone()
     }
 
     pub(crate) fn latest_session_end(&self) -> Result<Option<SessionEnd>> {
@@ -1748,6 +2138,100 @@ impl StatsDb {
                 out.push((*ucid, name.to_string(), *until));
             }
         }
+        Ok(out)
+    }
+
+
+    // ── DCS unit range database snapshots ────────────────────────────────────
+
+    /// Store a snapshot harvested by the engine. Returns the previous version
+    /// when this one is different, i.e. "DCS changed under us, go diff".
+    pub(crate) fn store_unit_db(
+        &self,
+        inst: &str,
+        version: &str,
+        json: &str,
+    ) -> Result<Option<std::string::String>> {
+        let key = (inst.to_string(), version.to_string());
+        self.unit_db.insert(&key, &json.to_string())?;
+        let prev = self.unit_db_latest.get(&inst.to_string())?;
+        self.unit_db_latest
+            .insert(&inst.to_string(), &version.to_string())?;
+        Ok(prev.filter(|p| p != version))
+    }
+
+    pub(crate) fn unit_db_json(&self, inst: &str, version: &str) -> Result<Option<std::string::String>> {
+        Ok(self.unit_db.get(&(inst.to_string(), version.to_string()))?)
+    }
+
+    /// Every DCS version we have a snapshot for, oldest insertion first is not
+    /// knowable, so these come back in key order.
+    pub(crate) fn unit_db_versions(&self, inst: &str) -> Result<Vec<std::string::String>> {
+        let mut out = vec![];
+        for r in self.unit_db.scan_prefix(&inst.to_string())? {
+            let ((_, version), _) = r?;
+            out.push(version);
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn unit_db_latest(&self, inst: &str) -> Result<Option<(std::string::String, std::string::String)>> {
+        let Some(version) = self.unit_db_latest.get(&inst.to_string())? else {
+            return Ok(None);
+        };
+        match self.unit_db_json(inst, &version)? {
+            Some(json) => Ok(Some((version, json))),
+            None => Ok(None),
+        }
+    }
+
+    /// Artillery ranges in the campaign config that no longer agree with what
+    /// DCS says. An entry in `cfg.artillery.units` overrides the harvest, so a
+    /// disagreement is either a patch worth absorbing or an override worth
+    /// keeping -- but it should never be a surprise.
+    pub(crate) fn unit_db_stale_overrides(&self, inst: &str) -> Result<Vec<StaleOverride>> {
+        let Some((_, json)) = self.unit_db_latest(inst)? else {
+            return Ok(vec![]);
+        };
+        let snap: UnitDbSnapshot = serde_json::from_str(&json)?;
+        let mut latest_cfg: Option<Cfg> = None;
+        for r in self.session.iter() {
+            match r {
+                Ok((_, s)) => latest_cfg = Some(s.cfg),
+                Err(e) => {
+                    log::warn!("unit_db_stale_overrides: skipping unreadable session: {e:?}");
+                    continue;
+                }
+            }
+        }
+        let Some(art) = latest_cfg.and_then(|c| c.artillery) else {
+            return Ok(vec![]);
+        };
+        let mut out = vec![];
+        for (typ, over) in &art.units {
+            let Some(info) = snap.by_type.get(typ.as_str()) else {
+                out.push(StaleOverride {
+                    typ: typ.to_string(),
+                    cfg_max_range_m: over.max_range_m,
+                    cfg_min_range_m: over.min_range_m,
+                    dcs_max_range_m: None,
+                    dcs_min_range_m: None,
+                });
+                continue;
+            };
+            let dcs_max = info.threat_range_m;
+            let dcs_min = info.threat_range_min_m.unwrap_or(0.0);
+            if dcs_max != Some(over.max_range_m) || dcs_min != over.min_range_m {
+                out.push(StaleOverride {
+                    typ: typ.to_string(),
+                    cfg_max_range_m: over.max_range_m,
+                    cfg_min_range_m: over.min_range_m,
+                    dcs_max_range_m: dcs_max,
+                    dcs_min_range_m: info.threat_range_min_m,
+                });
+            }
+        }
+        out.sort_by(|a, b| a.typ.cmp(&b.typ));
         Ok(out)
     }
 
@@ -1822,8 +2306,12 @@ impl StatsDb {
     /// fallback a registered pilot who simply hasn't rejoined the server
     /// since the last restart would be walled out of their own coalition's
     /// intel.
-    pub(crate) fn pilot_current_side(&self, ucid: &Ucid) -> Result<Option<Side>> {
-        let active = self.active_round_id()?;
+    pub(crate) fn pilot_current_side(
+        &self,
+        inst: &InstanceId,
+        ucid: &Ucid,
+    ) -> Result<Option<Side>> {
+        let active = self.active_round_id(inst)?;
         let mut best: Option<(DateTime<Utc>, Side)> = None;
         for r in self.pilots.round_info.scan_prefix(ucid)? {
             let ((_, rid), ri) = r?;
@@ -1840,10 +2328,10 @@ impl StatsDb {
         Ok(best.map(|(_, s)| s))
     }
 
-    /// The active round id, if any.
-    pub(crate) fn active_round_id(&self) -> Result<Option<RoundId>> {
+    /// The active round id for one instance, if any.
+    pub(crate) fn active_round_id(&self, inst: &InstanceId) -> Result<Option<RoundId>> {
         Ok(self
-            .latest_rounds()?
+            .latest_rounds_for(inst)?
             .into_iter()
             .find(|(_, _, r)| r.end.is_none())
             .map(|(_, rid, _)| rid))
@@ -1976,6 +2464,36 @@ impl StatsDb {
         }
     }
 
+    /// Purge only the recon intel belonging to `rounds` -- the per-instance
+    /// counterpart of `intel_purge_all`, used when one server's campaign is
+    /// reset while another's keeps running.
+    pub(crate) fn intel_purge_all_for(&self, rounds: &HashSet<RoundId>) -> Result<()> {
+        if rounds.is_empty() {
+            return Ok(());
+        }
+        let dead: Vec<((RoundId, Uuid), IntelCapture)> = self
+            .intel_captures
+            .iter()
+            .filter_map(|r| r.ok())
+            .filter(|((rid, _), _)| rounds.contains(rid))
+            .collect();
+        for (key, cap) in dead {
+            self.intel_remove_image(&cap.image_id)?;
+            self.intel_captures.remove(&key)?;
+        }
+        let markup: Vec<(RoundId, Uuid)> = self
+            .intel_markup
+            .iter()
+            .filter_map(|r| r.ok())
+            .map(|(k, _)| k)
+            .filter(|(rid, _)| rounds.contains(rid))
+            .collect();
+        for k in markup {
+            self.intel_markup.remove(&k)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn intel_purge_all(&self) -> Result<()> {
         // Remove on-disk files before clearing the index.
         for r in self.intel_images.iter() {
@@ -2038,8 +2556,11 @@ impl StatsDb {
 
     /// JSON payload of the active round's markup (both coalitions) for the
     /// engine's F10-map feed. `None` when there's no active round.
-    pub(crate) fn intel_marks_payload(&self) -> Result<Option<std::string::String>> {
-        let Some(round) = self.active_round_id()? else {
+    pub(crate) fn intel_marks_payload(
+        &self,
+        inst: &InstanceId,
+    ) -> Result<Option<std::string::String>> {
+        let Some(round) = self.active_round_id(inst)? else {
             return Ok(None);
         };
         let items = self.intel_markup_list(round, None)?;
@@ -2090,6 +2611,8 @@ impl StatsDb {
             ("gameplay/points-and-lives", "Points and Lives", "Core Gameplay", 3, include_str!("../seed_wiki/gameplay/points-and-lives.md")),
             ("gameplay/chat-commands", "Chat Commands", "Core Gameplay", 4, include_str!("../seed_wiki/gameplay/chat-commands.md")),
             ("gameplay/gci", "Live GCI (AWACS Calls)", "Core Gameplay", 5, include_str!("../seed_wiki/gameplay/gci.md")),
+            ("gameplay/briefing", "The Auto-Generated Briefing", "Core Gameplay", 6, include_str!("../seed_wiki/gameplay/briefing.md")),
+            ("gameplay/comms-plan", "Comms Plan", "Core Gameplay", 7, include_str!("../seed_wiki/gameplay/comms-plan.md")),
             ("f10-menu/overview", "Overview", "F10 Menu Systems", 0, include_str!("../seed_wiki/f10-menu/overview.md")),
             ("f10-menu/actions", "Actions Menu", "F10 Menu Systems", 1, include_str!("../seed_wiki/f10-menu/actions.md")),
             ("f10-menu/jtac", "JTAC System", "F10 Menu Systems", 2, include_str!("../seed_wiki/f10-menu/jtac.md")),
@@ -2220,12 +2743,30 @@ impl StatsDb {
             .and_then(|(_, s)| s.stop_time)
     }
 
-    pub(crate) fn latest_rounds(&self) -> Result<Vec<(Scenario, RoundId, Round)>> {
+    /// `latest_rounds` restricted to one DCS server instance. Two instances can
+    /// legitimately run the same scenario name, so filtering by scenario alone
+    /// is not enough -- the round tag is authoritative.
+    pub(crate) fn latest_rounds_for(
+        &self,
+        inst: &InstanceId,
+    ) -> Result<Vec<(Scenario, RoundId, Round)>> {
+        self.latest_rounds_inner(Some(inst))
+    }
+
+    fn latest_rounds_inner(
+        &self,
+        inst: Option<&InstanceId>,
+    ) -> Result<Vec<(Scenario, RoundId, Round)>> {
         let mut rounds = Vec::new();
         let mut seen_scenarios = std::collections::HashSet::new();
         // Scan all rounds, keep the latest per scenario
         for r in self.round.iter() {
             let ((scenario, rid), round) = r?;
+            if let Some(inst) = inst {
+                if &self.round_instance_of(rid) != inst {
+                    continue;
+                }
+            }
             if !seen_scenarios.contains(&scenario) || round.end.is_none() {
                 seen_scenarios.insert(scenario.clone());
                 // Remove previous entry for this scenario if exists
@@ -2280,6 +2821,9 @@ impl StatsDb {
     }
 
     /// Get recent kills for a round (last N)
+    /// A pilot's lifetime totals as the public sees them. Test-instance rounds
+    /// are already excluded: they never reach `Pilot.total` in the first place
+    /// (see `with_pilot_and_aggregates`).
     pub(crate) fn pilot_detail(&self, ucid: &Ucid) -> Result<Option<(String, Aggregates)>> {
         match self.pilots.pilots.get(ucid)? {
             None => Ok(None),
@@ -2404,7 +2948,35 @@ impl StatsDb {
         })
     }
 
-    fn add_stat(&self, ctx: &mut StatCtx, time: DateTime<Utc>, stat: Stat) -> Result<()> {
+    /// The newest `seq` entry for `sortie` that belongs to `inst`.
+    ///
+    /// Two DCS instances fronted by the same bfdb can legitimately run missions
+    /// with the same Sortie name, and `seq`/`round` are keyed by scenario name
+    /// alone -- so a bare `scan_prefix(sortie).next_back()` would happily hand
+    /// instance A the other server's round and then "end the stale open round"
+    /// out from under it. Walking back to the newest entry tagged with our own
+    /// instance keeps them apart without changing any stored key.
+    fn last_seq_for(
+        &self,
+        inst: &InstanceState,
+        sortie: &Scenario,
+    ) -> Result<Option<(RoundId, DateTime<Utc>)>> {
+        for r in self.seq.scan_prefix(sortie)?.rev() {
+            let ((_, round), seq) = r?;
+            if self.round_instance_of(round) == inst.id {
+                return Ok(Some((round, seq)));
+            }
+        }
+        Ok(None)
+    }
+
+    fn add_stat(
+        &self,
+        inst: &InstanceState,
+        ctx: &mut StatCtx,
+        time: DateTime<Utc>,
+        stat: Stat,
+    ) -> Result<()> {
         if let Some(ctx) = &ctx.0 {
             if time <= ctx.seq {
                 return Ok(());
@@ -2412,28 +2984,28 @@ impl StatsDb {
         }
         if let Stat::NewRound { sortie } = &stat {
             ctx.0 = None; // reset on session restart so we re-attach or create a new round
-            info!("processing NewRound sortie={sortie:?}");
-            match self.seq.scan_prefix(sortie)?.next_back().transpose()? {
+            info!("[{}] processing NewRound sortie={sortie:?}", inst.id);
+            match self.last_seq_for(inst, sortie)? {
                 None => {
                     info!("NewRound: no existing seq, creating new round");
-                    return self.new_round(ctx, time, sortie.clone(), time);
+                    return self.new_round(inst, ctx, time, sortie.clone(), time);
                 }
-                Some(((_, round), _seq)) => match self.round.get(&(sortie.clone(), round))? {
+                Some((round, _seq)) => match self.round.get(&(sortie.clone(), round))? {
                     Some(r) if r.end.is_none() => {
                         info!("NewRound: ending stale open round {round:?}, creating new round");
                         let key = (sortie.clone(), round);
                         let mut stale = r;
                         stale.end = Some(time);
                         let _ = self.round.insert(&key, &stale)?;
-                        return self.new_round(ctx, time, sortie.clone(), time);
+                        return self.new_round(inst, ctx, time, sortie.clone(), time);
                     }
                     Some(_) => {
                         info!("NewRound: existing round is ended, creating new round");
-                        return self.new_round(ctx, time, sortie.clone(), time);
+                        return self.new_round(inst, ctx, time, sortie.clone(), time);
                     }
                     None => {
                         info!("NewRound: seq entry exists but round missing, creating new round");
-                        return self.new_round(ctx, time, sortie.clone(), time);
+                        return self.new_round(inst, ctx, time, sortie.clone(), time);
                     }
                 },
             }
@@ -2456,7 +3028,7 @@ impl StatsDb {
                 // sortie, and new_round() would clobber the live current_sortie
                 // with it, silently redirecting RPC/log subscriptions to a path
                 // that doesn't exist. Only fall back to that guess with nothing.
-                let sortie = self
+                let sortie = inst
                     .current_sortie
                     .lock()
                     .unwrap()
@@ -2473,26 +3045,27 @@ impl StatsDb {
                         // one, instead of spawning a duplicate. A second round id
                         // fragments stats -- deploys/kills/health land in a round
                         // the dashboard never queries.
-                        let open = self
-                            .seq
-                            .scan_prefix(&sortie)?
-                            .next_back()
-                            .transpose()?
-                            .and_then(|((_, round), seq)| {
-                                match self.round.get(&(sortie.clone(), round)) {
-                                    Ok(Some(r)) if r.end.is_none() => Some((round, seq)),
-                                    _ => None,
-                                }
-                            });
+                        let open = self.last_seq_for(inst, &sortie)?.and_then(|(round, seq)| {
+                            match self.round.get(&(sortie.clone(), round)) {
+                                Ok(Some(r)) if r.end.is_none() => Some((round, seq)),
+                                _ => None,
+                            }
+                        });
                         match open {
                             Some((round, seq)) => {
-                                info!("SessionStart: reattaching to open round {round:?} for sortie {sortie:?}");
-                                *self.current_sortie.lock().unwrap() = Some(sortie.clone());
-                                ctx.0 = Some(StatCtxInner { sortie, round, seq });
+                                info!(
+                                    "[{}] SessionStart: reattaching to open round {round:?} for sortie {sortie:?}",
+                                    inst.id
+                                );
+                                *inst.current_sortie.lock().unwrap() = Some(sortie.clone());
+                                ctx.0 = Some(StatCtxInner { public: inst.cfg.public, sortie, round, seq });
                             }
                             None => {
-                                info!("auto-creating round from SessionStart, sortie={sortie:?}");
-                                self.new_round(ctx, time, sortie, time)?;
+                                info!(
+                                    "[{}] auto-creating round from SessionStart, sortie={sortie:?}",
+                                    inst.id
+                                );
+                                self.new_round(inst, ctx, time, sortie, time)?;
                             }
                         }
                     }
@@ -2642,6 +3215,7 @@ impl StatsDb {
                     self.pilots.with_pilot_and_aggregates(
                         ucid,
                         ctx.round,
+                        ctx.public,
                         |pilot| pilot.total.captures += 1,
                         |agg| agg.captures += 1,
                     )?
@@ -2651,6 +3225,7 @@ impl StatsDb {
                 self.pilots.with_pilot_and_aggregates(
                     by,
                     ctx.round,
+                    ctx.public,
                     |pilot| pilot.total.repairs += 1,
                     |agg| agg.repairs += 1,
                 )?;
@@ -2659,6 +3234,7 @@ impl StatsDb {
                 self.pilots.with_pilot_and_aggregates(
                     by,
                     ctx.round,
+                    ctx.public,
                     |pilot| pilot.total.supply_transfers += 1,
                     |agg| agg.supply_transfers += 1,
                 )?;
@@ -2675,6 +3251,7 @@ impl StatsDb {
                 self.pilots.with_pilot_and_aggregates(
                     by,
                     ctx.round,
+                    ctx.public,
                     |p| p.total.actions += 1,
                     |a| a.actions += 1,
                 )?;
@@ -2691,6 +3268,7 @@ impl StatsDb {
                 self.pilots.with_pilot_and_aggregates(
                     by,
                     ctx.round,
+                    ctx.public,
                     |p| p.total.troops += 1,
                     |a| a.troops += 1,
                 )?;
@@ -2722,6 +3300,7 @@ impl StatsDb {
                 self.pilots.with_pilot_and_aggregates(
                     by,
                     ctx.round,
+                    ctx.public,
                     |p| p.total.deploys += 1,
                     |a| a.deploys += 1,
                 )?;
@@ -2756,6 +3335,7 @@ impl StatsDb {
                 self.pilots.with_pilot_and_aggregates(
                     by,
                     ctx.round,
+                    ctx.public,
                     |p| p.total.farps += 1,
                     |a| a.farps += 1,
                 )?;
@@ -2933,6 +3513,7 @@ impl StatsDb {
                     self.pilots.with_pilot_and_aggregates(
                         id,
                         ctx.round,
+                        ctx.public,
                         |p| p.total.hours += hours,
                         |a| a.hours += hours,
                     )?;
@@ -2960,6 +3541,7 @@ impl StatsDb {
                 self.pilots.with_pilot_and_aggregates(
                     from,
                     ctx.round,
+                    ctx.public,
                     |p| p.total.donated_points += points,
                     |a| a.donated_points += points,
                 )?;
@@ -2984,7 +3566,7 @@ impl StatsDb {
                 // Not currently tracked in database
             }
             Stat::Weather { temp_c, wind_speed_kts, wind_from_deg, cloud_base_m, qnh_hpa, cloud_density, visibility_m } => {
-                if let Ok(mut w) = self.latest_weather.write() {
+                if let Ok(mut w) = inst.latest_weather.write() {
                     *w = Some(WeatherSnapshot {
                         temp_c,
                         wind_speed_kts,
@@ -3111,10 +3693,214 @@ impl StatsDb {
         Ok(())
     }
 
-    /// Wipe all campaign data — rounds, kills, objectives, pilot stats, trails,
-    /// captures, sorties, weather — while preserving auth sessions and Discord links
-    /// so admins remain logged in and pilot linking is not lost.
-    pub(crate) fn reset_campaign_data(&self) -> Result<()> {
+    /// Wipe campaign data for one DCS server instance -- rounds, kills,
+    /// objectives, pilot stats, trails, captures, sorties, weather -- while
+    /// preserving auth sessions and Discord links so admins remain logged in
+    /// and pilot linking is not lost.
+    ///
+    /// With a single instance configured this is the whole database (the
+    /// original behaviour, and much cheaper than a per-round sweep). With
+    /// several, only the named instance's rounds are purged, so resetting one
+    /// server's campaign leaves the other's history intact.
+    pub(crate) fn reset_campaign_data_for(&self, inst: &InstanceState) -> Result<()> {
+        if self.0.instances.is_single() {
+            return self.reset_campaign_data(inst);
+        }
+        let rounds = self.rounds_of(&inst.id)?;
+        warn!(
+            "[{}] resetting campaign: purging {} round(s), other instances untouched",
+            inst.id,
+            rounds.len()
+        );
+        self.purge_rounds(&rounds)?;
+        self.intel_purge_all_for(&rounds)?;
+        if let Ok(mut w) = inst.latest_weather.write() {
+            *w = None;
+        }
+        Ok(())
+    }
+
+    /// Delete every trace of `rounds` from the round-scoped trees, then rebuild
+    /// each pilot's lifetime totals by re-summing the aggregates that survived.
+    /// `Aggregates` is a plain bag of additive counters, so a re-sum is exact.
+    fn purge_rounds(&self, rounds: &HashSet<RoundId>) -> Result<()> {
+        if rounds.is_empty() {
+            return Ok(());
+        }
+        // Trees keyed (RoundId, ..) -- scan the round prefix directly.
+        macro_rules! purge_prefixed {
+            ($tree:expr) => {
+                for round in rounds.iter() {
+                    let keys: Vec<_> = $tree
+                        .scan_prefix(round)?
+                        .filter_map(|r| r.ok())
+                        .map(|(k, _)| k)
+                        .collect();
+                    for k in keys {
+                        $tree.remove(&k)?;
+                    }
+                }
+            };
+        }
+        purge_prefixed!(self.session);
+        purge_prefixed!(self.kill_seen);
+        purge_prefixed!(self.sortie_seen);
+        purge_prefixed!(self.deploy_seen);
+        purge_prefixed!(self.units);
+        purge_prefixed!(self.groups);
+        purge_prefixed!(self.detected);
+        purge_prefixed!(self.objectives);
+        purge_prefixed!(self.equipment);
+        purge_prefixed!(self.liquids);
+        purge_prefixed!(self.trail_points);
+        purge_prefixed!(self.objective_captures);
+        purge_prefixed!(self.captures);
+        purge_prefixed!(self.aircraft_sorties);
+
+        // Trees where RoundId is NOT the leading key component -- full scan.
+        let mut dead_kill_ids: Vec<KillId> = Vec::new();
+        let kill_keys: Vec<_> = self
+            .kills
+            .iter()
+            .filter_map(|r| r.ok())
+            .map(|(k, _)| k)
+            .filter(|(_, rid, _)| rounds.contains(rid))
+            .collect();
+        for k in kill_keys {
+            dead_kill_ids.push(k.2);
+            self.kills.remove(&k)?;
+        }
+        for kid in dead_kill_ids {
+            self.shared_kills.remove(&kid)?;
+        }
+        let deploy_keys: Vec<_> = self
+            .deploys
+            .iter()
+            .filter_map(|r| r.ok())
+            .map(|(k, _)| k)
+            .filter(|(_, rid, _)| rounds.contains(rid))
+            .collect();
+        for k in deploy_keys {
+            self.deploys.remove(&k)?;
+        }
+        // Before the aggregate rows go: they are what tells us how much of
+        // each pilot's lifetime total came from these rounds.
+        self.subtract_rounds_from_totals(rounds)?;
+        let agg_keys: Vec<_> = self
+            .pilots
+            .aggregates
+            .iter()
+            .filter_map(|r| r.ok())
+            .map(|(k, _)| k)
+            .filter(|(_, _, rid)| rounds.contains(rid))
+            .collect();
+        for k in agg_keys {
+            self.pilots.aggregates.remove(&k)?;
+        }
+        let sortie_keys: Vec<_> = self
+            .pilots
+            .sortie
+            .iter()
+            .filter_map(|r| r.ok())
+            .map(|(k, _)| k)
+            .filter(|(_, rid, _)| rounds.contains(rid))
+            .collect();
+        for k in sortie_keys {
+            self.pilots.sortie.remove(&k)?;
+        }
+        let ri_keys: Vec<_> = self
+            .pilots
+            .round_info
+            .iter()
+            .filter_map(|r| r.ok())
+            .map(|(k, _)| k)
+            .filter(|(_, rid)| rounds.contains(rid))
+            .collect();
+        for k in ri_keys {
+            self.pilots.round_info.remove(&k)?;
+        }
+
+        // Round bookkeeping itself.
+        let seq_keys: Vec<_> = self
+            .seq
+            .iter()
+            .filter_map(|r| r.ok())
+            .map(|(k, _)| k)
+            .filter(|(_, rid)| rounds.contains(rid))
+            .collect();
+        for k in seq_keys {
+            self.seq.remove(&k)?;
+        }
+        let round_keys: Vec<_> = self
+            .round
+            .iter()
+            .filter_map(|r| r.ok())
+            .map(|(k, _)| k)
+            .filter(|(_, rid)| rounds.contains(rid))
+            .collect();
+        for k in round_keys {
+            self.round.remove(&k)?;
+        }
+        for rid in rounds.iter() {
+            self.round_instance.remove(rid)?;
+        }
+
+        Ok(())
+    }
+
+    /// Deduct the purged rounds' contribution from each pilot's lifetime
+    /// total, after a partial (per-instance) purge.
+    ///
+    /// Deliberately a subtraction and not a recompute-from-scratch: an
+    /// `aggregates` row only exists for stats earned while the pilot was in a
+    /// slot with a known vehicle, so re-summing the survivors would silently
+    /// shrink every pilot's record by whatever was earned outside one. All
+    /// counters saturate at zero, so an under-recorded round can leave a small
+    /// residual -- much the better failure than deleting real history.
+    fn subtract_rounds_from_totals(&self, rounds: &HashSet<RoundId>) -> Result<()> {
+        let mut deltas: HashMap<Ucid, Aggregates> = HashMap::new();
+        for r in self.pilots.aggregates.iter() {
+            let ((ucid, _, rid), a) = r?;
+            if !rounds.contains(&rid) {
+                continue;
+            }
+            let t = deltas.entry(ucid).or_default();
+            t.air_kills += a.air_kills;
+            t.ground_kills += a.ground_kills;
+            t.captures += a.captures;
+            t.repairs += a.repairs;
+            t.supply_transfers += a.supply_transfers;
+            t.troops += a.troops;
+            t.farps += a.farps;
+            t.deploys += a.deploys;
+            t.actions += a.actions;
+            t.deaths += a.deaths;
+            t.hours += a.hours;
+            t.donated_points += a.donated_points;
+        }
+        for (ucid, d) in deltas {
+            self.pilots.with_pilot(ucid, |p| {
+                let t = &mut p.total;
+                t.air_kills = t.air_kills.saturating_sub(d.air_kills);
+                t.ground_kills = t.ground_kills.saturating_sub(d.ground_kills);
+                t.captures = t.captures.saturating_sub(d.captures);
+                t.repairs = t.repairs.saturating_sub(d.repairs);
+                t.supply_transfers = t.supply_transfers.saturating_sub(d.supply_transfers);
+                t.troops = t.troops.saturating_sub(d.troops);
+                t.farps = t.farps.saturating_sub(d.farps);
+                t.deploys = t.deploys.saturating_sub(d.deploys);
+                t.actions = t.actions.saturating_sub(d.actions);
+                t.deaths = t.deaths.saturating_sub(d.deaths);
+                t.hours = (t.hours - d.hours).max(0.0);
+                t.donated_points = t.donated_points.saturating_sub(d.donated_points);
+            })?;
+        }
+        Ok(())
+    }
+
+    /// The whole-database campaign wipe. Only reachable when this bfdb fronts a
+    /// single instance -- see `reset_campaign_data_for`.
+    fn reset_campaign_data(&self, inst: &InstanceState) -> Result<()> {
         // Pilot stat trees
         self.pilots.pilots.clear()?;
         self.pilots.aggregates.clear()?;
@@ -3144,7 +3930,8 @@ impl StatsDb {
         self.deploy_seen.clear()?;
         // Trails & weather
         self.trail_points.clear()?;
-        if let Ok(mut w) = self.latest_weather.write() { *w = None; }
+        self.round_instance.clear()?;
+        if let Ok(mut w) = inst.latest_weather.write() { *w = None; }
         // Recon intel (TARPS) -- per-round picture, gone on reset (incl. any
         // on-disk photo files)
         self.intel_purge_all()?;
@@ -3170,41 +3957,667 @@ impl StatsDb {
     /// `--stats-dir`; if older segments have been pruned, history before the
     /// oldest surviving segment will not come back.
     pub(crate) fn rebuild_stats_from_archive(&self) -> Result<()> {
-        // Pilot stat trees
+        self.wipe_stats_derived_trees()?;
+        // Rewind the replay so a normal restart re-ingests from the top --
+        // both the netidx archive cursor and the stats.jsonl byte offset, for
+        // every instance (a rebuild is inherently whole-database: the derived
+        // trees are shared).
+        self.replay_cursor.clear()?;
+        self.jsonl_cursor.clear()?;
+        for st in self.0.states.values() {
+            *st.current_sortie.lock().unwrap() = None;
+        }
+        Ok(())
+    }
+
+    /// Clear every tree that is *derived* from replaying the stats stream
+    /// (rounds, sessions, pilot stats, kills, sorties, deploys, objectives,
+    /// trails). Does NOT touch replay position or anything the stream doesn't
+    /// own (auth, Discord links, bans, wiki, recon intel). Shared by the
+    /// `--rebuild-stats` flag and the live `/api/admin/rebuild-stats` path.
+    fn wipe_stats_derived_trees(&self) -> Result<()> {
         self.pilots.pilots.clear()?;
         self.pilots.aggregates.clear()?;
         self.pilots.by_name.clear()?;
         self.pilots.sortie.clear()?;
         self.pilots.round_info.clear()?;
-        // Round / mission trees
         self.seq.clear()?;
         self.round.clear()?;
         self.session.clear()?;
-        // Combat trees
         self.kills.clear()?;
         self.shared_kills.clear()?;
         self.kill_seen.clear()?;
         self.units.clear()?;
         self.groups.clear()?;
         self.detected.clear()?;
-        // Objectives
         self.objectives.clear()?;
         self.equipment.clear()?;
         self.liquids.clear()?;
-        // Captures, sorties & deploys
         self.objective_captures.clear()?;
         self.captures.clear()?;
         self.aircraft_sorties.clear()?;
         self.sortie_seen.clear()?;
         self.deploys.clear()?;
         self.deploy_seen.clear()?;
-        // Trails & weather
         self.trail_points.clear()?;
-        if let Ok(mut w) = self.latest_weather.write() { *w = None; }
-        // Rewind the replay so a normal restart re-ingests the whole archive
-        self.replay_cursor.clear()?;
-        *self.current_sortie.lock().unwrap() = None;
+        self.round_instance.clear()?;
+        for st in self.0.states.values() {
+            if let Ok(mut w) = st.latest_weather.write() {
+                *w = None;
+            }
+        }
         Ok(())
+    }
+
+    /// Queue an in-process stats rebuild: the JSONL reader loop wipes the
+    /// derived trees and re-ingests `stats.jsonl` from offset 0 on its next
+    /// tick. Returns an error in netidx-archive mode (no live reset there --
+    /// use the `--rebuild-stats` flag). See `jsonl_reset`.
+    ///
+    /// The derived trees are shared across instances, so a rebuild rewinds and
+    /// re-ingests *every* instance that reads a JSONL -- rebuilding only one
+    /// would delete the others' data with nothing to replay it back from.
+    pub(crate) fn request_jsonl_rebuild(&self) -> Result<()> {
+        let readers: Vec<_> = self
+            .0
+            .states
+            .values()
+            .filter(|st| st.stats_jsonl.is_some())
+            .collect();
+        if readers.is_empty() {
+            bail!("no instance is reading from a stats.jsonl -- use the --rebuild-stats flag offline instead");
+        }
+        for st in readers {
+            self.jsonl_cursor.insert(&st.id.to_string(), &0u64)?;
+            st.jsonl_reset.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    /// One-off maintenance for `--merge-rounds <sortie>`: collapse every round
+    /// recorded under `sortie` into a single round, re-keying every
+    /// round-scoped tree onto the earliest round's id.
+    ///
+    /// Repairs the fragmentation left by an older bug: bfdb used to close the
+    /// live round on every restart whenever the sortie was named the same as
+    /// the last path segment of `--base` (the documented default is
+    /// netidx_base `/local/fowl/campaign` + sortie `campaign`), and the next
+    /// `SessionStart` then forked a fresh round -- so one long campaign showed
+    /// up as dozens of near-identical rounds in the dashboard. The startup
+    /// sweep is now name-blind (see `StatsDb::new`), so this only has to clean
+    /// up the rounds already on disk.
+    ///
+    /// Merge rules: counters that were split across the forks (per-pilot /
+    /// per-vehicle aggregates, objective capture counts, aircraft sortie
+    /// counts) are summed. The per-pilot round snapshot (points / side / slot
+    /// / lives) keeps the newest fork's value. Everything else is re-keyed
+    /// as-is; on a key collision the newest fork wins.
+    ///
+    /// Leaves the replay cursor, auth, Discord links, bans, wiki, weather and
+    /// the stats archive itself untouched. Idempotent -- a sortie that already
+    /// has a single round is a no-op.
+    pub(crate) fn merge_rounds(&self, sortie: &str) -> Result<std::string::String> {
+        let scenario = Scenario::from(sortie);
+
+        let mut rounds: Vec<(RoundId, Round)> = self
+            .round
+            .scan_prefix(&scenario)?
+            .collect::<Result<Vec<((Scenario, RoundId), Round)>>>()?
+            .into_iter()
+            .map(|((_, rid), rd)| (rid, rd))
+            .collect();
+        if rounds.is_empty() {
+            bail!("no rounds recorded under sortie {sortie:?} -- check the exact name in GET /api/rounds");
+        }
+        rounds.sort_by(|a, b| a.1.start.cmp(&b.1.start).then(a.0.cmp(&b.0)));
+        let canonical = rounds[0].0;
+        if rounds.len() == 1 {
+            return Ok(format!(
+                "sortie {sortie:?} already has a single round (#{}); nothing to merge",
+                canonical.0
+            ));
+        }
+        let fork_ids: std::collections::HashSet<RoundId> =
+            rounds.iter().skip(1).map(|(rid, _)| *rid).collect();
+        let n_forks = fork_ids.len();
+
+        // ── round / seq: collapse to one ────────────────────────────────
+        let start = rounds.iter().map(|(_, r)| r.start).min().unwrap();
+        let any_open = rounds.iter().any(|(_, r)| r.end.is_none());
+        let end = if any_open {
+            None
+        } else {
+            rounds.iter().filter_map(|(_, r)| r.end).max()
+        };
+        let winner = rounds.iter().rev().find_map(|(_, r)| r.winner);
+        for (rid, _) in &rounds {
+            self.round.remove(&(scenario.clone(), *rid))?;
+            self.seq.remove(&(scenario.clone(), *rid))?;
+        }
+        self.round
+            .insert(&(scenario.clone(), canonical), &Round { start, end, winner })?;
+        self.seq.insert(&(scenario.clone(), canonical), &start)?;
+
+        let moved = self.collapse_round_data(canonical, &fork_ids)?;
+        Ok(format!(
+            "merged {n_forks} fork round(s) into #{} for sortie {sortie:?} \
+             ({moved} round-scoped rows re-keyed). Restart bfdb normally.",
+            canonical.0
+        ))
+    }
+
+    /// Re-key every round-scoped data tree so rows whose `RoundId` is in
+    /// `fork_ids` move onto `canonical`. Summable counters (per-pilot/vehicle
+    /// aggregates, objective capture counts, aircraft sortie counts) are
+    /// summed; the per-pilot round snapshot keeps the newest fork's value;
+    /// everything else is re-keyed as-is with the newest fork winning a key
+    /// collision. Does NOT touch `round` / `seq` -- the caller owns those.
+    /// Returns the number of rows moved.
+    fn collapse_round_data(
+        &self,
+        canonical: RoundId,
+        fork_ids: &std::collections::HashSet<RoundId>,
+    ) -> Result<usize> {
+        let touched = |rid: RoundId| rid == canonical || fork_ids.contains(&rid);
+        let mut moved = 0usize;
+
+        // ── pilots.aggregates (Ucid, Vehicle, RoundId): sum ─────────────
+        for ((u, v, rid), agg) in self
+            .pilots
+            .aggregates
+            .iter()
+            .collect::<Result<Vec<((Ucid, Vehicle, RoundId), Aggregates)>>>()?
+        {
+            if !fork_ids.contains(&rid) {
+                continue;
+            }
+            self.pilots.aggregates.remove(&(u.clone(), v.clone(), rid))?;
+            self.pilots
+                .aggregates
+                .fetch_and_update(&(u.clone(), v.clone(), canonical), |cur| {
+                    let mut c = cur.unwrap_or_default();
+                    c.air_kills += agg.air_kills;
+                    c.ground_kills += agg.ground_kills;
+                    c.captures += agg.captures;
+                    c.repairs += agg.repairs;
+                    c.supply_transfers += agg.supply_transfers;
+                    c.troops += agg.troops;
+                    c.farps += agg.farps;
+                    c.deploys += agg.deploys;
+                    c.actions += agg.actions;
+                    c.deaths += agg.deaths;
+                    c.hours += agg.hours;
+                    c.donated_points += agg.donated_points;
+                    Some(c)
+                })?;
+            moved += 1;
+        }
+
+        // ── pilots.round_info (Ucid, RoundId): newest fork wins per pilot ─
+        {
+            let all = self
+                .pilots
+                .round_info
+                .iter()
+                .collect::<Result<Vec<((Ucid, RoundId), PilotRoundInfo)>>>()?;
+            let mut newest: std::collections::HashMap<Ucid, (RoundId, PilotRoundInfo)> =
+                std::collections::HashMap::new();
+            for ((u, rid), ri) in all {
+                if !touched(rid) {
+                    continue;
+                }
+                self.pilots.round_info.remove(&(u.clone(), rid))?;
+                moved += 1;
+                match newest.get(&u) {
+                    Some((best, _)) if *best >= rid => {}
+                    _ => {
+                        newest.insert(u, (rid, ri));
+                    }
+                }
+            }
+            for (u, (_, ri)) in newest {
+                self.pilots.round_info.insert(&(u, canonical), &ri)?;
+            }
+        }
+
+        // ── pilots.sortie (Ucid, RoundId, SortieId): re-key (id unique) ──
+        for ((u, rid, sid), s) in self
+            .pilots
+            .sortie
+            .iter()
+            .collect::<Result<Vec<((Ucid, RoundId, SortieId), Sortie)>>>()?
+        {
+            if !fork_ids.contains(&rid) {
+                continue;
+            }
+            self.pilots.sortie.remove(&(u.clone(), rid, sid))?;
+            self.pilots.sortie.insert(&(u, canonical, sid), &s)?;
+            moved += 1;
+        }
+
+        // ── kills (EnId, RoundId, KillId): re-key (id unique) ───────────
+        for ((en, rid, kid), dead) in self
+            .kills
+            .iter()
+            .collect::<Result<Vec<((EnId, RoundId, KillId), Dead)>>>()?
+        {
+            if !fork_ids.contains(&rid) {
+                continue;
+            }
+            self.kills.remove(&(en, rid, kid))?;
+            self.kills.insert(&(en, canonical, kid), &dead)?;
+            moved += 1;
+        }
+
+        // ── deploys (Ucid, RoundId, DeployId): re-key (id unique) ───────
+        for ((u, rid, did), rec) in self
+            .deploys
+            .iter()
+            .collect::<Result<Vec<((Ucid, RoundId, DeployId), DeployRecord)>>>()?
+        {
+            if !fork_ids.contains(&rid) {
+                continue;
+            }
+            self.deploys.remove(&(u.clone(), rid, did))?;
+            self.deploys.insert(&(u, canonical, did), &rec)?;
+            moved += 1;
+        }
+
+        // ── objective_captures (RoundId, ObjectiveId): sum ─────────────
+        for ((rid, oid), count) in self
+            .objective_captures
+            .iter()
+            .collect::<Result<Vec<((RoundId, ObjectiveId), u32)>>>()?
+        {
+            if !fork_ids.contains(&rid) {
+                continue;
+            }
+            self.objective_captures.remove(&(rid, oid))?;
+            self.objective_captures.fetch_and_update(&(canonical, oid), |cur| {
+                Some(cur.unwrap_or(0) + count)
+            })?;
+            moved += 1;
+        }
+
+        // ── aircraft_sorties (RoundId, type): sum (count, hours) ───────
+        for ((rid, ty), (cnt, hrs)) in self
+            .aircraft_sorties
+            .iter()
+            .collect::<Result<Vec<((RoundId, std::string::String), (u32, f32))>>>()?
+        {
+            if !fork_ids.contains(&rid) {
+                continue;
+            }
+            self.aircraft_sorties.remove(&(rid, ty.clone()))?;
+            self.aircraft_sorties.fetch_and_update(&(canonical, ty.clone()), |cur| {
+                let (c, h) = cur.unwrap_or((0, 0.0));
+                Some((c + cnt, h + hrs))
+            })?;
+            moved += 1;
+        }
+
+        // ── intel_captures / intel_markup: re-key + patch the value ────
+        for ((rid, id), mut cap) in self
+            .intel_captures
+            .iter()
+            .collect::<Result<Vec<((RoundId, Uuid), IntelCapture)>>>()?
+        {
+            if !fork_ids.contains(&rid) {
+                continue;
+            }
+            self.intel_captures.remove(&(rid, id))?;
+            cap.round = canonical;
+            self.intel_captures.insert(&(canonical, id), &cap)?;
+            moved += 1;
+        }
+        for ((rid, id), mut mk) in self
+            .intel_markup
+            .iter()
+            .collect::<Result<Vec<((RoundId, Uuid), IntelMarkup)>>>()?
+        {
+            if !fork_ids.contains(&rid) {
+                continue;
+            }
+            self.intel_markup.remove(&(rid, id))?;
+            mk.round = canonical;
+            self.intel_markup.insert(&(canonical, id), &mk)?;
+            moved += 1;
+        }
+
+        // ── remaining (RoundId, …)-keyed trees: re-key, newest fork wins
+        //    on collision (rows come back RoundId-ascending, so the highest
+        //    fork id is written last) ───────────────────────────────────
+        moved += rekey_round_first(&self.session, canonical, fork_ids)?;
+        moved += rekey_round_first(&self.deploy_seen, canonical, fork_ids)?;
+        moved += rekey_round_first(&self.units, canonical, fork_ids)?;
+        moved += rekey_round_first(&self.groups, canonical, fork_ids)?;
+        moved += rekey_round_first(&self.detected, canonical, fork_ids)?;
+        moved += rekey_round_first(&self.objectives, canonical, fork_ids)?;
+        moved += rekey_round_first(&self.captures, canonical, fork_ids)?;
+        moved += rekey_round_first3(&self.kill_seen, canonical, fork_ids)?;
+        moved += rekey_round_first3(&self.sortie_seen, canonical, fork_ids)?;
+        moved += rekey_round_first3(&self.equipment, canonical, fork_ids)?;
+        moved += rekey_round_first3(&self.liquids, canonical, fork_ids)?;
+        moved += rekey_round_first3(&self.trail_points, canonical, fork_ids)?;
+
+        Ok(moved)
+    }
+
+    /// One-off maintenance: collapse **every** round id referenced anywhere in
+    /// the stats DB into a single round. Unlike `merge_rounds`, this doesn't
+    /// need a sortie name and also sweeps up "orphan" round ids that have kill
+    /// / sortie / deploy rows but no `round`-tree entry at all (which is how
+    /// the fork bug's later rounds show up -- "Round 48000000" with no
+    /// scenario in the dashboard). Same merge rules as `merge_rounds`.
+    ///
+    /// `dry_run` reports what it would do and changes nothing. Safe to run
+    /// against a live bfdb (used by `POST /api/admin/merge-rounds`), though
+    /// quietest right after a mission restart.
+    pub(crate) fn merge_all_rounds(&self, dry_run: bool) -> Result<std::string::String> {
+        use std::collections::HashSet;
+        let round_entries: Vec<(Scenario, RoundId, Round)> = self
+            .round
+            .iter()
+            .collect::<Result<Vec<((Scenario, RoundId), Round)>>>()?
+            .into_iter()
+            .map(|((s, rid), rd)| (s, rid, rd))
+            .collect();
+
+        let round_tree_ids: HashSet<RoundId> =
+            round_entries.iter().map(|(_, rid, _)| *rid).collect();
+        let mut ids: HashSet<RoundId> = round_tree_ids.clone();
+        for r in self.seq.iter() { ids.insert(r?.0 .1); }
+        for r in self.pilots.aggregates.iter() { ids.insert(r?.0 .2); }
+        for r in self.pilots.sortie.iter() { ids.insert(r?.0 .1); }
+        for r in self.pilots.round_info.iter() { ids.insert(r?.0 .1); }
+        for r in self.session.iter() { ids.insert(r?.0 .0); }
+        for r in self.kills.iter() { ids.insert(r?.0 .1); }
+        for r in self.kill_seen.iter() { ids.insert(r?.0 .0); }
+        for r in self.sortie_seen.iter() { ids.insert(r?.0 .0); }
+        for r in self.deploy_seen.iter() { ids.insert(r?.0 .0); }
+        for r in self.units.iter() { ids.insert(r?.0 .0); }
+        for r in self.groups.iter() { ids.insert(r?.0 .0); }
+        for r in self.detected.iter() { ids.insert(r?.0 .0); }
+        for r in self.objectives.iter() { ids.insert(r?.0 .0); }
+        for r in self.equipment.iter() { ids.insert(r?.0 .0); }
+        for r in self.liquids.iter() { ids.insert(r?.0 .0); }
+        for r in self.trail_points.iter() { ids.insert(r?.0 .0); }
+        for r in self.objective_captures.iter() { ids.insert(r?.0 .0); }
+        for r in self.captures.iter() { ids.insert(r?.0 .0); }
+        for r in self.deploys.iter() { ids.insert(r?.0 .1); }
+        for r in self.aircraft_sorties.iter() { ids.insert(r?.0 .0); }
+        for r in self.intel_captures.iter() { ids.insert(r?.0 .0); }
+        for r in self.intel_markup.iter() { ids.insert(r?.0 .0); }
+
+        if ids.len() <= 1 {
+            return Ok(format!(
+                "nothing to merge -- {} round id(s) referenced on disk",
+                ids.len()
+            ));
+        }
+
+        // Canonical: prefer a still-open `round` entry (newest by start), then
+        // the earliest-start entry, then just the lowest id seen anywhere.
+        let canonical = round_entries
+            .iter()
+            .filter(|(_, _, r)| r.end.is_none())
+            .max_by_key(|(_, _, r)| r.start)
+            .map(|(_, rid, _)| *rid)
+            .or_else(|| {
+                round_entries
+                    .iter()
+                    .min_by_key(|(_, _, r)| r.start)
+                    .map(|(_, rid, _)| *rid)
+            })
+            .unwrap_or_else(|| *ids.iter().min().unwrap());
+
+        // Surviving scenario name: the canonical's own, else the most common
+        // non-empty one, else "campaign".
+        let scenario = round_entries
+            .iter()
+            .find(|(_, rid, _)| *rid == canonical)
+            .map(|(s, _, _)| s.clone())
+            .or_else(|| {
+                let mut counts: std::collections::HashMap<Scenario, usize> =
+                    std::collections::HashMap::new();
+                for (s, _, _) in &round_entries {
+                    if !s.as_str().is_empty() {
+                        *counts.entry(s.clone()).or_insert(0) += 1;
+                    }
+                }
+                counts.into_iter().max_by_key(|(_, n)| *n).map(|(s, _)| s)
+            })
+            .unwrap_or_else(|| Scenario::from("campaign"));
+
+        let mut fork_ids: HashSet<RoundId> = ids.clone();
+        fork_ids.remove(&canonical);
+
+        let canon_entry = round_entries.iter().find(|(_, rid, _)| *rid == canonical);
+        let start = round_entries
+            .iter()
+            .map(|(_, _, r)| r.start)
+            .min()
+            .unwrap_or_else(Utc::now);
+        // Keep the campaign open unless the canonical round is itself a
+        // genuinely-ended round.
+        let end = canon_entry.and_then(|(_, _, r)| r.end);
+        let winner = canon_entry.and_then(|(_, _, r)| r.winner);
+
+        if dry_run {
+            let mut sorted: Vec<u64> = ids.iter().map(|r| r.0).collect();
+            sorted.sort_unstable();
+            let orphans = ids.iter().filter(|rid| !round_tree_ids.contains(rid)).count();
+            return Ok(format!(
+                "DRY RUN: {} round ids on disk ({} with no round-tree entry). \
+                 Would merge {} of them into #{} (scenario {:?}), keeping it {}. \
+                 ids: {:?}",
+                ids.len(),
+                orphans,
+                fork_ids.len(),
+                canonical.0,
+                scenario.as_str(),
+                if end.is_none() { "open" } else { "closed" },
+                sorted,
+            ));
+        }
+
+        // Wipe every round/seq entry, write one canonical row.
+        for (s, rid, _) in &round_entries {
+            self.round.remove(&(s.clone(), *rid))?;
+        }
+        for r in self
+            .seq
+            .iter()
+            .collect::<Result<Vec<((Scenario, RoundId), DateTime<Utc>)>>>()?
+        {
+            self.seq.remove(&r.0)?;
+        }
+        self.round
+            .insert(&(scenario.clone(), canonical), &Round { start, end, winner })?;
+        self.seq.insert(&(scenario.clone(), canonical), &start)?;
+
+        let moved = self.collapse_round_data(canonical, &fork_ids)?;
+        Ok(format!(
+            "merged {} round id(s) into #{} (scenario {:?}); {} round-scoped rows re-keyed. \
+             Reload the dashboard.",
+            fork_ids.len(),
+            canonical.0,
+            scenario.as_str(),
+            moved
+        ))
+    }
+}
+
+/// Re-key every row of a `(RoundId, Rest)`-keyed tree whose round id is in
+/// `fork_ids` onto `canonical`. Rows come out of the tree RoundId-ascending,
+/// so on a key collision the highest fork id is written last and wins.
+fn rekey_round_first<Rest, V>(
+    tree: &Tree<(RoundId, Rest), V>,
+    canonical: RoundId,
+    fork_ids: &std::collections::HashSet<RoundId>,
+) -> Result<usize>
+where
+    Rest: serde::Serialize + serde::de::DeserializeOwned + Clone,
+    V: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let all: Vec<((RoundId, Rest), V)> = tree.iter().collect::<Result<_>>()?;
+    let mut moved = 0;
+    for ((rid, rest), v) in all {
+        if !fork_ids.contains(&rid) {
+            continue;
+        }
+        tree.remove(&(rid, rest.clone()))?;
+        tree.insert(&(canonical, rest), &v)?;
+        moved += 1;
+    }
+    Ok(moved)
+}
+
+/// Same as [`rekey_round_first`] for trees with a three-part `(RoundId, A, B)`
+/// key.
+fn rekey_round_first3<A, B, V>(
+    tree: &Tree<(RoundId, A, B), V>,
+    canonical: RoundId,
+    fork_ids: &std::collections::HashSet<RoundId>,
+) -> Result<usize>
+where
+    A: serde::Serialize + serde::de::DeserializeOwned + Clone,
+    B: serde::Serialize + serde::de::DeserializeOwned + Clone,
+    V: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let all: Vec<((RoundId, A, B), V)> = tree.iter().collect::<Result<_>>()?;
+    let mut moved = 0;
+    for ((rid, a, b), v) in all {
+        if !fork_ids.contains(&rid) {
+            continue;
+        }
+        tree.remove(&(rid, a.clone(), b.clone()))?;
+        tree.insert(&(canonical, a, b), &v)?;
+        moved += 1;
+    }
+    Ok(moved)
+}
+
+#[cfg(test)]
+mod merge_rounds_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn collapses_forked_campaign_rounds() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-merge-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let scen = Scenario::from("campaign");
+        let t0 = Utc::now();
+
+        // Three "rounds" for the same sortie -- the fragmentation the old
+        // startup sweep produced. Oldest (r1) is the canonical target.
+        let r1 = RoundId(10);
+        let r2 = RoundId(2_000_010);
+        let r3 = RoundId(4_000_010);
+        for (rid, mins, open) in [(r1, 0i64, false), (r2, 60, false), (r3, 120, true)] {
+            let start = t0 + chrono::Duration::minutes(mins);
+            db.round
+                .insert(
+                    &(scen.clone(), rid),
+                    &Round { start, end: if open { None } else { Some(start + chrono::Duration::minutes(30)) }, winner: None },
+                )
+                .unwrap();
+            db.seq.insert(&(scen.clone(), rid), &start).unwrap();
+        }
+
+        let ucid = Ucid::default();
+        let veh = Vehicle(String::from("F-16C_50"));
+        for (rid, ak) in [(r1, 2u32), (r2, 3), (r3, 5)] {
+            db.pilots
+                .aggregates
+                .insert(&(ucid, veh.clone(), rid), &Aggregates { air_kills: ak, ..Default::default() })
+                .unwrap();
+        }
+        let oid = ObjectiveId::from(1i64);
+        for (rid, n) in [(r1, 1u32), (r2, 2), (r3, 4)] {
+            db.objective_captures.insert(&(rid, oid), &n).unwrap();
+        }
+        // round_info: newest fork (r3) should win
+        for (rid, pts) in [(r1, 5i32), (r3, 42)] {
+            db.pilots
+                .round_info
+                .insert(&(ucid, rid), &PilotRoundInfo { points: pts, ..Default::default() })
+                .unwrap();
+        }
+
+        let report = db.merge_rounds("campaign").unwrap();
+        assert!(report.contains("into #10"), "{report}");
+
+        // one round left, still open (r3 was open), earliest start
+        let left: Vec<_> = db.all_rounds().unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].1, r1);
+        assert_eq!(left[0].2.start, t0);
+        assert!(left[0].2.end.is_none());
+
+        // aggregates summed onto canonical
+        let agg = db.pilots.aggregates.get(&(ucid, veh.clone(), r1)).unwrap().unwrap();
+        assert_eq!(agg.air_kills, 10);
+        assert!(db.pilots.aggregates.get(&(ucid, veh.clone(), r2)).unwrap().is_none());
+        assert!(db.pilots.aggregates.get(&(ucid, veh, r3)).unwrap().is_none());
+
+        // capture counts summed
+        assert_eq!(db.objective_captures.get(&(r1, oid)).unwrap().unwrap(), 7);
+
+        // round_info: newest fork's value kept
+        assert_eq!(db.pilots.round_info.get(&(ucid, r1)).unwrap().unwrap().points, 42);
+
+        // idempotent
+        let again = db.merge_rounds("campaign").unwrap();
+        assert!(again.contains("already has a single round"), "{again}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn merge_all_sweeps_orphan_round_ids() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-mergeall-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let scen = Scenario::from("campaign");
+        let t0 = Utc::now();
+
+        // One real (open) round in the `round` tree...
+        let real = RoundId(10);
+        db.round
+            .insert(&(scen.clone(), real), &Round { start: t0, end: None, winner: None })
+            .unwrap();
+        db.seq.insert(&(scen.clone(), real), &t0).unwrap();
+
+        // ...plus two "orphan" round ids that only exist in the data trees
+        // (this is how the fork bug's later rounds show up -- "Round 48000000"
+        // with no scenario in the dashboard).
+        let orphan_a = RoundId(48_000_000);
+        let orphan_b = RoundId(50_000_000);
+        let oid = ObjectiveId::from(7i64);
+        for (rid, n) in [(real, 2u32), (orphan_a, 3), (orphan_b, 4)] {
+            db.objective_captures.insert(&(rid, oid), &n).unwrap();
+        }
+
+        let dry = db.merge_all_rounds(true).unwrap();
+        assert!(dry.contains("DRY RUN"), "{dry}");
+        assert!(dry.contains("3 round ids on disk"), "{dry}");
+        assert!(dry.contains("2 with no round-tree entry"), "{dry}");
+
+        let done = db.merge_all_rounds(false).unwrap();
+        assert!(done.contains("into #10"), "{done}");
+
+        // orphan capture counts summed onto the real round, orphans cleared
+        assert_eq!(db.objective_captures.get(&(real, oid)).unwrap().unwrap(), 9);
+        assert!(db.objective_captures.get(&(orphan_a, oid)).unwrap().is_none());
+        assert!(db.objective_captures.get(&(orphan_b, oid)).unwrap().is_none());
+
+        // one round left, still open
+        let left = db.all_rounds().unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].1, real);
+        assert!(left[0].2.end.is_none());
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 

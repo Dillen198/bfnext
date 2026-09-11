@@ -828,3 +828,19 @@ body::after {
 .logo-mark--dark { display: none !important; }
 :root[data-theme="light"] .logo-mark--light { display: none !important; }
 :root[data-theme="light"] .logo-mark--dark { display: block !important; }
+
+/* ── Briefing page ────────────────────────────────────────────────────────
+   The situation tab is a map beside a panel column on a wide screen. Below
+   1100px there isn't room for both, so the map keeps a fixed height and the
+   panels flow underneath it on the page's own scroll. */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1100px) {
+  .briefing-split {
+    grid-template-columns: 1fr !important;
+    /* The parent is a flex child with min-height:0; once stacked we want the
+       page to grow rather than squeeze the map to nothing. */
+    overflow-y: auto;
+  }
+  .briefing-split > :first-child { height: 340px; min-height: 340px; }
+}

@@ -1,5 +1,17 @@
 # ==========================================================
-# FOWL ENGINE SERVICE STARTER
+# FOWL ENGINE SERVICE STARTER  --  MANUAL FALLBACK ONLY
+# ==========================================================
+# In production the DCSServerBot `fowlengine` plugin owns bfdb.exe + the netidx
+# resolver as child processes (set `bfdb.manage: true` in fowlengine.yaml, and
+# see deploy/windows-service/ for running the bot itself as a service). When
+# that is enabled, DO NOT also run this script -- you'd get two bfdb processes
+# fighting over the same port and DB.
+#
+# This script stays as a hand-run fallback for local testing or when the bot
+# is down. It only covers a SINGLE DCS server instance -- for several on one
+# machine, bfdb needs --instances <file.json> (see deploy/multi-instance.md and
+# instances.sample.json), which the bot's procman renders for you. gci.json here is superseded by the plugin's `gci:` YAML block, which
+# regenerates <home>\gci.json on every bot-managed bfdb start.
 # ==========================================================
 
 # DCS instance's Saved Games folder -- the one DCS/bflib actually run under
@@ -120,6 +132,18 @@ $corsOrigins = @(
 # won't, since those need a live subscription to bflib.
 $netidxBase = "/local/fowl/campaign"
 
+# Sortie-name override for bfdb's LIVE engine subscriptions (RPC calls +
+# engine log). bflib publishes under "<netidx_base>/<sortie>/..." where
+# <sortie> is the DCS mission's Sortie field -- the same name as your
+# "<sortie>_CFG" engine config file (so if that file is "ODFv2_CFG", the
+# sortie is "ODFv2"). bfdb normally learns this from the stats stream, but a
+# persisted campaign that was renamed keeps emitting the OLD name, which
+# points every RPC at a dead path (symptom: query-* all time out while
+# stats still flow). Set this to the real sortie and restart bfdb. Confirm
+# with:  netidx resolver list $netidxBase
+# Leave blank to let bfdb auto-detect.
+$sortieOverride = ""
+
 # ==========================================================
 # Secrets: bfsystem.ps1 is tracked in git (public repo). $adminPassword lives
 # in bfsystem.local.ps1 instead, which is gitignored and never committed.
@@ -219,6 +243,9 @@ function Start-VECTOR {
         }
         if ($using:netidxBase -ne "") {
             $argList += "--base", $using:netidxBase
+        }
+        if ($using:sortieOverride -ne "") {
+            $argList += "--sortie", $using:sortieOverride
         }
         if ($using:engineConfigPath -ne "") {
             $argList += "--engine-config", $using:engineConfigPath

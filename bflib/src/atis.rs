@@ -19,17 +19,17 @@ use dcso3::{
 use log::error;
 use mlua::prelude::*;
 
-struct WeatherData {
-    wind_from_deg: f64,
-    wind_speed_kts: f64,
-    qnh_inhg: f64,
-    qnh_hpa: f64,
-    temp_c: f64,
-    cloud_base_m: f64,
-    cloud_density: u8,
+pub(crate) struct WeatherData {
+    pub(crate) wind_from_deg: f64,
+    pub(crate) wind_speed_kts: f64,
+    pub(crate) qnh_inhg: f64,
+    pub(crate) qnh_hpa: f64,
+    pub(crate) temp_c: f64,
+    pub(crate) cloud_base_m: f64,
+    pub(crate) cloud_density: u8,
     cloud_preset: Option<compact_str::CompactString>,
-    precip: bool,
-    visibility_m: f64,
+    pub(crate) precip: bool,
+    pub(crate) visibility_m: f64,
     ground_elev_m: f64,
     winds_aloft: Vec<AltitudeWind>,
 }
@@ -74,7 +74,7 @@ fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
     Ok((wind_from_deg, wind_speed_kts))
 }
 
-fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
+pub(crate) fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
     let globals = lua.inner().globals();
 
     // Ground elevation at this point -- DCS's y coordinate is height above
@@ -354,7 +354,7 @@ fn format_winds_aloft(winds: &[AltitudeWind]) -> compact_str::CompactString {
     s
 }
 
-fn is_aircraft_slot(db: &Db, slot: &SlotId) -> bool {
+pub(crate) fn is_aircraft_slot(db: &Db, slot: &SlotId) -> bool {
     let sifo = match db.ephemeral.get_slot_info(slot) {
         Some(s) => s,
         None => return false,
@@ -530,6 +530,181 @@ pub fn publish_weather(lua: MizLua, ctx: &mut Context) -> Result<()> {
         visibility_m: Some(wx.visibility_m),
     });
     Ok(())
+}
+
+/// Build one coalition's ATC picture: every field it holds, with the same
+/// weather and active-runway figures the text ATIS reports, plus its aircraft.
+///
+/// Lives here rather than in `admin.rs` so it reuses `fetch_weather` and
+/// `active_runway` directly — a spoken ATIS and the F10 text ATIS can then
+/// never disagree about the wind or the duty runway.
+pub(crate) fn query_atc(
+    lua: MizLua,
+    ctx: &Context,
+    side: dcso3::coalition::Side,
+) -> bfprotocols::atc::AtcPicture {
+    use bfprotocols::atc::{AtcAirfield, AtcPicture, AtcRunway, AtcTraffic};
+    use dcso3::airbase::Airbase;
+    use dcso3::object::DcsObject as _;
+    use std::string::String as StdString;
+
+    let db = &ctx.db;
+    let coord = dcso3::coord::Coord::singleton(lua).ok();
+    let to_ll = |x: f64, z: f64| -> (f64, f64) {
+        coord
+            .as_ref()
+            .and_then(|c| c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(x, 0.0, z))).ok())
+            .map(|ll| (ll.latitude, ll.longitude))
+            .unwrap_or((0.0, 0.0))
+    };
+
+    let mut airfields: Vec<AtcAirfield> = vec![];
+    for (oid, obj) in &db.persisted.objectives {
+        if obj.owner != side {
+            continue;
+        }
+        let is_carrier = obj.kind().is_carrier_group();
+        if !obj.kind().is_airbase() && !is_carrier {
+            continue;
+        }
+        let pos = obj.pos();
+        let Ok(wx) = fetch_weather(lua, pos.x, pos.y) else {
+            continue;
+        };
+        let (lat, lon) = to_ll(pos.x, pos.y);
+        let (qfe_hpa, qfe_inhg) = qfe(wx.qnh_hpa, wx.ground_elev_m);
+
+        // Runways, straight from DCS — no per-map table needed.
+        let ab = db.ephemeral.get_airbase_by_oid(oid);
+        let mut runways: Vec<AtcRunway> = vec![];
+        if let Some(ab_id) = ab {
+            if let Ok(abase) = Airbase::get_instance(lua, ab_id) {
+                if let Ok(seq) = abase.get_runways() {
+                    for r in seq {
+                        let Ok(r) = r else { continue };
+                        let course = r.course().unwrap_or(0.0).to_degrees().rem_euclid(360.0);
+                        runways.push(AtcRunway {
+                            name: r.name().map(|n| n.to_string()).unwrap_or_default(),
+                            heading: course as u16,
+                            length_m: r.length().unwrap_or(0.0) as u32,
+                            width_m: r.width().unwrap_or(0.0) as u32,
+                        });
+                    }
+                }
+            }
+        }
+        let active_runway = ab
+            .and_then(|ab_id| active_runway(lua, ab_id, wx.wind_from_deg, wx.wind_speed_kts))
+            .map(|r| r.to_string());
+
+        // Dewpoint from temperature and the cloud base (the standard
+        // spread/lapse approximation — DCS models no humidity of its own).
+        let dewpoint_c = wx.temp_c - (wx.cloud_base_m.max(0.0) * M_TO_FT / 1000.0) * 4.4 / 2.5;
+
+        airfields.push(AtcAirfield {
+            id: format_compact!("{oid}").to_string(),
+            name: obj.name().to_string(),
+            lat,
+            lon,
+            elev_ft: (wx.ground_elev_m * M_TO_FT) as i32,
+            kind: StdString::from(if is_carrier { "carrier" } else { "airbase" }),
+            runways,
+            active_runway,
+            brc: is_carrier.then(|| carrier_brc(db, obj.kind()) as u16),
+            wind_from_deg: wx.wind_from_deg as u16,
+            wind_speed_kts: wx.wind_speed_kts as u16,
+            qnh_inhg: wx.qnh_inhg,
+            qnh_hpa: wx.qnh_hpa,
+            qfe_inhg,
+            qfe_hpa,
+            temp_c: wx.temp_c as i16,
+            dewpoint_c: dewpoint_c as i16,
+            visibility_m: wx.visibility_m as u32,
+            cloud_base_ft: (wx.cloud_base_m > 0.0).then(|| (wx.cloud_base_m * M_TO_FT) as i32),
+            cloud_cover: wx.cloud_preset.as_ref().map(|p| p.to_string()),
+            precipitation: wx.precip,
+            recovery_case: is_carrier.then(|| match wx.cloud_base_m * M_TO_FT {
+                b if b >= 3000.0 => 1u8,
+                b if b >= 1000.0 => 2,
+                _ => 3,
+            }),
+            logi: obj.logi(),
+            health: obj.health(),
+            supply: obj.supply(),
+            fuel: obj.fuel(),
+            threatened: obj.threatened(),
+            // A field with its logistics flattened can't turn aircraft round,
+            // so ATIS calls it closed rather than pretending otherwise.
+            open: obj.logi() > 0 && obj.health() > 0,
+        });
+    }
+
+    // Aircraft on this side, with the field each is nearest to.
+    let mut traffic: Vec<AtcTraffic> = vec![];
+    for (ucid, player, inst) in db.instanced_players() {
+        if player.side != side {
+            continue;
+        }
+        let unit = player
+            .current_slot
+            .as_ref()
+            .and_then(|(slot, _)| db.ephemeral.slot_instance_unit(lua, slot).ok());
+        let unit_id = unit
+            .as_ref()
+            .and_then(|u| u.id().ok())
+            .map(|id| id.inner())
+            .filter(|id| *id > 0)
+            .map(|id| id as u64);
+        let callsign = unit
+            .as_ref()
+            .and_then(|u| u.get_callsign().ok())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| player.name.to_string());
+        let fp = Vector2::new(inst.position.p.x, inst.position.p.z);
+        let v = inst.velocity;
+        let heading = if v.x.abs() > f64::EPSILON || v.z.abs() > f64::EPSILON {
+            ((v.z.atan2(v.x).to_degrees() + 360.0) % 360.0) as u16
+        } else {
+            0
+        };
+        let ground_elev = dcso3::land::Land::singleton(lua)
+            .and_then(|l| l.get_height(dcso3::LuaVec2(fp)))
+            .unwrap_or(0.0);
+        let (lat, lon) = to_ll(fp.x, fp.y);
+        let mut nearest: Option<(f64, u16, StdString)> = None;
+        for (oid, obj) in &db.persisted.objectives {
+            if obj.owner != side || !(obj.kind().is_airbase() || obj.kind().is_carrier_group()) {
+                continue;
+            }
+            let d = obj.pos() - fp;
+            let rng = d.magnitude();
+            if nearest.as_ref().map_or(true, |(r, _, _)| rng < *r) {
+                let brg = ((d.y.atan2(d.x).to_degrees() + 360.0) % 360.0) as u16;
+                nearest = Some((rng, brg, format_compact!("{oid}").to_string()));
+            }
+        }
+        traffic.push(AtcTraffic {
+            ucid: ucid.to_string(),
+            unit_id,
+            callsign,
+            player_name: player.name.to_string(),
+            lat,
+            lon,
+            alt_ft: (inst.position.p.y * M_TO_FT) as i32,
+            agl_ft: ((inst.position.p.y - ground_elev).max(0.0) * M_TO_FT) as i32,
+            heading,
+            speed_kts: ((v.x * v.x + v.y * v.y + v.z * v.z).sqrt() * 1.944) as u16,
+            vspd_fpm: (v.y * M_TO_FT * 60.0) as i32,
+            on_ground: !inst.in_air,
+            field: nearest.as_ref().map(|(_, _, id)| id.clone()),
+            field_brg: nearest.as_ref().map_or(0, |(_, b, _)| *b),
+            field_rng_m: nearest.as_ref().map_or(0, |(r, _, _)| *r as u32),
+            rotary: false,
+        });
+    }
+
+    AtcPicture { airfields, traffic }
 }
 
 pub fn schedule_atis(lua: MizLua, slot: SlotId) -> Result<()> {

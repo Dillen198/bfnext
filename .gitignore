@@ -121,3 +121,14 @@ version.texi
 !src/vendor/**
 /src/target/
 no_llvm_build
+
+# Live DCSServerBot deployment config copied from the production host --
+# contains real credentials (.secret/*.pkl tokens, postgres DSN, Discord
+# client secret, CheckWX/Gemini API keys, admin_password, dashboard_secret).
+# The committed plugin/extension sources and *.sample.yaml templates are the
+# shareable half; this tree is not.
+DCSServerBot/config/
+DCSServerBot/plugins/fowlengine/fowlengine.yaml
+DCSServerBot/plugins/smartmod/smartmod.yaml
+# Packaged extension bundle -- rebuilt from DCSServerBot/extensions/
+DCSServerBot/extensions.zip

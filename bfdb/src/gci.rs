@@ -31,18 +31,15 @@
 //! intercept vectoring after a commit, coalition-wide group naming, and ID
 //! ripening (bogey → bandit → hostile).
 
-mod srs;
-mod stt;
-mod tts;
-
 use crate::db::StatsDb;
+use crate::voice::{radios_from, srs, stt, tts, FreqSpec, Radio};
 use bfprotocols::gci::{
     GciAspect, GciContact, GciControlPicture, GciFlight, GciRef, GciSamThreat, GciUnits,
 };
 use dcso3::coalition::Side;
 use serde::Deserialize;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
@@ -107,8 +104,28 @@ pub(crate) struct GciConfig {
     pub srs_host: String,
     #[serde(default = "d_srs_port")]
     pub srs_port: u16,
+    /// Legacy single-frequency form. Still honoured; `blueFreqs`/`redFreqs`
+    /// win when present.
+    #[serde(default)]
     pub blue_freq_mhz: f64,
+    #[serde(default)]
     pub red_freq_mhz: f64,
+    /// Every frequency the controller transmits on, per side — a UHF channel,
+    /// a VHF channel and an FM combat net can all be listed, and one
+    /// transmission is heard on all of them. Modulation defaults to FM below
+    /// 108 MHz and AM above.
+    ///
+    /// ```json
+    /// "blueFreqs": [
+    ///   { "mhz": 251.0, "modulation": "AM" },
+    ///   { "mhz": 124.0, "modulation": "AM" },
+    ///   { "mhz": 30.0,  "modulation": "FM" }
+    /// ]
+    /// ```
+    #[serde(default)]
+    pub blue_freqs: Vec<FreqSpec>,
+    #[serde(default)]
+    pub red_freqs: Vec<FreqSpec>,
     #[serde(default = "d_modulation")]
     pub modulation: String,
     /// External AWACS Mode coalition passwords. Leave blank on a server that
@@ -148,10 +165,35 @@ pub(crate) struct GciConfig {
     pub whisper_exe: Option<PathBuf>,
     #[serde(default)]
     pub whisper_model: Option<PathBuf>,
+    /// Base URL of a running `whisper-server` (e.g. `http://127.0.0.1:8910`).
+    /// Preferred over `whisperExe`/`whisperModel` when set — the model stays
+    /// resident instead of being reloaded for every transmission, which matters
+    /// as soon as more than one position is listening.
+    #[serde(default)]
+    pub whisper_server_url: Option<String>,
+    /// Spoken air traffic control and ATIS. Shares this file's SRS, TTS and
+    /// whisper settings; omit the block to leave ATC off.
+    #[serde(default)]
+    pub atc: Option<crate::atc::AtcConfig>,
     /// Discord webhook URL. When set, every GCI call is also posted there as a
-    /// text transcript. Create it in a channel's Integrations → Webhooks.
+    /// text transcript, both coalitions in one channel, tagged 🔵/🔴. Create it
+    /// in a channel's Integrations → Webhooks.
     #[serde(default)]
     pub discord_webhook_url: Option<String>,
+    /// Split the transcript across two channels instead. When either of these
+    /// is set that side posts here and not to `discordWebhookUrl`, which keeps
+    /// working as the fallback for a side without its own webhook — so you can
+    /// run one channel, two channels, or one channel per coalition with a
+    /// shared overflow.
+    #[serde(default)]
+    pub blue_discord_webhook_url: Option<String>,
+    #[serde(default)]
+    pub red_discord_webhook_url: Option<String>,
+    /// Prefix every Discord line with the DCS server's name. Defaults to on
+    /// when bfdb is fronting more than one instance, so two servers posting
+    /// into one channel stay tellable apart.
+    #[serde(default)]
+    pub discord_tag_instance: Option<bool>,
     /// Spoken controller callsign + SRS client-list name, per side.
     #[serde(default = "d_blue_cs")]
     pub blue_controller_callsign: String,
@@ -186,6 +228,10 @@ pub(crate) struct GciConfig {
     /// Periodic friendly tanker / AWACS location broadcast.
     #[serde(default = "d_true")]
     pub support_calls: bool,
+    /// "New tasking" broadcast when a player posts a task (CAP / CAS /
+    /// CAPTURE / ...) to the coalition tasking board in game.
+    #[serde(default = "d_true")]
+    pub tasking_calls: bool,
     #[serde(default = "d_support_interval")]
     pub support_interval_secs: u64,
     /// A hostile group beyond this range is not called as "new" (it still
@@ -246,11 +292,24 @@ impl GciConfig {
         }
     }
     fn modulation_byte(&self) -> u8 {
-        if self.modulation.eq_ignore_ascii_case("fm") {
-            1
-        } else {
-            0
-        }
+        crate::voice::modulation_byte(&self.modulation)
+    }
+
+    /// Every frequency a side's controller transmits on.
+    fn radios(&self, side: Side) -> Vec<Radio> {
+        let (specs, legacy, label) = match side {
+            Side::Red => (
+                &self.red_freqs,
+                self.red_freq_mhz,
+                self.red_controller_callsign.as_str(),
+            ),
+            _ => (
+                &self.blue_freqs,
+                self.blue_freq_mhz,
+                self.blue_controller_callsign.as_str(),
+            ),
+        };
+        radios_from(specs, legacy, self.modulation_byte(), label)
     }
 }
 
@@ -291,17 +350,19 @@ pub(crate) fn from_file(path: &std::path::Path) -> Option<GciConfig> {
 
 // ─── Public entry point ────────────────────────────────────────────────────
 
-/// Run the GCI poller until the process exits. Spawned from `main` only when
-/// `--base` is set (there is a live engine to query) and a `gci` config block
-/// is present.
+/// Run the GCI poller for one DCS server instance until the process exits.
+/// Spawned from `main` only for an instance that has a netidx base (there is a
+/// live engine to query) and a `gci` config of its own.
 pub(crate) async fn run(
     db: StatsDb,
+    inst: crate::Inst,
     cfg: GciConfig,
     transcript_tx: broadcast::Sender<String>,
     transcript: Transcript,
 ) {
     log::info!(
-        "GCI enabled: blue {} MHz ({}) / red {} MHz ({}) {}, default units {}, poll {}s",
+        "[{}] GCI enabled: blue {} MHz ({}) / red {} MHz ({}) {}, default units {}, poll {}s",
+        inst.id,
         cfg.blue_freq_mhz,
         cfg.blue_controller_callsign,
         cfg.red_freq_mhz,
@@ -311,13 +372,8 @@ pub(crate) async fn run(
         cfg.poll_secs,
     );
 
-    let webhook = cfg
-        .discord_webhook_url
-        .clone()
-        .filter(|s| s.starts_with("https://"));
-    if webhook.is_some() {
-        log::info!("gci: Discord transcript enabled");
-    }
+    let discord = DiscordRoute::build(&cfg, &inst, db.instances().all().len() > 1);
+    discord.log();
 
     let (tx, rx) = mpsc::channel::<QueuedCall>(64);
 
@@ -328,7 +384,18 @@ pub(crate) async fn run(
     let stt = stt::Stt::from_cfg(
         nonempty_path(&cfg.whisper_exe).as_ref(),
         nonempty_path(&cfg.whisper_model).as_ref(),
+        cfg.whisper_server_url.as_deref(),
     );
+    // Prime the recogniser with the names it will actually hear. The controller
+    // callsigns are the wake words — getting those decoded is most of the job.
+    if let Some(s) = stt.as_ref() {
+        s.set_vocabulary(&[
+            cfg.blue_controller_callsign.clone(),
+            cfg.red_controller_callsign.clone(),
+            cfg.bullseye_name(Side::Blue).to_string(),
+            cfg.bullseye_name(Side::Red).to_string(),
+        ]);
+    }
     let (rx_for_srs, rx_recv) = if stt.is_some() {
         let (t, r) = tokio::sync::mpsc::unbounded_channel::<srs::Transmission>();
         (Some(t), Some(r))
@@ -336,6 +403,13 @@ pub(crate) async fn run(
         (None, None)
     };
     let (commit_tx, mut commit_rx) = tokio::sync::mpsc::unbounded_channel::<(Side, String)>();
+    if stt.is_none() {
+        log::info!(
+            "gci: speech recognition disabled (set whisperExe + whisperModel to let              players call '{}' / '{}'); outbound calls still work",
+            cfg.blue_controller_callsign,
+            cfg.red_controller_callsign,
+        );
+    }
     if let (Some(stt), Some(rx_recv)) = (stt.clone(), rx_recv) {
         log::info!("gci: speech recognition enabled — {}", stt.describe());
         tokio::spawn(stt_worker(
@@ -350,7 +424,7 @@ pub(crate) async fn run(
 
     tokio::spawn(transmit_worker(
         build_voice(&cfg, rx_for_srs),
-        webhook,
+        discord,
         cfg.inter_call_gap_secs,
         transcript_tx,
         transcript,
@@ -381,7 +455,7 @@ pub(crate) async fn run(
         let mut flights_in_combat = 0usize;
 
         for (side, side_str) in [(Side::Blue, "blue"), (Side::Red, "red")] {
-            let picture = match fetch_picture(&db, side_str).await {
+            let picture = match fetch_picture(&db, &inst, side_str).await {
                 Ok(p) => {
                     any_ok = true;
                     p
@@ -482,15 +556,29 @@ pub(crate) async fn run(
                 last_err.as_deref().unwrap_or("unknown")
             );
         }
-        if engine_ok && tick % heartbeat_ticks == 0 {
-            log::info!(
-                "gci: alive — {total_flights} airborne flight(s), {flights_in_combat} with contacts"
-            );
+        if tick % heartbeat_ticks == 0 {
+            if engine_ok {
+                log::info!(
+                    "gci: alive — {total_flights} airborne flight(s), {flights_in_combat} with contacts"
+                );
+            } else {
+                // Keep saying it — a one-time warning is easy to miss when the
+                // RPC channel is down for a whole mission.
+                log::warn!(
+                    "gci: still waiting on the engine — query-gci not answering ({}). \
+                     Check the netidx resolver / bfdb --base; GCI makes no calls until this clears.",
+                    last_err.as_deref().unwrap_or("unknown")
+                );
+            }
         }
     }
 }
 
-async fn fetch_picture(db: &StatsDb, side: &'static str) -> Result<GciControlPicture, String> {
+async fn fetch_picture(
+    db: &StatsDb,
+    inst: &crate::db::InstanceState,
+    side: &'static str,
+) -> Result<GciControlPicture, String> {
     // Be generous: on a loaded engine the RPC handler runs on the DCS
     // scripting thread and can lag well past a few seconds. A missed poll is
     // cheaper than a spurious "unreachable".
@@ -498,6 +586,7 @@ async fn fetch_picture(db: &StatsDb, side: &'static str) -> Result<GciControlPic
         Duration::from_secs(GCI_RPC_TIMEOUT_SECS),
         crate::call_engine_rpc_str(
             db,
+            inst,
             "query-gci",
             vec![("side", netidx::publisher::Value::from(side))],
         ),
@@ -567,6 +656,9 @@ struct SideState {
     last_support: Option<Instant>,
     ejections: HashMap<(i64, i64), u64>,
     last_tumbleweed_tick: u64,
+    /// Tasking board entries already read out, so each is spoken once. The
+    /// engine keeps a posted task in the picture for a couple of minutes.
+    tasks_called: HashSet<i64>,
     initialized: bool,
 }
 
@@ -701,6 +793,28 @@ fn coalition_calls(
         }
     }
 
+    // TASKING -- a player posted a task on the F10 tasking board. Read it
+    // out once, to everyone, the way a controller would pass new tasking.
+    if cfg.tasking_calls {
+        for t in &picture.tasks {
+            if ss.tasks_called.insert(t.id) && ss.initialized {
+                let mut call = format!(
+                    "all players, {ctrl}, new tasking, {}, {}",
+                    t.kind.to_lowercase(),
+                    bulls(t.lat, t.lon)
+                );
+                if let Some(by) = t.by.as_ref() {
+                    call.push_str(&format!(", requested by {by}"));
+                }
+                out.push((false, call));
+            }
+        }
+        // A task the engine has stopped advertising is off the board; let
+        // its id go so a re-post is called again.
+        let live: HashSet<i64> = picture.tasks.iter().map(|t| t.id).collect();
+        ss.tasks_called.retain(|id| live.contains(id));
+    }
+
     ss.initialized = true;
     out
 }
@@ -790,6 +904,10 @@ fn decide(
     named: &[NamedGroup],
     tick: u64,
 ) -> Option<(bool, String)> {
+    // This flight runs its own comms — the controller answers when called but
+    // never opens. Still tick the ledger below so that turning callouts back on
+    // does not dump a backlog of stale contacts; just say nothing.
+    let quiet = !flight.auto;
     let controller = cfg.controller(side);
     // Address the flight by pilot name (falling back to flight callsign) — most
     // players don't set a DCS flight callsign.
@@ -1047,6 +1165,10 @@ fn decide(
     }
 
     let (prio, text) = best?;
+    // Ledger is up to date; this flight just doesn't want to be spoken to.
+    if quiet {
+        return None;
+    }
     let urgent = matches!(
         prio,
         Prio::SamLaunch | Prio::Threat | Prio::SamThreat | Prio::Splash | Prio::Vector
@@ -1238,6 +1360,46 @@ fn reporting_name(raw: &str) -> Option<&'static str> {
 }
 
 /// Small cardinal numbers as words (for clock positions).
+/// A single digit as it is spoken on the radio.
+///
+/// Unlike [`number_word`] this is digit-by-digit — callsigns, bearings and
+/// headings are never read as quantities. The spellings are the ICAO/NATO
+/// ones ("tree", "fife", "niner"), which exist because the ordinary words are
+/// the ones that get lost under noise: "five" and "nine" are easily confused,
+/// and "three" collapses to "free". They read oddly on the page but come out
+/// of a TTS voice sounding like a controller rather than a satnav.
+fn digit_word(d: u32) -> &'static str {
+    match d {
+        0 => "zero",
+        1 => "one",
+        2 => "two",
+        3 => "tree",
+        4 => "four",
+        5 => "fife",
+        6 => "six",
+        7 => "seven",
+        8 => "eight",
+        _ => "niner",
+    }
+}
+
+/// The everyday spelling of a digit — what a speech recogniser writes down when
+/// a player reads a number, as opposed to what we say back.
+fn digit_word_plain(d: u32) -> &'static str {
+    match d {
+        0 => "zero",
+        1 => "one",
+        2 => "two",
+        3 => "three",
+        4 => "four",
+        5 => "five",
+        6 => "six",
+        7 => "seven",
+        8 => "eight",
+        _ => "nine",
+    }
+}
+
 fn number_word(n: u32) -> &'static str {
     match n {
         1 => "one",
@@ -1537,6 +1699,9 @@ fn picture_call(callsign: &str, rc: &RCtx) -> String {
 /// bracketed clan tags and punctuation so TTS doesn't read "open bracket dot
 /// I D", and drops the trailing "00" DCS puts on custom group callsigns.
 fn spoken_callsign(cs: &str) -> String {
+    // "№15 | KillerDog", "=51= | Ivan" — a pipe separates a squadron tag from
+    // the name; only the name gets spoken.
+    let cs = cs.rsplit('|').next().map(str::trim).filter(|s| !s.is_empty()).unwrap_or(cs);
     // Drop [..] (..) {..} <..> tag groups and stray punctuation.
     let mut cleaned = String::with_capacity(cs.len());
     let mut depth = 0i32;
@@ -1580,19 +1745,8 @@ fn spoken_callsign(cs: &str) -> String {
 fn digit_string(n: u16) -> String {
     format!("{:03}", n % 1000)
         .chars()
-        .map(|c| match c {
-            '0' => "zero",
-            '1' => "one",
-            '2' => "two",
-            '3' => "three",
-            '4' => "four",
-            '5' => "five",
-            '6' => "six",
-            '7' => "seven",
-            '8' => "eight",
-            '9' => "nine",
-            _ => "",
-        })
+        .filter_map(|c| c.to_digit(10))
+        .map(digit_word)
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -1684,19 +1838,92 @@ struct QueuedCall {
 struct Voice {
     blue: Option<srs::SrsClient>,
     red: Option<srs::SrsClient>,
+    /// Every frequency each side's controller transmits on. One transmission
+    /// goes out on all of them at once (UHF + VHF + FM).
+    blue_radios: Vec<Radio>,
+    red_radios: Vec<Radio>,
     tts_blue: tts::Tts,
     tts_red: tts::Tts,
 }
 
+/// Where each coalition's transcript goes on Discord.
+///
+/// Three shapes fall out of the config with no extra switch: one webhook for
+/// everything (both coalitions, colour-tagged), a webhook per coalition (two
+/// channels), or one per coalition with `discordWebhookUrl` catching whichever
+/// side has none of its own.
+#[derive(Clone, Default)]
+struct DiscordRoute {
+    blue: Option<String>,
+    red: Option<String>,
+    /// Server-name prefix, when more than one DCS instance shares a channel.
+    prefix: String,
+}
+
+impl DiscordRoute {
+    fn build(cfg: &GciConfig, inst: &crate::Inst, multi_instance: bool) -> Self {
+        let ok = |u: &Option<String>| u.clone().filter(|s| s.starts_with("https://"));
+        let shared = ok(&cfg.discord_webhook_url);
+        // Tag by default only when this bfdb fronts several servers — a
+        // single-server setup does not need its own name on every line.
+        let tag = cfg.discord_tag_instance.unwrap_or(multi_instance);
+        let prefix = match (tag, inst.cfg.label().trim()) {
+            (true, n) if !n.is_empty() => format!("`[{n}]` "),
+            _ => String::new(),
+        };
+        DiscordRoute {
+            blue: ok(&cfg.blue_discord_webhook_url).or_else(|| shared.clone()),
+            red: ok(&cfg.red_discord_webhook_url).or(shared),
+            prefix,
+        }
+    }
+
+    fn any(&self) -> bool {
+        self.blue.is_some() || self.red.is_some()
+    }
+
+    fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    fn for_side(&self, side: Side) -> Option<&String> {
+        match side {
+            Side::Red => self.red.as_ref(),
+            _ => self.blue.as_ref(),
+        }
+    }
+
+    fn log(&self) {
+        match (&self.blue, &self.red) {
+            (None, None) => {}
+            (b, r) if b == r => log::info!("gci: Discord transcript enabled (one channel)"),
+            (Some(_), Some(_)) => {
+                log::info!("gci: Discord transcript enabled (separate blue/red channels)")
+            }
+            (Some(_), None) => log::info!("gci: Discord transcript enabled (blue only)"),
+            (None, Some(_)) => log::info!("gci: Discord transcript enabled (red only)"),
+        }
+    }
+}
+
 /// Post one GCI call to the Discord transcript webhook. Fire-and-forget —
 /// failures are logged at debug and never block a transmission.
-async fn post_discord(http: &reqwest::Client, url: &str, side: Side, text: &str) {
+async fn post_discord(
+    http: &reqwest::Client,
+    url: &str,
+    side: Side,
+    prefix: &str,
+    text: &str,
+) {
     let tag = match side {
         Side::Blue => "🔵",
         Side::Red => "🔴",
         _ => "⚪",
     };
-    let body = serde_json::json!({ "content": format!("{tag} {text}"), "allowed_mentions": { "parse": [] } });
+    let body = serde_json::json!({
+        "content": format!("{prefix}{tag} {text}"),
+        "allowed_mentions": { "parse": [] }
+    });
     match tokio::time::timeout(Duration::from_secs(5), http.post(url).json(&body).send()).await {
         Ok(Ok(r)) if r.status().is_success() || r.status().as_u16() == 204 => {}
         Ok(Ok(r)) => log::debug!("gci: Discord webhook returned {}", r.status()),
@@ -1746,14 +1973,19 @@ fn build_voice(
         }
     };
 
-    let mk = |coalition: u8, name: &str, freq_mhz: f64, pw: &str| -> Option<srs::SrsClient> {
+    let mk = |coalition: u8, name: &str, radios: Vec<Radio>, pw: &str| -> Option<srs::SrsClient> {
+        if radios.is_empty() {
+            log::error!(
+                "gci: no frequency configured for '{name}' — set freqs (or the legacy freqMhz)                  in gci.json; this side will not transmit"
+            );
+            return None;
+        }
         match srs::SrsClient::start(
             &cfg.srs_host,
             cfg.srs_port,
             coalition,
             name,
-            freq_mhz * 1e6,
-            cfg.modulation_byte(),
+            radios,
             pw,
             opus.clone(),
             rx_tx.clone(),
@@ -1766,9 +1998,32 @@ fn build_voice(
         }
     };
 
+    let blue_radios = cfg.radios(Side::Blue);
+    let red_radios = cfg.radios(Side::Red);
+    for (side, rs) in [("blue", &blue_radios), ("red", &red_radios)] {
+        if !rs.is_empty() {
+            log::info!(
+                "gci: {side} controller on {}",
+                rs.iter().map(|r| r.describe()).collect::<Vec<_>>().join(" + ")
+            );
+        }
+    }
+
     Voice {
-        blue: mk(2, &cfg.blue_controller_callsign, cfg.blue_freq_mhz, &cfg.blue_eam_password),
-        red: mk(1, &cfg.red_controller_callsign, cfg.red_freq_mhz, &cfg.red_eam_password),
+        blue: mk(
+            2,
+            &cfg.blue_controller_callsign,
+            blue_radios.clone(),
+            &cfg.blue_eam_password,
+        ),
+        red: mk(
+            1,
+            &cfg.red_controller_callsign,
+            red_radios.clone(),
+            &cfg.red_eam_password,
+        ),
+        blue_radios,
+        red_radios,
         tts_blue,
         tts_red,
     }
@@ -1776,13 +2031,13 @@ fn build_voice(
 
 async fn transmit_worker(
     voice: Voice,
-    webhook: Option<String>,
+    discord: DiscordRoute,
     gap_secs: u64,
     transcript_tx: broadcast::Sender<String>,
     transcript: Transcript,
     mut rx: mpsc::Receiver<QueuedCall>,
 ) {
-    let http = webhook.as_ref().map(|_| reqwest::Client::new());
+    let http = discord.any().then(reqwest::Client::new);
     let mut last_tx_end: Option<Instant> = None;
     while let Some(call) = rx.recv().await {
         if call.queued.elapsed() > Duration::from_secs(12) {
@@ -1824,14 +2079,14 @@ async fn transmit_worker(
 
         log::info!("gci[{:?}]: {}", call.side, call.text);
 
-        if let (Some(url), Some(http)) = (&webhook, &http) {
-            post_discord(http, url, call.side, &call.text).await;
+        if let (Some(url), Some(http)) = (discord.for_side(call.side), &http) {
+            post_discord(http, url, call.side, discord.prefix(), &call.text).await;
         }
 
-        let client = match call.side {
-            Side::Blue => voice.blue.clone(),
-            Side::Red => voice.red.clone(),
-            _ => None,
+        let (client, radios) = match call.side {
+            Side::Blue => (voice.blue.clone(), voice.blue_radios.clone()),
+            Side::Red => (voice.red.clone(), voice.red_radios.clone()),
+            _ => (None, Vec::new()),
         };
         let Some(client) = client else {
             log::debug!("gci: no SRS client for {:?}; call not transmitted", call.side);
@@ -1850,7 +2105,7 @@ async fn transmit_worker(
         let res = tokio::task::spawn_blocking(move || -> anyhow::Result<usize> {
             let pcm = tts.synthesize(&text)?;
             let n = pcm.len();
-            client.transmit(&pcm)?;
+            client.transmit(&radios, &pcm)?;
             Ok(n)
         })
         .await;
@@ -1877,7 +2132,7 @@ async fn stt_worker(
     commit_tx: tokio::sync::mpsc::UnboundedSender<(Side, String)>,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<srs::Transmission>,
 ) {
-    while let Some(tr) = rx.recv().await {
+    while let Some(mut tr) = rx.recv().await {
         let (side, side_str) = if tr.coalition == 1 {
             (Side::Red, "red")
         } else {
@@ -1885,7 +2140,9 @@ async fn stt_worker(
         };
         let wake = cfg.controller(side).to_lowercase();
         let s = stt.clone();
-        let pcm = tr.pcm;
+        // The audio moves into the blocking transcribe task; everything else
+        // about the transmission is still needed to answer it.
+        let pcm = std::mem::take(&mut tr.pcm);
         let text = match tokio::task::spawn_blocking(move || s.transcribe(&pcm)).await {
             Ok(Ok(t)) => t,
             Ok(Err(e)) => {
@@ -1898,13 +2155,56 @@ async fn stt_worker(
             continue;
         }
         log::info!("gci[{side:?}] heard '{}': \"{text}\"", tr.name);
-        let Some(req) = stt::parse_request(&text, &wake) else {
-            continue;
+        // The control picture is only needed for calls that report on
+        // contacts; a radio check / check-in is answered even when the engine
+        // poll has not produced one yet.
+        let picture = cache.read().ok().and_then(|c| c.get(side_str).cloned());
+        let flight = match_flight(&tr, &text, picture.as_ref());
+
+        let req = match stt::parse_request_dbg(&text, &wake) {
+            (Some(r), _) => r,
+            (None, Some(stt::Reject::NotAddressed)) => {
+                // Not our callsign — someone talking to another agency, or to
+                // another player. Staying off the air is the right answer.
+                log::info!("gci[{side:?}] ignoring \"{text}\": not addressed to '{wake}'");
+                continue;
+            }
+            (None, _) => {
+                // They called us and we could not make out the request. Say so
+                // — silence leaves the player wondering whether the whole
+                // system is broken.
+                let ctrl = cfg.controller(side);
+                let who = flight.map(|f| {
+                    if f.player_name.is_empty() {
+                        f.callsign.as_str()
+                    } else {
+                        f.player_name.as_str()
+                    }
+                });
+                let answer = match who {
+                    Some(w) => format!("{}, {ctrl}, say again", spoken_callsign(w)),
+                    None => format!("station calling {ctrl}, say again"),
+                };
+                log::info!("gci[{side:?}] unparsed \"{text}\" — asking for a repeat");
+                let _ = tx.try_send(QueuedCall {
+                    queued: Instant::now(),
+                    side,
+                    urgent: true,
+                    text: answer,
+                });
+                continue;
+            }
         };
 
-        let picture = cache.read().ok().and_then(|c| c.get(side_str).cloned());
-        let Some(picture) = picture else { continue };
-        let flight = picture.flights.iter().find(|f| name_matches(&tr.name, f));
+        if flight.is_none() {
+            log::info!(
+                "gci[{side:?}] {req:?} from '{}' (unit {:?}): no matching flight in the picture \
+                 ({} known)",
+                tr.name,
+                tr.unit_id,
+                picture.as_ref().map_or(0, |p| p.flights.len())
+            );
+        }
 
         if req == stt::Request::Commit {
             if let Some(f) = flight {
@@ -1912,20 +2212,116 @@ async fn stt_worker(
             }
         }
 
-        if let Some(answer) = build_answer(&cfg, side, &req, flight, &picture) {
-            log::info!("gci[{side:?}] answering {req:?}: {answer}");
-            let _ = tx.try_send(QueuedCall {
-                queued: Instant::now(),
-                side,
-                urgent: true,
-                text: answer,
-            });
-        }
+        // A request we understood always gets an answer on the air, even when
+        // we can't build the real one — an unanswered call is indistinguishable
+        // from a dead system.
+        let answer = build_answer(&cfg, side, &req, flight, picture.as_ref()).unwrap_or_else(|| {
+            let ctrl = cfg.controller(side);
+            match flight {
+                Some(f) => {
+                    let w = if f.player_name.is_empty() {
+                        &f.callsign
+                    } else {
+                        &f.player_name
+                    };
+                    format!("{}, {ctrl}, unable", spoken_callsign(w))
+                }
+                None => format!("station calling {ctrl}, no radar contact, say your position"),
+            }
+        });
+        log::info!("gci[{side:?}] answering {req:?}: {answer}");
+        let _ = tx.try_send(QueuedCall {
+            queued: Instant::now(),
+            side,
+            urgent: true,
+            text: answer,
+        });
     }
 }
 
+/// Tie an inbound transmission to a flight.
+///
+/// The DCS unit id an in-cockpit SRS client reports is exact, so try that
+/// first; fall back to name matching for players flying with an external SRS
+/// client (which has no unit), and finally to the callsign the pilot spoke.
+fn match_flight<'a>(
+    tr: &srs::Transmission,
+    heard: &str,
+    picture: Option<&'a GciControlPicture>,
+) -> Option<&'a GciFlight> {
+    let p = picture?;
+    if let Some(uid) = tr.unit_id {
+        if let Some(f) = p.flights.iter().find(|f| f.unit_id == Some(uid)) {
+            return Some(f);
+        }
+    }
+    if let Some(f) = p.flights.iter().find(|f| name_matches(&tr.name, f)) {
+        return Some(f);
+    }
+    // "Magic, Colt one one, bogey dope" — the caller said who they are.
+    p.flights.iter().find(|f| spoken_callsign_in(heard, f))
+}
+
+/// Did the transmission contain this flight's callsign, spoken the way a pilot
+/// says it? "Colt11" is read "Colt one one", so compare against the digits
+/// written out as words as well as as digits.
+fn spoken_callsign_in(heard: &str, f: &GciFlight) -> bool {
+    let tokens: Vec<String> = heard
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_lowercase())
+        .collect();
+    if tokens.is_empty() {
+        return false;
+    }
+    for src in [&f.callsign, &f.player_name] {
+        // Split "Colt11" / "Enfield 1-1" into a name and its digits.
+        let name: String = src
+            .chars()
+            .take_while(|c| !c.is_ascii_digit())
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+            .to_lowercase();
+        if name.chars().count() < 3 {
+            continue;
+        }
+        let digits: Vec<char> = src.chars().filter(|c| c.is_ascii_digit()).collect();
+        let Some(at) = tokens.iter().position(|t| t == &name) else {
+            continue;
+        };
+        if digits.is_empty() {
+            return true;
+        }
+        // Digits may follow as words ("one one"), as a run ("eleven" is not
+        // used on the radio), or glued to the name token.
+        let rest: String = tokens[at + 1..].join(" ");
+        // We *speak* ICAO ("tree", "fife", "niner") but players say the
+        // ordinary words, and whisper writes down what they said — so accept
+        // either spelling when matching a callsign we heard.
+        let say = |f: fn(u32) -> &'static str| -> String {
+            digits
+                .iter()
+                .filter_map(|d| d.to_digit(10))
+                .map(f)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let plain: String = digits.iter().collect();
+        if rest.starts_with(&say(digit_word))
+            || rest.starts_with(&say(digit_word_plain))
+            || rest.starts_with(&plain)
+            || tokens[at].ends_with(&plain)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Match an SRS transmitter name to a flight (by pilot name or callsign,
-/// tag/punctuation-insensitive, either-contains-either).
+/// tag/punctuation-insensitive, either-contains-either). Players decorate
+/// their names differently in SRS and DCS ("№15 | KillerDog" vs "KillerDog"),
+/// so a shared significant word counts as a match too.
 fn name_matches(srs_name: &str, f: &GciFlight) -> bool {
     let norm = |s: &str| {
         s.chars()
@@ -1933,13 +2329,28 @@ fn name_matches(srs_name: &str, f: &GciFlight) -> bool {
             .collect::<String>()
             .to_lowercase()
     };
+    // Words of 4+ letters, ignoring the clan tags and squadron numbers that
+    // tend to differ between the two names.
+    let words = |s: &str| -> Vec<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .map(|w| w.to_lowercase())
+            .filter(|w| w.chars().count() >= 4 && w.chars().any(|c| c.is_alphabetic()))
+            .collect()
+    };
     let a = norm(srs_name);
     if a.is_empty() {
         return false;
     }
+    let aw = words(srs_name);
     for b in [&f.player_name, &f.callsign] {
-        let b = norm(b);
-        if !b.is_empty() && (a.contains(&b) || b.contains(&a)) {
+        let bn = norm(b);
+        if bn.is_empty() {
+            continue;
+        }
+        if a.contains(&bn) || bn.contains(&a) {
+            return true;
+        }
+        if words(b).iter().any(|w| aw.contains(w)) {
             return true;
         }
     }
@@ -1951,7 +2362,7 @@ fn build_answer(
     side: Side,
     req: &stt::Request,
     flight: Option<&GciFlight>,
-    picture: &GciControlPicture,
+    picture: Option<&GciControlPicture>,
 ) -> Option<String> {
     let ctrl = cfg.controller(side);
     let who = flight.map(|f| {
@@ -1970,6 +2381,7 @@ fn build_answer(
         stt::Request::RadioCheck => Some(format!("{}, loud and clear", addr(who))),
         stt::Request::CheckIn => {
             let n = flight.map_or(0, |f| f.contacts.len());
+            let _ = picture;
             Some(format!(
                 "{}, radar contact, {}",
                 addr(who),
@@ -1981,7 +2393,7 @@ fn build_answer(
             ))
         }
         stt::Request::AlphaCheck => {
-            let (f, b) = (flight?, picture.bullseye?);
+            let (f, b) = (flight?, picture?.bullseye?);
             let (brg, dist) = bearing_range(b.0, b.1, f.lat, f.lon);
             let units = f.units.unwrap_or_else(|| cfg.default_units());
             Some(format!(
@@ -1998,7 +2410,7 @@ fn build_answer(
                 units: f.units.unwrap_or_else(|| cfg.default_units()),
                 refm: f.reference.unwrap_or_else(|| cfg.default_reference()),
                 flight: f,
-                be: picture.bullseye,
+                be: picture.and_then(|p| p.bullseye),
                 bulls_name: cfg.bullseye_name(side),
                 groups: &[],
             };
@@ -2010,7 +2422,7 @@ fn build_answer(
                 units: f.units.unwrap_or_else(|| cfg.default_units()),
                 refm: f.reference.unwrap_or_else(|| cfg.default_reference()),
                 flight: f,
-                be: picture.bullseye,
+                be: picture.and_then(|p| p.bullseye),
                 bulls_name: cfg.bullseye_name(side),
                 groups: &[],
             };
@@ -2030,7 +2442,7 @@ fn build_answer(
             let units = f.units.unwrap_or_else(|| cfg.default_units());
             // A "declare" only makes sense against a point; we only hold
             // hostile tracks, so: hostile if a group is near, else clean.
-            let near = match (be_point, picture.bullseye) {
+            let near = match (be_point, picture.and_then(|p| p.bullseye)) {
                 (Some((pb, pr)), Some(b)) => {
                     let (plat, plon) = project(b.0, b.1, *pb as f64, (*pr as f64) * 1852.0);
                     f.contacts.iter().any(|c| {
@@ -2049,5 +2461,29 @@ fn build_answer(
                 if near { "hostile" } else { "clean" }
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GciConfig;
+
+    /// `gci.sample.json` is the documentation for this struct, and the shape
+    /// DCSServerBot's procman renders. If a field is renamed here and not
+    /// there, the sample silently stops meaning what it says — serde ignores
+    /// unknown keys, so the only symptom on a live server is a setting that
+    /// quietly does nothing.
+    #[test]
+    fn sample_config_parses() {
+        let raw = include_str!("../../gci.sample.json");
+        let cfg: GciConfig = serde_json::from_str(raw).expect("gci.sample.json must parse");
+        assert_eq!(cfg.blue_freqs.len(), 3, "sample should show the multi-band form");
+        assert!(cfg.blue_freqs.iter().any(|f| f.mhz < 108.0), "sample should include an FM net");
+        let atc = cfg.atc.expect("sample should carry an atc block");
+        assert!(atc.tower_base_mhz > 0.0);
+        assert!(
+            atc.fields.contains_key("Incirlik"),
+            "sample should show a per-field frequency override"
+        );
     }
 }

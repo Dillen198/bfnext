@@ -4,6 +4,7 @@ use serde_derive::Serialize;
 use std::path::PathBuf;
 
 mod mission_edit;
+mod unitdb;
 
 #[derive(Args, Clone, Debug, Serialize)]
 struct SpecialSamCmd {
@@ -45,9 +46,14 @@ struct MizCmd {
     /// the base mission file
     #[clap(long)]
     base: PathBuf,
-    /// the weapon template
+    /// the weapon template: a miz whose Client-skill plane/helicopter groups
+    /// carry the payload, radio, frequency and AddPropAircraft settings to
+    /// stamp onto the base mission's static player slots. Optional -- a
+    /// mission built entirely on DCS dynamic slots has no static player slots
+    /// to stamp, and its loadouts come from the dynSpawnTemplate groups in the
+    /// --warehouse miz instead, so there is nothing for this to do
     #[clap(long)]
-    weapon: PathBuf,
+    weapon: Option<PathBuf>,
     /// the options template
     #[clap(long)]
     options: PathBuf,
@@ -112,6 +118,27 @@ enum Tools {
     Miz(MizCmd),
     SpecialSam(SpecialSamCmd),
     FixLogiCoverage(FixLogiCoverageCmd),
+    /// Report on a harvested DCS unit range database (JSON or a markdown table)
+    UnitDb(unitdb::UnitDbCmd),
+    /// Print this build's identity as JSON (git rev + build time) and exit.
+    Version,
+}
+
+/// Build identity, embedded at compile time by `build.rs`.
+const BUILD_GIT: &str = env!("BFNEXT_BUILD_GIT");
+const BUILD_EPOCH: &str = env!("BFNEXT_BUILD_EPOCH");
+const BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn print_version() {
+    let built = BUILD_EPOCH
+        .parse::<i64>()
+        .ok()
+        .and_then(|s| chrono::DateTime::from_timestamp(s, 0))
+        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(|| "unknown".to_string());
+    println!(
+        r#"{{"name":"bftools","version":"{BUILD_VERSION}","git":"{BUILD_GIT}","built":"{built}"}}"#
+    );
 }
 
 #[derive(Parser)]
@@ -128,6 +155,8 @@ fn main() -> Result<()> {
         Tools::Miz(cfg) => mission_edit::run(&cfg)?,
         Tools::SpecialSam(cfg) => mission_edit::run_special_sam(&cfg)?,
         Tools::FixLogiCoverage(cfg) => mission_edit::run_fix_logi_coverage(&cfg)?,
+        Tools::UnitDb(cfg) => unitdb::run(&cfg)?,
+        Tools::Version => print_version(),
     };
     Ok(())
 }

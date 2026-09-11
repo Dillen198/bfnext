@@ -44,64 +44,10 @@ fn brg_rng_str(from: Option<Vector2>, to: Vector2) -> CompactString {
 }
 
 // ── Situation report ────────────────────────────────────────────────────────
-
-fn build_sitrep(db: &Db, side: Side) -> CompactString {
-    use bfprotocols::db::objective::ObjectiveKind as K;
-    let enemy = side.opposite();
-    let is_primary = |k: &K| matches!(k, K::Airbase | K::NavalBase | K::Farp { .. });
-
-    let mut f_total = 0u32;
-    let mut f_primary = 0u32;
-    let mut e_total = 0u32;
-    let mut e_primary = 0u32;
-    let mut f_capturable = 0u32;
-    let mut f_threatened = 0u32;
-    for (_, o) in db.objectives() {
-        if o.owner() == side {
-            f_total += 1;
-            f_primary += is_primary(o.kind()) as u32;
-            f_capturable += o.captureable() as u32;
-            f_threatened += o.threatened() as u32;
-        } else if o.owner() == enemy {
-            e_total += 1;
-            e_primary += is_primary(o.kind()) as u32;
-        }
-    }
-
-    let mut report = CompactString::from("=== Situation Report ===\n");
-    let _ = write!(
-        report,
-        "{side:?}: {f_total} objectives ({f_primary} primary)\n\
-         {enemy:?}: {e_total} objectives ({e_primary} primary)\n\
-         Treasury: {} pts\n\
-         Your bases: {f_threatened} under threat, {f_capturable} at risk of capture\n",
-        db.persisted.treasury(side),
-    );
-
-    if let Some((arm_time, losing_side)) = db.ephemeral.last_stand_state {
-        if let Some(cfg) = &db.ephemeral.cfg.last_stand {
-            let elapsed = chrono::Utc::now() - arm_time;
-            let remaining =
-                (chrono::Duration::seconds(cfg.countdown_secs as i64) - elapsed).num_seconds().max(0);
-            let _ = write!(report, "LAST STAND: {losing_side:?} -- {remaining}s remaining\n");
-        }
-    }
-
-    let mut low: Vec<(CompactString, u8)> = db
-        .objectives()
-        .filter(|(_, o)| o.owner() == side)
-        .map(|(_, o)| (CompactString::from(o.name()), o.supply()))
-        .collect();
-    low.sort_by_key(|(_, s)| *s);
-    low.truncate(5);
-    if !low.is_empty() {
-        let _ = write!(report, "\nLowest supply:\n");
-        for (name, supply) in &low {
-            let _ = write!(report, "  {name}: {supply}%\n");
-        }
-    }
-    report
-}
+//
+// The whole report is built by `crate::situation` and rendered a page at a
+// time. DCS radio menus can't be relabelled in place, so each page gets its
+// own command rather than a Next/Prev cursor.
 
 // ── My status ──────────────────────────────────────────────────────────────
 
@@ -275,10 +221,24 @@ fn my_status(_lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
     Ok(())
 }
 
-fn sitrep(_lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+/// Render one page of the auto-generated situational briefing. `trd` is the
+/// page index into [`crate::situation::PAGES`].
+fn situation_page(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
-    let report = build_sitrep(&ctx.db, arg.snd);
-    ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
+    let from = from_pos(ctx, lua, &arg.fst);
+    let rep = crate::situation::build(
+        ctx,
+        lua,
+        arg.snd,
+        crate::situation::Opts { include_map: false, from },
+    );
+    let pages = crate::situation::render_pages(&rep);
+    let page = pages
+        .get(arg.trd as usize)
+        .cloned()
+        .unwrap_or_else(|| String::from("That briefing page is not available."));
+    // Long pages -- give them time to read rather than the usual 30s.
+    ctx.db.ephemeral.msgs().panel_to_group(60, false, arg.fst, page);
     Ok(())
 }
 
@@ -463,12 +423,22 @@ HOW TO CAPTURE A BASE:
 3. A capture timer starts (~180s, faster with more squads) -- both sides
    get a warning. Killing your troops resets your progress.
 4. CONSOLIDATION HOLD: the base flips to you the instant the timer ends,
-   but your assault troops must stay in the zone for a consolidation
-   window (~5 min). During the hold the enemy CANNOT start a fresh capture
-   timer -- to take it back they have to wipe out your holding troops. If
-   they do, and the base is still shot up (Health <= 20%), it drops to
-   Neutral. If your new garrison is standing (Health > 20%), it holds and
-   consolidates even if the assault troops die.
+   but it is not a working base yet -- the map label runs a live
+   \"CONSOLIDATING X% (ETA ...)\" countdown, normally ~5 min, and you cannot
+   slot in there until it finishes.
+   Your troops must physically STAY IN THE ZONE. Step outside and the
+   clock stops (\"CONSOLIDATION PAUSED\") -- progress is never lost, it just
+   stops accruing until they are back in.
+   You can beat the clock. Bring a second squad into the zone and it
+   consolidates faster (each extra squad adds 50%), and landing a
+   Logistics Repair Kit or a supply crate at the base jumps it forward
+   ~2 min outright -- so flying the logistics sortie is quicker than
+   orbiting and waiting.
+   During the hold the enemy CANNOT start a fresh capture timer -- to take
+   it back they have to wipe out your holding troops. If they do, and the
+   base is still shot up (Health <= 20%), it drops to Neutral. If your new
+   garrison is standing (Health > 20%), it holds and consolidates even if
+   the assault troops die.
 5. For ~2 minutes after any base changes hands (or goes Neutral) no new
    capture timer can start against it -- the new owner gets a breather.
 
@@ -544,13 +514,16 @@ pub(super) fn init_info_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &Slo
         my_status,
         ArgTuple { fst: miz_gid, snd: *slot },
     )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Situation Report".into(),
-        Some(root.clone()),
-        sitrep,
-        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
-    )?;
+    let sit_root = mc.add_submenu_for_group(miz_gid, "Situation".into(), Some(root.clone()))?;
+    for (i, title) in crate::situation::PAGES.iter().enumerate() {
+        mc.add_command_for_group(
+            miz_gid,
+            format_compact!("{}. {title}", i + 1).as_str().into(),
+            Some(sit_root.clone()),
+            situation_page,
+            ArgTriple { fst: miz_gid, snd: side, trd: i as u8 },
+        )?;
+    }
     mc.add_command_for_group(
         miz_gid,
         "Support & Radios".into(),

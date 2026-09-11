@@ -1702,6 +1702,94 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
             },
         ),
         (
+            "add-task".into(),
+            Action {
+                cost: 0,
+                penalty: None,
+                limit: None,
+                geo_limit: ActionGeoLimit::Unlimited,
+                kind: ActionKind::AddTask(TaskCfg {
+                    max_per_side: 12,
+                    ttl_secs: 7200,
+                    announce_gci: true,
+                    types: vec![
+                        TaskTypeCfg {
+                            name: "CAP".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 40000.,
+                            color: Some([0.2, 0.5, 1., 0.8]),
+                            description: Some("Combat air patrol -- hold this area".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "CAS".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 15000.,
+                            color: Some([1., 0.4, 0., 0.8]),
+                            description: Some("Close air support -- friendlies in contact".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "SEAD".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 25000.,
+                            color: Some([1., 0., 0.6, 0.8]),
+                            description: Some("Suppress enemy air defences".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "STRIKE".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 10000.,
+                            color: Some([1., 0.1, 0.1, 0.8]),
+                            description: Some("Strike the objective in this area".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "LOGISTICS".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 10000.,
+                            color: Some([0.2, 0.9, 0.2, 0.8]),
+                            description: Some("Crates / troops needed here".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "CSAR".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 10000.,
+                            color: Some([1., 1., 0.2, 0.8]),
+                            description: Some("Recover the downed pilot".into()),
+                        },
+                        // Objective tasks. These need no follow up from the
+                        // player who posted them -- the engine closes them
+                        // out when the coalition has actually done the job.
+                        TaskTypeCfg {
+                            name: "CAPTURE".into(),
+                            target: TaskTarget::CaptureObjective,
+                            radius_m: 8000.,
+                            color: Some([1., 0.6, 0., 0.8]),
+                            description: Some("Take this objective".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "SUPPLY".into(),
+                            target: TaskTarget::SupplyObjective { threshold: 80 },
+                            radius_m: 8000.,
+                            color: Some([0.4, 0.8, 1., 0.8]),
+                            description: Some(
+                                "Resupply this objective -- AI helo supply, convoy or crates"
+                                    .into(),
+                            ),
+                        },
+                    ],
+                }),
+            },
+        ),
+        (
+            "remove-task".into(),
+            Action {
+                cost: 0,
+                penalty: None,
+                limit: None,
+                geo_limit: ActionGeoLimit::Unlimited,
+                kind: ActionKind::RemoveTask(RemoveTaskCfg { owner_only: false }),
+            },
+        ),
+        (
             "move".into(),
             Action {
                 cost: 10,
@@ -2058,6 +2146,94 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
             },
         ),
         (
+            "add-task".into(),
+            Action {
+                cost: 0,
+                penalty: None,
+                limit: None,
+                geo_limit: ActionGeoLimit::Unlimited,
+                kind: ActionKind::AddTask(TaskCfg {
+                    max_per_side: 12,
+                    ttl_secs: 7200,
+                    announce_gci: true,
+                    types: vec![
+                        TaskTypeCfg {
+                            name: "CAP".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 40000.,
+                            color: Some([0.2, 0.5, 1., 0.8]),
+                            description: Some("Combat air patrol -- hold this area".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "CAS".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 15000.,
+                            color: Some([1., 0.4, 0., 0.8]),
+                            description: Some("Close air support -- friendlies in contact".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "SEAD".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 25000.,
+                            color: Some([1., 0., 0.6, 0.8]),
+                            description: Some("Suppress enemy air defences".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "STRIKE".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 10000.,
+                            color: Some([1., 0.1, 0.1, 0.8]),
+                            description: Some("Strike the objective in this area".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "LOGISTICS".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 10000.,
+                            color: Some([0.2, 0.9, 0.2, 0.8]),
+                            description: Some("Crates / troops needed here".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "CSAR".into(),
+                            target: TaskTarget::Position,
+                            radius_m: 10000.,
+                            color: Some([1., 1., 0.2, 0.8]),
+                            description: Some("Recover the downed pilot".into()),
+                        },
+                        // Objective tasks. These need no follow up from the
+                        // player who posted them -- the engine closes them
+                        // out when the coalition has actually done the job.
+                        TaskTypeCfg {
+                            name: "CAPTURE".into(),
+                            target: TaskTarget::CaptureObjective,
+                            radius_m: 8000.,
+                            color: Some([1., 0.6, 0., 0.8]),
+                            description: Some("Take this objective".into()),
+                        },
+                        TaskTypeCfg {
+                            name: "SUPPLY".into(),
+                            target: TaskTarget::SupplyObjective { threshold: 80 },
+                            radius_m: 8000.,
+                            color: Some([0.4, 0.8, 1., 0.8]),
+                            description: Some(
+                                "Resupply this objective -- AI helo supply, convoy or crates"
+                                    .into(),
+                            ),
+                        },
+                    ],
+                }),
+            },
+        ),
+        (
+            "remove-task".into(),
+            Action {
+                cost: 0,
+                penalty: None,
+                limit: None,
+                geo_limit: ActionGeoLimit::Unlimited,
+                kind: ActionKind::RemoveTask(RemoveTaskCfg { owner_only: false }),
+            },
+        ),
+        (
             "move".into(),
             Action {
                 cost: 10,
@@ -2133,9 +2309,31 @@ impl Default for Cfg {
                 ]),
                 exempt_airframes: FxHashSet::from_iter(["Su-30SM".into()]),
                 unlimited_objectives: FxHashSet::default(),
+                airframe_max: Some((3, 1)),
+                hub_reserve_percent: 20,
                 convoy: None,
                 air_logistics: None,
                 sea_logistics: None,
+                materiel: Some(MaterielConfig {
+                    enabled: true,
+                    hub_production: 2000,
+                    hub_capacity: 6,
+                    airbase_capacity: 3,
+                    repair_cost: 250,
+                    deploy_cost: 100,
+                }),
+                production_scaling: Some(ProductionScalingConfig {
+                    enabled: true,
+                    ..Default::default()
+                }),
+                front_line_routing: true,
+                route_block_margin_m: 12000.,
+                captured_airframes: Some(CapturedAirframeConfig {
+                    salvage_percent: 25,
+                    max_per_type: Some(4),
+                    min_health: 100,
+                    exclude: FxHashSet::default(),
+                }),
             }),
             weapon_target_exclusions: FxHashSet::default(),
             logistics_exclusion: 10000,
@@ -2148,6 +2346,9 @@ impl Default for Cfg {
             weapon_spawn_expiry_secs: 120,
             cull_after: 1800,
             capture_consolidation_secs: 300,
+            consolidation_zone_grace_secs: 15,
+            consolidation_squad_bonus: 0.5,
+            consolidation_crate_progress_secs: 120,
             takeoff_delay_secs: 0,
             slot_leave_kill_radius_m: 15000.0,
             slow_timed_events_freq: 10,
@@ -2267,6 +2468,10 @@ impl Default for Cfg {
             elint: None,
             player_recon: None,
             gci_briefing: None,
+            situation_briefing: None,
+            comms_plan: None,
+            logi_from_scenery: None,
+            helo_insertion: None,
             ground_vehicle_cargo: FxHashMap::default(),
             smart_commander: Some(SmartCommanderCfg {
                 tick_period_secs: 60,
@@ -2282,6 +2487,7 @@ impl Default for Cfg {
                 cap_cost: 250,
                 cap_min_friendly_pilots: 1,
                 cap_cooldown_secs: 300,
+                action_reserve: 300,
             }),
             navaids: crate::cfg::NavaidsCfg::default(),
             harm_codes: fxhash::FxHashMap::default(),

@@ -285,6 +285,22 @@ struct SlotSpec {
     slots: HashMap<Side, HashMap<String, usize>>,
     margin: Option<f64>,
     spacing: Option<f64>,
+    /// `captured = N`: also emit up to N slots per airframe on the *opposite*
+    /// coalition, using this side's own airframes and templates. Those slots
+    /// are the aircraft the losing side leaves parked when the base changes
+    /// hands -- a coalition's slot list is fixed at mission load, so the only
+    /// way the captors can ever fly a captured jet is for the slot to have
+    /// been in the .miz all along. bflib keeps them locked until the base is
+    /// both owned by that side and holding salvaged stock of the type (see
+    /// `WarehouseConfig::captured_airframes`), so they are invisible to
+    /// players until an actual capture unlocks them.
+    captured: Option<usize>,
+    /// `captured_types = F-16C_50,F-14B`: restrict the mirror to these
+    /// airframes. A zone typically offers five or six types, so mirroring all
+    /// of them doubles the slot list of every base in the mission; usually you
+    /// want one or two jets the enemy would plausibly get flying, not the
+    /// whole ramp. Absent means mirror everything the zone offers.
+    captured_types: Option<Vec<std::string::String>>,
 }
 
 impl SlotSpec {
@@ -293,6 +309,8 @@ impl SlotSpec {
         let mut side = None;
         let mut margin = None;
         let mut spacing = None;
+        let mut captured = None;
+        let mut captured_types: Option<Vec<std::string::String>> = None;
         for prop in props {
             let prop = prop?;
             if *prop.key == "include" {
@@ -304,6 +322,12 @@ impl SlotSpec {
                         }
                         if let Some(v) = tmpl.spacing {
                             spacing = Some(v);
+                        }
+                        if let Some(v) = tmpl.captured {
+                            captured = Some(v);
+                        }
+                        if let Some(v) = tmpl.captured_types.as_ref() {
+                            captured_types = Some(v.clone());
                         }
                         for (side, tmpl) in &tmpl.slots {
                             let slots = slots.entry(*side).or_default();
@@ -317,6 +341,16 @@ impl SlotSpec {
                 margin = Some(prop.value.parse()?);
             } else if *prop.key == "spacing" {
                 spacing = Some(prop.value.parse()?);
+            } else if *prop.key == "captured" {
+                captured = Some(prop.value.parse()?);
+            } else if *prop.key == "captured_types" {
+                captured_types = Some(
+                    prop.value
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect(),
+                );
             } else {
                 match Side::from_str(&prop.key) {
                     Ok(s) => side = Some(s),
@@ -334,6 +368,8 @@ impl SlotSpec {
             slots,
             margin,
             spacing,
+            captured,
+            captured_types,
         })
     }
 }
@@ -635,6 +671,59 @@ impl VehicleTemplates {
         let mut gid = idx.max_gid();
         uid.next();
         gid.next();
+        // Both coalitions' generic-country slot tables, resolved once. The
+        // captured-slot mirror needs to push a group onto the coalition
+        // opposite the one whose airframe it is, so a zone can no longer just
+        // work with "its" own side's tables.
+        let mut side_seqs = HashMap::new();
+        for side in [Side::Blue, Side::Red] {
+            let coa = base.mission.coalition(side)?;
+            let cname = match side {
+                Side::Blue => Country::CJTF_BLUE,
+                Side::Red => Country::CJTF_RED,
+                Side::Neutral => unreachable!(),
+            };
+            let country = match coa.country(cname)? {
+                Some(c) => c,
+                None => {
+                    let tbl = lua.create_table()?;
+                    tbl.raw_set("id", cname)?;
+                    tbl.raw_set(
+                        "name",
+                        match cname {
+                            Country::CJTF_BLUE => "CJTF Blue",
+                            Country::CJTF_RED => "CJTF Red",
+                            _ => unreachable!(),
+                        },
+                    )?;
+                    coa.raw_get::<_, Table>("country")?.push(tbl)?;
+                    coa.country(cname)?.unwrap()
+                }
+            };
+            let helicopters = {
+                let heli = country.helicopters()?;
+                if heli.len() > 0 {
+                    heli
+                } else {
+                    let heli = lua.create_table()?;
+                    heli.raw_set("group", lua.create_table()?)?;
+                    country.raw_set("helicopter", heli)?;
+                    country.helicopters()?
+                }
+            };
+            let planes = {
+                let plane = country.planes()?;
+                if plane.len() > 0 {
+                    plane
+                } else {
+                    let plane = lua.create_table()?;
+                    plane.raw_set("group", lua.create_table()?)?;
+                    country.raw_set("plane", plane)?;
+                    country.planes()?
+                }
+            };
+            side_seqs.insert(side, (planes, helicopters));
+        }
         for zone in base.mission.triggers()? {
             let zone = zone?;
             if let Some(s) = zone.name()?.strip_prefix("TTS") {
@@ -668,103 +757,98 @@ impl VehicleTemplates {
                         spec.spacing,
                     )?),
                 };
-                let coa = base.mission.coalition(*side)?;
-                let cname = match side {
-                    Side::Blue => Country::CJTF_BLUE,
-                    Side::Red => Country::CJTF_RED,
-                    Side::Neutral => unreachable!(),
-                };
-                let country = match coa.country(cname)? {
-                    Some(c) => c,
-                    None => {
-                        let tbl = lua.create_table()?;
-                        tbl.raw_set("id", cname)?;
-                        tbl.raw_set(
-                            "name",
-                            match cname {
-                                Country::CJTF_BLUE => "CJTF Blue",
-                                Country::CJTF_RED => "CJTF Red",
-                                _ => unreachable!(),
-                            },
-                        )?;
-                        coa.raw_get::<_, Table>("country")?.push(tbl)?;
-                        coa.country(cname)?.unwrap()
-                    }
-                };
-                let helicopters = {
-                    let heli = country.helicopters()?;
-                    if heli.len() > 0 {
-                        heli
-                    } else {
-                        let heli = lua.create_table()?;
-                        heli.raw_set("group", lua.create_table()?)?;
-                        country.raw_set("helicopter", heli)?;
-                        country.helicopters()?
-                    }
-                };
-                let planes = {
-                    let plane = country.planes()?;
-                    if plane.len() > 0 {
-                        plane
-                    } else {
-                        let plane = lua.create_table()?;
-                        plane.raw_set("group", lua.create_table()?)?;
-                        country.raw_set("plane", plane)?;
-                        country.planes()?
-                    }
+                let (planes, helicopters) = &side_seqs[side];
+                // The captured mirror is built from *this* side's airframes
+                // and templates but pushed onto the other coalition: they are
+                // literally this side's jets, parked on this side's ramp, that
+                // the other side inherits if it takes the place. A coalition's
+                // slot list is fixed when the mission loads, so this is the
+                // only moment at which a captured jet can be made flyable at
+                // all -- bflib keeps the slot locked until the base is
+                // actually owned by that side and holding salvaged stock of
+                // the type (WarehouseConfig::captured_airframes).
+                let captured = match spec.captured {
+                    None | Some(0) => None,
+                    Some(cap) => Some((cap, &side_seqs[&side.opposite()])),
                 };
                 for (vehicle, n) in slots {
+                    let is_plane = self
+                        .plane_slots
+                        .get(side)
+                        .map(|s| s.contains_key(vehicle))
+                        .unwrap_or(false);
                     let (seq, tmpl) = match self.plane_slots.get(side).and_then(|s| s.get(vehicle))
                     {
-                        Some(t) => (&planes, t),
+                        Some(t) => (planes, t),
                         None => {
                             match self.helicopter_slots.get(side).and_then(|s| s.get(vehicle)) {
-                                Some(t) => (&helicopters, t),
+                                Some(t) => (helicopters, t),
                                 None => bail!("missing required slot template {vehicle}"),
                             }
                         }
                     };
-                    for _ in 0..*n {
-                        let tmpl = tmpl.deep_clone(lua)?;
-                        let pos = posgen.next()?;
-                        let route = tmpl.route()?;
-                        let mut has_ground_start = false;
-                        route.set_points(
-                            route
-                                .points()?
-                                .into_iter()
-                                .map(|p| {
-                                    let mut p = p?;
-                                    match p.typ {
-                                        PointType::TakeOffGround | PointType::TakeOffGroundHot => {
-                                            has_ground_start = true;
-                                            p.pos = LuaVec2(pos);
+                    // (destination group list, how many): the side's own
+                    // slots, then however many of them the enemy inherits.
+                    let mut targets = vec![(seq, *n)];
+                    if let Some((cap, (cplanes, chelicopters))) = captured {
+                        let wanted = spec
+                            .captured_types
+                            .as_ref()
+                            .map(|only| only.iter().any(|t| t == vehicle.as_str()))
+                            .unwrap_or(true);
+                        let cn = if wanted { (*n).min(cap) } else { 0 };
+                        if cn > 0 {
+                            info!(
+                                "{name}: {cn} captured {vehicle} slot(s) for {:?}",
+                                side.opposite()
+                            );
+                            targets.push((if is_plane { cplanes } else { chelicopters }, cn));
+                        }
+                    }
+                    for (seq, n) in targets {
+                        for _ in 0..n {
+                            let tmpl = tmpl.deep_clone(lua)?;
+                            let pos = posgen.next()?;
+                            let route = tmpl.route()?;
+                            let mut has_ground_start = false;
+                            route.set_points(
+                                route
+                                    .points()?
+                                    .into_iter()
+                                    .map(|p| {
+                                        let mut p = p?;
+                                        match p.typ {
+                                            PointType::TakeOffGround
+                                            | PointType::TakeOffGroundHot => {
+                                                has_ground_start = true;
+                                                p.pos = LuaVec2(pos);
+                                            }
+                                            _ => (),
                                         }
-                                        _ => (),
-                                    }
-                                    Ok(p)
-                                })
-                                .collect::<Result<Vec<MissionPoint>>>()?,
-                        )?;
-                        if !has_ground_start {
-                            bail!("slot template aircraft must be ground starts")
-                        }
-                        tmpl.set_route(route)?;
-                        tmpl.set_id(gid)?;
-                        tmpl.set_pos(pos)?;
-                        for u in tmpl.units()? {
-                            let u = u?;
-                            if u.skill()? != Skill::Client {
-                                bail!("slot templates must be set to Client skill level")
+                                        Ok(p)
+                                    })
+                                    .collect::<Result<Vec<MissionPoint>>>()?,
+                            )?;
+                            if !has_ground_start {
+                                bail!("slot template aircraft must be ground starts")
                             }
-                            u.set_id(uid)?;
-                            u.set_heading(posgen.azumith())?;
-                            u.set_pos(pos)?;
-                            set_dl_mizuid(&u).with_context(|| format_compact!("unit {u:?}"))?;
-                            uid.next();
+                            tmpl.set_route(route)?;
+                            tmpl.set_id(gid)?;
+                            tmpl.set_pos(pos)?;
+                            for u in tmpl.units()? {
+                                let u = u?;
+                                if u.skill()? != Skill::Client {
+                                    bail!("slot templates must be set to Client skill level")
+                                }
+                                u.set_id(uid)?;
+                                u.set_heading(posgen.azumith())?;
+                                u.set_pos(pos)?;
+                                set_dl_mizuid(&u).with_context(|| format_compact!("unit {u:?}"))?;
+                                uid.next();
+                            }
+                            gid.next();
+                            seq.push(tmpl)?;
                         }
-                        gid.next();
-                        seq.push(tmpl)?;
                     }
                 }
             }
@@ -806,7 +890,23 @@ impl VehicleTemplates {
                             continue;
                         }
                         let unit_type: String = unit.raw_get("type")?;
-                        match self.payload.get(&side).and_then(|t| t.get(&unit_type)) {
+                        // Fall back to the other coalition's template for an
+                        // airframe this side has none of its own. That is a
+                        // captured slot (see generate_slots' `captured`
+                        // mirror): it is the enemy's jet, so the enemy's
+                        // loadout, radio plan and datalink config are the only
+                        // ones that exist for it -- and the alternative is
+                        // shipping a captured jet with no payload and no
+                        // Link-16 STN at all.
+                        match self
+                            .payload
+                            .get(&side)
+                            .and_then(|t| t.get(&unit_type))
+                            .or_else(|| {
+                                self.payload
+                                    .get(&side.opposite())
+                                    .and_then(|t| t.get(&unit_type))
+                            }) {
                             Some(w) => unit.set("payload", w.deep_clone(lua)?)?,
                             None => warn!("no payload table for {side}/{unit_type}"),
                         }
@@ -814,6 +914,11 @@ impl VehicleTemplates {
                             .prop_aircraft
                             .get(&side)
                             .and_then(|t| t.get(&unit_type))
+                            .or_else(|| {
+                                self.prop_aircraft
+                                    .get(&side.opposite())
+                                    .and_then(|t| t.get(&unit_type))
+                            })
                         {
                             None => String::from(""),
                             Some(tmpl) => {
@@ -833,10 +938,28 @@ impl VehicleTemplates {
                                 stn
                             }
                         };
-                        if let Some(w) = self.radio.get(&side).and_then(|t| t.get(&unit_type)) {
+                        if let Some(w) = self
+                            .radio
+                            .get(&side)
+                            .and_then(|t| t.get(&unit_type))
+                            .or_else(|| {
+                                self.radio
+                                    .get(&side.opposite())
+                                    .and_then(|t| t.get(&unit_type))
+                            })
+                        {
                             unit.set("Radio", w.deep_clone(lua)?)?
                         }
-                        if let Some(v) = self.frequency.get(&side).and_then(|t| t.get(&unit_type)) {
+                        if let Some(v) = self
+                            .frequency
+                            .get(&side)
+                            .and_then(|t| t.get(&unit_type))
+                            .or_else(|| {
+                                self.frequency
+                                    .get(&side.opposite())
+                                    .and_then(|t| t.get(&unit_type))
+                            })
+                        {
                             unit.set("frequency", v.deep_clone(lua)?)?
                         }
                         increment_key(&mut replace_count, &unit_type);
@@ -1257,22 +1380,34 @@ impl WarehouseTemplate {
                 _ => &self.default,
             }
         };
-        // bflib is the sole authority for weapons/fuel stock (production_by_side +
-        // hubs/convoys/air-sea routes). Zero DCS's own equipment/fuel production
-        // so it doesn't stack on top of bflib's -- that double production is what
-        // made stock run away (1000 -> 5000). Also clear unlimitedMunitions /
-        // unlimitedFuel: if the coalition inventory template has them true, DCS
-        // ignores bflib's per-tick set_item() counts and every base shows
-        // infinite weapons/fuel regardless of the campaign's logistics state.
-        // (objective-level UNLIMITED_SUPPLY is still honoured -- bflib just keeps
-        // that objective's model maxed and pushes it back each sync.) Aircraft
-        // (OperatingLevel_Air / unlimitedAircrafts) is left alone; dynSpawn
-        // amounts are handled by the link propagation below.
+        // bflib is the sole authority for stock (production_by_side + hubs +
+        // convoys/air/sea routes). Zero DCS's own production so it doesn't
+        // stack on top -- that double production is what made stock run away
+        // (1000 -> 5000). Also clear the unlimited* flags: if the coalition
+        // inventory template has them true, DCS ignores bflib's per-tick
+        // set_item() counts and every base shows infinite stock regardless of
+        // the campaign's logistics state. (Objective-level UNLIMITED_SUPPLY is
+        // still honoured -- bflib just keeps that objective's model maxed and
+        // pushes it back each sync.)
+        //
+        // `OperatingLevel_Air` is in here now too. It was deliberately left
+        // alone, but it is the airframe half of exactly the same bug: bflib
+        // reads the DCS count back into its model on every logistics tick, so
+        // any aircraft DCS manufactures in between is absorbed as if the
+        // campaign had produced it. Every base's airframe stock drifted
+        // upward forever, which is why nobody ever ran out of jets no matter
+        // how badly their supply line was doing. dynSpawn availability is
+        // unaffected -- that comes from the per-type `aircrafts` entries and
+        // their linkDynTempl, which are preserved below.
         let stop_dcs_production = |wh: &Table| -> Result<()> {
-            for lvl in ["OperatingLevel_Eqp", "OperatingLevel_Fuel"] {
+            for lvl in [
+                "OperatingLevel_Eqp",
+                "OperatingLevel_Fuel",
+                "OperatingLevel_Air",
+            ] {
                 wh.raw_set(lvl, 0)?;
             }
-            for flag in ["unlimitedMunitions", "unlimitedFuel"] {
+            for flag in ["unlimitedMunitions", "unlimitedFuel", "unlimitedAircrafts"] {
                 wh.raw_set(flag, false)?;
             }
             Ok(())
@@ -1284,8 +1419,12 @@ impl WarehouseTemplate {
         // particular decides whether ramp-hot starts are allowed at that
         // field; taking it from the template forced every base to the
         // template's value (usually false).
+        //
+        // `OperatingLevel_Air` used to be carried across here, which put back
+        // the aircraft production `stop_dcs_production` has just zeroed --
+        // preserve runs after it. It is deliberately no longer in this list.
         let preserve_from_orig = |orig: &Table, new_wh: &Table| -> Result<()> {
-            for key in ["allowHotStart", "OperatingLevel_Air"] {
+            for key in ["allowHotStart"] {
                 if let Ok(v) = orig.raw_get::<_, Value>(key) {
                     if !matches!(v, Value::Nil) {
                         new_wh.raw_set(key, v)?;
@@ -1509,8 +1648,14 @@ impl WarehouseTemplate {
         // so bflib can't see which airframes are actually aboard (it reads
         // Warehouse:getInventory() when registering a carrier) and a captured
         // carrier ends up unable to slot the jets sitting on its deck.
-        // Airports keep unlimitedAircrafts / OperatingLevel_Air as templated
-        // (dynSpawn links are handled by propagate_links above).
+        // Aircraft production (OperatingLevel_Air) is forced to 0 everywhere
+        // as well. bflib reads DCS's warehouse counts back into its model on
+        // every logistics tick, so any airframe DCS manufactures in between is
+        // absorbed as if the campaign had produced it -- stock drifts upward
+        // forever and a base never runs short of jets however badly its supply
+        // line is doing. Availability is unaffected: what a dynamic slot can
+        // spawn comes from the per-type `aircrafts` counts (which bflib sets
+        // every sync) and their linkDynTempl, not from the production rate.
         let navy_for = |coa: Option<&str>| -> Option<&Table> {
             match coa {
                 Some("blue") => self.blue_navy.as_ref(),
@@ -1534,7 +1679,11 @@ impl WarehouseTemplate {
             for flag in ["unlimitedMunitions", "unlimitedFuel", "unlimitedAircrafts"] {
                 wh.raw_set(flag, false)?;
             }
-            for lvl in ["OperatingLevel_Eqp", "OperatingLevel_Fuel"] {
+            for lvl in [
+                "OperatingLevel_Eqp",
+                "OperatingLevel_Fuel",
+                "OperatingLevel_Air",
+            ] {
                 wh.raw_set(lvl, 0)?;
             }
             wh.raw_set("coalition", coa)?;
@@ -1591,7 +1740,11 @@ impl WarehouseTemplate {
                                 for flag in ["unlimitedMunitions", "unlimitedFuel"] {
                                     wh.raw_set(flag, false)?;
                                 }
-                                for lvl in ["OperatingLevel_Eqp", "OperatingLevel_Fuel"] {
+                                for lvl in [
+                                    "OperatingLevel_Eqp",
+                                    "OperatingLevel_Fuel",
+                                    "OperatingLevel_Air",
+                                ] {
                                     wh.raw_set(lvl, 0)?;
                                 }
                             }
@@ -2369,9 +2522,22 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
     };
     let mut base = LoadedMiz::new(lua, &cfg.base).context("loading base mission")?;
     let mut objectives = compile_objectives(&base).context("compiling objectives")?;
-    let vehicle_templates = {
-        let wep = LoadedMiz::new(lua, &cfg.weapon).context("loading weapon template")?;
-        VehicleTemplates::new(&wep).context("loading templates")?
+    // The weapon template only ever fed static (Client-skill) player slots.
+    // A mission built on DCS dynamic slots has none of those -- its loadouts
+    // ride on the dynSpawnTemplate groups in the --warehouse miz -- so the
+    // template is optional and slot generation is simply skipped.
+    let vehicle_templates = match cfg.weapon.as_ref() {
+        Some(path) => {
+            let wep = LoadedMiz::new(lua, path).context("loading weapon template")?;
+            Some(VehicleTemplates::new(&wep).context("loading templates")?)
+        }
+        None => {
+            info!(
+                "no --weapon template given: skipping static player-slot generation \
+                 (dynamic slots take their loadouts from the --warehouse dynSpawnTemplate groups)"
+            );
+            None
+        }
     };
     let warehouse_template = match cfg.warehouse.as_ref() {
         None => None,
@@ -2380,12 +2546,14 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
             Some(WarehouseTemplate::new(&wht, cfg).context("compiling warehouse template")?)
         }
     };
-    vehicle_templates
-        .generate_slots(lua, &mut base)
-        .context("generating slots")?;
-    vehicle_templates
-        .apply(lua, &mut objectives, &mut base)
-        .context("applying vehicle templates")?;
+    if let Some(vehicle_templates) = vehicle_templates.as_ref() {
+        vehicle_templates
+            .generate_slots(lua, &mut base)
+            .context("generating slots")?;
+        vehicle_templates
+            .apply(lua, &mut objectives, &mut base)
+            .context("applying vehicle templates")?;
+    }
     // Apply dynSpawnTemplate groups to the mission before serializing it,
     // and record the old->new group ID mapping for linkDynTempl patching.
     let dyn_templ_id_map = match warehouse_template.as_ref() {

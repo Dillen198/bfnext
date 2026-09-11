@@ -19,7 +19,7 @@ pub mod cargo;
 pub(crate) mod ewr;
 mod info;
 pub mod jtac;
-mod objectives;
+pub(crate) mod objectives;
 mod recon;
 mod troop;
 
@@ -32,13 +32,102 @@ use dcso3::{
     coalition::Side,
     env::miz::{GroupId, Miz},
     lua_err,
-    mission_commands::{GroupSubMenu, MissionCommands},
+    mission_commands::{GroupCommandItem, GroupSubMenu, MissionCommands},
     net::SlotId,
     MizLua, String,
 };
+
 use log::debug;
 use mlua::{prelude::*, Value};
 use std::sync::Arc;
+
+/// DCS caps every F10 menu at **10 entries**. Anything past that is silently
+/// dropped by the sim -- the eleventh deployable, the eleventh JTAC, the
+/// eleventh objective simply is not there, with no error anywhere.
+///
+/// `Pager` makes a menu grow instead: hand it items and it fills the current
+/// page, then spends the last slot on a `More >>` submenu and carries on
+/// inside that. Chains as deep as needed, so a list of any length stays
+/// reachable.
+///
+/// ```ignore
+/// let mut p = Pager::new(group, root.clone());
+/// for obj in objectives {
+///     p.command(mc, obj.name.clone(), show_objective, obj.id)?;
+/// }
+/// ```
+pub(crate) struct Pager {
+    group: GroupId,
+    /// The page items are currently being added to.
+    cur: GroupSubMenu,
+    /// Entries used on `cur`.
+    used: u32,
+}
+
+/// Items per DCS menu page. The last slot on a full page becomes `More >>`,
+/// so a page carries at most `PAGE_ITEMS - 1` real entries before spilling.
+const PAGE_ITEMS: u32 = 10;
+
+impl Pager {
+    /// Page inside `root`, which is assumed empty.
+    pub(crate) fn new(group: GroupId, root: GroupSubMenu) -> Self {
+        Pager {
+            group,
+            cur: root,
+            used: 0,
+        }
+    }
+
+    /// Page inside `root`, which already has `used` entries on it (fixed
+    /// commands added before the variable-length list starts).
+    pub(crate) fn with_used(group: GroupId, root: GroupSubMenu, used: u32) -> Self {
+        Pager {
+            group,
+            cur: root,
+            used,
+        }
+    }
+
+    /// The menu the next entry should go on, spilling to a new `More >>` page
+    /// first if the current one is full.
+    fn slot(&mut self, mc: &MissionCommands<'_>) -> Result<GroupSubMenu> {
+        if self.used + 1 >= PAGE_ITEMS {
+            self.cur = mc
+                .add_submenu_for_group(self.group, "More >>".into(), Some(self.cur.clone()))
+                .context("adding More >> page")?;
+            self.used = 0;
+        }
+        self.used += 1;
+        Ok(self.cur.clone())
+    }
+
+    /// Add a command, paging as needed.
+    pub(crate) fn command<'lua, F, A>(
+        &mut self,
+        mc: &MissionCommands<'lua>,
+        name: String,
+        f: F,
+        arg: A,
+    ) -> Result<GroupCommandItem>
+    where
+        F: Fn(MizLua, A) -> Result<()> + 'static,
+        A: IntoLua<'lua> + FromLua<'lua>,
+    {
+        let parent = self.slot(mc)?;
+        mc.add_command_for_group(self.group, name, Some(parent), f, arg)
+    }
+
+    /// Add a submenu, paging as needed. Entries inside it are not this pager's
+    /// concern -- give the returned menu its own `Pager` if it can also be long.
+    pub(crate) fn submenu(
+        &mut self,
+        mc: &MissionCommands<'_>,
+        name: String,
+    ) -> Result<GroupSubMenu> {
+        let parent = self.slot(mc)?;
+        mc.add_submenu_for_group(self.group, name, Some(parent))
+    }
+}
 
 #[derive(Debug)]
 pub struct ArgTuple<T, U> {
@@ -233,7 +322,7 @@ fn player_name(db: &Db, slot: &SlotId) -> String {
 /// The requesting player's current world position (north, east), if they are
 /// sitting in an instanced aircraft. Used by the Objectives/Info menus to add
 /// bearing/range annotations to their reports.
-pub(super) fn player_world_pos(ctx: &Context, slot: &SlotId) -> Option<dcso3::Vector2> {
+pub(crate) fn player_world_pos(ctx: &Context, slot: &SlotId) -> Option<dcso3::Vector2> {
     let ucid = ctx.db.ephemeral.player_in_slot(slot)?;
     let player = ctx.db.player(ucid)?;
     let (_, inst) = player.current_slot.as_ref()?;
@@ -290,7 +379,7 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             let miz_gid = si.miz_gid;
             let si_side = si.side;
             let si_typ = si.typ.clone();
-            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["EWR".into()]))?;
+            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["GCI/EWR".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Cargo".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["C-130 Cargo".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["CSAR".into()]))?;

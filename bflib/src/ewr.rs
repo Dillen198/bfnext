@@ -244,8 +244,16 @@ struct PlayerState {
     units: EwrUnits,
     last: DateTime<Utc>,
     last_spike_warned: DateTime<Utc>,
-    /// Live voice GCI: whether this player wants unsolicited GCI calls.
+    /// Live voice GCI: whether this player wants anything to do with the
+    /// voice controller at all. Off removes them from the controller's picture
+    /// entirely, so they can neither be called nor answered.
     gci_enabled: bool,
+    /// Live voice GCI: whether the controller calls *unprompted*. Off keeps
+    /// the player in the picture -- so they can still key up and ask for a
+    /// bogey dope or a picture -- but the net stays quiet until they do. For
+    /// players who can talk and would rather run their own comms; players with
+    /// no mic leave it on.
+    gci_auto: bool,
     /// Live voice GCI: this player's explicit spoken-unit override. `None`
     /// means bfdb should use the server default.
     gci_units: Option<EwrUnits>,
@@ -262,6 +270,7 @@ impl Default for PlayerState {
             last: DateTime::default(),
             last_spike_warned: DateTime::default(),
             gci_enabled: true,
+            gci_auto: true,
             gci_units: None,
             gci_ref: None,
         }
@@ -437,7 +446,7 @@ fn compute_detection_probability(
 /// One air contact on a coalition's fused picture, in DCS world coordinates.
 /// Consumed by `crate::admin::query_tacmap`, which converts to lat/lon for the
 /// dashboard TACMAP (`bfprotocols::tacmap`).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct AirContact {
     /// Stable id (hash of the engine `EnId`) so the client can keep a trail.
     pub id: u64,
@@ -450,6 +459,12 @@ pub struct AirContact {
     /// detected hostile.
     pub friendly: bool,
     pub class: ContactClass,
+    /// DCS unit type name (e.g. `"F-16C_50"`), when the engine can resolve
+    /// it. Lets the dashboard TACMAP draw an exact aircraft-type icon
+    /// instead of the coarse `class` bucket.
+    pub typ: Option<CompactString>,
+    /// In-game player name, for a friendly human-flown contact only.
+    pub player_name: Option<CompactString>,
     /// Seconds since the last sensor hit.
     pub age_s: u32,
     pub stale: bool,
@@ -1065,8 +1080,8 @@ impl Ewr {
         (1.0 - effect).clamp(0.0, 1.0) as f32
     }
 
-    fn classify_contact(id: &EnId, db: &Db) -> ContactClass {
-        let typ = match id {
+    fn contact_typ_vehicle(id: &EnId, db: &Db) -> Option<bfprotocols::cfg::Vehicle> {
+        match id {
             EnId::Player(ucid) => db
                 .persisted
                 .players
@@ -1079,7 +1094,29 @@ impl Ewr {
                 .units
                 .get(uid)
                 .map(|u| u.typ.clone()),
-        };
+        }
+    }
+
+    /// DCS unit type name (e.g. `"F-16C_50"`) for a contact, when resolvable.
+    fn contact_typ(id: &EnId, db: &Db) -> Option<CompactString> {
+        Self::contact_typ_vehicle(id, db).map(|v| CompactString::from(v.as_str()))
+    }
+
+    /// Player callsign for a friendly human contact, `None` for AI or an
+    /// unresolvable slot.
+    fn contact_player_name(id: &EnId, db: &Db) -> Option<CompactString> {
+        match id {
+            EnId::Player(ucid) => db
+                .persisted
+                .players
+                .get(ucid)
+                .map(|p| CompactString::from(p.name.as_str())),
+            EnId::Unit(_) => None,
+        }
+    }
+
+    fn classify_contact(id: &EnId, db: &Db) -> ContactClass {
+        let typ = Self::contact_typ_vehicle(id, db);
         let tags = typ.as_ref().and_then(|t| db.ephemeral.cfg.unit_classification.get(t));
         match tags {
             Some(tags) if tags.contains(UnitTag::Helicopter) => ContactClass::Helicopter,
@@ -1450,6 +1487,24 @@ impl Ewr {
             .unwrap_or((true, None, None))
     }
 
+    /// Live voice GCI: does this player want unprompted calls? Read by
+    /// `crate::admin::query_gci` and sent on as `GciFlight.auto`.
+    pub fn gci_auto(&self, ucid: &Ucid) -> bool {
+        self.player_state.get(ucid).map_or(true, |s| s.gci_auto)
+    }
+
+    /// Live voice GCI: flip unprompted calls, returning the new state.
+    pub fn gci_toggle_auto(&mut self, ucid: &Ucid) -> bool {
+        let s = self.player_state.entry(ucid.clone()).or_default();
+        s.gci_auto = !s.gci_auto;
+        s.gci_auto
+    }
+
+    /// Live voice GCI: set unprompted calls explicitly.
+    pub fn gci_set_auto(&mut self, ucid: &Ucid, on: bool) {
+        self.player_state.entry(ucid.clone()).or_default().gci_auto = on;
+    }
+
     /// Live voice GCI: set this player's position-reference override
     /// (`Some(0)` BRAA, `Some(1)` bullseye, `Some(2)` clock, `None` default).
     pub fn gci_set_reference(&mut self, ucid: &Ucid, refmode: Option<u8>) {
@@ -1804,6 +1859,8 @@ impl Ewr {
                     velocity: t.velocity,
                     friendly,
                     class: Self::classify_contact(id, db),
+                    typ: Self::contact_typ(id, db),
+                    player_name: if friendly { Self::contact_player_name(id, db) } else { None },
                     age_s: age.max(0) as u32,
                     stale: age >= STALE_AGE_SECS,
                     detected_by: t.detected_by,

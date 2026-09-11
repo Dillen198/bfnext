@@ -94,11 +94,17 @@ The capture zone is the designated area around the objective.
 ### Step 5: Consolidate
 
 The base flips owner when the timer completes, but your assault troops
-**stay and hold** for a **~5-minute consolidation window** while the
-garrison moves in:
+**stay in the zone and hold** for a **~5-minute consolidation window** while
+the garrison moves in:
 
-- The F10 label reads **"NOT CONSOLIDATED — hold with troops or it goes
-  Neutral"**.
+- The F10 label runs a live countdown — **"CONSOLIDATING 42% (3m left) — hold
+  the zone with troops"** — and you can't slot in at the base until it ends.
+- The troops must stay **inside the zone**; fly them out and the clock stops
+  (**"CONSOLIDATION PAUSED"**) until they come back. Progress is held, never
+  lost.
+- You can shorten it: each **extra squad** in the zone adds 50% to the rate,
+  and landing a **Logistics Repair Kit** or **supply crate** jumps it forward
+  **~2 minutes**.
 - If the enemy wipes out your holding troops first, the base goes
   **Neutral** and must be taken again from scratch.
 - If they survive the window, the garrison spawns, the base is firmly

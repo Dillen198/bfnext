@@ -154,6 +154,27 @@ fn gci_toggle(lua: MizLua, gid: GroupId) -> Result<()> {
     Ok(())
 }
 
+/// Unprompted calls on/off. Distinct from `gci_toggle`, which removes the
+/// player from the controller's picture altogether: with auto off the
+/// controller still answers a request, it just never speaks first.
+fn gci_toggle_auto(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let on = ctx.ewr.gci_toggle_auto(&ucid);
+        let msg = if on {
+            "GCI will call you unprompted (threats, new groups, picture)"
+        } else {
+            "GCI will stay quiet unless you call — key up and ask for a bogey dope or picture"
+        };
+        ctx.db
+            .ephemeral
+            .msgs()
+            .panel_to_group(8, false, gid, format_compact!("{msg}"));
+    }
+    Ok(())
+}
+
 fn gci_units_set(lua: MizLua, gid: GroupId, units: Option<crate::ewr::EwrUnits>, label: &str) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
@@ -219,99 +240,28 @@ fn ground_intel_report(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 pub(super) fn add_ewr_menu_for_group(mc: &MissionCommands, group: GroupId) -> Result<()> {
-    let root = mc.add_submenu_for_group(group, "EWR".into(), None)?;
-    mc.add_command_for_group(
-        group,
-        "Report".into(),
-        Some(root.clone()),
-        ewr_report,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Toggle".into(),
-        Some(root.clone()),
-        toggle_ewr,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Friendly Report".into(),
-        Some(root.clone()),
-        friendly_ewr_report,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Units to Imperial".into(),
-        Some(root.clone()),
-        ewr_units_imperial,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Units to Metric".into(),
-        Some(root.clone()),
-        ewr_units_metric,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Ground Intel".into(),
-        Some(root.clone()),
-        ground_intel_report,
-        group,
-    )?;
+    use super::Pager;
+    let root = mc.add_submenu_for_group(group, "GCI/EWR".into(), None)?;
 
-    let gci = mc.add_submenu_for_group(group, "GCI Voice".into(), Some(root.clone()))?;
-    mc.add_command_for_group(
-        group,
-        "Toggle GCI Calls".into(),
-        Some(gci.clone()),
-        gci_toggle,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Units to Imperial".into(),
-        Some(gci.clone()),
-        gci_units_imperial,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Units to Metric".into(),
-        Some(gci.clone()),
-        gci_units_metric,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Units to Server Default".into(),
-        Some(gci.clone()),
-        gci_units_auto,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Reference: BRAA".into(),
-        Some(gci.clone()),
-        gci_ref_braa,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Reference: Bullseye".into(),
-        Some(gci.clone()),
-        gci_ref_bullseye,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Reference: Clock".into(),
-        Some(gci.clone()),
-        gci_ref_clock,
-        group,
-    )?;
+    // Both levels are paged: the root is already near DCS's 10-entry cap and
+    // gains entries as features land, and the GCI submenu likewise.
+    let mut p = Pager::new(group, root.clone());
+    p.command(mc, "Report".into(), ewr_report, group)?;
+    p.command(mc, "Toggle".into(), toggle_ewr, group)?;
+    p.command(mc, "Friendly Report".into(), friendly_ewr_report, group)?;
+    p.command(mc, "Units to Imperial".into(), ewr_units_imperial, group)?;
+    p.command(mc, "Units to Metric".into(), ewr_units_metric, group)?;
+    p.command(mc, "Ground Intel".into(), ground_intel_report, group)?;
+
+    let gci = p.submenu(mc, "GCI Voice".into())?;
+    let mut g = Pager::new(group, gci);
+    g.command(mc, "Toggle GCI Calls".into(), gci_toggle, group)?;
+    g.command(mc, "Toggle Auto Callouts".into(), gci_toggle_auto, group)?;
+    g.command(mc, "Units: Imperial".into(), gci_units_imperial, group)?;
+    g.command(mc, "Units: Metric".into(), gci_units_metric, group)?;
+    g.command(mc, "Units: Server Default".into(), gci_units_auto, group)?;
+    g.command(mc, "Reference: BRAA".into(), gci_ref_braa, group)?;
+    g.command(mc, "Reference: Bullseye".into(), gci_ref_bullseye, group)?;
+    g.command(mc, "Reference: Clock".into(), gci_ref_clock, group)?;
     Ok(())
 }

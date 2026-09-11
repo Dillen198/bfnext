@@ -189,11 +189,21 @@ pub struct GciFlight {
     /// names over callsigns (players who don't set a flight callsign).
     #[serde(default)]
     pub player_name: String,
+    /// DCS unit id of the jet the player is in. An in-cockpit SRS client
+    /// reports the same id, which makes it an exact key from a spoken
+    /// transmission back to this flight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_id: Option<u64>,
     pub lat: f64,
     pub lon: f64,
     pub alt_m: i32,
     pub heading: u16,
     pub speed_ms: u16,
+    /// Does this flight want unprompted calls? `false` means the controller
+    /// answers requests but never opens the conversation -- the player is
+    /// running their own comms. Defaults true for older engines.
+    #[serde(default = "crate::gci::default_true")]
+    pub auto: bool,
     /// The flight's explicit GCI unit choice, when the player set one. `None`
     /// means "use the server default".
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -230,6 +240,24 @@ pub struct GciSupport {
     pub callsign: Option<String>,
 }
 
+/// A tasking board entry the coalition has just posted, for the controller
+/// to read out over the voice net. Only newly posted tasks appear here --
+/// the board itself lives in the engine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GciTask {
+    /// Engine task id, used to speak each task exactly once.
+    pub id: i64,
+    /// Task type, e.g. "CAP", "CAS", "CAPTURE".
+    pub kind: String,
+    /// Plain language location, e.g. "12km NE of Batumi".
+    pub location: String,
+    pub lat: f64,
+    pub lon: f64,
+    /// Who posted it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+}
+
 /// The `query-gci` RPC return: one coalition's live controller picture.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GciControlPicture {
@@ -250,6 +278,10 @@ pub struct GciControlPicture {
     /// Friendly tanker / AWACS assets, for periodic support-location calls.
     #[serde(default)]
     pub support: Vec<GciSupport>,
+    /// Tasking board entries posted in the last couple of minutes, for the
+    /// "new tasking" broadcast call.
+    #[serde(default)]
+    pub tasks: Vec<GciTask>,
 }
 
 fn yes() -> bool {
@@ -283,4 +315,8 @@ pub struct GciPicture {
     /// Geographic jam corridors from mission cfg.
     #[serde(default)]
     pub jam_zones: Vec<GciJamZone>,
+}
+
+pub(crate) fn default_true() -> bool {
+    true
 }

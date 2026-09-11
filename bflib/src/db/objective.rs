@@ -28,7 +28,9 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use bfprotocols::{
-    cfg::{Deployable, DeployableObjective, UnitTag, Vehicle, VictoryCondition},
+    cfg::{
+        Deployable, DeployableObjective, UnitTag, Vehicle, VictoryCondition, MATERIEL_ITEM,
+    },
     db::{
         group::{GroupId, UnitId},
         objective::{ObjectiveId, ObjectiveKind},
@@ -175,6 +177,25 @@ impl From<&str> for ObjGroupClass {
     }
 }
 
+/// True for the template names the `logi_from_scenery` mode replaces with the
+/// map-building mechanic: the LOGI / LOGIA / LOGIB command-centre groups, the
+/// DEPOT resupply-pad groups, and the FUEL depot groups. Each of these is a
+/// cluster of `.Ammunition depot` / `FARP Ammo Dump` / `FARP Fuel Depot`
+/// statics plus an invisible FARP pad -- structures that (a) count against the
+/// objective's health when bombed and (b) drop an invisible pad that can land
+/// on a runway. When the mode is on, `G` zones resolving to one of these are
+/// skipped entirely (no group spawned) and the objective's logi rating comes
+/// from surviving real map buildings instead. `SERVICES` is deliberately NOT
+/// included -- that template is actual AA defences (Avenger / Linebacker /
+/// Roland / infantry), not infrastructure.
+pub fn is_logi_family_template(name: &str) -> bool {
+    if matches!(ObjGroupClass::from(name), ObjGroupClass::Logi) {
+        return true;
+    }
+    let stem = name.trim_start_matches(|c| c == 'B' || c == 'R' || c == 'N');
+    stem.starts_with("DEPOT") || stem.starts_with("FUEL")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ObjGroup(String);
 
@@ -307,10 +328,20 @@ pub struct Objective {
     pub(super) logi: u8,
     #[serde(default)]
     pub(super) infantry: u8,
+    /// Weighted munitions/materiel readiness (0-100). Weighted by how much
+    /// of each item the side produces, so the number moves when the base runs
+    /// short of something it actually burns through, instead of being an
+    /// unweighted mean over hundreds of item types in which a rare store and
+    /// a chaff cartridge count the same.
     #[serde(default)]
     pub(super) supply: u8,
     #[serde(default)]
     pub(super) fuel: u8,
+    /// Weighted airframe availability (0-100), tracked separately from
+    /// `supply` -- a base with full magazines and no aircraft is not a
+    /// supplied base, and blending the two hid that.
+    #[serde(default)]
+    pub(super) aircraft: u8,
     pub(super) threatened: bool,
     pub(super) last_threatened_ts: DateTime<Utc>,
     pub(super) last_change_ts: DateTime<Utc>,
@@ -341,8 +372,29 @@ pub struct Objective {
     /// survived the timer) or when the base goes Neutral (troops wiped out).
     #[serde(default)]
     pub(super) capture_hold: Vec<GroupId>,
+    /// When the capture landed. Kept for reporting; the hold itself is driven
+    /// by `capture_hold_progress`, not by wall-clock elapsed since this.
     #[serde(default)]
     pub(super) capture_hold_ts: Option<DateTime<Utc>>,
+    /// Seconds of consolidation progress banked so far, against
+    /// `capture_consolidation_secs`. Accrues while the holding troops are in
+    /// the zone -- faster with more squads -- and is bumped outright when a
+    /// logistics or supply crate lands. Progress pauses when the troops leave;
+    /// it is never rolled back.
+    #[serde(default)]
+    pub(super) capture_hold_progress: f64,
+    /// Last tick progress was accrued on, so accrual is tick-rate independent.
+    #[serde(default)]
+    pub(super) capture_hold_tick: Option<DateTime<Utc>>,
+    /// Last time a holding squad was seen inside the zone, for the
+    /// out-of-zone grace period.
+    #[serde(default)]
+    pub(super) capture_hold_in_zone_ts: Option<DateTime<Utc>>,
+    /// True while accrual is paused because the holding troops are outside the
+    /// zone past the grace period. Drives the F10 label and the one-shot
+    /// paused/resumed panels.
+    #[serde(default)]
+    pub(super) capture_hold_stalled: bool,
     /// Commander's intent marker, settable via the fowlengine Discord bot / bfdb
     /// admin API. Display/coordination only -- does not affect AI or logistics.
     #[serde(default)]
@@ -386,6 +438,37 @@ impl Objective {
         !self.capture_hold.is_empty()
     }
 
+    /// Consolidation progress as (percent complete, seconds remaining), or
+    /// `None` when the base isn't mid-hold. `total` is the configured
+    /// consolidation window; extra squads and delivered crates make the
+    /// seconds-remaining shrink faster than wall clock.
+    pub fn capture_hold_pct(&self, total: u32) -> Option<(u8, i64)> {
+        if self.capture_hold.is_empty() || total == 0 {
+            return None;
+        }
+        let total = total as f64;
+        let done = self.capture_hold_progress.clamp(0., total);
+        let pct = ((done / total) * 100.).clamp(0., 100.) as u8;
+        Some((pct, (total - done).max(0.).ceil() as i64))
+    }
+
+    /// True while consolidation is paused because the holding troops left the
+    /// objective zone past the grace period.
+    pub fn capture_hold_stalled(&self) -> bool {
+        self.capture_hold_stalled
+    }
+
+    /// Drop the post-capture hold and every scrap of its accounting, so a base
+    /// that is re-taken later starts its next hold from zero.
+    pub(super) fn clear_capture_hold(&mut self) {
+        self.capture_hold.clear();
+        self.capture_hold_ts = None;
+        self.capture_hold_progress = 0.;
+        self.capture_hold_tick = None;
+        self.capture_hold_in_zone_ts = None;
+        self.capture_hold_stalled = false;
+    }
+
     pub fn owner(&self) -> Side {
         self.owner
     }
@@ -394,6 +477,7 @@ impl Objective {
         self.priority
     }
 
+    #[allow(dead_code)]
     pub fn is_farp(&self) -> bool {
         match &self.kind {
             ObjectiveKind::Farp { .. } => true,
@@ -442,6 +526,11 @@ impl Objective {
 
     pub fn fuel(&self) -> u8 {
         self.fuel
+    }
+
+    /// Weighted airframe availability, 0-100. See the field docs.
+    pub fn aircraft(&self) -> u8 {
+        self.aircraft
     }
 
     pub fn threatened(&self) -> bool {
@@ -586,10 +675,10 @@ impl Db {
     }
 
     fn compute_objective_status(&self, obj: &Objective) -> Result<(u8, u8, u8)> {
-        let (health, mut logi, infantry) = obj
+        let (mut health, mut logi, infantry, unit_total) = obj
             .groups
             .get(&obj.owner)
-            .map(|groups| -> Result<(u8, u8, u8)> {
+            .map(|groups| -> Result<(u8, u8, u8, u32)> {
                 let mut total = 0;
                 let mut alive = 0;
                 let mut logi_total = 0;
@@ -637,9 +726,37 @@ impl Db {
                     }
                 }
 
-                let health = ((alive as f32 / total as f32) * 100.).trunc() as u8;
-                let mut logi = ((logi_alive as f32 / logi_total as f32) * 100.).trunc() as u8;
-                let infantry = ((infantry_alive as f32 / infantry_total as f32) * 100.).trunc() as u8;
+                // An objective with no destructible units at all has nothing
+                // to be bombed out of, so it reads as fully healthy. Without
+                // this the division is 0/0, which lands on 0 -- and health 0
+                // means `maybe_do_repairs` neutralises the objective and
+                // `captureable()` (health <= 20 && infantry == 0) reports it as
+                // free for the taking. That is exactly the shape a logistics
+                // hub takes once its LOGI/DEPOT/FUEL groups are no longer
+                // spawned, so every hub on the map would have quietly gone
+                // Neutral on the first repair pass.
+                let pct = |alive: u32, total: u32| -> u8 {
+                    if total == 0 {
+                        return 100;
+                    }
+                    ((alive as f32 / total as f32) * 100.).trunc() as u8
+                };
+                let health = pct(alive, total);
+                // Logi keeps the 0-when-absent reading: it is what marks a
+                // carrier dead in the water, and `logi_from_scenery` overrides
+                // it below for every land objective anyway.
+                let mut logi = if logi_total == 0 {
+                    0
+                } else {
+                    ((logi_alive as f32 / logi_total as f32) * 100.).trunc() as u8
+                };
+                // No infantry template means no defenders, which is 0%, not
+                // 100% -- this one really is "nothing there".
+                let infantry = if infantry_total == 0 {
+                    0
+                } else {
+                    ((infantry_alive as f32 / infantry_total as f32) * 100.).trunc() as u8
+                };
 
                 // For carrier groups with supply ships, logi becomes 0 if supply ship is dead
                 if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
@@ -648,14 +765,15 @@ impl Db {
                     }
                 }
 
-                Ok((health, logi, infantry))
+                Ok((health, logi, infantry, total))
             })
-            .unwrap_or(Ok((0, 0, 0)))?;
+            // No groups registered for the owner at all -- again, nothing to
+            // destroy rather than destroyed.
+            .unwrap_or(Ok((100, 0, 0, 0)))?;
 
         // Logistics-relevant map buildings (warehouses, fuel depots, etc.)
-        // destroyed at this objective further degrade its logi rating,
-        // independent of the unit-group-based calculation above. See
-        // scan_objective_scenery / check_scenery_buildings.
+        // inside this objective's zone. See scan_objective_scenery /
+        // check_scenery_buildings.
         let destroyed = self
             .ephemeral
             .scenery_destroyed_by_objective
@@ -668,7 +786,34 @@ impl Db {
             .get(&obj.id)
             .copied()
             .unwrap_or(0);
-        if total > 0 && destroyed > 0 {
+        // Carriers keep the supply-ship logi mechanic above; every land
+        // objective uses the scenery mode when it's configured.
+        let scenery_cfg = self
+            .ephemeral
+            .cfg
+            .logi_from_scenery
+            .as_ref()
+            .filter(|_| !matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }));
+        if let Some(sc) = scenery_cfg {
+            // logi IS the surviving-buildings fraction -- there are no logi
+            // groups. Objectives the scan found nothing at use the fallback.
+            logi = match total {
+                0 => sc.fallback_logi.min(100),
+                t => {
+                    let remaining = t.saturating_sub(destroyed);
+                    ((remaining as f32 / t as f32) * 100.).round() as u8
+                }
+            };
+            // An objective whose only substance is those buildings -- a
+            // logistics hub or depot, now that its LOGI/DEPOT groups are no
+            // longer spawned -- has no units to lose, so unit-based health
+            // would pin it at 100 forever: unbombable, and therefore never
+            // `captureable()`. Let the buildings be its health too.
+            if unit_total == 0 && total > 0 {
+                health = logi;
+            }
+        } else if total > 0 && destroyed > 0 {
+            // Legacy: buildings only scale down the group-based rating.
             let remaining_frac = 1. - (destroyed as f32 / total as f32).min(1.);
             logi = ((logi as f32) * remaining_frac).round() as u8;
         }
@@ -879,6 +1024,7 @@ impl Db {
             health: 100,
             logi: 100,
             infantry: 0,
+            aircraft: 100,
             supply: 0,
             fuel: 0,
             spawned: true,
@@ -892,6 +1038,10 @@ impl Db {
             points: 0,
             capture_hold: vec![],
             capture_hold_ts: None,
+            capture_hold_progress: 0.,
+            capture_hold_tick: None,
+            capture_hold_in_zone_ts: None,
+            capture_hold_stalled: false,
             last_threatened_ts: now,
             last_change_ts: now,
             last_activate: DateTime::<Utc>::default(),
@@ -1025,13 +1175,51 @@ impl Db {
 
     pub fn repair_objective(&mut self, oid: ObjectiveId, now: DateTime<Utc>) -> Result<()> {
         let repair_supply_cost = self.ephemeral.cfg.repair_supply_cost;
+        // When the materiel commodity is in play, repairs are paid for in
+        // materiel: a fixed number of units per group put back together, and
+        // no materiel means no repair until a convoy gets through. That is
+        // the whole point of running a supply line, and it replaces the old
+        // draw, which shaved a flat percentage off *every* item type -- so
+        // patching a runway also consumed a slice of the base's fighter
+        // airframes and of every missile type it held.
+        let materiel_cost = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.materiel.as_ref())
+            .filter(|m| m.enabled)
+            .map(|m| m.repair_cost);
         let obj = self
             .persisted
             .objectives
             .get(&oid)
             .ok_or_else(|| anyhow!("no such objective {:?}", oid))?;
-        if obj.supply < repair_supply_cost {
-            return Ok(());
+        match materiel_cost {
+            Some(cost) => {
+                let have = obj
+                    .warehouse
+                    .equipment
+                    .get(&dcso3::String::from(MATERIEL_ITEM))
+                    .map(|inv| inv.stored)
+                    .unwrap_or(0);
+                if have < cost {
+                    // Info, not debug: "my base won't repair" is the single
+                    // most likely support question once repairs are paid for
+                    // in materiel, and the answer has to be in the log.
+                    info!(
+                        "[MATERIEL] {} cannot repair: {have} on hand, {cost} needed per group -- \
+                         waiting on resupply",
+                        obj.name
+                    );
+                    return Ok(());
+                }
+            }
+            None => {
+                if obj.supply < repair_supply_cost {
+                    return Ok(());
+                }
+            }
         }
         if let Some(groups) = obj.groups.get(&obj.owner) {
             let mut damaged_by_class: FxHashMap<ObjGroupClass, Vec<(GroupId, usize)>> =
@@ -1075,19 +1263,43 @@ impl Db {
                             self.ephemeral.push_spawn(gid)
                         }
                         let owner = obj.owner;
-                        if let Some(production) =
-                            self.ephemeral.production_by_side.get(&owner).cloned()
-                        {
-                            let percent = repair_supply_cost as f32 / 100.;
-                            if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
-                                for name in production.equipment.keys() {
-                                    if let Some(inv) = obj.warehouse.equipment.get_mut_cow(name) {
-                                        inv.reduce(percent);
+                        match materiel_cost {
+                            Some(cost) => {
+                                if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+                                    let name = obj.name.clone();
+                                    if let Some(inv) = obj
+                                        .warehouse
+                                        .equipment
+                                        .get_mut_cow(&dcso3::String::from(MATERIEL_ITEM))
+                                    {
+                                        *inv -= cost;
+                                        let left = inv.stored;
+                                        info!(
+                                            "[MATERIEL] {name} repaired a {class:?} group for {cost} -- {left} left"
+                                        );
                                     }
                                 }
-                                for liq in production.liquids.keys() {
-                                    if let Some(inv) = obj.warehouse.liquids.get_mut_cow(liq) {
-                                        inv.reduce(percent);
+                            }
+                            None => {
+                                if let Some(production) =
+                                    self.ephemeral.production_by_side.get(&owner).cloned()
+                                {
+                                    let percent = repair_supply_cost as f32 / 100.;
+                                    if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+                                        for name in production.equipment.keys() {
+                                            if let Some(inv) =
+                                                obj.warehouse.equipment.get_mut_cow(name)
+                                            {
+                                                inv.reduce(percent);
+                                            }
+                                        }
+                                        for liq in production.liquids.keys() {
+                                            if let Some(inv) =
+                                                obj.warehouse.liquids.get_mut_cow(liq)
+                                            {
+                                                inv.reduce(percent);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1113,6 +1325,45 @@ impl Db {
         &mut self,
         origins: impl IntoIterator<Item = (ObjectiveId, usize)>,
     ) -> Result<()> {
+        // With the materiel commodity enabled, unpacking a crate costs a
+        // flat number of materiel units at the base that supplied it, rather
+        // than a percentage slice of every item type that base holds.
+        if let Some(cost) = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.materiel.as_ref())
+            .filter(|m| m.enabled)
+            .map(|m| m.deploy_cost)
+        {
+            if cost == 0 {
+                return Ok(());
+            }
+            for (oid, count) in origins {
+                if count == 0 {
+                    continue;
+                }
+                if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+                    let name = obj.name.clone();
+                    if let Some(inv) = obj
+                        .warehouse
+                        .equipment
+                        .get_mut_cow(&dcso3::String::from(MATERIEL_ITEM))
+                    {
+                        let spend = cost.saturating_mul(count as u32);
+                        *inv -= spend;
+                        info!(
+                            "[MATERIEL] {name} paid {spend} for {count} unpacked crate(s) -- {} left",
+                            inv.stored
+                        );
+                    }
+                }
+            }
+            self.update_supply_status()?;
+            self.ephemeral.dirty();
+            return Ok(());
+        }
         let pct = self.ephemeral.cfg.deploy_supply_cost as f32 / 100.;
         if pct <= 0. {
             return Ok(());
@@ -1503,6 +1754,71 @@ impl Db {
         Ok((became_threatened, became_clear))
     }
 
+    /// On an ownership change, sweep out everything the *previous* occupant (or
+    /// a lingering Neutral state) still had at this objective: mark the units
+    /// dead and despawn the DCS object. This covers combat groups (stray
+    /// ex-owner armour / infantry / SAM that the new garrison would just ignore)
+    /// *and* statics -- the logi command center / warehouse buildings -- which
+    /// otherwise stay on the exact footprints where the new owner's equivalents
+    /// spawn, stacking two buildings in one spot. The persisted (dead) group is
+    /// kept so a later re-capture by that side can revive it, matching the way
+    /// the .miz pre-places both sides' infrastructure. `repair_one_logi_step` /
+    /// `repair_services` then bring the *new* owner's logi/services back.
+    pub fn overrun_previous_occupants(
+        &mut self,
+        oid: ObjectiveId,
+        new_owner: Side,
+    ) -> Result<()> {
+        let stale_gids: SmallVec<[GroupId; 16]> = {
+            let obj = objective!(self, &oid)?;
+            [Side::Blue, Side::Red, Side::Neutral]
+                .into_iter()
+                .filter(|s| *s != new_owner)
+                .flat_map(|s| {
+                    obj.groups
+                        .get(&s)
+                        .into_iter()
+                        .flat_map(|set| set.into_iter().copied())
+                })
+                .collect()
+        };
+        for gid in stale_gids {
+            let group_kind = match group!(self, &gid) {
+                Ok(g) => g.kind,
+                Err(_) => continue,
+            };
+            if let Some(id) = self.ephemeral.group_marks.remove(&gid) {
+                self.ephemeral.msgs.delete_mark(id)
+            }
+            let uids: SmallVec<[UnitId; 32]> =
+                group!(self, &gid)?.units.into_iter().copied().collect();
+            for uid in &uids {
+                unit_mut!(self, uid)?.dead = true;
+            }
+            match group_kind {
+                Some(_) => {
+                    if let Some(dcs_oid) = self.ephemeral.object_id_by_gid.get(&gid).cloned() {
+                        self.ephemeral.push_despawn(gid, Despawn::Group(dcs_oid));
+                    }
+                }
+                None => {
+                    // Static group: despawn by object id when we have it,
+                    // otherwise per-unit by name (same handling as culling).
+                    if let Some(dcs_oid) = self.ephemeral.object_id_by_gid.get(&gid).cloned() {
+                        self.ephemeral
+                            .push_despawn(gid, Despawn::StaticObject(dcs_oid));
+                    } else {
+                        for uid in &uids {
+                            let name = unit!(self, uid)?.name.clone();
+                            self.ephemeral.push_despawn(gid, Despawn::Static(name));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn repair_services(
         &mut self,
         side: Side,
@@ -1547,6 +1863,25 @@ impl Db {
         now: DateTime<Utc>,
         oid: ObjectiveId,
     ) -> Result<()> {
+        // logi_from_scenery: no logi groups to revive -- a repair step
+        // un-counts destroyed buildings instead (the DCS rubble stays, the
+        // objective's logi rating recovers). Same "half the remainder + 1"
+        // pace as the unit revive below.
+        if self.ephemeral.cfg.logi_from_scenery.is_some() {
+            if let Some(d) = self.ephemeral.scenery_destroyed_by_objective.get_mut(&oid) {
+                let step = 1 + (*d >> 1);
+                *d = d.saturating_sub(step);
+                let remaining = *d;
+                if remaining == 0 {
+                    self.ephemeral.scenery_destroyed_by_objective.remove(&oid);
+                    self.persisted.scenery_destroyed.remove_cow(&oid);
+                } else {
+                    self.persisted.scenery_destroyed.insert_cow(oid, remaining);
+                }
+                self.ephemeral.dirty();
+            }
+            return self.update_objective_status(&oid, now);
+        }
         let obj = objective_mut!(self, oid)?;
         let mut total_logi = 0;
         let mut logi_groups = 0;
@@ -1671,6 +2006,10 @@ impl Db {
             obj.capture_hold_ts = None;
             obj.name.clone()
         };
+        warn!(
+            "[CAPTURE] {name} neutralised: garrison health reached 0, ownership dropped to Neutral \
+             (spawns locked, self-repair off, must be retaken with troops)"
+        );
         self.ephemeral.capture_progress.remove(&oid);
         self.ephemeral.last_owner_change.insert(oid, now);
         self.ephemeral.msgs().panel_to_all(
@@ -1949,6 +2288,11 @@ impl Db {
                     let center = obj.zone.pos();
                     let radius = obj.zone.radius();
                     let mut lines: SmallVec<[CompactString; 8]> = smallvec![];
+                    // Only actually log if at least one candidate is genuinely
+                    // trying to take this base (in the zone, or closing on it).
+                    // Otherwise a base that just sits capturable with the
+                    // nearest squad 10-20 km away spams the log every 2 min.
+                    let mut engaged = false;
                     let mut scan_dbg = |group: &SpawnedGroup, cc: bool, kind: &str, gid: &GroupId| {
                         let mut nearest = f64::INFINITY;
                         let mut in_zone = false;
@@ -1973,6 +2317,9 @@ impl Db {
                         if nearest > 25_000.0 && !in_zone {
                             return;
                         }
+                        if cc && (in_zone || nearest <= 4_000.0) {
+                            engaged = true;
+                        }
                         lines.push(format_compact!(
                             "{kind} {gid} side={:?} can_capture={cc} alive={alive} in_zone={in_zone} nearest={nearest:.0}m (zone r={radius:.0}m owner={:?})",
                             group.side, obj.owner
@@ -1992,7 +2339,7 @@ impl Db {
                             }
                         }
                     }
-                    if !lines.is_empty() {
+                    if engaged && !lines.is_empty() {
                         capture_debug.push((*oid, obj.name.clone(), lines));
                     }
                 }
@@ -2096,41 +2443,7 @@ impl Db {
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     to_mark.push(*gid);
                 }
-                // The previous garrison's combat units are overrun on capture:
-                // kill the survivors and despawn them, rather than leaving stray
-                // ex-owner armour/infantry/SAM standing around a base that just
-                // changed hands (they and the new garrison mostly ignore each
-                // other). Logi/services have their own capture transition
-                // (repair_one_logi_step / repair_services) so leave those.
-                let stale_gids: SmallVec<[GroupId; 16]> = [Side::Blue, Side::Red, Side::Neutral]
-                    .into_iter()
-                    .filter(|s| *s != new_owner)
-                    .flat_map(|s| {
-                        obj.groups
-                            .get(&s)
-                            .into_iter()
-                            .flat_map(|set| set.into_iter().copied())
-                    })
-                    .collect();
-                for gid in stale_gids {
-                    let is_combat = group!(self, &gid)
-                        .map(|g| !g.class.is_logi() && !g.class.is_services())
-                        .unwrap_or(false);
-                    if !is_combat {
-                        continue;
-                    }
-                    if let Some(id) = self.ephemeral.group_marks.remove(&gid) {
-                        self.ephemeral.msgs.delete_mark(id)
-                    }
-                    let uids: SmallVec<[UnitId; 32]> =
-                        group!(self, &gid)?.units.into_iter().copied().collect();
-                    for uid in &uids {
-                        unit_mut!(self, uid)?.dead = true;
-                    }
-                    if let Some(dcs_oid) = self.ephemeral.object_id_by_gid.get(&gid).cloned() {
-                        self.ephemeral.push_despawn(gid, Despawn::Group(dcs_oid));
-                    }
-                }
+                self.overrun_previous_occupants(oid, new_owner)?;
                 let is_sam = objective!(self, oid)?.kind.is_special_sam_site();
                 if !is_sam {
                     let abid = self
@@ -2533,6 +2846,8 @@ impl Db {
             }
         }
 
+        self.overrun_previous_occupants(oid, new_owner)
+            .context("force_capture: clearing previous occupants")?;
         self.repair_one_logi_step(new_owner, now, oid)
             .context("force_capture: repairing logi")?;
         self.repair_services(new_owner, now, oid)
@@ -2573,9 +2888,39 @@ impl Db {
     /// `capture_consolidation_secs > 0` is held only by the assaulting troop
     /// groups until either they survive the timer (consolidate -> garrison may
     /// spawn) or they are all wiped out (base goes Neutral).
+    /// Credit consolidation progress at a base that is mid post-capture hold.
+    /// This is what lets a crew beat the wall clock by actually flying the
+    /// logistics sortie in, instead of orbiting a timer. No-op at a base that
+    /// isn't currently holding.
+    pub fn bump_consolidation(&mut self, oid: ObjectiveId, reason: &str) -> Result<()> {
+        let bump = self.ephemeral.cfg.consolidation_crate_progress_secs;
+        let total = self.ephemeral.cfg.capture_consolidation_secs as f64;
+        if bump == 0 || total <= 0. {
+            return Ok(());
+        }
+        let (name, owner, remaining) = {
+            let obj = objective_mut!(self, oid)?;
+            if obj.capture_hold.is_empty() {
+                return Ok(());
+            }
+            obj.capture_hold_progress = (obj.capture_hold_progress + bump as f64).min(total);
+            let remaining = (total - obj.capture_hold_progress).max(0.).ceil() as i64;
+            (obj.name.clone(), obj.owner, remaining)
+        };
+        self.ephemeral.msgs().panel_to_side(
+            10,
+            false,
+            owner,
+            format_compact!("{name}: {reason} -- consolidation advanced, {remaining}s to go"),
+        );
+        self.ephemeral.dirty();
+        Ok(())
+    }
+
     pub fn check_capture_hold(&mut self, now: DateTime<Utc>) -> Result<()> {
-        let consolidation =
-            Duration::seconds(self.ephemeral.cfg.capture_consolidation_secs as i64);
+        let total = self.ephemeral.cfg.capture_consolidation_secs as f64;
+        let grace = self.ephemeral.cfg.consolidation_zone_grace_secs as i64;
+        let squad_bonus = self.ephemeral.cfg.consolidation_squad_bonus.max(0.) as f64;
         let held: SmallVec<[ObjectiveId; 4]> = self
             .persisted
             .objectives
@@ -2584,18 +2929,32 @@ impl Db {
             .map(|(oid, _)| *oid)
             .collect();
         for oid in held {
-            let (alive, started, name, owner) = {
+            // A holding squad only counts while it is physically in the zone.
+            // The label promises "hold with troops", so flying them out has to
+            // actually stop the clock -- see the grace handling below, which
+            // covers position-update gaps and short repositioning.
+            let (alive, in_zone, name, owner) = {
                 let obj = objective!(self, oid)?;
-                let started = obj.capture_hold_ts.unwrap_or(now);
-                let alive: Vec<GroupId> = obj
-                    .capture_hold
-                    .iter()
-                    .copied()
-                    .filter(|gid| {
-                        self.group_health(gid).map(|(a, _)| a > 0).unwrap_or(false)
-                    })
-                    .collect();
-                (alive, started, obj.name.clone(), obj.owner)
+                let mut alive: Vec<GroupId> = vec![];
+                let mut in_zone = 0usize;
+                for gid in obj.capture_hold.iter().copied() {
+                    if !self.group_health(&gid).map(|(a, _)| a > 0).unwrap_or(false) {
+                        continue;
+                    }
+                    alive.push(gid);
+                    let holding = group!(self, gid)
+                        .map(|g| {
+                            g.units
+                                .into_iter()
+                                .filter_map(|uid| self.persisted.units.get(uid))
+                                .any(|u| !u.dead && obj.zone.contains(u.pos))
+                        })
+                        .unwrap_or(false);
+                    if holding {
+                        in_zone += 1;
+                    }
+                }
+                (alive, in_zone, obj.name.clone(), obj.owner)
             };
             // The assault force is gone. It only drops to Neutral if the base
             // is *also* undefended -- if the garrison the capture revived is
@@ -2604,12 +2963,13 @@ impl Db {
             // free-for-all again.
             let held_health = objective!(self, oid)?.health();
             if alive.is_empty() && held_health <= 20 {
-                let obj = objective_mut!(self, oid)?;
-                obj.capture_hold.clear();
-                obj.capture_hold_ts = None;
-                obj.owner = Side::Neutral;
-                obj.spawned = false;
-                obj.last_activate = now;
+                {
+                    let obj = objective_mut!(self, oid)?;
+                    obj.clear_capture_hold();
+                    obj.owner = Side::Neutral;
+                    obj.spawned = false;
+                    obj.last_activate = now;
+                }
                 self.ephemeral.last_owner_change.insert(oid, now);
                 self.ephemeral.msgs().panel_to_all(
                     15,
@@ -2622,26 +2982,89 @@ impl Db {
                 self.ephemeral.create_objective_markup(&self.persisted, obj);
                 self.ephemeral.dirty();
                 self.sync_scenery_markers(oid);
-            } else if alive.is_empty() || now - started >= consolidation {
-                let obj = objective_mut!(self, oid)?;
-                obj.capture_hold.clear();
-                obj.capture_hold_ts = None;
-                obj.spawned = false;
-                obj.last_activate = now;
-                self.ephemeral.msgs().panel_to_side(
-                    10,
-                    false,
-                    owner,
-                    format_compact!("{name} consolidated -- garrison moving in"),
-                );
+                continue;
+            }
+            if !alive.is_empty() {
+                // Bank progress for this tick. Extra squads in the zone speed
+                // consolidation up the same way they shorten the capture timer;
+                // stepping outside pauses accrual but never rolls it back, so a
+                // crew that has to reposition doesn't lose the work.
+                let (holding, was_stalled, before, after) = {
+                    let obj = objective_mut!(self, oid)?;
+                    let dt = obj
+                        .capture_hold_tick
+                        .map(|t| (now - t).num_milliseconds().max(0) as f64 / 1000.)
+                        .unwrap_or(0.);
+                    obj.capture_hold_tick = Some(now);
+                    if in_zone > 0 {
+                        obj.capture_hold_in_zone_ts = Some(now);
+                    }
+                    let out_for = obj
+                        .capture_hold_in_zone_ts
+                        .map(|t| (now - t).num_seconds())
+                        .unwrap_or(0);
+                    let holding = in_zone > 0 || out_for <= grace;
+                    let was_stalled = obj.capture_hold_stalled;
+                    obj.capture_hold_stalled = !holding;
+                    let before = obj.capture_hold_progress;
+                    if holding {
+                        let rate = 1. + squad_bonus * in_zone.saturating_sub(1) as f64;
+                        obj.capture_hold_progress += dt * rate;
+                    }
+                    if obj.capture_hold.len() != alive.len() {
+                        obj.capture_hold = alive;
+                    }
+                    (holding, was_stalled, before, obj.capture_hold_progress)
+                };
+                if holding && was_stalled {
+                    self.ephemeral.msgs().panel_to_side(
+                        10,
+                        false,
+                        owner,
+                        format_compact!("{name}: troops back in the zone -- consolidation resumed"),
+                    );
+                } else if !holding && !was_stalled {
+                    self.ephemeral.msgs().panel_to_side(
+                        15,
+                        true,
+                        owner,
+                        format_compact!(
+                            "{name}: holding troops have left the zone -- CONSOLIDATION PAUSED"
+                        ),
+                    );
+                }
+                // One-shot "nearly there" ping, fired on the crossing so it
+                // needs no extra persisted state.
+                if total > 60. && before < total - 60. && after >= total - 60. {
+                    self.ephemeral.msgs().panel_to_side(
+                        10,
+                        false,
+                        owner,
+                        format_compact!("{name}: one minute to consolidation -- hold the zone"),
+                    );
+                }
                 self.ephemeral.dirty();
-            } else {
-                let obj = objective_mut!(self, oid)?;
-                if obj.capture_hold.len() != alive.len() {
-                    obj.capture_hold = alive;
-                    self.ephemeral.dirty();
+                if after < total {
+                    continue;
                 }
             }
+            // Consolidated: either the window is fully banked, or the assault
+            // force died with the revived garrison still standing.
+            {
+                let obj = objective_mut!(self, oid)?;
+                obj.clear_capture_hold();
+                obj.spawned = false;
+                obj.last_activate = now;
+            }
+            self.ephemeral.msgs().panel_to_side(
+                10,
+                false,
+                owner,
+                format_compact!("{name} consolidated -- garrison moving in"),
+            );
+            let obj = objective!(self, oid)?;
+            self.ephemeral.create_objective_markup(&self.persisted, obj);
+            self.ephemeral.dirty();
         }
         Ok(())
     }
@@ -2839,7 +3262,7 @@ impl Db {
                     continue;
                 }
                 let base_supplies = base_obj.warehouse.equipment
-                    .get(&dcso3::String::from("SUPPLIES"))
+                    .get(&dcso3::String::from(MATERIEL_ITEM))
                     .map(|inv| inv.stored)
                     .unwrap_or(0);
                 if base_supplies >= repair_cost {

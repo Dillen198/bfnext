@@ -360,7 +360,17 @@ impl Db {
                 // crate through any path other than unpack_c130_crate leaves a
                 // zombie in c130_crates that update_c130_crates chases every
                 // tick ("has no object_id in map, skipping") forever.
-                self.ephemeral.c130_crates.remove(&group.name);
+                if let Some(c) = self.ephemeral.c130_crates.remove(&group.name) {
+                    // ... and take its "Missing: x (need 2, have 1)" map marker
+                    // with it. Only unpack_c130_crate used to clear that, so a
+                    // set completed the other way -- a helo flying in the last
+                    // crate and unpacking the pile by hand -- left the stale
+                    // shortfall marker sitting on the F10 map forever, telling
+                    // players the delivery still hadn't worked.
+                    if let Some(id) = c.missing_marker {
+                        self.ephemeral.msgs().delete_mark(id);
+                    }
+                }
             }
             DeployKind::Deployed { spec, .. } => {
                 self.persisted.deployed.remove_cow(gid);

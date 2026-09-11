@@ -191,6 +191,33 @@ impl<'lua> Unit<'lua> {
         Ok(self.raw_set("alt", a)?)
     }
 
+    /// "BARO" or "RADIO". DCS wants BARO on a unit that is starting from a
+    /// parking spot -- the alt is then the field elevation.
+    pub fn set_alt_type(&self, t: &str) -> Result<()> {
+        Ok(self.raw_set("alt_type", t)?)
+    }
+
+    /// Assign this unit to a specific parking spot. `term_index` is the
+    /// `Term_Index` of a spot from `Airbase::get_parking_spots`.
+    ///
+    /// DCS reads `parking` alongside a `TakeOffParking*` waypoint 0; the unit's
+    /// x/y/alt must also be set to that spot, or DCS discards the ground start
+    /// and puts the flight in the air instead.
+    pub fn set_parking(&self, term_index: i64) -> Result<()> {
+        self.raw_set("parking", term_index)?;
+        // `parking_id` is the mission-editor-side spot *name*. At runtime DCS
+        // resolves the spot from `parking` alone, and a stale name inherited
+        // from the template points at a spot on a different airfield.
+        Ok(self.raw_set("parking_id", Value::Nil)?)
+    }
+
+    /// Drop any parking assignment (template leftovers included) so DCS is free
+    /// to pick spots itself.
+    pub fn clear_parking(&self) -> Result<()> {
+        self.raw_set("parking", Value::Nil)?;
+        Ok(self.raw_set("parking_id", Value::Nil)?)
+    }
+
     pub fn typ(&self) -> Result<String> {
         Ok(self.raw_get("type")?)
     }
@@ -546,7 +573,7 @@ impl MizIndex {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GroupKind {
     Any,
     Plane,

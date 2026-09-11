@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { campaign } from '../config/campaign'
@@ -16,8 +17,20 @@ function score(p: { air_kills: number; ground_kills: number; deaths: number; hou
 const MEDAL_COLORS = ['#fbbf24', '#94a3b8', '#d97706']
 
 export default function StatsSection() {
-  const { data: stats, isLoading: statsLoading } = useQuery({ queryKey: ['site-stats'],    queryFn: api.stats,       refetchInterval: 30_000 })
-  const { data: objectives = [], isLoading: objectivesLoading } = useQuery({ queryKey: ['site-objectives'], queryFn: api.objectives, refetchInterval: 30_000 })
+  // One bfdb can front several DCS servers. When it does, the campaign-status
+  // panel gets a row of tabs; with one server nothing extra renders.
+  const { data: instanceList } = useQuery({
+    queryKey: ['site-instances'],
+    queryFn: api.instances,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  })
+  const instances = instanceList?.instances ?? []
+  const [picked, setPicked] = useState<string | undefined>(undefined)
+  const instance = picked ?? instanceList?.default
+
+  const { data: stats, isLoading: statsLoading } = useQuery({ queryKey: ['site-stats', instance],    queryFn: () => api.stats(instance),       refetchInterval: 30_000 })
+  const { data: objectives = [], isLoading: objectivesLoading } = useQuery({ queryKey: ['site-objectives', instance], queryFn: () => api.objectives(instance), refetchInterval: 30_000 })
   const { data: pilots = [], isLoading: pilotsLoading }     = useQuery({ queryKey: ['site-pilots'],     queryFn: api.leaderboard, refetchInterval: 60_000 })
 
   const total       = objectives.length
@@ -40,6 +53,30 @@ export default function StatsSection() {
         <div className="flex items-end justify-between mb-12 flex-wrap gap-4">
           <div>
             <div className="vs-section-label mb-4">Live from the server</div>
+            {instances.length > 1 && (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {instances.map(i => {
+                  const active = i.id === instance
+                  return (
+                    <button
+                      key={i.id}
+                      onClick={() => setPicked(i.id)}
+                      className="vs-btn vs-btn-outline"
+                      aria-pressed={active}
+                      style={{
+                        fontSize: '0.72rem',
+                        padding: '0.3rem 0.75rem',
+                        opacity: active ? 1 : 0.6,
+                        borderColor: active ? 'var(--accent)' : undefined,
+                        color: active ? 'var(--accent)' : undefined,
+                      }}
+                    >
+                      {i.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             <h2
               style={{
                 fontFamily: "'Bebas Neue', sans-serif",

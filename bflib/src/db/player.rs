@@ -62,11 +62,16 @@ pub enum SlotAuth {
     VehicleNotAvailable(Vehicle),
     Denied,
     EraRestricted { vehicle: Vehicle, era: compact_str::CompactString },
-    /// A carrier is flying an aircraft type its own side doesn't normally
-    /// produce (kept from the previous owner on capture -- see
-    /// capture_warehouse's carrier branch), and the carrier hasn't finished
-    /// repairs yet.
-    CarrierNotRepaired(Vehicle),
+    /// The objective holds an aircraft type its own side doesn't normally
+    /// produce -- salvage kept from the previous owner on capture (see
+    /// capture_warehouse) -- and it hasn't been repaired far enough for the
+    /// captors to put it in the air yet.
+    CapturedNotReady(Vehicle),
+    /// The objective was just taken and is still in its post-capture
+    /// consolidation hold. Carries the seconds left on that hold so the denial
+    /// can tell the player how long, rather than the bare "is capturable" the
+    /// overloaded `captureable()` check used to produce.
+    Consolidating(i64),
 }
 
 pub enum RegErr {
@@ -143,8 +148,32 @@ impl Db {
                     .ephemeral
                     .player_deslot(&self.persisted, &slot, Some(*ucid));
             }
+            // Close the sortie this slot session opened. Only a session that
+            // ended on the ground counts as landed -- a pilot who died,
+            // ejected or jumped to spectators mid-flight leaves it open, which
+            // is how the dashboard shows a sortie as not landed. This has to go
+            // out before `Stat::Deslot`: bfdb drops the slot, and with it the
+            // open SortieId, the moment it sees the deslot.
+            if let Some(Some(_landed)) = self.ephemeral.open_sorties.remove(ucid) {
+                self.ephemeral.stat(Stat::Land { id: *ucid });
+            }
             self.ephemeral.stat(Stat::Deslot { id: *ucid });
             self.ephemeral.dirty()
+        }
+    }
+
+    /// Close every sortie still open with its pilot on the ground. Shutdown
+    /// ends the slot session for everyone still slotted but never runs
+    /// `player_deslot`, so without this a pilot who landed and stayed in the
+    /// airframe would leave the sortie open forever -- never landed, no hours
+    /// credited. Pilots still airborne are left open, exactly as a mid-flight
+    /// deslot leaves them.
+    pub fn close_open_sorties(&mut self) {
+        let open = std::mem::take(&mut self.ephemeral.open_sorties);
+        for (ucid, landed) in open {
+            if landed.is_some() {
+                self.ephemeral.stat(Stat::Land { id: ucid });
+            }
         }
     }
 
@@ -228,6 +257,31 @@ impl Db {
         });
         self.ephemeral.dirty();
         Ok(())
+    }
+
+    /// Reset every player's lives. Returns the number of players who actually
+    /// had lives consumed.
+    pub fn reset_all_lives(&mut self) -> Result<usize> {
+        let ucids: SmallVec<[Ucid; 64]> = self
+            .persisted
+            .players
+            .into_iter()
+            .filter(|(_, player)| player.lives.len() > 0)
+            .map(|(ucid, _)| *ucid)
+            .collect();
+        for ucid in &ucids {
+            if let Some(player) = self.persisted.players.get_mut_cow(ucid) {
+                player.lives = MapS::new();
+            }
+            self.ephemeral.stat(Stat::Life {
+                id: *ucid,
+                lives: MapS::new(),
+            });
+        }
+        if !ucids.is_empty() {
+            self.ephemeral.dirty();
+        }
+        Ok(ucids.len())
     }
 
     pub fn instanced_players(&self) -> impl Iterator<Item = (&Ucid, &Player, &InstancedPlayer)> {
@@ -406,7 +460,14 @@ impl Db {
                 _ => (),
             }
         };
-        self.ephemeral.stat(Stat::Takeoff { id: ucid });
+        // One sortie per slot session, not per takeoff. A pilot who lands to
+        // rearm and launches again in the same airframe is still flying the
+        // same sortie, so only the first takeoff opens one -- the rest still
+        // take a life and charge points above, they just do not mint a second
+        // SortieId in bfdb. See `Ephemeral::open_sorties`.
+        if self.ephemeral.open_sorties.insert(ucid, None).is_none() {
+            self.ephemeral.stat(Stat::Takeoff { id: ucid });
+        }
         res
     }
 
@@ -455,6 +516,15 @@ impl Db {
     }
 
     pub fn land(&mut self, slot: SlotId, position: Vector2, unit: &Unit) -> Option<LifeType> {
+        // Record the touchdown before any of the bookkeeping below can bail
+        // out. `player_deslot` reads this to decide whether the slot session
+        // ended on the ground, so every landing has to be marked -- not just
+        // the ones at an owned objective that hand a life back.
+        if let Some(ucid) = self.ephemeral.players_by_slot.get(&slot).copied()
+            && let Some(landed) = self.ephemeral.open_sorties.get_mut(&ucid)
+        {
+            *landed = Some(Utc::now());
+        }
         let sifo = match self.ephemeral.slot_info.get(&slot) {
             Some(sifo) => sifo,
             None => return None,
@@ -487,7 +557,9 @@ impl Db {
                 None
             }
         });
-        self.ephemeral.stat(Stat::Land { id: ucid });
+        // The sortie is deliberately NOT closed here: the pilot is still in
+        // the airframe and may rearm and launch again on the same sortie.
+        // `player_deslot` emits `Stat::Land` once the slot session really ends.
         if let Some(oid) = owned_objective {
             *player_lives += 1;
             player.airborne = None;
@@ -684,6 +756,11 @@ impl Db {
         if objective.owner != player.side {
             return SlotAuth::ObjectiveNotOwned(player.side);
         }
+        if objective.in_capture_hold() {
+            let total = self.ephemeral.cfg.capture_consolidation_secs;
+            let remaining = objective.capture_hold_pct(total).map(|(_, s)| s).unwrap_or(0);
+            return SlotAuth::Consolidating(remaining);
+        }
         if objective.captureable() {
             return SlotAuth::ObjectiveHasNoLogistics;
         }
@@ -700,21 +777,31 @@ impl Db {
                             }
                         }
                     }
-                    // A carrier can end up carrying an aircraft type its own
-                    // side doesn't normally produce -- kept from the previous
-                    // owner on capture so the new owner can operate it (see
-                    // capture_warehouse's carrier branch). That foreign
-                    // aircraft only becomes flyable once the carrier finishes
-                    // repairs, not immediately at capture.
-                    if matches!(objective.kind, ObjectiveKind::CarrierGroup { .. }) {
-                        let is_own_roster = self
-                            .ephemeral
-                            .production_by_side
-                            .get(&objective.owner)
-                            .map(|p| p.equipment.contains_key(typ))
-                            .unwrap_or(true);
-                        if !is_own_roster && objective.health < 100 {
-                            break SlotAuth::CarrierNotRepaired(sifo.typ.clone());
+                    // An objective can end up holding an aircraft type its
+                    // own side doesn't produce: kept from the previous owner
+                    // on capture so the captors can operate it (see
+                    // capture_warehouse -- the carrier branch, and the land
+                    // salvage branch under `captured_airframes`). Captured
+                    // aircraft aren't flyable the moment the last defender
+                    // dies; the objective has to be consolidated and repaired
+                    // first.
+                    let is_own_roster = self
+                        .ephemeral
+                        .production_by_side
+                        .get(&objective.owner)
+                        .map(|p| p.equipment.contains_key(typ))
+                        .unwrap_or(true);
+                    if !is_own_roster {
+                        let min_health =
+                            if matches!(objective.kind, ObjectiveKind::CarrierGroup { .. }) {
+                                Some(100)
+                            } else {
+                                whcfg.captured_airframes.as_ref().map(|c| c.min_health)
+                            };
+                        if let Some(min) = min_health {
+                            if objective.health < min {
+                                break SlotAuth::CapturedNotReady(sifo.typ.clone());
+                            }
                         }
                     }
                 }
@@ -1020,6 +1107,7 @@ impl Db {
                 .context("getting airbase")?
                 .get_warehouse()
                 .context("getting warehouse")?;
+            let mut drawn: SmallVec<[CompactString; 8]> = smallvec![];
             if sifo.ground_start {
                 wh.remove_item(sifo.typ.0.clone(), 1)
                     .with_context(|| format_compact!("removing {} from warehouse", sifo.typ.0))?;
@@ -1028,7 +1116,7 @@ impl Db {
                     let count = wep.count()?;
                     let typ = wep.type_name()?;
                     let whcnt = wh.get_item_count(typ.clone())?;
-                    debug!("removing {count} {typ} from the warehouse which contains {whcnt}");
+                    drawn.push(format_compact!("{typ} x{count} (had {whcnt})"));
                     wh.remove_item(typ.clone(), count)?;
                     if let Some(inv) = obj.warehouse.equipment.get_mut_cow(&typ) {
                         inv.stored = whcnt - count;
@@ -1045,6 +1133,7 @@ impl Db {
                         .unwrap_or(0.0);
                     let kg = (frac.clamp(0.0, 1.0) as f64 * max_kg).round() as u32;
                     if kg > 0 {
+                        drawn.push(format_compact!("jet fuel {kg} kg"));
                         let have = wh
                             .get_liquid_amount(dcso3::warehouse::LiquidType::JetFuel)
                             .unwrap_or(0);
@@ -1064,9 +1153,31 @@ impl Db {
                     }
                 }
             }
-            maybe_mut!(obj.warehouse.equipment, sifo.typ.0, "equip")?.stored = wh
+            let left = wh
                 .get_item_count(sifo.typ.0.clone())
                 .with_context(|| format_compact!("getting warehouse count for {}", sifo.typ.0))?;
+            // Ground starts are the campaign's main consumption path -- every
+            // sortie is an airframe, a loadout and a tank of fuel out of that
+            // base. Log the draw so a base running dry can be traced back to
+            // what actually drained it.
+            if sifo.ground_start {
+                info!(
+                    "[WAREHOUSE_DRAW] {ucid} took a {} from {} ({left} left); stores: {}",
+                    sifo.typ.0,
+                    obj.name,
+                    if drawn.is_empty() {
+                        CompactString::from("none")
+                    } else {
+                        CompactString::from(drawn.join(", "))
+                    }
+                );
+            } else {
+                debug!(
+                    "[WAREHOUSE_DRAW] {ucid} slotted an air-start {} at {} -- nothing drawn",
+                    sifo.typ.0, obj.name
+                );
+            }
+            maybe_mut!(obj.warehouse.equipment, sifo.typ.0, "equip")?.stored = left;
             Ok(())
         };
         if let Err(e) = adjust_warehouse() {
