@@ -1462,11 +1462,6 @@ impl Jtac {
         self.contacts.values()
     }
 
-    /// Is the laser actually firing on the current target?
-    pub fn is_lasing(&self) -> bool {
-        self.target.is_some()
-    }
-
     pub fn nearby_alcm(&self) -> &[(GroupId, i32)] {
         &self.nearby_alcm
     }
@@ -1504,6 +1499,15 @@ impl Jtacs {
 
     pub fn jtacs(&self) -> impl Iterator<Item = &Jtac> {
         self.jtacs.values().flat_map(|jtx| jtx.values())
+    }
+
+    /// The objective a gun battery belongs to -- the nearest friendly objective
+    /// to its center. The artillery menu groups guns by this, and a battery
+    /// fire mission targets exactly the guns that answer with the same id.
+    pub fn artillery_objective(db: &Db, gid: &GroupId, side: Side) -> Option<ObjectiveId> {
+        let pos = db.group_center(gid).ok()?;
+        Db::objective_near_point(&db.persisted.objectives, pos, |o| o.owner == side)
+            .map(|(_, _, o)| o.id)
     }
 
     pub fn artillery_range_reason(db: &Db, gid: &GroupId, target_pos: Vector2) -> Option<CompactString> {
@@ -1624,12 +1628,16 @@ impl Jtacs {
     /// Fire every gun in `nearby_artillery` at the current JTAC target simultaneously.
     /// Each gun fires `n` rounds using its individual adjustment. Returns the count
     /// of guns that accepted the order.
+    /// Fire several guns at the JTAC's target at once. `at` narrows the salvo
+    /// to the battery sitting at one objective; `None` fires every gun the
+    /// JTAC has in range.
     pub fn fire_all_artillery_together(
         &mut self,
         db: &Db,
         lua: MizLua,
         jtid: &JtId,
         n: u8,
+        at: Option<ObjectiveId>,
     ) -> Result<(usize, SmallVec<[CompactString; 4]>)> {
         let jtac = self
             .jtacs
@@ -1640,7 +1648,14 @@ impl Jtacs {
             None => bail!("no JTAC target — designate a target first"),
             Some(t) => Vector2::new(t.pos.x, t.pos.z),
         };
-        let arty_gids: SmallVec<[GroupId; 8]> = jtac.nearby_artillery.clone();
+        let side = jtac.side;
+        let mut arty_gids: SmallVec<[GroupId; 8]> = jtac.nearby_artillery.clone();
+        if let Some(oid) = at {
+            arty_gids.retain(|gid| Jtacs::artillery_objective(db, gid, side) == Some(oid));
+            if arty_gids.is_empty() {
+                bail!("that battery has no guns left");
+            }
+        }
         if arty_gids.is_empty() {
             bail!("no nearby artillery groups registered with this JTAC");
         }

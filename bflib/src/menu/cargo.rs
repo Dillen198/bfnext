@@ -14,7 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{ArgTriple, ArgTuple, player_name, slot_for_group};
+use super::{ArgTriple, ArgTuple, Pager, player_name, slot_for_group};
 use crate::{
     Context,
     db::cargo::{Cargo, Oldest, SlotStats},
@@ -31,7 +31,6 @@ use dcso3::{
     net::{SlotId, Ucid},
 };
 use fxhash::FxHashMap;
-use std::collections::hash_map::Entry;
 
 fn unpakistan(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
@@ -634,52 +633,80 @@ fn deliver_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
     Ok(())
 }
 
-/// Resolve `path` to its leaf submenu, creating intermediate submenus on demand
-/// and caching them in `created`. The top-level (path[0]) category submenus are
-/// spread across a "More>>" page chain -- `page` holds the current page menu and
-/// how many entries it already has -- so a long deployable-category list never
-/// exceeds DCS's hard limit of 10 entries per menu page. When the leaf is the
-/// deployable's own priced entry it gets a "(N pts)" suffix.
-fn crate_category_menu(
-    mc: &MissionCommands,
+/// The deployable category tree under "Crates". Category names are unique
+/// across the config (see the "Base Supply" note below), so one map keyed by
+/// name is enough to find any node again.
+struct CrateTree {
     group: GroupId,
-    created: &mut FxHashMap<String, GroupSubMenu>,
-    page: &mut (GroupSubMenu, u32),
-    path: &[String],
-    cost: u32,
-) -> Result<GroupSubMenu> {
-    let leaf = path.last().unwrap();
-    let mut cur = page.0.clone();
-    for (i, p) in path.iter().enumerate() {
-        cur = match created.entry(p.clone()) {
-            Entry::Occupied(e) => e.get().clone(),
-            Entry::Vacant(e) => {
-                let parent = if i == 0 {
-                    if page.1 >= 9 {
-                        page.0 = mc.add_submenu_for_group(
-                            group,
-                            "More>>".into(),
-                            Some(page.0.clone()),
-                        )?;
-                        page.1 = 0;
-                    }
-                    page.1 += 1;
-                    page.0.clone()
-                } else {
-                    cur.clone()
-                };
-                let item = if p == leaf && cost > 0 {
-                    String::from(format_compact!("{p}({cost} pts)"))
-                } else {
-                    p.clone()
-                };
-                let menu = mc.add_submenu_for_group(group, item, Some(parent))?;
-                e.insert(menu.clone());
-                menu
-            }
-        };
+    menus: FxHashMap<String, GroupSubMenu>,
+    /// The pager filling each node. A node's children -- sub-categories and
+    /// crate entries alike -- all claim their slot from it, so no level of the
+    /// tree can quietly pass DCS's hard limit of 10 entries per menu.
+    pagers: FxHashMap<String, Pager>,
+    /// The pager filling "Crates" itself, which the top-level categories sit on.
+    root: Pager,
+}
+
+impl CrateTree {
+    /// `used` is how many entries the caller already put on `root` before the
+    /// category list starts.
+    fn new(group: GroupId, root: GroupSubMenu, used: u32) -> Self {
+        CrateTree {
+            group,
+            menus: FxHashMap::default(),
+            pagers: FxHashMap::default(),
+            root: Pager::with_used(group, root, used),
+        }
     }
-    Ok(cur)
+
+    /// The page a new entry should go on directly under the tree's own root.
+    fn root_page(&mut self, mc: &MissionCommands) -> Result<GroupSubMenu> {
+        self.root.page(mc)
+    }
+
+    /// The page a new entry should go on inside category `name`.
+    fn page_in(&mut self, mc: &MissionCommands, name: &String) -> Result<GroupSubMenu> {
+        let menu = self
+            .menus
+            .get(name)
+            .ok_or_else(|| anyhow!("no category menu {name}"))?
+            .clone();
+        let group = self.group;
+        self.pagers
+            .entry(name.clone())
+            .or_insert_with(|| Pager::new(group, menu))
+            .page(mc)
+    }
+
+    /// Resolve `path` to its leaf submenu, creating intermediate submenus on
+    /// demand. When the leaf is the deployable's own priced entry it gets a
+    /// "(N pts)" suffix.
+    fn category(
+        &mut self,
+        mc: &MissionCommands,
+        path: &[String],
+        cost: u32,
+    ) -> Result<GroupSubMenu> {
+        let leaf = path.last().unwrap();
+        for (i, p) in path.iter().enumerate() {
+            if self.menus.contains_key(p) {
+                continue;
+            }
+            let parent = if i == 0 {
+                self.root.page(mc)?
+            } else {
+                self.page_in(mc, &path[i - 1])?
+            };
+            let item = if p == leaf && cost > 0 {
+                String::from(format_compact!("{p}({cost} pts)"))
+            } else {
+                p.clone()
+            };
+            let menu = mc.add_submenu_for_group(self.group, item, Some(parent))?;
+            self.menus.insert(p.clone(), menu);
+        }
+        Ok(self.menus[leaf].clone())
+    }
 }
 
 pub(super) fn add_cargo_menu_for_group(
@@ -775,31 +802,25 @@ pub(super) fn add_cargo_menu_for_group(
             )?;
         }
     }
-    let mut created_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
     // "Base Supply" already occupies one slot directly under "Crates".
-    let mut crate_page = (root.clone(), 1u32);
+    let mut tree = CrateTree::new(group, root.clone(), 1);
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
         if dep.crates.is_empty() && dep.repair_crate.is_none() {
             continue;
         }
-        let root = crate_category_menu(
-            mc,
-            group,
-            &mut created_menus,
-            &mut crate_page,
-            &dep.path,
-            dep.cost,
-        )?;
+        tree.category(mc, &dep.path, dep.cost)?;
+        let leaf = dep.path.last().unwrap().clone();
         for cr in dep.crates.iter().chain(dep.repair_crate.iter()) {
             let title = if cr.required > 1 {
                 String::from(format_compact!("{}({})", cr.name, cr.required))
             } else {
                 cr.name.clone()
             };
+            let page = tree.page_in(mc, &leaf)?;
             mc.add_command_for_group(
                 group,
                 title,
-                Some(root.clone()),
+                Some(page),
                 spawn_crate,
                 ArgTuple {
                     fst: group,
@@ -886,19 +907,17 @@ pub(super) fn add_c130_cargo_menu_for_group(
         // One base-supply crate: the single "spawn 1" command plus a "xN"
         // submenu (1-9) so a poor base can be topped off / a wreck fully
         // repaired in one trip, same as deployable crates.
-        let add_supply = |name: &str| -> Result<()> {
-            mc.add_command_for_group(
-                group,
+        // Two entries per crate (the command and its xN submenu), so four
+        // base-supply crates already fill most of a page -- pager it.
+        let mut supply = Pager::new(group, logi);
+        let mut add_supply = |name: &str| -> Result<()> {
+            supply.command(
+                mc,
                 String::from(name),
-                Some(logi.clone()),
                 spawn_c130_crate,
                 ArgTuple { fst: group, snd: String::from(name) },
             )?;
-            let qty = mc.add_submenu_for_group(
-                group,
-                String::from(format_compact!("{name} xN")),
-                Some(logi.clone()),
-            )?;
+            let qty = supply.submenu(mc, String::from(format_compact!("{name} xN")))?;
             for n in 1..=9u32 {
                 mc.add_command_for_group(
                     group,
@@ -927,22 +946,15 @@ pub(super) fn add_c130_cargo_menu_for_group(
     }
 
     // Add all deployable crates (organized by path, excluding repair crates)
-    let mut created_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
     let base_items = if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() { 1 } else { 0 };
-    let mut crate_page = (crates_menu.clone(), base_items);
+    let mut tree = CrateTree::new(group, crates_menu.clone(), base_items);
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
         if dep.crates.is_empty() && dep.repair_crate.is_none() {
             continue;
         }
 
-        let root = crate_category_menu(
-            mc,
-            group,
-            &mut created_menus,
-            &mut crate_page,
-            &dep.path,
-            dep.cost,
-        )?;
+        tree.category(mc, &dep.path, dep.cost)?;
+        let leaf = dep.path.last().unwrap().clone();
 
         // The per-deployable repair crate (revives that deployed group after
         // it's been shot up) is a plain single command -- no xN quantity menu,
@@ -956,7 +968,7 @@ pub(super) fn add_c130_cargo_menu_for_group(
             mc.add_command_for_group(
                 group,
                 title,
-                Some(root.clone()),
+                Some(tree.page_in(mc, &leaf)?),
                 spawn_c130_crate,
                 ArgTuple { fst: group, snd: rc.name.clone() },
             )?;
@@ -971,7 +983,7 @@ pub(super) fn add_c130_cargo_menu_for_group(
             mc.add_command_for_group(
                 group,
                 title,
-                Some(root.clone()),
+                Some(tree.page_in(mc, &leaf)?),
                 spawn_c130_crate,
                 ArgTuple {
                     fst: group,
@@ -987,7 +999,7 @@ pub(super) fn add_c130_cargo_menu_for_group(
             let qty_menu = mc.add_submenu_for_group(
                 group,
                 String::from(format_compact!("{} xN", cr.name)),
-                Some(root.clone()),
+                Some(tree.page_in(mc, &leaf)?),
             )?;
             for n in 1..=9u32 {
                 mc.add_command_for_group(
@@ -1005,33 +1017,18 @@ pub(super) fn add_c130_cargo_menu_for_group(
     if let Some(c130_cfg) = &cfg.c130_cargo {
         if let Some(vehicles) = c130_cfg.loadable_vehicles.get(side) {
             if !vehicles.is_empty() {
-                let vehicles_menu = mc.add_submenu_for_group(group, "Vehicles".into(), Some(root.clone()))?;
-
-                // Track created vehicle path menus to organize by path
-                let mut vehicle_path_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
+                let vehicles_menu =
+                    mc.add_submenu_for_group(group, "Vehicles".into(), Some(root.clone()))?;
+                // Same tree as the crate categories: an optional path per
+                // vehicle, every level of it paged.
+                let mut tree = CrateTree::new(group, vehicles_menu, 0);
 
                 for vehicle in vehicles {
-                    // Determine which menu to add this vehicle to
-                    let target_menu = if vehicle.path.is_empty() {
-                        vehicles_menu.clone()
+                    let page = if vehicle.path.is_empty() {
+                        tree.root_page(mc)?
                     } else {
-                        // Build nested menu structure, creating menus as needed
-                        let mut current_menu = vehicles_menu.clone();
-                        for path_part in &vehicle.path {
-                            let menu_key: String = path_part.clone().into();
-                            if let Some(existing) = vehicle_path_menus.get(&menu_key) {
-                                current_menu = existing.clone();
-                            } else {
-                                let new_menu = mc.add_submenu_for_group(
-                                    group,
-                                    menu_key.clone(),
-                                    Some(current_menu),
-                                )?;
-                                vehicle_path_menus.insert(menu_key, new_menu.clone());
-                                current_menu = new_menu;
-                            }
-                        }
-                        current_menu
+                        tree.category(mc, &vehicle.path, 0)?;
+                        tree.page_in(mc, vehicle.path.last().unwrap())?
                     };
 
                     // Create menu item with cost if applicable
@@ -1044,7 +1041,7 @@ pub(super) fn add_c130_cargo_menu_for_group(
                     mc.add_command_for_group(
                         group,
                         title,
-                        Some(target_menu),
+                        Some(page),
                         spawn_c130_vehicle,
                         ArgTuple {
                             fst: group,
@@ -1135,19 +1132,17 @@ pub(super) fn add_helo_cargo_menu_for_group(
     if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() {
         let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(crates_menu.clone()))?;
         // "spawn 1" command + a "xN" submenu (1-9) per base-supply crate.
-        let add_supply = |name: &str| -> Result<()> {
-            mc.add_command_for_group(
-                group,
+        // Two entries per crate (the command and its xN submenu), so four
+        // base-supply crates already fill most of a page -- pager it.
+        let mut supply = Pager::new(group, logi);
+        let mut add_supply = |name: &str| -> Result<()> {
+            supply.command(
+                mc,
                 String::from(name),
-                Some(logi.clone()),
                 spawn_helo_crate,
                 ArgTuple { fst: group, snd: String::from(name) },
             )?;
-            let qty = mc.add_submenu_for_group(
-                group,
-                String::from(format_compact!("{name} xN")),
-                Some(logi.clone()),
-            )?;
+            let qty = supply.submenu(mc, String::from(format_compact!("{name} xN")))?;
             for n in 1..=9u32 {
                 mc.add_command_for_group(
                     group,
@@ -1175,22 +1170,15 @@ pub(super) fn add_helo_cargo_menu_for_group(
         }
     }
 
-    let mut created_menus: FxHashMap<String, GroupSubMenu> = FxHashMap::default();
     let base_items = if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() { 1 } else { 0 };
-    let mut crate_page = (crates_menu.clone(), base_items);
+    let mut tree = CrateTree::new(group, crates_menu.clone(), base_items);
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
         if dep.crates.is_empty() && dep.repair_crate.is_none() {
             continue;
         }
 
-        let dep_root = crate_category_menu(
-            mc,
-            group,
-            &mut created_menus,
-            &mut crate_page,
-            &dep.path,
-            dep.cost,
-        )?;
+        tree.category(mc, &dep.path, dep.cost)?;
+        let leaf = dep.path.last().unwrap().clone();
 
         // Per-deployable repair crate (revives that deployed group after it's
         // been shot up) -- plain single command, no xN menu.
@@ -1203,7 +1191,7 @@ pub(super) fn add_helo_cargo_menu_for_group(
             mc.add_command_for_group(
                 group,
                 title,
-                Some(dep_root.clone()),
+                Some(tree.page_in(mc, &leaf)?),
                 spawn_helo_crate,
                 ArgTuple { fst: group, snd: rc.name.clone() },
             )?;
@@ -1218,7 +1206,7 @@ pub(super) fn add_helo_cargo_menu_for_group(
             mc.add_command_for_group(
                 group,
                 title,
-                Some(dep_root.clone()),
+                Some(tree.page_in(mc, &leaf)?),
                 spawn_helo_crate,
                 ArgTuple { fst: group, snd: cr.name.clone() },
             )?;
@@ -1231,7 +1219,7 @@ pub(super) fn add_helo_cargo_menu_for_group(
             let qty_menu = mc.add_submenu_for_group(
                 group,
                 String::from(format_compact!("{} xN", cr.name)),
-                Some(dep_root.clone()),
+                Some(tree.page_in(mc, &leaf)?),
             )?;
             for n in 1..=9u32 {
                 mc.add_command_for_group(

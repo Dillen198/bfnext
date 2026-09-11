@@ -37,7 +37,7 @@ use dcso3::{
     MizLua, String,
 };
 
-use log::debug;
+use log::{debug, error};
 use mlua::{prelude::*, Value};
 use std::sync::Arc;
 
@@ -68,6 +68,14 @@ pub(crate) struct Pager {
 /// so a page carries at most `PAGE_ITEMS - 1` real entries before spilling.
 const PAGE_ITEMS: u32 = 10;
 
+/// The 10-entry cap applies to the group's F10 root as well, and the root is
+/// deliberately *not* paged: every top-level menu is removed and rebuilt by its
+/// own fixed path ("Cargo", "JTAC>>", "Info", ...) from several places, and a
+/// `More >>` page would move those paths out from under the rebuild. So the
+/// root gets a budget instead. Nine are in use today; adding a tenth top-level
+/// menu means restructuring, not just adding a line to `init_for_slot`.
+const ROOT_MENU_BUDGET: u32 = PAGE_ITEMS;
+
 impl Pager {
     /// Page inside `root`, which is assumed empty.
     pub(crate) fn new(group: GroupId, root: GroupSubMenu) -> Self {
@@ -89,8 +97,9 @@ impl Pager {
     }
 
     /// The menu the next entry should go on, spilling to a new `More >>` page
-    /// first if the current one is full.
-    fn slot(&mut self, mc: &MissionCommands<'_>) -> Result<GroupSubMenu> {
+    /// first if the current one is full. Reserves the slot, so callers that
+    /// build their own submenu inside the page still keep the count honest.
+    pub(crate) fn page(&mut self, mc: &MissionCommands<'_>) -> Result<GroupSubMenu> {
         if self.used + 1 >= PAGE_ITEMS {
             self.cur = mc
                 .add_submenu_for_group(self.group, "More >>".into(), Some(self.cur.clone()))
@@ -113,7 +122,7 @@ impl Pager {
         F: Fn(MizLua, A) -> Result<()> + 'static,
         A: IntoLua<'lua> + FromLua<'lua>,
     {
-        let parent = self.slot(mc)?;
+        let parent = self.page(mc)?;
         mc.add_command_for_group(self.group, name, Some(parent), f, arg)
     }
 
@@ -124,7 +133,7 @@ impl Pager {
         mc: &MissionCommands<'_>,
         name: String,
     ) -> Result<GroupSubMenu> {
-        let parent = self.slot(mc)?;
+        let parent = self.page(mc)?;
         mc.add_submenu_for_group(self.group, name, Some(parent))
     }
 }
@@ -386,9 +395,14 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Troops".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Actions".into()]))?;
             mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Recon".into()]))?;
+            // Every top-level menu below costs one slot at the group's F10
+            // root -- see ROOT_MENU_BUDGET.
+            let mut root_menus = 0u32;
             ewr::add_ewr_menu_for_group(&mc, miz_gid)?;
+            root_menus += 1;
             if ctx.db.recon_capable(&si_typ) {
                 recon::add_recon_menu_for_group(&mc, miz_gid)?;
+                root_menus += 1;
             }
             let cap = CarryCap::from_typ(&cfg, si_typ.as_str());
 
@@ -402,28 +416,43 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
                 .unwrap_or(false);
 
             if is_c130 && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
+                cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?;
+                root_menus += 1;
             } else if is_helo_dynamic && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                cargo::add_helo_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
+                cargo::add_helo_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?;
+                root_menus += 1;
             } else if cap.crates && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                cargo::add_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
+                cargo::add_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?;
+                root_menus += 1;
             }
             if ctx.db.ephemeral.cfg.csar.as_ref().map(|c| c.enabled).unwrap_or(false)
                 && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid)
             {
-                cargo::add_csar_menu_for_group(&mc, miz_gid)?
+                cargo::add_csar_menu_for_group(&mc, miz_gid)?;
+                root_menus += 1;
             }
             if cap.troops && ctx.db.ephemeral.cfg.rules.troops.check(&ucid) {
-                troop::add_troops_menu_for_group(&cfg, &mc, &si_side, miz_gid)?
+                troop::add_troops_menu_for_group(&cfg, &mc, &si_side, miz_gid)?;
+                root_menus += 1;
             }
             if ctx.db.ephemeral.cfg.rules.jtac.check(&ucid) {
-                jtac::init_jtac_menu_for_slot(ctx, lua, slot)?
+                jtac::init_jtac_menu_for_slot(ctx, lua, slot)?;
+                root_menus += 1;
             }
             if ctx.db.ephemeral.cfg.rules.actions.check(&ucid) {
-                action::init_action_menu_for_slot(ctx, lua, slot, &ucid)?
+                action::init_action_menu_for_slot(ctx, lua, slot, &ucid)?;
+                root_menus += 1;
             }
             objectives::init_objectives_menu_for_slot(ctx, lua, slot)?;
+            root_menus += 1;
             info::init_info_menu_for_slot(ctx, lua, slot)?;
+            root_menus += 1;
+            if root_menus > ROOT_MENU_BUDGET {
+                error!(
+                    "slot {slot:?}: {root_menus} top-level F10 menus but DCS shows only \
+                     {ROOT_MENU_BUDGET} -- the last one(s) are being dropped silently"
+                );
+            }
             Ok(())
         }
     }

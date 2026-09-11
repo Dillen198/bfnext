@@ -14,7 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{cargo, player_name, slot_for_group, ArgTuple};
+use super::{cargo, player_name, slot_for_group, ArgTuple, Pager};
 use crate::{
     jtac::JtId,
     Context,
@@ -263,17 +263,19 @@ pub(super) fn add_troops_menu_for_group(
             return_troops,
             group,
         )?;
+        // Paged: a side with more than nine squad types would otherwise lose
+        // the tenth and everything after it -- DCS drops them silently.
         let root = mc.add_submenu_for_group(group, "Squads".into(), Some(root))?;
+        let mut p = Pager::new(group, root);
         for sq in squads {
             let item = if sq.cost > 0 {
                 format_compact!("Load {} squad ({} pts)", sq.name, sq.cost)
             } else {
                 format_compact!("Load {} squad", sq.name)
             };
-            mc.add_command_for_group(
-                group,
+            p.command(
+                mc,
                 item.into(),
-                Some(root.clone()),
                 load_troops,
                 ArgTuple {
                     fst: group,

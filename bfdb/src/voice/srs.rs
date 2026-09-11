@@ -41,9 +41,6 @@ pub(crate) struct Transmission {
     pub coalition: u8,
     /// SRS client name of the transmitter (matched to a pilot downstream).
     pub name: String,
-    /// SRS client GUID of the transmitter — a stable key for the session, used
-    /// to stitch a paused transmission back together.
-    pub guid: String,
     /// DCS unit id of the jet the caller is sitting in, when their SRS client
     /// is reporting one. The exact key back to a flight in the engine picture.
     pub unit_id: Option<u64>,
@@ -719,7 +716,6 @@ fn emit_rx(
     let _ = tx.send(Transmission {
         coalition: c.coalition,
         name,
-        guid,
         unit_id,
         freq_hz,
         label: label.to_string(),

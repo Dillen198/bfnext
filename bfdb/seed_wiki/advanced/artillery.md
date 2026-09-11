@@ -34,14 +34,23 @@ which one and why.
 F10 → JTAC → [JTAC ID] → Artillery → [Battery ID] → [Rounds]
 ```
 
+When the JTAC can reach guns at more than one objective, the batteries are
+bucketed by objective first, the same way the JTAC list itself is:
+```
+F10 → JTAC → [JTAC ID] → Artillery → [Objective (n)] → [Battery ID] → [Rounds]
+```
+
 **Process**:
 1. JTAC identifies target
-2. Select a battery — or **Fire All Groups Together** to salvo every battery
-   in range at once
-3. Choose rounds: **1 / 3 / 5 / 10 / all ammo** ("all ammo" dumps each gun's
+2. **Fire All Groups Together** is the first entry in the Artillery menu — it
+   salvos every battery in range at once, no scrolling to the end of the gun
+   list. Each objective bucket carries its own **Fire Battery Together** for
+   just the guns sitting there
+3. Or open a single battery for per-gun control
+4. Choose rounds: **1 / 3 / 5 / 10 / all ammo** ("all ammo" dumps each gun's
    full remaining load)
-4. The battery turns to face the target if it needs to, then fires
-5. Rounds impact near target
+5. The battery turns to face the target if it needs to, then fires
+6. Rounds impact near target
 
 > **Turning to fire**: fixed- or limited-traverse launchers (Grad, Smerch,
 > Scud, Silkworm…) spawn facing north. When you call fire they now reposition

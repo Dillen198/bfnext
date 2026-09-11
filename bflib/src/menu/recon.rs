@@ -14,7 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::slot_for_group;
+use super::{slot_for_group, Pager};
 use crate::Context;
 use anyhow::{Context as ErrContext, Result};
 use chrono::prelude::*;
@@ -52,26 +52,13 @@ fn recon_status(lua: MizLua, gid: GroupId) -> Result<()> {
 
 pub(super) fn add_recon_menu_for_group(mc: &MissionCommands, group: GroupId) -> Result<()> {
     let root = mc.add_submenu_for_group(group, "Recon".into(), None)?;
-    mc.add_command_for_group(
-        group,
-        "Start Recon Pass".into(),
-        Some(root.clone()),
-        start_recon,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Cancel Recon Pass".into(),
-        Some(root.clone()),
-        cancel_recon,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Recon Status".into(),
-        Some(root.clone()),
-        recon_status,
-        group,
-    )?;
+    let mut p = Pager::new(group, root);
+    for (label, cb) in [
+        ("Start Recon Pass", start_recon as fn(MizLua, GroupId) -> Result<()>),
+        ("Cancel Recon Pass", cancel_recon),
+        ("Recon Status", recon_status),
+    ] {
+        p.command(mc, label.into(), cb, group)?;
+    }
     Ok(())
 }

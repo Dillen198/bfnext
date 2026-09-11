@@ -1,4 +1,4 @@
-use super::{ArgPent, ArgQuad, ArgTriple};
+use super::{ArgPent, ArgQuad, ArgTriple, Pager};
 use crate::{
     Context,
     db::{
@@ -718,7 +718,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     let mc = MissionCommands::singleton(lua)?;
     let world = World::singleton(lua)?;
     mc.remove_command_for_group(arg.snd, vec!["Actions>>".into()].into())?;
-    let mut root = mc.add_submenu_for_group(arg.snd, "Actions".into(), None)?;
+    let root = mc.add_submenu_for_group(arg.snd, "Actions".into(), None)?;
     let player = ctx
         .db
         .player(&arg.fst)
@@ -768,20 +768,15 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     for (i, mk) in blank.into_iter().enumerate() {
         marks.insert(String::from(format_compact!("Mark {}", i + 1)), mk);
     }
-    // Mark lists page at 8 like every other list in this menu -- a player
-    // who has dropped a dozen marks would otherwise get a menu level DCS
-    // silently truncates.
-    let add_pos = |mut root: GroupSubMenu, name: String| -> Result<()> {
-        let mut n = 0;
+    // Mark lists page like every other list in this menu -- a player who has
+    // dropped a dozen marks would otherwise get a menu level DCS silently
+    // truncates.
+    let add_pos = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
         for (text, mk) in &marks {
-            if n >= 8 {
-                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-                n = 0;
-            }
-            mc.add_command_for_group(
-                arg.snd,
+            p.command(
+                &mc,
                 text.clone(),
-                Some(root.clone()),
                 run_pos_action,
                 ArgQuad {
                     fst: arg.fst,
@@ -790,11 +785,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     fth: mk.id,
                 },
             )?;
-            n += 1;
         }
         Ok(())
     };
-    let add_pos_group = |mut root: GroupSubMenu, name: String, action: bool| -> Result<()> {
+    let add_pos_group = |root: GroupSubMenu, name: String, action: bool| -> Result<()> {
         // Collect carrier group IDs if we're processing actions (e.g., CarrierWaypoint)
         // by checking objectives_by_group to see which groups belong to carrier objectives
         let mut carrier_group_ids: Vec<DbGid> = Vec::new();
@@ -821,12 +815,8 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     .chain(ctx.db.persisted.troops.into_iter()),
             )
         };
-        let mut n = 0;
+        let mut p = Pager::new(arg.snd, root);
         for gid in iter {
-            if n >= 8 {
-                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-                n = 0;
-            }
             let group = ctx.db.group(gid)?;
             if group.side != player.side {
                 continue;
@@ -876,22 +866,15 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 | DeployKind::DownedPilot { .. }
                 | DeployKind::Dismount { .. } => None,
             };
+            // Only a group that actually gets an entry claims a slot --
+            // counting the skipped ones used to open a "Next>>" page early.
             if let Some(key) = key {
-                let mut groot = mc.add_submenu_for_group(
-                    arg.snd,
-                    format_compact!("{gid}({key})").into(),
-                    Some(root.clone()),
-                )?;
-                let mut m = 0;
+                let groot = p.submenu(&mc, format_compact!("{gid}({key})").into())?;
+                let mut gp = Pager::new(arg.snd, groot);
                 for (text, mk) in &marks {
-                    if m >= 8 {
-                        groot = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(groot))?;
-                        m = 0;
-                    }
-                    mc.add_command_for_group(
-                        arg.snd,
+                    gp.command(
+                        &mc,
                         text.clone(),
-                        Some(groot.clone()),
                         run_pos_group_action,
                         ArgPent {
                             fst: arg.fst,
@@ -901,25 +884,18 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                             pnt: mk.id,
                         },
                     )?;
-                    m += 1;
                 }
             }
-            n += 1;
         }
         Ok(())
     };
-    let add_objective = |mut root: GroupSubMenu, name: String| -> Result<()> {
-        let mut n = 0;
+    let add_objective = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
         for (oid, obj) in ctx.db.objectives() {
             if obj.owner == player.side {
-                if n >= 8 {
-                    root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-                    n = 0;
-                }
-                mc.add_command_for_group(
-                    arg.snd,
+                p.command(
+                    &mc,
                     obj.name.clone(),
-                    Some(root.clone()),
                     run_objective_action,
                     ArgTriple {
                         fst: arg.fst,
@@ -927,23 +903,17 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                         trd: *oid,
                     },
                 )?;
-                n += 1;
             }
         }
         Ok(())
     };
-    let add_enemy_objective = |mut root: GroupSubMenu, name: String| -> Result<()> {
-        let mut n = 0;
+    let add_enemy_objective = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
         for (oid, obj) in ctx.db.objectives() {
             if obj.owner != player.side && obj.owner != Side::Neutral {
-                if n >= 8 {
-                    root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-                    n = 0;
-                }
-                mc.add_command_for_group(
-                    arg.snd,
+                p.command(
+                    &mc,
                     obj.name.clone(),
-                    Some(root.clone()),
                     run_enemy_objective_action,
                     ArgTriple {
                         fst: arg.fst,
@@ -951,7 +921,6 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                         trd: *oid,
                     },
                 )?;
-                n += 1;
             }
         }
         Ok(())
@@ -962,27 +931,17 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     // objectives it can sensibly be posted against -- enemy held ones to
     // capture, friendly ones to resupply. Both lists page at 8 entries,
     // since DCS only shows about ten items per menu level.
-    let add_task_types = |mut root: GroupSubMenu, name: String, cfg: &TaskCfg| -> Result<()> {
-        let mut n = 0;
+    let add_task_types = |root: GroupSubMenu, name: String, cfg: &TaskCfg| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
         for typ in &cfg.types {
-            if n >= 8 {
-                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-                n = 0;
-            }
             match typ.target {
                 TaskTarget::Position => {
-                    let mut tr =
-                        mc.add_submenu_for_group(arg.snd, typ.name.clone(), Some(root.clone()))?;
-                    let mut i = 0;
+                    let tr = p.submenu(&mc, typ.name.clone())?;
+                    let mut tp = Pager::new(arg.snd, tr);
                     for (text, mk) in &marks {
-                        if i >= 8 {
-                            tr = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(tr))?;
-                            i = 0;
-                        }
-                        mc.add_command_for_group(
-                            arg.snd,
+                        tp.command(
+                            &mc,
                             text.clone(),
-                            Some(tr.clone()),
                             run_add_task,
                             ArgPent {
                                 fst: arg.fst,
@@ -992,7 +951,6 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                                 pnt: typ.name.clone(),
                             },
                         )?;
-                        i += 1;
                     }
                 }
                 TaskTarget::CaptureObjective | TaskTarget::SupplyObjective { .. } => {
@@ -1012,10 +970,11 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     objs.sort_by(|a, b| a.1.cmp(&b.1));
                     // Reuse the objectives menu's chunked base tree so a
                     // 40 base map doesn't overflow one menu level.
+                    let page = p.page(&mc)?;
                     objectives::add_base_list(
                         &mc,
                         arg.snd,
-                        &root,
+                        &page,
                         typ.name.as_str(),
                         objs,
                         run_add_objective_task,
@@ -1028,7 +987,6 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     )?;
                 }
             }
-            n += 1;
         }
         Ok(())
     };
@@ -1036,22 +994,17 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     // board -- there is nothing to pick on the map, the task already has a
     // position. Objective tasks normally take themselves off the board when
     // the coalition finishes the job, so this is for cancelling.
-    let add_open_tasks = |mut root: GroupSubMenu, name: String| -> Result<()> {
-        let mut n = 0;
+    let add_open_tasks = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
         let tasks: Vec<(TaskId, String)> = ctx
             .db
             .tasks(player.side)
             .map(|t| (t.id, String::from(t.label().as_str())))
             .collect();
         for (id, label) in tasks {
-            if n >= 8 {
-                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-                n = 0;
-            }
-            mc.add_command_for_group(
-                arg.snd,
+            p.command(
+                &mc,
                 label,
-                Some(root.clone()),
                 run_remove_task,
                 ArgTriple {
                     fst: arg.fst,
@@ -1059,28 +1012,22 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     trd: id,
                 },
             )?;
-            n += 1;
         }
         Ok(())
     };
     // Bomber missions target whatever a JTAC is tracking, so the menu item
     // expands into a list of friendly JTACs to direct the strike.
-    let add_bomber_jtacs = |mut root: GroupSubMenu, name: String| -> Result<()> {
-        let mut n = 0;
+    let add_bomber_jtacs = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
         for jtac in ctx.jtac.jtacs() {
             if jtac.side() != player.side {
                 continue;
-            }
-            if n >= 8 {
-                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-                n = 0;
             }
             let label = match jtac.callsign() {
                 Some(cs) => format_compact!("{cs}"),
                 None => format_compact!("{}", jtac.gid()),
             };
-            let jt_root =
-                mc.add_submenu_for_group(arg.snd, label.into(), Some(root.clone()))?;
+            let jt_root = p.submenu(&mc, label.into())?;
             mc.add_command_for_group(
                 arg.snd,
                 "Yes, do it!".into(),
@@ -1092,25 +1039,22 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     trd: name.clone(),
                 },
             )?;
-            n += 1;
         }
         Ok(())
     };
-    let mut n = 0;
+    let mut p = Pager::new(arg.snd, root);
     for (name, action) in actions {
-        if n >= 8 {
-            root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-            n = 0;
-        }
         let title = if action.cost > 0 {
             String::from(format_compact!("{name}({} pts)", action.cost))
         } else {
             name.clone()
         };
         match &action.kind {
-            ActionKind::LogisticsTransfer(_) => (),
+            // Adds no entry, so it must not consume one -- counting it here
+            // used to push a "Next>>" page open several slots early.
+            ActionKind::LogisticsTransfer(_) => continue,
             ActionKind::Bomber(_) => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let root = p.submenu(&mc, title)?;
                 add_bomber_jtacs(root.clone(), name.clone())?
             }
             ActionKind::AttackersWaypoint
@@ -1122,11 +1066,11 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             | ActionKind::TankerWaypoint
             | ActionKind::DroneWaypoint
             | ActionKind::CarrierWaypoint => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let root = p.submenu(&mc, title)?;
                 add_pos_group(root.clone(), name.clone(), true)?
             }
             ActionKind::Move(_) => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let root = p.submenu(&mc, title)?;
                 add_pos_group(root.clone(), name.clone(), false)?
             }
             ActionKind::Attackers(_)
@@ -1141,53 +1085,41 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             | ActionKind::Nuke(_)
             | ActionKind::Artillery(_)
             | ActionKind::Recon(_) => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let root = p.submenu(&mc, title)?;
                 add_pos(root.clone(), name.clone())?
             }
             ActionKind::CarrierRepair | ActionKind::CarrierRespawn => {
-                let _root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let _root = p.submenu(&mc, title)?;
                 // Carrier repair/respawn actions handled via objective-based menus
             }
             ActionKind::LogisticsRepair(_) => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let root = p.submenu(&mc, title)?;
                 add_objective(root.clone(), name.clone())?
             }
             ActionKind::NavalCruiseMissileStrike(_) => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let root = p.submenu(&mc, title)?;
                 add_enemy_objective(root.clone(), name.clone())?
             }
             ActionKind::AddTask(cfg) => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let root = p.submenu(&mc, title)?;
                 add_task_types(root.clone(), name.clone(), cfg)?
             }
             ActionKind::RemoveTask(_) => {
-                let root = mc.add_submenu_for_group(arg.snd, title, Some(root.clone()))?;
+                let root = p.submenu(&mc, title)?;
                 add_open_tasks(root.clone(), name.clone())?
             }
         }
-        n += 1;
     }
     // Global artillery system: auto-append "Request Fires" if cfg.artillery is set
     // and the player's side has alive artillery groups — no per-unit action config needed.
     if ctx.db.ephemeral.cfg.artillery.is_some() {
         if side_has_artillery(ctx, player.side) {
-            if n >= 8 {
-                root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-                n = 0;
-            }
-            let label = String::from("Request Fires");
-            let mut arty_root = mc.add_submenu_for_group(arg.snd, label, Some(root.clone()))?;
-            let mut m = 0;
+            let arty_root = p.submenu(&mc, String::from("Request Fires"))?;
+            let mut ap = Pager::new(arg.snd, arty_root);
             for (text, mk) in &marks {
-                if m >= 8 {
-                    arty_root =
-                        mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(arty_root))?;
-                    m = 0;
-                }
-                mc.add_command_for_group(
-                    arg.snd,
+                ap.command(
+                    &mc,
                     text.clone(),
-                    Some(arty_root.clone()),
                     run_global_artillery,
                     ArgQuad {
                         fst: arg.fst,
@@ -1196,18 +1128,14 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                         fth: mk.id,
                     },
                 )?;
-                m += 1;
             }
-            n += 1;
         }
     }
     // AI helo missions are player-triggered dispatches like every other action,
     // so they live here rather than in the Objectives report menu.
     if ctx.db.ephemeral.cfg.helo_insertion.is_some() {
-        if n >= 8 {
-            root = mc.add_submenu_for_group(arg.snd, "Next>>".into(), Some(root))?;
-        }
-        objectives::add_helo_mission_menu(&mc, ctx, lua, arg.snd, &root, player.side)?;
+        let page = p.page(&mc)?;
+        objectives::add_helo_mission_menu(&mc, ctx, lua, arg.snd, &page, player.side)?;
     }
     ctx.subscribed_action_menus.insert(arg.trd);
     Ok(())

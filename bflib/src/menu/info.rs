@@ -1,4 +1,4 @@
-use super::{brg_rng, player_world_pos, slot_for_group, ArgTriple, ArgTuple};
+use super::{brg_rng, player_world_pos, slot_for_group, ArgTriple, ArgTuple, Pager};
 use crate::{
     atis,
     db::{group::DeployKind, logistics::ConvoyState, Db},
@@ -506,61 +506,49 @@ pub(super) fn init_info_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &Slo
 
     mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Info".into()]))?;
     let root = mc.add_submenu_for_group(miz_gid, "Info".into(), None)?;
+    // Eight entries today, and this menu has only ever grown -- everything on
+    // it claims a slot from the pager so the next report added here spills to
+    // a "More >>" page instead of being dropped by DCS.
+    let mut p = Pager::new(miz_gid, root);
 
-    mc.add_command_for_group(
-        miz_gid,
+    p.command(
+        &mc,
         "My Status".into(),
-        Some(root.clone()),
         my_status,
         ArgTuple { fst: miz_gid, snd: *slot },
     )?;
-    let sit_root = mc.add_submenu_for_group(miz_gid, "Situation".into(), Some(root.clone()))?;
+    let sit_root = p.submenu(&mc, "Situation".into())?;
+    let mut sp = Pager::new(miz_gid, sit_root);
     for (i, title) in crate::situation::PAGES.iter().enumerate() {
-        mc.add_command_for_group(
-            miz_gid,
+        sp.command(
+            &mc,
             format_compact!("{}. {title}", i + 1).as_str().into(),
-            Some(sit_root.clone()),
             situation_page,
             ArgTriple { fst: miz_gid, snd: side, trd: i as u8 },
         )?;
     }
-    mc.add_command_for_group(
-        miz_gid,
-        "Support & Radios".into(),
-        Some(root.clone()),
-        support,
-        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Supply Convoys".into(),
-        Some(root.clone()),
-        convoys,
-        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Navaids Directory".into(),
-        Some(root.clone()),
-        navaids_directory,
-        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Time & Server".into(),
-        Some(root.clone()),
-        time_and_server,
-        miz_gid,
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
+    for (label, cb) in [
+        ("Support & Radios", support as fn(MizLua, ArgTriple<GroupId, Side, u8>) -> Result<()>),
+        ("Supply Convoys", convoys),
+        ("Navaids Directory", navaids_directory),
+    ] {
+        p.command(
+            &mc,
+            label.into(),
+            cb,
+            ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
+        )?;
+    }
+    p.command(&mc, "Time & Server".into(), time_and_server, miz_gid)?;
+    p.command(
+        &mc,
         "Weather".into(),
-        Some(root.clone()),
         weather,
         ArgTuple { fst: miz_gid, snd: *slot },
     )?;
 
-    let help_root = mc.add_submenu_for_group(miz_gid, "Help".into(), Some(root.clone()))?;
+    let help_root = p.submenu(&mc, "Help".into())?;
+    let mut hp = Pager::new(miz_gid, help_root);
     for (label, text) in [
         ("Getting Started", HELP_GETTING_STARTED),
         ("Chat Commands", HELP_CHAT_COMMANDS),
@@ -569,13 +557,7 @@ pub(super) fn init_info_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &Slo
         ("Carrier Groups", HELP_CARRIER_GROUPS),
         ("Combat & JTAC", HELP_COMBAT_JTAC),
     ] {
-        mc.add_command_for_group(
-            miz_gid,
-            label.into(),
-            Some(help_root.clone()),
-            help_topic(text),
-            miz_gid,
-        )?;
+        hp.command(&mc, label.into(), help_topic(text), miz_gid)?;
     }
 
     Ok(())

@@ -14,7 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{ArgQuad, ArgTriple, ArgTuple};
+use super::{ArgQuad, ArgTriple, ArgTuple, Pager};
 use crate::{
     Context,
     db::{
@@ -296,24 +296,48 @@ pub fn jtac_fire_all_artillery_together(
     lua: MizLua,
     arg: ArgTriple<JtId, u8, Ucid>,
 ) -> Result<()> {
+    group_fire(lua, arg.fst, arg.snd, arg.trd, None)
+}
+
+/// Fire only the battery at one objective, leaving the rest of the JTAC's guns
+/// alone. arg: (jtac_id, rounds_per_gun, ucid, objective)
+pub fn jtac_fire_battery_together(
+    lua: MizLua,
+    arg: ArgQuad<JtId, u8, Ucid, ObjectiveId>,
+) -> Result<()> {
+    group_fire(lua, arg.fst, arg.snd, arg.trd, Some(arg.fth))
+}
+
+fn group_fire(
+    lua: MizLua,
+    jtid: JtId,
+    n: u8,
+    ucid: Ucid,
+    at: Option<ObjectiveId>,
+) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     match ctx
         .jtac
-        .fire_all_artillery_together(&ctx.db, lua, &arg.fst, arg.snd)
+        .fire_all_artillery_together(&ctx.db, lua, &jtid, n, at)
     {
         Ok((count, skipped)) => {
-            let jtac = get_jtac(&ctx.jtac, &arg.fst).context("getting jtac")?;
-            let (near, name) = change_info(jtac, &ctx.db, &arg.trd);
-            let rounds = if arg.snd == 0 {
+            let jtac = get_jtac(&ctx.jtac, &jtid).context("getting jtac")?;
+            let (near, name) = change_info(jtac, &ctx.db, &ucid);
+            let rounds = if n == 0 {
                 format_compact!("all remaining")
             } else {
-                format_compact!("{}", arg.snd)
+                format_compact!("{}", n)
+            };
+            let battery = match at.and_then(|oid| ctx.db.objective(&oid).ok()) {
+                Some(obj) => format_compact!(" ({} battery)", obj.name),
+                None => format_compact!(""),
             };
             let mut msg = format_compact!(
-                "GROUP FIRE MISSION: {} guns firing {} rounds each\njtac {} near {}\nrequested by {}",
+                "GROUP FIRE MISSION{}: {} guns firing {} rounds each\njtac {} near {}\nrequested by {}",
+                battery,
                 count,
                 rounds,
-                arg.fst,
+                jtid,
                 near,
                 name
             );
@@ -330,7 +354,7 @@ pub fn jtac_fire_all_artillery_together(
             let msg = format!("group fire failed: {e:?}");
             ctx.db
                 .ephemeral
-                .panel_to_player(&ctx.db.persisted, 10, &arg.trd, msg);
+                .panel_to_player(&ctx.db.persisted, 10, &ucid, msg);
         }
     }
     Ok(())
@@ -510,170 +534,198 @@ pub fn jtac_set_code(lua: MizLua, arg: ArgTriple<JtId, u16, Ucid>) -> Result<()>
     Ok(())
 }
 
+/// The contents of one gun's submenu: relay, ammo, and its fire missions.
+fn add_menu_for_gun(
+    mc: &MissionCommands<'_>,
+    mizgid: GroupId,
+    ucid: Ucid,
+    root: GroupSubMenu,
+    jtac: JtId,
+    gid: DbGid,
+) -> Result<()> {
+    mc.add_command_for_group(
+        mizgid,
+        "Relay Target".into(),
+        Some(root.clone()),
+        jtac_relay_target,
+        ArgTriple {
+            fst: jtac,
+            snd: gid,
+            trd: ucid,
+        },
+    )?;
+    mc.add_command_for_group(
+        mizgid,
+        "Get Ammo".into(),
+        Some(root.clone()),
+        jtac_get_artillery_ammo,
+        ArgTriple {
+            fst: jtac,
+            snd: gid,
+            trd: ucid,
+        },
+    )?;
+    mc.add_command_for_group(
+        mizgid,
+        "Fire One".into(),
+        Some(root.clone()),
+        jtac_artillery_mission,
+        ArgQuad {
+            fst: jtac,
+            snd: gid,
+            trd: 1,
+            fth: ucid,
+        },
+    )?;
+    let for_effect =
+        mc.add_submenu_for_group(mizgid, "Fire For Effect".into(), Some(root.clone()))?;
+    for n in [5u8, 10, 20, 40] {
+        mc.add_command_for_group(
+            mizgid,
+            format_compact!("{n}").into(),
+            Some(for_effect.clone()),
+            jtac_artillery_mission,
+            ArgQuad {
+                fst: jtac,
+                snd: gid,
+                trd: n,
+                fth: ucid,
+            },
+        )?;
+    }
+    mc.add_command_for_group(
+        mizgid,
+        "Fire All".into(),
+        Some(root.clone()),
+        jtac_artillery_fire_all,
+        ArgTriple {
+            fst: jtac,
+            snd: gid,
+            trd: ucid,
+        },
+    )?;
+    let target_group =
+        mc.add_submenu_for_group(mizgid, "Target Group".into(), Some(root.clone()))?;
+    for rounds_per_target in [1u8, 2, 5, 10] {
+        let submenu = mc.add_submenu_for_group(
+            mizgid,
+            format_compact!("Fire {rounds_per_target} per").into(),
+            Some(target_group.clone()),
+        )?;
+        for num_targets in 2..=6u8 {
+            mc.add_command_for_group(
+                mizgid,
+                format_compact!("Target {num_targets} units").into(),
+                Some(submenu.clone()),
+                jtac_artillery_combo_mission,
+                ArgQuad {
+                    fst: jtac,
+                    snd: gid,
+                    trd: vec![rounds_per_target, num_targets],
+                    fth: ucid,
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// The salvo sizes offered by every "fire together" menu. `0` is the
+/// "everything you have left" sentinel the engine understands.
+const SALVO: [(&str, u8); 5] = [
+    ("1 round each", 1),
+    ("3 rounds each", 3),
+    ("5 rounds each", 5),
+    ("10 rounds each", 10),
+    ("all ammo", 0),
+];
+
 fn add_artillery_menu_for_jtac(
+    db: &Db,
     lua: MizLua,
     mizgid: GroupId,
     ucid: Ucid,
     root: GroupSubMenu,
     jtac: JtId,
+    side: Side,
     arty: &[DbGid],
 ) -> Result<()> {
     let mc = MissionCommands::singleton(lua)?;
-    let mut root = mc.add_submenu_for_group(mizgid, "Artillery".into(), Some(root.clone()))?;
-    // DCS caps each menu page at 10 entries -- spill the gun list into "More>>"
-    // sub-pages when a JTAC has many artillery groups in range.
-    let mut page_n = 0u32;
-    for gid in arty {
-        if page_n >= 9 {
-            root = mc.add_submenu_for_group(mizgid, "More>>".into(), Some(root.clone()))?;
-            page_n = 0;
-        }
-        page_n += 1;
-        let root =
-            mc.add_submenu_for_group(mizgid, format_compact!("{gid}").into(), Some(root.clone()))?;
-        mc.add_command_for_group(
-            mizgid,
-            "Relay Target".into(),
-            Some(root.clone()),
-            jtac_relay_target,
-            ArgTriple {
-                fst: jtac,
-                snd: *gid,
-                trd: ucid,
-            },
-        )?;
-        mc.add_command_for_group(
-            mizgid,
-            "Get Ammo".into(),
-            Some(root.clone()),
-            jtac_get_artillery_ammo,
-            ArgTriple {
-                fst: jtac,
-                snd: *gid,
-                trd: ucid,
-            },
-        )?;
-        mc.add_command_for_group(
-            mizgid,
-            "Fire One".into(),
-            Some(root.clone()),
-            jtac_artillery_mission,
-            ArgQuad {
-                fst: jtac,
-                snd: *gid,
-                trd: 1,
-                fth: ucid,
-            },
-        )?;
-        let for_effect =
-            mc.add_submenu_for_group(mizgid, "Fire For Effect".into(), Some(root.clone()))?;
-        mc.add_command_for_group(
-            mizgid,
-            "5".into(),
-            Some(for_effect.clone()),
-            jtac_artillery_mission,
-            ArgQuad {
-                fst: jtac,
-                snd: *gid,
-                trd: 5,
-                fth: ucid,
-            },
-        )?;
-        mc.add_command_for_group(
-            mizgid,
-            "10".into(),
-            Some(for_effect.clone()),
-            jtac_artillery_mission,
-            ArgQuad {
-                fst: jtac,
-                snd: *gid,
-                trd: 10,
-                fth: ucid,
-            },
-        )?;
-        mc.add_command_for_group(
-            mizgid,
-            "20".into(),
-            Some(for_effect.clone()),
-            jtac_artillery_mission,
-            ArgQuad {
-                fst: jtac,
-                snd: *gid,
-                trd: 20,
-                fth: ucid,
-            },
-        )?;
-        mc.add_command_for_group(
-            mizgid,
-            "40".into(),
-            Some(for_effect.clone()),
-            jtac_artillery_mission,
-            ArgQuad {
-                fst: jtac,
-                snd: *gid,
-                trd: 40,
-                fth: ucid,
-            },
-        )?;
-        mc.add_command_for_group(
-            mizgid,
-            "Fire All".into(),
-            Some(root.clone()),
-            jtac_artillery_fire_all,
-            ArgTriple {
-                fst: jtac,
-                snd: *gid,
-                trd: ucid,
-            },
-        )?;
-        
-        // Add Target Group submenu with combo options
-        let target_group = mc.add_submenu_for_group(mizgid, "Target Group".into(), Some(root.clone()))?;
-        let fire_1_per = mc.add_submenu_for_group(mizgid, "Fire 1 per".into(), Some(target_group.clone()))?;
-        let fire_2_per = mc.add_submenu_for_group(mizgid, "Fire 2 per".into(), Some(target_group.clone()))?;
-        let fire_5_per = mc.add_submenu_for_group(mizgid, "Fire 5 per".into(), Some(target_group.clone()))?;
-        let fire_10_per = mc.add_submenu_for_group(mizgid, "Fire 10 per".into(), Some(target_group.clone()))?;
-        
-        for (submenu, rounds_per_target) in vec![(fire_1_per, 1), (fire_2_per, 2), (fire_5_per, 5), (fire_10_per, 10)] {
-            for num_targets in 2..=6 {
-                mc.add_command_for_group(
-                    mizgid,
-                    format_compact!("Target {num_targets} units").into(),
-                    Some(submenu.clone()),
-                    jtac_artillery_combo_mission,
-                    ArgQuad {
-                        fst: jtac,
-                        snd: *gid,
-                        trd: vec![rounds_per_target, num_targets],
-                        fth: ucid,
-                    },
-                )?;
-            }
-        }
-    }
+    let root = mc.add_submenu_for_group(mizgid, "Artillery".into(), Some(root.clone()))?;
+    let mut p = Pager::new(mizgid, root);
 
-    // "Fire All Groups Together" — only shown when 2+ guns are registered.
+    // Salvo first. It used to be added after the gun list, which meant it
+    // landed on the last "More >>" page -- players had to click through the
+    // whole list to fire everything.
     if arty.len() >= 2 {
-        let group_fire =
-            mc.add_submenu_for_group(mizgid, "Fire All Groups Together".into(), Some(root.clone()))?;
-        for (label, n) in &[
-            ("1 round each", 1u8),
-            ("3 rounds each", 3),
-            ("5 rounds each", 5),
-            ("10 rounds each", 10),
-            ("all ammo", 0),
-        ] {
+        let group_fire = p.submenu(&mc, "Fire All Groups Together".into())?;
+        for (label, n) in SALVO {
             mc.add_command_for_group(
                 mizgid,
-                (*label).into(),
+                label.into(),
                 Some(group_fire.clone()),
                 jtac_fire_all_artillery_together,
                 ArgTriple {
                     fst: jtac,
-                    snd: *n,
+                    snd: n,
                     trd: ucid,
                 },
             )?;
+        }
+    }
+
+    // Then the guns, bucketed by the objective they are sitting at, the way
+    // the JTAC list itself is organized. A busy front no longer produces one
+    // flat chain of anonymous group ids.
+    let mut by_obj: SmallVec<[(String, Option<ObjectiveId>, SmallVec<[DbGid; 8]>); 8]> = smallvec![];
+    for gid in arty {
+        let oid = Jtacs::artillery_objective(db, gid, side);
+        let name = match oid.and_then(|oid| db.objective(&oid).ok()) {
+            Some(obj) => obj.name.clone(),
+            None => String::from("Unknown"),
+        };
+        match by_obj.iter_mut().find(|(n, _, _)| n == &name) {
+            Some((_, _, guns)) => guns.push(*gid),
+            None => by_obj.push((name, oid, smallvec![*gid])),
+        }
+    }
+    by_obj.sort_by(|a, b| a.0.cmp(&b.0));
+    if by_obj.len() == 1 {
+        // Everything is at one place -- keep the guns where they have always
+        // been rather than burying them a level deeper for no information.
+        for gid in &by_obj[0].2 {
+            let gun = p.submenu(&mc, format_compact!("{gid}").into())?;
+            add_menu_for_gun(&mc, mizgid, ucid, gun, jtac, *gid)?;
+        }
+        return Ok(());
+    }
+    for (name, oid, guns) in by_obj {
+        let obj_root = p.submenu(&mc, format_compact!("{name} ({})", guns.len()).into())?;
+        let mut gp = Pager::new(mizgid, obj_root);
+        // Fire just this battery -- the common case once guns are spread over
+        // several objectives and only the ones nearby can reach the target.
+        if let Some(oid) = oid {
+            if guns.len() >= 2 {
+                let battery_fire = gp.submenu(&mc, "Fire Battery Together".into())?;
+                for (label, n) in SALVO {
+                    mc.add_command_for_group(
+                        mizgid,
+                        label.into(),
+                        Some(battery_fire.clone()),
+                        jtac_fire_battery_together,
+                        ArgQuad {
+                            fst: jtac,
+                            snd: n,
+                            trd: ucid,
+                            fth: oid,
+                        },
+                    )?;
+                }
+            }
+        }
+        for gid in guns {
+            let gun = gp.submenu(&mc, format_compact!("{gid}").into())?;
+            add_menu_for_gun(&mc, mizgid, ucid, gun, jtac, gid)?;
         }
     }
 
@@ -690,20 +742,10 @@ fn add_alcm_menu_for_jtac(
 ) -> Result<()> {
     let mc = MissionCommands::singleton(lua)?;
 
-    let mut root = mc.add_submenu_for_group(mizgid, "ALCM".into(), Some(root.clone()))?;
-    // DCS caps each menu page at 10 entries -- spill into "More>>" sub-pages.
-    let mut page_n = 0u32;
+    let root = mc.add_submenu_for_group(mizgid, "ALCM".into(), Some(root.clone()))?;
+    let mut p = Pager::new(mizgid, root);
     for (gid, ammo) in alcm {
-        if page_n >= 9 {
-            root = mc.add_submenu_for_group(mizgid, "More>>".into(), Some(root.clone()))?;
-            page_n = 0;
-        }
-        page_n += 1;
-        let root = mc.add_submenu_for_group(
-            mizgid,
-            format_compact!("{gid}({ammo})").into(),
-            Some(root.clone()),
-        )?;
+        let root = p.submenu(&mc, format_compact!("{gid}({ammo})").into())?;
 
         let quarter =
             mc.add_submenu_for_group(mizgid, "Fire Quarter".into(), Some(root.clone()))?;
@@ -818,7 +860,6 @@ fn toggle_pin_jtac(lua: MizLua, arg: ArgTuple<SlotId, JtId>) -> Result<()> {
     init_jtac_menu_for_slot(ctx, lua, &arg.fst)
 }
 
-#[allow(unused_assignments)] // trailing page!() bumps item_count without a reader
 pub(super) fn add_menu_for_jtac(
     db: &Db,
     _side: Side,
@@ -878,20 +919,12 @@ pub(super) fn add_menu_for_jtac(
         }
         }
     };
-    let mut root = mc.add_submenu_for_group(mizgid, name.clone().into(), Some(root))?;
-    // DCS only shows 10 entries per menu page. Spill overflow into a chain of
-    // "More>>" submenus so entries like Artillery/ALCM/Bomber remain reachable.
-    let mut item_count = 0u32;
-    macro_rules! page {
-        () => {{
-            if item_count >= 9 {
-                root = mc.add_submenu_for_group(mizgid, "More>>".into(), Some(root.clone()))?;
-                item_count = 0;
-            }
-            item_count += 1;
-        }};
-    }
-    page!();
+    let root = mc.add_submenu_for_group(mizgid, name.clone().into(), Some(root))?;
+    // DCS only shows 10 entries per menu page, so every entry below claims its
+    // slot from the pager first -- that keeps Artillery/ALCM/Bomber reachable
+    // however many options this JTAC ends up with.
+    let mut p = Pager::new(mizgid, root);
+    let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
         if !pinned {
@@ -906,7 +939,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
-    page!();
+    let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
         "Status".into(),
@@ -917,7 +950,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
-    page!();
+    let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
         "9-Line".into(),
@@ -928,7 +961,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
-    page!();
+    let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
         "Toggle Auto Shift".into(),
@@ -939,7 +972,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
-    page!();
+    let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
         "Toggle IR Pointer".into(),
@@ -950,7 +983,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
-    page!();
+    let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
         "Smoke Current Target".into(),
@@ -961,7 +994,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
-    page!();
+    let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
         "Shift".into(),
@@ -972,7 +1005,7 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
-    page!();
+    let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
         "Designate Building".into(),
@@ -983,27 +1016,22 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
-    page!();
-    let mut filter_root = mc.add_submenu_for_group(mizgid, "Filter".into(), Some(root.clone()))?;
-    mc.add_command_for_group(
-        mizgid,
+    let root = p.page(&mc)?;
+    let filter_root = mc.add_submenu_for_group(mizgid, "Filter".into(), Some(root.clone()))?;
+    let mut fp = Pager::new(mizgid, filter_root);
+    fp.command(
+        &mc,
         "Clear".into(),
-        Some(filter_root.clone()),
         jtac_clear_filter,
         ArgTuple {
             fst: *ucid,
             snd: jtac.gid(),
         },
     )?;
-    for (i, tag) in UnitTag::all().iter().enumerate() {
-        if (i + 1) % 9 == 0 {
-            filter_root =
-                mc.add_submenu_for_group(mizgid, "Next>>".into(), Some(filter_root.clone()))?;
-        }
-        mc.add_command_for_group(
-            mizgid,
+    for tag in UnitTag::all().iter() {
+        fp.command(
+            &mc,
             format_compact!("{:?}", tag).into(),
-            Some(filter_root.clone()),
             jtac_filter,
             ArgTriple {
                 fst: jtac.gid(),
@@ -1012,7 +1040,7 @@ pub(super) fn add_menu_for_jtac(
             },
         )?;
     }
-    page!();
+    let root = p.page(&mc)?;
     let code_root = mc.add_submenu_for_group(mizgid, "Code".into(), Some(root.clone()))?;
     let thou_root = mc.add_submenu_for_group(mizgid, "Xxxx".into(), Some(code_root.clone()))?;
     let hund_root = mc.add_submenu_for_group(mizgid, "xXxx".into(), Some(code_root.clone()))?;
@@ -1037,7 +1065,7 @@ pub(super) fn add_menu_for_jtac(
     // Artillery / ALCM submenus are always present (drone JTACs included) so the
     // option is discoverable; when nothing is in range they show a single
     // informational line instead of being empty.
-    page!();
+    let root = p.page(&mc)?;
     if jtac.nearby_artillery().is_empty() {
         let arty_root =
             mc.add_submenu_for_group(mizgid, "Artillery".into(), Some(root.clone()))?;
@@ -1053,16 +1081,18 @@ pub(super) fn add_menu_for_jtac(
         )?;
     } else {
         add_artillery_menu_for_jtac(
+            db,
             lua,
             mizgid,
             *ucid,
             root.clone(),
             jtac.gid(),
+            jtac.side(),
             jtac.nearby_artillery(),
         )?;
     }
 
-    page!();
+    let root = p.page(&mc)?;
     if jtac.nearby_alcm().is_empty() {
         let alcm_root = mc.add_submenu_for_group(mizgid, "ALCM".into(), Some(root.clone()))?;
         mc.add_command_for_group(
@@ -1113,26 +1143,21 @@ fn add_jtacs_by_location(
         let mut cmd: Vec<String> = arg.fth.clone().into();
         cmd.push(format_compact!("{name}>>").into());
         mc.remove_command_for_group(arg.snd, cmd.into())?;
-        let mut root = mc.add_submenu_for_group(arg.snd, name, Some(arg.fth))?;
-        let mut n = 0;
+        let root = mc.add_submenu_for_group(arg.snd, name, Some(arg.fth))?;
+        let mut p = Pager::new(arg.snd, root);
         for jtac in ctx.jtac.jtacs() {
             if jtac.side() == player.side && jtac.location().oid == arg.trd {
-                if n >= 8 {
-                    root =
-                        mc.add_submenu_for_group(arg.snd, "NEXT>>".into(), Some(root.clone()))?;
-                    n = 0;
-                }
+                let page = p.page(&mc)?;
                 add_menu_for_jtac(
                     &ctx.db,
                     player.side,
-                    root.clone(),
+                    page,
                     lua,
                     arg.snd,
                     jtac,
                     &arg.fst,
                     slot,
                 )?;
-                n += 1
             }
         }
     }
@@ -1162,24 +1187,17 @@ fn add_jtac_locations(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Res
         .ok_or_else(|| anyhow!("missing player"))?;
     let mut roots: SmallVec<[String; 16]> = smallvec![];
     mc.remove_command_for_group(arg.snd, vec!["JTAC>>".into()].into())?;
-    let mut root = mc.add_submenu_for_group(arg.snd, "JTAC".into(), None)?;
-    mc.add_command_for_group(
-        arg.snd,
+    let root = mc.add_submenu_for_group(arg.snd, "JTAC".into(), None)?;
+    // Pinned JTACs and one entry per objective with JTACs on it -- both grow
+    // with the campaign, so the whole list goes through the pager, refresh
+    // included.
+    let mut p = Pager::new(arg.snd, root);
+    p.command(
+        &mc,
         "Refresh Locations".into(),
-        Some(root.clone()),
         jtac_refresh_locations,
         arg.fst,
     )?;
-    let mut n = 0;
-    macro_rules! handle_submenu {
-        () => {
-            if n >= 8 {
-                root = mc.add_submenu_for_group(arg.snd, "NEXT>>".into(), Some(root.clone()))?;
-                n = 0;
-            }
-            n += 1;
-        };
-    }
     struct JtEntry<'a> {
         jtac: &'a Jtac,
         near: String,
@@ -1224,11 +1242,11 @@ fn add_jtac_locations(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Res
     });
     for jte in jtacs {
         if jte.pinned {
-            handle_submenu!();
+            let page = p.page(&mc)?;
             add_menu_for_jtac(
                 &ctx.db,
                 player.side,
-                root.clone(),
+                page,
                 lua,
                 arg.snd,
                 jte.jtac,
@@ -1237,17 +1255,19 @@ fn add_jtac_locations(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Res
             )?;
         } else if !roots.contains(&jte.near) {
             roots.push(jte.near.clone());
-            handle_submenu!();
+            // The expanded list is hung off the same page this entry sits on,
+            // so a location that lands on "More >>" expands there too.
+            let page = p.page(&mc)?;
             mc.add_command_for_group(
                 arg.snd,
                 format_compact!("{}>>", jte.near).into(),
-                Some(root.clone()),
+                Some(page.clone()),
                 add_jtacs_by_location,
                 ArgQuad {
                     fst: arg.fst,
                     snd: arg.snd,
                     trd: jte.oid,
-                    fth: root.clone(),
+                    fth: page,
                 },
             )?;
         }

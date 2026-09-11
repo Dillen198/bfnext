@@ -14,7 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{brg_rng, player_world_pos, slot_for_group, ArgQuad, ArgTriple, ArgTuple};
+use super::{brg_rng, player_world_pos, slot_for_group, ArgQuad, ArgTriple, ArgTuple, Pager};
 use crate::{
     db::{objective::Objective, Db},
     Context,
@@ -1065,49 +1065,41 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
     // The rebuilt menu starts at page 1 of every report.
     ctx.objective_pages.remove(&miz_gid);
     let root = mc.add_submenu_for_group(miz_gid, "Objectives".into(), None)?;
+    // Eight entries today against DCS's cap of ten -- paged so the next report
+    // added here lands on a "More >>" page instead of silently vanishing.
+    let mut p = Pager::new(miz_gid, root);
 
-    mc.add_command_for_group(
-        miz_gid,
-        "Nearest Base (detail)".into(),
-        Some(root.clone()),
-        nearest_base,
-        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Capturable / Contested".into(),
-        Some(root.clone()),
-        contested,
-        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Capture Advisor: Nearest".into(),
-        Some(root.clone()),
-        capture_advisor_nearest,
-        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
-    )?;
-    mc.add_command_for_group(
-        miz_gid,
-        "Bases Under Threat".into(),
-        Some(root.clone()),
-        under_attack,
-        ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
-    )?;
+    for (label, cb) in [
+        ("Nearest Base (detail)", nearest_base as fn(MizLua, ArgTriple<GroupId, Side, u8>) -> Result<()>),
+        ("Capturable / Contested", contested),
+        ("Capture Advisor: Nearest", capture_advisor_nearest),
+        ("Bases Under Threat", under_attack),
+    ] {
+        p.command(
+            &mc,
+            label.into(),
+            cb,
+            ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
+        )?;
+    }
 
-    add_status_report(&mc, miz_gid, &root, "Friendly Status", side, RPT_FRIENDLY)?;
-    add_status_report(&mc, miz_gid, &root, "Enemy Status", side, RPT_ENEMY)?;
+    let page = p.page(&mc)?;
+    add_status_report(&mc, miz_gid, &page, "Friendly Status", side, RPT_FRIENDLY)?;
+    let page = p.page(&mc)?;
+    add_status_report(&mc, miz_gid, &page, "Enemy Status", side, RPT_ENEMY)?;
 
-    add_base_list(&mc, miz_gid, &root, "Base Detail", friendly, detail_by_oid, |oid| {
+    let page = p.page(&mc)?;
+    add_base_list(&mc, miz_gid, &page, "Base Detail", friendly, detail_by_oid, |oid| {
         ArgTuple { fst: miz_gid, snd: oid }
     })?;
     // Capture Advisor cards for enemy / neutral objectives. "Capture Advisor:
     // Nearest" and "Capturable / Contested" cover anything past the list cap or
     // that flips owner mid-slot.
+    let page = p.page(&mc)?;
     add_base_list(
         &mc,
         miz_gid,
-        &root,
+        &page,
         "Capture Advisor",
         takeable,
         capture_advisor_by_oid,
