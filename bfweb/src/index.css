@@ -1438,3 +1438,26 @@ body::after {
     white-space: nowrap;
   }
 }
+
+/* Rankings on a phone. Four tabs reflowing in a flex row left LOGISTICS
+   stranded alone on a second line at a different width from the three above
+   it -- the same ragged wrap the briefing header had. A 2x2 grid gives four
+   equal cells and reads as one control.
+
+   At the end of the file on purpose: see the note on the KPI rules above --
+   overrides written earlier than the base declarations lose on source order. */
+@media (max-width: 767px), (pointer: coarse) {
+  .lb-tabs {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .lb-tabs > .vs-tab {
+    width: 100%;
+    justify-content: center;
+  }
+  /* The search field is fixed at 180px inline, which left it stopping short
+     of the header it sits in. */
+  .lb-search {
+    width: 100% !important;
+  }
+}

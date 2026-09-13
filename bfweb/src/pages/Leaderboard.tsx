@@ -132,7 +132,7 @@ export default function Leaderboard() {
         sub={`${pilots.length} pilots registered`}
         right={
           <input type="text" placeholder="Search pilot…" value={search}
-            onChange={e => setSearch(e.target.value)} className="vs-input"
+            onChange={e => setSearch(e.target.value)} className="vs-input lb-search"
             style={{ width: 180 }} />
         }
       />
@@ -140,7 +140,7 @@ export default function Leaderboard() {
       <div className="flex-1 overflow-auto vs-page">
 
         {/* ── Leaderboard tabs ── */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div className="lb-tabs" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {TABS.map(t => {
             const active = tab === t.key
             return (
