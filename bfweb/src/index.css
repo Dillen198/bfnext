@@ -254,6 +254,12 @@ body {
 /* Keyboard focus. Nothing in here styled :focus-visible, so tabbing through
    the dashboard was invisible. Scoped to :focus-visible so a mouse click
    never paints a ring. */
+/* Objective drawer stock lines. The numeric columns are fixed at desktop so
+   the bars align down the list, and content-sized on a phone where a wide
+   value like "70000/100000" would otherwise push the percentage off-screen. */
+.stock-count { width: 66px; }
+.stock-pct   { width: 34px; }
+
 .lb-card-head {
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
@@ -1141,5 +1147,33 @@ body::after {
   /* Tab strips (leaderboard categories and friends). */
   .vs-tab {
     min-height: 40px;
+  }
+
+  /* Objective drawer: the supply-graph nodes navigate to another objective,
+     so they are real targets, not decoration. */
+  .supply-node {
+    min-height: 40px;
+  }
+
+  /* A fixed 150px label is fine on a 460px drawer and mean on a 375px phone,
+     where it ellipsised most weapon names. Let it take the slack instead and
+     hold the numeric columns to their own width. */
+  .stock-row .stock-label {
+    width: auto;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .stock-row .stock-bar {
+    flex: 0 0 auto;
+  }
+  /* Let the numbers size to their content and give the bar whatever is
+     left -- a fixed column cannot fit both a six-digit fuel figure and a
+     percentage in the width a phone has. */
+  .stock-row .stock-count,
+  .stock-row .stock-pct {
+    width: auto;
+  }
+  .stock-row .stock-bar > div:first-child {
+    min-width: 22px;
   }
 }

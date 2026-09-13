@@ -52,22 +52,35 @@ function countBelow(items: [string, WarehouseItem][], frac: number): number {
   return items.filter(([, v]) => v.capacity > 0 && fillOf(v) <= frac).length
 }
 
+/** Fuel is stored in litres, so a full tank reads 100000 -- five figures of
+ *  precision nobody acts on, and wide enough to push the percentage off a
+ *  phone screen. Abbreviate above 10k; leave weapon and airframe counts,
+ *  which are small and exact, alone. */
+function compact(n: number, abbreviate: boolean): string {
+  if (!abbreviate) return String(n)
+  if (n < 1_000_000) return `${Math.round(n / 100) / 10}k`
+  return `${Math.round(n / 100_000) / 10}M`
+}
+
 function StockBar({ item }: { item: WarehouseItem }) {
   const pct = item.capacity > 0 ? Math.min(100, (item.stored / item.capacity) * 100) : 0
   const col = pct < 20 ? 'var(--red)' : pct < 50 ? 'var(--yellow)' : 'var(--accent)'
+  // Scale is chosen per LINE, not per number, so a fraction never mixes units
+  // the way "2000/40k" did.
+  const abbrev = Math.max(item.stored, item.capacity) >= 10_000
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 }}>
+    <div className="stock-bar" style={{ display: 'flex', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 }}>
       <div style={{ flex: 1, height: 4, background: 'var(--bg-elevated)', minWidth: 30 }}>
         <div style={{ width: `${pct}%`, height: '100%', background: col }} />
       </div>
-      <span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--text-dim)', width: 66, textAlign: 'right', flexShrink: 0 }}>
-        {item.stored}
-        {item.capacity > 0 && <span style={{ opacity: 0.55 }}>/{item.capacity}</span>}
+      <span className="font-mono-vs stock-count" style={{ fontSize: '0.6rem', color: 'var(--text-dim)', textAlign: 'right', flexShrink: 0 }}>
+        {compact(item.stored, abbrev)}
+        {item.capacity > 0 && <span style={{ opacity: 0.55 }}>/{compact(item.capacity, abbrev)}</span>}
       </span>
       {item.capacity > 0 && (
         <span
-          className="font-mono-vs"
-          style={{ fontSize: '0.6rem', color: col, width: 34, textAlign: 'right', flexShrink: 0 }}
+          className="font-mono-vs stock-pct"
+          style={{ fontSize: '0.6rem', color: col, textAlign: 'right', flexShrink: 0 }}
         >
           {Math.round(pct)}%
         </span>
@@ -93,6 +106,7 @@ function SupplyGraph({ w, onOpen }: { w: Warehouse; onOpen: (name: string) => vo
     <button
       type="button"
       onClick={() => onOpen(name)}
+      className="supply-node"
       style={{
         display: 'flex', alignItems: 'center', gap: 7, width: '100%', textAlign: 'left',
         background: 'none', border: '1px solid var(--border)', padding: '5px 9px',
@@ -201,7 +215,7 @@ export default function ObjectiveDrawer({
             {w.kind}
           </span>
         )}
-        <button type="button" onClick={onClose} aria-label="Close"
+        <button type="button" onClick={onClose} aria-label="Close" className="vs-touch-target"
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 2, display: 'flex' }}>
           <X size={15} />
         </button>
@@ -287,8 +301,8 @@ export default function ObjectiveDrawer({
                         )}
                       </div>
                       {items.slice(0, 25).map(([k, v]) => (
-                        <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 14px', fontSize: '0.66rem' }}>
-                          <span style={{ width: 150, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k}</span>
+                        <div key={k} className="stock-row" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 14px', fontSize: '0.66rem' }}>
+                          <span className="stock-label" style={{ width: 150, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k}</span>
                           <StockBar item={v} />
                         </div>
                       ))}
@@ -309,8 +323,8 @@ export default function ObjectiveDrawer({
                       Liquids
                     </div>
                     {Object.entries(w.liquids).map(([k, v]) => (
-                      <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 14px 6px', fontSize: '0.66rem' }}>
-                        <span style={{ width: 150, flexShrink: 0 }}>{k}</span>
+                      <div key={k} className="stock-row" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 14px 6px', fontSize: '0.66rem' }}>
+                        <span className="stock-label" style={{ width: 150, flexShrink: 0 }}>{k}</span>
                         <StockBar item={v} />
                       </div>
                     ))}
