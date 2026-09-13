@@ -120,6 +120,14 @@ pub enum Stat {
         by: Ucid,
         gid: GroupId,
         deployable: String,
+        /// Delivering aircraft's DCS type name, when known (physical C-130/
+        /// helo cargo deploys only -- None for instant/admin-triggered ones).
+        #[serde(default)]
+        aircraft: Option<String>,
+        /// "AirDrop" (auto-unpacked on landing) or "ManualUnpack" (player
+        /// had to walk up and trigger it), when known.
+        #[serde(default)]
+        method: Option<String>,
     },
     DeployFarp {
         by: Ucid,
@@ -215,4 +223,53 @@ pub enum Stat {
         id: Ucid,
         token: String,
     },
+    ConvoyDestroyed {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+        killer: Option<Ucid>,
+    },
+    AirRouteDelivered {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    AirRouteDestroyed {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    SeaRouteDelivered {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    SeaRouteDestroyed {
+        from: ObjectiveId,
+        to: ObjectiveId,
+        side: Side,
+    },
+    CampaignEvent {
+        event_type: String,
+        side: Side,
+    },
+    PilotXp {
+        id: Ucid,
+        xp: u32,
+        reason: String,
+    },
+    Weather {
+        temp_c: f64,
+        wind_speed_kts: f64,
+        wind_from_deg: f64,
+        cloud_base_m: f64,
+        qnh_hpa: f64,
+        /// Cloud density 0–10 (0 = clear, 10 = overcast). None if not available.
+        #[serde(default)]
+        cloud_density: Option<u8>,
+        /// Horizontal visibility in metres (capped at 10 000 = unlimited). None if no fog.
+        #[serde(default)]
+        visibility_m: Option<f64>,
+    },
+    GciPicture(crate::gci::GciPicture),
 }

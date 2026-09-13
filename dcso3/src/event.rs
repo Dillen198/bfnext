@@ -19,8 +19,8 @@ use super::{
     as_tbl, as_tbl_ref, lua_err, object::Object, unit::Unit, value_to_json,
     weapon::Weapon, world::MarkPanel, String, Time,
 };
-use anyhow::{bail, Result};
-use log::{error, info};
+use anyhow::Result;
+use log::{debug, info};
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
 
@@ -38,7 +38,7 @@ pub struct Shot<'lua> {
     pub time: Time,
     pub initiator: Unit<'lua>,
     pub weapon: Weapon<'lua>,
-    pub weapon_name: String,
+    pub weapon_name: Option<String>,
 }
 
 impl<'lua> FromLua<'lua> for Shot<'lua> {
@@ -48,7 +48,7 @@ impl<'lua> FromLua<'lua> for Shot<'lua> {
             time: tbl.raw_get("time")?,
             initiator: tbl.raw_get("initiator")?,
             weapon: tbl.raw_get("weapon")?,
-            weapon_name: tbl.raw_get("weapon_name")?,
+            weapon_name: opt_weapon_name(&tbl)?,
         })
     }
 }
@@ -57,7 +57,7 @@ impl<'lua> FromLua<'lua> for Shot<'lua> {
 pub struct ShootingEnd<'lua> {
     pub time: Time,
     pub initiator: Unit<'lua>,
-    pub weapon_name: String,
+    pub weapon_name: Option<String>,
 }
 
 impl<'lua> FromLua<'lua> for ShootingEnd<'lua> {
@@ -66,8 +66,42 @@ impl<'lua> FromLua<'lua> for ShootingEnd<'lua> {
         Ok(Self {
             time: tbl.raw_get("time")?,
             initiator: tbl.raw_get("initiator")?,
-            weapon_name: tbl.raw_get("weapon_name")?,
+            weapon_name: opt_weapon_name(&tbl)?,
         })
+    }
+}
+
+/// `weapon_name` as DCS actually supplies it.
+///
+/// DCS leaves the field nil on some hits -- notably cluster submunitions, where
+/// the parent weapon is already gone by the time the hit registers. Reading
+/// that straight into `String` went through the catch-all arm of dcso3's
+/// `FromLua` impl, which stringifies whatever it is given, so the *literal text
+/// "nil"* was stored as the weapon name and shown that way in the kill log.
+/// `Option<String>` is what the field really is: mlua maps Lua nil to None
+/// before `String::from_lua` is ever reached. An empty name is no more useful
+/// than a missing one, so it collapses to None too.
+fn opt_weapon_name(tbl: &mlua::Table) -> LuaResult<Option<String>> {
+    Ok(tbl
+        .raw_get::<_, Option<String>>("weapon_name")?
+        .filter(|s| !s.as_str().is_empty()))
+}
+
+/// DCS sometimes hands an event an `initiator`/`target` that is a bare table
+/// with no object metatable -- e.g. a Hit/Kill/Dead/Score for a shell fired by
+/// a unit that has since died. Those can't be turned into a usable `Object`
+/// (any method call would fail anyway), so degrade them to `None` instead of
+/// failing the whole event and spamming the log.
+fn opt_object<'lua>(
+    tbl: &LuaTable<'lua>,
+    key: &str,
+    lua: &'lua Lua,
+) -> LuaResult<Option<Object<'lua>>> {
+    match tbl.raw_get::<_, Value<'lua>>(key)? {
+        Value::Table(t) if t.get_metatable().is_some() => {
+            Ok(Some(Object::from_lua(Value::Table(t), lua)?))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -76,17 +110,17 @@ pub struct WeaponUse<'lua> {
     pub time: Time,
     pub initiator: Option<Object<'lua>>,
     pub target: Option<Object<'lua>>,
-    pub weapon_name: String,
+    pub weapon_name: Option<String>,
 }
 
 impl<'lua> FromLua<'lua> for WeaponUse<'lua> {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
         let tbl = as_tbl("WeaponUse", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
-            initiator: tbl.raw_get("initiator")?,
-            target: tbl.raw_get("target")?,
-            weapon_name: tbl.raw_get("weapon_name")?,
+            initiator: opt_object(&tbl, "initiator", lua)?,
+            target: opt_object(&tbl, "target", lua)?,
+            weapon_name: opt_weapon_name(&tbl)?,
         })
     }
 }
@@ -120,9 +154,9 @@ pub struct UnitEvent<'lua> {
 }
 
 impl<'lua> FromLua<'lua> for UnitEvent<'lua> {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
         let tbl = as_tbl("UnitEvent", None, value).map_err(lua_err)?;
-        Ok(Self { time: tbl.raw_get("time")?, initiator: tbl.raw_get("initiator")? })
+        Ok(Self { time: tbl.raw_get("time")?, initiator: opt_object(&tbl, "initiator", lua)? })
     }
 }
 
@@ -188,7 +222,7 @@ impl<'lua> FromLua<'lua> for AtPlace<'lua> {
 pub struct WeaponAdd<'lua> {
     pub time: Time,
     pub initiator: Object<'lua>,
-    pub weapon_name: String,
+    pub weapon_name: Option<String>,
 }
 
 impl<'lua> FromLua<'lua> for WeaponAdd<'lua> {
@@ -197,7 +231,7 @@ impl<'lua> FromLua<'lua> for WeaponAdd<'lua> {
         Ok(Self {
             time: tbl.raw_get("time")?,
             initiator: tbl.raw_get("initiator")?,
-            weapon_name: tbl.raw_get("weapon_name")?,
+            weapon_name: opt_weapon_name(&tbl)?,
         })
     }
 }
@@ -332,7 +366,15 @@ fn translate<'a, 'lua: 'a>(
         55 => Event::PostponedTakeoff(AtPlace::from_lua(value, lua)?),
         56 => Event::PostponedLand(AtPlace::from_lua(value, lua)?),
         57 => Event::Max,
-        n => bail!("unknown event {n}"),
+        // DCS periodically adds new event ids in updates (e.g. simulation
+        // freeze/unfreeze, human aircraft repair start/finish were added
+        // after this table was last updated). Rather than erroring every
+        // time DCS adds one we don't know about yet, ignore it — none of
+        // these newer events are consumed by campaign logic anyway.
+        n => {
+            debug!("ignoring unknown DCS event id {n}: {}", value_to_json(&value));
+            Event::Invalid
+        }
     })
 }
 
@@ -342,8 +384,12 @@ impl<'lua> FromLua<'lua> for Event<'lua> {
         match translate(lua, id, value.clone()) {
             Ok(ev) => Ok(ev),
             Err(e) => {
+                // The world event handler (world.rs) already logs a WARN for
+                // this and skips the event -- keep the detailed payload at
+                // debug level so a genuine translation bug is still diagnosable
+                // without double-logging every dead-object edge case.
                 let s = value_to_json(&value);
-                error!("error translating event {id}: {e:?}, value: {s}");
+                debug!("error translating event {id}: {e:?}, value: {s}");
                 Err(lua_err(e))
             }
         }

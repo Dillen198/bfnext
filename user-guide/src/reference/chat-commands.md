@@ -21,7 +21,7 @@ Quick reference for all Fowl Engine chat commands.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `-bind <id>` | Bind troop for control | `-bind 12345` |
+| `-bind <uuid>` | Link your pilot to the web dashboard (**not** for groups) | `-bind 3f2a91c4-…` |
 | `-delete <id>` | Delete deployed group | `-delete 12345` |
 
 ### JTAC Commands

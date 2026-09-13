@@ -1,0 +1,1463 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+/* daisyUI — used only by the peace-eye-ported /scope page (src/scope/*) */
+@plugin "daisyui";
+
+/* ═══════════════════════════════════════════════════════════════
+   MILITARY DESIGN TOKENS
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  /* Backgrounds — dark olive / field drab.
+     The panel surfaces are deliberately translucent: the animated backdrop
+     sits behind the app, and a wall of opaque cards hides it completely.
+     Anything that must stay opaque -- a popup over a map, a dialog over the
+     page -- uses the -solid variants instead. */
+  --bg:            #080b06;
+  --bg-card:       rgba(13,16,9,0.72);
+  --bg-elevated:   rgba(20,25,16,0.86);
+  --bg-hover:      #1b2116;
+  --bg-input:      #0a0d07;
+  --bg-chrome:     rgba(6,9,8,0.78);   /* topbar / sidebar / kpi strip / page header */
+
+  --bg-card-solid:     #0d1009;
+  --bg-elevated-solid: #141910;
+  --bg-chrome-solid:   #060908;
+
+  /* OD Green — primary accent */
+  --accent:        #6aab1f;   /* olive drab green */
+  --accent-dim:    #528a17;
+  --accent-bright: #8ec83f;
+  --accent-glow:   rgba(106,171,31,0.10);
+  --accent-border: rgba(106,171,31,0.28);
+
+  /* Coalition */
+  --blue:          #4a8fd4;   /* NATO blue, slightly muted */
+  --blue-dim:      #3472b8;
+  --blue-bg:       rgba(74,143,212,0.08);
+  --red:           #cc4444;   /* tactical red */
+  --red-dim:       #aa3333;
+  --red-bg:        rgba(204,68,68,0.08);
+
+  /* Semantic */
+  --green:         #6aab1f;
+  --yellow:        #c9a227;   /* mil amber */
+  --orange:        #c27820;
+  --purple:        #8a72cc;
+  --cyan:          #3a9f9f;
+
+  /* Text — warm olive tones */
+  --text:          #cdd4be;   /* field cream */
+  --text-muted:    #7d8a6a;   /* khaki */
+  --text-dim:      #6b7858;   /* dark khaki */
+
+  /* Borders */
+  --border:        #1c2318;
+  --border-light:  #262e1d;
+
+  /* Scrollbar */
+  --scrollbar:     #1c2318;
+  --scrollbar-h:   rgba(106,171,31,0.35);
+
+  /* Font vars */
+  --font-mono:     'JetBrains Mono', 'Share Tech Mono', monospace;
+  --font-display:  'Bebas Neue', sans-serif;
+  --font-body:     'Inter', system-ui, sans-serif;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   LIGHT THEME  (data-theme="light" on <html>)
+   Redefines only the surface / text / border / accent-contrast
+   tokens. Coalition + semantic status colors are intentionally
+   left alone — they read fine on both grounds. The campaign
+   config's dark surface overrides are scoped to [data-theme="dark"]
+   (see main.tsx) so they don't leak in here.
+   ═══════════════════════════════════════════════════════════════ */
+:root[data-theme="light"] {
+  --bg:            #e9eae2;
+  --bg-card:       rgba(245,245,239,0.80);
+  --bg-elevated:   rgba(251,251,246,0.90);
+  --bg-hover:      #e3e5da;
+  --bg-input:      #ffffff;
+  --bg-chrome:     rgba(237,238,230,0.84);
+
+  --bg-card-solid:     #f5f5ef;
+  --bg-elevated-solid: #fbfbf6;
+  --bg-chrome-solid:   #edeee6;
+
+  --accent:        #5c9219;
+  --accent-dim:    #4a7a13;
+  --accent-bright: #3f6b10;
+  --accent-glow:   rgba(92,146,25,0.14);
+  --accent-border: rgba(92,146,25,0.42);
+  --green:         #4a7a13;
+
+  --blue-bg:       rgba(74,143,212,0.12);
+  --red-bg:        rgba(204,68,68,0.12);
+
+  --yellow:        #8a6d0e;
+  --orange:        #a15c12;
+  --purple:        #5f4bb0;
+  --cyan:          #1f7a7a;
+
+  --text:          #262b1d;
+  --text-muted:    #545f3e;
+  --text-dim:      #6a7551;
+
+  --border:        #cdd0c1;
+  --border-light:  #b9bda8;
+
+  --scrollbar:     #c6cab7;
+  --scrollbar-h:   rgba(92,146,25,0.5);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   THEME-LOCKED DARK
+   The tactical map / cockpit / GCI radar views are designed around
+   a dark ground (dark basemap tiles, glowing HUD overlays) and
+   don't make sense on a light page. Any subtree with this class
+   stays dark regardless of the active theme. Specificity is bumped
+   past :root[data-theme="light"] (0,2,0).
+   ═══════════════════════════════════════════════════════════════ */
+.theme-locked-dark,
+:root[data-theme] .theme-locked-dark {
+  --bg:            #080b06;
+  --bg-card:       #0d1009;
+  --bg-elevated:   #141910;
+  --bg-hover:      #1b2116;
+  --bg-input:      #0a0d07;
+  --bg-chrome:     #060908;
+  --bg-card-solid:     #0d1009;
+  --bg-elevated-solid: #141910;
+  --bg-chrome-solid:   #060908;
+  --accent:        #6aab1f;
+  --accent-dim:    #528a17;
+  --accent-bright: #8ec83f;
+  --accent-glow:   rgba(106,171,31,0.10);
+  --accent-border: rgba(106,171,31,0.28);
+  --green:         #6aab1f;
+  --yellow:        #c9a227;
+  --orange:        #c27820;
+  --text:          #cdd4be;
+  --text-muted:    #7d8a6a;
+  --text-dim:      #6b7858;
+  --border:        #1c2318;
+  --border-light:  #262e1d;
+  --scrollbar:     #1c2318;
+  --scrollbar-h:   rgba(106,171,31,0.35);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar            { width: 4px; height: 4px; }
+::-webkit-scrollbar-track      { background: transparent; }
+::-webkit-scrollbar-thumb      { background: var(--scrollbar); border-radius: 0; }
+::-webkit-scrollbar-thumb:hover{ background: var(--scrollbar-h); }
+
+/* ── Font helpers ── */
+.font-display   { font-family: var(--font-display); letter-spacing: 0.08em; }
+.font-mono-vs   { font-family: var(--font-mono); }
+.tabular-nums   { font-variant-numeric: tabular-nums; }
+
+/* ═══════════════════════════════════════════════════════════════
+   LEAFLET OVERRIDES
+   ═══════════════════════════════════════════════════════════════ */
+.leaflet-container {
+  background: var(--bg) !important;
+  font-family: var(--font-body);
+}
+.leaflet-popup-content-wrapper {
+  background: var(--bg-card-solid) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--accent-border) !important;
+  border-radius: 2px !important;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.55) !important;
+}
+.leaflet-popup-tip             { background: var(--bg-card-solid) !important; }
+.leaflet-popup-close-button    { color: var(--text-muted) !important; }
+.leaflet-control-zoom a {
+  background: var(--bg-card-solid) !important;
+  color: var(--text-muted) !important;
+  border-color: var(--border-light) !important;
+  border-radius: 0 !important;
+}
+.leaflet-control-zoom a:hover  { color: var(--accent) !important; }
+.leaflet-control-attribution {
+  background: var(--bg-card-solid) !important;
+  color: var(--text-dim) !important;
+  font-size: 10px !important;
+}
+.leaflet-control-attribution a { color: var(--text-dim) !important; }
+
+.obj-label { background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
+
+/* Recon-intel coordinate grid labels — faint, no bubble */
+.grid-lbl {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: rgba(255,255,255,0.55) !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-size: 9px !important;
+  text-shadow: 0 0 3px #000, 0 0 3px #000 !important;
+}
+.grid-lbl::before { display: none !important; }
+.logi-tip {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+.logi-tip::before { display: none !important; }
+.obj-label::before { display: none !important; }
+
+/* ═══════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════════ */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in-up { animation: fade-in-up 0.2s ease-out forwards; }
+
+@keyframes vs-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+.vs-pulse { animation: vs-pulse 2s ease-in-out infinite; }
+
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.radar-sweep { animation: radar-sweep 4s linear infinite; transform-origin: center; }
+
+/* Keyboard focus. Nothing in here styled :focus-visible, so tabbing through
+   the dashboard was invisible. Scoped to :focus-visible so a mouse click
+   never paints a ring. */
+/* Objective drawer stock lines. The numeric columns are fixed at desktop so
+   the bars align down the list, and content-sized on a phone where a wide
+   value like "70000/100000" would otherwise push the percentage off-screen. */
+.stock-count { width: 66px; }
+.stock-pct   { width: 34px; }
+
+/* Panel folds (recon controls, briefing map). Both start folded: the thing
+   they hide is supporting material, and the thing underneath is what the
+   page is for. Present at every width -- a 300px control column beside the
+   map is worth reclaiming on a desktop too. */
+.intel-panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  flex-shrink: 0;
+  padding: 0 12px;
+  min-height: 34px;
+  background: var(--bg-elevated);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.intel-panel-toggle:hover { color: var(--text); }
+
+/* Desktop collapse is horizontal: the column shrinks to a strip carrying
+   just the chevron, and the map takes the width. */
+.intel-sidebar-collapsed { width: 40px !important; }
+.intel-sidebar-collapsed .intel-panel-toggle { padding: 0; justify-content: center; }
+.intel-sidebar-collapsed .panel-toggle-label { display: none; }
+
+/* Briefing: folding the map collapses the grid to a single column so the
+   tasking list uses the full width, not half of it. */
+.briefing-map-toggle { position: relative; z-index: 500; }
+.briefing-map-card-collapsed { min-height: 0 !important; height: 34px; }
+/* Everything under the toggle is hidden outright rather than merely clipped:
+   the map's legend is positioned from the BOTTOM of the card, so once the
+   card shrank to the bar height the legend sat on top of the bar. */
+.briefing-map-card-collapsed > *:not(.briefing-map-toggle) { display: none; }
+.briefing-split-nomap { grid-template-columns: minmax(0, 1fr) !important; }
+
+.lb-card-head {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 1px;
+}
+
+/* Capture timeline. Full width, so once there is room the chart and the
+   scrolling event log sit side by side instead of stacking into a column
+   twice the height of everything around it. */
+.capture-timeline-body {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+.capture-timeline-log {
+  max-height: 200px;
+  overflow-y: auto;
+}
+@media (min-width: 1100px) {
+  .capture-timeline-body { grid-template-columns: minmax(0, 1fr) 360px; }
+  .capture-timeline-log  { max-height: 236px; border-left: 1px solid var(--border); padding-left: 14px; }
+}
+
+/* An objective taking fire. Deliberately more urgent than .vs-pulse -- it
+   scales as well as fades, so it still reads as "something is happening
+   here" at 10px on top of a busy map tile. `alert` is the faster, redder
+   variant for an enemy capture actually in progress.
+
+   Both respect prefers-reduced-motion: the icon stays, the motion stops --
+   it is carrying information, so it must not simply disappear. */
+@keyframes vs-underattack {
+  0%, 100% { opacity: 1;    transform: scale(1); }
+  50%      { opacity: 0.25; transform: scale(0.78); }
+}
+.vs-underattack {
+  animation: vs-underattack 1.15s ease-in-out infinite;
+  transform-origin: center;
+}
+.vs-underattack-urgent { animation-duration: 0.6s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .vs-underattack,
+  .vs-underattack-urgent { animation: none; opacity: 1; transform: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CARDS — angular military styling
+   ═══════════════════════════════════════════════════════════════ */
+.vs-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.vs-card:hover {
+  border-color: var(--border-light);
+  box-shadow: 0 0 0 1px var(--border-light), 0 4px 24px rgba(0,0,0,0.5);
+}
+
+/* Accent-top variant */
+.vs-card-accent {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--accent);
+  border-radius: 2px;
+}
+
+/* Blue / Red coalition cards */
+.vs-card-blue {
+  background: var(--bg-card);
+  border: 1px solid rgba(74,143,212,0.15);
+  border-left: 3px solid var(--blue);
+  border-radius: 2px;
+}
+.vs-card-red {
+  background: var(--bg-card);
+  border: 1px solid rgba(204,68,68,0.15);
+  border-left: 3px solid var(--red);
+  border-radius: 2px;
+}
+
+/* Stat card */
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.stat-card:hover {
+  border-color: var(--accent-border);
+  box-shadow: 0 2px 16px rgba(0,0,0,0.4);
+}
+.stat-card-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.stat-card-value {
+  font-family: var(--font-mono);
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.stat-card-sub {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION HEADER
+   ═══════════════════════════════════════════════════════════════ */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0,0,0,0.2);
+  border-radius: 2px 2px 0 0;
+}
+.section-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.vs-section-title {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.14em;
+  color: var(--text);
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BADGES
+   ═══════════════════════════════════════════════════════════════ */
+.vs-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  border-radius: 1px;
+  padding: 2px 6px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+.vs-badge-live {
+  color: var(--accent-bright);
+  background: rgba(106,171,31,0.1);
+  border: 1px solid rgba(106,171,31,0.28);
+}
+.vs-badge-offline {
+  color: var(--text-dim);
+  background: rgba(74,85,60,0.1);
+  border: 1px solid rgba(74,85,60,0.2);
+}
+
+/* Round open, DCS server not answering -- the state the old two-way badge
+   could not express and silently reported as LIVE. */
+.vs-badge-degraded {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+.vs-badge-red {
+  color: var(--red);
+  background: var(--red-bg);
+  border: 1px solid rgba(204,68,68,0.22);
+}
+.vs-badge-blue {
+  color: var(--blue);
+  background: var(--blue-bg);
+  border: 1px solid rgba(74,143,212,0.22);
+}
+.vs-badge-neutral {
+  color: var(--text-muted);
+  background: rgba(80,90,65,0.07);
+  border: 1px solid rgba(80,90,65,0.2);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BUTTON
+   ═══════════════════════════════════════════════════════════════ */
+.vs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #0a0d07;
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-family: var(--font-display);
+  border: none;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.vs-btn:hover { background: var(--accent-bright); box-shadow: 0 0 16px rgba(106,171,31,0.3); }
+
+.vs-btn-outline {
+  background: transparent;
+  border: 1px solid var(--accent-border);
+  color: var(--accent);
+}
+.vs-btn-outline:hover { background: var(--accent-glow); }
+
+.vs-btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+}
+.vs-btn-ghost:hover { background: var(--bg-elevated); color: var(--text); }
+
+/* ═══════════════════════════════════════════════════════════════
+   INPUT
+   ═══════════════════════════════════════════════════════════════ */
+.vs-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-light);
+  border-radius: 1px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  letter-spacing: 0.04em;
+}
+.vs-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.vs-input::placeholder { color: var(--text-dim); }
+
+/* ═══════════════════════════════════════════════════════════════
+   HEALTH BAR
+   ═══════════════════════════════════════════════════════════════ */
+.health-fill { transition: width 0.4s ease; }
+
+/* ═══════════════════════════════════════════════════════════════
+   RANK BADGES
+   ═══════════════════════════════════════════════════════════════ */
+.rank-gold   { color: #c9a227; text-shadow: 0 0 10px rgba(201,162,39,0.5); }
+.rank-silver { color: #7d8a6a; text-shadow: 0 0 10px rgba(125,138,106,0.3); }
+.rank-bronze { color: #a06020; text-shadow: 0 0 10px rgba(160,96,32,0.3); }
+
+/* ═══════════════════════════════════════════════════════════════
+   TABLE
+   ═══════════════════════════════════════════════════════════════ */
+.vs-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.vs-table th {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  background: rgba(0,0,0,0.2);
+  font-family: var(--font-mono);
+}
+.vs-table td {
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(28,35,24,0.6);
+  color: var(--text);
+}
+.vs-table tr:last-child td { border-bottom: none; }
+.vs-table tbody tr:hover { background: rgba(255,255,255,0.015); }
+
+/* ── Kill row hover ── */
+.kill-row:hover { background: rgba(106,171,31,0.03) !important; }
+
+/* ═══════════════════════════════════════════════════════════════
+   TOPBAR
+   ═══════════════════════════════════════════════════════════════ */
+.topbar {
+  height: 54px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 16px;
+  min-width: 0;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+}
+/* Inline groups that the mobile rules below collapse as a unit. */
+.topbar-brand,
+.topbar-campaign,
+.topbar-theme { display: flex; align-items: center; }
+.topbar-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border-light);
+  flex-shrink: 0;
+  margin: 0 10px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SIDEBAR NAV
+   ═══════════════════════════════════════════════════════════════ */
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-chrome);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  transition: width 0.18s ease;
+}
+
+/* ── Collapsed (icon-rail) sidebar — desktop only ── */
+.sidebar.collapsed {
+  width: 52px;
+}
+.sidebar.collapsed .nav-group-label,
+.sidebar.collapsed .nav-item span,
+.sidebar.collapsed .sidebar-footer-text {
+  display: none;
+}
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+.sidebar-collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sidebar-collapse-btn:hover { color: var(--accent-bright); }
+
+/* ── Mobile menu toggle (hidden on desktop) ── */
+.mobile-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border-light);
+  border-radius: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.mobile-menu-btn:hover { color: var(--text); border-color: var(--accent-dim); }
+
+.sidebar-backdrop { display: none; }
+
+.topbar-secondary { display: flex; align-items: center; }
+
+/* Campaign picker + theme toggle relocated into the mobile drawer. */
+.drawer-controls { display: none; }
+
+.podium-grid { grid-template-columns: repeat(3, 1fr); }
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE LAYOUT (<= 860px)
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 860px) {
+  .mobile-menu-btn { display: flex; }
+
+  /* Secondary topbar readouts (clock, weather, territory, etc.) move
+     off the topbar on mobile -- there just isn't room, and none of
+     them are essential to have visible at all times. */
+  .topbar-secondary { display: none; }
+
+  /* The topbar is a single non-wrapping row of flex-shrink:0 items, so
+     anything that doesn't fit is simply pushed off the right edge and
+     clipped -- which is how the login button and theme toggle used to
+     disappear on a phone. Everything below trims the row down to what a
+     ~320px viewport can actually hold: the drawer toggle, the mark, the
+     live/online readout and the account control. The campaign picker and
+     theme toggle aren't dropped, they move into the drawer. */
+  .topbar { padding: 0 10px; gap: 8px; }
+  .topbar-sep { display: none; }
+  .topbar-campaign,
+  .topbar-theme { display: none; }
+
+  /* The brand block sizes itself with inline styles (the logo is a prop on
+     <LogoMark>), so overriding it from here needs the extra specificity. */
+  .topbar-brand { padding-right: 0 !important; gap: 8px !important; }
+  .topbar-brand img { width: 32px !important; height: 32px !important; }
+
+  .drawer-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 54px;
+    left: 0;
+    bottom: 0;
+    /* Leaflet gives its internal map-pane a CSS transform for panning,
+       which makes it its own stacking context -- but the pane itself
+       still carries Leaflet's z-index:400, and none of a map page's own
+       wrapper divs happen to establish a stacking context that scopes
+       it. Left unscoped, that 400 outranks a "normal" nav z-index and
+       the sidebar/backdrop render underneath the live map instead of
+       over it. App chrome must always win, so this sits above anything
+       any page's own content could plausibly stack to. */
+    z-index: 2000;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 6px 0 28px rgba(0,0,0,0.55);
+  }
+  .sidebar.open { transform: translateX(0); }
+  /* Icon-rail collapse is a desktop concept -- the mobile sidebar is
+     already an overlay drawer that's fully hidden when closed. */
+  .sidebar.collapsed { width: 220px; }
+  .sidebar-collapse-btn { display: none; }
+
+  .sidebar-backdrop.open {
+    display: block;
+    position: fixed;
+    inset: 54px 0 0 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 1999;
+  }
+
+  /* Rankings podium: 3 equal columns has no room to breathe once each
+     card is under ~120px wide -- stack the top-3 cards instead. */
+  .podium-grid { grid-template-columns: 1fr; }
+  .podium-stats { gap: 10px; }
+}
+
+/* ── Phone-width topbar (<= 600px) ──
+   Below this the wordmark and the username no longer fit next to the
+   account control. The logo already carries the brand and the avatar
+   already identifies the account, so both labels drop rather than
+   squeezing the row past its width. */
+@media (max-width: 600px) {
+  .topbar-brandname,
+  .topbar-user-meta,
+  .topbar-login-text { display: none; }
+  .topbar-login { padding: 5px 9px !important; }
+}
+
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 42px;
+  padding: 0 16px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-decoration: none;
+  transition: color 0.15s, background 0.15s;
+  border: none;
+  background: transparent;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.nav-item:hover {
+  color: var(--text-muted);
+  background: rgba(106,171,31,0.04);
+}
+.nav-item.active {
+  color: var(--accent-bright);
+  background: rgba(106,171,31,0.08);
+}
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 18%;
+  height: 64%;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 1px 1px 0;
+}
+
+/* A gated entry the viewer hasn't unlocked. Dimmed so it reads as
+   unavailable, but still a live link -- it routes to the login page or to
+   the page's own explainer rather than swallowing the click. */
+.nav-item.locked {
+  color: var(--text-dim);
+  opacity: 0.45;
+}
+.nav-item.locked:hover {
+  opacity: 0.75;
+  color: var(--text-muted);
+  background: rgba(106, 171, 31, 0.03);
+}
+
+/* ── Nav group label ── */
+.nav-group-label {
+  padding: 14px 16px 4px;
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+
+/* Thin rule between purpose-grouped nav sections. */
+.nav-divider {
+  height: 1px;
+  margin: 8px 16px;
+  background: var(--border);
+}
+.sidebar.collapsed .nav-divider {
+  margin: 8px 10px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   KPI STRIP
+   ═══════════════════════════════════════════════════════════════ */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg-chrome);
+}
+.kpi-cell {
+  padding: 10px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  border-right: 1px solid var(--border);
+}
+.kpi-cell:last-child { border-right: none; }
+
+/* 7 equal columns has no room to breathe under ~860px -- wrap into a
+   flexible grid instead of a fixed column count. */
+@media (max-width: 860px) {
+  .kpi-strip {
+    /* auto-FILL, not auto-fit: auto-fit collapses the empty tracks on the
+       last row, which stretched the lone seventh cell across the full width
+       and left it looking like a mistake. auto-fill keeps the track, so it
+       stays one column wide and lines up under the one above it. */
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  }
+  .kpi-cell {
+    padding: 8px 12px;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    /* "obj below 40% HP" wraps to two lines and "2 blu · 1 red" does not, so
+       without a floor the rows came out different heights. */
+    min-height: 66px;
+  }
+  .kpi-cell:last-child { border-right: 1px solid var(--border); }
+
+}
+
+.kpi-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+.kpi-value {
+  font-family: var(--font-mono);
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.kpi-sub {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  margin-top: 1px;
+  font-family: var(--font-mono);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PAGE HEADER
+   ═══════════════════════════════════════════════════════════════ */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  flex-shrink: 0;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  position: relative;
+}
+.page-header::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent) 0%, transparent 60%);
+  opacity: 0.4;
+}
+.page-header-title {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  letter-spacing: 0.28em;
+  color: var(--text);
+  line-height: 1;
+}
+.page-header-sub {
+  font-size: 0.62rem;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+  margin-top: 3px;
+  font-family: var(--font-mono);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   VS PAGE (scroll wrapper)
+   ═══════════════════════════════════════════════════════════════ */
+.vs-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TACTICAL GRID BG
+   ═══════════════════════════════════════════════════════════════ */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(106,171,31,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(106,171,31,0.025) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ANIMATED BACKDROP
+   Behind the app: an LED dot matrix under a slow scan bar -- a display,
+   not a radar scope.
+   Every animation below is a compositor transform; the main thread does
+   nothing per frame, which is the whole point. Do not animate
+   background-position here (repaints the layer every frame) or pulse
+   opacity on these full-viewport surfaces.
+   ═══════════════════════════════════════════════════════════════ */
+.vs-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  /* Isolate it: nothing inside can affect layout or paint outside it. */
+  contain: strict;
+}
+
+/* The matrix. Inset past the edges so the drift never exposes one, and
+   translated by exactly one 14px cell so the loop is seamless. */
+.vs-backdrop-grid {
+  position: absolute;
+  inset: -30px;
+  background-image: radial-gradient(rgba(106,171,31,0.16) 1px, transparent 1px);
+  background-size: 14px 14px;
+  will-change: transform;
+  animation: vs-matrix-drift 26s linear infinite;
+}
+@keyframes vs-matrix-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(14px, 14px, 0); }
+}
+
+/* The scan. One gradient band travelling the viewport height; 100vh of
+   travel plus its own height, so it clears the bottom before it repeats. */
+.vs-backdrop-sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -32vh;
+  height: 32vh;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(106,171,31,0.055) 68%,
+    rgba(142,200,63,0.11)
+  );
+  will-change: transform;
+  animation: vs-scan 11s linear infinite;
+}
+@keyframes vs-scan {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(0, 132vh, 0); }
+}
+
+/* Green over a white dashboard reads as a fault, not an effect. */
+:root[data-theme="light"] .vs-backdrop-sweep { display: none; }
+:root[data-theme="light"] .vs-backdrop-grid {
+  background-image: radial-gradient(rgba(60,90,20,0.12) 1px, transparent 1px);
+}
+
+/* A full-width band travelling the viewport is free on a desktop GPU and
+   not free on a phone battery. Matrix only below the mobile breakpoint. */
+@media (max-width: 860px) {
+  .vs-backdrop-sweep { display: none; }
+}
+
+/* Decoration yields: keep the matrix, stop the motion. */
+@media (prefers-reduced-motion: reduce) {
+  .vs-backdrop-grid,
+  .vs-backdrop-sweep { animation: none; }
+  .vs-backdrop-sweep { display: none; }
+}
+
+/* The app shell paints over the backdrop unless it is told not to; body still
+   carries --bg, so nothing below this is actually transparent. */
+.vs-shell,
+.vs-main { background: transparent !important; position: relative; }
+.vs-shell { z-index: 1; }
+
+/* Section glyph in a page header -- boxed so it reads as chrome rather than
+   as a decoration floating next to the title. */
+.page-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-glow);
+  border-radius: 3px;
+}
+
+/* ── Scanline overlay (apply to full app for CRT effect) ── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0,0,0,0.03) 0px,
+    rgba(0,0,0,0.03) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   OBJECTIVE ICON
+   ═══════════════════════════════════════════════════════════════ */
+.obj-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1px;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ── Brand logo mark (theme-swapped) ─────────────────────────────
+   LogoMark renders both variants; CSS shows the one that fits the
+   active theme. Files: /public/logo.png (light-on-dark, default)
+   and /public/logo-dark.png (dark-on-light). */
+.logo-mark--dark { display: none !important; }
+:root[data-theme="light"] .logo-mark--light { display: none !important; }
+:root[data-theme="light"] .logo-mark--dark { display: block !important; }
+
+/* ── Briefing page ────────────────────────────────────────────────────────
+   The situation tab is a map beside a panel column on a wide screen. Below
+   1100px there isn't room for both, so the map keeps a fixed height and the
+   panels flow underneath it on the page's own scroll. */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1100px) {
+  .briefing-split {
+    grid-template-columns: 1fr !important;
+    /* The parent is a flex child with min-height:0; once stacked we want the
+       page to grow rather than squeeze the map to nothing. */
+    overflow-y: auto;
+  }
+  .briefing-split > :first-child { height: 340px; min-height: 340px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TOUCH TARGETS — phones and small tablets
+   ═══════════════════════════════════════════════════════════════
+   The chrome was built at desktop mouse sizes: a 32px hamburger, a
+   14px logout icon, 28px filter pills. Apple asks for 44pt and
+   Android for 48dp, and the hamburger in particular is the single
+   most-used control on a phone. Raised here rather than at each call
+   site so it stays consistent and cannot drift back.
+
+   Scoped to pointer:coarse as well as width, so a narrow desktop
+   window does not get finger-sized chrome it has no use for. */
+@media (max-width: 767px), (pointer: coarse) {
+  .mobile-menu-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* Icon-only chrome buttons in the topbar (theme, logout, close). */
+  .vs-touch-target {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Selects and text inputs: 32px is below the comfortable minimum and
+     iOS zooms any input whose font-size is under 16px on focus. */
+  .vs-input,
+  select.vs-input,
+  input.vs-input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  /* Segmented filter pills (ALL / RED / BLUE / NEUTRAL and friends). */
+  .vs-pill {
+    min-height: 40px;
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+  }
+
+  /* Table rows that act as buttons need room for a fingertip. */
+  .kill-row td {
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+
+  /* Column-sort controls live inside a <th>, so they cannot simply grow to
+     44px without doubling the header height. 32px plus the header's own
+     padding lands close enough to be tappable without wrecking the table. */
+  .vs-sort-btn {
+    min-height: 32px;
+  }
+
+  /* Tab strips (leaderboard categories and friends). */
+  .vs-tab {
+    min-height: 40px;
+  }
+
+  /* Everything else that is a control.
+     Admin alone had 39 buttons under the threshold -- ten 12x12 icon actions
+     and, worse, "Restart Server" / "RESET DATABASE" at 31px. Classing forty
+     call sites would not survive the next page anyone adds, so this is a
+     floor with explicit opt-outs for the controls that are deliberately
+     smaller: column-sort lives inside a <th>, nav items own their own
+     height, and map controls are positioned furniture. */
+  button:not(.vs-sort-btn):not(.nav-item):not(.mobile-menu-btn),
+  [role="button"]:not(.nav-item) {
+    min-height: 36px;
+    /* Width matters as much as height: the admin player actions ("Ban
+       player", "Copy kick command") were 12px wide icons sitting in a row,
+       so a 36px height alone still left a sliver to hit. */
+    min-width: 36px;
+  }
+
+  /* Range inputs render a ~16px track, which is the control's whole hit
+     area. Grow the box and keep the thumb usable. */
+  input[type="range"] {
+    height: 36px;
+  }
+
+  /* Text-ish inputs. Some carry .vs-input and are handled above; the admin
+     log filters carry no class at all and rendered 17px tall. */
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+  textarea,
+  select {
+    min-height: 36px;
+  }
+
+  /* Page headers put the title on the left and a control cluster on the
+     right, with justify-content: space-between and no wrap. Briefing's
+     cluster is five controls wide; at 375px it overflowed the header and
+     pushed the title to x=-178, i.e. clean off the screen, while clipping
+     its own last button. Let the header wrap and give the cluster its own
+     full-width row underneath the title. */
+  .page-header {
+    flex-wrap: wrap;
+  }
+  .page-header > div:nth-child(2) {
+    width: 100%;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  /* Pages nest their own flex row inside that wrapper (Briefing's is 429px
+     of tabs, side selector, refresh and PDF), so wrapping only the outer
+     element leaves the inner one to overflow exactly as before. */
+  .page-header > div:nth-child(2) > div {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    max-width: 100%;
+  }
+
+  /* Recon intel is a fixed 300px control panel beside a map. At 375px that
+     leaves 75px for the map, and the map's own absolutely-positioned
+     controls (photos, legend, basemap, markup, opacity) then render on top
+     of the panel -- two UIs occupying the same pixels. Stack them instead. */
+  .intel-shell {
+    flex-direction: column;
+  }
+  .intel-sidebar {
+    width: 100% !important;
+    max-height: 46vh;
+    border-right: none !important;
+    border-bottom: 1px solid var(--border);
+  }
+  .intel-map {
+    min-height: 54vh;
+  }
+  /* The overlay cluster carries an inline maxWidth of 380px, which is wider
+     than the phone itself -- so it spilled past the map and collided with
+     the opacity panel beneath it. Cap it to the viewport and let it wrap. */
+  .intel-map-controls {
+    max-width: calc(100vw - 20px) !important;
+    row-gap: 4px;
+  }
+
+  /* The error toast and the control cluster both anchor at top:10, so on a
+     narrow map they land on top of each other. The controls need the top --
+     they are how you use the page -- so the toast moves to the bottom edge,
+     where nothing else lives. */
+  .intel-map-toast {
+    top: auto !important;
+    bottom: 12px;
+    max-width: calc(100vw - 24px);
+    text-align: center;
+  }
+
+  /* Briefing's header controls, laid out deliberately instead of just
+     allowed to wrap. Letting five items reflow put KNEEBOARD PDF alone on a
+     ragged second line with everything different widths.
+       row 1: the tab pair as a proper full-width segmented control
+       row 2: side badge, refresh, and the PDF button taking the slack
+     Equal heights across both rows so it reads as one block. */
+  .briefing-header-controls {
+    width: 100%;
+    gap: 8px;
+  }
+  .briefing-tabgroup {
+    flex: 1 0 100%;
+  }
+  .briefing-tabgroup > button {
+    flex: 1;
+    justify-content: center;
+  }
+  .briefing-header-controls > .briefing-pdf-btn {
+    flex: 1;
+    justify-content: center;
+  }
+  /* The side badge is a span, so the button minimums never touched it and it
+     sat 10px shorter than everything beside it. */
+  .briefing-side-badge {
+    min-height: 36px;
+  }
+
+  /* On the situation tab the body is overflow:hidden and only the inner grid
+     scrolls, so on a phone -- where the header alone takes 160px -- the
+     scrollable window was a sliver. Let the page scroll as a page instead
+     and stop the grid competing for it. (The body's overflow is an inline
+     style, hence the !important.) */
+  .briefing-body {
+    overflow-y: auto !important;
+  }
+  .briefing-split {
+    overflow-y: visible !important;
+    /* flex:1 + min-height:0 are inline on the grid. Stacked, they clamp it
+       to whatever is left of the viewport -- 116px -- and squash ten panels
+       into it. Let it size to its content and scroll the body instead. */
+    flex: none !important;
+    min-height: auto !important;
+  }
+
+  /* An earlier mobile rule pins .briefing-split > :first-child to 340px so
+     the stacked map does not collapse to nothing. That also defeats the
+     fold, so the collapsed state has to beat it explicitly. */
+  .briefing-split-nomap > .briefing-map-card-collapsed {
+    height: 40px !important;
+    min-height: 0 !important;
+  }
+
+  .intel-panel-toggle {
+    min-height: 40px;
+    padding: 0 14px;
+    font-size: 0.62rem;
+  }
+  /* Stacked, so the fold is vertical here: the panel already clips, so
+     capping its height to the toggle bar hides everything below it. The
+     label stays -- there is room for it on a full-width bar. */
+  .intel-sidebar-collapsed {
+    width: 100% !important;
+    max-height: 40px;
+  }
+  .intel-sidebar-collapsed .panel-toggle-label { display: inline; }
+  .intel-sidebar-collapsed .intel-panel-toggle {
+    padding: 0 14px;
+    justify-content: space-between;
+  }
+  .intel-sidebar-collapsed + .intel-map,
+  .intel-sidebar-collapsed ~ .intel-map {
+    min-height: calc(100vh - 40px);
+  }
+
+  /* Links that are laid out as buttons -- About's "JOIN DISCORD" and the
+     like were 16px tall. CSS ignores min-height on a non-replaced inline
+     box, so genuine inline links inside prose are untouched by this and
+     only the block/flex ones grow. */
+  a:not(.nav-item) {
+    min-height: 36px;
+  }
+  .leaflet-container button,
+  .maplibregl-map button,
+  .leaflet-control button {
+    min-height: 0;
+  }
+
+  /* Text.
+     The chrome is sized for a large monitor -- label text bottomed out at
+     8.3px, which is not readable at arm's length on a phone. Nearly all of
+     it is set in rem from inline styles, which a media query cannot reach,
+     so the root size moves instead and every rem-based label scales with it.
+     Kept modest: the layout is mostly px, so type grows inside fixed boxes
+     and too large a jump starts wrapping things. */
+  :root {
+    font-size: 17.5px;
+  }
+
+  /* Objective drawer: the supply-graph nodes navigate to another objective,
+     so they are real targets, not decoration. */
+  .supply-node {
+    min-height: 40px;
+  }
+
+  /* A fixed 150px label is fine on a 460px drawer and mean on a 375px phone,
+     where it ellipsised most weapon names. Let it take the slack instead and
+     hold the numeric columns to their own width. */
+  .stock-row .stock-label {
+    width: auto;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .stock-row .stock-bar {
+    flex: 0 0 auto;
+  }
+  /* Let the numbers size to their content and give the bar whatever is
+     left -- a fixed column cannot fit both a six-digit fuel figure and a
+     percentage in the width a phone has. */
+  .stock-row .stock-count,
+  .stock-row .stock-pct {
+    width: auto;
+  }
+  .stock-row .stock-bar > div:first-child {
+    min-width: 22px;
+  }
+}
+
+/* KPI strip type, sized from measurement rather than guesswork.
+   These have to live at the end of the file: the .kpi-* base rules are
+   declared AFTER the @media (max-width: 860px) block above, so an override
+   placed there loses on source order and silently does nothing -- which is
+   exactly what happened on the first attempt (the sub stayed 11.9px).
+
+   The longest sub, "obj below 40% HP", measured 114px against a 100px
+   track. Trimming the cell padding to 10px and the type to 0.58rem brings
+   it to ~97px in a 105px track, so every sub sits on one line and the grid
+   rows come out equal without truncating anything. */
+@media (max-width: 860px) {
+  .kpi-cell {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .kpi-label {
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+  }
+  .kpi-sub {
+    font-size: 0.58rem;
+    white-space: nowrap;
+  }
+}
+
+/* Rankings on a phone. Four tabs reflowing in a flex row left LOGISTICS
+   stranded alone on a second line at a different width from the three above
+   it -- the same ragged wrap the briefing header had. A 2x2 grid gives four
+   equal cells and reads as one control.
+
+   At the end of the file on purpose: see the note on the KPI rules above --
+   overrides written earlier than the base declarations lose on source order. */
+@media (max-width: 767px), (pointer: coarse) {
+  .lb-tabs {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .lb-tabs > .vs-tab {
+    width: 100%;
+    justify-content: center;
+  }
+  /* The search field is fixed at 180px inline, which left it stopping short
+     of the header it sits in. */
+  .lb-search {
+    width: 100% !important;
+  }
+}

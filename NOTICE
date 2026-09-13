@@ -1,0 +1,68 @@
+Fowl Engine (BFNEXT) — licensing NOTICE
+======================================
+
+This repository is a fork of https://github.com/estokes/bfnext ("upstream").
+It contains code by more than one author under more than one license. Read this
+file before using, copying, modifying, or redistributing any part of it.
+
+
+1. Upstream code — © Eric Stokes
+------------------------------------------------------------------------
+  dcso3/            MIT (see dcso3/LICENSE)
+  bflib/            GNU AGPL-3.0-or-later (see bflib/LICENSE, bflib/COPYING)
+  bfprotocols/      part of the upstream project; no separate license file.
+                    Because bflib (AGPL-3.0) links bfprotocols, treat
+                    bfprotocols as AGPL-3.0 for any distribution that also
+                    includes bflib.
+  bfdb/             part of the upstream project (no separate license file),
+                    except the files listed in section 3 below.
+  bftools/, yats/   part of the upstream project (no separate license file).
+
+  Modifications to the above files in this fork remain under the upstream
+  file's license and © their respective authors. Nothing in this NOTICE
+  relicenses, reassigns, or waives any rights in Eric Stokes' code.
+
+
+2. Proprietary components — © 2026 Dillen Weerasinghe, all rights reserved
+------------------------------------------------------------------------
+  bfweb/            Campaign dashboard (web UI).     See bfweb/LICENSE
+  bfsite/           Public website.                  See bfsite/LICENSE
+  bfwiki/           Campaign wiki (web UI).          See bfwiki/LICENSE
+
+  These directories are the independent, original work of Dillen Weerasinghe.
+  They are NOT open source. No license is granted. You may not use, run,
+  deploy, copy, modify, translate, create derivative works from, distribute,
+  publish, sublicense, or sell them, in whole or in part, without prior
+  written permission. Public hosting of this repository does not grant any
+  such right.
+
+
+3. Proprietary files inside upstream crates — © 2026 Dillen Weerasinghe
+------------------------------------------------------------------------
+  The Live GCI (proactive AWACS/SRS callout) implementation was written by
+  Dillen Weerasinghe and is proprietary — all rights reserved, no license
+  granted (same terms as section 2). It comprises:
+
+    bfdb/src/gci.rs
+    bfdb/src/gci/srs.rs
+    bfdb/src/gci/stt.rs
+    bfdb/src/gci/tts.rs
+    bfdb/seed_wiki/gameplay/gci.md
+    gci.sample.json
+
+  The GCI protocol types in bfprotocols/src/gci.rs were also authored by
+  Dillen Weerasinghe. That file sits in an upstream crate that is treated as
+  AGPL-3.0 when distributed with bflib (see section 1); it is listed here only
+  to record authorship.
+
+  Other Dillen Weerasinghe contributions to bfdb/ and bfprotocols/ (dashboard
+  API endpoints, stats fixes, TARPS recon intel, TACMAP fog-of-war, the
+  read-only log endpoints, etc.) are © their author but are interleaved with
+  Eric Stokes' code in files governed by section 1; they are not separately
+  licensed.
+
+
+4. Contact
+------------------------------------------------------------------------
+  Permission requests for any proprietary component:
+  Dillen Weerasinghe <dillen.weerasinghe98@gmail.com>

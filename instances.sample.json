@@ -1,0 +1,47 @@
+{
+  "//": "bfdb --instances <this file>. One entry per DCS server instance on this machine.",
+  "//default": "Which instance answers a request that carries no ?instance=. Defaults to the first entry.",
+  "default": "vs1",
+  "instances": [
+    {
+      "//": "Stable, URL-safe key. Rounds in the Sled DB are tagged with it -- never change it once a campaign has run.",
+      "id": "vs1",
+      "label": "Vector Strike #1",
+
+      "//base": "netidx_base from THIS instance's engine CFG. Two instances must never share one.",
+      "base": "/local/fowl/vs1",
+      "//sortie": "Leave null to auto-detect from the stats stream. Set only if RPCs time out (see --sortie).",
+      "sortie": null,
+
+      "stats_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats.jsonl",
+      "stats_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats",
+      "engine_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\ODFv2_CFG",
+
+      "//export_port": "UDP port this instance's Scripts/Export.lua sends to. Must be unique per instance.",
+      "export_port": 42001,
+
+      "//srs_url": "This instance's SRS: an http(s) URL to proxy, or the local CLIENT_EXPORT_FILE_PATH json.",
+      "srs_url": "http://127.0.0.1:5002",
+      "//gci_config": "This instance's live-GCI config (its own SRS port, freqs and callsigns).",
+      "gci_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\gci.json",
+
+      "//dcs_server_name": "The DCSServerBot server name. Lets a caller address this instance as ?server=<name>.",
+      "dcs_server_name": "[VS] Vector Strike - Vector Strike | Dynamic Campaign PVP Modern"
+    },
+    {
+      "id": "vs2",
+      "label": "Vector Strike #2",
+      "base": "/local/fowl/vs2",
+      "sortie": null,
+      "stats_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\Logs\\stats.jsonl",
+      "stats_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\Logs\\stats",
+      "engine_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\ODFv2_CFG",
+      "export_port": 42002,
+      "srs_url": "http://127.0.0.1:5003",
+      "gci_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\gci.json",
+      "//public": "false = a test/staging server: hidden from the selector for non-admins, and its rounds are excluded from the all-time leaderboard and pilot profiles. Defaults to true.",
+      "public": false,
+      "dcs_server_name": "[VS] Vector Strike #2 | Training"
+    }
+  ]
+}

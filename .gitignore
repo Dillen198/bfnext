@@ -1,4 +1,20 @@
 **/target/
+**/node_modules/
+Logs/
+bfdb_log.txt
+netidx_out.txt
+test_stats.jsonl
+netidx-resolver.json
+bfsystem.local.ps1
+# Real deployed plugin configs -- contain live secrets (admin passwords, API
+# keys, HMAC secrets). Commit the .sample.yaml templates instead.
+plugins/fowlengine/fowlengine.yaml
+plugins/smartmod/smartmod.yaml
+plugins/plugines.zip
+# Live DCSServerBot config pulled from the production host for reference --
+# contains real credentials (.secret/*.pkl tokens, admin_password,
+# dashboard_secret in fowlengine.yaml). Never commit this.
+Server Bot/
 **/*.rs.bk
 Cargo.lock
 **/Cargo.lock
@@ -105,3 +121,14 @@ version.texi
 !src/vendor/**
 /src/target/
 no_llvm_build
+
+# Live DCSServerBot deployment config copied from the production host --
+# contains real credentials (.secret/*.pkl tokens, postgres DSN, Discord
+# client secret, CheckWX/Gemini API keys, admin_password, dashboard_secret).
+# The committed plugin/extension sources and *.sample.yaml templates are the
+# shareable half; this tree is not.
+DCSServerBot/config/
+DCSServerBot/plugins/fowlengine/fowlengine.yaml
+DCSServerBot/plugins/smartmod/smartmod.yaml
+# Packaged extension bundle -- rebuilt from DCSServerBot/extensions/
+DCSServerBot/extensions.zip

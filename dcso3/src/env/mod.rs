@@ -18,6 +18,7 @@ use serde_derive::Serialize;
 use std::ops::Deref;
 
 pub mod miz;
+pub mod miz_pack;
 pub mod warehouse;
 
 wrapped_table!(Env, None);

@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fowl Engine — Action Config Editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --panel-2: #1c2029;
+    --border: #2a2f3a;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --accent: #4fd1c5;
+    --accent-dim: #2f6b66;
+    --warn: #f2b134;
+    --bad: #ef4444;
+    --bad-dim: #4a2323;
+    --good: #34d399;
+    font-size: 15px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header.toolbar {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    padding: .6rem .9rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-wrap: wrap;
+  }
+  header.toolbar h1 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 .6rem 0 0;
+    white-space: nowrap;
+  }
+  header.toolbar h1 .sub { color: var(--muted); font-weight: 400; }
+  header.toolbar a.crosslink { color: var(--muted); font-size: .78rem; text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: .35rem .6rem; }
+  header.toolbar a.crosslink:hover { color: var(--text); border-color: var(--accent); }
+  .spacer { flex: 1; }
+  .unit-group { display: flex; gap: .8rem; padding: .2rem .6rem; border: 1px solid var(--border); border-radius: 6px; }
+  .unit-group label { display: flex; align-items: center; gap: .35rem; font-size: .78rem; color: var(--muted); }
+  .unit-group select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: .2rem .35rem; font-size: .8rem; }
+  #status-text { color: var(--muted); font-size: .85rem; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  button, .btn {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .45rem .75rem;
+    font-size: .85rem;
+    cursor: pointer;
+  }
+  button:hover, .btn:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent-dim); border-color: var(--accent); color: #ecfffe; font-weight: 600; }
+  button.small { padding: .25rem .55rem; font-size: .78rem; }
+  button.icon-btn { padding: .2rem .4rem; line-height: 1; font-size: .85rem; background: transparent; border: 1px solid transparent; color: var(--muted); }
+  button.icon-btn:hover { color: var(--text); border-color: var(--border); }
+  button.icon-btn.danger:hover { color: var(--bad); border-color: var(--bad); }
+  input[type=file] { display: none; }
+
+  main.app {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  aside.sidebar {
+    width: 340px;
+    min-width: 260px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+  }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: .55rem .3rem;
+    color: var(--muted);
+    font-size: .82rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .35rem;
+  }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab .count { color: var(--muted); font-size: .75rem; }
+  .tab .badge.bad {
+    background: var(--bad); color: #fff; font-size: .68rem; border-radius: 999px;
+    padding: 0 .35rem; min-width: 1.1rem; text-align: center;
+  }
+  .sidebar-controls { display: flex; gap: .4rem; padding: .5rem; border-bottom: 1px solid var(--border); }
+  .sidebar-controls input[type=text] {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: .4rem .55rem; font-size: .82rem;
+  }
+  .list { flex: 1; overflow-y: auto; }
+  .item {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: .4rem;
+    padding: .55rem .7rem; border-bottom: 1px solid var(--border); cursor: pointer;
+  }
+  .item:hover { background: var(--panel-2); }
+  .item.selected { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
+  .item.invalid .item-title::before { content: "⚠ "; color: var(--warn); }
+  .item-title { font-size: .87rem; font-weight: 500; word-break: break-word; }
+  .item-sub { font-size: .74rem; color: var(--muted); margin-top: .15rem; }
+  .item-sub .err-count { color: var(--warn); }
+  .item-actions { display: flex; gap: .1rem; flex-shrink: 0; }
+  .empty-hint { padding: 1.2rem .8rem; color: var(--muted); font-size: .85rem; line-height: 1.5; }
+
+  section.detail-pane { flex: 1; min-width: 0; overflow-y: auto; }
+  .detail-scroll { padding: 1rem 1.3rem 3rem; max-width: 780px; }
+  .empty-state { padding: 3rem 1.5rem; color: var(--muted); text-align: center; font-size: .95rem; line-height: 1.6; max-width: 480px; margin: 0 auto; }
+  .empty-state h2 { color: var(--text); font-size: 1.1rem; }
+
+  section.card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: .9rem 1rem; margin-bottom: .9rem;
+  }
+  section.card h3 { margin: 0 0 .6rem; font-size: .92rem; letter-spacing: .01em; }
+  h4.subhead { margin: .9rem 0 .5rem; font-size: .8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; border-top: 1px solid var(--border); padding-top: .7rem; }
+  .hint { color: var(--muted); font-weight: 400; font-size: .78rem; }
+  p.hint { margin: -.3rem 0 .6rem; }
+
+  .field { display: flex; flex-direction: column; gap: .25rem; margin-bottom: .55rem; }
+  .field label { font-size: .78rem; color: var(--muted); }
+  .field input[type=text], .field input[type=number], .field select, select[name] {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: .45rem .55rem; font-size: .87rem; width: 100%;
+  }
+  .field input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 .8rem; }
+  .checkbox-field { align-self: end; flex-direction: row; align-items: center; gap: .4rem; }
+  .checkbox-field label { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--text); cursor: pointer; }
+
+  .radio-row { display: flex; gap: 1.2rem; margin-bottom: .7rem; flex-wrap: wrap; }
+  .radio-row label { display: flex; align-items: center; gap: .4rem; font-size: .87rem; cursor: pointer; }
+
+  .crate-box { border: 1px solid var(--border); border-radius: 8px; padding: .7rem .8rem; margin-bottom: .7rem; background: var(--panel-2); }
+  .crate-box-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; gap: .5rem; }
+  .crate-box-header .unit-key-input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: .35rem .5rem; font-size: .85rem; font-weight: 600; }
+
+  #errors-panel { margin-top: 1rem; }
+  .errors-box { border: 1px solid var(--bad); background: var(--bad-dim); border-radius: 8px; padding: .7rem .9rem; font-size: .84rem; }
+  .errors-box strong { color: #fecaca; }
+  .errors-box ul { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .ok-box { border: 1px solid var(--good); color: var(--good); border-radius: 8px; padding: .6rem .9rem; font-size: .84rem; }
+
+  details.raw-panel { border-top: 1px solid var(--border); background: var(--panel); }
+  details.raw-panel > summary {
+    cursor: pointer; padding: .5rem .9rem; font-size: .82rem; color: var(--muted);
+    display: flex; align-items: center; gap: .5rem; user-select: none;
+  }
+  details.raw-panel > summary:hover { color: var(--text); }
+  .raw-body { display: flex; flex-direction: column; max-height: 40vh; }
+  .raw-toolbar { display: flex; justify-content: flex-end; gap: .4rem; padding: 0 .9rem .4rem; }
+  #raw-json {
+    margin: 0; padding: .8rem .9rem; overflow: auto; font-size: .78rem; line-height: 1.45;
+    background: #0b0d11; color: #c9e8e5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  @media (max-width: 760px) {
+    main.app { flex-direction: column; }
+    aside.sidebar { width: 100%; max-height: 40vh; border-right: none; border-bottom: 1px solid var(--border); }
+    .field-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="toolbar">
+  <h1>Action Config Editor <span class="sub">— Fowl Engine <code>cfg.actions</code></span></h1>
+  <label class="btn" for="file-input">Open File…</label>
+  <input type="file" id="file-input" accept="application/json,.json">
+  <button id="btn-example">Load Example</button>
+  <button id="btn-blank">Start Blank</button>
+  <span class="unit-group">
+    <label>Altitude<select id="unit-altitude"><option value="m">meters</option><option value="ft">feet</option></select></label>
+    <label>Speed<select id="unit-speed"><option value="ms">m/s</option><option value="kt">knots</option><option value="mach">Mach</option></select></label>
+  </span>
+  <span class="spacer"></span>
+  <a class="crosslink" href="./deployable-cfg-editor.html">Deployable Editor →</a>
+  <span id="status-text">No file loaded — editing in-memory only.</span>
+  <button id="btn-download" class="primary">Download JSON</button>
+</header>
+
+<main class="app">
+  <aside class="sidebar">
+    <div class="tabs" id="tabs"></div>
+    <div class="sidebar-controls">
+      <input type="text" id="search-box" placeholder="Filter by name…">
+      <button id="btn-new" class="small" title="Add a new action to the current side">+ New</button>
+    </div>
+    <div class="list" id="list"></div>
+  </aside>
+
+  <section class="detail-pane" id="detail"></section>
+</main>
+
+<details class="raw-panel" id="raw-details">
+  <summary>▸ Raw JSON preview (what gets downloaded)</summary>
+  <div class="raw-body">
+    <div class="raw-toolbar">
+      <button id="btn-copy-raw" class="small">Copy to clipboard</button>
+    </div>
+    <pre id="raw-json"></pre>
+  </div>
+</details>
+
+<script>
+(function () {
+  "use strict";
+
+  const SIDES = ["Red", "Blue", "Neutral"];
+
+  // ---------- action kind registry ----------
+
+  const KIND_DEFS = {
+    Tanker:               { group: "AI Missions",      label: "Tanker",                        payload: "AiPlaneCfg" },
+    Awacs:                { group: "AI Missions",      label: "AWACS",                          payload: "AwacsCfg" },
+    Bomber:               { group: "AI Missions",      label: "Bomber Strike",                  payload: "BomberCfg" },
+    Fighters:             { group: "AI Missions",      label: "Fighters (CAP)",                 payload: "AiPlaneCfg" },
+    Attackers:            { group: "AI Missions",      label: "Attack Aircraft / Helicopters",  payload: "AiPlaneCfg" },
+    Sead:                 { group: "AI Missions",      label: "SEAD",                           payload: "AiPlaneCfg" },
+    CruiseMissileSpawn:   { group: "AI Missions",      label: "Cruise Missile Spawn",           payload: "AiPlaneCfg" },
+    Drone:                { group: "AI Missions",      label: "Recon Drone (JTAC)",             payload: "DroneCfg" },
+    Recon:                { group: "AI Missions",      label: "Recon Flight",                   payload: "ReconCfg" },
+
+    TankerWaypoint:       { group: "Waypoint Markers", label: "Tanker — Add Waypoint",          payload: null },
+    AwacsWaypoint:        { group: "Waypoint Markers", label: "AWACS — Add Waypoint",           payload: null },
+    FighersWaypoint:      { group: "Waypoint Markers", label: "Fighters — Add Waypoint",        payload: null },
+    AttackersWaypoint:    { group: "Waypoint Markers", label: "Attackers — Add Waypoint",       payload: null },
+    SeadWaypoint:         { group: "Waypoint Markers", label: "SEAD — Add Waypoint",            payload: null },
+    DroneWaypoint:        { group: "Waypoint Markers", label: "Drone — Add Waypoint",           payload: null },
+    CruiseMissileWaypoint:{ group: "Waypoint Markers", label: "Cruise Missile — Add Waypoint",  payload: null },
+    CarrierWaypoint:      { group: "Waypoint Markers", label: "Carrier — Add Waypoint",         payload: null },
+
+    Paratrooper:          { group: "Deployment",       label: "Paratrooper Drop",               payload: "DeployableCfg" },
+    Deployable:           { group: "Deployment",       label: "Air-Deployable Unit",            payload: "DeployableCfg" },
+
+    LogisticsRepair:      { group: "Logistics",        label: "Logistics: Repair",              payload: "AiPlaneCfg" },
+    LogisticsTransfer:    { group: "Logistics",        label: "Logistics: Transfer Supply",     payload: "AiPlaneCfg" },
+    Move:                 { group: "Logistics",        label: "Move Troop / Deployable",        payload: "MoveCfg" },
+
+    CarrierRepair:        { group: "Carrier",          label: "Carrier: Repair",                payload: null },
+    CarrierRespawn:       { group: "Carrier",          label: "Carrier: Respawn",               payload: null },
+
+    Nuke:                 { group: "Strategic",        label: "Nuke",                           payload: "NukeCfg" },
+    NavalCruiseMissileStrike: { group: "Strategic",    label: "Naval Cruise Missile Strike",    payload: "NavalCruiseMissileCfg" },
+    Artillery:            { group: "Strategic",        label: "Artillery / Indirect Fire",      payload: "ArtilleryCfg" },
+
+    Rtb:                  { group: "Misc",             label: "Return to Base (RTB)",           payload: null },
+  };
+  const KIND_GROUP_ORDER = ["AI Missions", "Waypoint Markers", "Deployment", "Logistics", "Carrier", "Strategic", "Misc"];
+
+  const state = {
+    isFullCfg: false,
+    fullCfgObj: null,
+    fileName: null,
+    sides: { Red: [], Blue: [], Neutral: [] },
+    currentSide: "Red",
+    currentIndex: -1,
+    filterText: "",
+    units: loadUnitsPref(),
+  };
+
+  // ---------- unit conversion (display only -- stored/exported values are always meters / m/s) ----------
+
+  const M_PER_FT = 0.3048;
+  const FT_PER_M = 1 / M_PER_FT;
+  const MS_PER_KT = 0.514444444;
+  const KT_PER_MS = 1 / MS_PER_KT;
+
+  function loadUnitsPref() {
+    try {
+      const saved = JSON.parse(localStorage.getItem("bfnext-action-editor-units"));
+      if (saved && (saved.altitude === "m" || saved.altitude === "ft") &&
+          (saved.speed === "ms" || saved.speed === "kt" || saved.speed === "mach")) return saved;
+    } catch (e) { /* localStorage unavailable (e.g. some file:// contexts) -- fall through to defaults */ }
+    return { altitude: "m", speed: "ms" };
+  }
+  function saveUnitsPref() {
+    try { localStorage.setItem("bfnext-action-editor-units", JSON.stringify(state.units)); } catch (e) { /* ignore */ }
+  }
+
+  // Local speed of sound (m/s) via the ISA troposphere/stratosphere model, for Mach<->m/s conversion.
+  function speedOfSoundAt(altitudeM) {
+    const alt = Number.isFinite(altitudeM) ? altitudeM : 0;
+    const t = alt <= 11000 ? 288.15 - 0.0065 * alt : 216.65;
+    return Math.sqrt(1.4 * 287.05 * t);
+  }
+
+  function altitudeToDisplay(m) { return state.units.altitude === "ft" ? m * FT_PER_M : m; }
+  function altitudeFromDisplay(v) { return state.units.altitude === "ft" ? v * M_PER_FT : v; }
+  function altitudeLabel() { return state.units.altitude === "ft" ? "ft" : "m"; }
+  function altitudeStep() { return state.units.altitude === "ft" ? 500 : 100; }
+
+  function speedToDisplay(ms, altitudeM) {
+    if (state.units.speed === "kt") return ms * KT_PER_MS;
+    if (state.units.speed === "mach") return ms / speedOfSoundAt(altitudeM);
+    return ms;
+  }
+  function speedFromDisplay(v, altitudeM) {
+    if (state.units.speed === "kt") return v * MS_PER_KT;
+    if (state.units.speed === "mach") return v * speedOfSoundAt(altitudeM);
+    return v;
+  }
+  function speedLabel() { return state.units.speed === "kt" ? "kt" : state.units.speed === "mach" ? "Mach" : "m/s"; }
+  function speedStep() { return state.units.speed === "mach" ? 0.05 : 10; }
+  function roundAltitudeForDisplay(v) { return Math.round(v); }
+  function roundSpeedForDisplay(v) { return state.units.speed === "mach" ? Math.round(v * 100) / 100 : Math.round(v); }
+
+  const els = {
+    tabs: document.getElementById("tabs"),
+    list: document.getElementById("list"),
+    detail: document.getElementById("detail"),
+    search: document.getElementById("search-box"),
+    status: document.getElementById("status-text"),
+    fileInput: document.getElementById("file-input"),
+    rawDetails: document.getElementById("raw-details"),
+    rawJson: document.getElementById("raw-json"),
+    unitAltitude: document.getElementById("unit-altitude"),
+    unitSpeed: document.getElementById("unit-speed"),
+  };
+  els.unitAltitude.value = state.units.altitude;
+  els.unitSpeed.value = state.units.speed;
+  els.unitAltitude.addEventListener("change", () => {
+    state.units.altitude = els.unitAltitude.value;
+    saveUnitsPref();
+    renderDetail();
+  });
+  els.unitSpeed.addEventListener("change", () => {
+    state.units.speed = els.unitSpeed.value;
+    saveUnitsPref();
+    renderDetail();
+  });
+
+  // ---------- helpers ----------
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  function safeNum(v, fallback) { return Number.isFinite(v) ? v : fallback; }
+  function emptyToNull(v) { return (typeof v === "string" && v.trim() === "") ? null : v; }
+
+  function getDeep(obj, path) {
+    return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+  }
+  function setDeep(obj, path, value) {
+    const keys = path.split(".");
+    let o = obj;
+    for (let i = 0; i < keys.length - 1; i++) o = o[keys[i]];
+    o[keys[keys.length - 1]] = value;
+  }
+
+  function currentItem() {
+    const arr = state.sides[state.currentSide];
+    if (state.currentIndex < 0 || state.currentIndex >= arr.length) return null;
+    return arr[state.currentIndex];
+  }
+
+  function getKindTag(item) { return typeof item.kind === "string" ? item.kind : Object.keys(item.kind)[0]; }
+  function getKindPayload(item) { const tag = getKindTag(item); return typeof item.kind === "string" ? null : item.kind[tag]; }
+
+  // ---------- payload defaults ----------
+
+  function defaultAiPlaneCfg() { return { kind: "FixedWing", duration: null, template: "", altitude: 3000, altitude_typ: "BARO", speed: 200, freq: null, tacan_channel: null, tacan_band: null, tacan_callsign: null, callsign_id: null, callsign_number: null }; }
+  function defaultAwacsCfg() { return { ewr: { range: 400000 }, plane: defaultAiPlaneCfg() }; }
+  function defaultBomberCfg() { return { targets: 10, power: 1000, accuracy: 15, plane: defaultAiPlaneCfg() }; }
+  function defaultDroneCfg() { return { jtac: { range: 16000, nolos: true, default_laser_code: 1688, name: null }, plane: defaultAiPlaneCfg() }; }
+  function defaultNukeCfg() { return { cost_scale: 5, power: 1000 }; }
+  function defaultDeployableCfg() { return { name: "", plane: null }; }
+  function defaultMoveCfg() { return { troop: 1000, deployable: 1000 }; }
+  function defaultNavalCruiseMissileCfg() { return { missiles_per_strike: 1, max_range: 100000, supply_cost: 100 }; }
+  function defaultArtilleryCfg() { return { units: {}, default_max_range_m: 30000, default_min_range_m: 4000, radius_m: 200, max_groups: 3 }; }
+  function defaultReconCfg() { return { plane: defaultAiPlaneCfg(), scan_radius_m: 10000, duration_secs: 300 }; }
+
+  const PAYLOAD_DEFAULTS = {
+    AiPlaneCfg: defaultAiPlaneCfg, AwacsCfg: defaultAwacsCfg, BomberCfg: defaultBomberCfg,
+    DroneCfg: defaultDroneCfg, NukeCfg: defaultNukeCfg, DeployableCfg: defaultDeployableCfg,
+    MoveCfg: defaultMoveCfg, NavalCruiseMissileCfg: defaultNavalCruiseMissileCfg,
+    ArtilleryCfg: defaultArtilleryCfg, ReconCfg: defaultReconCfg,
+  };
+
+  function newAction() {
+    return { name: "new-action", kind: { Tanker: defaultAiPlaneCfg() }, cost: 0, penalty: null, limit: null, geo_limit: "Unlimited" };
+  }
+
+  // ---------- loading / migration ----------
+
+  function coercePayload(type, raw) {
+    raw = raw || {};
+    switch (type) {
+      case "AiPlaneCfg": return Object.assign(defaultAiPlaneCfg(), raw);
+      case "AwacsCfg": return { ewr: Object.assign({ range: 0 }, raw.ewr), plane: Object.assign(defaultAiPlaneCfg(), raw.plane) };
+      case "BomberCfg": return Object.assign({ targets: 1, power: 0, accuracy: 0 }, raw, { plane: Object.assign(defaultAiPlaneCfg(), raw.plane) });
+      case "DroneCfg": return { jtac: Object.assign({ range: 0, nolos: false, default_laser_code: 1688, name: null }, raw.jtac), plane: Object.assign(defaultAiPlaneCfg(), raw.plane) };
+      case "NukeCfg": return Object.assign(defaultNukeCfg(), raw);
+      case "DeployableCfg": return { name: raw.name || "", plane: raw.plane ? Object.assign(defaultAiPlaneCfg(), raw.plane) : null };
+      case "MoveCfg": return Object.assign(defaultMoveCfg(), raw);
+      case "NavalCruiseMissileCfg": return Object.assign(defaultNavalCruiseMissileCfg(), raw);
+      case "ArtilleryCfg": return Object.assign(defaultArtilleryCfg(), raw, { units: Object.assign({}, raw.units) });
+      case "ReconCfg": return Object.assign({ scan_radius_m: 10000, duration_secs: 300 }, raw, { plane: Object.assign(defaultAiPlaneCfg(), raw.plane) });
+      default: return raw;
+    }
+  }
+
+  function coerceAction(name, raw) {
+    const item = Object.assign({ cost: 0, penalty: null, limit: null, geo_limit: "Unlimited", kind: "Rtb" }, raw);
+    item.name = name;
+    if (!Number.isFinite(item.cost)) item.cost = 0;
+    if (item.penalty === undefined) item.penalty = null;
+    if (item.limit === undefined) item.limit = null;
+    if (!item.geo_limit) item.geo_limit = "Unlimited";
+    if (item.geo_limit && typeof item.geo_limit === "object" && item.geo_limit.NearFriendlyObjective) {
+      item.geo_limit = { NearFriendlyObjective: { max: safeNum(item.geo_limit.NearFriendlyObjective.max, 5000) } };
+    }
+    const tag = getKindTag(item);
+    const def = KIND_DEFS[tag];
+    if (def && def.payload) item.kind = { [tag]: coercePayload(def.payload, getKindPayload(item)) };
+    else if (def) item.kind = tag;
+    return item;
+  }
+
+  function normalizeSideKey(k) {
+    const s = String(k).toLowerCase();
+    if (s === "red") return "Red";
+    if (s === "blue") return "Blue";
+    if (s === "neutral" || s === "neutrals") return "Neutral";
+    return null;
+  }
+
+  function parseLoadedJson(obj) {
+    let isFullCfg = false, fullCfgObj = null, sidesRaw = null;
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+      if (obj.actions && typeof obj.actions === "object") {
+        isFullCfg = true; fullCfgObj = obj; sidesRaw = obj.actions;
+      } else {
+        const vals = Object.values(obj);
+        if (vals.length && vals.every((v) => v && typeof v === "object" && !Array.isArray(v))) sidesRaw = obj;
+      }
+    }
+    if (!sidesRaw) throw new Error("Couldn't find an \"actions\" section (a map of side -> named actions) in this file.");
+    const sides = { Red: [], Blue: [], Neutral: [] };
+    for (const key of Object.keys(sidesRaw)) {
+      const norm = normalizeSideKey(key);
+      if (!norm) continue;
+      const actionsObj = sidesRaw[key] || {};
+      sides[norm] = Object.keys(actionsObj).map((name) => coerceAction(name, actionsObj[name]));
+    }
+    return { isFullCfg, fullCfgObj, sides };
+  }
+
+  // ---------- validation ----------
+
+  function validateAiPlaneCfg(p, prefix) {
+    const errs = [];
+    if (!p.template || !p.template.trim()) errs.push(prefix + "template name is required.");
+    if (!Number.isFinite(p.altitude) || p.altitude < 0) errs.push(prefix + "altitude must be zero or positive.");
+    if (!Number.isFinite(p.speed) || p.speed <= 0) errs.push(prefix + "speed must be a positive number.");
+    if (p.duration != null && (!Number.isFinite(p.duration) || p.duration <= 0)) errs.push(prefix + "duration must be a positive number if set.");
+    if (p.freq != null && (!Number.isFinite(p.freq) || p.freq <= 0)) errs.push(prefix + "radio frequency must be a positive number if set.");
+    if (p.tacan_channel != null && (!Number.isFinite(p.tacan_channel) || p.tacan_channel < 1 || p.tacan_channel > 126)) errs.push(prefix + "TACAN channel must be between 1 and 126.");
+    if (p.callsign_number != null && (!Number.isFinite(p.callsign_number) || p.callsign_number < 1)) errs.push(prefix + "callsign flight number must be a positive integer if set.");
+    return errs;
+  }
+
+  function validatePayload(type, p) {
+    const errs = [];
+    switch (type) {
+      case "AiPlaneCfg": errs.push(...validateAiPlaneCfg(p, "")); break;
+      case "AwacsCfg":
+        if (!Number.isFinite(p.ewr.range) || p.ewr.range <= 0) errs.push("EWR range must be a positive number.");
+        errs.push(...validateAiPlaneCfg(p.plane, "Aircraft: ")); break;
+      case "BomberCfg":
+        if (!Number.isFinite(p.targets) || p.targets < 1) errs.push("Targets per strike must be at least 1.");
+        if (!Number.isFinite(p.power) || p.power < 0) errs.push("Power must be zero or positive.");
+        if (!Number.isFinite(p.accuracy) || p.accuracy < 0) errs.push("Accuracy radius must be zero or positive.");
+        errs.push(...validateAiPlaneCfg(p.plane, "Aircraft: ")); break;
+      case "DroneCfg":
+        if (!Number.isFinite(p.jtac.range) || p.jtac.range <= 0) errs.push("JTAC range must be a positive number.");
+        if (!Number.isFinite(p.jtac.default_laser_code)) errs.push("JTAC laser code is required.");
+        else if (p.jtac.default_laser_code < 1111 || p.jtac.default_laser_code > 1788) errs.push("JTAC laser code should be between 1111 and 1788.");
+        errs.push(...validateAiPlaneCfg(p.plane, "Aircraft: ")); break;
+      case "NukeCfg":
+        if (!Number.isFinite(p.cost_scale) || p.cost_scale < 1) errs.push("Cost scale factor must be at least 1.");
+        if (!Number.isFinite(p.power) || p.power < 0) errs.push("Power must be zero or positive.");
+        break;
+      case "DeployableCfg":
+        if (!p.name || !p.name.trim()) errs.push("Deployable/troop name is required.");
+        if (p.plane) errs.push(...validateAiPlaneCfg(p.plane, "Carrier aircraft: "));
+        break;
+      case "MoveCfg":
+        if (!Number.isFinite(p.troop) || p.troop < 0) errs.push("Troop move range must be zero or positive.");
+        if (!Number.isFinite(p.deployable) || p.deployable < 0) errs.push("Deployable move range must be zero or positive.");
+        break;
+      case "NavalCruiseMissileCfg":
+        if (!Number.isFinite(p.missiles_per_strike) || p.missiles_per_strike < 1) errs.push("Missiles per strike must be at least 1.");
+        if (!Number.isFinite(p.max_range) || p.max_range <= 0) errs.push("Max range must be a positive number.");
+        if (!Number.isFinite(p.supply_cost) || p.supply_cost < 0) errs.push("Supply cost must be zero or positive.");
+        break;
+      case "ArtilleryCfg":
+        if (!Number.isFinite(p.default_max_range_m) || p.default_max_range_m <= 0) errs.push("Default max range must be a positive number.");
+        if (!Number.isFinite(p.default_min_range_m) || p.default_min_range_m < 0) errs.push("Default min range must be zero or positive.");
+        if (p.default_min_range_m >= p.default_max_range_m) errs.push("Default min range must be less than default max range.");
+        if (!Number.isFinite(p.radius_m) || p.radius_m < 0) errs.push("Scatter radius must be zero or positive.");
+        if (!Number.isFinite(p.max_groups) || p.max_groups < 1) errs.push("Max simultaneous groups must be at least 1.");
+        Object.keys(p.units).forEach((k) => {
+          const u = p.units[k];
+          if (!Number.isFinite(u.max_range_m) || u.max_range_m <= 0) errs.push('Unit "' + k + '": max range must be a positive number.');
+          if (!Number.isFinite(u.min_range_m) || u.min_range_m < 0) errs.push('Unit "' + k + '": min range must be zero or positive.');
+        });
+        break;
+      case "ReconCfg":
+        if (!Number.isFinite(p.scan_radius_m) || p.scan_radius_m <= 0) errs.push("Scan radius must be a positive number.");
+        if (!Number.isFinite(p.duration_secs) || p.duration_secs <= 0) errs.push("Loiter duration must be a positive number.");
+        errs.push(...validateAiPlaneCfg(p.plane, "Aircraft: "));
+        break;
+    }
+    return errs;
+  }
+
+  function validateAction(item, allNames) {
+    const errs = [];
+    if (!item.name || !item.name.trim()) errs.push("Action name is required.");
+    else if (allNames.filter((n) => n === item.name).length > 1) errs.push('Action name must be unique within this side ("' + item.name + '" is used more than once).');
+
+    if (!Number.isFinite(item.cost) || item.cost < 0) errs.push("Cost must be zero or positive.");
+    if (item.penalty != null && (!Number.isFinite(item.penalty) || item.penalty < 0)) errs.push("Penalty must be zero or positive.");
+    if (item.limit != null && (!Number.isFinite(item.limit) || item.limit < 1)) errs.push("Concurrent use limit must be at least 1.");
+    if (item.geo_limit && typeof item.geo_limit === "object") {
+      const max = item.geo_limit.NearFriendlyObjective.max;
+      if (!Number.isFinite(max) || max <= 0) errs.push("Near-objective max distance must be a positive number.");
+    }
+
+    const tag = getKindTag(item);
+    const def = KIND_DEFS[tag];
+    if (!def) errs.push('Unrecognized action kind "' + tag + '".');
+    else if (def.payload) errs.push(...validatePayload(def.payload, getKindPayload(item)));
+    return errs;
+  }
+
+  function countInvalid() {
+    let n = 0;
+    for (const side of SIDES) {
+      const names = state.sides[side].map((a) => a.name);
+      for (const item of state.sides[side]) if (validateAction(item, names).length) n++;
+    }
+    return n;
+  }
+
+  // ---------- export ----------
+
+  function cleanAiPlane(p) {
+    p.altitude = safeNum(p.altitude, 0);
+    p.speed = Math.max(1, safeNum(p.speed, 100));
+    if (p.duration != null && !Number.isFinite(p.duration)) p.duration = null;
+    if (p.freq != null && !Number.isFinite(p.freq)) p.freq = null;
+    if (p.tacan_channel != null && !Number.isFinite(p.tacan_channel)) p.tacan_channel = null;
+    if (p.tacan_channel == null) {
+      p.tacan_band = null;
+      p.tacan_callsign = null;
+    } else {
+      p.tacan_band = p.tacan_band === "X" ? "X" : "Y";
+      p.tacan_callsign = emptyToNull(p.tacan_callsign);
+    }
+    if (p.callsign_id != null && !Number.isFinite(p.callsign_id)) p.callsign_id = null;
+    p.callsign_number = p.callsign_id == null ? null : Math.max(1, safeNum(p.callsign_number, 1));
+    return p;
+  }
+
+  function cleanPayloadForExport(type, raw) {
+    const p = JSON.parse(JSON.stringify(raw));
+    switch (type) {
+      case "AiPlaneCfg": return cleanAiPlane(p);
+      case "AwacsCfg": p.ewr.range = safeNum(p.ewr.range, 0); p.plane = cleanAiPlane(p.plane); return p;
+      case "BomberCfg": p.targets = Math.max(1, safeNum(p.targets, 1)); p.power = safeNum(p.power, 0); p.accuracy = safeNum(p.accuracy, 0); p.plane = cleanAiPlane(p.plane); return p;
+      case "DroneCfg": p.jtac.range = safeNum(p.jtac.range, 0); p.jtac.default_laser_code = safeNum(p.jtac.default_laser_code, 1688); p.jtac.nolos = !!p.jtac.nolos; p.jtac.name = emptyToNull(p.jtac.name); p.plane = cleanAiPlane(p.plane); return p;
+      case "NukeCfg": p.cost_scale = Math.max(1, safeNum(p.cost_scale, 1)); p.power = safeNum(p.power, 0); return p;
+      case "DeployableCfg": p.name = (p.name || "").trim(); p.plane = p.plane ? cleanAiPlane(p.plane) : null; return p;
+      case "MoveCfg": p.troop = safeNum(p.troop, 0); p.deployable = safeNum(p.deployable, 0); return p;
+      case "NavalCruiseMissileCfg": p.missiles_per_strike = Math.max(1, safeNum(p.missiles_per_strike, 1)); p.max_range = safeNum(p.max_range, 0); p.supply_cost = safeNum(p.supply_cost, 0); return p;
+      case "ArtilleryCfg":
+        p.default_max_range_m = safeNum(p.default_max_range_m, 30000);
+        p.default_min_range_m = safeNum(p.default_min_range_m, 0);
+        p.radius_m = safeNum(p.radius_m, 0);
+        p.max_groups = Math.max(1, safeNum(p.max_groups, 1));
+        Object.keys(p.units).forEach((k) => { p.units[k].max_range_m = safeNum(p.units[k].max_range_m, 0); p.units[k].min_range_m = safeNum(p.units[k].min_range_m, 0); });
+        return p;
+      case "ReconCfg": p.scan_radius_m = safeNum(p.scan_radius_m, 0); p.duration_secs = safeNum(p.duration_secs, 0); p.plane = cleanAiPlane(p.plane); return p;
+      default: return p;
+    }
+  }
+
+  function cleanActionForExport(item) {
+    const tag = getKindTag(item);
+    const def = KIND_DEFS[tag];
+    const kindOut = def && def.payload ? { [tag]: cleanPayloadForExport(def.payload, getKindPayload(item)) } : tag;
+    return {
+      kind: kindOut,
+      cost: safeNum(item.cost, 0),
+      penalty: item.penalty == null ? null : safeNum(item.penalty, 0),
+      limit: item.limit == null ? null : Math.max(1, safeNum(item.limit, 1)),
+      geo_limit: typeof item.geo_limit === "string" ? item.geo_limit : { NearFriendlyObjective: { max: safeNum(item.geo_limit.NearFriendlyObjective.max, 5000) } },
+    };
+  }
+
+  function buildExportObject() {
+    const sidesOut = {};
+    for (const side of SIDES) {
+      const obj = {};
+      state.sides[side].forEach((item, i) => {
+        const key = (item.name || "").trim() || ("unnamed-" + (i + 1));
+        obj[key] = cleanActionForExport(item);
+      });
+      sidesOut[side] = obj;
+    }
+    if (state.isFullCfg) {
+      const merged = JSON.parse(JSON.stringify(state.fullCfgObj));
+      merged.actions = sidesOut;
+      return merged;
+    }
+    return sidesOut;
+  }
+
+  function downloadJSON() {
+    const text = JSON.stringify(buildExportObject(), null, 2);
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = state.isFullCfg ? (state.fileName || "cfg.json") : "actions.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleDownload() {
+    const invalid = countInvalid();
+    if (invalid > 0) {
+      const ok = confirm(invalid + " action" + (invalid === 1 ? "" : "s") + " still " +
+        (invalid === 1 ? "has" : "have") + " validation issues shown in the sidebar. " +
+        "The exported file may not load correctly in the campaign. Download anyway?");
+      if (!ok) return;
+    }
+    downloadJSON();
+  }
+
+  function updateRawPreview() {
+    if (!els.rawDetails.open) return;
+    els.rawJson.textContent = JSON.stringify(buildExportObject(), null, 2);
+  }
+
+  // ---------- rendering: sidebar ----------
+
+  function itemSubHtml(item, allNames) {
+    const tag = getKindTag(item);
+    const label = KIND_DEFS[tag] ? KIND_DEFS[tag].label : tag;
+    const errs = validateAction(item, allNames);
+    return escapeHtml(label) + " · " + (item.cost || 0) + " pts" +
+      (errs.length ? ' · <span class="err-count">' + errs.length + " issue" + (errs.length === 1 ? "" : "s") + "</span>" : "");
+  }
+
+  function renderTabs() {
+    els.tabs.innerHTML = SIDES.map((side) => {
+      const count = state.sides[side].length;
+      const names = state.sides[side].map((a) => a.name);
+      const invalid = state.sides[side].filter((d) => validateAction(d, names).length > 0).length;
+      const active = side === state.currentSide ? "active" : "";
+      const badge = invalid > 0 ? '<span class="badge bad">' + invalid + "</span>" : "";
+      return '<button class="tab ' + active + '" data-side="' + side + '">' + side +
+        ' <span class="count">' + count + "</span>" + badge + "</button>";
+    }).join("");
+  }
+
+  function renderSidebar() {
+    renderTabs();
+    const list = state.sides[state.currentSide];
+    const names = list.map((a) => a.name);
+    const filter = state.filterText.trim().toLowerCase();
+    let html = "";
+    list.forEach((item, i) => {
+      if (filter && !(item.name || "").toLowerCase().includes(filter)) return;
+      const errs = validateAction(item, names);
+      const cls = ["item"];
+      if (i === state.currentIndex) cls.push("selected");
+      if (errs.length) cls.push("invalid");
+      html += '<div class="' + cls.join(" ") + '" data-index="' + i + '">' +
+        '<div class="item-main">' +
+        '<div class="item-title">' + escapeHtml(item.name || "(unnamed)") + "</div>" +
+        '<div class="item-sub">' + itemSubHtml(item, names) + "</div>" +
+        "</div>" +
+        '<div class="item-actions">' +
+        '<button class="icon-btn" data-action="dup" data-index="' + i + '" title="Duplicate">⧉</button>' +
+        '<button class="icon-btn danger" data-action="del" data-index="' + i + '" title="Delete">✕</button>' +
+        "</div></div>";
+    });
+    els.list.innerHTML = html || '<div class="empty-hint">No actions' + (filter ? " match your search." :
+      ' yet for this side.<br><br>Click <strong>+ New</strong> above, or use <strong>Open File…</strong> / <strong>Load Example</strong> in the toolbar.') + "</div>";
+    updateRawPreview();
+  }
+
+  function updateCurrentSidebarItem() {
+    const item = currentItem();
+    renderTabs();
+    if (!item) return;
+    const names = state.sides[state.currentSide].map((a) => a.name);
+    const node = els.list.querySelector('.item[data-index="' + state.currentIndex + '"]');
+    if (node) {
+      const errs = validateAction(item, names);
+      node.classList.toggle("invalid", errs.length > 0);
+      node.querySelector(".item-title").textContent = item.name || "(unnamed)";
+      node.querySelector(".item-sub").innerHTML = itemSubHtml(item, names);
+    }
+    updateRawPreview();
+  }
+
+  // ---------- rendering: payload fieldsets ----------
+
+  function aiPlaneCfgFields(basePath, plane) {
+    return '<div class="field-grid">' +
+      '<div class="field"><label>Aircraft Kind</label><select data-bind="' + basePath + '.kind">' +
+      '<option value="FixedWing" ' + (plane.kind === "FixedWing" ? "selected" : "") + '>Fixed Wing</option>' +
+      '<option value="Helicopter" ' + (plane.kind === "Helicopter" ? "selected" : "") + '>Helicopter</option>' +
+      "</select></div>" +
+      '<div class="field"><label>Template <span class="hint">DCS group template to spawn</span></label>' +
+      '<input type="text" value="' + escapeHtml(plane.template) + '" data-bind="' + basePath + '.template" placeholder="e.g. RAWACS"></div>' +
+      '<div class="field"><label>Altitude (' + altitudeLabel() + ')</label>' +
+      '<input type="number" step="' + altitudeStep() + '" min="0" value="' + roundAltitudeForDisplay(altitudeToDisplay(plane.altitude)) +
+      '" data-bind-alt="' + basePath + '.altitude"></div>' +
+      '<div class="field"><label>Altitude Type</label><select data-bind="' + basePath + '.altitude_typ">' +
+      '<option value="BARO" ' + (plane.altitude_typ === "BARO" ? "selected" : "") + '>Barometric (MSL)</option>' +
+      '<option value="RADIO" ' + (plane.altitude_typ === "RADIO" ? "selected" : "") + '>Radar (AGL)</option>' +
+      "</select></div>" +
+      '<div class="field"><label>Speed (' + speedLabel() + ')' +
+      (state.units.speed === "mach" ? ' <span class="hint">converted using the altitude above</span>' : "") + "</label>" +
+      '<input type="number" step="' + speedStep() + '" min="0" value="' + roundSpeedForDisplay(speedToDisplay(plane.speed, plane.altitude)) +
+      '" data-bind-spd="' + basePath + '.speed" data-alt-ref="' + basePath + '.altitude"></div>' +
+      '<div class="field"><label>Duration (hours) <span class="hint">optional</span></label>' +
+      '<input type="number" step="1" min="0" value="' + (plane.duration == null ? "" : plane.duration) + '" data-bind-optnum="' + basePath + '.duration" placeholder="unlimited"></div>' +
+      '<div class="field"><label>Radio Frequency (Hz) <span class="hint">optional</span></label>' +
+      '<input type="number" step="1000" min="0" value="' + (plane.freq == null ? "" : plane.freq) + '" data-bind-optnum="' + basePath + '.freq" placeholder="none"></div>' +
+      '<div class="field"><label>TACAN Channel <span class="hint">optional, 1-126 — lets players home in without the radio freq</span></label>' +
+      '<input type="number" step="1" min="1" max="126" value="' + (plane.tacan_channel == null ? "" : plane.tacan_channel) + '" data-bind-optnum="' + basePath + '.tacan_channel" placeholder="none"></div>' +
+      '<div class="field"><label>TACAN Band</label><select data-bind="' + basePath + '.tacan_band">' +
+      '<option value="X" ' + (plane.tacan_band === "X" ? "selected" : "") + '>X</option>' +
+      '<option value="Y" ' + (plane.tacan_band !== "X" ? "selected" : "") + '>Y</option>' +
+      "</select></div>" +
+      '<div class="field"><label>TACAN Callsign <span class="hint">optional, e.g. TEX — defaults to first 3 letters of the action name</span></label>' +
+      '<input type="text" value="' + escapeHtml(plane.tacan_callsign || "") + '" data-bind="' + basePath + '.tacan_callsign" placeholder="auto"></div>' +
+      '<div class="field"><label>DCS Callsign Id <span class="hint">optional — the number from the Mission Editor\'s Callsign dropdown for this aircraft type (e.g. Tanker family: Texaco/Arco/Shell)</span></label>' +
+      '<input type="number" step="1" min="1" value="' + (plane.callsign_id == null ? "" : plane.callsign_id) + '" data-bind-optnum="' + basePath + '.callsign_id" placeholder="none"></div>' +
+      '<div class="field"><label>Callsign Flight Number <span class="hint">e.g. 1 for "Texaco 1-1"</span></label>' +
+      '<input type="number" step="1" min="1" value="' + (plane.callsign_number == null ? "" : plane.callsign_number) + '" data-bind-optnum="' + basePath + '.callsign_number" placeholder="1"></div>' +
+      "</div>";
+  }
+
+  function awacsCfgFields(basePath, cfg) {
+    return '<div class="field"><label>EWR Detection Range (m)</label><input type="number" step="1000" min="0" value="' + cfg.ewr.range + '" data-bind="' + basePath + '.ewr.range"></div>' +
+      '<h4 class="subhead">Aircraft</h4>' + aiPlaneCfgFields(basePath + ".plane", cfg.plane);
+  }
+
+  function bomberCfgFields(basePath, cfg) {
+    return '<div class="field-grid">' +
+      '<div class="field"><label>Targets per Strike</label><input type="number" step="1" min="1" value="' + cfg.targets + '" data-bind="' + basePath + '.targets"></div>' +
+      '<div class="field"><label>Power (kg per bomb)</label><input type="number" step="10" min="0" value="' + cfg.power + '" data-bind="' + basePath + '.power"></div>' +
+      '<div class="field"><label>Accuracy Radius (m)</label><input type="number" step="1" min="0" value="' + cfg.accuracy + '" data-bind="' + basePath + '.accuracy"></div>' +
+      "</div><h4 class=\"subhead\">Aircraft</h4>" + aiPlaneCfgFields(basePath + ".plane", cfg.plane);
+  }
+
+  function droneCfgFields(basePath, cfg) {
+    return '<div class="field-grid">' +
+      '<div class="field"><label>JTAC Range (m)</label><input type="number" step="1000" min="0" value="' + cfg.jtac.range + '" data-bind="' + basePath + '.jtac.range"></div>' +
+      '<div class="field checkbox-field"><label><input type="checkbox" ' + (cfg.jtac.nolos ? "checked" : "") + ' data-bind="' + basePath + '.jtac.nolos"> Ignore line of sight</label></div>' +
+      '<div class="field"><label>Default Laser Code</label><input type="number" step="1" min="1111" max="1788" value="' + cfg.jtac.default_laser_code + '" data-bind="' + basePath + '.jtac.default_laser_code"></div>' +
+      '<div class="field"><label>Callsign <span class="hint">optional</span></label><input type="text" value="' + escapeHtml(cfg.jtac.name || "") + '" data-bind="' + basePath + '.jtac.name"></div>' +
+      "</div><h4 class=\"subhead\">Aircraft</h4>" + aiPlaneCfgFields(basePath + ".plane", cfg.plane);
+  }
+
+  function nukeCfgFields(basePath, cfg) {
+    return '<div class="field-grid">' +
+      '<div class="field"><label>Cost Scale-down Factor <span class="hint">next nuke divides cost by this</span></label>' +
+      '<input type="number" step="1" min="1" max="255" value="' + cfg.cost_scale + '" data-bind="' + basePath + '.cost_scale"></div>' +
+      '<div class="field"><label>Power (kt)</label><input type="number" step="10" min="0" value="' + cfg.power + '" data-bind="' + basePath + '.power"></div>' +
+      "</div>";
+  }
+
+  function deployableCfgFields(basePath, cfg) {
+    const planeSection = cfg.plane ? '<h4 class="subhead">Carrier Aircraft</h4>' + aiPlaneCfgFields(basePath + ".plane", cfg.plane) : "";
+    return '<div class="field"><label>Deployable / Troop Name <span class="hint">must match a Troop name or Deployable leaf path segment</span></label>' +
+      '<input type="text" value="' + escapeHtml(cfg.name) + '" data-bind="' + basePath + '.name" placeholder="e.g. Standard"></div>' +
+      '<div class="field checkbox-field"><label><input type="checkbox" ' + (cfg.plane ? "checked" : "") +
+      ' data-toggle="opt" data-toggle-path="' + basePath + '.plane" data-toggle-default="AiPlaneCfg"> Requires a carrier aircraft (paradrop / airlift)</label></div>' +
+      planeSection;
+  }
+
+  function moveCfgFields(basePath, cfg) {
+    return '<div class="field-grid">' +
+      '<div class="field"><label>Troop Move Range (m per point)</label><input type="number" step="10" min="0" value="' + cfg.troop + '" data-bind="' + basePath + '.troop"></div>' +
+      '<div class="field"><label>Deployable Move Range (m per point)</label><input type="number" step="10" min="0" value="' + cfg.deployable + '" data-bind="' + basePath + '.deployable"></div>' +
+      "</div>";
+  }
+
+  function navalCruiseMissileCfgFields(basePath, cfg) {
+    return '<div class="field-grid">' +
+      '<div class="field"><label>Missiles per Strike</label><input type="number" step="1" min="1" max="255" value="' + cfg.missiles_per_strike + '" data-bind="' + basePath + '.missiles_per_strike"></div>' +
+      '<div class="field"><label>Max Range (m)</label><input type="number" step="1000" min="0" value="' + cfg.max_range + '" data-bind="' + basePath + '.max_range"></div>' +
+      '<div class="field"><label>Supply Cost <span class="hint">deducted from carrier warehouse</span></label><input type="number" step="10" min="0" value="' + cfg.supply_cost + '" data-bind="' + basePath + '.supply_cost"></div>' +
+      "</div>";
+  }
+
+  function artilleryCfgFields(basePath, cfg) {
+    const rows = Object.keys(cfg.units).map((key) => {
+      const u = cfg.units[key];
+      return '<div class="crate-box" data-unit-key="' + escapeHtml(key) + '">' +
+        '<div class="crate-box-header"><input type="text" class="unit-key-input" value="' + escapeHtml(key) + '" data-artillery-field="key" placeholder="DCS unit type, e.g. M142 HIMARS">' +
+        '<button class="icon-btn danger" data-action="remove-unit" title="Remove override">✕</button></div>' +
+        '<div class="field-grid">' +
+        '<div class="field"><label>Max Range (m)</label><input type="number" step="100" min="0" value="' + u.max_range_m + '" data-artillery-field="max_range_m"></div>' +
+        '<div class="field"><label>Min Range (m)</label><input type="number" step="100" min="0" value="' + u.min_range_m + '" data-artillery-field="min_range_m"></div>' +
+        "</div></div>";
+    }).join("");
+    return '<div class="field-grid">' +
+      '<div class="field"><label>Default Max Range (m)</label><input type="number" step="1000" min="0" value="' + cfg.default_max_range_m + '" data-bind="' + basePath + '.default_max_range_m"></div>' +
+      '<div class="field"><label>Default Min Range (m)</label><input type="number" step="500" min="0" value="' + cfg.default_min_range_m + '" data-bind="' + basePath + '.default_min_range_m"></div>' +
+      '<div class="field"><label>Scatter Radius (m)</label><input type="number" step="10" min="0" value="' + cfg.radius_m + '" data-bind="' + basePath + '.radius_m"></div>' +
+      '<div class="field"><label>Max Simultaneous Groups</label><input type="number" step="1" min="1" value="' + cfg.max_groups + '" data-bind="' + basePath + '.max_groups"></div>' +
+      "</div>" +
+      '<h4 class="subhead">Per-Unit-Type Range Overrides <span class="hint">optional — falls back to the defaults above</span></h4>' +
+      (rows || '<p class="hint">No overrides — every unit type uses the defaults above.</p>') +
+      '<button class="btn small" data-action="add-unit">+ Add Unit Override</button>';
+  }
+
+  function reconCfgFields(basePath, cfg) {
+    return '<div class="field-grid">' +
+      '<div class="field"><label>Scan Radius (m)</label><input type="number" step="500" min="0" value="' + cfg.scan_radius_m + '" data-bind="' + basePath + '.scan_radius_m"></div>' +
+      '<div class="field"><label>Loiter Duration (s)</label><input type="number" step="10" min="0" value="' + cfg.duration_secs + '" data-bind="' + basePath + '.duration_secs"></div>' +
+      "</div><h4 class=\"subhead\">Aircraft</h4>" + aiPlaneCfgFields(basePath + ".plane", cfg.plane);
+  }
+
+  const PAYLOAD_RENDERERS = {
+    AiPlaneCfg: aiPlaneCfgFields, AwacsCfg: awacsCfgFields, BomberCfg: bomberCfgFields,
+    DroneCfg: droneCfgFields, NukeCfg: nukeCfgFields, DeployableCfg: deployableCfgFields,
+    MoveCfg: moveCfgFields, NavalCruiseMissileCfg: navalCruiseMissileCfgFields,
+    ArtilleryCfg: artilleryCfgFields, ReconCfg: reconCfgFields,
+  };
+
+  // ---------- rendering: detail ----------
+
+  function kindSection(item) {
+    const tag = getKindTag(item);
+    const grouped = {};
+    Object.keys(KIND_DEFS).forEach((k) => { (grouped[KIND_DEFS[k].group] = grouped[KIND_DEFS[k].group] || []).push(k); });
+    const selectHtml = '<select name="action-kind-tag">' + KIND_GROUP_ORDER.map((g) =>
+      '<optgroup label="' + g + '">' + grouped[g].map((k) =>
+        '<option value="' + k + '" ' + (k === tag ? "selected" : "") + '>' + KIND_DEFS[k].label + "</option>"
+      ).join("") + "</optgroup>"
+    ).join("") + "</select>";
+
+    const def = KIND_DEFS[tag];
+    const payloadHtml = def && def.payload
+      ? PAYLOAD_RENDERERS[def.payload]("kind." + tag, getKindPayload(item))
+      : '<p class="hint">This action type is a marker with no additional configuration.</p>';
+
+    return '<div class="field"><label>Action Type</label>' + selectHtml + "</div>" + payloadHtml;
+  }
+
+  function actionMetaSection(item) {
+    const geoTag = typeof item.geo_limit === "string" ? item.geo_limit : Object.keys(item.geo_limit)[0];
+    const geoMax = geoTag === "NearFriendlyObjective" ? item.geo_limit.NearFriendlyObjective.max : "";
+    return '<div class="field-grid">' +
+      '<div class="field"><label>Cost (pts)</label><input type="number" step="1" min="0" value="' + item.cost + '" data-bind="cost"></div>' +
+      '<div class="field"><label>Penalty on Failure (pts) <span class="hint">optional</span></label>' +
+      '<input type="number" step="1" min="0" value="' + (item.penalty == null ? "" : item.penalty) + '" data-bind-optnum="penalty" placeholder="none"></div>' +
+      '<div class="field"><label>Concurrent Use Limit <span class="hint">optional</span></label>' +
+      '<input type="number" step="1" min="1" value="' + (item.limit == null ? "" : item.limit) + '" data-bind-optnum="limit" placeholder="unlimited"></div>' +
+      "</div>" +
+      '<div class="field"><label>Where can this be used?</label><div class="radio-row">' +
+      '<label><input type="radio" name="geo-limit-tag" value="Unlimited" ' + (geoTag === "Unlimited" ? "checked" : "") + "> Anywhere</label>" +
+      '<label><input type="radio" name="geo-limit-tag" value="NearFriendlyObjective" ' + (geoTag === "NearFriendlyObjective" ? "checked" : "") + "> Near a friendly objective</label>" +
+      "</div>" +
+      (geoTag === "NearFriendlyObjective" ? '<div class="field"><label>Max Distance (m)</label><input type="number" step="1000" min="0" value="' + geoMax + '" data-bind="geo_limit.NearFriendlyObjective.max"></div>' : "") +
+      "</div>";
+  }
+
+  function renderDetail() {
+    const item = currentItem();
+    if (!item) {
+      els.detail.innerHTML = '<div class="empty-state">' +
+        "<h2>Nothing selected</h2>" +
+        "<p>Pick an action from the list on the left, click <strong>+ New</strong> to create one, " +
+        "or use <strong>Open File…</strong> / <strong>Load Example</strong> in the toolbar above.</p></div>";
+      return;
+    }
+
+    els.detail.innerHTML =
+      '<div class="detail-scroll">' +
+      '<section class="card"><h3>Name</h3><p class="hint">The key this action is registered under (must be unique per side).</p>' +
+      '<input type="text" value="' + escapeHtml(item.name) + '" data-bind="name" placeholder="e.g. awacs"></section>' +
+
+      '<section class="card"><h3>Kind</h3>' + kindSection(item) + "</section>" +
+
+      '<section class="card"><h3>Cost, Limits &amp; Geography</h3>' + actionMetaSection(item) + "</section>" +
+
+      '<div id="errors-panel"></div>' +
+      "</div>";
+
+    updateErrorsPanel();
+  }
+
+  function updateErrorsPanel() {
+    const item = currentItem();
+    const panel = document.getElementById("errors-panel");
+    if (!panel || !item) return;
+    const names = state.sides[state.currentSide].map((a) => a.name);
+    const errs = validateAction(item, names);
+    panel.innerHTML = errs.length
+      ? '<div class="errors-box"><strong>' + errs.length + " issue" + (errs.length === 1 ? "" : "s") + " found:</strong><ul>" +
+        errs.map((e) => "<li>" + escapeHtml(e) + "</li>").join("") + "</ul></div>"
+      : '<div class="ok-box">✓ Looks good — no validation issues.</div>';
+  }
+
+  // ---------- app control ----------
+
+  function setStatus(text) { els.status.textContent = text; }
+
+  function selectIndex(i) {
+    state.currentIndex = i;
+    renderSidebar();
+    renderDetail();
+  }
+
+  function switchSide(side) {
+    state.currentSide = side;
+    state.currentIndex = state.sides[side].length ? 0 : -1;
+    renderSidebar();
+    renderDetail();
+  }
+
+  function loadState(sides, isFullCfg, fullCfgObj, fileName) {
+    state.sides = sides;
+    state.isFullCfg = isFullCfg;
+    state.fullCfgObj = fullCfgObj;
+    state.fileName = fileName;
+    state.currentSide = state.sides.Red.length ? "Red" : (state.sides.Blue.length ? "Blue" : "Neutral");
+    state.currentIndex = state.sides[state.currentSide].length ? 0 : -1;
+    renderSidebar();
+    renderDetail();
+  }
+
+  const EXAMPLE_DATA = {
+    Red: [
+      { name: "awacs", cost: 100, penalty: 100, limit: null, geo_limit: "Unlimited",
+        kind: { Awacs: { ewr: { range: 400000 }, plane: { kind: "FixedWing", duration: 8, template: "RAWACS", altitude: 11000, altitude_typ: "BARO", speed: 200, freq: 125000000, tacan_channel: 1, tacan_band: "Y", tacan_callsign: "MAGIC" } } } },
+      { name: "awacs-waypoint", cost: 10, penalty: null, limit: null, geo_limit: "Unlimited", kind: "AwacsWaypoint" },
+      { name: "tanker", cost: 50, penalty: 50, limit: null, geo_limit: "Unlimited",
+        kind: { Tanker: { kind: "FixedWing", duration: 8, template: "RTANKER", altitude: 10000, altitude_typ: "BARO", speed: 180, freq: 125000000, tacan_channel: 11, tacan_band: "Y", tacan_callsign: "TEX" } } },
+      { name: "drone", cost: 25, penalty: 25, limit: null, geo_limit: "Unlimited",
+        kind: { Drone: { plane: { kind: "FixedWing", duration: 12, template: "RDRONE", altitude: 7000, altitude_typ: "BARO", speed: 90, freq: null },
+                         jtac: { range: 16000, nolos: true, default_laser_code: 1688, name: null } } } },
+      { name: "bomber", cost: 100, penalty: 100, limit: null, geo_limit: "Unlimited",
+        kind: { Bomber: { targets: 15, power: 1000, accuracy: 15, plane: { kind: "FixedWing", template: "RBOMBER", altitude: 12000, altitude_typ: "BARO", duration: null, speed: 500, freq: null } } } },
+      { name: "paratroops", cost: 50, penalty: 100, limit: null, geo_limit: "Unlimited",
+        kind: { Paratrooper: { name: "Standard", plane: { kind: "Helicopter", template: "RTROOPCARRIER", altitude: 500, altitude_typ: "RADIO", speed: 70, duration: null, freq: null } } } },
+      { name: "nuke", cost: 5000, penalty: null, limit: 1, geo_limit: "Unlimited", kind: { Nuke: { cost_scale: 5, power: 1000 } } },
+      { name: "move", cost: 10, penalty: 25, limit: null, geo_limit: "Unlimited", kind: { Move: { troop: 1000, deployable: 1000 } } },
+      { name: "arty", cost: 30, penalty: 20, limit: 2, geo_limit: { NearFriendlyObjective: { max: 40000 } },
+        kind: { Artillery: { units: { "M142 HIMARS": { max_range_m: 70000, min_range_m: 15000 } }, default_max_range_m: 30000, default_min_range_m: 4000, radius_m: 200, max_groups: 3 } } },
+    ],
+    Blue: [
+      { name: "tanker", cost: 50, penalty: 50, limit: null, geo_limit: "Unlimited",
+        kind: { Tanker: { kind: "FixedWing", duration: 8, template: "BTANKER", altitude: 10000, altitude_typ: "BARO", speed: 180, freq: 125000000 } } },
+      { name: "transfer", cost: 100, penalty: 100, limit: null, geo_limit: "Unlimited",
+        kind: { LogisticsTransfer: { kind: "Helicopter", template: "BCARGOCARRIER", altitude: 500, altitude_typ: "RADIO", duration: null, speed: 70, freq: null } } },
+      { name: "rtb", cost: 0, penalty: null, limit: null, geo_limit: "Unlimited", kind: "Rtb" },
+    ],
+    Neutral: [],
+  };
+
+  function loadExample() {
+    loadState(
+      { Red: EXAMPLE_DATA.Red.map((a) => coerceAction(a.name, a)), Blue: EXAMPLE_DATA.Blue.map((a) => coerceAction(a.name, a)), Neutral: [] },
+      false, null, null
+    );
+    setStatus("Example data loaded — not tied to any file.");
+  }
+
+  function startBlank() {
+    loadState({ Red: [], Blue: [], Neutral: [] }, false, null, null);
+    setStatus("Blank workspace — not tied to any file.");
+  }
+
+  function loadFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const obj = JSON.parse(reader.result);
+        const parsed = parseLoadedJson(obj);
+        loadState(parsed.sides, parsed.isFullCfg, parsed.fullCfgObj, file.name);
+        setStatus("Loaded " + file.name + (parsed.isFullCfg ? " (full campaign cfg)" : " (actions only)") + ".");
+      } catch (err) {
+        alert("Could not read this file as an actions config:\n\n" + err.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  // ---------- event wiring ----------
+
+  els.fileInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) loadFile(file);
+    e.target.value = "";
+  });
+  document.getElementById("btn-example").addEventListener("click", loadExample);
+  document.getElementById("btn-blank").addEventListener("click", () => {
+    if (state.sides.Red.length === 0 && state.sides.Blue.length === 0 && state.sides.Neutral.length === 0) { startBlank(); return; }
+    if (confirm("Discard current data and start blank?")) startBlank();
+  });
+  document.getElementById("btn-download").addEventListener("click", handleDownload);
+  document.getElementById("btn-new").addEventListener("click", () => {
+    const arr = state.sides[state.currentSide];
+    arr.push(newAction());
+    selectIndex(arr.length - 1);
+  });
+
+  els.search.addEventListener("input", (e) => { state.filterText = e.target.value; renderSidebar(); });
+
+  els.tabs.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab");
+    if (btn) switchSide(btn.dataset.side);
+  });
+
+  els.list.addEventListener("click", (e) => {
+    const actionBtn = e.target.closest("button[data-action]");
+    if (actionBtn) {
+      const i = Number(actionBtn.dataset.index);
+      const arr = state.sides[state.currentSide];
+      if (actionBtn.dataset.action === "dup") {
+        const clone = JSON.parse(JSON.stringify(arr[i]));
+        clone.name = clone.name + "-copy";
+        arr.splice(i + 1, 0, clone);
+        selectIndex(i + 1);
+      } else if (actionBtn.dataset.action === "del") {
+        if (confirm('Delete "' + (arr[i].name || "(unnamed)") + '"?')) {
+          arr.splice(i, 1);
+          if (state.currentIndex >= arr.length) state.currentIndex = arr.length - 1;
+          renderSidebar();
+          renderDetail();
+        }
+      }
+      return;
+    }
+    const rowEl = e.target.closest(".item[data-index]");
+    if (rowEl) selectIndex(Number(rowEl.dataset.index));
+  });
+
+  els.detail.addEventListener("input", (e) => {
+    const el = e.target;
+    const item = currentItem();
+    if (!item) return;
+    if (el.dataset.bind) {
+      const val = el.type === "number" ? el.valueAsNumber : el.value;
+      setDeep(item, el.dataset.bind, val);
+      updateCurrentSidebarItem();
+      updateErrorsPanel();
+    } else if (el.dataset.bindOptnum) {
+      const raw = el.value.trim();
+      setDeep(item, el.dataset.bindOptnum, raw === "" ? null : Number(raw));
+      updateCurrentSidebarItem();
+      updateErrorsPanel();
+    } else if (el.dataset.bindAlt) {
+      setDeep(item, el.dataset.bindAlt, altitudeFromDisplay(el.valueAsNumber));
+      if (state.units.speed === "mach") {
+        const speedInput = els.detail.querySelector('[data-alt-ref="' + el.dataset.bindAlt + '"]');
+        if (speedInput) {
+          const spd = getDeep(item, speedInput.dataset.bindSpd);
+          speedInput.value = roundSpeedForDisplay(speedToDisplay(spd, getDeep(item, el.dataset.bindAlt)));
+        }
+      }
+      updateCurrentSidebarItem();
+      updateErrorsPanel();
+    } else if (el.dataset.bindSpd) {
+      const altitudeM = getDeep(item, el.dataset.altRef);
+      setDeep(item, el.dataset.bindSpd, speedFromDisplay(el.valueAsNumber, altitudeM));
+      updateCurrentSidebarItem();
+      updateErrorsPanel();
+    } else if (el.dataset.artilleryField && el.dataset.artilleryField !== "key") {
+      const payload = getKindPayload(item);
+      const key = el.closest("[data-unit-key]").dataset.unitKey;
+      payload.units[key][el.dataset.artilleryField] = el.valueAsNumber;
+      updateCurrentSidebarItem();
+      updateErrorsPanel();
+    }
+  });
+
+  els.detail.addEventListener("change", (e) => {
+    const el = e.target;
+    const item = currentItem();
+    if (!item) return;
+
+    if (el.name === "action-kind-tag") {
+      const tag = el.value;
+      const def = KIND_DEFS[tag];
+      item.kind = def.payload ? { [tag]: PAYLOAD_DEFAULTS[def.payload]() } : tag;
+      renderDetail(); renderSidebar();
+      return;
+    }
+    if (el.name === "geo-limit-tag") {
+      item.geo_limit = el.value === "Unlimited" ? "Unlimited" : { NearFriendlyObjective: { max: 5000 } };
+      renderDetail(); renderSidebar();
+      return;
+    }
+    if (el.dataset.toggle === "opt") {
+      const factory = PAYLOAD_DEFAULTS[el.dataset.toggleDefault];
+      setDeep(item, el.dataset.togglePath, el.checked ? factory() : null);
+      renderDetail(); renderSidebar();
+      return;
+    }
+    if (el.dataset.artilleryField === "key") {
+      const payload = getKindPayload(item);
+      const row = el.closest("[data-unit-key]");
+      const oldKey = row.dataset.unitKey;
+      const newKey = el.value.trim();
+      if (!newKey) { el.value = oldKey; return; }
+      if (newKey !== oldKey) {
+        if (payload.units[newKey] !== undefined) { alert('A unit type override for "' + newKey + '" already exists.'); el.value = oldKey; return; }
+        payload.units[newKey] = payload.units[oldKey];
+        delete payload.units[oldKey];
+      }
+      renderDetail(); renderSidebar();
+      return;
+    }
+    if (el.dataset.bind) {
+      const val = el.type === "checkbox" ? el.checked : (el.type === "number" ? el.valueAsNumber : el.value);
+      setDeep(item, el.dataset.bind, val);
+      updateCurrentSidebarItem();
+      updateErrorsPanel();
+    }
+  });
+
+  els.detail.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const item = currentItem();
+    if (!item) return;
+    if (btn.dataset.action === "add-unit") {
+      const payload = getKindPayload(item);
+      let key = "New Unit Type", n = 1;
+      while (payload.units[key] !== undefined) key = "New Unit Type " + (++n);
+      payload.units[key] = { max_range_m: 30000, min_range_m: 4000 };
+      renderDetail(); renderSidebar();
+    } else if (btn.dataset.action === "remove-unit") {
+      const payload = getKindPayload(item);
+      const key = btn.closest("[data-unit-key]").dataset.unitKey;
+      delete payload.units[key];
+      renderDetail(); renderSidebar();
+    }
+  });
+
+  els.rawDetails.addEventListener("toggle", updateRawPreview);
+
+  document.getElementById("btn-copy-raw").addEventListener("click", () => {
+    const text = JSON.stringify(buildExportObject(), null, 2);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => { const b = document.getElementById("btn-copy-raw"); const old = b.textContent; b.textContent = "Copied!"; setTimeout(() => (b.textContent = old), 1200); },
+        () => alert("Copy failed — select the text manually.")
+      );
+    } else {
+      alert("Clipboard API not available — select the text manually.");
+    }
+  });
+
+  ["dragover", "drop"].forEach((evt) => document.body.addEventListener(evt, (e) => e.preventDefault()));
+  document.body.addEventListener("drop", (e) => {
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) loadFile(file);
+  });
+
+  // ---------- init ----------
+  renderSidebar();
+  renderDetail();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1831 @@
+{
+  "name": "Germany",
+  "center": [
+    52.0145970269428,
+    10.70780052822324
+  ],
+  "airports": [
+    {
+      "name": "Wittstock",
+      "position": [
+        53.20236642932322,
+        12.522974752022787
+      ],
+      "heli": false
+    },
+    {
+      "name": "Altes Lager",
+      "position": [
+        51.99548583684283,
+        12.983764125237425
+      ],
+      "heli": false
+    },
+    {
+      "name": "Barth",
+      "position": [
+        54.33819249126573,
+        12.709696935514591
+      ],
+      "heli": false
+    },
+    {
+      "name": "Zerbst",
+      "position": [
+        51.9996286685388,
+        12.144260293781354
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bremen",
+      "position": [
+        53.04694183173097,
+        8.788272954437744
+      ],
+      "heli": false
+    },
+    {
+      "name": "Briest",
+      "position": [
+        52.43763761905973,
+        12.453931463819352
+      ],
+      "heli": false
+    },
+    {
+      "name": "Buckeburg",
+      "position": [
+        52.27857917974465,
+        9.083267470706495
+      ],
+      "heli": false
+    },
+    {
+      "name": "Celle",
+      "position": [
+        52.59141567014775,
+        10.02432055463888
+      ],
+      "heli": false
+    },
+    {
+      "name": "Cochstedt",
+      "position": [
+        51.85591488351973,
+        11.417946832546656
+      ],
+      "heli": false
+    },
+    {
+      "name": "Damgarten",
+      "position": [
+        54.26401067309812,
+        12.44421667787313
+      ],
+      "heli": false
+    },
+    {
+      "name": "Fassberg",
+      "position": [
+        52.9194259427796,
+        10.184823323192532
+      ],
+      "heli": false
+    },
+    {
+      "name": "Finow",
+      "position": [
+        52.827140250896186,
+        13.694045364969806
+      ],
+      "heli": false
+    },
+    {
+      "name": "Garz",
+      "position": [
+        53.87850297110243,
+        14.153540978070696
+      ],
+      "heli": false
+    },
+    {
+      "name": "Gatow",
+      "position": [
+        52.47534860802753,
+        13.138099482476035
+      ],
+      "heli": false
+    },
+    {
+      "name": "Templin",
+      "position": [
+        53.03199880575529,
+        13.542582429822126
+      ],
+      "heli": false
+    },
+    {
+      "name": "Gutersloh",
+      "position": [
+        51.92280704511431,
+        8.304065093904839
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hamburg",
+      "position": [
+        53.62684350494846,
+        9.981322355063563
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hamburg Finkenwerder",
+      "position": [
+        53.53414949627449,
+        9.8328953010041
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hannover",
+      "position": [
+        52.45447947632911,
+        9.693752906845946
+      ],
+      "heli": false
+    },
+    {
+      "name": "Laage",
+      "position": [
+        53.918052260111125,
+        12.279400229904006
+      ],
+      "heli": false
+    },
+    {
+      "name": "Larz",
+      "position": [
+        53.306376414732604,
+        12.752546788781084
+      ],
+      "heli": false
+    },
+    {
+      "name": "Mahlwinkel",
+      "position": [
+        52.38827901650516,
+        11.826442332722701
+      ],
+      "heli": false
+    },
+    {
+      "name": "Neubrandenburg",
+      "position": [
+        53.60222462975454,
+        13.306103633301076
+      ],
+      "heli": false
+    },
+    {
+      "name": "Neuruppin",
+      "position": [
+        52.94105719385809,
+        12.786901160206142
+      ],
+      "heli": false
+    },
+    {
+      "name": "Peenemunde",
+      "position": [
+        54.158700026515206,
+        13.773615764900237
+      ],
+      "heli": false
+    },
+    {
+      "name": "Schonefeld",
+      "position": [
+        52.38422599011297,
+        13.534354529142906
+      ],
+      "heli": false
+    },
+    {
+      "name": "Stendal",
+      "position": [
+        52.6290813388046,
+        11.819859214339434
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tegel",
+      "position": [
+        52.55843045655373,
+        13.292892047249634
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tempelhof",
+      "position": [
+        52.471065654288,
+        13.404303876923029
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tutow",
+      "position": [
+        53.921792848259216,
+        13.219058615700252
+      ],
+      "heli": false
+    },
+    {
+      "name": "Werneuchen",
+      "position": [
+        52.631801308189566,
+        13.768794530678987
+      ],
+      "heli": false
+    },
+    {
+      "name": "Wunstorf",
+      "position": [
+        52.45732513473248,
+        9.427111116087744
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bornholm",
+      "position": [
+        55.063382982959354,
+        14.759014442539018
+      ],
+      "heli": false
+    },
+    {
+      "name": "Brand",
+      "position": [
+        52.03683755644755,
+        13.746437234749811
+      ],
+      "heli": false
+    },
+    {
+      "name": "Brandis",
+      "position": [
+        51.328328945789686,
+        12.656378077302701
+      ],
+      "heli": false
+    },
+    {
+      "name": "Chojna",
+      "position": [
+        52.93956167828871,
+        14.421983885304524
+      ],
+      "heli": false
+    },
+    {
+      "name": "Cologne",
+      "position": [
+        50.86792093922613,
+        7.147543812058577
+      ],
+      "heli": false
+    },
+    {
+      "name": "Dusseldorf",
+      "position": [
+        51.28695670346312,
+        6.767706431992743
+      ],
+      "heli": false
+    },
+    {
+      "name": "Falkenberg",
+      "position": [
+        51.546466744524444,
+        13.216107163946152
+      ],
+      "heli": false
+    },
+    {
+      "name": "Heidelberg",
+      "position": [
+        49.39351048384379,
+        8.652137244671254
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kastrup",
+      "position": [
+        55.619241115734894,
+        12.652365139235153
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kiel",
+      "position": [
+        54.379500500570295,
+        10.144680565548262
+      ],
+      "heli": false
+    },
+    {
+      "name": "Landstuhl",
+      "position": [
+        49.403076433825206,
+        7.536319780851569
+      ],
+      "heli": false
+    },
+    {
+      "name": "Mainz Finthen",
+      "position": [
+        49.96913259030302,
+        8.147878027314865
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sturup",
+      "position": [
+        55.53565871866094,
+        13.37640446010861
+      ],
+      "heli": false
+    },
+    {
+      "name": "Marxwalde",
+      "position": [
+        52.61297613963963,
+        14.24273041612272
+      ],
+      "heli": false
+    },
+    {
+      "name": "Nordholz",
+      "position": [
+        53.76758682206749,
+        8.658518877502965
+      ],
+      "heli": false
+    },
+    {
+      "name": "Norvenich",
+      "position": [
+        50.83127395921535,
+        6.658647546228425
+      ],
+      "heli": false
+    },
+    {
+      "name": "Oranienburg",
+      "position": [
+        52.72489535400651,
+        13.21686144019542
+      ],
+      "heli": false
+    },
+    {
+      "name": "Szczecin-Goleniow",
+      "position": [
+        53.58475693254595,
+        14.902260189229054
+      ],
+      "heli": false
+    },
+    {
+      "name": "Obermehler Schlotheim",
+      "position": [
+        51.267735335743915,
+        10.634806437495469
+      ],
+      "heli": false
+    },
+    {
+      "name": "Adelsheim",
+      "position": [
+        49.36917016839361,
+        9.440137178636958
+      ],
+      "heli": false
+    },
+    {
+      "name": "H FRG 01",
+      "position": [
+        52.26605318962672,
+        10.615636561679667
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 02",
+      "position": [
+        53.878600416045124,
+        10.642456259053212
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 03",
+      "position": [
+        53.64421526594639,
+        10.14012856661462
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 04",
+      "position": [
+        53.442230980521096,
+        10.517905250972872
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 05",
+      "position": [
+        53.15928777542,
+        10.94831097664223
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 06",
+      "position": [
+        53.0727189432617,
+        8.907938312297947
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 07",
+      "position": [
+        53.11547514097221,
+        11.184008922606747
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 08",
+      "position": [
+        52.60601645949526,
+        10.630504858088798
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 09",
+      "position": [
+        52.518208783816206,
+        10.844312949595716
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 10",
+      "position": [
+        52.386182784388545,
+        9.771016692285697
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 12",
+      "position": [
+        53.67574342019163,
+        10.800684864199578
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 13",
+      "position": [
+        52.0314020640836,
+        8.583061861959125
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 14",
+      "position": [
+        52.464728742858824,
+        13.223080682508012
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 01",
+      "position": [
+        53.43810664920464,
+        11.144805911295553
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 02",
+      "position": [
+        52.61875637254309,
+        12.356064978846078
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 03",
+      "position": [
+        53.11214187005377,
+        13.52651978226397
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 04",
+      "position": [
+        53.52412553063581,
+        13.32029087754768
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 05",
+      "position": [
+        53.63853186771784,
+        13.897127701493362
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 06",
+      "position": [
+        52.41447999808396,
+        12.534486056122738
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 07",
+      "position": [
+        52.984532636611384,
+        11.703076694521124
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 08",
+      "position": [
+        52.70722819182732,
+        13.54329771428156
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 09",
+      "position": [
+        53.867262194545695,
+        13.115552968885133
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 10",
+      "position": [
+        52.504550752972115,
+        13.52469046167031
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 11",
+      "position": [
+        52.385353221013794,
+        13.611284552145696
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 15",
+      "position": [
+        52.603457675487704,
+        13.314887452975201
+      ],
+      "heli": true
+    },
+    {
+      "name": "Revinge",
+      "position": [
+        55.728817586067244,
+        13.427334835349933
+      ],
+      "heli": false
+    },
+    {
+      "name": "Gross Mohrdorf",
+      "position": [
+        54.38319613952992,
+        12.912291068172841
+      ],
+      "heli": false
+    },
+    {
+      "name": "Lubeck",
+      "position": [
+        53.804876163045456,
+        10.716882406282613
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kothen",
+      "position": [
+        51.72137729351605,
+        11.961541766896637
+      ],
+      "heli": false
+    },
+    {
+      "name": "Dessau",
+      "position": [
+        51.83172374047441,
+        12.193083917285277
+      ],
+      "heli": false
+    },
+    {
+      "name": "Parchim",
+      "position": [
+        53.427856457926126,
+        11.786588686993307
+      ],
+      "heli": false
+    },
+    {
+      "name": "H GDR 12",
+      "position": [
+        52.48484265621955,
+        11.596376296406264
+      ],
+      "heli": true
+    },
+    {
+      "name": "Uetersen",
+      "position": [
+        53.64650729289362,
+        9.704033664715231
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tagra",
+      "position": [
+        55.60085220625693,
+        13.714127773061529
+      ],
+      "heli": false
+    },
+    {
+      "name": "Luneburg",
+      "position": [
+        53.24854220122413,
+        10.459530813553874
+      ],
+      "heli": false
+    },
+    {
+      "name": "Northeim",
+      "position": [
+        52.98432893722959,
+        11.237111833314444
+      ],
+      "heli": false
+    },
+    {
+      "name": "H GDR 13",
+      "position": [
+        53.60917166019072,
+        12.206164161361851
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 14",
+      "position": [
+        53.044028340705786,
+        13.38198889080597
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 15",
+      "position": [
+        52.18617388571979,
+        12.179097117161582
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 16",
+      "position": [
+        52.22117725733668,
+        11.781077220980018
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 17",
+      "position": [
+        53.900057085139146,
+        11.38723934994314
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 16",
+      "position": [
+        52.11031518369243,
+        9.44464267821589
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 17",
+      "position": [
+        53.15101307911518,
+        9.481280547346946
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 18",
+      "position": [
+        54.15063608839162,
+        10.552375484289039
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 19",
+      "position": [
+        53.46455931674421,
+        9.908176185757128
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 11",
+      "position": [
+        52.80537105099719,
+        10.051049996523304
+      ],
+      "heli": true
+    },
+    {
+      "name": "Sperenberg",
+      "position": [
+        52.136913674642265,
+        13.305952208629321
+      ],
+      "heli": false
+    },
+    {
+      "name": "Uelzen",
+      "position": [
+        52.98362186460628,
+        10.464482564688307
+      ],
+      "heli": false
+    },
+    {
+      "name": "Dedelow",
+      "position": [
+        53.35552039576503,
+        13.785070983871789
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kammermark",
+      "position": [
+        53.195960749922,
+        12.165032063828273
+      ],
+      "heli": false
+    },
+    {
+      "name": "Weser Wumme",
+      "position": [
+        53.056096849673885,
+        9.208308835404344
+      ],
+      "heli": false
+    },
+    {
+      "name": "Braunschweig",
+      "position": [
+        52.319082720511624,
+        10.553930054151627
+      ],
+      "heli": false
+    },
+    {
+      "name": "Wismar",
+      "position": [
+        53.91444764286049,
+        11.502444626403106
+      ],
+      "heli": false
+    },
+    {
+      "name": "Waren Vielist",
+      "position": [
+        53.565921979906754,
+        12.653834312986582
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bienenfarm",
+      "position": [
+        52.658628438564804,
+        12.747121244930888
+      ],
+      "heli": false
+    },
+    {
+      "name": "Pinnow",
+      "position": [
+        53.61654253515467,
+        11.563142755127945
+      ],
+      "heli": false
+    },
+    {
+      "name": "Gardelegen",
+      "position": [
+        52.52952265365525,
+        11.350135395517034
+      ],
+      "heli": false
+    },
+    {
+      "name": "Glindbruchkippe",
+      "position": [
+        52.323828299536125,
+        10.180461767179889
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ummern",
+      "position": [
+        52.620466347088325,
+        10.411015394773791
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hildesheim",
+      "position": [
+        52.179792188628376,
+        9.945789969598508
+      ],
+      "heli": false
+    },
+    {
+      "name": "Verden-Scharnhorst",
+      "position": [
+        52.9657608211232,
+        9.280623241151188
+      ],
+      "heli": false
+    },
+    {
+      "name": "Rinteln",
+      "position": [
+        52.17468840168899,
+        9.052913016977275
+      ],
+      "heli": false
+    },
+    {
+      "name": "Holzdorf",
+      "position": [
+        51.76779587569124,
+        13.169712923752838
+      ],
+      "heli": false
+    },
+    {
+      "name": "H Med GDR 01",
+      "position": [
+        54.09330232480643,
+        12.088700762879876
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med GDR 02",
+      "position": [
+        54.30237708429946,
+        13.072043963770065
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med GDR 03",
+      "position": [
+        54.090877565439705,
+        13.376113073633467
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 33",
+      "position": [
+        50.85918860381089,
+        10.743133059793578
+      ],
+      "heli": true
+    },
+    {
+      "name": "Airracing Koblenz",
+      "position": [
+        50.292047600338236,
+        7.830377839800633
+      ],
+      "heli": false
+    },
+    {
+      "name": "H GDR 34",
+      "position": [
+        53.07250633509155,
+        12.62969616367138
+      ],
+      "heli": true
+    },
+    {
+      "name": "Perwenitz",
+      "position": [
+        52.67563869540525,
+        13.006941904719621
+      ],
+      "heli": false
+    },
+    {
+      "name": "H Med GDR 08",
+      "position": [
+        52.270980180292156,
+        11.87819317436928
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med GDR 09",
+      "position": [
+        52.162425589514065,
+        11.633036010065494
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med GDR 10",
+      "position": [
+        51.95977937776639,
+        12.10092824305113
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 01",
+      "position": [
+        53.8479824394138,
+        10.688354670312657
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 02",
+      "position": [
+        53.561300343110865,
+        10.024594909718855
+      ],
+      "heli": true
+    },
+    {
+      "name": "Sittensen",
+      "position": [
+        53.32095701876966,
+        9.582918343504616
+      ],
+      "heli": false
+    },
+    {
+      "name": "H Med FRG 04",
+      "position": [
+        53.25234996100838,
+        10.39818148297245
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 06",
+      "position": [
+        52.296393251700245,
+        8.891155486960308
+      ],
+      "heli": true
+    },
+    {
+      "name": "Sprendlingen",
+      "position": [
+        49.87098996906207,
+        7.959922484182357
+      ],
+      "heli": false
+    },
+    {
+      "name": "Thurland",
+      "position": [
+        51.69638144725728,
+        12.210248278668141
+      ],
+      "heli": false
+    },
+    {
+      "name": "Zollschen",
+      "position": [
+        51.26636454993559,
+        12.099991132463837
+      ],
+      "heli": false
+    },
+    {
+      "name": "H Med FRG 11",
+      "position": [
+        51.730316762672246,
+        8.778216733538306
+      ],
+      "heli": true
+    },
+    {
+      "name": "Hasselfelde",
+      "position": [
+        51.705392546527165,
+        10.878693013408322
+      ],
+      "heli": false
+    },
+    {
+      "name": "Grosse Wiese",
+      "position": [
+        52.13687712664526,
+        10.570782455802092
+      ],
+      "heli": false
+    },
+    {
+      "name": "H GDR 18",
+      "position": [
+        51.84813778413792,
+        10.766606070894797
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 20",
+      "position": [
+        51.71330817984557,
+        10.58912112943049
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 12",
+      "position": [
+        51.81720770590667,
+        10.336158253575809
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 19",
+      "position": [
+        51.845870269331236,
+        11.293790250229412
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 30",
+      "position": [
+        54.51048087606537,
+        13.618226621449288
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med GDR 11",
+      "position": [
+        51.77092072874761,
+        10.790492925823106
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 21",
+      "position": [
+        52.335760034564935,
+        10.639428077317557
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 50",
+      "position": [
+        52.83176420447818,
+        9.775312785088461
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 23",
+      "position": [
+        52.94796578898208,
+        10.115502955368472
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 39",
+      "position": [
+        50.577253882634515,
+        9.69557980315224
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 21",
+      "position": [
+        54.281007354944386,
+        12.518646865187444
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 22",
+      "position": [
+        52.07055565737201,
+        13.089145557065487
+      ],
+      "heli": true
+    },
+    {
+      "name": "Fritzlar",
+      "position": [
+        51.11460960221507,
+        9.28583518299218
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hahn",
+      "position": [
+        49.948452435488626,
+        7.263905136878401
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sembach",
+      "position": [
+        49.50615201372286,
+        7.863412244056545
+      ],
+      "heli": false
+    },
+    {
+      "name": "Allstedt",
+      "position": [
+        51.380583928516074,
+        11.446474040922793
+      ],
+      "heli": false
+    },
+    {
+      "name": "Zweibrucken",
+      "position": [
+        49.2095507275352,
+        7.400867297409862
+      ],
+      "heli": false
+    },
+    {
+      "name": "Giebelstadt",
+      "position": [
+        49.64790119428609,
+        9.964733700223674
+      ],
+      "heli": false
+    },
+    {
+      "name": "Schweinfurt",
+      "position": [
+        50.04885225779901,
+        10.169674230486862
+      ],
+      "heli": false
+    },
+    {
+      "name": "Haina",
+      "position": [
+        50.991662592392196,
+        10.479569753128565
+      ],
+      "heli": false
+    },
+    {
+      "name": "Spangdahlem",
+      "position": [
+        49.97657208774117,
+        6.698827524476681
+      ],
+      "heli": false
+    },
+    {
+      "name": "Frankfurt",
+      "position": [
+        50.04043131691842,
+        8.567320045456603
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bindersleben",
+      "position": [
+        50.97947255241783,
+        10.962329176748108
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ramstein",
+      "position": [
+        49.43689911921814,
+        7.600077441627362
+      ],
+      "heli": false
+    },
+    {
+      "name": "Fulda",
+      "position": [
+        50.53991152235473,
+        9.643015869835944
+      ],
+      "heli": false
+    },
+    {
+      "name": "Mendig",
+      "position": [
+        50.366013294653555,
+        7.315629126192264
+      ],
+      "heli": false
+    },
+    {
+      "name": "Merseburg",
+      "position": [
+        51.363972565950455,
+        11.950008884349092
+      ],
+      "heli": false
+    },
+    {
+      "name": "Wiesbaden",
+      "position": [
+        50.04981915958832,
+        8.325573326209353
+      ],
+      "heli": false
+    },
+    {
+      "name": "Schkeuditz",
+      "position": [
+        51.41502378725531,
+        12.227158683795887
+      ],
+      "heli": false
+    },
+    {
+      "name": "H Med GDR 12",
+      "position": [
+        50.98791611470047,
+        10.316368350209904
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med GDR 13",
+      "position": [
+        51.28926441081004,
+        10.743367343731952
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med GDR 14",
+      "position": [
+        50.80908061053132,
+        10.21872955636718
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med GDR 16",
+      "position": [
+        50.88608953299872,
+        11.617336453088162
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 24",
+      "position": [
+        52.1666266698308,
+        13.484153536030083
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 13",
+      "position": [
+        49.45272770436173,
+        7.767097388749899
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 14",
+      "position": [
+        50.97466972909901,
+        9.804709744316035
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 15",
+      "position": [
+        51.2570196544041,
+        9.379733482258265
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 16",
+      "position": [
+        51.552894877971596,
+        8.332072337898952
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 17",
+      "position": [
+        51.39920343061342,
+        9.659754256549169
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 25",
+      "position": [
+        50.72407588662701,
+        9.931883699236284
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Radar GDR 01",
+      "position": [
+        51.79979757817452,
+        10.612502976243443
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Radar GDR 02",
+      "position": [
+        50.57177828246343,
+        10.085249529189763
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Radar GDR 03",
+      "position": [
+        51.107844239318474,
+        10.193686222182324
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Radar GDR 04",
+      "position": [
+        51.62403922817615,
+        10.72423615169466
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Radar GDR 05",
+      "position": [
+        52.006375367927085,
+        10.723486474573914
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Radar GDR 06",
+      "position": [
+        52.32538338432559,
+        11.45559679932517
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Radar GDR 07",
+      "position": [
+        53.28017343790073,
+        11.081132364687326
+      ],
+      "heli": true
+    },
+    {
+      "name": "Bitburg",
+      "position": [
+        49.94465892221097,
+        6.564182682274123
+      ],
+      "heli": false
+    },
+    {
+      "name": "Airracing Lubeck",
+      "position": [
+        53.71166622042583,
+        10.766574228243018
+      ],
+      "heli": false
+    },
+    {
+      "name": "H FRG 27",
+      "position": [
+        51.3234223772027,
+        9.47709100215426
+      ],
+      "heli": true
+    },
+    {
+      "name": "Airracing Frankfurt",
+      "position": [
+        50.008206735709805,
+        8.09869297929719
+      ],
+      "heli": false
+    },
+    {
+      "name": "H Med FRG 21",
+      "position": [
+        49.246115448409114,
+        7.36522991988239
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 30",
+      "position": [
+        50.01960794452627,
+        7.349018206624784
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 31",
+      "position": [
+        49.92006616437997,
+        7.293041799940619
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 32",
+      "position": [
+        49.47470881575678,
+        7.881511467582546
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 34",
+      "position": [
+        50.41649410434355,
+        7.441757280475078
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 51",
+      "position": [
+        49.61348315999984,
+        7.381086712977679
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 38",
+      "position": [
+        50.51797029661763,
+        9.134741607027978
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 48",
+      "position": [
+        49.9220376561608,
+        6.677135189184557
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 49",
+      "position": [
+        50.06939304139687,
+        8.56590960082509
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 24",
+      "position": [
+        51.55418323699845,
+        8.568385538059058
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Radar FRG 02",
+      "position": [
+        50.23329552829184,
+        8.4578786392674
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 26",
+      "position": [
+        49.92751138366969,
+        6.83978867496194
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 25",
+      "position": [
+        51.13868726214497,
+        11.772348141349209
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 26",
+      "position": [
+        51.493926686784,
+        11.907455284154429
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 31",
+      "position": [
+        54.368925183480364,
+        13.085669604277975
+      ],
+      "heli": true
+    },
+    {
+      "name": "H GDR 32",
+      "position": [
+        54.347369234458334,
+        13.45549239463654
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Med FRG 27",
+      "position": [
+        50.07733380709671,
+        8.216295031495948
+      ],
+      "heli": true
+    },
+    {
+      "name": "Pferdsfeld",
+      "position": [
+        49.855128339682366,
+        7.60470580233805
+      ],
+      "heli": false
+    },
+    {
+      "name": "H Med FRG 29",
+      "position": [
+        49.40249454416588,
+        7.558637041102926
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 40",
+      "position": [
+        50.37407996834325,
+        7.583960388919031
+      ],
+      "heli": true
+    },
+    {
+      "name": "Buchel",
+      "position": [
+        50.17409523646749,
+        7.063849283992004
+      ],
+      "heli": false
+    },
+    {
+      "name": "Leipzig Mockau",
+      "position": [
+        51.393781691531395,
+        12.408046121994646
+      ],
+      "heli": false
+    },
+    {
+      "name": "H FRG 43",
+      "position": [
+        49.76014660960852,
+        9.491092385768914
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 44",
+      "position": [
+        49.94407135205967,
+        8.916184351723945
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 45",
+      "position": [
+        49.744632687083474,
+        9.071655021102096
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 46",
+      "position": [
+        50.050912154943745,
+        9.823800458496502
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 47",
+      "position": [
+        49.57608710226392,
+        9.349869498932906
+      ],
+      "heli": true
+    },
+    {
+      "name": "Bad Durkheim",
+      "position": [
+        49.47268288851787,
+        8.194936250365284
+      ],
+      "heli": false
+    },
+    {
+      "name": "Gelnhausen",
+      "position": [
+        50.19633141257246,
+        9.166998313847923
+      ],
+      "heli": false
+    },
+    {
+      "name": "Herrenteich",
+      "position": [
+        49.34350070075784,
+        8.48985201656906
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hockenheim",
+      "position": [
+        49.32526265654047,
+        8.52747588045237
+      ],
+      "heli": false
+    },
+    {
+      "name": "Langenselbold",
+      "position": [
+        50.174620965506755,
+        9.06328687920667
+      ],
+      "heli": false
+    },
+    {
+      "name": "Walldorf",
+      "position": [
+        49.30370804874938,
+        8.66144478225154
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ober-Morlen",
+      "position": [
+        50.36244475956877,
+        8.712214979423077
+      ],
+      "heli": false
+    },
+    {
+      "name": "Pottschutthohe",
+      "position": [
+        49.26446946585472,
+        7.488763551987055
+      ],
+      "heli": false
+    },
+    {
+      "name": "Worms",
+      "position": [
+        49.60650295813648,
+        8.365413042076055
+      ],
+      "heli": false
+    },
+    {
+      "name": "H Radar GDR 09",
+      "position": [
+        52.493990851073875,
+        14.088624631312799
+      ],
+      "heli": true
+    },
+    {
+      "name": "H Radar GDR 08",
+      "position": [
+        52.79189130036446,
+        10.81133787547997
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 41",
+      "position": [
+        49.79327390750524,
+        9.984978616563529
+      ],
+      "heli": true
+    },
+    {
+      "name": "H FRG 42",
+      "position": [
+        49.828193015554966,
+        9.887384484242205
+      ],
+      "heli": true
+    }
+  ],
+  "projection": {
+    "centralMeridian": 21,
+    "falseEasting": 35427.619999985734,
+    "falseNorthing": -6061633.128000011,
+    "scaleFactor": 0.9996
+  }
+}

@@ -1,0 +1,35 @@
+bfsite — Fowl Engine public website
+
+Copyright (c) 2026 Dillen Weerasinghe. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL.
+
+This directory (bfsite) and its contents are the exclusive property of
+Dillen Weerasinghe. No license, express or implied, is granted to any
+person or entity.
+
+You may NOT, without the prior written permission of the copyright holder:
+
+  * use, run, or deploy this software;
+  * copy, reproduce, or store it;
+  * modify, adapt, translate, or create derivative works from it;
+  * distribute, publish, sublicense, sell, or otherwise make it available
+    to any third party;
+  * remove or alter this notice.
+
+Viewing this source code because it is hosted in a public repository does
+not grant any of the rights above.
+
+This license covers only the files in this directory. It does not apply to
+other components in the surrounding repository, which are governed by their
+own licenses (see the repository NOTICE file).
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
+OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+To request permission: Dillen Weerasinghe <dillen.weerasinghe98@gmail.com>

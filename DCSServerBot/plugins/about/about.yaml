@@ -1,0 +1,80 @@
+DEFAULT:
+  # Branding. `logo_url` defaults to <dashboard_url>/vs-vectorstrike_hd-white.png,
+  # the same mark the fowlengine plugin's embeds use.
+  brand_name: "Vector Strike"
+  color: "#c8102e"
+  website: "https://vectorstrike.org"
+  wiki_url: "https://wiki.vectorstrike.org"
+  dashboard_url: "https://dashboard.vectorstrike.org"
+
+  # Buttons under the panel. Omit this block entirely and the three links above
+  # are turned into Website / Wiki / Dashboard buttons automatically. Max 5.
+  # links:
+  #   - label: "Website"
+  #     url: "https://vectorstrike.org"
+  #     emoji: "🌐"
+
+  about_us:
+    title: "About Vector Strike"
+    description: >-
+      A persistent, player-driven war in DCS World. Territory, logistics and
+      losses carry over between sorties and between server restarts — every
+      flight moves the front line, or fails to.
+
+
+      We build and run it ourselves on top of the Fowl Engine, and it is under
+      active development: the campaign you fly this month is measurably not the
+      one you flew last month.
+    # Rendered as inline fields — two or three sit side by side per row.
+    team:
+      - name: "KillerDog"
+        role: "Engine development — new systems, performance, tooling, the web stack."
+      - name: "EagleEye"
+        role: "Mission design — map layouts, force composition, tactical scenarios."
+
+  mission:
+    title: "How the Campaign Works"
+    description: >-
+      Ground is taken by grinding an objective down and physically putting
+      troops in its zone, then holding while it consolidates. Everything that
+      makes that possible — fuel, munitions, airframes, repairs — has to be
+      produced somewhere and moved to where you need it.
+    # {name, value} pairs render as a two-column grid. Plain strings still work
+    # and are collected into a single bulleted "Key Features" field.
+    features:
+      - name: "Persistent Front"
+        value: "Territory, base health and stockpiles survive restarts. The war is continuous."
+      - name: "Real Logistics"
+        value: "Convoys, transport aircraft and player crate runs. Cut a road and the base behind it starves."
+      - name: "Capture & Consolidate"
+        value: "Break the objective, insert troops, hold the zone — then hold it again while it consolidates."
+      - name: "Coalition Tasking"
+        value: "Post CAP, CAS, SEAD, CAPTURE or SUPPLY tasks that your whole side sees on the F10 map."
+      - name: "Live GCI"
+        value: "An AWACS controller calling threats, groups and intercepts to you over SRS."
+      - name: "Ops Dashboard"
+        value: "Live map, leaderboards, kill feed, briefings and pilot careers on the web."
+
+  credits:
+    title: "Credits & Thanks"
+    description: "None of this runs on its own."
+    entries:
+      - name: "Eagle Dynamics — the simulator"
+        value: >-
+          For DCS World, and for continuing to expand the sandbox everything
+          here is built inside.
+      - name: "Eric Stokes — Fowl Engine"
+        value: >-
+          Original author of the `bfnext` dynamic campaign engine. Our build is
+          a heavily extended fork of his work, and the architecture underneath
+          it is still his.
+      - name: "Special K — DCSServerBot"
+        value: >-
+          Creator and lead developer of DCSServerBot, which runs our Discord
+          integration, server automation and live telemetry.
+      - name: "Hacker, 61st ATP — the server"
+        value: >-
+          A 24/7 campaign needs a machine that never goes down, and Vector
+          Strike has one because Hacker, founder of **61st ATP — Arctic Terns &
+          Penguins**, donated it. Every objective captured and every name on
+          the leaderboard exists because of that. Thank you.
