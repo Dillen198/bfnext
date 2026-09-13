@@ -1149,6 +1149,60 @@ body::after {
     min-height: 40px;
   }
 
+  /* Everything else that is a control.
+     Admin alone had 39 buttons under the threshold -- ten 12x12 icon actions
+     and, worse, "Restart Server" / "RESET DATABASE" at 31px. Classing forty
+     call sites would not survive the next page anyone adds, so this is a
+     floor with explicit opt-outs for the controls that are deliberately
+     smaller: column-sort lives inside a <th>, nav items own their own
+     height, and map controls are positioned furniture. */
+  button:not(.vs-sort-btn):not(.nav-item):not(.mobile-menu-btn),
+  [role="button"]:not(.nav-item) {
+    min-height: 36px;
+    /* Width matters as much as height: the admin player actions ("Ban
+       player", "Copy kick command") were 12px wide icons sitting in a row,
+       so a 36px height alone still left a sliver to hit. */
+    min-width: 36px;
+  }
+
+  /* Range inputs render a ~16px track, which is the control's whole hit
+     area. Grow the box and keep the thumb usable. */
+  input[type="range"] {
+    height: 36px;
+  }
+
+  /* Text-ish inputs. Some carry .vs-input and are handled above; the admin
+     log filters carry no class at all and rendered 17px tall. */
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+  textarea,
+  select {
+    min-height: 36px;
+  }
+
+  /* Links that are laid out as buttons -- About's "JOIN DISCORD" and the
+     like were 16px tall. CSS ignores min-height on a non-replaced inline
+     box, so genuine inline links inside prose are untouched by this and
+     only the block/flex ones grow. */
+  a:not(.nav-item) {
+    min-height: 36px;
+  }
+  .leaflet-container button,
+  .maplibregl-map button,
+  .leaflet-control button {
+    min-height: 0;
+  }
+
+  /* Text.
+     The chrome is sized for a large monitor -- label text bottomed out at
+     8.3px, which is not readable at arm's length on a phone. Nearly all of
+     it is set in rem from inline styles, which a media query cannot reach,
+     so the root size moves instead and every rem-based label scales with it.
+     Kept modest: the layout is mostly px, so type grows inside fixed boxes
+     and too large a jump starts wrapping things. */
+  :root {
+    font-size: 17.5px;
+  }
+
   /* Objective drawer: the supply-graph nodes navigate to another objective,
      so they are real targets, not decoration. */
   .supply-node {
