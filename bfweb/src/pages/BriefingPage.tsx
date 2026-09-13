@@ -150,7 +150,7 @@ export default function BriefingPage() {
         }
       />
 
-      <div style={{
+      <div className="briefing-body" style={{
         flex: 1, minHeight: 0, minWidth: 0, overflowY: tab === 'situation' ? 'hidden' : 'auto',
         overflowX: 'hidden', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: 12,
       }}>

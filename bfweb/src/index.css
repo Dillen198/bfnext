@@ -260,6 +260,43 @@ body {
 .stock-count { width: 66px; }
 .stock-pct   { width: 34px; }
 
+/* Panel folds (recon controls, briefing map). Both start folded: the thing
+   they hide is supporting material, and the thing underneath is what the
+   page is for. Present at every width -- a 300px control column beside the
+   map is worth reclaiming on a desktop too. */
+.intel-panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  flex-shrink: 0;
+  padding: 0 12px;
+  min-height: 34px;
+  background: var(--bg-elevated);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.intel-panel-toggle:hover { color: var(--text); }
+
+/* Desktop collapse is horizontal: the column shrinks to a strip carrying
+   just the chevron, and the map takes the width. */
+.intel-sidebar-collapsed { width: 40px !important; }
+.intel-sidebar-collapsed .intel-panel-toggle { padding: 0; justify-content: center; }
+.intel-sidebar-collapsed .panel-toggle-label { display: none; }
+
+/* Briefing: folding the map collapses the grid to a single column so the
+   tasking list uses the full width, not half of it. */
+.briefing-map-toggle { position: relative; z-index: 500; }
+.briefing-map-card-collapsed { min-height: 0 !important; height: 34px; }
+.briefing-split-nomap { grid-template-columns: minmax(0, 1fr) !important; }
+
 .lb-card-head {
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
@@ -1177,6 +1214,111 @@ body::after {
   textarea,
   select {
     min-height: 36px;
+  }
+
+  /* Page headers put the title on the left and a control cluster on the
+     right, with justify-content: space-between and no wrap. Briefing's
+     cluster is five controls wide; at 375px it overflowed the header and
+     pushed the title to x=-178, i.e. clean off the screen, while clipping
+     its own last button. Let the header wrap and give the cluster its own
+     full-width row underneath the title. */
+  .page-header {
+    flex-wrap: wrap;
+  }
+  .page-header > div:nth-child(2) {
+    width: 100%;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  /* Pages nest their own flex row inside that wrapper (Briefing's is 429px
+     of tabs, side selector, refresh and PDF), so wrapping only the outer
+     element leaves the inner one to overflow exactly as before. */
+  .page-header > div:nth-child(2) > div {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    max-width: 100%;
+  }
+
+  /* Recon intel is a fixed 300px control panel beside a map. At 375px that
+     leaves 75px for the map, and the map's own absolutely-positioned
+     controls (photos, legend, basemap, markup, opacity) then render on top
+     of the panel -- two UIs occupying the same pixels. Stack them instead. */
+  .intel-shell {
+    flex-direction: column;
+  }
+  .intel-sidebar {
+    width: 100% !important;
+    max-height: 46vh;
+    border-right: none !important;
+    border-bottom: 1px solid var(--border);
+  }
+  .intel-map {
+    min-height: 54vh;
+  }
+  /* The overlay cluster carries an inline maxWidth of 380px, which is wider
+     than the phone itself -- so it spilled past the map and collided with
+     the opacity panel beneath it. Cap it to the viewport and let it wrap. */
+  .intel-map-controls {
+    max-width: calc(100vw - 20px) !important;
+    row-gap: 4px;
+  }
+
+  /* The error toast and the control cluster both anchor at top:10, so on a
+     narrow map they land on top of each other. The controls need the top --
+     they are how you use the page -- so the toast moves to the bottom edge,
+     where nothing else lives. */
+  .intel-map-toast {
+    top: auto !important;
+    bottom: 12px;
+    max-width: calc(100vw - 24px);
+    text-align: center;
+  }
+
+  /* On the situation tab the body is overflow:hidden and only the inner grid
+     scrolls, so on a phone -- where the header alone takes 160px -- the
+     scrollable window was a sliver. Let the page scroll as a page instead
+     and stop the grid competing for it. (The body's overflow is an inline
+     style, hence the !important.) */
+  .briefing-body {
+    overflow-y: auto !important;
+  }
+  .briefing-split {
+    overflow-y: visible !important;
+    /* flex:1 + min-height:0 are inline on the grid. Stacked, they clamp it
+       to whatever is left of the viewport -- 116px -- and squash ten panels
+       into it. Let it size to its content and scroll the body instead. */
+    flex: none !important;
+    min-height: auto !important;
+  }
+
+  /* An earlier mobile rule pins .briefing-split > :first-child to 340px so
+     the stacked map does not collapse to nothing. That also defeats the
+     fold, so the collapsed state has to beat it explicitly. */
+  .briefing-split-nomap > .briefing-map-card-collapsed {
+    height: 40px !important;
+    min-height: 0 !important;
+  }
+
+  .intel-panel-toggle {
+    min-height: 40px;
+    padding: 0 14px;
+    font-size: 0.62rem;
+  }
+  /* Stacked, so the fold is vertical here: the panel already clips, so
+     capping its height to the toggle bar hides everything below it. The
+     label stays -- there is room for it on a full-width bar. */
+  .intel-sidebar-collapsed {
+    width: 100% !important;
+    max-height: 40px;
+  }
+  .intel-sidebar-collapsed .panel-toggle-label { display: inline; }
+  .intel-sidebar-collapsed .intel-panel-toggle {
+    padding: 0 14px;
+    justify-content: space-between;
+  }
+  .intel-sidebar-collapsed + .intel-map,
+  .intel-sidebar-collapsed ~ .intel-map {
+    min-height: calc(100vh - 40px);
   }
 
   /* Links that are laid out as buttons -- About's "JOIN DISCORD" and the

@@ -179,6 +179,10 @@ function HotspotRow({ h, side: ourSide }: { h: Hotspot; side: Side }) {
 
 export default function SituationTab({ report }: { report: SituationReport }) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  // The map is supporting material; the tasking list is what the page is
+  // for. Folded by default so the list gets the height, on every screen --
+  // open it when you need to see where something is.
+  const [mapOpen, setMapOpen] = useState(false)
   const p = report.posture
   const a = report.air
   const l = report.logistics
@@ -239,9 +243,19 @@ export default function SituationTab({ report }: { report: SituationReport }) {
           display: 'grid', gridTemplateColumns: 'minmax(0, 1.15fr) minmax(340px, 1fr)',
           gap: 12, flex: 1, minHeight: 0,
         }}
-        className="briefing-split"
+        className={`briefing-split${mapOpen ? '' : ' briefing-split-nomap'}`}
       >
-        <div className="vs-card" style={{ overflow: 'hidden', minHeight: 380, position: 'relative' }}>
+        <div className={`vs-card briefing-map-card${mapOpen ? '' : ' briefing-map-card-collapsed'}`} style={{ overflow: 'hidden', minHeight: 380, position: 'relative' }}>
+          <button
+            type="button"
+            className="intel-panel-toggle briefing-map-toggle"
+            onClick={() => setMapOpen(v => !v)}
+            aria-expanded={mapOpen}
+            title={mapOpen ? 'Hide the map' : 'Show the map'}
+          >
+            <span className="panel-toggle-label">{mapOpen ? 'Hide map' : 'Show map'}</span>
+            <span aria-hidden="true">{mapOpen ? '\u25B2' : '\u25BC'}</span>
+          </button>
           <BriefingMap
             report={report}
             selectedTaskId={selectedTaskId}

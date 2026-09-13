@@ -173,6 +173,13 @@ export default function IntelPage() {
   const ownSide = user?.side ?? null
   const canSwitch = !!user?.is_admin && !ownSide
 
+  // The control panel sits above the map on a phone and eats half the
+  // screen. Collapsing it hands the whole viewport back to the map, which is
+  // the thing you actually came to look at -- so on a narrow screen it
+  // starts folded and you open it when you need a tool. Desktop lays the
+  // panel out beside the map with nothing to reclaim, so it starts open
+  // there (and the toggle is hidden entirely).
+  const [panelOpen, setPanelOpen] = useState(false)
   const [adminSide, setAdminSide] = useState<'blue' | 'red' | 'all'>('blue')
   const [tileKey, setTileKey] = useState<IntelTileKey | 'grid'>('satellite')
   const [showImagery, setShowImagery] = useState(true)
@@ -433,12 +440,22 @@ export default function IntelPage() {
   })
 
   return (
-    <div style={{ position: 'relative', flex: 1, display: 'flex', overflow: 'hidden' }}>
+    <div className="intel-shell" style={{ position: 'relative', flex: 1, display: 'flex', overflow: 'hidden' }}>
       {/* ── Side panel ─────────────────────────────────────────────── */}
-      <div style={{
+      <div className={`intel-sidebar${panelOpen ? '' : ' intel-sidebar-collapsed'}`} style={{
         width: 300, flexShrink: 0, background: 'var(--bg-card)', borderRight: '1px solid var(--border)',
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }}>
+        <button
+          type="button"
+          className="intel-panel-toggle"
+          onClick={() => setPanelOpen(v => !v)}
+          aria-expanded={panelOpen}
+          title={panelOpen ? 'Hide the control panel' : 'Show the control panel'}
+        >
+          <span className="panel-toggle-label">{panelOpen ? 'Hide controls' : 'Show controls'}</span>
+          <span aria-hidden="true">{panelOpen ? '\u25C0' : '\u25B6'}</span>
+        </button>
         <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <ReconIntel size={15} style={{ color: 'var(--accent)' }} />
@@ -681,11 +698,11 @@ export default function IntelPage() {
           <div style={{
             position: 'absolute', zIndex: 1000, top: 10, left: '50%', transform: 'translateX(-50%)',
             background: 'rgba(120,20,20,0.9)', color: '#fff', padding: '6px 12px', borderRadius: 4, fontSize: '0.7rem',
-          }}>{String((error as Error)?.message ?? 'failed to load intel')}</div>
+          }} className="intel-map-toast">{String((error as Error)?.message ?? 'failed to load intel')}</div>
         )}
 
         {/* Top-right controls */}
-        <div style={{ position: 'absolute', zIndex: 1000, top: 10, right: 10, display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 380 }}>
+        <div className="intel-map-controls" style={{ position: 'absolute', zIndex: 1000, top: 10, right: 10, display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 380 }}>
           <button onClick={() => setShowImagery(v => !v)} title="Toggle photo overlays" style={toggleBtn(showImagery)}>
             {showImagery ? <Eye size={11} /> : <EyeOff size={11} />} PHOTOS
           </button>
@@ -750,7 +767,7 @@ export default function IntelPage() {
           </div>
         )}
 
-        <div ref={mapWrapRef} style={{ flex: 1, position: 'relative' }}>
+        <div ref={mapWrapRef} className="intel-map" style={{ flex: 1, position: 'relative' }}>
           <MapContainer center={[35, 40]} zoom={6} style={{ height: '100%', width: '100%' }}>
             {tile && <TileLayer url={tile.url} attribution={tile.attr} maxZoom={18} crossOrigin="" />}
             <ScaleControl position="bottomleft" />
