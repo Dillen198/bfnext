@@ -1331,15 +1331,23 @@ async fn api_warehouse(
         .cloned()
         .ok_or_else(|| Error(anyhow::anyhow!("missing ?objective=<id or exact name>")))?;
 
-    // Unlike the briefing routes this does not hard-require a coalition:
-    // failing to resolve one simply means an unscoped query, which the engine
-    // answers in full. Admin sessions rely on that.
-    let side = match require_coalition(&query, session_id, &db, &bot_cfg, &inst).await {
-        Ok(c) => match c.side {
+    // This MUST fail closed. require_coalition returns Err for "not logged in"
+    // and "session expired" as well as "no coalition", and an earlier version
+    // mapped every one of those to an unscoped query -- which the engine
+    // answers in full, for every objective. That handed any anonymous visitor
+    // the enemy's complete stock and supply map and defeated the entire point
+    // of gating this route.
+    //
+    // Admins are the only unscoped case, and require_coalition already marks
+    // them: a session with no side but is_admin comes back with god_mode set.
+    let caller = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let side = if caller.god_mode {
+        ""
+    } else {
+        match caller.side {
             dcso3::coalition::Side::Red => "red",
             _ => "blue",
-        },
-        Err(_) => "",
+        }
     };
 
     match tokio::time::timeout(

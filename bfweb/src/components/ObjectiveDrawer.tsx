@@ -31,8 +31,25 @@ function groupItems(equipment: Record<string, WarehouseItem>) {
     else if (k.startsWith('Fortifications.')) groups.Fortifications.push([k.replace(/^Fortifications\./, ''), v])
     else groups.Airframes.push([k, v])
   }
-  for (const g of Object.values(groups)) g.sort((a, b) => b[1].stored - a[1].stored)
+  // Sorted by how DEPLETED a line is, not by how many are stored. Sorting by
+  // count buries the thing you are about to run out of under a pile of
+  // chaff cartridges -- the useful question is "what is nearly gone?".
+  // Uncapped lines (capacity 0) have no meaningful fill, so they sink.
+  for (const g of Object.values(groups)) {
+    g.sort((a, b) => fillOf(a[1]) - fillOf(b[1]))
+  }
   return groups
+}
+
+/** Fraction of capacity in stock, 0-1. Uncapped lines report as full. */
+function fillOf(i: WarehouseItem): number {
+  if (i.capacity <= 0) return 1
+  return Math.min(1, i.stored / i.capacity)
+}
+
+/** How many lines in a group are at or below `frac` of capacity. */
+function countBelow(items: [string, WarehouseItem][], frac: number): number {
+  return items.filter(([, v]) => v.capacity > 0 && fillOf(v) <= frac).length
 }
 
 function StockBar({ item }: { item: WarehouseItem }) {
@@ -43,10 +60,18 @@ function StockBar({ item }: { item: WarehouseItem }) {
       <div style={{ flex: 1, height: 4, background: 'var(--bg-elevated)', minWidth: 30 }}>
         <div style={{ width: `${pct}%`, height: '100%', background: col }} />
       </div>
-      <span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--text-dim)', width: 62, textAlign: 'right', flexShrink: 0 }}>
+      <span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--text-dim)', width: 66, textAlign: 'right', flexShrink: 0 }}>
         {item.stored}
         {item.capacity > 0 && <span style={{ opacity: 0.55 }}>/{item.capacity}</span>}
       </span>
+      {item.capacity > 0 && (
+        <span
+          className="font-mono-vs"
+          style={{ fontSize: '0.6rem', color: col, width: 34, textAlign: 'right', flexShrink: 0 }}
+        >
+          {Math.round(pct)}%
+        </span>
+      )}
     </div>
   )
 }
@@ -130,6 +155,13 @@ export default function ObjectiveDrawer({
   })
   const w = q.data
   const groups = useMemo(() => (w ? groupItems(w.equipment) : null), [w])
+  // Stock lines at or under 20% of capacity, across every family and the
+  // liquids -- the "is this base about to stop working?" number.
+  const lowCount = useMemo(() => {
+    if (!w) return 0
+    const all = [...Object.values(w.equipment), ...Object.values(w.liquids)]
+    return all.filter(i => i.capacity > 0 && i.stored / i.capacity <= 0.2).length
+  }, [w])
 
   if (!objective) return null
 
@@ -231,15 +263,28 @@ export default function ObjectiveDrawer({
 
                 <div className="lb-card-head" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                   <Supply size={11} /> Stock
+                  {lowCount > 0 && (
+                    <span style={{ marginLeft: 'auto', color: 'var(--red)', letterSpacing: 0, textTransform: 'none' }}>
+                      {lowCount} line{lowCount === 1 ? '' : 's'} low
+                    </span>
+                  )}
                 </div>
                 {groups && Object.entries(groups).map(([name, items]) =>
                   items.length === 0 ? null : (
                     <div key={name}>
                       <div style={{
-                        padding: '7px 14px 3px', fontFamily: 'var(--font-mono)', fontSize: '0.56rem',
+                        display: 'flex', alignItems: 'baseline', gap: 6,
+                        padding: '9px 14px 3px', fontFamily: 'var(--font-mono)', fontSize: '0.56rem',
                         letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--text-dim)',
                       }}>
-                        {name} <span style={{ opacity: 0.6 }}>({items.length})</span>
+                        <span>{name} <span style={{ opacity: 0.6 }}>({items.length})</span></span>
+                        {/* Lead with the shortage -- it is the only number in
+                            this panel anyone acts on. */}
+                        {countBelow(items, 0.2) > 0 && (
+                          <span style={{ marginLeft: 'auto', color: 'var(--red)' }}>
+                            {countBelow(items, 0.2)} under 20%
+                          </span>
+                        )}
                       </div>
                       {items.slice(0, 25).map(([k, v]) => (
                         <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 14px', fontSize: '0.66rem' }}>
