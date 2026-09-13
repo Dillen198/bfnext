@@ -671,6 +671,10 @@ impl StatCtx {
 /// separate per-instance trees, which keeps a pre-multi-instance DB readable
 /// (an untagged round belongs to the default instance).
 pub(crate) struct InstanceState {
+    /// Last /api/health engine probe: when, whether it answered, and why not.
+    /// Shared so many dashboard tabs cost one RPC, not one each.
+    pub(crate) health_cache:
+        tokio::sync::Mutex<Option<(std::time::Instant, bool, Option<std::string::String>)>>,
     /// Static config this instance was started with.
     pub(crate) cfg: Arc<InstanceCfg>,
     /// `cfg.id`, pre-shared for cheap cloning into keys and log lines.
@@ -743,6 +747,7 @@ impl InstanceState {
             engine_log_history: StdMutex::new(VecDeque::new()),
             engine_error_history: StdMutex::new(VecDeque::new()),
             jsonl_reset: AtomicBool::new(false),
+            health_cache: tokio::sync::Mutex::new(None),
             cfg,
         }
     }

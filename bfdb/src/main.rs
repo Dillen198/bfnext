@@ -1230,18 +1230,60 @@ async fn api_pilot_deploys(
 /// UNREACHABLE / OFFLINE -- instead of inferring liveness from the mere
 /// existence of a round row.
 async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
-    let started = std::time::Instant::now();
-    let probe = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        call_engine_rpc_str(&db, &inst, "query-campaign-state", vec![]),
-    )
-    .await;
-    let elapsed_ms = started.elapsed().as_millis() as u64;
+    // Served from a short cache. Without one, every open dashboard tab fires
+    // its own engine RPC every 30s, and this endpoint would itself become a
+    // source of the poll contention it is meant to measure.
+    const CACHE_FOR: std::time::Duration = std::time::Duration::from_secs(15);
+    // 8s, not 3s: netidx RPC round-trips under a populated mission routinely
+    // run past 3s with a perfectly healthy engine -- see the same note on
+    // api_objectives. A 3s probe reported NO ENGINE on a server whose tacmap
+    // and objective RPCs were answering fine every few seconds.
+    const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
-    let (engine_ok, engine_err) = match probe {
-        Ok(Ok(_)) => (true, None),
-        Ok(Err(e)) => (false, Some(e.0.to_string())),
-        Err(_) => (false, Some("engine RPC timed out after 3s".to_string())),
+    let cached = {
+        let cache = inst.health_cache.lock().await;
+        match &*cache {
+            Some((at, ok, err)) if at.elapsed() < CACHE_FOR => {
+                Some((*ok, err.clone(), at.elapsed().as_millis() as u64))
+            }
+            _ => None,
+        }
+    };
+
+    let (engine_ok, engine_err, elapsed_ms) = match cached {
+        Some((ok, err, _)) => (ok, err, 0u64),
+        None => {
+            let started = std::time::Instant::now();
+            let probe = tokio::time::timeout(
+                PROBE_TIMEOUT,
+                call_engine_rpc_str(&db, &inst, "query-campaign-state", vec![]),
+            )
+            .await;
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            let (ok, err) = match probe {
+                Ok(Ok(_)) => (true, None),
+                Ok(Err(e)) => (false, Some(e.0.to_string())),
+                Err(_) => (
+                    false,
+                    Some(format!(
+                        "engine RPC timed out after {}s",
+                        PROBE_TIMEOUT.as_secs()
+                    )),
+                ),
+            };
+            // Log it. The first version of this handler logged nothing, so a
+            // persistent NO ENGINE left no trace in bfdb.log at all.
+            if !ok {
+                log::warn!(
+                    "[{}] api_health: query-campaign-state probe failed after {}ms: {}",
+                    inst.id,
+                    elapsed_ms,
+                    err.as_deref().unwrap_or("unknown")
+                );
+            }
+            *inst.health_cache.lock().await = Some((std::time::Instant::now(), ok, err.clone()));
+            (ok, err, elapsed_ms)
+        }
     };
 
     // The round row is campaign state, NOT liveness -- it survives the DCS
@@ -1260,7 +1302,7 @@ async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::R
         "instance": inst.id.to_string(),
         "engine": {
             "reachable": engine_ok,
-            "latency_ms": if engine_ok { Some(elapsed_ms) } else { None },
+            "latency_ms": if engine_ok && elapsed_ms > 0 { Some(elapsed_ms) } else { None },
             "error": engine_err,
         },
         "active_round": round,
