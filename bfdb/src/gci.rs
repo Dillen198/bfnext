@@ -432,6 +432,11 @@ pub(crate) async fn run(
     ));
 
     let mut ledger: HashMap<String, PlayerGci> = HashMap::new();
+    // Last contact list logged per flight. The picture is rebuilt every few
+    // seconds whether or not anything moved, and logging it unconditionally
+    // made these lines ~20% of bfdb's log while a single player orbited in
+    // sight of two AWACS. Log a flight's picture when it actually changes.
+    let mut last_seen_log: HashMap<String, String> = HashMap::new();
     let mut side_state: HashMap<&'static str, SideState> = HashMap::new();
     let mut tick: u64 = 0;
     let mut engine_ok = true; // start optimistic so the first failure warns once
@@ -476,22 +481,43 @@ pub(crate) async fn run(
             for flight in &picture.flights {
                 if !flight.contacts.is_empty() || !flight.sam_threats.is_empty() {
                     flights_in_combat += 1;
-                    log::info!(
-                        "gci: {} sees {} group(s): {}",
-                        flight.player_name,
-                        flight.contacts.len(),
-                        flight
-                            .contacts
-                            .iter()
-                            .map(|c| format!(
-                                "{}nm {}x {}",
-                                c.rng_m / 1852,
-                                c.group_size,
-                                c.type_name.as_deref().unwrap_or("unknown-type")
-                            ))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
+                    let summary = flight
+                        .contacts
+                        .iter()
+                        .map(|c| format!(
+                            "{}nm {}x {}",
+                            c.rng_m / 1852,
+                            c.group_size,
+                            c.type_name.as_deref().unwrap_or("unknown-type")
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    // Compare on what the picture *is*, not on the ranges --
+                    // those tick over every few seconds on a closing or
+                    // orbiting contact and would defeat the check entirely.
+                    let shape = flight
+                        .contacts
+                        .iter()
+                        .map(|c| format!(
+                            "{}x{}",
+                            c.group_size,
+                            c.type_name.as_deref().unwrap_or("unknown-type")
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let changed = last_seen_log
+                        .get(flight.ucid.as_str())
+                        .map(|prev| prev != &shape)
+                        .unwrap_or(true);
+                    if changed {
+                        log::info!(
+                            "gci: {} sees {} group(s): {}",
+                            flight.player_name,
+                            flight.contacts.len(),
+                            summary
+                        );
+                        last_seen_log.insert(flight.ucid.to_string(), shape);
+                    }
                 }
                 // Honor a fresh COMMIT for this flight.
                 if committed.get(&flight.ucid) == Some(&side) {

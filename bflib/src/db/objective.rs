@@ -1240,17 +1240,34 @@ impl Db {
                         }
                     },
                 )?;
-            for class in [
-                ObjGroupClass::Logi,
-                ObjGroupClass::Services,
-                ObjGroupClass::Infantry,
-                ObjGroupClass::Sr,
-                ObjGroupClass::Aaa,
-                ObjGroupClass::Mr,
-                ObjGroupClass::Lr,
-                ObjGroupClass::Armor,
-                ObjGroupClass::Other,
-            ] {
+            // Repair priority, lowest first. This is an exhaustive match
+            // rather than a literal list of classes on purpose: `Naval` was
+            // missing from the list this replaces, and a class that is absent
+            // here can never be repaired even though `compute_objective_status`
+            // still counts its dead units against objective health. The base
+            // then reads damaged forever, `-admin repair` answers "no damaged
+            // groups to repair", and once health hits 0
+            // `neutralize_depleted_objective` drops it to Neutral. Adding a
+            // variant to ObjGroupClass now fails to compile until it is given
+            // a place in the order.
+            let priority = |c: &ObjGroupClass| -> u8 {
+                match c {
+                    ObjGroupClass::Logi => 0,
+                    ObjGroupClass::Services => 1,
+                    ObjGroupClass::Infantry => 2,
+                    ObjGroupClass::Sr => 3,
+                    ObjGroupClass::Aaa => 4,
+                    ObjGroupClass::Mr => 5,
+                    ObjGroupClass::Lr => 6,
+                    ObjGroupClass::Armor => 7,
+                    ObjGroupClass::Naval => 8,
+                    ObjGroupClass::Other => 9,
+                }
+            };
+            let mut classes: SmallVec<[ObjGroupClass; 10]> =
+                damaged_by_class.keys().copied().collect();
+            classes.sort_by_key(priority);
+            for class in classes {
                 if let Some(groups) = damaged_by_class.get_mut(&class) {
                     groups.sort_by_key(|(_, d)| *d); // pick the most damaged group
                     if let Some((gid, _)) = groups.pop() {
@@ -2294,6 +2311,16 @@ impl Db {
                     // nearest squad 10-20 km away spams the log every 2 min.
                     let mut engaged = false;
                     let mut scan_dbg = |group: &SpawnedGroup, cc: bool, kind: &str, gid: &GroupId| {
+                        // Only an *enemy* squad can register as a capturing
+                        // group (see the `group.side != obj.owner` guard on
+                        // both loops above), so a friendly squad parked in its
+                        // own base is not a failed capture. Without this the
+                        // diagnostic fired every 2 minutes for the whole
+                        // session on every garrisoned base, which buried the
+                        // real "why won't this capture" cases it exists for.
+                        if group.side == obj.owner {
+                            return;
+                        }
                         let mut nearest = f64::INFINITY;
                         let mut in_zone = false;
                         let mut alive = 0u32;

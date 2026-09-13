@@ -1649,7 +1649,8 @@
       },
       {
         "path": [
-          "SAM - Medium Range"
+          "SAM - Medium Range",
+          "SA-15 Tor"
         ],
         "kind": {
           "Group": {

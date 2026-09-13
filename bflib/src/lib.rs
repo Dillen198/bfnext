@@ -960,7 +960,8 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             // weapon, start tracking it so nearby SAM sites on the opposite
             // side can be warned to go dark before it arrives.
             if let Some(iadn) = ctx.db.ephemeral.cfg.iadn.as_ref() {
-                if iadn.anti_radiation_weapons.contains(e.weapon_name.as_str()) {
+                let arm_name = e.weapon_name.as_ref().map(|n| n.as_str()).unwrap_or("");
+                if iadn.anti_radiation_weapons.contains(arm_name) {
                     let shooter_side = e.initiator.object_id().ok()
                         .and_then(|obj_id| ctx.db.ephemeral.get_uid_by_object_id(&obj_id))
                         .and_then(|uid| ctx.db.unit(uid).ok())
@@ -1062,7 +1063,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                     warn_taxiway_takeoff(lua, ctx, &unit, e.place.as_ref(), position, &slot);
                     match ctx.db.takeoff(Utc::now(), slot, &unit, position) {
                         Err(e) => error!("could not process takeoff, {:?}", e),
-                        Ok(TakeoffRes::NoLifeTaken) => (),
+                        Ok(TakeoffRes::NoLifeTaken | TakeoffRes::NotPlayerSlot) => (),
                         Ok(TakeoffRes::TookLife(typ)) => {
                             if let Err(e) =
                                 message_life(ctx, &slot, Some(typ), "life taken\n")
@@ -1213,16 +1214,28 @@ fn took_off_off_runway(lua: MizLua, airbase_name: &str, pos: Vector2) -> Option<
         // margin stays tighter so a parallel-taxiway departure is still caught,
         // but with enough room for line-up + shoulder.
         let end_margin = length / 2.0 + 1500.0;
-        let side_margin = width / 2.0 + 60.0;
+        // The lateral margin has to grow with distance along the runway.
+        // `getRunways()` reports a course that is a few degrees off the real
+        // axis on some fields, and an angular error turns into a lateral error
+        // proportional to how far down the runway the wheels left the ground --
+        // at ~1500 m along (a fast jet lifting off past the far threshold) six
+        // degrees is ~160 m, well outside a flat 90 m box. That is what has
+        // been flagging legitimate departures. 0.06 ~= 3.4 degrees of slop.
+        let side_margin = |along: f64| width / 2.0 + 60.0 + along.abs() * 0.06;
         let mut best: Option<(f64, f64)> = None;
         for course in [course, -course] {
             let (s, c) = course.sin_cos();
             let along = dn * c + de * s;
             let across = -dn * s + de * c;
-            if along.abs() <= end_margin && across.abs() <= side_margin {
+            if along.abs() <= end_margin && across.abs() <= side_margin(along) {
                 return Some(false);
             }
-            if best.map(|(_, a)| across.abs() < a).unwrap_or(true) {
+            // Keep the *closest* projection for the diagnostic. This compared
+            // `across.abs() < a` against the stored raw `across`, so once the
+            // first candidate stored a negative value nothing could ever beat
+            // it -- the log then reported the discarded projection. That is how
+            // a departure 165 m off centreline came out in the log as 1536 m.
+            if best.map(|(_, a)| across.abs() < a.abs()).unwrap_or(true) {
                 best = Some((along, across));
             }
         }
@@ -1230,8 +1243,9 @@ fn took_off_off_runway(lua: MizLua, airbase_name: &str, pos: Vector2) -> Option<
             info!(
                 "[TAXIWAY_CHK] {airbase_name}: liftoff off runway (name={:?} len={length:.0} \
                  width={width:.0} course={course:.3}rad) along={along:.0} across={across:.0} \
-                 (limits {end_margin:.0}/{side_margin:.0})",
-                rwy.name().ok()
+                 (limits {end_margin:.0}/{:.0})",
+                rwy.name().ok(),
+                side_margin(along)
             );
         }
     }
@@ -2872,17 +2886,34 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
         let outnumbered = events_cfg.cap_balance_gap > 0
             && their_air >= my_air + events_cfg.cap_balance_gap as usize;
         if player_fw_count < min_threat && !outnumbered {
-            info!(
-                "Reactive CAP: {:?} not scrambling — {} enemy fixed-wing player(s) {} (need {}), \
-                 air balance {}v{} (gap {})",
-                defending_side,
-                player_fw_count,
-                if events_cfg.cap_trigger_on_known_players { "airborne" } else { "on radar" },
-                min_threat,
-                my_air,
-                their_air,
-                events_cfg.cap_balance_gap
-            );
+            // This runs every 10s per side, and on a quiet server the answer is
+            // the same every time -- unthrottled it was 13% of the whole engine
+            // log. Say it when the picture actually changes, and otherwise once
+            // every 10 minutes so it still reads as a heartbeat.
+            use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
+            static LAST_LOG: [AtomicI64; 2] = [AtomicI64::new(i64::MIN), AtomicI64::new(i64::MIN)];
+            static LAST_PIC: [AtomicU32; 2] = [AtomicU32::new(u32::MAX), AtomicU32::new(u32::MAX)];
+            let slot = if defending_side == Side::Red { 0 } else { 1 };
+            let pic = ((player_fw_count.min(255) as u32) << 16)
+                | ((my_air.min(255) as u32) << 8)
+                | their_air.min(255) as u32;
+            let secs = now.timestamp();
+            let changed = LAST_PIC[slot].swap(pic, Ordering::Relaxed) != pic;
+            let stale = secs.saturating_sub(LAST_LOG[slot].load(Ordering::Relaxed)) >= 600;
+            if changed || stale {
+                LAST_LOG[slot].store(secs, Ordering::Relaxed);
+                info!(
+                    "Reactive CAP: {:?} not scrambling — {} enemy fixed-wing player(s) {} (need {}), \
+                     air balance {}v{} (gap {})",
+                    defending_side,
+                    player_fw_count,
+                    if events_cfg.cap_trigger_on_known_players { "airborne" } else { "on radar" },
+                    min_threat,
+                    my_air,
+                    their_air,
+                    events_cfg.cap_balance_gap
+                );
+            }
             continue;
         }
         if outnumbered && player_fw_count < min_threat {

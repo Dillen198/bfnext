@@ -48,18 +48,36 @@ impl Tts {
     }
 
     /// Synthesize `text` to 16 kHz mono `i16` PCM. Blocking.
+    ///
+    /// Retried once. Piper is an external binary and has been seen to die with
+    /// an access violation (0xc0000005) mid-run; that dropped the GCI call
+    /// outright even though synthesis is pure and a second attempt succeeds.
+    /// Each attempt gets its own temp file so a half-written wav from a crashed
+    /// run can't be picked up by the retry.
     pub(crate) fn synthesize(&self, text: &str) -> Result<Vec<i16>> {
-        let tmp = std::env::temp_dir().join(format!("bfgci-{}.wav", uuid::Uuid::new_v4()));
-        let r = (|| -> Result<Vec<i16>> {
-            match self {
-                Tts::Piper { exe, model } => run_piper(exe, model, text, &tmp)?,
-                Tts::Sapi { voice } => run_sapi(voice.as_deref(), text, &tmp)?,
+        let mut last_err = None;
+        for attempt in 0..2 {
+            let tmp = std::env::temp_dir().join(format!("bfgci-{}.wav", uuid::Uuid::new_v4()));
+            let r = (|| -> Result<Vec<i16>> {
+                match self {
+                    Tts::Piper { exe, model } => run_piper(exe, model, text, &tmp)?,
+                    Tts::Sapi { voice } => run_sapi(voice.as_deref(), text, &tmp)?,
+                }
+                let (samples, rate) = read_wav_mono(&tmp)?;
+                Ok(resample_to(&samples, rate, SRS_RATE))
+            })();
+            let _ = std::fs::remove_file(&tmp);
+            match r {
+                Ok(pcm) => return Ok(pcm),
+                Err(e) => {
+                    if attempt == 0 {
+                        log::debug!("tts: synthesis failed ({e}), retrying once");
+                    }
+                    last_err = Some(e);
+                }
             }
-            let (samples, rate) = read_wav_mono(&tmp)?;
-            Ok(resample_to(&samples, rate, SRS_RATE))
-        })();
-        let _ = std::fs::remove_file(&tmp);
-        r
+        }
+        Err(last_err.expect("loop runs at least once"))
     }
 }
 

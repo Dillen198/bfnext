@@ -1051,7 +1051,7 @@ async fn api_kills(
                         serde_json::json!({
                             "ucid": s.shooter.ucid().map(|u| u.to_string()),
                             "side": format!("{:?}", s.shooter.side()),
-                            "weapon": s.weapon_name.as_ref().map(|w| w.to_string()),
+                            "weapon": display_weapon(s.weapon_name.as_ref()),
                             "airframe": s.shooter_typ.as_deref(),
                         })
                     });
@@ -1174,7 +1174,7 @@ async fn api_pilot_kills(
                 .or_else(|| dead.shots.iter().find(|s| mine(s)))
                 .or_else(|| dead.shots.iter().find(|s| s.hit))
                 .or_else(|| dead.shots.first());
-            let weapon = shot.and_then(|s| s.weapon_name.as_ref().map(|w| w.to_string()));
+            let weapon = shot.and_then(|s| display_weapon(s.weapon_name.as_ref()));
             let airframe = shot.and_then(|s| s.shooter_typ.as_deref().map(|t| t.to_string()));
             let target_type = shot.map(|s| s.target_typ.to_string());
             let victim_ucid = dead.victim.ucid().map(|u| u.to_string());
@@ -3892,6 +3892,9 @@ enum TacView {
 /// release feed and hoping a third-party dump catches up, we get told the
 /// version that is actually running -- mods included -- and diff it.
 ///
+/// Storage key used when the engine could not report the running DCS build.
+const UNKNOWN_DCS_VERSION: &str = "unknown";
+
 /// Slow on purpose. The data only changes when DCS or a mod updates, which
 /// means a restart, which means we re-read it anyway.
 async fn unitdb_refresher(db: StatsDb, inst: Inst) {
@@ -3901,6 +3904,7 @@ async fn unitdb_refresher(db: StatsDb, inst: Inst) {
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(30 * 60));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_err: Option<std::string::String> = None;
+    let mut warned_no_version = false;
     loop {
         tick.tick().await;
         let res = tokio::time::timeout(
@@ -3935,12 +3939,26 @@ async fn unitdb_refresher(db: StatsDb, inst: Inst) {
                 continue;
             }
         };
-        let Some(version) = snap.dcs_version.clone() else {
-            log::warn!(
-                "[{}] unitdb_refresher: snapshot has no DCS version, not storing it",
-                inst.id
-            );
-            continue;
+        // The version is only the storage key and a label. bflib reads it from
+        // the hooks Lua state, where `DCS.getVersion` is not always present
+        // ("could not read the DCS version: error converting Lua nil to
+        // function" in the engine log) -- and discarding the snapshot over that
+        // threw away a complete, usable harvest (883 unit types) on every run,
+        // leaving the dashboard and wiki with no unit data at all. Store it
+        // under a placeholder instead and say so once.
+        let version = match snap.dcs_version.clone() {
+            Some(v) => v,
+            None => {
+                if !warned_no_version {
+                    warned_no_version = true;
+                    log::warn!(
+                        "[{}] unitdb_refresher: snapshot has no DCS version -- storing it as \"{}\"                          (the engine could not read DCS.getVersion; the unit data itself is fine)",
+                        inst.id,
+                        UNKNOWN_DCS_VERSION
+                    );
+                }
+                UNKNOWN_DCS_VERSION.to_string()
+            }
         };
         let inst_id = inst.id.to_string();
         let stored = task::block_in_place(|| -> Result<_> {
@@ -4079,6 +4097,19 @@ async fn api_unitdb_diff(
     Ok(warp::reply::json(&changes))
 }
 
+/// A weapon name worth showing, or None.
+///
+/// Kills recorded before the engine learned that DCS leaves `weapon_name` nil
+/// on some hits (cluster submunitions especially) are stored with the literal
+/// text "nil" -- dcso3's `FromLua` for String stringified the Lua nil. The
+/// engine no longer produces those, but the rows already in the database do,
+/// and they render in the kill log as if "nil" were the weapon. Filter it here
+/// so the API never hands one out, rather than rewriting stored history.
+fn display_weapon<S: std::fmt::Display>(name: Option<&S>) -> Option<std::string::String> {
+    name.map(|w| w.to_string())
+        .filter(|w| !w.is_empty() && w != "nil")
+}
+
 /// Background task: poll `query-tacmap` for both coalitions and cache the
 /// results. Cheap on the engine side (in-memory sensor maps). No-op when
 /// bfdb has no live engine.
@@ -4097,6 +4128,9 @@ async fn tacmap_poller(db: StatsDb, inst: Inst, state: TacState) {
     let mut last_report: [chrono::DateTime<chrono::Utc>; 2] =
         [chrono::DateTime::UNIX_EPOCH; 2];
     let mut last_err_kind: [u8; 2] = [255; 2]; // 0=ok 1=rpc-err 2=timeout 3=bad-json
+    // Consecutive failures per side, so an instance that is simply switched off
+    // backs off to a heartbeat instead of a steady warning stream.
+    let mut fail_streak: [u32; 2] = [0; 2];
     loop {
         tick.tick().await;
         for (i, side) in ["blue", "red"].into_iter().enumerate() {
@@ -4116,13 +4150,32 @@ async fn tacmap_poller(db: StatsDb, inst: Inst, state: TacState) {
                 Ok(Err(e)) => (None, 1u8, format!("RPC error: {} -- is bflib.dll current?", e.0)),
                 Err(_) => (None, 2u8, "RPC timed out after 6s (engine overloaded, restarting, or bflib.dll not current)".to_string()),
             };
-            // Report on a state change, or every 30s.
+            // Report on a state change, or on the reporting interval. Every
+            // instance runs its own poller, so tag the line with the instance
+            // id -- without it a configured-but-not-running instance (a test
+            // server that is simply off) produced ~200 identical warnings an
+            // hour that looked exactly like the live server failing.
             let now = chrono::Utc::now();
-            if last_err_kind[i] != kind || (now - last_report[i]).num_seconds() >= 30 {
+            if kind == 0 {
+                fail_streak[i] = 0;
+            } else {
+                fail_streak[i] = fail_streak[i].saturating_add(1);
+            }
+            // An instance whose engine is down fails forever; after the first
+            // minute of that, drop to one line every 10 minutes. A state change
+            // still reports immediately, so recovery is never delayed.
+            let interval = if fail_streak[i] > 30 { 600 } else { 30 };
+            if last_err_kind[i] != kind || (now - last_report[i]).num_seconds() >= interval {
+                let id = &inst.id;
                 if kind == 0 {
-                    log::info!("tacmap_poller: query-tacmap({side}) ok -- {detail}");
+                    log::info!("[{id}] tacmap_poller: query-tacmap({side}) ok -- {detail}");
+                } else if fail_streak[i] > 30 {
+                    log::warn!(
+                        "[{id}] tacmap_poller: query-tacmap({side}) {detail}                          (failing since {} attempt(s) ago -- is this instance's DCS server running?)",
+                        fail_streak[i]
+                    );
                 } else {
-                    log::warn!("tacmap_poller: query-tacmap({side}) {detail}");
+                    log::warn!("[{id}] tacmap_poller: query-tacmap({side}) {detail}");
                 }
                 last_report[i] = now;
                 last_err_kind[i] = kind;

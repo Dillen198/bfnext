@@ -133,8 +133,12 @@ impl ShotDb {
     }
 
     pub fn shot(&mut self, db: &Db, now: DateTime<Utc>, e: &ShotEvent) -> Result<()> {
-        if db.ephemeral.cfg.weapon_target_exclusions.contains(&e.weapon_name) {
-            return Ok(())
+        // A shot with no weapon name can't match an exclusion entry, so it
+        // falls through to the normal path -- same as any unlisted weapon.
+        if let Some(name) = e.weapon_name.as_ref() {
+            if db.ephemeral.cfg.weapon_target_exclusions.contains(name) {
+                return Ok(())
+            }
         }
         // Calling weapon.get_target() on a weapon that targets a ground point
         // rather than a unit object hard-crashes DCS inside
@@ -183,7 +187,7 @@ impl ShotDb {
         let target_typ = target.get_type_name()?;
         let target = some!(who(db, target_oid.clone()));
         self.by_target.entry(target_oid).or_default().push(Shot {
-            weapon_name: Some(e.weapon_name.clone()),
+            weapon_name: e.weapon_name.clone(),
             weapon: Some(e.weapon.object_id()?),
             shooter,
             shooter_typ,
@@ -202,7 +206,7 @@ impl ShotDb {
         dead: bool,
         target: &Unit,
         shooter: &Unit,
-        weapon_name: String,
+        weapon_name: Option<String>,
     ) -> Result<()> {
         let target_oid = target.object_id()?;
         if self.dead.contains_key(&target_oid) || self.recently_dead.contains_key(&target_oid) {
@@ -216,7 +220,7 @@ impl ShotDb {
             .entry(target_oid.clone())
             .or_default()
             .push(Shot {
-                weapon_name: Some(weapon_name),
+                weapon_name,
                 weapon: None,
                 shooter,
                 shooter_typ,

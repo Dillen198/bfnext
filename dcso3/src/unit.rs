@@ -19,7 +19,7 @@ use crate::{
     record_perf, simple_enum, wrapped_table, LuaEnv, LuaVec2, LuaVec3, MizLua, Position3, Sequence,
 };
 use anyhow::{bail, Result};
-use log::warn;
+use log::debug;
 use mlua::{prelude::*, Value};
 use na::Vector2;
 use serde_derive::{Deserialize, Serialize};
@@ -202,12 +202,12 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
             lua: lua.inner(),
         };
         if !t.is_exist()? {
-            warn!("{} is an invalid unit", id.id);
+            debug!("{} is an invalid unit", id.id);
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
         if t.get_life()? <= 0 {
-            warn!("{} is dead", id.id);
+            debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
         Ok(t)
@@ -226,12 +226,12 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
     fn change_instance(self, id: &DcsOid<Self::Class>) -> Result<Self> {
         self.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            warn!("{} is an invalid unit", id.id);
+            debug!("{} is an invalid unit", id.id);
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
         if self.get_life()? <= 0 {
-            warn!("{} is dead", id.id);
+            debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
         Ok(self)
@@ -241,12 +241,12 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
         id.check_implements(MizLua(self.lua), "Unit")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            warn!("{} is an invalid unit", id.id);
+            debug!("{} is an invalid unit", id.id);
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
         if self.get_life()? <= 0 {
-            warn!("{} is dead", id.id);
+            debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
         Ok(self)

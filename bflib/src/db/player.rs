@@ -88,6 +88,13 @@ pub enum TakeoffRes {
     /// Got airborne before the `takeoff_delay_secs` hold expired -- carries the
     /// seconds that were still remaining.
     TooEarly(i64),
+    /// The unit that took off isn't in a player slot at all. AI flights reach
+    /// the takeoff handler whenever they were spawned more than a few seconds
+    /// before they rolled -- a ground-started CAP taxis for over a minute, so
+    /// the `recently_born` guard (5s, there to swallow the takeoff DCS fires
+    /// for a unit spawned already airborne) has long since let go of them.
+    /// Nothing to charge and nobody to tell: not an error.
+    NotPlayerSlot,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -374,11 +381,9 @@ impl Db {
         unit: &Unit,
         position: Vector2,
     ) -> Result<TakeoffRes> {
-        let sifo = self
-            .ephemeral
-            .slot_info
-            .get(&slot)
-            .ok_or_else(|| anyhow!("could not find slot {:?}", slot))?;
+        let Some(sifo) = self.ephemeral.slot_info.get(&slot) else {
+            return Ok(TakeoffRes::NotPlayerSlot);
+        };
         let (cost, strict, cost_msg) = match self.compute_flight_cost(&sifo, unit) {
             Ok(cost) => cost,
             Err(e) => {
@@ -386,12 +391,16 @@ impl Db {
                 (0, false, String::from(""))
             }
         };
-        let (ucid, player) = self
+        // An AI unit can occupy a slot the miz also offers to players, so this
+        // is the second place a non-player takeoff can land.
+        let Some((ucid, player)) = self
             .ephemeral
             .players_by_slot
             .get(&slot)
             .and_then(|ucid| self.persisted.players.get_mut_cow(ucid).map(|p| (*ucid, p)))
-            .ok_or_else(|| anyhow!("could not find player in slot {:?}", slot))?;
+        else {
+            return Ok(TakeoffRes::NotPlayerSlot);
+        };
         // Enforce the post-slot-entry takeoff hold.
         if let Some((_, Some(inst))) = &player.current_slot {
             if let Some(ok_at) = inst.takeoff_ok_at {
@@ -986,7 +995,13 @@ impl Db {
                         let instance = match instance {
                             Ok(i) => Ok(i),
                             Err(_) => {
-                                warn!("failed to get unit by id, trying by name");
+                                // Routine: a player who left the slot between the poll
+                                // starting and this lookup has no unit by id
+                                // any more. The by-name fallback usually finds
+                                // it, and when it does not the skip below says
+                                // so -- this was the middle of three warnings
+                                // for one benign race.
+                                debug!("failed to get unit by id, trying by name");
                                 Unit::get_by_name(lua, &inst.unit_name)
                             }
                         };

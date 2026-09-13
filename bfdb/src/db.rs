@@ -3264,12 +3264,19 @@ impl StatsDb {
                     |a| a.actions += 1,
                 )?;
                 if let Some(gid) = gid {
-                    self.with_group((ctx.round, gid), |group| {
+                    // Same race as DeployTroop below: the group row only exists
+                    // once Stat::Unit reports the spawned units, and an action
+                    // that spawns a group is logged before they appear. Tag it
+                    // if it is there, but never throw away the whole stat --
+                    // the pilot's action count above has already landed.
+                    if let Err(e) = self.with_group((ctx.round, gid), |group| {
                         group.kind = GroupKind::Action {
                             by,
                             name: action.clone(),
                         }
-                    })?;
+                    }) {
+                        debug!("Action: group {gid:?} not tracked yet ({e})");
+                    }
                 }
             }
             Stat::DeployTroop { by, troop, gid } => {

@@ -38,7 +38,7 @@ pub struct Shot<'lua> {
     pub time: Time,
     pub initiator: Unit<'lua>,
     pub weapon: Weapon<'lua>,
-    pub weapon_name: String,
+    pub weapon_name: Option<String>,
 }
 
 impl<'lua> FromLua<'lua> for Shot<'lua> {
@@ -48,7 +48,7 @@ impl<'lua> FromLua<'lua> for Shot<'lua> {
             time: tbl.raw_get("time")?,
             initiator: tbl.raw_get("initiator")?,
             weapon: tbl.raw_get("weapon")?,
-            weapon_name: tbl.raw_get("weapon_name")?,
+            weapon_name: opt_weapon_name(&tbl)?,
         })
     }
 }
@@ -57,7 +57,7 @@ impl<'lua> FromLua<'lua> for Shot<'lua> {
 pub struct ShootingEnd<'lua> {
     pub time: Time,
     pub initiator: Unit<'lua>,
-    pub weapon_name: String,
+    pub weapon_name: Option<String>,
 }
 
 impl<'lua> FromLua<'lua> for ShootingEnd<'lua> {
@@ -66,9 +66,25 @@ impl<'lua> FromLua<'lua> for ShootingEnd<'lua> {
         Ok(Self {
             time: tbl.raw_get("time")?,
             initiator: tbl.raw_get("initiator")?,
-            weapon_name: tbl.raw_get("weapon_name")?,
+            weapon_name: opt_weapon_name(&tbl)?,
         })
     }
+}
+
+/// `weapon_name` as DCS actually supplies it.
+///
+/// DCS leaves the field nil on some hits -- notably cluster submunitions, where
+/// the parent weapon is already gone by the time the hit registers. Reading
+/// that straight into `String` went through the catch-all arm of dcso3's
+/// `FromLua` impl, which stringifies whatever it is given, so the *literal text
+/// "nil"* was stored as the weapon name and shown that way in the kill log.
+/// `Option<String>` is what the field really is: mlua maps Lua nil to None
+/// before `String::from_lua` is ever reached. An empty name is no more useful
+/// than a missing one, so it collapses to None too.
+fn opt_weapon_name(tbl: &mlua::Table) -> LuaResult<Option<String>> {
+    Ok(tbl
+        .raw_get::<_, Option<String>>("weapon_name")?
+        .filter(|s| !s.as_str().is_empty()))
 }
 
 /// DCS sometimes hands an event an `initiator`/`target` that is a bare table
@@ -94,7 +110,7 @@ pub struct WeaponUse<'lua> {
     pub time: Time,
     pub initiator: Option<Object<'lua>>,
     pub target: Option<Object<'lua>>,
-    pub weapon_name: String,
+    pub weapon_name: Option<String>,
 }
 
 impl<'lua> FromLua<'lua> for WeaponUse<'lua> {
@@ -104,7 +120,7 @@ impl<'lua> FromLua<'lua> for WeaponUse<'lua> {
             time: tbl.raw_get("time")?,
             initiator: opt_object(&tbl, "initiator", lua)?,
             target: opt_object(&tbl, "target", lua)?,
-            weapon_name: tbl.raw_get("weapon_name")?,
+            weapon_name: opt_weapon_name(&tbl)?,
         })
     }
 }
@@ -206,7 +222,7 @@ impl<'lua> FromLua<'lua> for AtPlace<'lua> {
 pub struct WeaponAdd<'lua> {
     pub time: Time,
     pub initiator: Object<'lua>,
-    pub weapon_name: String,
+    pub weapon_name: Option<String>,
 }
 
 impl<'lua> FromLua<'lua> for WeaponAdd<'lua> {
@@ -215,7 +231,7 @@ impl<'lua> FromLua<'lua> for WeaponAdd<'lua> {
         Ok(Self {
             time: tbl.raw_get("time")?,
             initiator: tbl.raw_get("initiator")?,
-            weapon_name: tbl.raw_get("weapon_name")?,
+            weapon_name: opt_weapon_name(&tbl)?,
         })
     }
 }
