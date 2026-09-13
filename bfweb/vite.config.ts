@@ -16,6 +16,18 @@ export default defineConfig(({ mode }) => {
   const target = env.VITE_BFDB_URL || 'http://localhost:8880'
   return {
     plugins: [react(), tailwindcss()],
+    // This app is not only viewed in a current browser: the in-DCS cockpit
+    // overlay renders it in DCS World's embedded CEF, which is Chromium 106
+    // (checked against bin/libcef.dll). Vite's default baseline is newer than
+    // that, so without this the bundle can ship syntax the sim's browser
+    // cannot parse -- and a parse error there is an unexplained blank panel,
+    // with no console to read.
+    //
+    // Note this covers JavaScript only. Tailwind v4's generated CSS uses
+    // oklch() and color-mix(), which need Chromium 111 and degrade in the
+    // overlay; CockpitPage.tsx therefore styles itself from the plain
+    // hex/rgba tokens in index.css rather than Tailwind utilities.
+    build: { target: 'chrome106' },
     resolve: {
       // One icon set for every front end in the repo -- see shared/icons/README.md.
       // It sits outside this app, so it has no node_modules to resolve React

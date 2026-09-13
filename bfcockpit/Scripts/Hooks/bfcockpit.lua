@@ -58,7 +58,7 @@
 -- out where they are already looking, and nothing here has to make a network
 -- call of its own. `bfdb` reads this same line out of the file it serves, so
 -- the two can never disagree; keep the format exactly as it is.
-local BFCOCKPIT_VERSION = "1.0.1"
+local BFCOCKPIT_VERSION = "1.0.2"
 
 local net = require('net')
 
@@ -324,6 +324,87 @@ local function build_url(playerId)
     return table.concat(parts)
 end
 
+-- ── Diagnostic page ──────────────────────────────────────────────────
+-- Written locally and loaded from file:// when the real page will not come up.
+-- Local file rendering is known to work (proven 2026-08-27), so if this shows
+-- and the real page does not, the browser itself is fine and the problem is
+-- reaching or running the remote page -- which this then tests directly and
+-- reports both on screen and in dcs.log.
+--
+-- Deliberately written in the plainest JavaScript available: no arrow
+-- functions, no template literals, no fetch. A diagnostic that fails for the
+-- same reason as the thing it is diagnosing is worthless.
+local function write_diagnostic_page(url, reason)
+    local origin = tostring(url):match("^(https?://[^/]+)") or ""
+    local html = [==[<!doctype html>
+<html><head><meta charset="utf-8"><title>BFCOCKPIT diagnostic</title>
+<style>
+ body{background:#0d1009;color:#cdd4be;font:13px/1.5 Consolas,monospace;margin:0;padding:14px}
+ h1{color:#8ec83f;font-size:15px;letter-spacing:2px;margin:0 0 10px}
+ .k{color:#6b7858} .ok{color:#8ec83f} .bad{color:#e06c6c}
+ pre{white-space:pre-wrap;word-break:break-all;margin:4px 0}
+</style></head><body>
+<h1>BFCOCKPIT DIAGNOSTIC</h1>
+<pre><span class="k">why:      </span>__REASON__</pre>
+<pre><span class="k">target:   </span>__URL__</pre>
+<pre><span class="k">browser:  </span><span id="ua">?</span></pre>
+<pre><span class="k">network:  </span><span id="net">testing...</span></pre>
+<pre id="detail"></pre>
+<script>
+document.getElementById("ua").textContent = navigator.userAgent;
+function show(id, cls, text) {
+  var e = document.getElementById(id);
+  e.className = cls;
+  e.textContent = text;
+}
+try {
+  var x = new XMLHttpRequest();
+  x.open("GET", "__ORIGIN__/api/cockpit/plugin/version", true);
+  x.timeout = 10000;
+  x.onload = function () {
+    show("net", x.status === 200 ? "ok" : "bad", "HTTP " + x.status);
+    document.getElementById("detail").textContent =
+      "response: " + String(x.responseText).substring(0, 300);
+  };
+  x.onerror = function () {
+    show("net", "bad", "request failed -- this browser cannot reach the campaign API");
+    document.getElementById("detail").textContent =
+      "DCS could not open the connection at all. Usually TLS or a firewall. "
+      + "Try your bfdb http:// address in the url setting to rule TLS out.";
+  };
+  x.ontimeout = function () { show("net", "bad", "timed out after 10s"); };
+  x.send();
+} catch (e) {
+  show("net", "bad", "threw: " + e);
+}
+</script></body></html>]==]
+    -- Function replacements, not string ones: gsub reads "%" in a replacement
+    -- string as a capture reference, and these URLs are percent-encoded
+    -- ("...server=Vector%20Admin"), which throws "invalid capture index".
+    local function fill(placeholder, value)
+        html = html:gsub(placeholder, function() return tostring(value) end)
+    end
+    fill("__ORIGIN__", origin)
+    fill("__URL__", url)
+    fill("__REASON__", reason)
+
+    local ok, result = pcall(function()
+        local dir = lfs.writedir() .. "Temp\\"
+        pcall(lfs.mkdir, dir)
+        local path = dir .. "bfcockpit_diag.html"
+        local f, err = io.open(path, "w")
+        if not f then error(tostring(err)) end
+        f:write(html)
+        f:close()
+        return "file:///" .. path:gsub("\\", "/")
+    end)
+    if not ok then
+        logmsg("could not write diagnostic page: " .. tostring(result))
+        return nil
+    end
+    return result
+end
+
 -- ── Window ───────────────────────────────────────────────────────────
 
 local TITLE_H = 26
@@ -333,6 +414,12 @@ local window, webview
 -- browserCreated; checked each simulation frame so a callback that never
 -- fires still ends in a loaded page rather than a grey rectangle.
 local load_deadline = nil
+-- Set when a remote page has been asked for but has not reported back yet.
+-- If it never does, the local diagnostic page is loaded instead of leaving
+-- the player staring at an empty grey rectangle with no idea why.
+local page_deadline = nil
+local last_url = nil
+local diagnostic_shown = false
 local visible = false
 local click_through = false
 local geometry_dirty = false
@@ -458,6 +545,7 @@ end
 
 local function close()
     load_deadline = nil
+    page_deadline = nil
     if not window then return end
     flush_geometry()
     pcall(function() window:close() end)
@@ -473,11 +561,29 @@ local function load_page(reason)
         return
     end
     local url = build_url(playerId)
+    last_url = url
     logmsg("loading " .. url .. " (" .. reason .. ")")
     local ok, err = pcall(function() webview:cefLoadUrl(url) end)
     if not ok then
         logmsg("FATAL: cefLoadUrl failed: " .. tostring(err))
+        return
     end
+    -- CEF reports success through onPageLoaded and failure through
+    -- onMountFailed, but a navigation that goes nowhere at all reports
+    -- neither. This is the backstop for that case.
+    page_deadline = os.clock() + 10.0
+end
+
+-- Swap to the local diagnostic page. Shown at most once, so a diagnostic that
+-- itself fails cannot loop.
+local function show_diagnostic(reason)
+    if diagnostic_shown or not webview then return end
+    diagnostic_shown = true
+    page_deadline = nil
+    logmsg("showing local diagnostic page: " .. tostring(reason))
+    local path = write_diagnostic_page(last_url or cfg.url, reason)
+    if not path then return end
+    pcall(function() webview:cefLoadUrl(path) end)
 end
 
 local function bind_hotkeys()
@@ -556,6 +662,24 @@ local function create()
             end)
         end)
 
+        -- The only way to find out what CEF actually did with a URL.
+        -- Without these, a failed navigation is indistinguishable from a page
+        -- that loaded and rendered nothing -- which cost a day of guessing.
+        pcall(function()
+            webview:onPageLoaded(function(...)
+                page_deadline = nil
+                local n = select("#", ...)
+                logmsg("onPageLoaded: " .. (n > 0 and tostring((select(1, ...))) or "no args"))
+            end)
+        end)
+        pcall(function()
+            webview:onMountFailed(function(...)
+                local n = select("#", ...)
+                logmsg("onMountFailed: " .. (n > 0 and tostring((select(1, ...))) or "no args"))
+                show_diagnostic("the page failed to load (onMountFailed)")
+            end)
+        end)
+
         window:insertWidget(webview)
 
         if browser_ready then
@@ -624,11 +748,17 @@ DCS.setUserCallbacks({
     -- Nothing but a deadline check; this runs every frame, so it stays a
     -- single comparison in the common case.
     onSimulationFrame = function()
-        if not load_deadline then return end
-        if os.clock() < load_deadline then return end
-        load_deadline = nil
-        logmsg("browserCreated never fired, loading anyway")
-        pcall(function() load_page("browserCreated timeout") end)
+        if load_deadline and os.clock() >= load_deadline then
+            load_deadline = nil
+            logmsg("browserCreated never fired, loading anyway")
+            pcall(function() load_page("browserCreated timeout") end)
+        end
+        if page_deadline and os.clock() >= page_deadline then
+            page_deadline = nil
+            pcall(function()
+                show_diagnostic("no onPageLoaded and no onMountFailed within 10s")
+            end)
+        end
     end,
 
     onSimulationStop = function()
