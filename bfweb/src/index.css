@@ -887,13 +887,22 @@ body {
    flexible grid instead of a fixed column count. */
 @media (max-width: 860px) {
   .kpi-strip {
-    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    /* auto-FILL, not auto-fit: auto-fit collapses the empty tracks on the
+       last row, which stretched the lone seventh cell across the full width
+       and left it looking like a mistake. auto-fill keeps the track, so it
+       stays one column wide and lines up under the one above it. */
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
   }
   .kpi-cell {
     padding: 8px 12px;
-    border-right: none;
+    border-right: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
+    /* "obj below 40% HP" wraps to two lines and "2 blu · 1 red" does not, so
+       without a floor the rows came out different heights. */
+    min-height: 66px;
   }
+  .kpi-cell:last-child { border-right: 1px solid var(--border); }
+
 }
 
 .kpi-label {
@@ -1402,5 +1411,30 @@ body::after {
   }
   .stock-row .stock-bar > div:first-child {
     min-width: 22px;
+  }
+}
+
+/* KPI strip type, sized from measurement rather than guesswork.
+   These have to live at the end of the file: the .kpi-* base rules are
+   declared AFTER the @media (max-width: 860px) block above, so an override
+   placed there loses on source order and silently does nothing -- which is
+   exactly what happened on the first attempt (the sub stayed 11.9px).
+
+   The longest sub, "obj below 40% HP", measured 114px against a 100px
+   track. Trimming the cell padding to 10px and the type to 0.58rem brings
+   it to ~97px in a 105px track, so every sub sits on one line and the grid
+   rows come out equal without truncating anything. */
+@media (max-width: 860px) {
+  .kpi-cell {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .kpi-label {
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+  }
+  .kpi-sub {
+    font-size: 0.58rem;
+    white-space: nowrap;
   }
 }
