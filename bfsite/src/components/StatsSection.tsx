@@ -2,7 +2,10 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { campaign } from '../config/campaign'
-import { ArrowRight, Trophy } from 'lucide-react'
+import {
+  ArrowRight,
+  Award as Trophy,
+} from '@icons'
 import Reveal from './Reveal'
 
 function kd(air: number, ground: number, deaths: number): string {

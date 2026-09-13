@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
-import { Radio } from 'lucide-react'
+import {
+  Comms as Radio,
+} from '@icons'
 
 export default function AlertBanner() {
   const { data: stats } = useQuery({

@@ -39,7 +39,7 @@ import {
   Download,
   Maximize2,
   Eraser,
-} from '../icons'
+} from '@icons'
 
 const MARKUP_COLORS = ['#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ffffff']
 const RUN_COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#a855f7', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16']

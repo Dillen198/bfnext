@@ -18,7 +18,7 @@ import {
   Tacmap,
   type IconComponent,
   Clock,
-} from '../icons'
+} from '@icons'
 import type { SituationReport, Task, Hotspot, Urgency } from '../api'
 import BriefingMap from './BriefingMap'
 

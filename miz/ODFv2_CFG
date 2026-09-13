@@ -17,12 +17,12 @@
   "shutdown": 10,
   "points": {
     "new_player_join": 30000,
-    "air_kill": 350,
-    "ground_kill": 200,
-    "lr_sam_bonus": 50,
-    "logistics_repair": 350,
-    "logistics_transfer": 350,
-    "capture": 1000,
+    "air_kill": 25,
+    "ground_kill": 2,
+    "lr_sam_bonus": 5,
+    "logistics_repair": 25,
+    "logistics_transfer": 15,
+    "capture": 15,
     "tk_window": 5,
     "provisional": false,
     "strict": false,
@@ -155,8 +155,8 @@
         "Red": "IL-76_LOGI",
         "Blue": "C-17_LOGI"
       },
-      "altitude_m": 2500,
-      "speed_kph": 400,
+      "altitude_m": 8000,
+      "speed_kph": 780,
       "spawn_interval_ticks": 3,
       "max_concurrent_routes": 6,
       "delivery_distance": 2000,
@@ -241,14 +241,20 @@
       "Blue": "BHELO_LOGI",
       "Red": "RHELO_LOGI"
     },
-    "altitude_m": 500,
+    "altitude_m": 150,
     "speed_kph": 220,
     "troop_name": "Standard",
     "troop_mission_cost": 0,
     "supply_mission_cost": 50,
     "supply_amount_per_item": 50,
     "max_range_m": 150000,
-    "landing_radius_m": 200
+    "landing_radius_m": 200,
+    "terrain_clearance_m": 250,
+    "max_altitude_m": 3500,
+    "waypoint_spacing_m": 2500,
+    "lateral_avoidance": false,
+    "refund_on_loss": true,
+    "cold_start": true
   },
   "logi_from_scenery": {
     "fallback_logi": 100
@@ -594,7 +600,7 @@
   "alcm_mission_range": 600000,
   "lock_sides": false,
   "side_switches": 1,
-  "max_crates": 4,
+  "max_crates": 8,
   "life_types": {
     "F-100D": "Intercept",
     "Mirage-F1EE": "Intercept",
@@ -1555,7 +1561,7 @@
           {
             "name": "Kub Launcher",
             "weight": 600,
-            "required": 3,
+            "required": 4,
             "pos_unit": "Kub 2P25 ln",
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1564,7 +1570,7 @@
           {
             "name": "Kub Radar",
             "weight": 600,
-            "required": 1,
+            "required": 2,
             "pos_unit": "Kub 1S91 str",
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1605,7 +1611,7 @@
           {
             "name": "SA3 Launcher",
             "weight": 600,
-            "required": 2,
+            "required": 3,
             "pos_unit": "Kub 2P25 ln",
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1623,7 +1629,7 @@
           {
             "name": "SA3 Search Radar",
             "weight": 450,
-            "required": 1,
+            "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 20,
             "max_drop_speed": 350,
@@ -1664,7 +1670,7 @@
           {
             "name": "SA15 Tor",
             "weight": 600,
-            "required": 3,
+            "required": 5,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1697,7 +1703,7 @@
           {
             "name": "HQ7 LN",
             "weight": 600,
-            "required": 1,
+            "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1706,7 +1712,7 @@
           {
             "name": "HQ7 Radar",
             "weight": 450,
-            "required": 1,
+            "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 20,
             "max_drop_speed": 350,
@@ -1747,7 +1753,7 @@
           {
             "name": "SA8 Osa",
             "weight": 600,
-            "required": 2,
+            "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1780,7 +1786,7 @@
           {
             "name": "SA9 Strela",
             "weight": 600,
-            "required": 2,
+            "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1813,7 +1819,7 @@
           {
             "name": "ZSU-57-2",
             "weight": 300,
-            "required": 1,
+            "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1844,7 +1850,7 @@
           {
             "name": "SPAA HL Zu-23",
             "weight": 300,
-            "required": 1,
+            "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1875,7 +1881,7 @@
           {
             "name": "SPAA ZSU-23 Shilka",
             "weight": 600,
-            "required": 1,
+            "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1906,7 +1912,7 @@
           {
             "name": "SA-19 Tunguska",
             "weight": 600,
-            "required": 2,
+            "required": 4,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -1937,7 +1943,7 @@
           {
             "name": "SA-22 Pantsir",
             "weight": 600,
-            "required": 3,
+            "required": 6,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2690,7 +2696,7 @@
           {
             "name": "Roland",
             "weight": 500,
-            "required": 2,
+            "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2723,7 +2729,7 @@
           {
             "name": "Hawk Launcher",
             "weight": 300,
-            "required": 3,
+            "required": 4,
             "pos_unit": "Hawk ln",
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2791,7 +2797,7 @@
           {
             "name": "Avenger",
             "weight": 300,
-            "required": 2,
+            "required": 3,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2822,7 +2828,7 @@
           {
             "name": "Linebacker",
             "weight": 300,
-            "required": 1,
+            "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2853,7 +2859,7 @@
           {
             "name": "C-RAM",
             "weight": 300,
-            "required": 1,
+            "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2893,7 +2899,7 @@
           {
             "name": "IRIST STR",
             "weight": 300,
-            "required": 1,
+            "required": 2,
             "pos_unit": "IRIST str",
             "max_drop_height_agl": 20,
             "max_drop_speed": 350,
@@ -2902,7 +2908,7 @@
           {
             "name": "IRIST LN",
             "weight": 450,
-            "required": 2,
+            "required": 3,
             "pos_unit": "IRIST ln",
             "max_drop_height_agl": 20,
             "max_drop_speed": 350,
@@ -2943,7 +2949,7 @@
           {
             "name": "Flakpanzergepard",
             "weight": 300,
-            "required": 1,
+            "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,
@@ -2974,7 +2980,7 @@
           {
             "name": "Vulkan",
             "weight": 300,
-            "required": 1,
+            "required": 2,
             "pos_unit": null,
             "max_drop_height_agl": 10,
             "max_drop_speed": 13,

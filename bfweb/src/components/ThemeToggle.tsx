@@ -3,7 +3,7 @@ import { useTheme } from '../context/ThemeContext'
 import {
   Moon,
   Sun,
-} from '../icons'
+} from '@icons'
 
 export default function ThemeToggle({ style }: { style?: CSSProperties }) {
   const { theme, toggle } = useTheme()

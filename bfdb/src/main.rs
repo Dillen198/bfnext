@@ -1755,7 +1755,7 @@ async fn require_admin(session_id: Option<Uuid>, db: StatsDb) -> std::result::Re
 // ── Cockpit UI handlers ──────────────────────────────────────────────
 // Identifies the calling player and forwards to a player-scoped bflib RPC
 // (see bflib/src/bg/rpcs.rs "Cockpit UI API"). Two ways in:
-//  - `?playerid=<id>` from bflib/lua/cockpit.lua, the in-DCS Hooks-script
+//  - `?playerid=<id>` from bfcockpit/Scripts/Hooks/bfcockpit.lua, the in-DCS Hooks-script
 //    overlay -- <id> is net.get_my_player_id(), meaningful only for the
 //    current connection, resolved to a ucid via the live connected-player
 //    table (bflib's "resolve-player-id" RPC). No manual step: it's only
@@ -1945,6 +1945,125 @@ async fn api_cockpit_cargo_spawn(
         ("crate_name", Value::from(body.crate_name)),
         ("qty", Value::from(body.qty as i64)),
         ("c130", Value::from(body.c130)),
+    ]).await?;
+    Ok(warp::reply::json(&serde_json::json!({ "message": msg })))
+}
+
+// ── Cockpit overlay plugin distribution ──────────────────────────────
+// The overlay is a client-side DCS plugin each player installs (see
+// `bfcockpit/`). bfdb ships the copy it was built with, so "which version is
+// current" has exactly one answer and the dashboard can hand players the file
+// directly instead of pointing them at a repo path.
+
+/// The plugin script this bfdb was built with.
+const COCKPIT_PLUGIN_LUA: &str =
+    include_str!("../../bfcockpit/Scripts/Hooks/bfcockpit.lua");
+
+/// Read the version out of the script itself rather than keeping a second
+/// copy of it here -- two places to bump is one place to forget.
+fn cockpit_plugin_version() -> &'static str {
+    COCKPIT_PLUGIN_LUA
+        .lines()
+        .find_map(|l| {
+            let l = l.trim();
+            let rest = l.strip_prefix("local BFCOCKPIT_VERSION")?;
+            let rest = rest.trim_start().strip_prefix('=')?;
+            rest.trim().trim_matches('"').split('"').next()
+        })
+        .unwrap_or("unknown")
+}
+
+/// GET /api/cockpit/plugin/version — what the current overlay version is.
+///
+/// Open on purpose: a player needs this before they are identified, and it
+/// reveals nothing.
+async fn api_cockpit_plugin_version() -> std::result::Result<impl warp::Reply, Error> {
+    Ok(warp::reply::json(&serde_json::json!({
+        "version": cockpit_plugin_version(),
+    })))
+}
+
+/// GET /api/cockpit/plugin/download — the overlay script itself.
+async fn api_cockpit_plugin_download() -> std::result::Result<impl warp::Reply, Error> {
+    Ok(warp::reply::with_header(
+        warp::reply::with_header(
+            COCKPIT_PLUGIN_LUA,
+            "content-type",
+            "text/plain; charset=utf-8",
+        ),
+        "content-disposition",
+        "attachment; filename=\"bfcockpit.lua\"",
+    ))
+}
+
+/// GET /api/cockpit/context — who the caller is, what they are flying, where.
+///
+/// The overlay polls this so it can shape itself to the player: a helo gets the
+/// helo crate list, a Herc gets CARP, someone sitting in spectators gets told
+/// to get in a jet. The engine already knows all of it, so the player is never
+/// asked to enter their aircraft, coalition or position.
+async fn api_cockpit_context(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst).await?;
+    use netidx::publisher::Value;
+    let json = call_engine_rpc_str(&db, &inst, "cockpit-context", vec![
+        ("ucid", Value::from(ucid.to_string())),
+    ]).await?;
+    Ok(json_response(json))
+}
+
+/// GET /api/cockpit/menu — the caller's entire F10 menu tree.
+///
+/// Mirrored out of the live menu rather than re-implemented (see
+/// `bflib/src/cockpit.rs`), so every menu the engine has -- Actions, Cargo,
+/// Troops, JTAC, Objectives, Info, Recon, and anything added later -- shows up
+/// here automatically and cannot drift out of step with the real one.
+async fn api_cockpit_menu(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst).await?;
+    use netidx::publisher::Value;
+    let json = call_engine_rpc_str(&db, &inst, "cockpit-menu", vec![
+        ("ucid", Value::from(ucid.to_string())),
+    ]).await?;
+    Ok(json_response(json))
+}
+
+#[derive(serde::Deserialize)]
+struct MenuInvokeBody {
+    /// Path segments exactly as `/api/cockpit/menu` reported them.
+    path: Vec<std::string::String>,
+}
+
+/// POST /api/cockpit/menu/invoke — click one F10 menu item for the caller.
+///
+/// Fires the same handler DCS fires, so the result is identical to the player
+/// having walked the menu themselves.
+async fn api_cockpit_menu_invoke(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: MenuInvokeBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst).await?;
+    if body.path.is_empty() {
+        return Err(anyhow::anyhow!("path must not be empty").into());
+    }
+    use netidx::publisher::Value;
+    let msg = call_engine_rpc_str(&db, &inst, "cockpit-menu-invoke", vec![
+        ("ucid", Value::from(ucid.to_string())),
+        ("path", Value::from(serde_json::to_string(&body.path).map_err(anyhow::Error::from)?)),
     ]).await?;
     Ok(warp::reply::json(&serde_json::json!({ "message": msg })))
 }
@@ -3154,6 +3273,46 @@ async fn api_admin_perf(
             }
         };
         Ok(serde_json::to_string(&json)?)
+    })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/admin/pilot-sides — every pilot's campaign coalition on this
+/// instance, as `[{ucid, name, side}]`.
+///
+/// This is what makes the Discord coalition roles honest: the bot mirrors the
+/// side the *engine* registered (first slot pick, or a `-switch`), so nobody
+/// can hand themselves the other faction's briefing channel by picking a role.
+/// The engine stays the only thing that decides a side — the bot never writes
+/// one back.
+///
+/// Admin-gated, because the full roster of who is flying for whom is exactly
+/// the kind of thing the fog of war is meant to hide from the other side.
+async fn api_admin_pilot_sides(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let data = task::block_in_place(|| -> Result<String> {
+        let mut pilots: Vec<serde_json::Value> = db
+            .all_pilot_sides(&inst.id)?
+            .into_iter()
+            .map(|(ucid, side)| {
+                serde_json::json!({
+                    "ucid": ucid.to_string(),
+                    "name": db.pilot_name(&ucid),
+                    // Debug, not Display: the rest of the API emits "Blue"/"Red".
+                    "side": format!("{side:?}"),
+                })
+            })
+            .collect();
+        pilots.sort_by(|a, b| a["ucid"].as_str().cmp(&b["ucid"].as_str()));
+        Ok(serde_json::to_string(&serde_json::json!({
+            "instance": inst.id.to_string(),
+            "round": db.active_round_id(&inst.id)?.map(|r| r.to_string()),
+            "pilots": pilots,
+        }))?)
     })?;
     Ok(json_response(data))
 }
@@ -4537,7 +4696,8 @@ fn bad_instance_guard(
             |_tail: warp::path::Tail,
              q: std::collections::HashMap<std::string::String, std::string::String>,
              db: StatsDb| async move {
-                let named = q.get("server").or_else(|| q.get("instance"));
+                let by_instance = q.get("instance");
+                let named = q.get("server").or(by_instance);
                 let Some(name) = named.map(|s| s.trim()).filter(|s| !s.is_empty()) else {
                     return Err(warp::reject::reject());
                 };
@@ -4549,6 +4709,20 @@ fn bad_instance_guard(
                 let known = db.instances().by_dcs_server_name(name).is_some()
                     || db.instances().get(name).is_some();
                 if known {
+                    return Err(warp::reject::reject());
+                }
+                // `?server=` is a name the *caller* knows itself by, not an id
+                // it looked up here: the in-DCS cockpit overlay sends whatever
+                // the DCS server calls itself, because a player's machine has
+                // no way to learn our short instance ids. A single-instance
+                // deployment normally leaves `dcs_server_name` unset, so that
+                // name resolves to nothing -- and there is exactly one campaign
+                // it could possibly have meant. Let it through as a hint
+                // (`with_instance` falls back to the default) instead of
+                // 400ing every call the overlay makes. With several instances
+                // configured the ambiguity is real, so it still fails loudly
+                // rather than showing someone the wrong server's war.
+                if by_instance.is_none() && db.instances().all().len() == 1 {
                     return Err(warp::reject::reject());
                 }
                 let ids: Vec<&str> = db.instances().all().iter().map(|i| i.id.as_str()).collect();
@@ -5470,6 +5644,12 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_admin_perf_history);
 
+    let admin_pilot_sides = warp::path!("api" / "admin" / "pilot-sides")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_pilot_sides);
+
     let admin_banned = warp::path!("api" / "admin" / "banned")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
@@ -5584,6 +5764,41 @@ async fn main() -> Result<()> {
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
         .then(api_cockpit_cargo_spawn);
+
+    let cockpit_plugin_version_route = warp::path!("api" / "cockpit" / "plugin" / "version")
+        .and(warp::get())
+        .then(api_cockpit_plugin_version);
+
+    let cockpit_plugin_download_route = warp::path!("api" / "cockpit" / "plugin" / "download")
+        .and(warp::get())
+        .then(api_cockpit_plugin_download);
+
+    let cockpit_context_route = warp::path!("api" / "cockpit" / "context")
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_cockpit_context);
+
+    let cockpit_menu_route = warp::path!("api" / "cockpit" / "menu")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_cockpit_menu);
+
+    let cockpit_menu_invoke_route = warp::path!("api" / "cockpit" / "menu" / "invoke")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::json::<MenuInvokeBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_cockpit_menu_invoke);
 
     let trails = warp::path!("api" / "trails")
         .and(extract_session_cookie())
@@ -5808,6 +6023,10 @@ async fn main() -> Result<()> {
         .or(all_pilots)
         .or(config_route)
         .or(srs_route)
+        .or(cockpit_plugin_version_route)
+        .or(cockpit_plugin_download_route)
+        .or(cockpit_context_route)
+        .or(cockpit_menu_route)
         .or(cockpit_ewr_report_route)
         .or(cockpit_ewr_intel_route)
         .or(cockpit_carp_solve_route)
@@ -5829,6 +6048,7 @@ async fn main() -> Result<()> {
         .or(admin_sessions)
         .or(admin_perf)
         .or(admin_perf_history)
+        .or(admin_pilot_sides)
         .or(admin_banned)
         .or(admin_engine_errors)
         .or(logs_route)
@@ -5864,7 +6084,7 @@ async fn main() -> Result<()> {
         .or(admin_cfg_post_route)
         .or(commander_spawn_route)
         .or(admin_priority_route)
-        .or(cockpit_ewr_toggle_route.or(cockpit_ewr_units_route).or(cockpit_cargo_spawn_route).boxed())
+        .or(cockpit_ewr_toggle_route.or(cockpit_ewr_units_route).or(cockpit_cargo_spawn_route).or(cockpit_menu_invoke_route).boxed())
         .boxed()
         .or(wiki_save_route.or(wiki_delete_route).or(wiki_upload_image_route).boxed())
         .or(intel_upload_route

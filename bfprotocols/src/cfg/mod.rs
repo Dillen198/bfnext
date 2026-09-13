@@ -175,6 +175,13 @@ pub enum UnitTag {
     /// Aircraft type is cleared to run a player "Recon Pass" (see
     /// `Cfg::player_recon`). Only meaningful on Aircraft/Helicopter entries.
     Recon,
+    /// Start this group on the ramp with engines OFF, rather than the hot
+    /// ramp start `HotStart` gives. Takes the same waypoint-0 rewrite path in
+    /// `ephemeral::spawn_group`, just with the cold variants of the point type
+    /// and action, so the AI runs a real startup and taxi before it flies.
+    /// Appended at the end deliberately: `UnitTags` serializes as a bitmask,
+    /// so a new trailing variant costs an unused bit and changes no layout.
+    ColdStart,
 }
 
 #[derive(
@@ -3706,7 +3713,10 @@ pub struct HeloInsertionCfg {
     /// launch either mission -- the F10 command tells the player why.
     #[serde(default)]
     pub aircraft_template: FxHashMap<Side, String>,
-    /// Cruise altitude in meters (BARO) for the transit leg.
+    /// Absolute floor (metres BARO) for the transit leg. The route's own
+    /// altitude comes from the terrain under it -- see `terrain_clearance_m`
+    /// -- and this only raises it where the ground is low, so keep it low
+    /// unless you want the helo held high over flat country.
     #[serde(default = "default_helo_altitude_m")]
     pub altitude_m: f64,
     /// Cruise speed in km/h for the transit leg.
@@ -3736,6 +3746,42 @@ pub struct HeloInsertionCfg {
     /// "landed and delivered". Default 200m.
     #[serde(default = "default_helo_landing_radius_m")]
     pub landing_radius_m: f64,
+    /// How far above the highest terrain under a leg the route is planned.
+    /// `altitude_m` is only a floor -- over mountains the planner climbs the
+    /// route to terrain + this, which is what stops the helo flying into a
+    /// ridge on the way. Default 250m.
+    #[serde(default = "default_helo_terrain_clearance_m")]
+    pub terrain_clearance_m: f64,
+    /// Terrain the planner considers too high for a loaded helicopter to
+    /// climb over. Exceeding it is logged, and is what `lateral_avoidance`
+    /// keys off if it is enabled. It never caps the route itself: flying
+    /// under a ridge isn't an option, so the route climbs regardless.
+    /// Default 3500m.
+    #[serde(default = "default_helo_max_altitude_m")]
+    pub max_altitude_m: f64,
+    /// Terrain sampling resolution for route planning, in metres. Smaller
+    /// tracks the ground more closely and catches narrower ridges, at the
+    /// cost of more `land.getHeight` calls in the frame the mission is
+    /// called. Default 2500m (further subdivided on long routes, so a route
+    /// is always cut at least 100 ways).
+    #[serde(default = "default_helo_waypoint_spacing_m")]
+    pub waypoint_spacing_m: f64,
+    /// Let the planner dogleg around high ground instead of climbing over
+    /// it. Off by default: a helo that just climbs and descends with the
+    /// terrain flies the shortest, most predictable track, and the detour is
+    /// only worth its extra exposure on a map with terrain a loaded
+    /// helicopter genuinely cannot out-climb. Turn it on for one of those.
+    #[serde(default)]
+    pub lateral_avoidance: bool,
+    /// Refund the points a mission cost if the helicopter is lost before it
+    /// delivers. Default true.
+    #[serde(default = "default_true")]
+    pub refund_on_loss: bool,
+    /// Spawn the helicopter cold (engines off, AI runs its own startup)
+    /// rather than hot on the ramp. Default true. Turn it off if the AI
+    /// startup delay before it gets moving is more than you want to wait.
+    #[serde(default = "default_true")]
+    pub cold_start: bool,
 }
 
 fn default_helo_troop_name() -> String { String::from("Standard") }
@@ -3745,6 +3791,9 @@ fn default_helo_supply_cost() -> i32 { 50 }
 fn default_helo_supply_per_item() -> u32 { 50 }
 fn default_helo_max_range_m() -> f64 { 150_000.0 }
 fn default_helo_landing_radius_m() -> f64 { 200.0 }
+fn default_helo_terrain_clearance_m() -> f64 { 250.0 }
+fn default_helo_max_altitude_m() -> f64 { 3500.0 }
+fn default_helo_waypoint_spacing_m() -> f64 { 2500.0 }
 
 fn default_scenery_fallback_logi() -> u8 {
     100

@@ -1,5 +1,8 @@
 import { campaign } from '../config/campaign'
-import { Zap, ExternalLink } from 'lucide-react'
+import {
+  ExternalLink,
+  Support as Zap,
+} from '@icons'
 import LogoMark from './LogoMark'
 
 export default function Footer() {

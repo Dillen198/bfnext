@@ -1,6 +1,11 @@
 import React from 'react'
 import { campaign } from '../config/campaign'
-import { Zap, Menu, X, BookOpen } from 'lucide-react'
+import {
+  Menu,
+  Support as Zap,
+  Wiki as BookOpen,
+  X,
+} from '@icons'
 import ThemeToggle from './ThemeToggle'
 import LogoMark from './LogoMark'
 

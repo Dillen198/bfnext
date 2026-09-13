@@ -30,8 +30,8 @@ import {
   type IconComponent,
   ExternalLink,
   TrendingUp,
-} from '../icons'
-import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type SrsClient, type SrsStatus, type Frontlines } from '../api'
+} from '@icons'
+import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type SrsClient, type SrsRadio, type SrsStatus, type Frontlines } from '../api'
 import { campaign } from '../config/campaign'
 import { useTheme } from '../context/ThemeContext'
 import { useRound } from '../context/RoundContext'
@@ -126,7 +126,7 @@ function TacMap({ objectives, fronts, onOpenTacmap }: { objectives: Objective[];
   const red  = valid.filter(o => o.owner === 'Red').length
   const neu  = valid.filter(o => o.owner === 'Neutral').length
 
-  // Real lucide icons (airbase/naval/factory/etc) rendered straight onto the
+  // The objective-type glyphs rendered straight onto the
   // map -- no circle, no fill -- same OBJ_ICON set used by the Critical
   // Objectives list below, so an objective reads the same way in both places
   // on this page. Owner colour + a flat dark outline keeps them legible over
@@ -594,7 +594,14 @@ function fmtFreq(hz: number): string {
 }
 
 function fmtMod(mod: number): string {
-  return mod === 1 ? 'FM' : mod === 2 ? 'IC' : 'AM'
+  return mod === 1 ? 'FM' : mod === 2 ? 'IC' : mod === 3 ? 'OFF' : 'AM'
+}
+
+// Radio slot 0 is the intercom in a real cockpit, and a disabled placeholder on
+// the GCI's own clients, so it is never the frequency anyone is working. A real
+// channel is an aviation frequency on AM or FM.
+function isLiveRadio(r: SrsRadio): boolean {
+  return r.freq > 1_000_000 && (r.modulation === 0 || r.modulation === 1)
 }
 
 function SrsPanel({ srs }: { srs: SrsStatus | undefined }) {
@@ -604,8 +611,12 @@ function SrsPanel({ srs }: { srs: SrsStatus | undefined }) {
   const spec    = clients.filter(c => c.Coalition === 0)
 
   function getActive(c: SrsClient): { freq: number; mod: number } | null {
+    // This used to filter on `r.enabled`, which is not a field SRS (or our own
+    // GCI client) ever sends. Every find() therefore failed and every row fell
+    // back to slot 0 -- which is why Magic and Overlord read "AM 0.000 MHz" on
+    // the dashboard while they were transmitting perfectly well on 251/252.
     const radios = c.RadioInfo?.radios ?? []
-    const r = radios.find(r => r.enabled && r.freq > 1) ?? radios[0]
+    const r = radios.find(isLiveRadio) ?? radios[0]
     return r ? { freq: r.freq, mod: r.modulation } : null
   }
 
@@ -629,9 +640,9 @@ function SrsPanel({ srs }: { srs: SrsStatus | undefined }) {
             </div>
           )}
         </div>
-        {(c.RadioInfo?.radios ?? []).filter(r => r.enabled && r.freq > 1).length > 1 && (
+        {(c.RadioInfo?.radios ?? []).filter(isLiveRadio).length > 1 && (
           <span className="font-mono-vs" style={{ fontSize: '0.63rem', color: 'var(--text-dim)', flexShrink: 0 }}>
-            +{(c.RadioInfo?.radios ?? []).filter(r => r.enabled && r.freq > 1).length - 1}
+            +{(c.RadioInfo?.radios ?? []).filter(isLiveRadio).length - 1}
           </span>
         )}
       </div>

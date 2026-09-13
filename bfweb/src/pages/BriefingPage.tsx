@@ -10,7 +10,7 @@ import {
   Briefing as BriefingIcon,
   Download,
   RefreshCw,
-} from '../icons'
+} from '@icons'
 
 type Side = 'Blue' | 'Red'
 type Tab = 'situation' | 'kneeboard'

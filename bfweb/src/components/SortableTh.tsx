@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react'
 import {
   ChevronDown,
   ChevronUp,
-} from '../icons'
+} from '@icons'
 
 export type SortDir = 'asc' | 'desc'
 export type SortValue = string | number | Date | null | undefined

@@ -1,5 +1,7 @@
 import { campaign } from '../config/campaign'
-import { Zap } from 'lucide-react'
+import {
+  Support as Zap,
+} from '@icons'
 import Reveal from './Reveal'
 
 export default function HowToJoin() {

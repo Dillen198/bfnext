@@ -131,8 +131,22 @@ impl UnpackedMiz {
         let mut files: HashMap<String, PathBuf> = HashMap::new();
         let mut archive = ZipArchive::new(File::open(path).context("opening miz file")?)
             .context("unzipping miz")?;
+        // The unpack directory has to be unique per UnpackedMiz, not per input
+        // path. `Drop` does `remove_dir_all(root)`, and the same .miz is
+        // routinely passed twice in one run (a mission whose warehouse template
+        // is also its weapon template gets it as both --weapon and
+        // --warehouse). Two of them sharing a root means the first one dropped
+        // deletes the files the second is still reading.
+        static UNPACK_SEQ: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let seq = UNPACK_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut root = PathBuf::from(path);
         root.set_extension("");
+        let stem = root
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| std::string::String::from("miz"));
+        root.set_file_name(format!("{stem}.unpack{}.{seq}", std::process::id()));
         info!("cracking open: {path:?}");
         for i in 0..archive.len() {
             let mut file = archive
@@ -196,6 +210,81 @@ impl UnpackedMiz {
     }
 }
 
+/// First line carrying an odd number of unescaped `"`, which in a DCS-written
+/// Lua table means the string literal on it never closed.
+fn unbalanced_quote_line(src: &str) -> Option<(usize, &str)> {
+    for (i, line) in src.lines().enumerate() {
+        let mut quotes = 0usize;
+        let mut escaped = false;
+        for c in line.chars() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match c {
+                '\\' => escaped = true,
+                '"' => quotes += 1,
+                _ => (),
+            }
+        }
+        if quotes % 2 == 1 {
+            return Some((i + 1, line));
+        }
+    }
+    None
+}
+
+/// Pull the `:<line>:` out of a Lua error and quote that line and its
+/// neighbours from the source it came from.
+fn lua_error_context(err: &str, src: &str) -> std::string::String {
+    let line_no = match err
+        .rsplit_once("]:")
+        .and_then(|(_, rest)| rest.split(':').next())
+        .and_then(|n| n.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+    {
+        Some(n) => n,
+        None => return std::string::String::new(),
+    };
+    let lines: Vec<&str> = src.lines().collect();
+    let lo = line_no.saturating_sub(3).min(lines.len());
+    let hi = (line_no + 2).min(lines.len());
+    if lo >= hi {
+        return std::string::String::new();
+    }
+    let mut out = std::string::String::new();
+    // The lexer does not stop where the damage is. A stray unescaped quote
+    // leaves it reading code as string and string as code until something
+    // eventually fails to parse, which can be hundreds of thousands of lines
+    // later -- so the line the error names is usually a symptom, not the cause.
+    // DCS writes one balanced statement per line, so the first line with an odd
+    // number of unescaped quotes is where to actually look.
+    if let Some((n, line)) = unbalanced_quote_line(src) {
+        if n != line_no {
+            let mut text = line.trim_end().to_string();
+            if text.len() > 200 {
+                text.truncate(200);
+                text.push_str(" ...");
+            }
+            out.push_str(&format!(
+                "\n--- likely cause: unbalanced quote at line {n} ---\n   {text}"
+            ));
+        }
+    }
+    out.push_str("\n--- offending lines ---");
+    for (i, line) in lines[lo..hi].iter().enumerate() {
+        let n = lo + i + 1;
+        let marker = if n == line_no { ">>" } else { "  " };
+        let mut text = line.trim_end().to_string();
+        if text.len() > 200 {
+            text.truncate(200);
+            text.push_str(" ...");
+        }
+        out.push_str(&format!("\n{marker} {n}: {text}"));
+    }
+    out
+}
+
 struct LoadedMiz {
     miz: UnpackedMiz,
     mission: Miz<'static>,
@@ -218,9 +307,14 @@ impl LoadedMiz {
             info!("processing {file_name}");
             let file_content = fs::read_to_string(file)
                 .with_context(|| format_compact!("error reading file {file:?}"))?;
-            lua.load(&file_content)
-                .exec()
-                .with_context(|| format_compact!("loading {file_name} into lua"))?;
+            if let Err(e) = lua.load(&file_content).exec() {
+                // A Lua syntax error here means the .miz itself is malformed,
+                // and the only thing the caller used to get was a line number
+                // in a temp file that Drop deletes on the way out. Quote the
+                // offending line so the mission can actually be fixed.
+                let ctx = lua_error_context(&e.to_string(), &file_content);
+                bail!("loading {file_name} from {path:?} into lua: {e}{ctx}");
+            }
             if **file_name == "mission" {
                 mission = lua
                     .globals()

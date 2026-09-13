@@ -1,13 +1,13 @@
-import { useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
-import { api, type CarpSolution } from '../api'
+import { api, type CarpSolution, type CockpitMenuItem } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
 
 // Standalone page (no dashboard chrome). Normally loaded inside DCS itself
-// by bflib/lua/cockpit.lua, a Hooks script each player installs, via a
+// by bfcockpit/Scripts/Hooks/bfcockpit.lua, a Hooks script each player installs, via a
 // dxgui WebViewWidget -- see that file for why this has to be a per-player
 // local script and not something bflib triggers remotely. It passes
 // ?playerid=<net.get_my_player_id()>, which bfdb resolves to a ucid using
@@ -25,9 +25,59 @@ import { campaign } from '../config/campaign'
 // fonts are all drawn from the app's existing --accent/--font-mono tokens
 // (index.css) so this stays part of the same visual family, just executed
 // as an instrument panel rather than a form.
+// ── Display mode ─────────────────────────────────────────────────────
+// cockpit.lua passes ?vr=1&scale=<n> when it detects VR in the player's own
+// Config/options.lua. Everything in this page is sized in `rem`, so scaling
+// the root font size scales the whole instrument panel in one move rather
+// than needing a second set of VR-specific sizes throughout. `vr` on top of
+// that relaxes the hit targets: a headset cursor is driven by your head or a
+// shaky controller, and 0.68rem bezel buttons that are fine with a mouse are
+// not selectable in a turning aircraft.
+const params = new URLSearchParams(window.location.search)
+const IS_VR = params.get('vr') === '1'
+const UI_SCALE = Math.min(2.5, Math.max(0.75, Number(params.get('scale')) || (IS_VR ? 1.35 : 1)))
+const SERVER_NAME = params.get('server') ?? undefined
+/** Version of the installed overlay plugin, sent by bfcockpit.lua. Absent when
+ *  the page is opened in a plain browser rather than in DCS. */
+const PLUGIN_VERSION = params.get('plugin') ?? undefined
+
+function useDisplayScale() {
+  useEffect(() => {
+    if (UI_SCALE === 1) return
+    const root = document.documentElement
+    const previous = root.style.fontSize
+    // 16px is the browser default this page's rem sizes were authored against.
+    root.style.fontSize = `${16 * UI_SCALE}px`
+    return () => { root.style.fontSize = previous }
+  }, [])
+}
+
+// Applied only in VR. Kept as a stylesheet rather than inline styles so it
+// can reach the controls inside every tab without touching each one.
+const VR_STYLES = `
+[data-cockpit-vr="1"] button,
+[data-cockpit-vr="1"] input,
+[data-cockpit-vr="1"] select {
+  min-height: 2.4em;
+  padding-top: 0.45em;
+  padding-bottom: 0.45em;
+}
+[data-cockpit-vr="1"] input,
+[data-cockpit-vr="1"] select { font-size: 1em; }
+/* A VR cursor lands near a target more often than on it, so give every
+   control a visible focus ring and a wider hover edge to aim at. */
+[data-cockpit-vr="1"] button:hover,
+[data-cockpit-vr="1"] button:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 1px;
+}
+[data-cockpit-vr="1"] ::-webkit-scrollbar { width: 1.1em; }
+`
+
 export default function CockpitPage() {
-  const playerId = new URLSearchParams(window.location.search).get('playerid') ?? undefined
+  const playerId = params.get('playerid') ?? undefined
   const { user, loading } = useAuth()
+  useDisplayScale()
 
   if (playerId) return <Tabs playerId={playerId} />
   if (loading) return <Centered>Loading…</Centered>
@@ -37,21 +87,261 @@ export default function CockpitPage() {
 }
 
 function Tabs({ playerId }: { playerId?: string }) {
-  const [tab, setTab] = useState<'ewr' | 'carp' | 'cargo'>('ewr')
+  const [tab, setTab] = useState<'menu' | 'ewr' | 'carp' | 'cargo'>('menu')
   return (
     <Shell
+      playerId={playerId}
       tabs={
         <div style={{ display: 'flex', gap: '0.35rem' }}>
+          <FnKey active={tab === 'menu'} onClick={() => setTab('menu')}>MENU</FnKey>
           <FnKey active={tab === 'ewr'} onClick={() => setTab('ewr')}>EWR</FnKey>
           <FnKey active={tab === 'carp'} onClick={() => setTab('carp')}>CARP</FnKey>
           <FnKey active={tab === 'cargo'} onClick={() => setTab('cargo')}>CARGO</FnKey>
         </div>
       }
     >
+      {tab === 'menu' && <MenuBody playerId={playerId} />}
       {tab === 'ewr' && <EwrBody playerId={playerId} />}
       {tab === 'carp' && <CarpBody playerId={playerId} />}
       {tab === 'cargo' && <CargoBody playerId={playerId} />}
     </Shell>
+  )
+}
+
+// ── The F10 menu, rendered as a panel ────────────────────────────────
+// The tree comes straight out of the engine's live menu (see
+// bflib/src/cockpit.rs), so every menu the campaign has -- Actions, Cargo,
+// Troops, JTAC, Objectives, Info, Recon -- is here without this file knowing
+// anything about any of them, and a menu added to the engine tomorrow shows up
+// on its own.
+//
+// One deliberate difference from F10: `More >>` pages are flattened away. They
+// exist only because DCS silently drops a group menu's eleventh entry; a panel
+// that scrolls has no such limit, so forty deployables are one list here
+// instead of five pages of nine.
+function childrenOf(items: CockpitMenuItem[], here: string[]): CockpitMenuItem[] {
+  const under = (parent: string[]) =>
+    items
+      .filter(i => i.path.length === parent.length + 1 && parent.every((seg, n) => i.path[n] === seg))
+      .sort((a, b) => a.order - b.order)
+
+  const out: CockpitMenuItem[] = []
+  const walk = (parent: string[], depth: number) => {
+    for (const item of under(parent)) {
+      // Depth guard: a malformed tree must not hang the panel.
+      if (!item.command && item.name.startsWith('More >>') && depth < 32) walk(item.path, depth + 1)
+      else out.push(item)
+    }
+  }
+  walk(here, 0)
+  return out
+}
+
+function crumbStyle(active: boolean): React.CSSProperties {
+  return {
+    background: 'transparent', border: 'none', padding: '0.15rem 0',
+    fontFamily: 'var(--font-mono)', fontSize: '0.62rem', letterSpacing: '0.1em',
+    color: active ? 'var(--accent-bright)' : 'var(--text-dim)',
+    cursor: 'pointer',
+  }
+}
+
+function MenuBody({ playerId }: { playerId?: string }) {
+  const [here, setHere] = useState<string[]>([])
+  const [result, setResult] = useState<{ text: string; bad: boolean } | null>(null)
+
+  const menu = useQuery({
+    queryKey: ['cockpit-menu', playerId],
+    queryFn: () => api.cockpit.menu(playerId),
+    // bflib rebuilds these menus constantly (a crate spawns, an objective
+    // flips, a JTAC dies), so the panel re-reads rather than caching.
+    refetchInterval: 5000,
+    retry: false,
+  })
+
+  const invoke = useMutation({
+    mutationFn: (path: string[]) => api.cockpit.menuInvoke(path, playerId),
+    onSuccess: (r) => {
+      setResult({ text: r.message || 'Done.', bad: false })
+      // Acting on a menu usually rewrites it -- pick the new one up at once
+      // rather than leaving a stale list on screen.
+      menu.refetch()
+    },
+    onError: (e: Error) => setResult({ text: e.message, bad: true }),
+  })
+
+  if (menu.isLoading) return <Glass><LskValue dim>READING MENU…</LskValue></Glass>
+  if (menu.error) return <Glass><LskValue dim>{(menu.error as Error).message}</LskValue></Glass>
+
+  const rows = childrenOf(menu.data ?? [], here)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+      <Glass>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap',
+          fontSize: '0.62rem', letterSpacing: '0.1em', color: 'var(--text-dim)',
+        }}>
+          <button onClick={() => { setHere([]); setResult(null) }} style={crumbStyle(here.length === 0)}>
+            MENU
+          </button>
+          {here.map((seg, n) => (
+            <span key={n} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span style={{ opacity: 0.5 }}>›</span>
+              <button
+                onClick={() => { setHere(here.slice(0, n + 1)); setResult(null) }}
+                style={crumbStyle(n === here.length - 1)}
+              >
+                {seg.toUpperCase()}
+              </button>
+            </span>
+          ))}
+        </div>
+      </Glass>
+
+      {result && (
+        <Glass>
+          <div style={{
+            fontSize: '0.68rem', whiteSpace: 'pre-wrap', lineHeight: 1.5,
+            color: result.bad ? '#e06c6c' : 'var(--accent-bright)',
+          }}>
+            {result.text}
+          </div>
+        </Glass>
+      )}
+
+      <Glass>
+        {rows.length === 0 ? (
+          <LskValue dim>{here.length === 0 ? 'NO MENU — TAKE A SLOT' : 'EMPTY'}</LskValue>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {rows.map((item) => (
+              <button
+                key={item.order}
+                disabled={invoke.isPending}
+                onClick={() => {
+                  setResult(null)
+                  if (item.command) invoke.mutate(item.path)
+                  else setHere(item.path)
+                }}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: '0.6rem', width: '100%', textAlign: 'left',
+                  padding: '0.5rem 0.6rem', background: 'transparent',
+                  border: 'none', borderBottom: '1px solid var(--border)',
+                  color: item.command ? 'var(--text)' : 'var(--accent-bright)',
+                  fontFamily: 'var(--font-mono)', fontSize: '0.72rem',
+                  letterSpacing: '0.04em', cursor: invoke.isPending ? 'wait' : 'pointer',
+                }}
+              >
+                <span>{item.name}</span>
+                <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>{item.command ? '▸' : '›'}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Glass>
+    </div>
+  )
+}
+
+// ── Plugin update notice ─────────────────────────────────────────────
+// The overlay script is installed on each player's own machine, so a stale
+// copy is invisible to us and to them. Rather than have the Lua make a network
+// call of its own at mission start (a hung request there would stall DCS's GUI
+// thread), it simply reports its version on the URL and the panel does the
+// comparison -- the player finds out where they are already looking.
+/** Dotted-numeric compare. -1 / 0 / 1, and 0 for anything it can't read as a
+ *  version, so an unparseable string never produces a bogus warning. */
+function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => v.trim().split('.').map(n => Number.parseInt(n, 10))
+  const [x, y] = [parse(a), parse(b)]
+  if (x.some(Number.isNaN) || y.some(Number.isNaN)) return 0
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0)
+    if (d !== 0) return d > 0 ? 1 : -1
+  }
+  return 0
+}
+
+function UpdateNotice() {
+  const { data } = useQuery({
+    queryKey: ['cockpit-plugin-version'],
+    queryFn: () => api.cockpit.pluginVersion(),
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+    // Only meaningful when running inside DCS, where the plugin told us its
+    // version; in a browser there is no installed copy to be out of date.
+    enabled: !!PLUGIN_VERSION,
+  })
+  if (!PLUGIN_VERSION || !data) return null
+  // Only nag when the installed copy is actually BEHIND. During development
+  // the plugin is routinely ahead of the deployed bfdb, and telling someone
+  // their newer copy is out of date is worse than saying nothing.
+  if (data.version === 'unknown' || compareVersions(PLUGIN_VERSION, data.version) >= 0) return null
+
+  return (
+    <div style={{
+      padding: '0.35rem 0.9rem', background: 'rgba(224,160,80,0.12)',
+      borderBottom: '1px solid rgba(224,160,80,0.4)', color: '#e0a050',
+      fontSize: '0.6rem', letterSpacing: '0.08em',
+      display: 'flex', gap: '0.5rem', alignItems: 'baseline', flexWrap: 'wrap',
+    }}>
+      <strong>OVERLAY UPDATE</strong>
+      <span>
+        you have {PLUGIN_VERSION}, {data.version} is current — download
+        bfcockpit.lua and re-run the installer
+      </span>
+    </div>
+  )
+}
+
+// ── Live context strip ───────────────────────────────────────────────
+// Who you are, what you're in, where you are. Nothing here is typed in by the
+// player -- it is the engine's own view of their slot, polled.
+function ContextStrip({ playerId }: { playerId?: string }) {
+  const { data } = useQuery({
+    queryKey: ['cockpit-context', playerId],
+    queryFn: () => api.cockpit.context(playerId),
+    refetchInterval: 3000,
+    retry: false,
+  })
+  if (!data) return null
+
+  const cell = (label: string, value: React.ReactNode) => (
+    <span style={{ display: 'flex', gap: '0.3rem', alignItems: 'baseline' }}>
+      {label && <span style={{ color: 'var(--text-dim)' }}>{label}</span>}
+      <span style={{ color: 'var(--text)' }}>{value}</span>
+    </span>
+  )
+
+  const s = data.slot
+  return (
+    <div style={{
+      padding: '0.3rem 0.9rem', background: 'var(--bg)', borderBottom: '1px solid var(--border)',
+      display: 'flex', gap: '0.9rem', flexWrap: 'wrap',
+      fontSize: '0.6rem', letterSpacing: '0.08em',
+    }}>
+      {cell('', <strong style={{ color: 'var(--accent-bright)' }}>{data.name}</strong>)}
+      {cell('PTS', data.points)}
+      {data.crates > 0 && cell('CRATES', data.crates)}
+      {s ? (
+        <>
+          {cell('A/C', s.airframe)}
+          {cell('ALT', `${s.alt_ft} ft`)}
+          {cell('HDG', `${String(s.heading_deg).padStart(3, '0')}°`)}
+          {cell('GS', `${s.speed_kts} kt`)}
+          {s.at_objective
+            ? cell('AT', s.at_objective)
+            : s.nearest
+              ? cell('NEAR', `${s.nearest.name} ${String(s.nearest.bearing_deg).padStart(3, '0')}°/${(s.nearest.distance_m / 1852).toFixed(1)}nm`)
+              : null}
+          {s.takeoff_ok_in_secs != null && s.takeoff_ok_in_secs > 0 && cell('HOLD', `${s.takeoff_ok_in_secs}s`)}
+        </>
+      ) : (
+        <span style={{ color: 'var(--text-dim)' }}>SPECTATING — TAKE A SLOT</span>
+      )}
+    </div>
   )
 }
 
@@ -81,12 +371,17 @@ function FnKey({ active, onClick, children }: { active: boolean; onClick: () => 
   )
 }
 
-function Shell({ children, tabs }: { children: React.ReactNode; tabs?: React.ReactNode }) {
+function Shell({ children, tabs, playerId }: { children: React.ReactNode; tabs?: React.ReactNode; playerId?: string }) {
   return (
-    <div className="theme-locked-dark" style={{
-      height: '100%', minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)',
-      display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-mono)',
-    }}>
+    <div
+      className="theme-locked-dark"
+      data-cockpit-vr={IS_VR ? '1' : undefined}
+      style={{
+        height: '100%', minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)',
+        display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-mono)',
+      }}
+    >
+      {IS_VR && <style>{VR_STYLES}</style>}
       <div style={{
         padding: '0.55rem 0.9rem', background: 'var(--bg-card)', borderBottom: '1px solid var(--border)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem',
@@ -99,6 +394,20 @@ function Shell({ children, tabs }: { children: React.ReactNode; tabs?: React.Rea
         </span>
         {tabs}
       </div>
+      {/* Which DCS server this panel is talking to. One bfdb fronts several,
+          and a player who joined the test server should be able to see at a
+          glance that the picture they are reading is that server's. */}
+      {SERVER_NAME && (
+        <div style={{
+          padding: '0.2rem 0.9rem', background: 'var(--bg)', borderBottom: '1px solid var(--border)',
+          fontSize: '0.6rem', letterSpacing: '0.12em', color: 'var(--text-dim)',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {SERVER_NAME}
+        </div>
+      )}
+      <UpdateNotice />
+      <ContextStrip playerId={playerId} />
       <div style={{ flex: 1, overflow: 'auto', padding: '0.9rem' }}>{children}</div>
     </div>
   )

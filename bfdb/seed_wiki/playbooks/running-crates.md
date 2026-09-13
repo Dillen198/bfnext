@@ -56,8 +56,9 @@ You also earn logistics score for it.
    Unload`, repeat until the full count is on the ground in one cluster.
 5. **Unpack.** With all required crates down, the Cargo menu offers an unpack /
    assemble option for that unit — select it and the vehicle spawns.
-6. **Bind it if you want to move it:** `-bind <group-id>`, then
-   `F10 → Actions>> → Move (Units/Troops)` to reposition (the cost is in the menu label).
+6. **Reposition it if you want to:** `F10 → Actions>> → Move (Units/Troops)`,
+   pick the group, then a map marker (the cost is in the menu label). Nothing
+   needs binding first.
 
 ## Repair crates
 

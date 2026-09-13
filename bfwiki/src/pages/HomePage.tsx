@@ -1,5 +1,11 @@
 import { Link } from 'react-router-dom'
-import { Compass, Radio, Crosshair, BookOpen, Rocket } from 'lucide-react'
+import {
+  Comms as Radio,
+  Compass,
+  Crosshair,
+  Rocket,
+  Wiki as BookOpen,
+} from '@icons'
 
 const FEATURES = [
   {

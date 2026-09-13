@@ -5,7 +5,7 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
-} from '../icons'
+} from '@icons'
 
 // ── shared styles ─────────────────────────────────────────────────────────
 

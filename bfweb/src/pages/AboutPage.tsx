@@ -6,7 +6,7 @@ import {
   Pilot,
   Support,
   ExternalLink,
-} from '../icons'
+} from '@icons'
 
 // Role badge colour mapping
 const ROLE_COLORS: Record<string, string> = {

@@ -19,7 +19,7 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronUp,
-} from '../icons'
+} from '@icons'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -699,13 +699,17 @@ impl MapLayer {
     // â”€â”€ Supply critical warnings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Draw a persistent F10 map marker when an objective's supply is critical.
+    ///
+    /// `detail` names what is actually short and by how much ("munitions 18% /
+    /// fuel 9%"), taken from the same three numbers the objective's own label
+    /// shows -- see the caller in `logistics.rs`.
     pub fn on_supply_critical(
         &mut self,
         oid: ObjectiveId,
         pos: Vector2,
         side: Side,
         name: &str,
-        threshold: u8,
+        detail: &str,
         msgs: &mut MsgQ,
     ) {
         if self.supply_critical_marks.contains_key(&oid) {
@@ -723,7 +727,7 @@ impl MapLayer {
                 fill_color: Color::black(0.0),
                 font_size: 12,
                 read_only: true,
-                text: format_compact!("âš  LOW SUPPLY\n{}\n< {}%", name, threshold).into(),
+                text: format_compact!("! LOW SUPPLY\n{}\n{}", name, detail).into(),
             },
         );
         self.supply_critical_marks.insert(oid, mark);

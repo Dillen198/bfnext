@@ -592,12 +592,11 @@ impl Ephemeral {
     }
 
     pub fn create_objective_markup(&mut self, persisted: &Persisted, obj: &Objective) {
-        if obj.kind.is_special_sam_site() {
-            if let Some(mk) = self.objective_markup.remove(&obj.id) {
-                mk.remove(&mut self.msgs);
-            }
-            return;
-        }
+        // Special SAM sites used to get no markup at all, on the grounds that
+        // their position is classified -- but that hid them from the coalition
+        // that owns them as well, so a side could not see its own SAM coverage.
+        // They are drawn for their owner only now; see `draw_spec` in
+        // `ObjectiveMarkup::new`.
         if let Some(mk) = self.objective_markup.remove(&obj.id) {
             mk.remove(&mut self.msgs);
         }
@@ -624,20 +623,26 @@ impl Ephemeral {
         obj: &Objective,
         moved: &[ObjectiveId],
     ) {
-        // Special SAM sites are position-classified -- they get no F10 label,
-        // health bar or rings (see create_objective_markup). The per-tick
-        // refresh loop calls straight in here, so without the same guard a
-        // Vacant entry would rebuild the full "<name>\nHealth: .." markup every
-        // few seconds -- which is the SAM-site label players keep seeing.
-        if obj.kind.is_special_sam_site() {
-            if let Some(mk) = self.objective_markup.remove(&obj.id) {
-                mk.remove(&mut self.msgs);
-            }
-            return;
-        }
         let capture_pct = self.capture_pct_for(&obj.id);
         let repair_pct = self.repair_pct_for(obj);
         let hold_pct = self.hold_pct_for(obj);
+        // Owner-only markup (carrier groups, special SAM sites) has its side
+        // filter fixed when the marks are created, and `update` cannot change
+        // it -- it only recolours and retexts existing MarkIds. So one that
+        // changes hands has to be torn down and redrawn, or it stays visible to
+        // the side that just lost it and invisible to the side that took it.
+        if (matches!(obj.kind, ObjectiveKind::CarrierGroup { .. })
+            || obj.kind.is_special_sam_site())
+            && self
+                .objective_markup
+                .get(&obj.id)
+                .map(|mk| mk.side != obj.owner)
+                .unwrap_or(false)
+        {
+            if let Some(mk) = self.objective_markup.remove(&obj.id) {
+                mk.remove(&mut self.msgs);
+            }
+        }
         match self.objective_markup.entry(obj.id) {
             Entry::Occupied(mut e) => e.get_mut().update(
                 persisted,
@@ -1806,7 +1811,16 @@ impl Ephemeral {
                 route.points().ok().map(|seq| seq.into_iter().filter_map(|p| p.ok()).collect()).unwrap_or_default()
             };
 
-            if group.tags.contains(UnitTag::CAP) || group.tags.contains(UnitTag::HotStart) {
+            if group.tags.contains(UnitTag::CAP)
+                || group.tags.contains(UnitTag::HotStart)
+                || group.tags.contains(UnitTag::ColdStart)
+            {
+                // Engines off on the ramp instead of turning. Everything else
+                // about the start -- parking spot selection, airdromeId, field
+                // elevation, locked zero speed/ETA -- is identical; DCS picks
+                // cold vs hot purely from the waypoint type/action pair, and
+                // getting only one of the two right air-starts the flight.
+                let cold = group.tags.contains(UnitTag::ColdStart);
                 // Resolve the origin airbase FIRST -- we need its id AND its
                 // position to build a valid parking start. A `TakeOffParkingHot`
                 // waypoint with no airdromeId (or one whose x/y/alt point
@@ -1867,10 +1881,10 @@ impl Ephemeral {
                     match ab.get_parking_spots(true) {
                         Ok(spots) => {
                             let total = spots.len();
-                            let mut usable: Vec<dcso3::airbase::ParkingSpot> = spots
-                                .into_iter()
-                                .filter(|s| s.usable_by(helicopter))
-                                .collect();
+                            let (mut usable, rejected): (
+                                Vec<dcso3::airbase::ParkingSpot>,
+                                Vec<dcso3::airbase::ParkingSpot>,
+                            ) = spots.into_iter().partition(|s| s.usable_by(helicopter));
                             usable.sort_by(|a, b| {
                                 a.preference(helicopter)
                                     .cmp(&b.preference(helicopter))
@@ -1882,8 +1896,31 @@ impl Ephemeral {
                             });
                             usable.truncate(want);
                             if usable.len() < want {
+                                // Say *why* nothing matched. Every ground start
+                                // on the live server came back "0 of N usable"
+                                // with N as high as 59, which is not a real
+                                // constraint -- an airfield with 59 free spots
+                                // has somewhere to put one fighter. Without the
+                                // breakdown there is no way to tell whether the
+                                // spots were all rejected for TO_AC (which we
+                                // default to false when DCS omits the field) or
+                                // for a Term_Type this build doesn't know about.
+                                let mut no_to_ac = 0usize;
+                                let mut by_type: FxHashMap<i64, usize> =
+                                    FxHashMap::default();
+                                for sp in &rejected {
+                                    if !sp.to_ac {
+                                        no_to_ac += 1;
+                                    }
+                                    *by_type.entry(sp.term_type).or_default() += 1;
+                                }
+                                let mut types: Vec<(i64, usize)> =
+                                    by_type.into_iter().collect();
+                                types.sort_by_key(|(t, _)| *t);
                                 warn!(
-                                    "[GROUND_START] {} wanted {want} parking spots, only {} of {total} free spots are usable by this airframe -- the rest go on the field for DCS to assign",
+                                    "[GROUND_START] {} wanted {want} parking spots, only {} of {total} free spots are usable by this airframe \
+                                     (helicopter={helicopter}; rejected: {no_to_ac} with TO_AC unset/false, Term_Type counts {types:?}) \
+                                     -- the rest go on the field for DCS to assign",
                                     group.name,
                                     usable.len()
                                 );
@@ -1910,7 +1947,18 @@ impl Ephemeral {
                 }
                 if let Some(first) = points.first_mut() {
                     match (&ab_start, parking_anchor) {
-                        (Some((abid, p, cat)), Some(anchor)) => {
+                        // A resolvable field is not on its own enough to park
+                        // at. FARPs and FOBs routinely report zero *usable*
+                        // spots, and a `TakeOffParking*` waypoint pointing at a
+                        // helipad we never got a spot on is one DCS answers by
+                        // air-starting the flight -- which is how these helo
+                        // missions ended up spawning airborne. A helicopter
+                        // does not need the pad, so send it to the open-ground
+                        // start below instead; fixed wing has no such option
+                        // and still has to try the field.
+                        (Some((abid, p, cat)), Some(anchor))
+                            if !helicopter || !parking_plan.is_empty() =>
+                        {
                             // The exact shape DCS itself uses when it spawns a
                             // ground-starting flight at runtime (see
                             // Scripts/GeneratedTasks/modules/one_plane_attack_*.lua):
@@ -1919,10 +1967,16 @@ impl Ephemeral {
                             // field elevation BARO, and zero locked speed with
                             // a zero locked ETA. Leave any of those out and DCS
                             // falls back to an air start.
-                            first.typ = dcso3::controller::PointType::TakeOffParkingHot;
-                            first.action = Some(dcso3::controller::ActionTyp::Air(
-                                dcso3::controller::TurnMethod::FromParkingAreaHot,
-                            ));
+                            first.typ = if cold {
+                                dcso3::controller::PointType::TakeOffParking
+                            } else {
+                                dcso3::controller::PointType::TakeOffParkingHot
+                            };
+                            first.action = Some(dcso3::controller::ActionTyp::Air(if cold {
+                                dcso3::controller::TurnMethod::FromParkingArea
+                            } else {
+                                dcso3::controller::TurnMethod::FromParkingAreaHot
+                            }));
                             // FARP/helipad airbases hand back getPoint() with
                             // y = 0. A parking start at 0m BARO under hundreds
                             // of metres of terrain spawns the flight inside the
@@ -1979,10 +2033,16 @@ impl Ephemeral {
                             let alt = dcso3::land::Land::singleton(spctx.lua())
                                 .and_then(|l| l.get_height(first.pos))
                                 .unwrap_or(0.0);
-                            first.typ = dcso3::controller::PointType::TakeOffGroundHot;
-                            first.action = Some(dcso3::controller::ActionTyp::Air(
-                                dcso3::controller::TurnMethod::FromGroundAreaHot,
-                            ));
+                            first.typ = if cold {
+                                dcso3::controller::PointType::TakeOffGround
+                            } else {
+                                dcso3::controller::PointType::TakeOffGroundHot
+                            };
+                            first.action = Some(dcso3::controller::ActionTyp::Air(if cold {
+                                dcso3::controller::TurnMethod::FromGroundArea
+                            } else {
+                                dcso3::controller::TurnMethod::FromGroundAreaHot
+                            }));
                             first.airdrome_id = None;
                             first.helipad = None;
                             first.link_unit = None;
@@ -2002,6 +2062,18 @@ impl Ephemeral {
                             "[GROUND_START] {} has no resolvable airbase for {:?} -- leaving template waypoint 0, so this flight will air-start (a CAP is then scrapped by enforce_cap_ground_start)",
                             group.name, group.origin
                         ),
+                    }
+
+                    if ground_start {
+                        // Starting on open ground, not at the field -- so the
+                        // rest of the group table has to stop claiming the
+                        // field too. Units left sitting on the parking
+                        // fallback while waypoint 0 is out at the objective is
+                        // precisely the disagreement DCS resolves by
+                        // air-starting the flight.
+                        parking_plan.clear();
+                        parking_fallback = None;
+                        parking_anchor = None;
                     }
 
                     if group.tags.contains(UnitTag::CAP) {

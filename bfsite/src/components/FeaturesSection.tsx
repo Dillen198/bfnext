@@ -1,9 +1,23 @@
 import { campaign } from '../config/campaign'
-import { Map, Package, Radio, Crosshair, Layers, BarChart3, Truck, Users, Radar, Eye, Shield, Menu, Antenna } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import {
+  Antenna,
+  Comms as Radio,
+  Crosshair,
+  Eye,
+  Layers,
+  Logistics as Truck,
+  Menu,
+  Pilot as Users,
+  Radar,
+  Rankings as BarChart3,
+  Shield,
+  Supply as Package,
+  Tacmap as Map,
+  type IconComponent,
+} from '@icons'
 import Reveal from './Reveal'
 
-const ICONS: Record<string, LucideIcon> = {
+const ICONS: Record<string, IconComponent> = {
   Map, Package, Radio, Crosshair, Layers, BarChart3, Truck, Users, Radar, Eye, Shield, Menu, Antenna,
 }
 

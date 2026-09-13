@@ -1,4 +1,7 @@
-import { Moon, Sun } from 'lucide-react'
+import {
+  Moon,
+  Sun,
+} from '@icons'
 import { useTheme } from '../context/ThemeContext'
 
 export default function ThemeToggle({ style }: { style?: React.CSSProperties }) {

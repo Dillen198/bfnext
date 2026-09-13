@@ -1,5 +1,7 @@
 import { useInstance } from '../context/InstanceContext'
-import { Server } from 'lucide-react'
+import {
+  Server,
+} from '@icons'
 
 /**
  * Which DCS server's numbers this wiki is quoting.

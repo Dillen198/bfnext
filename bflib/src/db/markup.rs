@@ -352,7 +352,11 @@ impl KindSymbol {
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct ObjectiveMarkup {
-    side: Side,
+    /// Owner at the time the marks were created. Read by
+    /// `Ephemeral::update_objective_markup` to notice a carrier changing hands,
+    /// which needs a full redraw because the side filter is baked into the
+    /// marks and `update` cannot change it.
+    pub(super) side: Side,
     threatened: bool,
     capturable: bool,
     health: u8,
@@ -668,14 +672,27 @@ impl ObjectiveMarkup {
         hold_pct: Option<(u8, i64)>,
     ) -> Self {
         let text_color = |a| text_color(obj.owner, a);
-        // Every objective is drawn for both coalitions. Hiding the enemy's
-        // FARPs and carrier groups didn't conceal much -- a FARP is a visible
-        // pad you fly over and a carrier task force is the most conspicuous
-        // thing on the water -- while it did leave attacking players unable to
-        // see what they were being asked to take. Special SAM sites are the
-        // deliberate exception and get no markup at all (they are never
-        // reached here; see `create_objective_markup`).
-        let all_spec = SideFilter::All;
+        // Land objectives are drawn for both coalitions: hiding an enemy FARP
+        // conceals nothing -- it is a pad you fly over, at a fixed place -- and
+        // it leaves attacking players unable to see what they are being asked
+        // to take.
+        //
+        // Two kinds are owner-only, for the same reason: their position is a
+        // live secret that the map would otherwise hand to the enemy for free.
+        //
+        //   * A carrier group moves. A task force drawn on the F10 map is a
+        //     task force nobody ever has to search for -- the label carries its
+        //     exact position, health and fuel, updated as it steams.
+        //   * A special SAM site is meant to be found by flying into it (or by
+        //     ELINT). It used to be hidden from *both* sides, which meant its
+        //     own coalition could not see the SAM protecting them either.
+        let draw_spec = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. })
+            || obj.kind.is_special_sam_site()
+        {
+            SideFilter::from(obj.owner)
+        } else {
+            SideFilter::All
+        };
         let mut t = ObjectiveMarkup::default();
         t.side = obj.owner;
         t.threatened = obj.threatened;
@@ -706,7 +723,7 @@ impl ObjectiveMarkup {
         macro_rules! threat_circle {
             ($radius:expr) => {
                 msgq.circle_to_all(
-                    all_spec,
+                    draw_spec,
                     t.threatened_ring,
                     CircleSpec {
                         center: LuaVec3(pos3),
@@ -723,7 +740,7 @@ impl ObjectiveMarkup {
         match obj.zone {
             Zone::Circle { radius, .. } => {
                 msgq.circle_to_all(
-                    all_spec,
+                    draw_spec,
                     t.owner_ring,
                     CircleSpec {
                         center: LuaVec3(pos3),
@@ -739,7 +756,7 @@ impl ObjectiveMarkup {
             }
             Zone::Quad { points, pos } => {
                 msgq.quad_to_all(
-                    all_spec,
+                    draw_spec,
                     t.owner_ring,
                     QuadSpec {
                         p0: LuaVec3(Vector3::new(points.p0.x, 0., points.p0.y)),
@@ -758,7 +775,7 @@ impl ObjectiveMarkup {
                 } else {
                     let points = points.scale(1.1);
                     msgq.quad_to_all(
-                        all_spec,
+                        draw_spec,
                         t.threatened_ring,
                         QuadSpec {
                             p0: LuaVec3(Vector3::new(points.p0.x, 0., points.p0.y)),
@@ -785,7 +802,7 @@ impl ObjectiveMarkup {
         match obj.zone {
             Zone::Circle { pos: _, radius } => {
                 msgq.circle_to_all(
-                    all_spec,
+                    draw_spec,
                     t.capturable_ring,
                     CircleSpec {
                         center: LuaVec3(pos3),
@@ -801,7 +818,7 @@ impl ObjectiveMarkup {
             Zone::Quad { pos: _, points } => {
                 let points = points.scale(0.9);
                 msgq.quad_to_all(
-                    all_spec,
+                    draw_spec,
                     t.capturable_ring,
                     QuadSpec {
                         p0: LuaVec3(Vector3::new(points.p0.x, 0., points.p0.y)),
@@ -818,7 +835,7 @@ impl ObjectiveMarkup {
             }
         }
         msgq.text_to_all(
-            all_spec,
+            draw_spec,
             t.label,
             TextSpec {
                 pos: LuaVec3(Vector3::new(pos3.x + 1500., 1., pos3.z + 1500.)),
@@ -836,31 +853,31 @@ impl ObjectiveMarkup {
         t.kind_symbol = match obj.kind {
             ObjectiveKind::SpecialSamSite => {
                 let path = if obj.owner == Side::Blue { friendly_sam_path() } else { hostile_sam_path() };
-                KindSymbol::Single(draw_polyline(t.pos, sym_r, path, all_spec, sym_color, msgq))
+                KindSymbol::Single(draw_polyline(t.pos, sym_r, path, draw_spec, sym_color, msgq))
             }
             ObjectiveKind::NavalBase => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, anchor_path(), all_spec, sym_color, msgq)
+                draw_polyline(t.pos, sym_r, anchor_path(), draw_spec, sym_color, msgq)
             ),
             ObjectiveKind::CarrierGroup { .. } => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, carrier_path(), all_spec, sym_color, msgq)
+                draw_polyline(t.pos, sym_r, carrier_path(), draw_spec, sym_color, msgq)
             ),
             ObjectiveKind::Airbase => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, airbase_path(), all_spec, sym_color, msgq)
+                draw_polyline(t.pos, sym_r, airbase_path(), draw_spec, sym_color, msgq)
             ),
             ObjectiveKind::Fob => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, fob_path(), all_spec, sym_color, msgq)
+                draw_polyline(t.pos, sym_r, fob_path(), draw_spec, sym_color, msgq)
             ),
             ObjectiveKind::Farp { .. } => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, farp_path(), all_spec, sym_color, msgq)
+                draw_polyline(t.pos, sym_r, farp_path(), draw_spec, sym_color, msgq)
             ),
             ObjectiveKind::Logistics => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, logistics_path(), all_spec, sym_color, msgq)
+                draw_polyline(t.pos, sym_r, logistics_path(), draw_spec, sym_color, msgq)
             ),
             ObjectiveKind::Factory { .. } => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, factory_path(), all_spec, sym_color, msgq)
+                draw_polyline(t.pos, sym_r, factory_path(), draw_spec, sym_color, msgq)
             ),
             ObjectiveKind::CommandCenter => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, command_center_path(), all_spec, sym_color, msgq)
+                draw_polyline(t.pos, sym_r, command_center_path(), draw_spec, sym_color, msgq)
             ),
         };
 
@@ -872,7 +889,7 @@ impl ObjectiveMarkup {
                     let dobj = &persisted.objectives[oid];
                     let (spos, dpos) = arrow_coords(obj, dobj);
                     msgq.arrow_to(
-                        all_spec,
+                        draw_spec,
                         id,
                         ArrowSpec {
                             start: LuaVec3(Vector3::new(dpos.x, 0., dpos.y)),
@@ -893,8 +910,11 @@ impl ObjectiveMarkup {
                     if let ObjectiveKind::CarrierGroup { .. } = dst_obj.kind {
                         let id = MarkId::new();
                         let (spos, dpos) = arrow_coords(obj, dst_obj);
+                        // The port itself is public, but this arrow ends on the
+                        // carrier -- drawing it to both sides hands the enemy
+                        // the position the carrier's own markup is now hiding.
                         msgq.arrow_to(
-                            all_spec,
+                            SideFilter::from(dst_obj.owner),
                             id,
                             ArrowSpec {
                                 start: LuaVec3(Vector3::new(dpos.x, 0., dpos.y)),

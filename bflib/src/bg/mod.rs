@@ -33,7 +33,7 @@ use compact_str::{CompactString, format_compact};
 use crossbeam::queue::SegQueue;
 use dcso3::perf::{Perf as ApiPerf, PerfStat as ApiPerfStat};
 use fxhash::FxHashMap;
-use log::{error, info};
+use log::{error, info, Level, Log, Metadata, Record};
 use logpub::LogPublisher;
 use netidx::{
     chars::Chars,
@@ -668,8 +668,41 @@ fn setup_logger(tx: UnboundedSender<Task>) {
         Some(s) if &s == "off" => LevelFilter::Off,
         Some(_) => LevelFilter::Info,
     };
-    WriteLogger::init(level, simplelog::Config::default(), LogHandle(tx))
-        .expect("could not init logger")
+    let logger = WriteLogger::new(level, simplelog::Config::default(), LogHandle(tx));
+    log::set_boxed_logger(Box::new(QuietNetidx(*logger))).expect("could not init logger");
+    log::set_max_level(level);
+}
+
+/// Wraps the real logger to drop netidx's subscriber chatter below Error.
+///
+/// netidx-archive joins a "cluster" even when this server is its only member,
+/// and the subscriber then retries the peer path forever, logging a WARN per
+/// attempt: a 20 minute log carried ~310 copies of `resubscription error
+/// /local/fowl/campaign/<x>/stats/cluster/publish/<uuid>: no such value`, which
+/// is every warning that actually mattered buried under one benign retry loop.
+/// bfdb already filters the same module the same way (env_logger
+/// `filter_module("netidx::subscriber", Error)` in its main). simplelog has no
+/// per-module level, and `ConfigBuilder::add_filter_ignore_str` would throw
+/// away genuine netidx errors along with the noise, so filter here instead.
+struct QuietNetidx<L>(L);
+
+impl<L: Log> Log for QuietNetidx<L> {
+    fn enabled(&self, m: &Metadata) -> bool {
+        if m.level() > Level::Error && m.target().starts_with("netidx::subscriber") {
+            return false;
+        }
+        self.0.enabled(m)
+    }
+
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            self.0.log(record)
+        }
+    }
+
+    fn flush(&self) {
+        self.0.flush()
+    }
 }
 
 pub(super) fn init(write_dir: PathBuf) -> UnboundedSender<Task> {

@@ -72,6 +72,10 @@ Plus things that aren't in the action list:
 charged again if the asset you called is lost early. An AWACS shot down shortly
 after launch costs you twice.
 
+**Refunds.** An [AI helo mission](../advanced/helo-missions.md) that never
+delivers — shot down, or lost to the terrain — hands its points back, the
+troop cost included. Nothing arrives, but you are not charged for nothing.
+
 Deployables are paid for in **crates and materiel**, not points. See
 [Deployable Units](../reference/deployables.md) and
 [Materiel & the War Economy](./war-economy.md).

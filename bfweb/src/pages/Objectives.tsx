@@ -6,7 +6,7 @@ import SideBadge from '../components/SideBadge'
 import PageHeader from '../components/PageHeader'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts'
 import { useRound } from '../context/RoundContext'
-import { Objective, Alert, Shield, Pin } from '../icons'
+import { Objective, Alert, Shield, Pin } from '@icons'
 
 const TT = {
   contentStyle: { background: 'var(--bg-elevated)', border: '1px solid var(--border-light)', borderRadius: 4, color: 'var(--text)', fontSize: 12 },

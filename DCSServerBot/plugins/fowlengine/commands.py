@@ -14,6 +14,8 @@ from typing import Optional
 
 from .procman import Procman, BFDB_HEALTH_CHECK_SECS, sha256_of
 from .upload import handle_bfbinary_upload
+from .briefing import build_briefing_embed
+from .icons import IconSet
 
 # NOTE: this plugin previously subclassed Plugin[FowlEngineEventListener] and
 # registered .listener.FowlEngineEventListener for the vs_event/registerDCSServer
@@ -56,6 +58,24 @@ WEAK_CLEAR_HEALTH = 35
 # alternating between polls, an endless stream of them.
 OWNER_CONFIRM_POLLS = 2
 ACHIEVEMENT_THRESHOLDS = [(15, "God of War"), (10, "Unstoppable"), (5, "Ace")]
+
+# ── Per-coalition briefing channels ──────────────────────────────
+# Two channels per DCS server, one per coalition, each holding a single embed
+# that is edited in place from bfdb's GET /api/situation. Read access is gated
+# by the coalition role below, and that role is a mirror of the side the ENGINE
+# registered -- so the only way into Red's channel is to actually be flying Red.
+BRIEFING_UPDATE_MINUTES = 3.0
+
+# How long to wait on /api/situation. The engine walks every objective, the
+# intel db and the radar net to build one, and bfdb already allows itself 8s
+# for that RPC -- so anything shorter here just times the whole thing out on a
+# busy server.
+BRIEFING_HTTP_TIMEOUT = 20
+
+# How often the Discord coalition roles are reconciled against the engine's own
+# registrations. Slow on purpose: it is a mirror, not a gate on joining, and a
+# player who just switched sides can wait a few minutes for their channel.
+COALITION_SYNC_MINUTES = 5.0
 
 # ── bfdb process supervision ────────────────────────────────────────────────
 # bfdb.exe + the netidx resolver are owned by procman.py as child processes of
@@ -292,6 +312,11 @@ class FowlEngine(Plugin):
         # and each overwrites the other's every 2 minutes.
         self.info_msg_ids = {}
         self.tail_msg_ids = {}  # server name -> engine log tail message id
+        # server name -> {"Blue": message id, "Red": message id}: the one live
+        # briefing embed each coalition channel holds. Persisted, so a bot
+        # restart keeps editing the same two messages instead of leaving a
+        # graveyard of stale briefings behind it.
+        self.briefing_msg_ids = {}
         self.faction_thread_ids = {}  # server name -> {"Blue": thread_id, "Red": thread_id}
         self.state_file = os.path.join(bot.node.config_dir, 'fowlengine_state.json')
         if os.path.exists(self.state_file):
@@ -316,6 +341,7 @@ class FowlEngine(Plugin):
                     if legacy_info and not self.info_msg_ids:
                         self.info_msg_ids = {'__legacy__': legacy_info}
                     self.tail_msg_ids = state.get('tail_msg_ids', {})
+                    self.briefing_msg_ids = state.get('briefing_msg_ids', {})
                     self.faction_thread_ids = state.get('faction_thread_ids', {})
             except Exception as ex:
                 self.log.error(f"Failed to load Fowl Engine state: {ex}")
@@ -340,6 +366,10 @@ class FowlEngine(Plugin):
         # Constructed in cog_load once the config is available.
         self.procman: Procman | None = None
         self._bfdb_admin_password: str | None = None
+        # Vector Strike custom emoji. Empty until refresh() runs and until an
+        # admin has actually installed them -- every icon has a unicode
+        # stand-in, so embeds render correctly either way.
+        self.icons = IconSet(bot, self.log)
 
     async def cog_load(self) -> None:
         await super().cog_load()
@@ -363,6 +393,8 @@ class FowlEngine(Plugin):
         utils.safe_start(self.update_server_info)
         utils.safe_start(self.supervise_bfdb)
         utils.safe_start(self.supervise_gci_transcript)
+        utils.safe_start(self.update_briefings)
+        utils.safe_start(self.sync_coalition_roles)
         self._warn_shared_channels()
 
     # Channels that must not be shared between DCS servers: each carries a
@@ -373,7 +405,7 @@ class FowlEngine(Plugin):
     PER_SERVER_CHANNEL_KEYS = (
         'status_channel', 'alerts_channel', 'achievements_channel',
         'engine_log_channel', 'perf_channel', 'gci_transcript_channel',
-        'server_info_channel',
+        'server_info_channel', 'blue_briefing_channel', 'red_briefing_channel',
     )
 
     def _warn_shared_channels(self) -> None:
@@ -416,6 +448,8 @@ class FowlEngine(Plugin):
         await utils.safe_cancel(self.update_server_info)
         await utils.safe_cancel(self.supervise_bfdb)
         await utils.safe_cancel(self.supervise_gci_transcript)
+        await utils.safe_cancel(self.update_briefings)
+        await utils.safe_cancel(self.sync_coalition_roles)
         for task in self._log_relay_tasks.values():
             task.cancel()
         for task in self._campaign_poll_tasks.values():
@@ -459,6 +493,7 @@ class FowlEngine(Plugin):
                     'perf_msg_ids': self.perf_msg_ids,
                     'info_msg_ids': self.info_msg_ids,
                     'tail_msg_ids': self.tail_msg_ids,
+                    'briefing_msg_ids': self.briefing_msg_ids,
                     'faction_thread_ids': self.faction_thread_ids,
                 }, f)
         except Exception as ex:
@@ -479,7 +514,7 @@ class FowlEngine(Plugin):
             try:
                 import aiohttp
                 config = self.get_config(server) or {}
-                api_url = config.get("api_url", "http://localhost:8765")
+                api_url = config.get("api_url", "http://localhost:8880")
                 dash = (config.get("dashboard_url") or "").rstrip("/")
                 async with aiohttp.ClientSession() as session:
                     sp = srv_params(server.name)
@@ -805,7 +840,7 @@ class FowlEngine(Plugin):
             if not config.get('perf_channel'):
                 continue
 
-            api_url = config.get("api_url", "http://localhost:8765")
+            api_url = config.get("api_url", "http://localhost:8880")
             username = config.get("admin_username")
             password = config.get("admin_password")
             if not username or not password:
@@ -929,8 +964,20 @@ class FowlEngine(Plugin):
         """Tails bfdb's /ws/gci (admin-gated) and posts each call to
         gci_transcript_channel. Each line is JSON {time, side, text}."""
         config = self.get_config(server) or {}
-        api_url = config.get("api_url", "http://localhost:8765")
+        api_url = config.get("api_url", "http://localhost:8880")
         username, password = config.get("admin_username"), config.get("admin_password")
+        # bfdb can post the transcript straight to a Discord webhook, and this
+        # relay posts the same calls through the bot. Both on means every call
+        # appears twice, which reads as the bot duplicating itself.
+        gci_cfg = config.get("gci") or {}
+        dupes = [k for k in ("discord_webhook_url", "blue_discord_webhook_url",
+                             "red_discord_webhook_url") if (gci_cfg.get(k) or "").strip()]
+        if dupes:
+            self.log.warning(
+                f"FowlEngine: {server.name} has gci_transcript_channel AND gci.{dupes[0]} set -- "
+                f"every GCI call will be posted twice. Clear the webhook(s) "
+                f"({', '.join(dupes)}) to keep the bot relay as the only transcript."
+            )
         channel = self.bot.get_channel(int(config['gci_transcript_channel']))
         if not channel:
             self.log.error(f"FowlEngine: gci_transcript_channel not found for {server.name}")
@@ -1094,7 +1141,7 @@ class FowlEngine(Plugin):
             # Sort thresholds descending by points
             sorted_ranks = sorted(rank_thresholds.items(), key=lambda x: x[1], reverse=True)
 
-            api_url = config.get("api_url", "http://localhost:8765")
+            api_url = config.get("api_url", "http://localhost:8880")
             try:
                 import aiohttp
                 async with aiohttp.ClientSession() as session:
@@ -1166,7 +1213,7 @@ class FowlEngine(Plugin):
         if getattr(channel, 'guild', None) and channel.guild.id != member.guild.id:
             return
 
-        api_url = config.get("api_url", "http://localhost:8765")
+        api_url = config.get("api_url", "http://localhost:8880")
         brand_name = config.get('brand_name', 'Fowl Engine')
         # A Discord join isn't tied to a DCS server, so with several of them
         # behind one bfdb the briefing needs to name which one it's about.
@@ -1358,7 +1405,7 @@ class FowlEngine(Plugin):
 
     async def _campaign_event_poll(self, server: Server):
         config = self.get_config(server) or {}
-        api_url = config.get("api_url", "http://localhost:8765")
+        api_url = config.get("api_url", "http://localhost:8880")
         alerts_channel_id = config.get('alerts_channel')
         achievements_channel_id = config.get('achievements_channel')
         messages = config.get('messages', {})
@@ -1644,7 +1691,7 @@ class FowlEngine(Plugin):
         """Long-lived task: logs into bfdb as admin, tails /ws/engine-logs, and
         relays it into engine_log_channel until the server stops or is unconfigured."""
         config = self.get_config(server) or {}
-        api_url = config.get("api_url", "http://localhost:8765")
+        api_url = config.get("api_url", "http://localhost:8880")
         username = config.get("admin_username")
         password = config.get("admin_password")
         channel_id = int(config['engine_log_channel'])
@@ -1766,6 +1813,257 @@ class FowlEngine(Plugin):
             except discord.HTTPException as ex:
                 self.log.error(f"FowlEngine: failed to send engine log alert: {ex}")
         
+    # ── Per-coalition briefing channels ─────────────────────────────────────
+    #
+    # Each DCS server gets two channels, one per coalition, each holding a
+    # single embed that is edited in place from bfdb's GET /api/situation.
+    #
+    # WHY THIS IS NOT CHEATABLE. The report bfdb hands back is built by the
+    # engine *for one side* and only contains what that side has earned --
+    # threat rings from its own recon/ELINT, air tracks from its own radar net.
+    # The bot never merges them. Read access to each channel is gated by a
+    # coalition role, and `sync_coalition_roles` below only ever mirrors the
+    # side the ENGINE registered (first slot pick, or a `-switch`), which it
+    # reads from /api/admin/pilot-sides. Nothing a player can do in Discord
+    # puts them in the other faction's channel; they have to actually go and
+    # fly for that faction, and switching costs them a side switch in game.
+
+    def _briefing_channels(self, config: dict) -> dict:
+        """{"Blue": channel id, "Red": channel id} for one server, unset keys
+        dropped. A server may configure one side only (or neither)."""
+        out = {}
+        for side, key in (("Blue", "blue_briefing_channel"), ("Red", "red_briefing_channel")):
+            cid = config.get(key)
+            if cid:
+                out[side] = int(cid)
+        return out
+
+    async def _fetch_situation(self, api_url: str, server_name: str, side: str,
+                               username: str, password: str):
+        """GET /api/situation for one side of one instance, as the bfdb admin.
+
+        The endpoint is coalition-locked: it resolves the caller's own side and
+        refuses to hand over anyone else's. A bfdb admin with no in-game
+        registration of their own is the one caller allowed to name a side via
+        `?side=`, which is exactly what the bot is -- so the *bot's* access is
+        privileged while every player's is not, and the fog of war is re-imposed
+        by which channel the embed is posted to.
+        """
+        path = srv_path(f"/api/situation?side={side.lower()}", server_name)
+        import aiohttp
+        async with aiohttp.ClientSession() as http:
+            cookie = await bfdb_login(http, api_url, username, password)
+            async with http.get(f"{api_url}{path}",
+                                headers={"Cookie": f"session={cookie}"},
+                                timeout=BRIEFING_HTTP_TIMEOUT) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"/api/situation {side} -> {resp.status}: "
+                                       f"{(await resp.text())[:200]}")
+                return await resp.json()
+
+    @tasks.loop(minutes=BRIEFING_UPDATE_MINUTES)
+    async def update_briefings(self):
+        for server in self.bot.servers.values():
+            if server.status not in [Status.RUNNING, Status.PAUSED]:
+                continue
+            config = self.get_config(server) or {}
+            channels = self._briefing_channels(config)
+            if not channels:
+                continue
+            api_url = config.get("api_url", "http://localhost:8880")
+            username = config.get("admin_username", "")
+            password = config.get("admin_password", "")
+            if not username or not password:
+                self.log.warning(
+                    f"FowlEngine: {server.name} has briefing channels configured but no "
+                    f"admin_username/admin_password -- /api/situation is coalition-locked "
+                    f"and cannot be read without them.")
+                continue
+            for side, channel_id in channels.items():
+                try:
+                    await self._update_one_briefing(server, config, api_url, username,
+                                                    password, side, channel_id)
+                except Exception as ex:
+                    self.log.error(f"FowlEngine: {side} briefing for {server.name}: {ex}")
+
+    async def _update_one_briefing(self, server, config, api_url, username, password,
+                                   side: str, channel_id: int):
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            self.log.error(f"FowlEngine: {side.lower()}_briefing_channel {channel_id} "
+                           f"not found or bot lacks access.")
+            return
+        report = await self._fetch_situation(api_url, server.name, side, username, password)
+        embed = build_briefing_embed(
+            report,
+            icons=self.icons,
+            embed_factory=self._vs_embed,
+            dashboard_url=config.get("dashboard_url") or "",
+            # Only label the instance when there is more than one, otherwise
+            # every title carries a server name nobody needs.
+            instance_label=server.name if len(self.bot.servers) > 1 else "",
+        )
+        per_server = self.briefing_msg_ids.setdefault(server.name, {})
+        msg_id = per_server.get(side)
+        if msg_id:
+            try:
+                msg = await channel.fetch_message(msg_id)
+                await msg.edit(embed=embed)
+                return
+            except discord.NotFound:
+                per_server.pop(side, None)
+            except discord.Forbidden:
+                self.log.error(f"FowlEngine: cannot edit in briefing channel {channel_id}")
+                per_server.pop(side, None)
+                return
+        msg = await channel.send(embed=embed)
+        per_server[side] = msg.id
+        self.save_state()
+
+    @update_briefings.before_loop
+    async def before_update_briefings(self):
+        await self.bot.wait_until_ready()
+        # Guild emoji are only readable once the bot is ready, so the icon set
+        # resolves here rather than in cog_load.
+        try:
+            await self.icons.refresh()
+        except Exception as ex:
+            self.log.debug(f"FowlEngine: icon refresh skipped: {ex}")
+
+    # ── Coalition roles, mirrored from the engine ───────────────────────────
+
+    def _coalition_roles_cfg(self, config: dict) -> dict:
+        cfg = config.get("coalition_roles") or {}
+        return cfg if cfg.get("manage") else {}
+
+    @staticmethod
+    def _resolve_role(guild: discord.Guild, spec):
+        """A role by id or by exact name. Ids are preferred -- a renamed role
+        keeps working."""
+        if spec is None:
+            return None
+        if isinstance(spec, int) or (isinstance(spec, str) and spec.isdigit()):
+            return guild.get_role(int(spec))
+        return discord.utils.get(guild.roles, name=str(spec))
+
+    @tasks.loop(minutes=COALITION_SYNC_MINUTES)
+    async def sync_coalition_roles(self):
+        """Make the Discord coalition roles say what the engine says.
+
+        One direction only: the engine decides a side and this reflects it. The
+        bot never writes a side back, so a Discord role is evidence of a
+        registration rather than a way to obtain one -- which is what makes the
+        briefing channels honest.
+        """
+        for server in self.bot.servers.values():
+            config = self.get_config(server) or {}
+            cr = self._coalition_roles_cfg(config)
+            if not cr:
+                continue
+            try:
+                await self._sync_coalition_roles_for(server, config, cr)
+            except Exception as ex:
+                self.log.error(f"FowlEngine: coalition role sync for {server.name}: {ex}")
+
+    async def _sync_coalition_roles_for(self, server, config: dict, cr: dict):
+        api_url = config.get("api_url", "http://localhost:8880")
+        username = config.get("admin_username", "")
+        password = config.get("admin_password", "")
+        if not username or not password:
+            self.log.warning(
+                f"FowlEngine: coalition_roles.manage is on for {server.name} but no "
+                f"admin_username/admin_password is set -- /api/admin/pilot-sides needs them.")
+            return
+
+        status, data = await bfdb_admin_get(
+            api_url, username, password,
+            srv_path("/api/admin/pilot-sides", server.name))
+        if status != 200 or not data:
+            self.log.warning(f"FowlEngine: /api/admin/pilot-sides -> {status} "
+                             f"for {server.name}")
+            return
+
+        # ucid -> "Blue"/"Red", straight from the engine's registrations.
+        sides = {p["ucid"]: p["side"] for p in (data.get("pilots") or [])
+                 if p.get("ucid") and p.get("side") in ("Blue", "Red")}
+
+        roles = {}
+        for side, key in (("Blue", "blue"), ("Red", "red")):
+            spec = cr.get(key)
+            if not spec:
+                continue
+            for g in self.bot.guilds:
+                role = self._resolve_role(g, spec)
+                if role:
+                    roles[side] = role
+                    break
+            else:
+                self.log.warning(f"FowlEngine: coalition role {spec!r} ({side}) not found "
+                                 f"in any guild -- sync for {server.name} is incomplete.")
+        if not roles:
+            return
+
+        # Discord member id -> the side the engine says they fly. Built from
+        # the engine's side list, not from who currently holds a role, so a
+        # role someone was given by hand is reconciled away below.
+        want = {}
+        for ucid, side in sides.items():
+            if side not in roles:
+                continue
+            try:
+                member = await self.bot.get_member_by_ucid(ucid)
+            except Exception:
+                member = None
+            if member:
+                want[member.id] = (member, side)
+
+        granted = revoked = 0
+        for member, side in want.values():
+            target = roles[side]
+            other = roles.get("Red" if side == "Blue" else "Blue")
+            try:
+                if target not in member.roles:
+                    await member.add_roles(target, reason="Fowl Engine: registered coalition")
+                    granted += 1
+                if other is not None and other in member.roles:
+                    await member.remove_roles(other, reason="Fowl Engine: switched coalition")
+                    revoked += 1
+            except discord.Forbidden:
+                self.log.error(
+                    f"FowlEngine: cannot manage {target.name} -- the bot's own role must sit "
+                    f"ABOVE the coalition roles in the guild's role list, and it needs "
+                    f"Manage Roles.")
+                return
+            except Exception as ex:
+                self.log.debug(f"FowlEngine: role update for {member} failed: {ex}")
+
+        # Reconcile the other way: anyone holding a coalition role the engine
+        # does not back loses it. This is the half that actually closes the
+        # hole -- without it, a role handed out by an admin (or left over from
+        # a previous campaign) is a permanent key to that side's briefing.
+        if cr.get("revoke_when_unregistered", True):
+            for side, role in roles.items():
+                for member in list(role.members):
+                    entry = want.get(member.id)
+                    if entry and entry[1] == side:
+                        continue
+                    try:
+                        await member.remove_roles(
+                            role, reason="Fowl Engine: no matching coalition registration")
+                        revoked += 1
+                    except discord.Forbidden:
+                        self.log.error(f"FowlEngine: cannot remove {role.name} from {member}")
+                        break
+                    except Exception as ex:
+                        self.log.debug(f"FowlEngine: role revoke for {member} failed: {ex}")
+        if granted or revoked:
+            self.log.info(f"FowlEngine: coalition roles for {server.name} -- "
+                          f"{granted} granted, {revoked} revoked")
+
+    @sync_coalition_roles.before_loop
+    async def before_sync_coalition_roles(self):
+        await self.bot.wait_until_ready()
+
     @command(description='Show detailed status for one objective.')
     @app_commands.guild_only()
     @utils.app_has_role('DCS')
@@ -1774,7 +2072,7 @@ class FowlEngine(Plugin):
                            name: str):
         await interaction.response.defer()
         config = self.get_config(server) or {}
-        api_url = config.get("api_url", "http://localhost:8765")
+        api_url = config.get("api_url", "http://localhost:8880")
         try:
             import aiohttp
             async with aiohttp.ClientSession() as session:
@@ -1848,7 +2146,7 @@ class FowlEngine(Plugin):
                      ucid: str, name: str, reason: str = "", until: str = None):
         await interaction.response.defer(ephemeral=True)
         config = self.get_config(server) or {}
-        api_url = config.get("api_url", "http://localhost:8765")
+        api_url = config.get("api_url", "http://localhost:8880")
         username = config.get("admin_username")
         password = config.get("admin_password")
         if not username or not password:
@@ -1877,7 +2175,7 @@ class FowlEngine(Plugin):
                        ucid: str):
         await interaction.response.defer(ephemeral=True)
         config = self.get_config(server) or {}
-        api_url = config.get("api_url", "http://localhost:8765")
+        api_url = config.get("api_url", "http://localhost:8880")
         username = config.get("admin_username")
         password = config.get("admin_password")
         if not username or not password:
@@ -1907,7 +2205,7 @@ class FowlEngine(Plugin):
         try:
             import aiohttp
             config = self.get_config(server) or {}
-            api_url = config.get("api_url", "http://localhost:8765")
+            api_url = config.get("api_url", "http://localhost:8880")
             admin_username = config.get("admin_username")
             admin_password = config.get("admin_password")
 
@@ -2278,6 +2576,221 @@ class FowlEngine(Plugin):
                     f"🔍 {msg}\n\nRe-run with **confirm: True** to apply.")
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
+
+
+    # ── icon set ────────────────────────────────────────────────────────────
+
+    @feops.command(name="icons_install",
+                   description="Upload the Vector Strike icon set to Discord (custom emoji).")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_icons_install(self, interaction: discord.Interaction):
+        """Installs the PNGs in plugins/fowlengine/assets/icons as custom emoji.
+
+        Deliberately a command and not a startup step: uploading emoji changes
+        what the guild (or the application) owns, and that is the operator's
+        call to make once, not something a bot restart should do on its own.
+        Until it is run, every embed falls back to unicode and reads fine.
+        """
+        await interaction.response.defer(ephemeral=True)
+        try:
+            added, skipped, errors = await self.icons.install(interaction.guild)
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {ex}")
+            return
+        embed = self._vs_embed("Icon Set", color=discord.Color.blurple())
+        parts = []
+        if added:
+            parts.append(f"**Installed {len(added)}:** " + " ".join(self.icons(n[3:]) for n in added))
+        if skipped:
+            parts.append(f"**Already present:** {len(skipped)}")
+        if errors:
+            parts.append("**Failed:**\n" + "\n".join(f"`{e}`" for e in errors[:10]))
+        if not parts:
+            parts.append("Nothing to do.")
+        from .icons import FALLBACK
+        parts.append(f"\n{self.icons.installed}/{len(FALLBACK)} icons now resolve to "
+                     f"custom emoji.")
+        embed.description = "\n\n".join(parts)[:4000]
+        await interaction.followup.send(embed=embed)
+
+    @feops.command(name="icons_status", description="Show which Fowl Engine icons are installed.")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_icons_status(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await self.icons.refresh()
+        from .icons import FALLBACK
+        rows = []
+        for key in FALLBACK:
+            rows.append(f"{self.icons(key)} `{key}`")
+        embed = self._vs_embed("Icon Set", color=discord.Color.blurple())
+        embed.description = (
+            f"**{self.icons.installed} of {len(FALLBACK)}** installed as custom emoji; "
+            f"the rest fall back to unicode.\n\n" + "  ".join(rows))[:4000]
+        embed.set_footer(text="Install with /feops icons_install · "
+                              "regenerate the PNGs with assets/icons/render_icons.py")
+        await interaction.followup.send(embed=embed)
+
+    @feops.command(name="icons_uninstall",
+                   description="Remove every Fowl Engine custom emoji (vs_*) from Discord.")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_icons_uninstall(self, interaction: discord.Interaction, confirm: bool = False):
+        await interaction.response.defer(ephemeral=True)
+        if not confirm:
+            await interaction.followup.send(
+                "⚠️ This deletes every `vs_*` emoji this app or guild owns. Any message already "
+                "using one renders it as plain text afterwards.\n\nRe-run with **confirm: True**.")
+            return
+        removed, errors = await self.icons.uninstall()
+        msg = f"✅ Removed {len(removed)} icon(s)."
+        if errors:
+            msg += "\n❌ " + "\n".join(f"`{e}`" for e in errors[:10])
+        await interaction.followup.send(msg)
+
+    # ── briefing channels ───────────────────────────────────────────────────
+
+    @feops.command(name="briefing_lock",
+                   description="Lock the two briefing channels to their coalition roles.")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_briefing_lock(self, interaction: discord.Interaction,
+                                  server: app_commands.Transform[Server, utils.ServerTransformer()],
+                                  confirm: bool = False):
+        """Sets the channel permission overwrites that actually enforce the split.
+
+        The bot posts one coalition's intel into each channel; Discord, not the
+        bot, is what stops the other side reading it. This applies the overwrites
+        for you -- deny @everyone, allow the coalition role, allow the bot -- but
+        only on an explicit confirm, because it rewrites channel permissions.
+        """
+        await interaction.response.defer(ephemeral=True)
+        config = self.get_config(server) or {}
+        channels = self._briefing_channels(config)
+        cr = config.get("coalition_roles") or {}
+        if not channels:
+            await interaction.followup.send(
+                "❌ No `blue_briefing_channel` / `red_briefing_channel` set for "
+                f"**{server.name}** in fowlengine.yaml.")
+            return
+
+        plan, targets = [], []
+        for side, cid in channels.items():
+            channel = self.bot.get_channel(cid)
+            role = self._resolve_role(interaction.guild, cr.get(side.lower()))
+            if not channel:
+                plan.append(f"❌ {side}: channel `{cid}` not found / no access")
+                continue
+            if not role:
+                plan.append(f"❌ {side}: role {cr.get(side.lower())!r} not found in this guild")
+                continue
+            plan.append(f"✅ {side}: {channel.mention} → viewable only by {role.mention}")
+            targets.append((channel, role))
+
+        if not confirm:
+            embed = self._vs_embed("Briefing Channel Lock", color=discord.Color.orange())
+            embed.description = (
+                "\n".join(plan) +
+                "\n\n@everyone will be **denied** View Channel; the coalition role and this "
+                "bot will be allowed. Existing overwrites for other roles are left alone.\n\n"
+                "Re-run with **confirm: True** to apply.")
+            await interaction.followup.send(embed=embed)
+            return
+
+        applied = []
+        for channel, role in targets:
+            try:
+                await channel.set_permissions(
+                    interaction.guild.default_role, view_channel=False,
+                    reason="Fowl Engine: coalition briefing")
+                await channel.set_permissions(
+                    role, view_channel=True, read_message_history=True,
+                    reason="Fowl Engine: coalition briefing")
+                await channel.set_permissions(
+                    interaction.guild.me, view_channel=True, send_messages=True,
+                    read_message_history=True, embed_links=True,
+                    reason="Fowl Engine: coalition briefing")
+                applied.append(f"✅ {channel.mention} locked to {role.mention}")
+            except discord.Forbidden:
+                applied.append(f"❌ {channel.mention}: bot lacks Manage Permissions")
+            except Exception as ex:
+                applied.append(f"❌ {channel.mention}: {ex}")
+        await interaction.followup.send("\n".join(applied))
+
+    async def _ucid_for_member(self, member, pilots: list):
+        """This Discord member's UCID, or None.
+
+        Prefers the bot's own reverse lookup where the running DCSServerBot has
+        one; otherwise walks the roster through `get_member_by_ucid`, which is
+        the lookup this plugin already relies on elsewhere. `pilots` bounds that
+        walk to people who actually have a registration.
+        """
+        lookup = getattr(self.bot, "get_ucid_by_member", None)
+        if lookup:
+            try:
+                ucid = await lookup(member)
+                if ucid:
+                    return ucid
+            except Exception as ex:
+                self.log.debug(f"FowlEngine: get_ucid_by_member failed: {ex}")
+        for p in pilots:
+            u = p.get("ucid")
+            if not u:
+                continue
+            try:
+                m = await self.bot.get_member_by_ucid(u)
+            except Exception:
+                continue
+            if m and m.id == member.id:
+                return u
+        return None
+
+    @command(description='Your coalition briefing: posture, tasking, threats, comms.')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS')
+    async def fe_briefing(self, interaction: discord.Interaction,
+                          server: app_commands.Transform[Server, utils.ServerTransformer()]):
+        """The same report the channel embed carries, on demand and private.
+
+        The side is resolved from the caller's own in-game registration, never
+        from anything they pass -- so this cannot be used to read the other
+        faction's picture even by someone who can see both channels.
+        """
+        await interaction.response.defer(ephemeral=True)
+        config = self.get_config(server) or {}
+        api_url = config.get("api_url", "http://localhost:8880")
+        username = config.get("admin_username", "")
+        password = config.get("admin_password", "")
+        if not username or not password:
+            await interaction.followup.send(
+                "❌ admin_username/admin_password must be set in fowlengine.yaml for this.")
+            return
+        status, data = await bfdb_admin_get(
+            api_url, username, password,
+            srv_path("/api/admin/pilot-sides", server.name))
+        if status != 200 or not data:
+            await interaction.followup.send(f"❌ bfdb did not answer (HTTP {status}).")
+            return
+        pilots = data.get("pilots") or []
+        ucid = await self._ucid_for_member(interaction.user, pilots)
+        side = next((p["side"] for p in pilots if p.get("ucid") == ucid), None)
+        if side not in ("Blue", "Red"):
+            await interaction.followup.send(
+                "❌ You have no coalition on this server yet. Take a slot in game — your "
+                "first slot pick registers you — and try again.")
+            return
+        try:
+            report = await self._fetch_situation(api_url, server.name, side, username, password)
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {ex}")
+            return
+        embed = build_briefing_embed(
+            report, icons=self.icons, embed_factory=self._vs_embed,
+            dashboard_url=config.get("dashboard_url") or "",
+            instance_label=server.name if len(self.bot.servers) > 1 else "")
+        await interaction.followup.send(embed=embed)
+
 
 
 async def setup(bot: DCSServerBot):

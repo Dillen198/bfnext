@@ -7,7 +7,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 
-const src = readFileSync(new URL('../src/icons/index.tsx', import.meta.url), 'utf8')
+const src = readFileSync(new URL('../../shared/icons/index.tsx', import.meta.url), 'utf8')
 
 const GROUPS = []
 for (const chunk of src.split(/\/\/ ── /).slice(1)) {

@@ -690,6 +690,23 @@ pub(crate) struct InstanceState {
     /// must be appended to `base` before subscribing -- a bare `base` path
     /// will never resolve.
     current_sortie: StdMutex<Option<Scenario>>,
+    /// Subscribed engine RPC procedures, keyed by (sortie, proc name).
+    ///
+    /// `Proc::new` performs a resolver lookup and a subscription handshake, and
+    /// dropping the `Proc` unsubscribes again -- so calling it per RPC, as
+    /// `call_engine_rpc` used to, paid a full subscribe/unsubscribe round trip
+    /// for every single query. That is what made `query-tacmap` flap in and out
+    /// of its 6s timeout thousands of times an hour while the engine itself sat
+    /// at a healthy 16ms frame time, and it is the source of most of the netidx
+    /// connection churn in both logs. The client `Proc` is `Arc`-backed and
+    /// `Clone`, i.e. built to be held, so hold it.
+    ///
+    /// Keyed by sortie as well as name because the path embeds it: a mission
+    /// restart under a new sortie simply populates new entries rather than
+    /// reusing a stale subscription.
+    engine_procs: tokio::sync::Mutex<
+        HashMap<(Scenario, std::string::String), netidx_protocols::rpc::client::Proc>,
+    >,
     latest_weather: RwLock<Option<WeatherSnapshot>>,
     /// Live bflib engine log for this instance, streamed over netidx from its
     /// running DCS mission (distinct from bfdb's own process log).
@@ -720,6 +737,7 @@ impl InstanceState {
             stats_dir: cfg.stats_dir.clone(),
             stats_jsonl: cfg.stats_jsonl.clone(),
             current_sortie: StdMutex::new(None),
+            engine_procs: tokio::sync::Mutex::new(HashMap::new()),
             latest_weather: RwLock::new(None),
             engine_log_tx: broadcast::channel(1024).0,
             engine_log_history: StdMutex::new(VecDeque::new()),
@@ -1381,8 +1399,23 @@ impl StatsDb {
                 inst.cfg.id
             )
         })?;
-        let path = base.append(&sortie).append("api").append(proc_name);
-        let proc = Proc::new(subscriber, path)?;
+        // Reuse the subscription; only pay for it the first time this sortie
+        // calls this procedure. Cloning the Proc out of the map keeps the lock
+        // held for the lookup only, not for the call itself -- two pollers
+        // (blue and red) must not serialise behind each other's RPC.
+        let key = (sortie.clone(), std::string::String::from(proc_name));
+        let proc = {
+            let mut procs = inst.engine_procs.lock().await;
+            match procs.get(&key) {
+                Some(p) => p.clone(),
+                None => {
+                    let path = base.append(&sortie).append("api").append(proc_name);
+                    let p = Proc::new(subscriber, path)?;
+                    procs.insert(key, p.clone());
+                    p
+                }
+            }
+        };
         proc.call(args).await
     }
 
@@ -2328,6 +2361,35 @@ impl StatsDb {
         Ok(best.map(|(_, s)| s))
     }
 
+    /// Every pilot's campaign coalition for one instance, in a single pass.
+    ///
+    /// Same rule as [`Self::pilot_current_side`] -- the active round's
+    /// registration wins, otherwise the most recent Blue/Red side on record --
+    /// but computed for the whole roster at once, because the Discord
+    /// coalition-role sync asks for all of them every few minutes and would
+    /// otherwise do one prefix scan per pilot.
+    pub(crate) fn all_pilot_sides(&self, inst: &InstanceId) -> Result<Vec<(Ucid, Side)>> {
+        let active = self.active_round_id(inst)?;
+        // ucid -> (is it the active round's registration?, when, side)
+        let mut best: HashMap<Ucid, (bool, DateTime<Utc>, Side)> = HashMap::new();
+        for r in self.pilots.round_info.iter() {
+            let ((ucid, rid), ri) = r?;
+            if !matches!(ri.side.1, Side::Blue | Side::Red) {
+                continue;
+            }
+            let is_active = active.is_some() && Some(rid) == active;
+            match best.get(&ucid) {
+                // An active-round registration is never superseded, and only
+                // another active-round row may replace one.
+                Some((true, _, _)) if !is_active => continue,
+                Some((was_active, t, _)) if *was_active == is_active && ri.side.0 <= *t => continue,
+                _ => {}
+            }
+            best.insert(ucid, (is_active, ri.side.0, ri.side.1));
+        }
+        Ok(best.into_iter().map(|(u, (_, _, s))| (u, s)).collect())
+    }
+
     /// The active round id for one instance, if any.
     pub(crate) fn active_round_id(&self, inst: &InstanceId) -> Result<Option<RoundId>> {
         Ok(self
@@ -2599,6 +2661,7 @@ impl StatsDb {
             ("getting-started/welcome", "Welcome", "Getting Started", 0, include_str!("../seed_wiki/getting-started/welcome.md")),
             ("getting-started/joining-team", "Joining a Team", "Getting Started", 1, include_str!("../seed_wiki/getting-started/joining-team.md")),
             ("getting-started/hud-and-menus", "Understanding the Menus", "Getting Started", 2, include_str!("../seed_wiki/getting-started/hud-and-menus.md")),
+            ("getting-started/cockpit-overlay", "The Cockpit Overlay (In-Game UI)", "Getting Started", 3, include_str!("../seed_wiki/getting-started/cockpit-overlay.md")),
             ("playbooks/first-sortie", "Your First Sortie", "Playbooks", 0, include_str!("../seed_wiki/playbooks/first-sortie.md")),
             ("playbooks/reading-live-ops", "Reading the Live Ops Dashboard", "Playbooks", 1, include_str!("../seed_wiki/playbooks/reading-live-ops.md")),
             ("playbooks/capturing-a-base", "Capturing a Base", "Playbooks", 2, include_str!("../seed_wiki/playbooks/capturing-a-base.md")),

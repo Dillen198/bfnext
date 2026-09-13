@@ -1,7 +1,7 @@
 import {
   Shield, Coins, Health, Logistics, Capture, Radar, Crosshair, Baro, Cloud, Award,
   type IconComponent,
-} from '../icons'
+} from '@icons'
 
 export interface CfgCategory {
   key: string

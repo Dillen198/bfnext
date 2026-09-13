@@ -6,9 +6,8 @@ export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'ref'> {
 }
 
 /**
- * Anything that can stand in for an icon in this app -- both lucide icons and
- * the ones in this directory satisfy it. Prefer it over `typeof SomeLucideIcon`
- * when typing an icon map, so the two sets stay interchangeable.
+ * Anything that can stand in for an icon. Use it when typing an icon map
+ * rather than `typeof SomeIcon`, so a map can hold any glyph in the set.
  */
 export type IconComponent = ComponentType<{
   size?: number | string

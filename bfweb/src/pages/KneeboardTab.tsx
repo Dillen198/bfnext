@@ -10,7 +10,7 @@ import {
   ArrowUp,
   ArrowDown,
   Headphones,
-} from '../icons'
+} from '@icons'
 import type { Briefing, SituationReport } from '../api'
 
 export function fmtCoord(lat: number, lon: number): string {

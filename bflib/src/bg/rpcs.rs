@@ -81,6 +81,9 @@ pub struct Rpcs {
     _carp_solve: Proc,
     _carp_solve_latlon: Proc,
     _cargo_spawn_crate: Proc,
+    _cockpit_context: Proc,
+    _cockpit_menu: Proc,
+    _cockpit_menu_invoke: Proc,
     _set_server_info: Proc,
     _intel_marks: Proc,
 }
@@ -1105,6 +1108,82 @@ impl Rpcs {
             c130: bool = true; "Use C-130 cargo rules (true) or helo cargo rules (false)"
         )?;
         let _q = Arc::clone(&q);
+        let cockpit_context = define_rpc!(
+            publisher,
+            base.append("cockpit-context"),
+            "Who the calling player is, what they are flying and where (JSON), so the cockpit overlay can shape itself without asking",
+            |mut c: RpcCall, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::CockpitContext { ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid"
+        )?;
+        let _q = Arc::clone(&q);
+        let cockpit_menu = define_rpc!(
+            publisher,
+            base.append("cockpit-menu"),
+            "The calling player's entire F10 menu tree as JSON, in the order they see it",
+            |mut c: RpcCall, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::CockpitMenu { ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid"
+        )?;
+        let _q = Arc::clone(&q);
+        let cockpit_menu_invoke = define_rpc!(
+            publisher,
+            base.append("cockpit-menu-invoke"),
+            "Click one item in the calling player's F10 menu, by the path cockpit-menu reported",
+            |mut c: RpcCall, ucid: Chars, path: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                // A JSON array of path segments rather than a delimited string:
+                // menu labels contain every punctuation character we might
+                // otherwise have picked as a separator ("More >>", "C-130
+                // Cargo", "JTAC>>").
+                let path: Vec<std::string::String> = match serde_json::from_str::<Vec<std::string::String>>(&path) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("path must be a JSON array of strings: {e}").into()));
+                        return None
+                    }
+                };
+                if path.is_empty() {
+                    c.reply.send(Value::Error("path must not be empty".into()));
+                    return None
+                }
+                _q.push((AdminCommand::CockpitMenuInvoke { ucid, path }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            path: Chars = Value::Null; "JSON array of menu path segments, e.g. [\"Cargo\",\"Unpack Crate\"]"
+        )?;
+        let _q = Arc::clone(&q);
         let set_server_info = define_rpc!(
             publisher,
             base.append("set-server-info"),
@@ -1201,6 +1280,9 @@ impl Rpcs {
             _carp_solve: carp_solve,
             _carp_solve_latlon: carp_solve_latlon,
             _cargo_spawn_crate: cargo_spawn_crate,
+            _cockpit_context: cockpit_context,
+            _cockpit_menu: cockpit_menu,
+            _cockpit_menu_invoke: cockpit_menu_invoke,
             _set_server_info: set_server_info,
             _intel_marks: intel_marks,
         })

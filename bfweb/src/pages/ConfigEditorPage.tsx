@@ -13,7 +13,7 @@ import {
   Save,
   CheckCircle2,
   FolderCog,
-} from '../icons'
+} from '@icons'
 
 export default function ConfigEditorPage() {
   const { user, loading } = useAuth()

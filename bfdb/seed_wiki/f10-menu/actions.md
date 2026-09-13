@@ -96,7 +96,6 @@ less than calling a new one. **Move the asset you have** before you buy another.
 | --- | --- |
 | Move a group | `Actions>>` → `Move (Units/Troops)` → group → mark |
 | Delete a group | `-delete <group-id>` in chat |
-| Bind a troop group | `-bind <troop-id>` in chat |
 | See what you have | `F10 → Info → Support & Radios`, and the F10 map |
 
 Group ids are in the menu labels and the map markers. See

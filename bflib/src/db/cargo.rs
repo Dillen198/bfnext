@@ -236,6 +236,19 @@ pub struct C130Cargo {
     /// panel toast that's easy to miss). Cleared when the deployable finally
     /// spawns and the crate is deleted.
     pub missing_marker: Option<MarkId>,
+    /// Earliest time auto-unpack may be retried for this crate.
+    ///
+    /// A landed auto-unpack crate normally retries every tick so a sibling
+    /// that lands late (parachute drift) still unpacks the stack promptly.
+    /// But an unpack onto an objective whose logistics are already at 100%
+    /// deliberately leaves the crate on the ground so it can be flown
+    /// somewhere that needs it -- and no sibling landing will change that, so
+    /// the per-tick retry became a permanent loop, re-running the
+    /// nearest-objective scan and logging an identical line every tick for as
+    /// long as the crate existed. Back that specific case off instead; the
+    /// objective can still take damage later, so it is a delay, not a stop,
+    /// and moving the crate clears it for an immediate retry.
+    pub retry_after: Option<DateTime<Utc>>,
 }
 
 impl C130Cargo {
@@ -269,6 +282,7 @@ impl C130Cargo {
             auto_unpack,
             notified_missing: false,
             missing_marker: None,
+            retry_after: None,
         }
     }
 
@@ -302,6 +316,7 @@ impl C130Cargo {
             auto_unpack: true,
             notified_missing: false,
             missing_marker: None,
+            retry_after: None,
         }
     }
 }
@@ -2977,6 +2992,24 @@ impl Db {
             }
         }
 
+        // One unpack handles the whole stack, and a stack dropped on one
+        // objective says the same thing once per crate -- a six-crate drop
+        // filled the chat with four identical "already fully repaired" lines.
+        // Collapse repeats instead of making the player read the same sentence
+        // five times; order is preserved so the line that actually did
+        // something still comes first.
+        let mut uniq: Vec<(compact_str::CompactString, usize)> = Vec::new();
+        for m in msgs {
+            match uniq.iter_mut().find(|(seen, _)| *seen == m) {
+                Some((_, n)) => *n += 1,
+                None => uniq.push((m, 1)),
+            }
+        }
+        let msgs: Vec<compact_str::CompactString> = uniq
+            .into_iter()
+            .map(|(m, n)| if n > 1 { format_compact!("{m} (x{n})") } else { m })
+            .collect();
+
         Ok(String::from(msgs.join("\n").as_str()))
     }
 
@@ -3651,6 +3684,10 @@ impl Db {
             // Update marker if crate has moved significantly (> 10 meters)
             if na::distance(&new_pos.into(), &crate_data.last_pos.into()) > 10.0 {
                 crate_data.last_pos = new_pos;
+                // It has been picked up or dropped somewhere else, so whatever
+                // made the last unpack a no-op no longer applies -- let the
+                // next tick try again immediately.
+                crate_data.retry_after = None;
 
                 // Update the unit position in the database so mark_group can use the correct position
                 if let Some(group) = self.persisted.groups.get(&crate_data.group_id) {
@@ -3708,7 +3745,13 @@ impl Db {
                     // Retry auto-unpack each tick — a previous attempt may have failed
                     // because sibling crates hadn't landed yet (parachute drift spreads
                     // landing times across multiple ticks). Unpack is idempotent on failure.
-                    if crate_data.auto_unpack {
+                    // `retry_after` holds off the one outcome no sibling can fix (see
+                    // its docs on C130Cargo).
+                    let backing_off = crate_data
+                        .retry_after
+                        .map(|t| Utc::now() < t)
+                        .unwrap_or(false);
+                    if crate_data.auto_unpack && !backing_off {
                         to_unpack.push(crate_name.clone());
                     }
                 }
@@ -4368,11 +4411,34 @@ impl Db {
 
                     // Counts toward consolidation whether or not logi moves --
                     // see the helo unpack path.
-                    self.bump_consolidation(oid, "logistics repair kit delivered")?;
+                    let advanced = self.bump_consolidation(oid, "logistics repair kit delivered")?;
                     if logi == 100 {
+                        if !advanced {
+                            // Nothing left for it to do here. The helo path
+                            // leaves the crate on the ground in this case; this
+                            // one used to eat it, so a player who dropped a
+                            // stack to repair a base watched the spares
+                            // evaporate one "already fully repaired" line at a
+                            // time. Leave it -- it is still worth flying
+                            // somewhere that needs it.
+                            // Terminal until the objective takes damage again --
+                            // a late sibling landing cannot change it -- so stop
+                            // the per-tick auto-unpack retry re-running this scan
+                            // forever. Moving the crate clears the backoff.
+                            if let Some(c) = self.ephemeral.c130_crates.get_mut(crate_name) {
+                                c.retry_after = Some(Utc::now() + chrono::Duration::seconds(60));
+                            }
+                            return Ok(String::from(format!(
+                                "{} logistics are already fully repaired -- crate left on the ground",
+                                obj_name
+                            )));
+                        }
                         self.ephemeral.c130_crates.remove(crate_name);
                         self.delete_group(&crate_data.group_id)?;
-                        return Ok(String::from(format!("{} logistics are already fully repaired", obj_name)));
+                        return Ok(String::from(format!(
+                            "{} logistics are already fully repaired, but the delivery sped up consolidation",
+                            obj_name
+                        )));
                     }
 
                     use chrono::Utc;

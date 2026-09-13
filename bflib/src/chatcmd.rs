@@ -740,10 +740,17 @@ fn bind_command(ctx: &mut Context, id: PlayerId, s: &str) {
             });
             let s = s.trim();
             if !rx.is_match(s) {
-                ctx.db
-                    .ephemeral
-                    .msgs()
-                    .send(MsgTyp::Chat(Some(id)), "Invalid token")
+                // A player tried `-bind <group id>` expecting it to bind a
+                // deployed group to the menu, got a bare "Invalid token", and
+                // had no way to tell what it actually wanted. Say both halves.
+                ctx.db.ephemeral.msgs().send(
+                    MsgTyp::Chat(Some(id)),
+                    "Invalid token -- -bind takes the UUID from the web dashboard login page",
+                );
+                ctx.db.ephemeral.msgs().send(
+                    MsgTyp::Chat(Some(id)),
+                    "it does not bind groups. Your own groups are listed first under F10 > Actions",
+                )
             } else {
                 ctx.db
                     .ephemeral
@@ -980,7 +987,7 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
         " -transfer <amount> [<player> | objective:<objective>]: transfer points to another player or objective",
         " -delete <groupid>: delete a group you deployed for a partial refund",
         " -action <name> <args>: perform an action, -action help for a list of actions",
-        " -bind <token>: bind your ucid to the specified token (for the web gui)",
+        " -bind <uuid>: link your account to the web dashboard (uuid from its login page)",
         " -jtac <jtid> <cmd>",
         " -gci [on|off|metric|imperial|auto]: control your live GCI voice calls",
         " -help: show this help message",

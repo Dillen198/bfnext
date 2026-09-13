@@ -1,7 +1,14 @@
 import React from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { LogOut, Shield, Plus, Search, Menu, X } from 'lucide-react'
+import {
+  LogOut,
+  Menu,
+  Plus,
+  Search,
+  Shield,
+  X,
+} from '@icons'
 import { api, type WikiPageMeta } from '../api'
 import { useAuth } from '../context/AuthContext'
 import ThemeToggle from './ThemeToggle'

@@ -20,6 +20,7 @@ mod atis;
 mod bg;
 mod carp;
 mod chatcmd;
+mod cockpit;
 mod commander;
 mod db;
 mod ewr;
@@ -3668,6 +3669,33 @@ fn run_timed_events(
     record_perf(&mut perf.jtac_target_positions, now);
     let now = Utc::now();
     let max_rate = ctx.db.ephemeral.cfg.max_msgs_per_second;
+    {
+        // Every F10 map draw goes through this one queue, drained once a
+        // second at `max_msgs_per_second` commands. One objective's markup
+        // rebuild is a label, three rings, a kind symbol (several line
+        // segments) and its supply arrows -- so with 150+ objectives a full
+        // remark is thousands of commands, and at the default 3/s the map a
+        // player is looking at can be many minutes behind the campaign. That
+        // shows up as labels that contradict themselves (a base reading
+        // "Health: 100" and ">> CAPTURABLE" at once, because the two came from
+        // different renders) and as old marks still drawn under new ones,
+        // because their deletes are also still queued. Nothing drops -- it is
+        // pure latency -- so report the depth instead of leaving it to be
+        // inferred from garbled map text.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static TICKS: AtomicUsize = AtomicUsize::new(0);
+        let depth = ctx.db.ephemeral.msgs().len();
+        if TICKS.fetch_add(1, Ordering::Relaxed) % 60 == 0 && depth > 0 {
+            let secs = depth / max_rate.max(1);
+            if secs > 60 {
+                warn!(
+                    "[MSGQ] {depth} map/chat commands queued, draining {max_rate}/s --                      ~{secs}s to clear. The F10 map is that far behind the campaign;                      raise max_msgs_per_second or draw less."
+                );
+            } else {
+                info!("[MSGQ] {depth} commands queued, draining {max_rate}/s (~{secs}s to clear)");
+            }
+        }
+    }
     ctx.db.ephemeral.msgs().process(max_rate, &net, &act);
     record_perf(&mut perf.process_messages, now);
     if let Err(e) = ctx.db.logistics_step(lua, perf, ts) {

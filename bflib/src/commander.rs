@@ -581,10 +581,31 @@ pub fn tick_events(
             // One event per tick — stop after the first successful spawn.
             break;
         } else {
+            // `select_best_action` returns None only when *nothing was
+            // scored*; it never rejects on price. The old wording ("no
+            // affordable action") pointed straight at the treasury, which is
+            // why a side sitting on thousands of points and never acting read
+            // as an economy problem and stayed unexplained through a round of
+            // treasury tuning. Print what each action family actually needs so
+            // the next look answers it: if the treasury clears every cost, the
+            // scorer simply found no valid targets.
+            let treasury = db.persisted.treasury(side);
             info!(
-                "[Commander] {:?} no affordable action (treasury={})",
+                "[Commander] {:?} scored no candidate actions (treasury={treasury}) -- \
+                 barrage: enabled={} cost={}; missile: needs barrage_enabled={} cost={} \
+                 and a deployed ALCM/Scud group ({} available); ambush: enabled={} cost={}; \
+                 cap: enabled={} cost={}. Treasury is not the limit where it exceeds the cost -- \
+                 there were no valid targets.",
                 side,
-                db.persisted.treasury(side)
+                events_cfg.barrage_enabled,
+                sc_cfg.barrage_cost,
+                events_cfg.barrage_enabled,
+                sc_cfg.barrage_cost,
+                alcm_groups.len(),
+                events_cfg.ambush_enabled,
+                sc_cfg.ambush_cost,
+                events_cfg.enemy_cap_enabled,
+                sc_cfg.cap_cost,
             );
         }
     }

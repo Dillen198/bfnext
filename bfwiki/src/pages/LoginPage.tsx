@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, KeyRound, User } from 'lucide-react'
+import {
+  Eye,
+  EyeOff,
+  KeyRound,
+  Pilot as User,
+} from '@icons'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import ThemeToggle from '../components/ThemeToggle'

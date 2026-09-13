@@ -34,7 +34,7 @@ import {
   X,
   ChevronsLeft,
   ChevronsRight,
-} from '../icons'
+} from '@icons'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 

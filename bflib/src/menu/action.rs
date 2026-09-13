@@ -815,12 +815,23 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                     .chain(ctx.db.persisted.troops.into_iter()),
             )
         };
-        let mut p = Pager::new(arg.snd, root);
+        // Every friendly deployed group and troop is listed here, not just the
+        // caller's, so on a busy server a player had to page through five or
+        // six screens to reach a squad they had just dropped (reported in-game
+        // by blueshack112). Collect first, put the caller's own groups at the
+        // front, and emit after -- someone else's group is still reachable,
+        // just behind yours.
+        let mut entries = Vec::new();
         for gid in iter {
             let group = ctx.db.group(gid)?;
             if group.side != player.side {
                 continue;
             }
+            let mine = match &group.origin {
+                DeployKind::Deployed { player: owner, .. }
+                | DeployKind::Troop { player: owner, .. } => *owner == arg.fst,
+                _ => false,
+            };
             let key = match &group.origin {
                 DeployKind::Action { name, .. } => {
                     if action {
@@ -869,22 +880,35 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             // Only a group that actually gets an entry claims a slot --
             // counting the skipped ones used to open a "Next>>" page early.
             if let Some(key) = key {
-                let groot = p.submenu(&mc, format_compact!("{gid}({key})").into())?;
-                let mut gp = Pager::new(arg.snd, groot);
-                for (text, mk) in &marks {
-                    gp.command(
-                        &mc,
-                        text.clone(),
-                        run_pos_group_action,
-                        ArgPent {
-                            fst: arg.fst,
-                            snd: name.clone(),
-                            trd: LuaVec3(mk.pos),
-                            fth: *gid,
-                            pnt: mk.id,
-                        },
-                    )?;
-                }
+                entries.push((*gid, key, mine));
+            }
+        }
+        // Stable, so within "mine" and "everyone else" the original order is
+        // untouched. Yours are marked so the list stays readable once both are
+        // on the same page.
+        entries.sort_by_key(|(_, _, mine)| !*mine);
+        let mut p = Pager::new(arg.snd, root);
+        for (gid, key, mine) in entries {
+            let label = if mine {
+                format_compact!("* {gid}({key})")
+            } else {
+                format_compact!("{gid}({key})")
+            };
+            let groot = p.submenu(&mc, label.into())?;
+            let mut gp = Pager::new(arg.snd, groot);
+            for (text, mk) in &marks {
+                gp.command(
+                    &mc,
+                    text.clone(),
+                    run_pos_group_action,
+                    ArgPent {
+                        fst: arg.fst,
+                        snd: name.clone(),
+                        trd: LuaVec3(mk.pos),
+                        fth: gid,
+                        pnt: mk.id,
+                    },
+                )?;
             }
         }
         Ok(())

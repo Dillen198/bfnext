@@ -29,6 +29,21 @@ let currentInstance: string | undefined = (() => {
   }
 })()
 
+// The in-DCS cockpit overlay knows which DCS server the player is connected to
+// by its *name*, not by bfdb's short instance id -- a player installs one Hooks
+// script and joins whichever of our servers they like, and nothing on their
+// machine knows that "[VS] Vector Strike #2" is `vs2`. So cockpit.lua sends
+// `?server=<name>` and bfdb's `with_instance` resolves it against each
+// instance's `dcs_server_name`. Carried through here so every call the page
+// makes stays scoped to the server the player is actually flying on.
+const currentServer: string | undefined = (() => {
+  try {
+    return new URLSearchParams(window.location.search).get('server') ?? undefined
+  } catch {
+    return undefined
+  }
+})()
+
 /** The instance every request is currently scoped to, if any. */
 export function getInstance(): string | undefined {
   return currentInstance
@@ -48,9 +63,13 @@ export function setInstance(id: string | undefined): void {
  *  has. A path that names an instance explicitly (`?instance=all`) is left
  *  alone. */
 export function withInstance(path: string): string {
-  if (!currentInstance) return path
-  if (/[?&]instance=/.test(path)) return path
-  return path + (path.includes('?') ? '&' : '?') + `instance=${encodeURIComponent(currentInstance)}`
+  if (/[?&](instance|server)=/.test(path)) return path
+  const sep = path.includes('?') ? '&' : '?'
+  // An explicit instance id is the precise answer; the DCS server name is the
+  // fallback the in-game overlay can supply. bfdb accepts either.
+  if (currentInstance) return path + sep + `instance=${encodeURIComponent(currentInstance)}`
+  if (currentServer) return path + sep + `server=${encodeURIComponent(currentServer)}`
+  return path
 }
 
 function wsUrl(path: string): string {
@@ -803,10 +822,9 @@ export interface PilotName {
 }
 
 export interface SrsRadio {
-  freq:       number
-  modulation: number  // 0=AM, 1=FM, 2=intercom
+  freq:       number  // Hz
+  modulation: number  // 0=AM, 1=FM, 2=intercom, 3=disabled
   name:       string
-  enabled:    boolean
   secFreq:    number
 }
 
@@ -918,6 +936,50 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
+/** One entry in the player's live F10 menu, mirrored out of the engine.
+ *  `path` is both its address and its position in the tree -- a child's path
+ *  is its parent's path plus one segment. */
+export interface CockpitMenuItem {
+  path: string[]
+  name: string
+  /** true = clickable command, false = submenu. */
+  command: boolean
+  order: number
+}
+
+export interface CockpitNearby {
+  name: string
+  owner: 'blue' | 'red' | 'neutral'
+  distance_m: number
+  bearing_deg: number
+}
+
+export interface CockpitSlot {
+  unit_name: string
+  airframe: string
+  in_air: boolean
+  lat: number
+  lon: number
+  alt_ft: number
+  heading_deg: number
+  speed_kts: number
+  home_objective: string | null
+  at_objective: string | null
+  nearest: CockpitNearby | null
+  takeoff_ok_in_secs: number | null
+}
+
+export interface CockpitContext {
+  ucid: string
+  name: string
+  side: 'blue' | 'red' | 'neutral'
+  points: number
+  lives: [string, number][]
+  crates: number
+  /** null in spectators or a non-flying slot. */
+  slot: CockpitSlot | null
+}
+
 /** One DCS server instance this bfdb fronts. */
 export interface ServerInstance {
   id: string
@@ -1021,7 +1083,7 @@ export const api = {
       post<{ ok: boolean }>('/commander/spawn', { airbase, type: itemType }),
   },
   cockpit: {
-    // playerId comes from bflib/lua/cockpit.lua's net.get_my_player_id(),
+    // playerId comes from bfcockpit/Scripts/Hooks/bfcockpit.lua's net.get_my_player_id(),
     // passed as ?playerid= on the page URL when loaded inside DCS. When
     // absent (e.g. testing standalone in a browser), these fall back to
     // the Discord-linked session cookie server-side.
@@ -1050,6 +1112,24 @@ export const api = {
       const q = playerId ? `?playerid=${playerId}` : ''
       return post<{ message: string }>(`/cockpit/cargo/spawn${q}`, { crate_name: crateName, qty, c130 })
     },
+    /** Who the player is, what they're flying and where. Polled, so the panel
+     *  follows them from ramp to target without being told anything. */
+    context: (playerId?: string) =>
+      get<CockpitContext>(`/cockpit/context${playerId ? `?playerid=${playerId}` : ''}`),
+    /** The player's whole live F10 menu tree. */
+    menu: (playerId?: string) =>
+      get<CockpitMenuItem[]>(`/cockpit/menu${playerId ? `?playerid=${playerId}` : ''}`),
+    /** Click one F10 item -- fires the engine's own handler for it. */
+    menuInvoke: (path: string[], playerId?: string) => {
+      const q = playerId ? `?playerid=${playerId}` : ''
+      return post<{ message: string }>(`/cockpit/menu/invoke${q}`, { path })
+    },
+    /** The overlay plugin version this server ships, for the in-panel
+     *  "your copy is out of date" notice. Unauthenticated -- a player needs it
+     *  before anything knows who they are. */
+    pluginVersion: () => get<{ version: string }>('/cockpit/plugin/version'),
+    /** Direct link to the plugin script. */
+    pluginDownloadUrl: () => `${BASE}/cockpit/plugin/download`,
   },
   intel: {
     /** Recon captures visible to the caller's coalition in the active round.

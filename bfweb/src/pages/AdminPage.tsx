@@ -29,7 +29,7 @@ import {
   RotateCw,
   Pause,
   PlayCircle,
-} from '../icons'
+} from '@icons'
 
 // ── shared styles ─────────────────────────────────────────────────────────────
 

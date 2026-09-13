@@ -1,7 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { campaign } from '../config/campaign'
-import { Users, Target, Crosshair, Flag } from 'lucide-react'
+import {
+  Capture as Flag,
+  Crosshair,
+  Objective as Target,
+  Pilot as Users,
+} from '@icons'
 import Reveal from './Reveal'
 
 export default function AboutSection() {

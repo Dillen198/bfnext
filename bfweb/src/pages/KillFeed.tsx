@@ -12,7 +12,7 @@ import {
   Aircraft, Helicopter, Ship, Armor, Sam, Arty, Infantry, Logistics, Radar,
   Structure, KillFeed as KillFeedIcon, Award, Aircraft as AircraftIcon, Activity, Strike,
   type IconComponent,
-} from '../icons'
+} from '@icons'
 import { useRound } from '../context/RoundContext'
 import { useTableSort, SortTh } from '../components/SortableTh'
 

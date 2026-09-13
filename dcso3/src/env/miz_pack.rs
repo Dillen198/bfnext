@@ -96,6 +96,39 @@ pub fn rewrite_entry_in_miz(miz_path: &Path, entry_name: &str, new_content: &str
     Ok(())
 }
 
+/// Write `s` as a Lua string literal, escaping everything that would otherwise
+/// end the literal early or start a new one.
+///
+/// This used to be a bare `write!("\"{}\"")`. A single `"` or `\` anywhere in a
+/// mission -- a unit name, a briefing line, a waypoint comment, a livery path --
+/// therefore produced a file that is not valid Lua, and the resulting .miz
+/// could not be re-opened by anything, bftools included. The damage is also
+/// invisible at the point of corruption: the lexer runs on past the stray
+/// quote and reports "unfinished string" wherever it eventually gives up, which
+/// can be hundreds of thousands of lines away from the real culprit.
+///
+/// A literal newline in a string is the same class of bug -- Lua does not allow
+/// one inside a quoted literal at all.
+fn write_lua_string(f: &mut std::fmt::Formatter<'_>, s: &str) -> std::fmt::Result {
+    use std::fmt::Write as _;
+    f.write_char('"')?;
+    for c in s.chars() {
+        match c {
+            '"' => f.write_str("\\\"")?,
+            '\\' => f.write_str("\\\\")?,
+            '\n' => f.write_str("\\n")?,
+            '\r' => f.write_str("\\r")?,
+            '\t' => f.write_str("\\t")?,
+            // Any other control character, NUL included: a raw NUL truncates
+            // the chunk at the C boundary and every lexer downstream of it
+            // sees a file that just stops.
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => write!(f, "\\{:03}", c as u32)?,
+            c => f.write_char(c)?,
+        }
+    }
+    f.write_char('"')
+}
+
 struct LuaSerVal {
     value: Value<'static>,
     level: usize,
@@ -117,7 +150,7 @@ impl Display for LuaSerVal {
             Value::Integer(i) => write!(f, "{i}"),
             Value::Nil => write!(f, "nil"),
             Value::Number(n) => write!(f, "{n}"),
-            Value::String(s) => write!(f, "\"{}\"", s.to_string_lossy()),
+            Value::String(s) => write_lua_string(f, &s.to_string_lossy()),
             Value::Table(tbl) => {
                 macro_rules! write_elt {
                     ($k:expr, $v:expr) => {

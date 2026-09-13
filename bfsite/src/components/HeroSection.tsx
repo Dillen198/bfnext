@@ -1,5 +1,9 @@
 import { campaign } from '../config/campaign'
-import { Zap, ChevronDown, ArrowRight } from 'lucide-react'
+import {
+  ArrowRight,
+  ChevronDown,
+  Support as Zap,
+} from '@icons'
 
 export default function HeroSection() {
   return (

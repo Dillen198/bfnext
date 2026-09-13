@@ -1,6 +1,8 @@
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Pencil } from 'lucide-react'
+import {
+  Pencil,
+} from '@icons'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import WikiMarkdown from '../components/WikiMarkdown'

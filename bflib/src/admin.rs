@@ -258,7 +258,7 @@ pub enum AdminCommand {
     // (resolved and trusted by bfdb from their linked session, not
     // client-supplied), not admin-wide like the commands above.
     //
-    // The in-DCS cockpit overlay (bflib/lua/cockpit.lua) identifies itself
+    // The in-DCS cockpit overlay (bfcockpit/Scripts/Hooks/bfcockpit.lua) identifies itself
     // with net.get_my_player_id(), a per-connection id local to each
     // player's own DCS client -- this resolves that id to a ucid using the
     // live connected-player table, so the overlay works the instant a
@@ -294,6 +294,21 @@ pub enum AdminCommand {
         crate_name: String,
         qty: u32,
         c130: bool,
+    },
+    /// Who the caller is, what they are flying and where -- so the overlay can
+    /// shape itself to the player without asking them anything.
+    CockpitContext {
+        ucid: Ucid,
+    },
+    /// The caller's entire F10 menu tree, read back from the dcso3 mirror.
+    CockpitMenu {
+        ucid: Ucid,
+    },
+    /// Click one item in that tree. `path` is an item's `path` exactly as
+    /// `CockpitMenu` reported it.
+    CockpitMenuInvoke {
+        ucid: Ucid,
+        path: Vec<std::string::String>,
     },
     /// DCSServerBot-derived server state, pushed in from bfdb: the scheduled
     /// restart time and the current surface weather, for the F10 Info menu.
@@ -2615,9 +2630,12 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 reply_ok!("delivery scheduled")
             }
             AdminCommand::Repair { airbase } => {
-                match ctx.db.repair_objective(airbase!(&airbase), Utc::now()) {
-                    Ok(()) => reply_ok!("repaired {airbase}"),
-                    Err(e) => reply_ok!("failed to repair {e:?}"),
+                let oid = airbase!(&airbase);
+                match ctx.db.admin_repair_objective(oid, Utc::now()) {
+                    Ok(0) => reply_ok!("{airbase} has no damaged groups to repair"),
+                    Ok(1) => reply_ok!("repaired {airbase} (1 group)"),
+                    Ok(n) => reply_ok!("repaired {airbase} ({n} groups)"),
+                    Err(e) => reply_err!("failed to repair {airbase}: {e:?}"),
                 }
             }
             AdminCommand::Capture { objective, side } => {
@@ -3048,6 +3066,29 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 };
                 match crate::menu::cargo::spawn_crates_for_ucid(ctx, lua, &ucid, &crate_name, qty, auto_unpack) {
                     Ok(msg) => reply_ok!("{msg}"),
+                    Err(e) => reply_err!("{e:?}"),
+                }
+            }
+            AdminCommand::CockpitContext { ucid } => {
+                match crate::cockpit::context(ctx, lua, &ucid)
+                    .and_then(|c| Ok(serde_json::to_string(&c)?))
+                {
+                    Ok(json) => reply_ok!("{json}"),
+                    Err(e) => reply_err!("{e:?}"),
+                }
+            }
+            AdminCommand::CockpitMenu { ucid } => {
+                match crate::cockpit::menu(ctx, lua, &ucid)
+                    .and_then(|m| Ok(serde_json::to_string(&m)?))
+                {
+                    Ok(json) => reply_ok!("{json}"),
+                    Err(e) => reply_err!("{e:?}"),
+                }
+            }
+            AdminCommand::CockpitMenuInvoke { ucid, path } => {
+                match crate::cockpit::invoke(ctx, lua, &ucid, &path) {
+                    Ok(true) => reply_ok!("ok"),
+                    Ok(false) => reply_err!("no such menu item: {}", path.join(" > ")),
                     Err(e) => reply_err!("{e:?}"),
                 }
             }

@@ -2,7 +2,7 @@ import {
   NatoO1, NatoO2, NatoO3, NatoO4, NatoO5, NatoO6, NatoO7, NatoO8,
   VksO1, VksO2, VksO3, VksO4, VksO5, VksO6, VksO7, VksO8,
   type IconComponent,
-} from './icons'
+} from '@icons'
 
 /**
  * Pilot rank.

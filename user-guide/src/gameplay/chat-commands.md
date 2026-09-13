@@ -145,24 +145,26 @@ Display available commands.
 
 ## Unit Management Commands
 
+### Account Linking
+
+#### `-bind <uuid>`
+Links your pilot to the web dashboard. The dashboard login page shows a UUID --
+paste it here once and the two are connected.
+
+```
+-bind 3f2a91c4-8d1e-4b77-9a02-5c6e1d84b0f3
+```
+
+**This does not bind groups.** It only accepts a UUID in the `8-4-4-4-12` form;
+anything else (a group id, for instance) is rejected with "Invalid token".
+
+---
+
 ### Troop Operations
 
-#### `-bind <troop-id>`
-Bind troops to your user for movement commands.
-
-```
--bind 12345
-```
-
-**Usage**:
-- After deploying troops
-- Enables movement commands
-- Troops follow your orders
-
-**Finding Troop ID**:
-- Check F10 map markers
-- System message after deployment
-- Format: usually numeric
+Moving something you deployed needs **no binding of any kind**. Go straight to
+`F10 → Actions>> → Move (Units/Troops)`, pick the group, then pick a map
+marker. Your own groups are listed first and marked with a `*`.
 
 ---
 

@@ -1,9 +1,10 @@
 # AI Helo Missions
 
-You can order the campaign to fly a logistics helo for you. It cold-starts at a
-real friendly field, flies a real route, **lands for real** at the destination,
+You can order the campaign to fly a logistics helo for you. It starts cold on
+the ground at a real friendly field — engines off, AI runs its own startup —
+flies a real route, **lands for real** at the destination,
 and only then delivers — troops on the ground, or supply into the warehouse.
-Shoot it down en route and nothing arrives.
+Shoot it down en route and nothing arrives, but you get your points back.
 
 ```
 F10 → Actions>> → AI Helo Missions
@@ -28,9 +29,10 @@ tax on capturing anything, and this pays it for you.
 or holding after a capture. It is also the fastest way to close a `SUPPLY` task
 on the [tasking board](../gameplay/tasking-board.md).
 
-Neither is free of risk. The helo flies at {{cfg:helo_insertion.altitude_m|500}}
-m and {{cfg:helo_insertion.speed_kph|220}} km/h in a straight line. If that line
-crosses a live SAM, you have bought an expensive fireball.
+Neither is free of risk. The helo cruises at
+{{cfg:helo_insertion.speed_kph|220}} km/h on a route planned around the terrain,
+not around the threats. If that route crosses a live SAM, you have bought an
+expensive fireball — and while the points come back, the time does not.
 
 ## Troop insertion
 
@@ -94,13 +96,61 @@ just been taken.
 
 - **It is a real group.** It shows on the F10 map, it shows on radar, the enemy
   can see and engage it.
-- **It flies a straight line** from launch field to destination. Look at that
-  line before you spend the points.
+- **It flies a terrain-aware route** — see below. It is not a straight line any
+  more, so check the map rather than assuming the ruler.
 - **Delivery happens on landing, not on arrival overhead.** A helo that is shot
-  down on short final delivers nothing.
+  down on short final delivers nothing — but it is refunded.
 - **Progress is polled every 10 seconds**, so expect a few seconds between the
   wheels touching and the delivery message.
 - **It despawns after delivering.** You do not have to clean it up.
+
+## How it routes
+
+**It still flies straight at the objective.** What changed is the altitude: it
+now climbs and descends with the ground underneath it, instead of holding one
+fixed height and meeting the first ridge taller than that — which is how these
+used to be lost.
+
+When you call the mission the engine samples the terrain along the track and
+builds a profile from it:
+
+1. The route is cut into steps of about
+   **{{cfg:helo_insertion.waypoint_spacing_m|2500}} m**, and each step is given
+   the highest ground under it.
+2. Each waypoint is placed **{{cfg:helo_insertion.terrain_clearance_m|250}} m**
+   above the higher of the two steps meeting there, and never below
+   {{cfg:helo_insertion.altitude_m|500}} m. Because both ends of a step sit
+   above everything in it, the line actually flown clears the ground the whole
+   way, not just at the waypoints.
+3. Steps of similar height are merged, so flat desert gets two or three
+   waypoints and rolling ground gets one per contour — the helo climbs for the
+   ridge and comes back down the far side rather than staying at the height of
+   the highest thing on the whole route.
+4. Each climb is then given **only the distance it needs** at a helicopter's
+   climb rate. It stays low and starts up near the high ground, rather than
+   easing up from the moment it took off, and it comes back down as soon as the
+   ground drops away instead of gliding down the whole leg.
+5. It rolls out on final short of the objective and flies a normal approach down
+   to the landing point.
+
+The one thing this cannot fix is terrain a loaded helicopter simply cannot
+out-climb. The route still goes **over** it, because flying under a ridge is not
+an option, and the server log says so when the top of the route goes past
+**{{cfg:helo_insertion.max_altitude_m|3500}} m**. That usually means you are
+asking for a delivery across a range no loaded helo should be crossing — take a
+closer launch field instead.
+
+*(Server admins: `lateral_avoidance` will additionally let the planner dogleg
+around ground that high rather than climbing it. It is off here — the straight
+track is shorter, more predictable, and spends less time exposed, and nothing on
+this map is tall enough to need it.)*
+
+## If it does not arrive
+
+Losing the helo — to terrain, to a SAM, to a fighter — refunds what the mission
+cost you, the troop's own cost included. You are told in the panel when it
+happens. Nothing is delivered, so the base is no better off; you have only lost
+the round trip.
 
 ## Using it well
 

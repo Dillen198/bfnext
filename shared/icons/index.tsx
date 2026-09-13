@@ -745,3 +745,52 @@ export const VksO8 = createIcon('VksO8', <>
   <path d="M4 8 12 3.5 20 8v12.5H4z" />
   <path d="M12.0 8.4L12.8 10.4L14.9 10.5L13.3 11.9L13.8 14.0L12.0 12.9L10.2 14.0L10.7 11.9L9.1 10.5L11.2 10.4zM12.0 14.5L12.8 16.5L14.9 16.6L13.3 18.0L13.8 20.1L12.0 19.0L10.2 20.1L10.7 18.0L9.1 16.6L11.2 16.5z" />
 </>)
+
+// ── Site and wiki chrome ──────────────────────────────────────────────────────
+// Concepts the dashboard never needed but the marketing site and the wiki do.
+
+export const ArrowRight = createIcon('ArrowRight', <>
+  <path d="M3.5 12h17" />
+  <path d="m13 5 7 7-7 7" />
+</>)
+
+/** ANTENNA -- a transmitter mast. */
+export const Antenna = createIcon('Antenna', <>
+  <path d="M12 9.5v11" />
+  <path d="M7.5 20.5h9" />
+  <path d="M9 7a4 4 0 0 1 6 0" />
+  <path d="M6.5 4a7.5 7.5 0 0 1 11 0" />
+</>)
+
+/** LAYERS -- stacked map overlays. */
+export const Layers = createIcon('Layers', <>
+  <path d="M12 2.5 21.5 7 12 11.5 2.5 7z" />
+  <path d="m2.5 12 9.5 4.5 9.5-4.5" />
+  <path d="m2.5 17 9.5 4.5 9.5-4.5" />
+</>)
+
+/** COMPASS -- orientation, used by the wiki's navigation pages. */
+export const Compass = createIcon('Compass', <>
+  <path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 1 1 0-17" />
+  <path d="m15.5 8.5-2 5.5-5.5 2 2-5.5z" />
+</>)
+
+/** IMAGE -- a picture in a frame. */
+export const Image = createIcon('Image', <>
+  <path d="M3.5 4.5h17v15h-17z" />
+  <path d="M9 9.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 1 1 3 0" />
+  <path d="m3.5 16 5-5 4.5 4.5 3.5-3 4 4" />
+</>)
+
+/** KEYROUND -- an access key. */
+export const KeyRound = createIcon('KeyRound', <>
+  <path d="M14.5 6.5a4.5 4.5 0 1 1-5.6 5.6L3.5 17.5v3h3v-2h2v-2h2l2.1-2.1a4.5 4.5 0 0 1 1.9-7.9z" />
+  <path d="M16.5 8.5h.01" />
+</>)
+
+/** ROCKET -- launch / getting started. */
+export const Rocket = createIcon('Rocket', <>
+  <path d="M12 2.5c3 2.4 4.5 5.7 4.5 9.3L14 15.5h-4L7.5 11.8c0-3.6 1.5-6.9 4.5-9.3z" />
+  <path d="M10 15.5 8 20l2.5-1.2M14 15.5 16 20l-2.5-1.2" />
+  <path d="M12 9.5h.01" />
+</>)

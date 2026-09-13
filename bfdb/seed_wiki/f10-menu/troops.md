@@ -113,10 +113,9 @@ mortar squad needs a Huey or larger.
 - Control via commands or F10
 
 **Movement**:
-```
--bind <troop-id>
-```
-Then use F10 → Actions>> → Move (Units/Troops) — the cost is in the menu label
+F10 → Actions>> → Move (Units/Troops) — pick the group, then a map marker. The
+cost is in the menu label. No binding step is needed; your own groups are at
+the top of the list, marked with a `*`.
 
 **Deletion**:
 ```

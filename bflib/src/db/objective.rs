@@ -1173,7 +1173,49 @@ impl Db {
         Ok(())
     }
 
-    pub fn repair_objective(&mut self, oid: ObjectiveId, now: DateTime<Utc>) -> Result<()> {
+    /// Repair one damaged group, paid for out of the objective's own materiel
+    /// (or supply). This is the per-tick auto-repair step -- `do_repairs`
+    /// calls it once per objective per pass, so a wrecked base rebuilds a
+    /// group at a time. Returns whether anything was actually repaired.
+    pub fn repair_objective(&mut self, oid: ObjectiveId, now: DateTime<Utc>) -> Result<bool> {
+        self.repair_objective_inner(oid, now, false)
+    }
+
+    /// Admin override: rebuild the objective outright, ignoring what it can
+    /// afford, and report how many groups were put back together.
+    ///
+    /// `-admin repair` used to call the single-step `repair_objective` and
+    /// print "repaired <base>" whatever came back, so it looked like a no-op
+    /// twice over: it fixed at most one group per invocation, and it fixed
+    /// none at all when the base was below `materiel.repair_cost` (250 on the
+    /// live config) -- which is exactly the state a base an admin wants to
+    /// repair is usually in.
+    pub fn admin_repair_objective(
+        &mut self,
+        oid: ObjectiveId,
+        now: DateTime<Utc>,
+    ) -> Result<usize> {
+        let mut repaired = 0;
+        // Bounded: one iteration per damaged group, and the loop only
+        // continues while a group actually got fixed, but don't let a
+        // pathological objective spin the mission thread forever.
+        while self.repair_objective_inner(oid, now, true)? {
+            repaired += 1;
+            if repaired >= 512 {
+                break;
+            }
+        }
+        Ok(repaired)
+    }
+
+    /// `free` skips both the affordability check and the charge -- see
+    /// `admin_repair_objective`.
+    fn repair_objective_inner(
+        &mut self,
+        oid: ObjectiveId,
+        now: DateTime<Utc>,
+        free: bool,
+    ) -> Result<bool> {
         let repair_supply_cost = self.ephemeral.cfg.repair_supply_cost;
         // When the materiel commodity is in play, repairs are paid for in
         // materiel: a fixed number of units per group put back together, and
@@ -1195,29 +1237,31 @@ impl Db {
             .objectives
             .get(&oid)
             .ok_or_else(|| anyhow!("no such objective {:?}", oid))?;
-        match materiel_cost {
-            Some(cost) => {
-                let have = obj
-                    .warehouse
-                    .equipment
-                    .get(&dcso3::String::from(MATERIEL_ITEM))
-                    .map(|inv| inv.stored)
-                    .unwrap_or(0);
-                if have < cost {
-                    // Info, not debug: "my base won't repair" is the single
-                    // most likely support question once repairs are paid for
-                    // in materiel, and the answer has to be in the log.
-                    info!(
-                        "[MATERIEL] {} cannot repair: {have} on hand, {cost} needed per group -- \
-                         waiting on resupply",
-                        obj.name
-                    );
-                    return Ok(());
+        if !free {
+            match materiel_cost {
+                Some(cost) => {
+                    let have = obj
+                        .warehouse
+                        .equipment
+                        .get(&dcso3::String::from(MATERIEL_ITEM))
+                        .map(|inv| inv.stored)
+                        .unwrap_or(0);
+                    if have < cost {
+                        // Info, not debug: "my base won't repair" is the single
+                        // most likely support question once repairs are paid for
+                        // in materiel, and the answer has to be in the log.
+                        info!(
+                            "[MATERIEL] {} cannot repair: {have} on hand, {cost} needed per group -- \
+                             waiting on resupply",
+                            obj.name
+                        );
+                        return Ok(false);
+                    }
                 }
-            }
-            None => {
-                if obj.supply < repair_supply_cost {
-                    return Ok(());
+                None => {
+                    if obj.supply < repair_supply_cost {
+                        return Ok(false);
+                    }
                 }
             }
         }
@@ -1280,7 +1324,7 @@ impl Db {
                             self.ephemeral.push_spawn(gid)
                         }
                         let owner = obj.owner;
-                        match materiel_cost {
+                        match materiel_cost.filter(|_| !free) {
                             Some(cost) => {
                                 if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
                                     let name = obj.name.clone();
@@ -1298,8 +1342,12 @@ impl Db {
                                 }
                             }
                             None => {
-                                if let Some(production) =
-                                    self.ephemeral.production_by_side.get(&owner).cloned()
+                                if let Some(production) = self
+                                    .ephemeral
+                                    .production_by_side
+                                    .get(&owner)
+                                    .cloned()
+                                    .filter(|_| !free)
                                 {
                                     let percent = repair_supply_cost as f32 / 100.;
                                     if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
@@ -1321,16 +1369,23 @@ impl Db {
                                 }
                             }
                         }
-                        self.update_supply_status()
-                            .context("updating supply status after repair")?;
+                        // A free repair draws nothing, so the supply/fuel
+                        // percentages cannot have moved -- skip the sweep. It
+                        // walks every objective's whole warehouse (~84k
+                        // item-slots on the live campaign) and the admin path
+                        // runs this loop once per damaged group.
+                        if !free {
+                            self.update_supply_status()
+                                .context("updating supply status after repair")?;
+                        }
                         self.update_objective_status(&oid, now)?;
                         self.ephemeral.dirty();
-                        return Ok(());
+                        return Ok(true);
                     }
                 }
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Draw supply from the objectives that unpacked crates were spawned at --
@@ -2919,29 +2974,39 @@ impl Db {
     /// This is what lets a crew beat the wall clock by actually flying the
     /// logistics sortie in, instead of orbiting a timer. No-op at a base that
     /// isn't currently holding.
-    pub fn bump_consolidation(&mut self, oid: ObjectiveId, reason: &str) -> Result<()> {
+    /// Grant outright consolidation progress for a delivery. Returns whether
+    /// it actually bought anything -- callers use that to decide whether the
+    /// crate was consumed.
+    pub fn bump_consolidation(&mut self, oid: ObjectiveId, reason: &str) -> Result<bool> {
         let bump = self.ephemeral.cfg.consolidation_crate_progress_secs;
         let total = self.ephemeral.cfg.capture_consolidation_secs as f64;
         if bump == 0 || total <= 0. {
-            return Ok(());
+            return Ok(false);
         }
         let (name, owner, remaining) = {
             let obj = objective_mut!(self, oid)?;
             if obj.capture_hold.is_empty() {
-                return Ok(());
+                return Ok(false);
+            }
+            // A full bar is a full bar: the next check_capture_hold tick hands
+            // the base over regardless, so any further crate buys nothing.
+            // Dropping a stack of six on a consolidating base otherwise
+            // announced "consolidation advanced, 0s to go" once per crate.
+            if obj.capture_hold_progress >= total {
+                return Ok(false);
             }
             obj.capture_hold_progress = (obj.capture_hold_progress + bump as f64).min(total);
             let remaining = (total - obj.capture_hold_progress).max(0.).ceil() as i64;
             (obj.name.clone(), obj.owner, remaining)
         };
-        self.ephemeral.msgs().panel_to_side(
-            10,
-            false,
-            owner,
-            format_compact!("{name}: {reason} -- consolidation advanced, {remaining}s to go"),
-        );
+        let msg = if remaining <= 0 {
+            format_compact!("{name}: {reason} -- consolidation complete, garrison moving in")
+        } else {
+            format_compact!("{name}: {reason} -- consolidation advanced, {remaining}s to go")
+        };
+        self.ephemeral.msgs().panel_to_side(10, false, owner, msg);
         self.ephemeral.dirty();
-        Ok(())
+        Ok(true)
     }
 
     pub fn check_capture_hold(&mut self, now: DateTime<Utc>) -> Result<()> {

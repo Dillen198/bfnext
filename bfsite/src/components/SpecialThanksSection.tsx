@@ -1,4 +1,7 @@
-import { ExternalLink, Zap } from 'lucide-react'
+import {
+  ExternalLink,
+  Support as Zap,
+} from '@icons'
 import Reveal from './Reveal'
 
 export default function SpecialThanksSection() {

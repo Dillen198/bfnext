@@ -590,6 +590,9 @@ pub struct HeloMission {
     pub destination: ObjectiveId,
     pub side: Side,
     pub player: dcso3::net::Ucid,
+    /// Points charged for the mission when it was called, refunded to
+    /// `player` if the helicopter is lost before it delivers.
+    pub cost: i32,
     pub spawn_time: DateTime<Utc>,
     pub state: HeloMissionState,
     pub last_pos: Vector2,
@@ -639,6 +642,288 @@ impl HeloMission {
                 HeloMissionState::Destroyed
             }
         }
+    }
+}
+
+/// A terrain-aware flight plan for an AI helo mission.
+///
+/// DCS flies the straight line between two waypoints at an interpolated
+/// altitude, so the original two-waypoint route -- take off, then a single
+/// `Land` point at the objective, both at a fixed cruise altitude -- walked
+/// into the first ridge taller than that altitude and the mission was lost
+/// en route. The planner samples the terrain and hands back enough waypoints
+/// that every leg is flown above the ground underneath it.
+struct HeloRoutePlan {
+    /// Altitude for waypoint 0. Only matters if the ground-start rewrite in
+    /// `ephemeral::spawn_group` can't resolve the launch field and the flight
+    /// air-starts after all.
+    departure_alt: f64,
+    /// Cruise waypoints between the origin and the final approach, as
+    /// (position, BARO altitude in metres). Neither the origin nor the
+    /// destination is included.
+    cruise: SmallVec<[(Vector2, f64); 16]>,
+    /// Where to roll out on final, and at what altitude, before the `Land`
+    /// waypoint at the objective itself.
+    approach: (Vector2, f64),
+    /// Highest terrain anywhere under the planned track.
+    peak_terrain: f64,
+    /// Set when the planner had to route around high ground rather than fly
+    /// straight at the objective.
+    detoured: bool,
+    /// Set when even the best track needs the helo higher than
+    /// `max_altitude_m`. The route still climbs over -- flying under a ridge
+    /// isn't an option -- but the airframe may not make it.
+    above_ceiling: bool,
+}
+
+/// Highest terrain on the straight line `a`..`b`, sampled at roughly `step`
+/// metres and never more than `max_samples` times. The cap matters: the
+/// planner runs entirely inside the frame a player calls the mission, and a
+/// 150km leg at a fine step would be hundreds of `land.getHeight` calls on
+/// its own.
+fn leg_peak_terrain(land: &dcso3::land::Land, a: Vector2, b: Vector2, step: f64, max_samples: usize) -> f64 {
+    use dcso3::LuaVec2;
+    let delta = b - a;
+    let d = delta.norm();
+    let n = if d <= 1.0 {
+        1
+    } else {
+        ((d / step).ceil() as usize).clamp(1, max_samples)
+    };
+    let mut peak = f64::MIN;
+    for i in 0..=n {
+        let p = a + delta * (i as f64 / n as f64);
+        peak = peak.max(land.get_height(LuaVec2(p)).unwrap_or(0.));
+    }
+    peak
+}
+
+/// Choose the ground track for a helo mission.
+///
+/// Normally this is the direct line: a helicopter that climbs and descends
+/// with the ground under it gets there by the shortest, most predictable
+/// track, and `plan_helo_route`'s altitude profile is what keeps it off the
+/// rocks. Only with `lateral_avoidance` on, and only when the direct line
+/// carries terrain the helo can't comfortably out-climb, does this search a
+/// fan of single-dogleg detours -- a perpendicular offset applied at a few
+/// points along the line -- for a track through lower ground, i.e. a valley
+/// or the shoulder of a ridge instead of its summit. Nearest-first, so the
+/// smallest detour that clears wins, and offsets are capped at a third of the
+/// route length so avoiding terrain never doubles the flight time.
+fn plan_helo_ground_track(
+    land: &dcso3::land::Land,
+    origin: Vector2,
+    dest: Vector2,
+    climbable: f64,
+    lateral_avoidance: bool,
+) -> (SmallVec<[Vector2; 3]>, f64) {
+    const SEARCH_STEP: f64 = 1000.;
+    const SEARCH_SAMPLES: usize = 80;
+    let direct = leg_peak_terrain(land, origin, dest, SEARCH_STEP, SEARCH_SAMPLES);
+    let mut best: (SmallVec<[Vector2; 3]>, f64) = (smallvec![origin, dest], direct);
+    let delta = dest - origin;
+    let len = delta.norm();
+    if !lateral_avoidance || direct <= climbable || len < 1. {
+        return best;
+    }
+    let perp = Vector2::new(-delta.y, delta.x) / len;
+    let max_offset = (len / 3.).min(40_000.);
+    for frac_offset in [0.2, 0.4, 0.7, 1.0] {
+        let offset = max_offset * frac_offset;
+        if offset < 2_000. {
+            continue;
+        }
+        for along in [0.5, 0.35, 0.65] {
+            for sign in [1., -1.] {
+                let mid = origin + delta * along + perp * (offset * sign);
+                let peak = leg_peak_terrain(land, origin, mid, SEARCH_STEP, SEARCH_SAMPLES)
+                    .max(leg_peak_terrain(land, mid, dest, SEARCH_STEP, SEARCH_SAMPLES));
+                if peak < best.1 {
+                    best = (smallvec![origin, mid, dest], peak);
+                }
+                if best.1 <= climbable {
+                    return best;
+                }
+            }
+        }
+    }
+    best
+}
+
+/// Plan the whole flight: pick a ground track (straight at the objective
+/// unless `lateral_avoidance` says otherwise), then give it an altitude
+/// profile that climbs and descends with the ground under it.
+///
+/// Segments get the highest terrain beneath them, and a waypoint's altitude
+/// is the higher of the two segments meeting there plus `terrain_clearance_m`.
+/// Since DCS interpolates altitude linearly and both ends of a segment sit at
+/// or above that segment's own peak, the line actually flown clears the
+/// ground everywhere along it, not merely at the waypoints. Runs of similar
+/// terrain are merged, so flat country produces a couple of waypoints and
+/// rolling ground produces a waypoint per contour step -- the helo climbs for
+/// the ridge and comes back down the far side rather than staying at the
+/// height of the highest thing on the route.
+///
+/// A last pass decides *when* those climbs happen. DCS interpolates altitude
+/// across a whole leg, so a ridge at the end of a long flat run would have the
+/// helo climbing gently from the moment it took off. Instead each climb is
+/// given only the distance it actually needs at a helicopter's climb rate and
+/// the leg is flown low until then, and each descent starts promptly once the
+/// ground has dropped away rather than gliding down the whole leg.
+fn plan_helo_route(
+    land: &dcso3::land::Land,
+    origin: Vector2,
+    dest: Vector2,
+    cfg: &bfprotocols::cfg::HeloInsertionCfg,
+) -> HeloRoutePlan {
+    // Terrain difference within a run that isn't worth a waypoint. This is
+    // what sets how closely the profile tracks the ground: every rise or
+    // fall bigger than this gets its own climb or descent.
+    const MERGE_TOLERANCE: f64 = 100.;
+    // However flat it is, put a waypoint in at least this often, so the AI
+    // has a route to follow rather than one enormous leg.
+    const MAX_MERGED_RUN: f64 = 20_000.;
+    // Finest the whole route is ever cut into, keeping the sample count
+    // bounded on a long mission. Merging collapses the flat stretches again,
+    // so this bounds the sampling, not the waypoint count.
+    const MAX_SEGMENTS: usize = 100;
+    // What a loaded logistics helicopter will actually manage, used to decide
+    // how far out a climb has to begin. Too generous and it climbs early --
+    // the thing this exists to stop; too mean and it arrives at the ridge
+    // still below it.
+    const CLIMB_RATE_MPS: f64 = 6.0;
+    const DESCENT_RATE_MPS: f64 = 8.0;
+
+    let clearance = cfg.terrain_clearance_m.max(0.);
+    let climbable = (cfg.max_altitude_m - clearance).max(0.);
+    let (track, peak_terrain) =
+        plan_helo_ground_track(land, origin, dest, climbable, cfg.lateral_avoidance);
+    let detoured = track.len() > 2;
+
+    // Cut the track into segments: at every track vertex, and at most
+    // `step` metres apart within a leg.
+    let total_len: f64 = track.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+    let step = cfg
+        .waypoint_spacing_m
+        .max(total_len / MAX_SEGMENTS as f64)
+        .max(500.);
+    // (position, is a vertex of the ground track)
+    let mut bounds: SmallVec<[(Vector2, bool); 64]> = smallvec![(origin, true)];
+    for w in track.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let d = (b - a).norm();
+        let n = ((d / step).ceil() as usize).max(1);
+        for i in 1..=n {
+            let p = a + (b - a) * (i as f64 / n as f64);
+            bounds.push((p, i == n));
+        }
+    }
+
+    // Highest terrain under each segment, sampled finer than the segment
+    // itself so a narrow ridge between two waypoints still registers.
+    let peaks: SmallVec<[f64; 64]> = bounds
+        .windows(2)
+        .map(|w| leg_peak_terrain(land, w[0].0, w[1].0, step / 8., 16))
+        .collect();
+
+    // Merge consecutive segments of similar height, breaking at track
+    // vertices and at `MAX_MERGED_RUN`. Each run records the bound index it
+    // ends at and the highest terrain anywhere in it.
+    let mut runs: SmallVec<[(usize, f64); 16]> = smallvec![];
+    let mut run_peak = f64::MIN;
+    let mut run_start = 0usize;
+    for (i, peak) in peaks.iter().copied().enumerate() {
+        run_peak = run_peak.max(peak);
+        let run_len = (bounds[i + 1].0 - bounds[run_start].0).norm();
+        let next_differs = peaks
+            .get(i + 1)
+            .map(|n| (n - run_peak).abs() > MERGE_TOLERANCE)
+            .unwrap_or(true);
+        if bounds[i + 1].1 || next_differs || run_len >= MAX_MERGED_RUN {
+            runs.push((i + 1, run_peak));
+            run_start = i + 1;
+            run_peak = f64::MIN;
+        }
+    }
+
+    let floor = cfg.altitude_m;
+    let alt_for = |a: f64, b: f64| (a.max(b) + clearance).max(floor);
+
+    // Every airborne waypoint, origin included: the origin sits at what its
+    // own first run needs, not at what the rest of the route needs, so the
+    // departure isn't already a climb toward a mountain 40km away.
+    let first_peak = runs.first().map(|r| r.1).unwrap_or(peak_terrain);
+    let mut nodes: SmallVec<[(Vector2, f64); 24]> =
+        smallvec![(origin, alt_for(first_peak, first_peak))];
+    for (n, (end, peak)) in runs.iter().copied().enumerate() {
+        // The last run ends at the destination, which gets the approach and
+        // the `Land` waypoint instead of a cruise point.
+        if n + 1 == runs.len() {
+            break;
+        }
+        nodes.push((bounds[end].0, alt_for(peak, runs[n + 1].1)));
+    }
+
+    // Roll out on final short of the objective so the descent to the ground
+    // is a normal approach rather than a dive off the last cruise waypoint.
+    let last_peak = runs.last().map(|r| r.1).unwrap_or(peak_terrain);
+    let inbound = match nodes.last() {
+        Some((p, _)) => dest - *p,
+        None => dest - origin,
+    };
+    let inbound_len = inbound.norm();
+    let approach_pos = if inbound_len > 1. {
+        dest - inbound * ((inbound_len * 0.25).min(2_500.) / inbound_len)
+    } else {
+        dest
+    };
+    let approach_peak = leg_peak_terrain(land, approach_pos, dest, 250., 16).max(last_peak);
+    nodes.push((approach_pos, alt_for(approach_peak, approach_peak)));
+
+    // Place the climbs and descents. Both inserted points sit at the *lower*
+    // of the leg's two altitudes, which is still at or above that leg's own
+    // terrain peak plus clearance, so holding low costs none of the clearance
+    // the profile was built to guarantee.
+    let speed_mps = (cfg.speed_kph / 3.6).max(10.);
+    let mut timed: SmallVec<[(Vector2, f64); 32]> = smallvec![];
+    for w in nodes.windows(2) {
+        let ((pa, aa), (pb, ab)) = (w[0], w[1]);
+        timed.push((pa, aa));
+        let d = (pb - pa).norm();
+        if d < 1. {
+            continue;
+        }
+        let climb = ab - aa;
+        if climb.abs() < 1. {
+            continue;
+        }
+        // Distance the height change actually needs at a helicopter's rate.
+        // If the leg is barely longer than that there's nothing to gain by
+        // splitting it.
+        let rate = if climb > 0. { CLIMB_RATE_MPS } else { DESCENT_RATE_MPS };
+        let need = climb.abs() / rate * speed_mps;
+        if d > need * 1.2 {
+            // Climbing: hold low and start up only where it is needed.
+            // Descending: get down first, then run in level.
+            let along = if climb > 0. { d - need } else { need };
+            timed.push((pa + (pb - pa) / d * along, aa.min(ab)));
+        }
+    }
+    if let Some(last) = nodes.last() {
+        timed.push(*last);
+    }
+
+    let departure_alt = timed.first().map(|(_, a)| *a).unwrap_or(floor);
+    let approach = timed.pop().unwrap_or((approach_pos, alt_for(approach_peak, approach_peak)));
+    let cruise: SmallVec<[(Vector2, f64); 16]> = timed.into_iter().skip(1).collect();
+
+    HeloRoutePlan {
+        departure_alt,
+        cruise,
+        approach,
+        peak_terrain,
+        detoured,
+        above_ceiling: peak_terrain > climbable,
     }
 }
 
@@ -1824,13 +2109,29 @@ impl Db {
                         let threshold = self.ephemeral.cfg.supply_alert_threshold;
                         if threshold > 0 {
                             if let Some(obj) = self.persisted.objectives.get(&oid) {
-                                let is_low = obj.warehouse.equipment.into_iter().any(|(_, inv)| {
-                                    inv.capacity > 0
-                                        && inv
-                                            .percent()
-                                            .map(|p| p < threshold)
-                                            .unwrap_or(false)
-                                });
+                                // Driven off the same three numbers the
+                                // objective's own F10 label shows. This used to
+                                // fire if ANY single warehouse entry was under
+                                // the threshold -- including airframes and item
+                                // types whose production weight is near zero, so
+                                // they barely move the mean. A base could
+                                // therefore carry a red "LOW SUPPLY < 25%"
+                                // marker while its label right next to it read
+                                // "Supply: 100", which is exactly what players
+                                // reported at Gaziantep. The two can no longer
+                                // disagree.
+                                // dcso3 re-exports its own String into this module.
+                                let mut short: Vec<std::string::String> = Vec::new();
+                                if obj.supply < threshold {
+                                    short.push(format!("munitions {}%", obj.supply));
+                                }
+                                if obj.fuel < threshold {
+                                    short.push(format!("fuel {}%", obj.fuel));
+                                }
+                                if obj.aircraft < threshold {
+                                    short.push(format!("aircraft {}%", obj.aircraft));
+                                }
+                                let is_low = !short.is_empty();
                                 let side = obj.owner;
                                 let name = obj.name.clone();
                                 if is_low {
@@ -1838,8 +2139,9 @@ impl Db {
                                     self.ephemeral.supply_warned.entry(oid).or_insert(ts);
                                     if newly_warned {
                                         let pos = obj.zone.pos();
+                                        let detail = short.join(" / ");
                                         let (ml, msgs) = self.ephemeral.map_layer_and_msgs();
-                                        ml.on_supply_critical(oid, pos, side, &name, threshold, msgs);
+                                        ml.on_supply_critical(oid, pos, side, &name, &detail, msgs);
                                     }
                                 } else {
                                     self.ephemeral.supply_warned.remove(&oid);
@@ -3315,25 +3617,32 @@ impl Db {
         use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, TurnMethod};
         use dcso3::env::miz::Miz;
         use dcso3::LuaVec2;
-        use enumflags2::BitFlags;
 
         let spawn_ctx = SpawnCtx::new(lua)?;
         let miz = Miz::singleton(lua)?;
         let idx = miz.index()?;
 
+        // Cargo flights start cold on the origin field's ramp and fly the
+        // route for real, rather than materialising at altitude over the hub.
+        // `DeployKind::Objective { origin }` + the `ColdStart` tag is what
+        // makes `ephemeral::spawn_group` rewrite waypoint 0 into a parking
+        // start at the resolved origin airbase -- the same mechanism the helo
+        // insertion missions and reactive CAP use, with the cold variants of
+        // the takeoff point type and action. If the origin has no resolvable
+        // airbase the rewrite leaves WP0 alone and the flight air-starts,
+        // which is the old behaviour and still delivers.
         let group_id = self.add_group(
             &spawn_ctx,
             &idx,
             side,
-            SpawnLoc::InAir {
+            SpawnLoc::AtPos {
                 pos: origin_pos,
-                heading,
-                altitude: altitude_m,
-                speed: speed_mps,
+                offset_direction: Vector2::new(1., 0.),
+                group_heading: heading,
             },
             &aircraft_template,
             DeployKind::Objective { origin },
-            BitFlags::empty(),
+            bfprotocols::cfg::UnitTag::ColdStart.into(),
         )?;
 
         let route_points = vec![
@@ -3517,6 +3826,7 @@ impl Db {
         origin: ObjectiveId,
         destination: ObjectiveId,
         player: dcso3::net::Ucid,
+        cost: i32,
         kind: HeloMissionKind,
         now: DateTime<Utc>,
     ) -> Result<HeloMissionId> {
@@ -3585,63 +3895,123 @@ impl Db {
             },
             &aircraft_template,
             DeployKind::Objective { origin },
-            UnitTag::HotStart.into(),
+            // Either tag makes `ephemeral::spawn_group` rewrite waypoint 0
+            // into a real start on the ground; they differ only in whether
+            // the engines are already running when it gets there.
+            if helo_cfg.cold_start {
+                UnitTag::ColdStart.into()
+            } else {
+                UnitTag::HotStart.into()
+            },
         )?;
+
+        let land = dcso3::land::Land::singleton(lua)?;
 
         // Terrain elevation at the destination: a Land waypoint's altitude is
         // the ground it lands on, not sea level.
-        let dest_alt = dcso3::land::Land::singleton(lua)
-            .and_then(|l| l.get_height(LuaVec2(dest_pos)))
-            .unwrap_or(0.0);
+        let dest_alt = land.get_height(LuaVec2(dest_pos)).unwrap_or(0.0);
 
-        let route_points = vec![
-            MissionPoint {
-                // Overwritten by the HotStart rewrite in `spawn_group` when the
-                // origin field resolves; a plain fly-over is the sane fallback
-                // if it doesn't, since an action-less waypoint is one DCS may
-                // decline to fly at all.
-                action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
-                airdrome_id: None,
-                helipad: None,
-                typ: PointType::TurningPoint,
-                link_unit: None,
-                pos: LuaVec2(origin_pos),
-                alt: altitude_m,
-                alt_typ: Some(AltType::BARO),
-                time_re_fu_ar: None,
-                eta: Some(dcso3::Time(0.)),
-                eta_locked: Some(true),
-                speed: speed_mps,
-                speed_locked: Some(true),
-                name: None,
-                task: Box::new(Task::ComboTask(vec![])),
-            },
-            MissionPoint {
-                // A Land waypoint DCS will actually fly needs the same shape
-                // the mission editor writes: action "Landing", the field
-                // elevation as its altitude, and a real transit speed. Left as
-                // action-less at zero speed the group spawns on the ramp with
-                // a route it won't fly -- engines running, never lifts off.
-                action: Some(ActionTyp::Air(TurnMethod::Landing)),
-                airdrome_id: None,
-                helipad: None,
-                typ: PointType::Land,
-                link_unit: None,
-                pos: LuaVec2(dest_pos),
-                alt: dest_alt,
-                alt_typ: Some(AltType::BARO),
-                // Sit on the ground for up to 10 minutes -- plenty of margin
-                // for the mission-poll tick (every ~10s) to see it landed and
-                // apply the payoff before DCS would otherwise send it home.
-                time_re_fu_ar: Some(600),
-                eta: None,
-                eta_locked: None,
-                speed: speed_mps,
-                speed_locked: None,
-                name: None,
-                task: Box::new(Task::ComboTask(vec![])),
-            },
-        ];
+        // The transit leg used to be a single straight line at a fixed cruise
+        // altitude, which is fine over the desert and fatal in the mountains:
+        // the first ridge above `altitude_m` was flown into. Plan it against
+        // the terrain instead -- around high ground where there's a way
+        // around, over it where there isn't.
+        let plan = plan_helo_route(&land, origin_pos, dest_pos, &helo_cfg);
+        if plan.above_ceiling {
+            warn!(
+                "[HELO_MISSION] {} {} -> {}: no track under {:.0}m, highest terrain on the \
+                 planned route is {:.0}m; the helo has to climb over it",
+                mission_id, origin_name, dest_name, helo_cfg.max_altitude_m, plan.peak_terrain
+            );
+        }
+        info!(
+            "[HELO_MISSION] {} routed {} -> {} via {} cruise waypoint(s){}, peak terrain {:.0}m, \
+             top of route {:.0}m",
+            mission_id,
+            origin_name,
+            dest_name,
+            plan.cruise.len(),
+            if plan.detoured { " (detoured around high ground)" } else { "" },
+            plan.peak_terrain,
+            plan.cruise
+                .iter()
+                .map(|(_, a)| *a)
+                .fold(plan.approach.1, f64::max)
+        );
+
+        let cruise_point = |pos: Vector2, alt: f64| MissionPoint {
+            action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
+            airdrome_id: None,
+            helipad: None,
+            typ: PointType::TurningPoint,
+            link_unit: None,
+            pos: LuaVec2(pos),
+            alt,
+            alt_typ: Some(AltType::BARO),
+            time_re_fu_ar: None,
+            eta: None,
+            eta_locked: None,
+            speed: speed_mps,
+            speed_locked: None,
+            name: None,
+            task: Box::new(Task::ComboTask(vec![])),
+        };
+
+        // Only used if the ground-start rewrite can't resolve the launch
+        // field; the planner has already set it to what the first leg needs.
+        let departure_alt = plan.departure_alt.max(altitude_m);
+
+        let mut route_points = Vec::with_capacity(plan.cruise.len() + 3);
+        route_points.push(MissionPoint {
+            // Overwritten by the HotStart rewrite in `spawn_group` when the
+            // origin field resolves; a plain fly-over is the sane fallback
+            // if it doesn't, since an action-less waypoint is one DCS may
+            // decline to fly at all.
+            action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
+            airdrome_id: None,
+            helipad: None,
+            typ: PointType::TurningPoint,
+            link_unit: None,
+            pos: LuaVec2(origin_pos),
+            alt: departure_alt,
+            alt_typ: Some(AltType::BARO),
+            time_re_fu_ar: None,
+            eta: Some(dcso3::Time(0.)),
+            eta_locked: Some(true),
+            speed: speed_mps,
+            speed_locked: Some(true),
+            name: None,
+            task: Box::new(Task::ComboTask(vec![])),
+        });
+        for (pos, alt) in plan.cruise.iter().copied() {
+            route_points.push(cruise_point(pos, alt));
+        }
+        route_points.push(cruise_point(plan.approach.0, plan.approach.1));
+        route_points.push(MissionPoint {
+            // A Land waypoint DCS will actually fly needs the same shape
+            // the mission editor writes: action "Landing", the field
+            // elevation as its altitude, and a real transit speed. Left as
+            // action-less at zero speed the group spawns on the ramp with
+            // a route it won't fly -- engines running, never lifts off.
+            action: Some(ActionTyp::Air(TurnMethod::Landing)),
+            airdrome_id: None,
+            helipad: None,
+            typ: PointType::Land,
+            link_unit: None,
+            pos: LuaVec2(dest_pos),
+            alt: dest_alt,
+            alt_typ: Some(AltType::BARO),
+            // Sit on the ground for up to 10 minutes -- plenty of margin
+            // for the mission-poll tick (every ~10s) to see it landed and
+            // apply the payoff before DCS would otherwise send it home.
+            time_re_fu_ar: Some(600),
+            eta: None,
+            eta_locked: None,
+            speed: speed_mps,
+            speed_locked: None,
+            name: None,
+            task: Box::new(Task::ComboTask(vec![])),
+        });
 
         {
             let perf = unsafe { Perf::get_mut() };
@@ -3664,6 +4034,7 @@ impl Db {
             destination,
             side,
             player,
+            cost,
             spawn_time: now,
             state: HeloMissionState::InTransit,
             last_pos: origin_pos,
@@ -3743,6 +4114,7 @@ impl Db {
             origin,
             destination,
             ucid.clone(),
+            total_cost,
             HeloMissionKind::TroopInsertion,
             now,
         )?;
@@ -3801,6 +4173,7 @@ impl Db {
             origin,
             destination,
             ucid.clone(),
+            cfg.supply_mission_cost,
             HeloMissionKind::ResourceDelivery { transfers },
             now,
         )?;
@@ -3819,6 +4192,11 @@ impl Db {
 
         let mut completed: SmallVec<[HeloMissionId; 4]> = smallvec![];
         let mut despawn: SmallVec<[bfprotocols::db::group::GroupId; 4]> = smallvec![];
+        // (player, points to hand back, what to tell them). A mission that
+        // never delivers gives the points back -- the player paid for troops
+        // on the ground or supply in the warehouse, and got neither.
+        let mut refunds: SmallVec<[(dcso3::net::Ucid, i32, CompactString); 2]> = smallvec![];
+        let mut delivered_msgs: SmallVec<[(dcso3::net::Ucid, CompactString); 2]> = smallvec![];
         #[allow(clippy::type_complexity)]
         let mut to_deploy_troops: SmallVec<
             [(Vector2, dcso3::String, Side, dcso3::net::Ucid, ObjectiveId); 2],
@@ -3840,18 +4218,21 @@ impl Db {
             }
             mission.last_check = now;
 
+            let (player, cost) = (mission.player, mission.cost);
             let group_name = match group!(self, &mission.group_id) {
                 Ok(g) => g.name.clone(),
                 Err(_) => {
                     warn!("[HELO_MISSION] {} group not found in database", mission_id);
+                    refunds.push((player, cost, format_compact!("helo mission lost")));
                     completed.push(mission_id.clone());
                     continue;
                 }
             };
-            let dest_pos = match self.persisted.objectives.get(&mission.destination) {
-                Some(o) => o.pos(),
+            let (dest_name, dest_pos) = match self.persisted.objectives.get(&mission.destination) {
+                Some(o) => (o.name.clone(), o.pos()),
                 None => {
                     warn!("[HELO_MISSION] {} destination no longer exists", mission_id);
+                    refunds.push((player, cost, format_compact!("helo mission target lost")));
                     completed.push(mission_id.clone());
                     continue;
                 }
@@ -3861,6 +4242,11 @@ impl Db {
                 HeloMissionState::InTransit => {}
                 HeloMissionState::Destroyed => {
                     info!("[HELO_MISSION] {} destroyed en route", mission_id);
+                    refunds.push((
+                        player,
+                        cost,
+                        format_compact!("helo mission to {dest_name} lost en route"),
+                    ));
                     completed.push(mission_id.clone());
                 }
                 HeloMissionState::Delivered => {
@@ -3874,9 +4260,21 @@ impl Db {
                                 mission.player,
                                 mission.origin,
                             ));
+                            delivered_msgs.push((
+                                player,
+                                format_compact!(
+                                    "your helo landed at {dest_name}, troops are on the ground"
+                                ),
+                            ));
                         }
                         HeloMissionKind::ResourceDelivery { transfers } => {
                             to_transfer.push(transfers.clone());
+                            delivered_msgs.push((
+                                player,
+                                format_compact!(
+                                    "your helo delivered its supply run to {dest_name}"
+                                ),
+                            ));
                         }
                     }
                     despawn.push(mission.group_id);
@@ -3887,6 +4285,22 @@ impl Db {
 
         for id in completed {
             self.ephemeral.active_helo_missions.remove(&id);
+        }
+        for (ucid, msg) in delivered_msgs {
+            self.ephemeral.panel_to_player(&self.persisted, 15, &ucid, msg);
+        }
+        if cfg.refund_on_loss {
+            for (ucid, cost, why) in refunds {
+                if cost > 0 {
+                    self.ephemeral.panel_to_player(
+                        &self.persisted,
+                        15,
+                        &ucid,
+                        format_compact!("{why}, refunding {cost} points"),
+                    );
+                    self.adjust_points(&ucid, cost, &why);
+                }
+            }
         }
         for gid in despawn {
             if let Err(e) = self.delete_group(&gid) {

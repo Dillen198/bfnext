@@ -14,7 +14,7 @@ import {
   Logistics,
   RANK_ICON,
   type IconComponent,
-} from '../icons'
+} from '@icons'
 import { rankFor, nextRankAt } from '../ranks'
 
 type SortKey = keyof Omit<Pilot, 'ucid' | 'name'> | 'kd' | 'score' | 'logistics'

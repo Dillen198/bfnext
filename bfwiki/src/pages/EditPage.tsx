@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Trash2, Image as ImageIcon } from 'lucide-react'
+import {
+  Image as ImageIcon,
+  Trash2,
+} from '@icons'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import WikiMarkdown from '../components/WikiMarkdown'
