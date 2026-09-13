@@ -282,6 +282,62 @@ DEFAULT:
   # bflib_dll_path + staging_dir set in nodes.yaml (NOT here).
 
   # ---------------------------------------------
+  # Per-coalition briefing channels
+  # ---------------------------------------------
+  # Two channels per DCS server, one per coalition. Each holds a SINGLE embed
+  # that the bot edits in place every few minutes, built from bfdb's
+  # GET /api/situation -- the same auto-generated situation report that backs
+  # the in-game F10 -> Info -> Situation pages, the dashboard BRIEFING page and
+  # the kneeboard PDF. So a pilot reads one story wherever they look.
+  #
+  # WHY A PLAYER CANNOT CHEAT THEIR WAY INTO THE OTHER SIDE'S CHANNEL:
+  #   1. The report is built BY THE ENGINE for one side and only contains what
+  #      that side has earned -- threat rings from its own recon/ELINT, air
+  #      tracks from its own radar net. The bot never merges the two.
+  #   2. Who can read each channel is a Discord permission, set from the
+  #      coalition role below (apply it with /feops briefing_lock).
+  #   3. That role is a MIRROR of the side the engine registered -- first slot
+  #      pick, or a `-switch`. `coalition_roles` below never writes a side back
+  #      into the game; it only reflects one out. So the only way to hold the
+  #      Red role is to actually be flying Red, and changing it costs a side
+  #      switch in game like it always did.
+  #
+  # These are per-DCS-server (each instance has its own front line), so with
+  # several servers put them in the per-server sections at the bottom of this
+  # file, not here in DEFAULT. Requires admin_username/admin_password above --
+  # /api/situation is coalition-locked and will not answer without them.
+  blue_briefing_channel: 123456789012345678
+  red_briefing_channel: 123456789012345678
+
+  # ---------------------------------------------
+  # Coalition roles, mirrored from the engine
+  # ---------------------------------------------
+  # Every ~5 minutes the bot reads bfdb's /api/admin/pilot-sides (the engine's
+  # own registrations for this instance) and makes the Discord roles agree:
+  # grant the matching side's role, remove the other one. Someone with no
+  # registration this campaign ends up with NEITHER role -- so a new player
+  # sees the public channels and has to take a slot in game before any briefing
+  # channel opens to them.
+  #
+  # Set `blue`/`red` to a role ID (preferred -- survives a rename) or the EXACT
+  # role name. The bot needs "Manage Roles", and its own highest role must sit
+  # ABOVE both coalition roles in the guild's role list or Discord refuses.
+  #
+  # With several DCS servers, give EACH ONE ITS OWN PAIR of roles. A pilot can
+  # legitimately be Blue on one server and Red on another; sharing one pair
+  # between servers makes the two syncs fight and the role flip every few
+  # minutes. The plugin logs a warning at startup if it spots this.
+  coalition_roles:
+    manage: true
+    blue: 123456789012345678      # role id, or "Blue Coalition"
+    red: 123456789012345678       # role id, or "Red Coalition"
+    # Take the role away from anyone the engine does not back -- someone who
+    # never registered, or who was handed the role by hand. Leave this ON: it
+    # is the half that actually closes the hole, since otherwise a stray role
+    # is a permanent key to that side's intel.
+    revoke_when_unregistered: true
+
+  # ---------------------------------------------
   # Localization & Message Formats
   # ---------------------------------------------
   # Customize the text used by the bot when posting alerts and achievements.
@@ -327,6 +383,14 @@ DEFAULT:
 #   perf_channel: 100000000000000005
 #   gci_transcript_channel: 100000000000000006
 #   server_info_channel: 100000000000000007
+#   # Coalition briefings -- ALWAYS per server, never in DEFAULT.
+#   blue_briefing_channel: 100000000000000008
+#   red_briefing_channel: 100000000000000009
+#   coalition_roles:
+#     manage: true
+#     blue: 100000000000000010      # this server's OWN Blue role
+#     red: 100000000000000011       # this server's OWN Red role
+#     revoke_when_unregistered: true
 #
 # '[VS] Vector Strike #2 | Training':
 #   cfg_path: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\ODFv2_CFG"
@@ -341,3 +405,11 @@ DEFAULT:
 #   perf_channel: null
 #   gci_transcript_channel: null
 #   server_info_channel: null
+#   blue_briefing_channel: 200000000000000008
+#   red_briefing_channel: 200000000000000009
+#   coalition_roles:
+#     manage: true
+#     # A DIFFERENT pair to server #1's -- a pilot may be Blue here and Red
+#     # there, and one shared pair would make the two syncs flip the role.
+#     blue: 200000000000000010
+#     red: 200000000000000011

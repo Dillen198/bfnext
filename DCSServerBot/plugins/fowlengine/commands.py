@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 import os
 import re
+import time
 import asyncio
 import subprocess
 from collections import deque
@@ -76,6 +77,13 @@ BRIEFING_HTTP_TIMEOUT = 20
 # registrations. Slow on purpose: it is a mirror, not a gate on joining, and a
 # player who just switched sides can wait a few minutes for their channel.
 COALITION_SYNC_MINUTES = 5.0
+
+# Safety rail on the revocation half of that sync. Revoking is the destructive
+# direction and has no undo, so one pass may only take the role off whichever
+# is larger: this many people, or this fraction of the current role holders.
+# Anything beyond that is treated as bad input from bfdb rather than obeyed.
+REVOKE_MIN_PER_TICK = 10
+REVOKE_MAX_FRACTION = 0.25
 
 # ── bfdb process supervision ────────────────────────────────────────────────
 # bfdb.exe + the netidx resolver are owned by procman.py as child processes of
@@ -165,6 +173,50 @@ async def bfdb_admin_get(api_url: str, username: str, password: str, path: str):
             except Exception:
                 data = None
             return status, data
+
+# ── cached admin session ────────────────────────────────────────────────────
+# bfdb only prunes an auth session when that session id is next looked up, so a
+# login the bot makes and never reuses sits in the sled tree indefinitely. The
+# one-shot helpers above are fine for a slash command; a loop that logs in on
+# every tick would leave thousands of dead rows a day. These reuse one cookie
+# (bfdb issues them for 7 days) and re-login only when it is actually rejected.
+_ADMIN_SESSION_CACHE: dict = {}
+_ADMIN_SESSION_TTL = 6 * 3600
+
+
+async def bfdb_session(http, api_url: str, username: str, password: str,
+                       force: bool = False) -> str:
+    key = (api_url, username)
+    now = time.monotonic()
+    if not force:
+        hit = _ADMIN_SESSION_CACHE.get(key)
+        if hit and now - hit[1] < _ADMIN_SESSION_TTL:
+            return hit[0]
+    cookie = await bfdb_login(http, api_url, username, password)
+    _ADMIN_SESSION_CACHE[key] = (cookie, now)
+    return cookie
+
+
+async def bfdb_get_cached(api_url: str, username: str, password: str, path: str,
+                          timeout: int = 10):
+    """GET an admin-gated endpoint on the cached session, re-logging in once if
+    the cookie has been rejected. Returns (status, parsed_json_or_None)."""
+    import aiohttp
+    async with aiohttp.ClientSession() as http:
+        for attempt in (0, 1):
+            cookie = await bfdb_session(http, api_url, username, password,
+                                        force=attempt == 1)
+            async with http.get(f"{api_url}{path}",
+                                headers={"Cookie": f"session={cookie}"},
+                                timeout=timeout) as resp:
+                if resp.status in (401, 403) and attempt == 0:
+                    continue
+                try:
+                    data = await resp.json()
+                except Exception:
+                    data = None
+                return resp.status, data
+
 
 class CommanderTerminalView(discord.ui.View):
     def __init__(self, api_url: str, admin_username: str, admin_password: str, airbases: list,
@@ -422,11 +474,49 @@ class FowlEngine(Plugin):
             seen: dict = {}
             for server in self.bot.servers.values():
                 cfg = self.get_config(server) or {}
+                # Two DIFFERENT feeds pointed at one channel on the SAME server
+                # is the easier mistake to make and the harder one to spot: the
+                # two embeds interleave and each edit lands on whichever message
+                # that loop last created, so the channel looks like it is
+                # flickering between two unrelated panels.
+                own: dict = {}
                 for key in self.PER_SERVER_CHANNEL_KEYS:
                     cid = cfg.get(key)
                     if not cid:
                         continue
-                    seen.setdefault((key, int(cid)), []).append(server.name)
+                    try:
+                        cid = int(cid)
+                    except (TypeError, ValueError):
+                        self.log.warning(f"FowlEngine: {server.name}: {key} is not a "
+                                         f"channel id: {cfg.get(key)!r}")
+                        continue
+                    own.setdefault(cid, []).append(key)
+                    seen.setdefault((key, cid), []).append(server.name)
+                for cid, keys in own.items():
+                    if len(keys) > 1:
+                        self.log.warning(
+                            f"FowlEngine: {server.name} points {', '.join(keys)} at the same "
+                            f"channel ({cid}). Those are separate feeds -- they will interleave "
+                            f"and overwrite each other there. Give each one its own channel.")
+            # Coalition roles are worse than a shared channel when two servers
+            # share them: a pilot who is Blue on one and Red on the other has
+            # the two syncs fighting, and the role flips every few minutes --
+            # handing them the other faction's briefing half the time.
+            role_seen: dict = {}
+            for server in self.bot.servers.values():
+                cr = (self.get_config(server) or {}).get('coalition_roles') or {}
+                if not cr.get('manage'):
+                    continue
+                for side in ('blue', 'red'):
+                    if cr.get(side):
+                        role_seen.setdefault((side, str(cr[side])), []).append(server.name)
+            for (side, spec), names in role_seen.items():
+                if len(names) > 1:
+                    self.log.warning(
+                        f"FowlEngine: coalition role {spec!r} ({side}) is managed by "
+                        f"{len(names)} servers ({', '.join(names)}). A pilot registered to "
+                        f"opposite sides on two servers will have the role flip between "
+                        f"syncs. Give each server its own coalition_roles pair.")
             for (key, cid), names in seen.items():
                 if len(names) > 1:
                     self.log.warning(
@@ -1830,12 +1920,21 @@ class FowlEngine(Plugin):
 
     def _briefing_channels(self, config: dict) -> dict:
         """{"Blue": channel id, "Red": channel id} for one server, unset keys
-        dropped. A server may configure one side only (or neither)."""
+        dropped. A server may configure one side only (or neither).
+
+        A malformed id is dropped with a warning rather than raised: this is
+        called from a `tasks.loop`, where an unhandled exception stops the loop
+        for every server, not just the misconfigured one.
+        """
         out = {}
         for side, key in (("Blue", "blue_briefing_channel"), ("Red", "red_briefing_channel")):
             cid = config.get(key)
-            if cid:
+            if not cid:
+                continue
+            try:
                 out[side] = int(cid)
+            except (TypeError, ValueError):
+                self.log.warning(f"FowlEngine: {key} is not a channel id: {cid!r}")
         return out
 
     async def _fetch_situation(self, api_url: str, server_name: str, side: str,
@@ -1850,41 +1949,41 @@ class FowlEngine(Plugin):
         by which channel the embed is posted to.
         """
         path = srv_path(f"/api/situation?side={side.lower()}", server_name)
-        import aiohttp
-        async with aiohttp.ClientSession() as http:
-            cookie = await bfdb_login(http, api_url, username, password)
-            async with http.get(f"{api_url}{path}",
-                                headers={"Cookie": f"session={cookie}"},
-                                timeout=BRIEFING_HTTP_TIMEOUT) as resp:
-                if resp.status != 200:
-                    raise RuntimeError(f"/api/situation {side} -> {resp.status}: "
-                                       f"{(await resp.text())[:200]}")
-                return await resp.json()
+        status, data = await bfdb_get_cached(api_url, username, password, path,
+                                             timeout=BRIEFING_HTTP_TIMEOUT)
+        if status != 200 or data is None:
+            raise RuntimeError(f"/api/situation {side} -> HTTP {status}")
+        return data
 
     @tasks.loop(minutes=BRIEFING_UPDATE_MINUTES)
     async def update_briefings(self):
+        # One server's bad config or unreachable bfdb must not stop the others
+        # -- and an exception that escapes a tasks.loop stops the loop for good.
         for server in self.bot.servers.values():
-            if server.status not in [Status.RUNNING, Status.PAUSED]:
-                continue
-            config = self.get_config(server) or {}
-            channels = self._briefing_channels(config)
-            if not channels:
-                continue
-            api_url = config.get("api_url", "http://localhost:8880")
-            username = config.get("admin_username", "")
-            password = config.get("admin_password", "")
-            if not username or not password:
-                self.log.warning(
-                    f"FowlEngine: {server.name} has briefing channels configured but no "
-                    f"admin_username/admin_password -- /api/situation is coalition-locked "
-                    f"and cannot be read without them.")
-                continue
-            for side, channel_id in channels.items():
-                try:
-                    await self._update_one_briefing(server, config, api_url, username,
-                                                    password, side, channel_id)
-                except Exception as ex:
-                    self.log.error(f"FowlEngine: {side} briefing for {server.name}: {ex}")
+            try:
+                if server.status not in [Status.RUNNING, Status.PAUSED]:
+                    continue
+                config = self.get_config(server) or {}
+                channels = self._briefing_channels(config)
+                if not channels:
+                    continue
+                api_url = config.get("api_url", "http://localhost:8880")
+                username = config.get("admin_username", "")
+                password = config.get("admin_password", "")
+                if not username or not password:
+                    self.log.warning(
+                        f"FowlEngine: {server.name} has briefing channels configured but no "
+                        f"admin_username/admin_password -- /api/situation is coalition-locked "
+                        f"and cannot be read without them.")
+                    continue
+                for side, channel_id in channels.items():
+                    try:
+                        await self._update_one_briefing(server, config, api_url, username,
+                                                        password, side, channel_id)
+                    except Exception as ex:
+                        self.log.error(f"FowlEngine: {side} briefing for {server.name}: {ex}")
+            except Exception as ex:
+                self.log.error(f"FowlEngine: briefing tick for {server.name}: {ex}")
 
     async def _update_one_briefing(self, server, config, api_url, username, password,
                                    side: str, channel_id: int):
@@ -1956,11 +2055,11 @@ class FowlEngine(Plugin):
         briefing channels honest.
         """
         for server in self.bot.servers.values():
-            config = self.get_config(server) or {}
-            cr = self._coalition_roles_cfg(config)
-            if not cr:
-                continue
             try:
+                config = self.get_config(server) or {}
+                cr = self._coalition_roles_cfg(config)
+                if not cr:
+                    continue
                 await self._sync_coalition_roles_for(server, config, cr)
             except Exception as ex:
                 self.log.error(f"FowlEngine: coalition role sync for {server.name}: {ex}")
@@ -1975,7 +2074,7 @@ class FowlEngine(Plugin):
                 f"admin_username/admin_password is set -- /api/admin/pilot-sides needs them.")
             return
 
-        status, data = await bfdb_admin_get(
+        status, data = await bfdb_get_cached(
             api_url, username, password,
             srv_path("/api/admin/pilot-sides", server.name))
         if status != 200 or not data:
@@ -2041,12 +2140,26 @@ class FowlEngine(Plugin):
         # does not back loses it. This is the half that actually closes the
         # hole -- without it, a role handed out by an admin (or left over from
         # a previous campaign) is a permanent key to that side's briefing.
-        if cr.get("revoke_when_unregistered", True):
+        #
+        # Both guards below exist because this pass can strip roles en masse
+        # and there is no undo. An EMPTY roster means "bfdb has no data right
+        # now" -- a campaign reset, a rebuilt database, a round that has not
+        # started -- not "nobody is registered", and acting on it would clear
+        # the coalition roles for the whole guild. The cap covers the partial
+        # version of the same failure, where the roster came back but the
+        # member lookups mostly did not.
+        if cr.get("revoke_when_unregistered", True) and sides:
+            holders = sum(len(r.members) for r in roles.values())
+            cap = max(REVOKE_MIN_PER_TICK, int(holders * REVOKE_MAX_FRACTION))
+            hit_cap = False
             for side, role in roles.items():
                 for member in list(role.members):
                     entry = want.get(member.id)
                     if entry and entry[1] == side:
                         continue
+                    if revoked >= cap:
+                        hit_cap = True
+                        break
                     try:
                         await member.remove_roles(
                             role, reason="Fowl Engine: no matching coalition registration")
@@ -2056,6 +2169,20 @@ class FowlEngine(Plugin):
                         break
                     except Exception as ex:
                         self.log.debug(f"FowlEngine: role revoke for {member} failed: {ex}")
+                if hit_cap:
+                    break
+            if hit_cap:
+                self.log.error(
+                    f"FowlEngine: coalition role sync for {server.name} wanted to revoke more "
+                    f"than {cap} of {holders} role holders in one pass and stopped. That is "
+                    f"almost always bfdb answering with a stale or partial roster, not that "
+                    f"many people genuinely unregistering -- check /api/admin/pilot-sides "
+                    f"before assuming the roles are wrong.")
+        elif cr.get("revoke_when_unregistered", True):
+            self.log.warning(
+                f"FowlEngine: /api/admin/pilot-sides returned no registered pilots for "
+                f"{server.name}; skipping revocation rather than stripping every coalition "
+                f"role.")
         if granted or revoked:
             self.log.info(f"FowlEngine: coalition roles for {server.name} -- "
                           f"{granted} granted, {revoked} revoked")

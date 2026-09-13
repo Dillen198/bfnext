@@ -10,6 +10,9 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 - **Per-Faction Alert Threads:** `alerts_channel` only needs to be set once — the plugin auto-creates a "Blue Ops" and "Red Ops" thread under it and routes alerts by relevance: a defending faction gets "ready to capture, defend it!" while the opposing faction gets "opportunity!" for the same event; captures post to both. Set `use_faction_threads: false` to go back to one shared channel.
 - **Killstreak Achievements:** Polls bfdb's public `/api/kills` every ~20s to track each pilot's consecutive kills (reset on death) and announces streaks of 5 (Ace), 10 (Unstoppable), and 15 (God of War).
 - **Mission-Briefing Welcome Message:** Posts an embed to `welcome_channel` when someone joins the Discord server, pulling the active scenario, round duration, and current front (objective counts per faction) from bfdb — same data as the live status embed — plus a customizable briefing blurb and dashboard link.
+- **Per-Coalition Briefing Channels:** two channels per DCS server, one per faction, each holding a single embed the bot edits in place from bfdb's `GET /api/situation` — the same auto-generated situation report that backs the in-game F10 → Info → Situation pages, the dashboard BRIEFING page and the kneeboard PDF. Posture, ranked tasking, hotspots, the air-defence areas *that side has earned intel on*, the air picture, logistics and the comms card. `/fe_briefing` gives any pilot their own side's copy privately. `/feops briefing_lock` applies the channel permissions.
+- **Engine-Mirrored Coalition Roles:** every ~5 minutes the bot reads bfdb's admin-only `/api/admin/pilot-sides` — the engine's own registrations for that instance — and makes the Discord Blue/Red roles agree, revoking any coalition role the engine does not back. The mirror runs one way only: Discord never assigns a side, it only reflects the one the engine gave out on first slot pick or `-switch`. That is what makes the briefing channels honest — you cannot read Red's intel without actually flying Red.
+- **Custom Icon Set:** all embeds render with the Vector Strike glyph set (`assets/icons/`, drawn by `render_icons.py`) uploaded as *application* emoji, so the bot's output matches the dashboard rather than looking like a group chat. Every icon has a unicode fallback, so nothing is broken before `/feops icons_install` is run.
 - **Server Performance Embed:** Posts and edits a live CPU/RAM/GPU/disk/temp + DCS frame-time embed every 5 minutes, pulled from bfdb's admin-only `/api/admin/perf`.
 - **Dual-Login Dashboard:** Supports both standard Discord OAuth web-login and securely generated HMAC bot-tokens to seamlessly bridge the `bfweb` dashboard.
 - **Interactive Commander Terminal:** A UI terminal (`/fe_terminal`) to drop crates/infantry at airbases **and** set objective priority, directly from Discord.
@@ -87,6 +90,7 @@ swap) is configured in `nodes.yaml`, not here.
 - `/fe_dashboard` - your secure web-dashboard login link (Discord OAuth + 1-hour HMAC auto-login).
 - `/fe_objective <name>` - owner / health / priority for one objective (substring match).
 - `/fe_gci` - current GCI (AWACS) frequencies, callsigns and usage.
+- `/fe_briefing <server>` - your own coalition's live situation report, privately. Side comes from your in-game registration; there is no way to ask for the other one.
 
 Live stats, the leaderboard, who's online and the full objective list all
 live on the web dashboard now -- `/fe_dashboard` points there.
@@ -97,12 +101,16 @@ live on the web dashboard now -- `/fe_dashboard` points there.
 - `/feops bfdb_restart` - restart bfdb (re-renders `gci.json`, picks up a staged `bfdb.exe`).
 - `/feops gci_show` - print the effective `gci.json` (secrets masked).
 - `/feops stage_status | stage_cancel <which> | stage_apply <server> <which>` - manage staged engine binaries.
+- `/feops briefing_lock <server> [confirm]` - show, then apply, the channel overwrites that lock each briefing channel to its coalition role. Dry-run unless `confirm: True`.
+- `/feops icons_install` / `icons_status` / `icons_uninstall` - manage the custom emoji set.
 - **Upload:** drop `bflib.dll` / `bfdb.exe` into the admin channel (DCS Admin only) to stage it.
 
 ## Architecture & Integration
 
 - **Read-only data** (status/welcome embeds, capture & achievement polling, engine-log relay): plain HTTP/WebSocket to bfdb.
 - **Commander actions** (`/fe_terminal`): bfdb -> bflib netidx RPCs (`bflib/src/bg/rpcs.rs`); needs `admin_username`/`admin_password` and bfdb started with `--base`.
+- **Coalition briefings** (`briefing.py`): `GET /api/situation?side=…&server=…`, fetched with the bfdb admin login. The endpoint is coalition-locked — a logged-in *player* only ever gets their own side — and a bfdb admin with no in-game registration is the one caller allowed to name a side, which is exactly what the bot is. The fog of war is then re-imposed by which Discord channel each embed lands in, and by the role gating that channel.
+- **Coalition roles** (`/api/admin/pilot-sides` → `db.all_pilot_sides`): admin-gated, because the full roster of who flies for whom is itself something the fog of war hides. One pass over `pilot_round_info` with the same rule as `pilot_current_side` — the active round's registration wins, else the most recent Blue/Red on record, which after a `reset_campaign_data` means "this campaign".
 - **Process ownership** (`bfdb.manage`, `procman.py`): the bot runs `bfdb.exe` + the netidx resolver as children, health-checks bfdb, renders `gci.json` from YAML.
 - **Restart-cycle binary swap** (`extensions/bfbinaries`): `prepare()` swaps a staged `bflib.dll` while DCS is down; a staged `bfdb.exe` is applied by procman on its next restart. Both back up the previous binary and never block a restart.
 

@@ -29,7 +29,11 @@ TASK_KEYS = ("defend", "capture", "strike", "sead", "cas",
 # Discord's own caps. A field value over 1024 characters, or an embed over
 # 6000, is rejected outright -- so every list below is fitted, not hoped about.
 FIELD_LIMIT = 1024
-EMBED_LIMIT = 5800  # leave headroom for the author/footer/title chrome
+MAX_FIELDS = 25
+# Discord's hard cap is 6000 across title + description + every field name and
+# value. The headroom covers the author and footer lines, which our own
+# len(embed) does not count.
+EMBED_LIMIT = 5600
 
 
 def side_color(side: str) -> discord.Color:
@@ -57,13 +61,27 @@ def _fit(lines: list, limit: int = FIELD_LIMIT) -> str:
 
 
 def _add(embed: discord.Embed, name: str, lines: list, inline: bool = False) -> None:
-    """Add a field only when there is something in it -- an empty section is
-    noise on a message that is edited every few minutes."""
-    if not lines:
+    """Add a field, fitted to what is left of the embed's budget.
+
+    Both caps have to be respected *per field*, not checked before the fact:
+    Discord rejects the entire message if the assembled embed is over 6000
+    characters or has more than 25 fields, and a rejected edit means the
+    channel silently stops updating. That is easy to hit once the custom icons
+    are installed -- each one is ~28 characters of `<:vs_cas:123…>` markup
+    where the unicode stand-in was one -- so the budget is computed against
+    what has already been added and the section is trimmed to suit.
+
+    An empty section is dropped rather than rendered, because a field saying
+    "none" every three minutes is just noise.
+    """
+    if not lines or len(embed.fields) >= MAX_FIELDS:
         return
-    if len(embed) >= EMBED_LIMIT:
+    budget = min(FIELD_LIMIT, EMBED_LIMIT - len(embed) - len(name))
+    # Below this there is no room for a line plus its "+N more" tail, so the
+    # field would be a stub. Stop adding sections instead.
+    if budget < 80:
         return
-    embed.add_field(name=name, value=_fit(lines), inline=inline)
+    embed.add_field(name=name, value=_fit(lines, budget), inline=inline)
 
 
 def _pct(v) -> str:
