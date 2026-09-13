@@ -501,7 +501,7 @@ export default function Layout() {
                 </div>
               )}
             </div>
-            <button onClick={logout} title="Logout"
+            <button onClick={logout} title="Logout" aria-label="Log out" className="vs-touch-target"
               style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 0 }}>
               <LogOut size={14} />
             </button>

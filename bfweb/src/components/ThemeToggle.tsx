@@ -10,6 +10,7 @@ export default function ThemeToggle({ style }: { style?: CSSProperties }) {
   return (
     <button
       onClick={toggle}
+      className="vs-touch-target"
       title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
       aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
       style={{

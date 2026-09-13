@@ -90,6 +90,7 @@ export function SortTh<K extends string>({
       {colKey ? (
         <button
           type="button"
+          className="vs-sort-btn"
           onClick={() => onSort(colKey)}
           aria-label={`${label}, sort ${active && sortDir === 'asc' ? 'descending' : 'ascending'}`}
           style={{

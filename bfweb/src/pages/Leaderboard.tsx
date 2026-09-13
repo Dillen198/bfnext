@@ -144,7 +144,7 @@ export default function Leaderboard() {
           {TABS.map(t => {
             const active = tab === t.key
             return (
-              <button key={t.key} onClick={() => selectTab(t.key)}
+              <button key={t.key} className="vs-tab" onClick={() => selectTab(t.key)}
                 style={{
                   padding: '6px 16px', borderRadius: 6, cursor: 'pointer',
                   fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em',

@@ -163,14 +163,14 @@ function FlightLog({ sorties, breakdown }: { sorties: PilotSortie[]; breakdown: 
         {/* Pagination */}
         {totalPages > 1 && (
           <div className="flex items-center gap-1 ml-2">
-            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+            <button aria-label="Previous page" className="vs-touch-target" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
               style={{ background: 'none', border: 'none', color: page === 0 ? '#333' : 'var(--text-dim)', cursor: page === 0 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronLeft size={12} />
             </button>
             <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
               {page + 1} / {totalPages}
             </span>
-            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
+            <button aria-label="Next page" className="vs-touch-target" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
               style={{ background: 'none', border: 'none', color: page === totalPages - 1 ? '#333' : 'var(--text-dim)', cursor: page === totalPages - 1 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronRight size={12} />
             </button>
@@ -276,14 +276,14 @@ function KillLog({ kills, allPilots, breakdown }: {
         </span>
         {totalPages > 1 && (
           <div className="flex items-center gap-1 ml-2">
-            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+            <button aria-label="Previous page" className="vs-touch-target" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
               style={{ background: 'none', border: 'none', color: page === 0 ? '#333' : 'var(--text-dim)', cursor: page === 0 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronLeft size={12} />
             </button>
             <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
               {page + 1} / {totalPages}
             </span>
-            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
+            <button aria-label="Next page" className="vs-touch-target" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
               style={{ background: 'none', border: 'none', color: page === totalPages - 1 ? '#333' : 'var(--text-dim)', cursor: page === totalPages - 1 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronRight size={12} />
             </button>
@@ -392,14 +392,14 @@ function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }
         </span>
         {totalPages > 1 && (
           <div className="flex items-center gap-1 ml-2">
-            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+            <button aria-label="Previous page" className="vs-touch-target" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
               style={{ background: 'none', border: 'none', color: page === 0 ? '#333' : 'var(--text-dim)', cursor: page === 0 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronLeft size={12} />
             </button>
             <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
               {page + 1} / {totalPages}
             </span>
-            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
+            <button aria-label="Next page" className="vs-touch-target" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
               style={{ background: 'none', border: 'none', color: page === totalPages - 1 ? '#333' : 'var(--text-dim)', cursor: page === totalPages - 1 ? 'default' : 'pointer', padding: 0 }}>
               <ChevronRight size={12} />
             </button>
@@ -672,6 +672,7 @@ export default function Pilots() {
                 </div>
                 <button
                   onClick={() => { setSelected(null); setSearch('') }}
+                  className="vs-touch-target"
                   style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.62rem', flexShrink: 0 }}
                 >
                   <RotateCcw size={10} /> Clear

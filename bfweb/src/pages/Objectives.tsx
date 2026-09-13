@@ -354,6 +354,7 @@ export default function Objectives() {
             {(['All', 'Red', 'Blue', 'Neutral'] as Filter[]).map(f => (
               <button
                 key={f}
+                className="vs-pill"
                 onClick={() => setFilter(f)}
                 style={{
                   fontFamily: "'Bebas Neue', sans-serif",

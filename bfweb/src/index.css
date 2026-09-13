@@ -1082,3 +1082,64 @@ body::after {
   }
   .briefing-split > :first-child { height: 340px; min-height: 340px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   TOUCH TARGETS — phones and small tablets
+   ═══════════════════════════════════════════════════════════════
+   The chrome was built at desktop mouse sizes: a 32px hamburger, a
+   14px logout icon, 28px filter pills. Apple asks for 44pt and
+   Android for 48dp, and the hamburger in particular is the single
+   most-used control on a phone. Raised here rather than at each call
+   site so it stays consistent and cannot drift back.
+
+   Scoped to pointer:coarse as well as width, so a narrow desktop
+   window does not get finger-sized chrome it has no use for. */
+@media (max-width: 767px), (pointer: coarse) {
+  .mobile-menu-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* Icon-only chrome buttons in the topbar (theme, logout, close). */
+  .vs-touch-target {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Selects and text inputs: 32px is below the comfortable minimum and
+     iOS zooms any input whose font-size is under 16px on focus. */
+  .vs-input,
+  select.vs-input,
+  input.vs-input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  /* Segmented filter pills (ALL / RED / BLUE / NEUTRAL and friends). */
+  .vs-pill {
+    min-height: 40px;
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+  }
+
+  /* Table rows that act as buttons need room for a fingertip. */
+  .kill-row td {
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+
+  /* Column-sort controls live inside a <th>, so they cannot simply grow to
+     44px without doubling the header height. 32px plus the header's own
+     padding lands close enough to be tappable without wrecking the table. */
+  .vs-sort-btn {
+    min-height: 32px;
+  }
+
+  /* Tab strips (leaderboard categories and friends). */
+  .vs-tab {
+    min-height: 40px;
+  }
+}
