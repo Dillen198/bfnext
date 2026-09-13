@@ -9,6 +9,7 @@ import ThemeToggle from './ThemeToggle'
 import { useInstance } from '../context/InstanceContext'
 import LogoMark from './LogoMark'
 import Backdrop from './Backdrop'
+import { getDevUser } from '../lib/devAuth'
 import {
   Sitrep,
   Tacmap,
@@ -34,28 +35,58 @@ import {
   X,
   ChevronsLeft,
   ChevronsRight,
+  Lock,
 } from '@icons'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 
-// Operational picture. BRIEFING / RECON INTEL are coalition-locked and only
-// appear once bfdb can resolve the viewer's side (or they're an admin).
-const OPS_NAV = [
+/** A sidebar entry. `locked` marks one the viewer can see but has not
+ *  unlocked -- it still navigates (to the login page, or to the page's own
+ *  "why can't I see this" explainer), because an inert nav item that
+ *  swallows the click just reads as broken. */
+interface NavItem {
+  to: string
+  icon: IconComponent
+  label: string
+  /** Set when the entry is gated: why, and where a click should go instead. */
+  locked?: { reason: string; go: string }
+}
+
+// Operational picture. BRIEFING / RECON INTEL are coalition-locked: they show
+// as locked entries until bfdb can resolve the viewer's side (or they're an
+// admin), so anonymous visitors can at least see the features exist.
+const OPS_NAV: NavItem[] = [
   { to: '/',            icon: Sitrep,          label: 'SITREP'     },
   { to: '/map',         icon: Tacmap,          label: 'TACMAP'     },
   { to: '/objectives',  icon: Objective,       label: 'OBJECTIVES' },
 ]
-const COALITION_NAV = [
+const COALITION_NAV: NavItem[] = [
   { to: '/briefing', icon: Briefing,   label: 'BRIEFING'     },
   { to: '/intel',    icon: ReconIntel, label: 'RECON INTEL'  },
 ]
 // Stats & people.
-const STATS_NAV = [
+const STATS_NAV: NavItem[] = [
   { to: '/leaderboard', icon: Rankings,   label: 'RANKINGS'  },
   { to: '/pilots',      icon: Pilot,      label: 'PILOTS'    },
   { to: '/kills',       icon: KillFeed,   label: 'KILL FEED' },
 ]
-const PROFILE_NAV = (ucid: string) => ({ to: `/pilots?ucid=${ucid}`, icon: Pilot, label: 'MY PROFILE' })
+const PROFILE_NAV = (ucid: string): NavItem => ({ to: `/pilots?ucid=${ucid}`, icon: Pilot, label: 'MY PROFILE' })
+
+/** Gate the coalition pages for a viewer who can't open them yet.
+ *  Signed out -> the click goes to login. Signed in but with no resolvable
+ *  side -> the click goes to the page itself, which renders the
+ *  "link your Discord with -linkme" explainer (see RequireCoalition). */
+function lockCoalition(items: NavItem[], signedIn: boolean): NavItem[] {
+  return items.map(i => ({
+    ...i,
+    locked: {
+      reason: signedIn
+        ? 'Locked to your coalition - link your Discord in game with -linkme'
+        : 'Sign in with Discord to view',
+      go: signedIn ? i.to : '/login',
+    },
+  }))
+}
 // Meta / system.
 const ABOUT_NAV = { to: '/about', icon: Info, label: 'ABOUT' }
 const ADMIN_NAV = { to: '/admin', icon: Admin, label: 'ADMIN' }
@@ -236,7 +267,21 @@ export default function Layout() {
 
   const { selectedRound, setSelectedRound } = useRound()
 
-  const isLive      = !!stats?.active_round
+  const isDevUser   = !!getDevUser()
+
+  // Three states, not two. `stats.active_round` only says a round row exists
+  // in sled -- it survives the DCS server crashing, which is exactly when the
+  // old badge kept cheerfully pulsing LIVE. /api/health probes the engine.
+  const { data: health } = useQuery({
+    queryKey: ['health'],
+    queryFn: api.health,
+    refetchInterval: 30_000,
+    retry: false,
+  })
+  const liveState: 'live' | 'engine-down' | 'offline' =
+    health?.engine.reachable ? 'live'
+      : health ? (health.active_round ? 'engine-down' : 'offline')
+        : (stats?.active_round ? 'live' : 'offline')
   // `rounds` spans every server in multi-instance mode, so anything that
   // describes "this server's campaign" has to be filtered to it first.
   const instanceOf  = (r: { instance?: string }) => r.instance ?? current?.id
@@ -264,14 +309,30 @@ export default function Layout() {
   // Grouped by purpose: operational picture, then stats/people, then
   // meta/system. Empty groups (e.g. no coalition, not admin) are dropped so
   // no stray dividers show.
-  const navGroups: { to: string; icon: IconComponent; label: string }[][] = [
+  //
+  // Gated entries fall into two classes, and they are treated differently on
+  // purpose. Coalition pages and MY PROFILE are things any visitor could
+  // plausibly unlock, so they show as locked entries -- that's how anyone
+  // finds out they exist, and the lock doubles as the prompt to sign in.
+  // ADMIN / CONFIG stay hidden: advertising an admin surface to anonymous
+  // visitors only invites probing and is noise for everyone who'll never
+  // use it. (bfdb enforces both server-side regardless of what's rendered.)
+  const hasCoalition = !!(user?.side || user?.is_admin)
+  const navGroups: NavItem[][] = [
     [
       ...OPS_NAV,
-      ...(user?.side || user?.is_admin ? COALITION_NAV : []),
+      ...(hasCoalition ? COALITION_NAV : lockCoalition(COALITION_NAV, !!user)),
     ],
     [
       ...STATS_NAV,
-      ...(user?.ucid ? [PROFILE_NAV(user.ucid)] : []),
+      ...(user?.ucid
+        ? [PROFILE_NAV(user.ucid)]
+        : [{
+            to: '/pilots', icon: Pilot, label: 'MY PROFILE',
+            locked: user
+              ? { reason: 'No DCS account linked - run -linkme in game chat', go: '/pilots' }
+              : { reason: 'Sign in with Discord to view your own record', go: '/login' },
+          } satisfies NavItem]),
     ],
     [
       ABOUT_NAV,
@@ -327,10 +388,18 @@ export default function Layout() {
               {campaign.name}
             </div>
             <div style={{ marginTop: 2 }}>
-              {isLive ? (
+              {liveState === 'live' ? (
                 <span className="vs-badge vs-badge-live">
                   <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#4ade80', display: 'inline-block' }} className="vs-pulse" />
                   LIVE
+                </span>
+              ) : liveState === 'engine-down' ? (
+                <span
+                  className="vs-badge vs-badge-degraded"
+                  title={health?.engine.error ?? 'The campaign round is open but the DCS server is not answering.'}
+                >
+                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fbbf24', display: 'inline-block' }} className="vs-pulse" />
+                  NO ENGINE
                 </span>
               ) : (
                 <span className="vs-badge vs-badge-offline">OFFLINE</span>
@@ -425,6 +494,12 @@ export default function Layout() {
                   <span style={{ fontSize: '0.58rem', color: '#fbbf24', letterSpacing: '0.1em' }}>ADMIN</span>
                 </div>
               )}
+              {/* Never let a faked identity pass for a real one. */}
+              {import.meta.env.DEV && isDevUser && (
+                <div style={{ fontSize: '0.55rem', color: 'var(--yellow)', letterSpacing: '0.12em', marginTop: 1 }}>
+                  DEV SESSION
+                </div>
+              )}
             </div>
             <button onClick={logout} title="Logout"
               style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 0 }}>
@@ -479,18 +554,31 @@ export default function Layout() {
             {navGroups.map((group, gi) => (
               <React.Fragment key={gi}>
                 {gi > 0 && <div className="nav-divider" />}
-                {group.map(({ to, icon: Icon, label }) => (
+                {group.map(({ to, icon: Icon, label, locked }) => (
                   <NavLink
-                    key={to}
-                    to={to}
+                    key={label}
+                    to={locked ? locked.go : to}
                     end={to === '/' || to === '/admin'}
                     onClick={() => setSidebarOpen(false)}
-                    className={() => `nav-item${isNavActive(to, location.pathname, location.search, to === '/' || to === '/admin') ? ' active' : ''}`}
-                    title={sidebarCollapsed ? label : undefined}
+                    aria-disabled={locked ? true : undefined}
+                    className={() => [
+                      'nav-item',
+                      locked ? 'locked' : '',
+                      // A locked entry never highlights: it points somewhere
+                      // else (login / the explainer), so matching its own
+                      // route would light up the wrong row.
+                      !locked && isNavActive(to, location.pathname, location.search, to === '/' || to === '/admin') ? 'active' : '',
+                    ].filter(Boolean).join(' ')}
+                    title={locked ? `${label} - ${locked.reason}` : sidebarCollapsed ? label : undefined}
                   >
                     <Icon size={16} style={{ flexShrink: 0 }} />
                     <span>{label}</span>
-                    {to === '/kills' && !sidebarCollapsed && (
+                    {locked && !sidebarCollapsed && (
+                      <span style={{ marginLeft: 'auto', display: 'inline-flex', opacity: 0.55 }}>
+                        <Lock size={12} />
+                      </span>
+                    )}
+                    {!locked && to === '/kills' && !sidebarCollapsed && (
                       <span style={{ marginLeft: 'auto', opacity: 0.4 }}><ChevronRight size={12} /></span>
                     )}
                   </NavLink>

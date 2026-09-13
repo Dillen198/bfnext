@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { api } from '../api'
+import { DEV_PERSONAS, setDevUser, withUcid, type DevPersona } from '../lib/devAuth'
 import { campaign } from '../config/campaign'
 import ThemeToggle from '../components/ThemeToggle'
 import LogoMark from '../components/LogoMark'
@@ -68,6 +70,73 @@ export default function LoginPage() {
             LOGIN WITH DISCORD
           </a>
         </div>
+
+        {import.meta.env.DEV && <DevSignIn />}
+      </div>
+    </div>
+  )
+}
+
+/** Dev-only shortcut past the Discord round trip. Stripped from production
+ *  builds -- DEV_AUTH_ENABLED is a compile-time false there, so this whole
+ *  subtree is dead code the bundler drops. */
+function DevSignIn() {
+  const [busy, setBusy] = useState<string | null>(null)
+
+  async function signIn(p: DevPersona) {
+    setBusy(p.id)
+    let user = p.user
+    // Borrow a real ucid so MY PROFILE and the pilot pages resolve to someone
+    // who actually has stats. Entirely optional -- if the API is unreachable
+    // the persona just has no linked pilot.
+    if (p.user.side || p.user.is_admin) {
+      try {
+        const pilots = await api.leaderboard()
+        const match = pilots.find(x => x.side === p.user.side) ?? pilots[0]
+        if (match?.ucid) user = withUcid(user, match.ucid)
+      } catch { /* offline bfdb -- carry on without a ucid */ }
+    }
+    setDevUser(user)
+    // assign() rather than `location.href =` -- the compiler lint rejects
+    // assigning through a global, and this is the same navigation.
+    window.location.assign('/')
+  }
+
+  return (
+    <div style={{
+      marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px dashed var(--border-light)',
+    }}>
+      <div style={{
+        fontFamily: 'var(--font-mono)', fontSize: '0.58rem', letterSpacing: '0.16em',
+        textTransform: 'uppercase', color: 'var(--yellow)', marginBottom: 4,
+      }}>
+        Dev sign-in
+      </div>
+      <p style={{ fontSize: '0.64rem', color: 'var(--text-dim)', lineHeight: 1.55, marginBottom: '0.8rem' }}>
+        Fakes the client's identity so gated pages open. There is no server
+        session, so coalition and admin endpoints still answer 401 — add{' '}
+        <code>?mock</code> on the briefing to render it from fixtures.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {DEV_PERSONAS.map(p => (
+          <button
+            key={p.id}
+            type="button"
+            disabled={busy !== null}
+            onClick={() => signIn(p)}
+            style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1,
+              background: 'transparent', border: '1px solid var(--border)',
+              padding: '5px 9px', cursor: busy ? 'default' : 'pointer',
+              textAlign: 'left', font: 'inherit', opacity: busy && busy !== p.id ? 0.4 : 1,
+            }}
+          >
+            <span style={{ fontSize: '0.7rem', color: 'var(--text)', fontWeight: 700 }}>
+              {busy === p.id ? 'Signing in…' : p.label}
+            </span>
+            <span style={{ fontSize: '0.58rem', color: 'var(--text-dim)' }}>{p.hint}</span>
+          </button>
+        ))}
       </div>
     </div>
   )

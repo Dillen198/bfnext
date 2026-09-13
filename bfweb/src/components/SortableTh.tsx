@@ -67,27 +67,50 @@ export function SortTh<K extends string>({
   title?: string
 }) {
   const active = colKey != null && colKey === sortKey
+  // A clickable <th> is invisible to assistive tech and unreachable by
+  // keyboard on its own: the control needs a role, a tab stop, Enter/Space,
+  // and aria-sort so the current order is announced rather than only drawn
+  // as a chevron.
+  const ariaSort: React.AriaAttributes['aria-sort'] =
+    colKey == null ? undefined
+      : active ? (sortDir === 'asc' ? 'ascending' : 'descending')
+        : 'none'
+
   return (
     <th
       title={title}
-      onClick={colKey ? () => onSort(colKey) : undefined}
+      aria-sort={ariaSort}
       style={{
         whiteSpace: 'nowrap',
         ...style,
-        cursor: colKey ? 'pointer' : title ? 'help' : undefined,
         userSelect: 'none',
         ...(active ? { color: 'var(--accent)' } : null),
       }}
     >
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-        {label}
-        {colKey &&
-          (active ? (
+      {colKey ? (
+        <button
+          type="button"
+          onClick={() => onSort(colKey)}
+          aria-label={`${label}, sort ${active && sortDir === 'asc' ? 'descending' : 'ascending'}`}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 3,
+            background: 'none', border: 'none', padding: 0, margin: 0,
+            font: 'inherit', color: 'inherit', letterSpacing: 'inherit',
+            textTransform: 'inherit', cursor: 'pointer',
+          }}
+        >
+          {label}
+          {active ? (
             sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />
           ) : (
             <ChevronDown size={10} style={{ opacity: 0.2 }} />
-          ))}
-      </span>
+          )}
+        </button>
+      ) : (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: title ? 'help' : undefined }}>
+          {label}
+        </span>
+      )}
     </th>
   )
 }

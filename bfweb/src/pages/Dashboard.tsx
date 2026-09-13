@@ -30,27 +30,21 @@ import {
   type IconComponent,
   ExternalLink,
   TrendingUp,
+  RefreshCw,
 } from '@icons'
 import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type SrsClient, type SrsRadio, type SrsStatus, type Frontlines } from '../api'
 import { campaign } from '../config/campaign'
+import PanelBase from '../components/Panel'
+import { classifyTargetClass, TARGET_CLASS_COLOR, fmtTimeZ, windDir, visStr, cloudStr } from '../lib/format'
 import { useTheme } from '../context/ThemeContext'
 import { useRound } from '../context/RoundContext'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Thin adapter over the shared classifier -- see lib/format. */
 function classifyKill(t: string | null): { label: string; col: string } {
-  const s = (t ?? '').toLowerCase()
-  if (/\bf-\d|\bf\/a|mig-|su-\d|a-10|av-8|aircraft|heli|ka-|mi-|uh-|ah-/.test(s)) return { label: 'AIR',   col: 'var(--blue)'   }
-  if (/ship|naval|carrier|frigate/.test(s))                                         return { label: 'NAVAL', col: 'var(--cyan)'   }
-  if (/t-\d{2}|tank|armor|apc|ifv|bmp|btr/.test(s))                                return { label: 'ARMOR', col: 'var(--orange)' }
-  if (/sa-\d|sam |patriot|radar|aaa|s-300|s-400|buk|tor/.test(s))                  return { label: 'AD',    col: 'var(--purple)' }
-  if (/truck|supply|ural|kamaz|vehicle|car|logistic/.test(s))                       return { label: 'VEH',   col: 'var(--yellow)' }
-  if (/infantry|soldier|troop/.test(s))                                             return { label: 'INF',   col: 'var(--accent)' }
-  return { label: 'GND', col: 'var(--text-dim)' }
-}
-
-function fmtTimeZ(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) + 'Z'
+  const label = classifyTargetClass(t)
+  return { label, col: TARGET_CLASS_COLOR[label] }
 }
 
 function useDelta(v: number) {
@@ -61,22 +55,6 @@ function useDelta(v: number) {
     prev.current = v
   }, [v])
   return delta.current
-}
-
-function windDir(deg: number) {
-  const dirs = ['N','NE','E','SE','S','SW','W','NW']
-  return dirs[Math.round(deg / 45) % 8]
-}
-
-function visStr(m: number | null | undefined) {
-  if (!m) return '—'
-  return m >= 9999 ? '10KM+' : `${(m / 1000).toFixed(1)}KM`
-}
-
-function cloudStr(m: number) {
-  if (!m || m === 0) return 'CLEAR'
-  const ft = Math.round(m * 3.281 / 100) * 100
-  return `${ft.toLocaleString()}FT`
 }
 
 // ── KPI cell ──────────────────────────────────────────────────────────────────
@@ -686,31 +664,9 @@ function SrsPanel({ srs }: { srs: SrsStatus | undefined }) {
 
 // ── Panel wrapper ─────────────────────────────────────────────────────────────
 
-function Panel({ title, icon: Icon, iconColor = 'var(--accent)', count, badge, children, style }: {
-  title: string; icon: React.ElementType; iconColor?: string
-  count?: number; badge?: React.ReactNode; children: React.ReactNode; style?: React.CSSProperties
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', background: 'var(--bg-card)', border: '1px solid var(--border)', overflow: 'hidden', ...style }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 7, padding: '6px 12px',
-        borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.25)', flexShrink: 0,
-      }}>
-        <Icon size={10} style={{ color: iconColor, flexShrink: 0 }} />
-        <span style={{ fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', flex: 1 }}>
-          {title}
-        </span>
-        {badge}
-        {count != null && (
-          <span className="font-mono-vs" style={{ fontSize: '0.65rem', color: 'var(--text-dim)', background: 'var(--bg-elevated)', padding: '1px 5px' }}>{count}</span>
-        )}
-      </div>
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {children}
-      </div>
-    </div>
-  )
-}
+
+/** Dashboard panels own a fixed slice of a flex column and scroll inside. */
+const PANEL_BODY: React.CSSProperties = { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
 
 // ── Live badge ─────────────────────────────────────────────────────────────────
 
@@ -733,10 +689,12 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const { selectedRound } = useRound()
 
-  const { data: online     = [] } = useQuery({ queryKey: ['online'],                    queryFn: api.online,                                                           refetchInterval: 10_000 })
+  const onlineQ = useQuery({ queryKey: ['online'], queryFn: api.online, refetchInterval: 10_000 })
+  const { data: online     = [] } = onlineQ
   const { data: pilots     = [] } = useQuery({ queryKey: ['leaderboard'],               queryFn: api.leaderboard,                                                      refetchInterval: 60_000 })
   const { data: allPilots  = [] } = useQuery({ queryKey: ['all-pilots'],                queryFn: api.allPilots,                                                        refetchInterval: 120_000 })
-  const { data: objectives = [] } = useQuery({ queryKey: ['objectives', selectedRound], queryFn: () => api.objectives(selectedRound),                                  refetchInterval: 30_000 })
+  const objectivesQ = useQuery({ queryKey: ['objectives', selectedRound], queryFn: () => api.objectives(selectedRound), refetchInterval: 30_000 })
+  const { data: objectives = [] } = objectivesQ
   const { data: fronts = { mid: [], blue: [], red: [] } } = useQuery<Frontlines>({ queryKey: ['frontline', selectedRound], queryFn: () => api.frontline(selectedRound), refetchInterval: 30_000 })
   const { data: kills      = [] } = useQuery({ queryKey: ['kills-dash', selectedRound], queryFn: () => api.kills(selectedRound, campaign.dashboardKillFeedCount + 20), refetchInterval: 15_000 })
   const { data: stats            } = useQuery({ queryKey: ['stats'],                    queryFn: api.stats,                                                            refetchInterval: 60_000 })
@@ -771,6 +729,35 @@ export default function Dashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+
+      {/* A failed poll used to be invisible here: every query defaults to an
+          empty array, so "bfdb is down" and "quiet server" drew the same
+          zeros. Call it out once, above the strip. */}
+      {(objectivesQ.isError || onlineQ.isError) && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+          padding: '6px 14px', background: 'rgba(204,68,68,0.10)',
+          borderBottom: '1px solid rgba(204,68,68,0.35)', color: 'var(--red)',
+          fontFamily: 'var(--font-mono)', fontSize: '0.66rem', letterSpacing: '0.1em',
+        }}>
+          <Alert size={11} />
+          <span style={{ flex: 1, textTransform: 'uppercase' }}>
+            Live data unavailable — the numbers below are stale or empty
+          </span>
+          <button
+            type="button"
+            onClick={() => { objectivesQ.refetch(); onlineQ.refetch() }}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer',
+              background: 'transparent', border: '1px solid rgba(204,68,68,0.4)',
+              color: 'var(--red)', font: 'inherit', padding: '2px 8px', textTransform: 'uppercase',
+            }}
+          >
+            <RefreshCw size={10} />
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* ── KPI strip ── */}
       <div className="kpi-strip">
@@ -848,29 +835,29 @@ export default function Dashboard() {
         }}>
 
           {/* Weather */}
-          <Panel title="WEATHER BRIEF" icon={Wind} iconColor="var(--cyan)" style={{ flexShrink: 0 }}>
+          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="WEATHER BRIEF" icon={Wind} iconColor="var(--cyan)" style={{ flexShrink: 0 }}>
             <WeatherBrief stats={stats} />
-          </Panel>
+          </PanelBase>
 
           {/* Territory */}
-          <Panel title="TERRITORY CONTROL" icon={Activity} iconColor="var(--yellow)" style={{ flexShrink: 0 }}>
+          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="TERRITORY CONTROL" icon={Activity} iconColor="var(--yellow)" style={{ flexShrink: 0 }}>
             <TerritoryBar objectives={objectives} />
-          </Panel>
+          </PanelBase>
 
           {/* Critical assets */}
-          <Panel title="CRITICAL ASSETS" icon={Alert} iconColor="var(--red)"
-            badge={critCount > 0 ? <span className="font-mono-vs" style={{ fontSize: '0.58rem', color: 'var(--red)', background: 'rgba(204,68,68,0.12)', border: '1px solid rgba(204,68,68,0.3)', padding: '1px 6px' }}>{critCount} CRIT</span> : undefined}
+          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="CRITICAL ASSETS" icon={Alert} iconColor="var(--red)"
+            right={critCount > 0 ? <span className="font-mono-vs" style={{ fontSize: '0.58rem', color: 'var(--red)', background: 'rgba(204,68,68,0.12)', border: '1px solid rgba(204,68,68,0.3)', padding: '1px 6px' }}>{critCount} CRIT</span> : undefined}
             style={{ flexShrink: 0 }}>
             <CriticalObjectives objectives={objectives} />
-          </Panel>
+          </PanelBase>
 
           {/* Full objective roster — scrollable */}
-          <Panel title="OBJECTIVE ROSTER" icon={Pin} iconColor="var(--accent)" count={total}
+          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="OBJECTIVE ROSTER" icon={Pin} iconColor="var(--accent)" count={total}
             style={isMobile ? { flex: '0 0 auto', maxHeight: 320 } : { flex: 1 }}>
             <div style={{ overflowY: 'auto', flex: 1 }}>
               <ObjectiveRoster objectives={objectives} />
             </div>
-          </Panel>
+          </PanelBase>
         </div>
 
         {/* ══ RIGHT COLUMN (25%) ══ */}
@@ -880,30 +867,30 @@ export default function Dashboard() {
         }}>
 
           {/* Air picture */}
-          <Panel title="AIR PICTURE" icon={Aircraft} iconColor="var(--accent)"
-            badge={<LiveBadge />}
+          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="AIR PICTURE" icon={Aircraft} iconColor="var(--accent)"
+            right={<LiveBadge />}
             count={inAir}
             style={isMobile ? { flex: '0 0 auto', maxHeight: 220 } : { flex: '0 0 auto', maxHeight: '30%' }}>
             <div style={{ overflowY: 'auto', flex: 1 }}>
               <AirPicture online={online} />
               <GroundRoster online={online} />
             </div>
-          </Panel>
+          </PanelBase>
 
           {/* Top shooters */}
-          <Panel title="TOP SHOOTERS" icon={TrendingUp} iconColor="var(--yellow)" style={{ flexShrink: 0 }}>
+          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="TOP SHOOTERS" icon={TrendingUp} iconColor="var(--yellow)" style={{ flexShrink: 0 }}>
             <TopShooters pilots={pilots} />
-          </Panel>
+          </PanelBase>
 
           {/* Engagement log */}
-          <Panel title="ENGAGEMENT LOG" icon={KillIcon} iconColor="var(--red)"
-            badge={<LiveBadge />}
+          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="ENGAGEMENT LOG" icon={KillIcon} iconColor="var(--red)"
+            right={<LiveBadge />}
             count={kills.length}
             style={isMobile ? { flex: '0 0 auto', maxHeight: 320 } : { flex: 1 }}>
             <div style={{ overflowY: 'auto', flex: 1 }}>
               <EngagementLog kills={kills} nameMap={nameMap} />
             </div>
-          </Panel>
+          </PanelBase>
         </div>
       </div>
     </div>

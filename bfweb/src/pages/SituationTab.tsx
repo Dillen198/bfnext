@@ -18,8 +18,10 @@ import {
   Tacmap,
   type IconComponent,
   Clock,
+  Explosion,
 } from '@icons'
-import type { SituationReport, Task, Hotspot, Urgency } from '../api'
+import type { SituationReport, Task, Hotspot, Urgency, Side } from '../api'
+import Panel from '../components/Panel'
 import BriefingMap from './BriefingMap'
 
 const URGENCY_COLOR = (u: Urgency) =>
@@ -37,37 +39,6 @@ const KIND_ICON: Record<Task['kind'], IconComponent> = {
   csar: Csar,
 }
 
-function Card({
-  title, icon: Icon, count, children, accent,
-}: {
-  title: string
-  icon: IconComponent
-  count?: number | string
-  children: React.ReactNode
-  accent?: string
-}) {
-  return (
-    <div className="vs-card" style={{ overflow: 'hidden', flexShrink: 0 }}>
-      <div
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px',
-          borderBottom: '1px solid var(--border)',
-        }}
-      >
-        <Icon size={13} style={{ color: accent ?? 'var(--accent)' }} />
-        <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-          {title}
-        </span>
-        {count != null && (
-          <span style={{ marginLeft: 'auto', fontSize: '0.64rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-            {count}
-          </span>
-        )}
-      </div>
-      {children}
-    </div>
-  )
-}
 
 const dim: React.CSSProperties = { fontSize: '0.7rem', color: 'var(--text-dim)', padding: '10px 13px' }
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' }
@@ -152,13 +123,29 @@ function TaskRow({
 
 // ── Hotspots ───────────────────────────────────────────────────────────────
 
-function HotspotRow({ h }: { h: Hotspot }) {
+function HotspotRow({ h, side: ourSide }: { h: Hotspot; side: Side }) {
   const color = URGENCY_COLOR(h.risk)
   const side = h.owner === 'Blue' ? '#4a8fd4' : h.owner === 'Red' ? '#cc4444' : '#8a8a6a'
+  // Same two-tier rule the briefing map uses: a running enemy capture timer
+  // is the loud case, plain `threatened` is hostiles in the area.
+  const beingTaken = !!h.capture_progress && h.capture_progress[0] !== ourSide
+  const underAttack = h.threatened || beingTaken
   return (
     <div style={{ padding: '8px 13px', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${color}` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
         <span style={{ width: 7, height: 7, borderRadius: '50%', background: side, flexShrink: 0 }} />
+        {underAttack && (
+          <span
+            className={'vs-underattack' + (beingTaken ? ' vs-underattack-urgent' : '')}
+            title={beingTaken ? 'Under attack - enemy capture in progress' : 'Under attack'}
+            style={{
+              display: 'inline-flex', flexShrink: 0,
+              color: beingTaken ? '#f04747' : '#f0a030',
+            }}
+          >
+            <Explosion size={13} />
+          </span>
+        )}
         <span style={{ fontSize: '0.73rem', fontWeight: 700 }}>{h.objective}</span>
         <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)' }}>{h.kind}</span>
         {h.capture_progress && (
@@ -274,7 +261,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
         </div>
 
         <div style={{ overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, paddingRight: 2 }}>
-          <Card title="Tasking" icon={Objective} count={report.tasking.length}>
+          <Panel title="Tasking" icon={Objective} count={report.tasking.length}>
             {report.tasking.length === 0 ? (
               <div style={dim}>
                 Nothing pressing. Soften an enemy objective before it can be taken, or resupply your own.
@@ -290,21 +277,21 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                 />
               ))
             )}
-          </Card>
+          </Panel>
 
-          <Card title="Hotspots" icon={Alert} count={report.hotspots.length}>
+          <Panel title="Hotspots" icon={Alert} count={report.hotspots.length}>
             {report.hotspots.length === 0 ? (
               <div style={dim}>No objective is in contact or takeable right now.</div>
             ) : (
-              report.hotspots.map((h) => <HotspotRow key={h.objective} h={h} />)
+              report.hotspots.map((h) => <HotspotRow key={h.objective} h={h} side={report.side} />)
             )}
-          </Card>
+          </Panel>
 
-          <Card
+          <Panel
             title="Air Picture"
             icon={Aircraft}
             count={a.radar_blind ? 'BLIND' : `${a.hostile_tracks} hostile`}
-            accent={a.radar_blind ? '#f04747' : undefined}
+            iconColor={a.radar_blind ? '#f04747' : undefined}
           >
             <div style={{ padding: '9px 13px', fontSize: '0.71rem', lineHeight: 1.6 }}>
               {a.radar_blind ? (
@@ -330,9 +317,9 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                 </>
               )}
             </div>
-          </Card>
+          </Panel>
 
-          <Card title="Known Air Defence" icon={Sam} count={report.threats.length} accent="#f04747">
+          <Panel title="Known Air Defence" icon={Sam} count={report.threats.length} iconColor="#f04747">
             {report.threats.length === 0 ? (
               <div style={dim}>
                 Nothing held — no recon, SF, JTAC or ELINT contact on enemy air defence. Every strike you
@@ -353,9 +340,9 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                 </div>
               ))
             )}
-          </Card>
+          </Panel>
 
-          <Card title="Logistics" icon={Logistics} count={`${l.hubs.length} hubs`}>
+          <Panel title="Logistics" icon={Logistics} count={`${l.hubs.length} hubs`}>
             <div style={{ padding: '8px 13px' }}>
               {l.hubs.length === 0 ? (
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>No logistics hub held.</div>
@@ -387,9 +374,9 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                 ))
               )}
             </div>
-          </Card>
+          </Panel>
 
-          <Card title="Comms Card" icon={Comms} count={report.comms.length}>
+          <Panel title="Comms Card" icon={Comms} count={report.comms.length}>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 320 }}>
                 <thead>
@@ -449,9 +436,9 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                 </div>
               </div>
             )}
-          </Card>
+          </Panel>
 
-          <Card title="On Station" icon={Supply} count={report.support.length}>
+          <Panel title="On Station" icon={Supply} count={report.support.length}>
             {report.support.length === 0 ? (
               <div style={dim}>No AWACS, tanker or JTAC up for your coalition.</div>
             ) : (
@@ -468,9 +455,9 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                 </div>
               ))
             )}
-          </Card>
+          </Panel>
 
-          <Card title="Last Hour" icon={Clock} count={report.recent.length}>
+          <Panel title="Last Hour" icon={Clock} count={report.recent.length}>
             {report.recent.length === 0 ? (
               <div style={dim}>Nothing has changed hands or taken damage recently.</div>
             ) : (
@@ -489,7 +476,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
                 </div>
               ))
             )}
-          </Card>
+          </Panel>
 
           <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', padding: '0 2px 4px', display: 'flex', gap: 5, alignItems: 'center' }}>
             <Tacmap size={10} />

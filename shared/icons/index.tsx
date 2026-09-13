@@ -794,3 +794,21 @@ export const Rocket = createIcon('Rocket', <>
   <path d="M10 15.5 8 20l2.5-1.2M14 15.5 16 20l-2.5-1.2" />
   <path d="M12 9.5h.01" />
 </>)
+
+/** LOCK -- a gated nav entry the viewer has not unlocked yet. */
+export const Lock = createIcon('Lock', <>
+  <path d="M4.5 10.5h15v10h-15z" />
+  <path d="M8 10.5v-3a4 4 0 0 1 8 0v3" />
+  <path d="M12 14.5v2.5" />
+</>)
+
+/** EXPLOSION -- an objective taking fire right now. A filled burst rather
+ *  than an outline: at marker size (10-12px) an outlined star reads as
+ *  noise, and this needs to be legible on top of a map tile. */
+export const Explosion = createIcon('Explosion', <>
+  <path
+    d="M12 1.8 14.1 6l4.2-1.6-1.2 4.3 4.6.9-3.4 3 3.4 3-4.6.9 1.2 4.3L14.1 18 12 22.2 9.9 18l-4.2 1.6 1.2-4.3-4.6-.9 3.4-3-3.4-3 4.6-.9-1.2-4.3L9.9 6z"
+    fill="currentColor"
+    stroke="none"
+  />
+</>)

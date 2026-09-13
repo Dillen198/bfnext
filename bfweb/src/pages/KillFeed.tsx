@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import QueryState from '../components/QueryState'
 import { api } from '../api'
 import SideBadge from '../components/SideBadge'
 import PageHeader from '../components/PageHeader'
@@ -75,7 +76,7 @@ function classifyTarget(targetType: string | null): { label: string; color: stri
 
 export default function KillFeed() {
   const { selectedRound } = useRound()
-  const { data: kills = [], isLoading, dataUpdatedAt } = useQuery({
+  const { data: kills = [], isLoading, isError, error, refetch, dataUpdatedAt } = useQuery({
     queryKey: ['kills-feed', selectedRound],
     queryFn: () => api.kills(selectedRound, 200),
     refetchInterval: 15_000,
@@ -247,12 +248,12 @@ export default function KillFeed() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading && (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: '#374151', fontSize: '0.75rem' }}>Loading…</td></tr>
-                )}
-                {kills.length === 0 && !isLoading && (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: '#374151', fontSize: '0.75rem' }}>No kills recorded yet</td></tr>
-                )}
+                <QueryState
+                  colSpan={7} what="kills" isLoading={isLoading}
+                  isError={isError} error={error} onRetry={refetch}
+                  isEmpty={kills.length === 0}
+                  emptyText="No kills recorded yet"
+                />
                 {sortedKills.map((k, i) => {
                   const killerName = k.killer?.ucid ? (nameMap.get(k.killer.ucid) ?? null) : null
                   const victimName = k.victim.ucid ? (nameMap.get(k.victim.ucid) ?? null) : null

@@ -1,4 +1,6 @@
+import { useQuery } from '@tanstack/react-query'
 import PageHeader from '../components/PageHeader'
+import { api } from '../api'
 import { campaign } from '../config/campaign'
 import {
   Info,
@@ -16,6 +18,16 @@ const ROLE_COLORS: Record<string, string> = {
 }
 
 export default function AboutPage() {
+  // The campaign version in config is hand-maintained; this is what the
+  // running bfdb was actually built from, so the two disagreeing is itself
+  // useful information.
+  const { data: build } = useQuery({
+    queryKey: ['version'],
+    queryFn: api.version,
+    staleTime: 10 * 60_000,
+    retry: false,
+  })
+
   return (
     <div className="flex-1 overflow-y-auto">
       <PageHeader
@@ -103,7 +115,17 @@ export default function AboutPage() {
           <div className="vs-card p-5 space-y-3">
             <div className="grid grid-cols-2 gap-4" style={{ fontSize: '0.78rem' }}>
               <InfoRow label="Campaign">{campaign.name}</InfoRow>
-              <InfoRow label="Version">{campaign.version}</InfoRow>
+              <InfoRow label="Campaign version">{campaign.version}</InfoRow>
+              <InfoRow label="Server build">
+                {build ? (
+                  <span className="font-mono-vs" style={{ fontSize: '0.72rem' }} title={`built ${build.built}`}>
+                    <span style={{ color: 'var(--accent)' }}>{build.git}</span>
+                    <span style={{ color: 'var(--text-dim)' }}> · {build.version}</span>
+                  </span>
+                ) : (
+                  <span style={{ color: 'var(--text-dim)' }}>—</span>
+                )}
+              </InfoRow>
               <InfoRow label="Server">{campaign.server}</InfoRow>
               {campaign.serverIp && (
                 <InfoRow label="Server IP">

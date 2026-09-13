@@ -1,4 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
+import QueryState from '../components/QueryState'
+import { AirframeUsage, PointsEconomy } from '../components/CampaignStats'
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, type Pilot } from '../api'
@@ -80,7 +82,7 @@ const TABS: { key: SortKey; label: string; color: string; icon: IconComponent }[
 
 export default function Leaderboard() {
   const navigate = useNavigate()
-  const { data: pilots = [], isLoading } = useQuery({
+  const { data: pilots = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['leaderboard'],
     queryFn: api.leaderboard,
     refetchInterval: 30_000,
@@ -265,9 +267,10 @@ export default function Leaderboard() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading && (
-                  <tr><td colSpan={COLS.length + 2} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>Loading…</td></tr>
-                )}
+                <QueryState
+                  colSpan={COLS.length + 2} what="pilots" isLoading={isLoading}
+                  isError={isError} error={error} onRetry={refetch}
+                />
                 {sorted.map((p, i) => {
                   const rank      = rankFor(computeScore(p), p.side)
                   const RankIcon  = rank.icon
@@ -328,11 +331,29 @@ export default function Leaderboard() {
                     </tr>
                   )
                 })}
-                {!isLoading && sorted.length === 0 && (
-                  <tr><td colSpan={COLS.length + 2} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No pilots found</td></tr>
-                )}
+                <QueryState
+                  colSpan={COLS.length + 2} what="pilots" isLoading={false}
+                  isEmpty={!isLoading && !isError && sorted.length === 0}
+                  emptyText={search.trim()
+                    ? `No pilots match "${search.trim()}"`
+                    : 'No pilots on the leaderboard yet'}
+                />
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* Campaign-wide readouts bfdb has always served and nothing showed:
+            which airframes are actually being flown, and where the points
+            economy sits per side. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start" style={{ marginTop: 16 }}>
+          <div className="vs-card">
+            <div className="lb-card-head">Airframe usage</div>
+            <AirframeUsage />
+          </div>
+          <div className="vs-card">
+            <div className="lb-card-head">Points economy</div>
+            <PointsEconomy />
           </div>
         </div>
 

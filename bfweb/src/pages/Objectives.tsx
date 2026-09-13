@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import QueryState from '../components/QueryState'
 import { useState, useMemo } from 'react'
 import { api, type NavaidEntry } from '../api'
 import HealthBar from '../components/HealthBar'
@@ -6,7 +7,9 @@ import SideBadge from '../components/SideBadge'
 import PageHeader from '../components/PageHeader'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts'
 import { useRound } from '../context/RoundContext'
-import { Objective, Alert, Shield, Pin } from '@icons'
+import { Objective, Alert, Shield, Pin, Capture } from '@icons'
+import CaptureTimeline from '../components/CaptureTimeline'
+import Panel from '../components/Panel'
 
 const TT = {
   contentStyle: { background: 'var(--bg-elevated)', border: '1px solid var(--border-light)', borderRadius: 4, color: 'var(--text)', fontSize: 12 },
@@ -69,32 +72,10 @@ const COLUMN_HELP: Partial<Record<string, string>> = {
   Fuel: '% fill of the warehouse\'s fuel stock -- a resource level, not defender health.',
 }
 
-function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <div className={`vs-card ${className}`}>{children}</div>
-}
-const ICON_COLOR: Record<string, string> = {
-  'text-blue-400': '#60a5fa',
-  'text-green-400': '#4ade80',
-  'text-cyan-400': '#22d3ee',
-  'text-amber-400': '#fbbf24',
-}
-function CardHeader({ title, icon: Icon, color = 'text-slate-400', right }: {
-  title: string; icon: React.ElementType; color?: string; right?: React.ReactNode
-}) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px 12px', borderBottom: '1px solid var(--border)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Icon size={13} style={{ color: ICON_COLOR[color] ?? 'var(--text-dim)' }} />
-        <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>{title}</span>
-      </div>
-      {right}
-    </div>
-  )
-}
 
 export default function Objectives() {
   const { selectedRound } = useRound()
-  const { data: objectives = [], isLoading } = useQuery({
+  const { data: objectives = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['objectives', selectedRound],
     queryFn: () => api.objectives(selectedRound),
     refetchInterval: 30_000,
@@ -120,6 +101,14 @@ export default function Objectives() {
     }
     return m
   }, [blueBrief, redBrief])
+
+  // The round's capture history. Cheap (a bounded sled scan, no engine RPC),
+  // so it can follow the round selector rather than being pinned to live.
+  const { data: captureEvents = [] } = useQuery({
+    queryKey: ['capture-events', selectedRound],
+    queryFn: () => api.captureEvents(selectedRound, 200),
+    refetchInterval: 60_000,
+  })
 
   const [filter, setFilter] = useState<Filter>('All')
   const [search, setSearch] = useState('')
@@ -252,13 +241,12 @@ export default function Objectives() {
 
         {/* ── Critical alerts ── */}
         {criticalObjs.length > 0 && (
-          <Card>
-            <CardHeader
-              title="Critical Objectives"
-              icon={Alert}
-              color="text-amber-400"
-              right={<span style={{ fontSize: '0.6rem', color: '#f59e0b', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}>{criticalObjs.length} CRITICAL</span>}
-            />
+          <Panel
+            title="Critical Objectives"
+            icon={Alert}
+            iconColor="#fbbf24"
+            right={<span style={{ fontSize: '0.6rem', color: '#f59e0b', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}>{criticalObjs.length} CRITICAL</span>}
+          >
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
               {criticalObjs.map(obj => (
                 <div key={obj.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
@@ -280,14 +268,13 @@ export default function Objectives() {
                 </div>
               ))}
             </div>
-          </Card>
+          </Panel>
         )}
 
         {/* ── Charts row ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
           {/* Ownership bars */}
-          <Card>
-            <CardHeader title="Ownership" icon={Shield} color="text-blue-400" />
+          <Panel title="Ownership" icon={Shield} iconColor="#60a5fa">
             <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
               {([['Blue', counts.Blue, '#3b82f6'], ['Red', counts.Red, '#ef4444'], ['Neutral', counts.Neutral, '#4a5568']] as const).map(([side, count, color]) => {
                 const pct = total > 0 ? count / total * 100 : 0
@@ -304,11 +291,10 @@ export default function Objectives() {
                 )
               })}
             </div>
-          </Card>
+          </Panel>
 
           {/* Health distribution */}
-          <Card>
-            <CardHeader title="Health Distribution" icon={Objective} color="text-green-400" />
+          <Panel title="Health Distribution" icon={Objective} iconColor="#4ade80">
             <div className="p-5">
               <ResponsiveContainer width="100%" height={100}>
                 <BarChart data={healthBuckets} margin={{ left: -10, right: 4 }}>
@@ -321,11 +307,10 @@ export default function Objectives() {
                 </BarChart>
               </ResponsiveContainer>
             </div>
-          </Card>
+          </Panel>
 
           {/* Objective type breakdown */}
-          <Card>
-            <CardHeader title="Types" icon={Pin} color="text-cyan-400" />
+          <Panel title="Types" icon={Pin} iconColor="#22d3ee">
             <div className="p-5">
               {kindData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={100}>
@@ -348,8 +333,15 @@ export default function Objectives() {
                 ))}
               </div>
             </div>
-          </Card>
+          </Panel>
         </div>
+
+        {/* Capture timeline -- full width. It carries a chart AND a scrolling
+            event list, so squeezed into a third of the row it was twice the
+            height of its neighbours and stretched the whole grid. */}
+        <Panel title="Capture Timeline" icon={Capture} iconColor="#fbbf24">
+          <CaptureTimeline events={captureEvents} />
+        </Panel>
 
         {/* ── Controls ── */}
         <div className="flex items-center gap-2 flex-wrap">
@@ -411,9 +403,10 @@ export default function Objectives() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading && (
-                  <tr><td colSpan={9} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>Loading…</td></tr>
-                )}
+                <QueryState
+                  colSpan={9} what="objectives" isLoading={isLoading}
+                  isError={isError} error={error} onRetry={refetch}
+                />
                 {filtered.map(obj => {
                   const isCrit = obj.health < 40
                   return (
@@ -440,9 +433,13 @@ export default function Objectives() {
                     </tr>
                   )
                 })}
-                {!isLoading && filtered.length === 0 && (
-                  <tr><td colSpan={9} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No objectives match</td></tr>
-                )}
+                <QueryState
+                  colSpan={9} what="objectives" isLoading={false}
+                  isEmpty={!isLoading && !isError && filtered.length === 0}
+                  emptyText={objectives.length === 0
+                    ? 'No objectives in this round'
+                    : 'No objectives match the current filter'}
+                />
               </tbody>
             </table>
           </div>

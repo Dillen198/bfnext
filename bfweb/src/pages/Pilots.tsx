@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import QueryState from '../components/QueryState'
+import { kd, sl, fmtHours, fmtDuration } from '../lib/format'
 import { useSearchParams } from 'react-router-dom'
 import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill, type PilotDeploy } from '../api'
 import PageHeader from '../components/PageHeader'
@@ -22,30 +24,6 @@ import {
 } from '@icons'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function kd(air: number, ground: number, deaths: number): string {
-  const k = air + ground
-  return deaths > 0 ? (k / deaths).toFixed(2) : k > 0 ? '∞' : '0.00'
-}
-
-function sl(sorties: number, landings: number): string {
-  return sorties > 0 ? (landings / sorties).toFixed(2) : '—'
-}
-
-function fmtHours(h: number): string {
-  const total = Math.round(h * 60)
-  const hh = Math.floor(total / 60)
-  const mm = total % 60
-  return `${hh}h ${mm.toString().padStart(2, '0')}m`
-}
-
-function fmtDuration(secs: number): string {
-  if (secs <= 0) return '—'
-  const h = Math.floor(secs / 3600)
-  const m = Math.floor((secs % 3600) / 60)
-  if (h > 0) return `${h}h ${m}m`
-  return `${m}m`
-}
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -509,7 +487,7 @@ export default function Pilots() {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
-  const { data: pilots = [], isLoading } = useQuery({
+  const { data: pilots = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['leaderboard'],
     queryFn: api.leaderboard,
     refetchInterval: 60_000,
@@ -654,7 +632,11 @@ export default function Pilots() {
           </div>
         )}
 
-        {!pilot && !isLoading && (
+        {isError && (
+          <QueryState what="the pilot roster" isLoading={false} isError error={error} onRetry={refetch} />
+        )}
+
+        {!pilot && !isLoading && !isError && (
           <div className="flex flex-col items-center justify-center py-20 gap-3" style={{ color: 'var(--text-dim)' }}>
             <PilotIcon size={40} style={{ opacity: 0.15 }} />
             <div style={{ fontSize: '0.72rem', letterSpacing: '0.16em', textTransform: 'uppercase' }}>Search for a pilot above</div>

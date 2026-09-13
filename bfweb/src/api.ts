@@ -679,6 +679,54 @@ export interface CarpSolution {
   sfc_temp_c: number
 }
 
+/** bfdb's own build identity, compiled in by its build.rs. Useful for
+ *  answering "did the binary I just staged actually get deployed?" without
+ *  shelling into the box. */
+export interface BuildInfo {
+  version: string
+  git:     string
+  built:   string
+}
+
+/** One objective changing hands, with the pilots bfdb credited for it.
+ *  Distinct from /api/captures, which is only a per-objective running total
+ *  with no timeline and no attribution. */
+export interface CaptureEvent {
+  time: string
+  objective: string
+  side: Side
+  /** Display names, falling back to the raw ucid when unknown. */
+  by: string[]
+  by_ucid: string[]
+}
+
+/** A cfg artillery range override that no longer agrees with the unit data
+ *  bflib harvested from DCS -- either the type vanished from `_G.db.Units`
+ *  or its ranges moved under it. Silent drift until someone looks. */
+export interface StaleOverride {
+  typ: string
+  cfg_max_range_m: number
+  cfg_min_range_m: number
+  dcs_max_range_m: number | null
+  dcs_min_range_m: number | null
+}
+
+/** Live health of bfdb AND the DCS server behind it. `ok` means the engine
+ *  actually answered an RPC -- an active round alone proves nothing, since
+ *  the round row outlives the server dying. */
+export interface Health {
+  ok: boolean
+  bfdb: string
+  instance: string
+  engine: {
+    reachable: boolean
+    latency_ms: number | null
+    error: string | null
+  }
+  active_round: { id: number; start: string } | null
+  build: BuildInfo
+}
+
 export interface AuthUser {
   discord_id: string
   username:   string
@@ -1039,10 +1087,22 @@ export const api = {
   pilotKills: (ucid: string) => get<PilotKill[]>(`/pilot/${ucid}/kills`),
   pilotDeploys: (ucid: string) => get<PilotDeploy[]>(`/pilot/${ucid}/deploys`),
   stats: () => get<Stats>('/stats'),
+  /** Build identity of the bfdb serving this dashboard. Not instance-scoped. */
+  version: () => get<BuildInfo>('/version'),
+  /** Probes the engine, so it is slower than most calls -- poll it, do not
+   *  put it on a hot path. */
+  health: () => get<Health>('/health'),
+  /** Capture timeline for a round (default: the active one), newest first. */
+  captureEvents: (round?: number, limit = 200) =>
+    get<CaptureEvent[]>(
+      '/capture-events?limit=' + limit + (round != null ? '&round=' + round : ''),
+    ),
   online: () => get<OnlinePilot[]>('/online'),
   points: () => get<PilotPoints[]>('/points'),
   captures: () => get<CaptureCount[]>('/captures'),
   aircraftUsage: () => get<AircraftUsage[]>('/aircraft-usage'),
+  /** cfg range overrides that disagree with the harvested DCS unit db. */
+  unitdbStale: () => get<StaleOverride[]>('/unitdb/stale-overrides'),
   srs:   () => get<SrsStatus>('/srs'),
   units: () => get<MapUnit[]>('/units'),
   trails: () => get<TrailPoint[]>('/trails'),
@@ -1077,10 +1137,6 @@ export const api = {
     cfg:         () => get<Record<string, unknown>>('/admin/cfg'),
     cfgSchema:   () => get<JsonSchema>('/admin/cfg/schema'),
     cfgSave:     (cfg: Record<string, unknown>) => post<{ ok: boolean }>('/admin/cfg', { cfg }),
-  },
-  commander: {
-    spawnLogistics: (airbase: string, itemType: string) =>
-      post<{ ok: boolean }>('/commander/spawn', { airbase, type: itemType }),
   },
   cockpit: {
     // playerId comes from bfcockpit/Scripts/Hooks/bfcockpit.lua's net.get_my_player_id(),

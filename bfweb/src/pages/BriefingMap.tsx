@@ -2,8 +2,9 @@ import { useMemo } from 'react'
 import Map, { Layer, Marker, Source } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useQuery } from '@tanstack/react-query'
-import { api, type Frontlines, type SituationReport, type Task } from '../api'
+import { api, type Frontlines, type Hotspot, type SituationReport, type Task } from '../api'
 import { useTheme } from '../context/ThemeContext'
+import { Explosion } from '@icons'
 
 // Inline raster style off the Esri canvas tiles — a hosted vector style is
 // blocked by the dashboard's prod CSP and renders black. Same style the tactical
@@ -85,6 +86,18 @@ export default function BriefingMap({ report, selectedTaskId, onSelectTask }: Pr
     () => report.map.filter((o) => o.lat !== 0 || o.lon !== 0),
     [report.map],
   )
+
+  // report.map carries a bare `threatened` flag; the matching hotspot record
+  // is the one that knows *how* bad it is (an enemy capture timer actually
+  // running vs. hostiles merely nearby). Join them by name so the marker can
+  // show the difference.
+  // NB: a plain record, not a Map -- `Map` is the react-map-gl component in
+  // this file's scope.
+  const hotspotByName = useMemo(() => {
+    const m: Record<string, Hotspot | undefined> = {}
+    for (const h of report.hotspots) m[h.objective] = h
+    return m
+  }, [report.hotspots])
 
   // Centre on the campaign, not on the world.
   const initialViewState = useMemo(() => {
@@ -192,12 +205,35 @@ export default function BriefingMap({ report, selectedTaskId, onSelectTask }: Pr
       {/* ── Objectives ──────────────────────────────────────────── */}
       {positioned.map((o) => {
         const r = o.primary ? 9 : 6
+        const hot = hotspotByName[o.name]
+        // An enemy capture timer already running is the loudest case;
+        // `threatened` on its own only means hostiles in the area. Only the
+        // first gets the fast red burst, so the alarm keeps its meaning.
+        const beingTaken = !!hot?.capture_progress && hot.capture_progress[0] !== report.side
+        const underAttack = o.threatened || beingTaken
         return (
           <Marker key={`obj-${o.name}`} latitude={o.lat} longitude={o.lon}>
+            <div style={{ position: 'relative', width: r * 2, height: r * 2 }}>
+            {underAttack && (
+              <span
+                className={'vs-underattack' + (beingTaken ? ' vs-underattack-urgent' : '')}
+                style={{
+                  // Sit the burst off the objective's shoulder rather than on
+                  // top of it -- the dot's own fill still has to read.
+                  position: 'absolute', left: '50%', bottom: '100%',
+                  transform: 'translate(-40%, 30%)',
+                  color: beingTaken ? '#f04747' : '#f0a030',
+                  display: 'inline-flex', pointerEvents: 'none',
+                  filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.85))',
+                }}
+              >
+                <Explosion size={beingTaken ? 15 : 12} />
+              </span>
+            )}
             <div
               title={`${o.name} — ${o.kind}, ${o.owner}\nhealth ${o.health}% logi ${o.logi}%${
                 o.supply != null ? ` supply ${o.supply}%` : ''
-              }${o.captureable ? '\nCAPTURABLE NOW' : ''}${o.threatened ? '\nunder threat' : ''}`}
+              }${o.captureable ? '\nCAPTURABLE NOW' : ''}${beingTaken ? '\nUNDER ATTACK - enemy capture in progress' : o.threatened ? '\nUNDER ATTACK' : ''}`}
               style={{
                 width: r * 2,
                 height: r * 2,
@@ -215,6 +251,7 @@ export default function BriefingMap({ report, selectedTaskId, onSelectTask }: Pr
                 cursor: 'default',
               }}
             />
+            </div>
           </Marker>
         )
       })}

@@ -165,6 +165,12 @@ export default function BriefingPage() {
               <div className="vs-card" style={{ padding: 20, color: '#f87171' }}>
                 Situation unavailable — the engine may be unreachable, no round is active, or the running
                 bflib.dll predates this feature. The Kneeboard tab still works.
+                {/* The guesses above are usually right, but not always -- a
+                    coalition/auth rejection looks identical from here. Show
+                    what bfdb actually said. */}
+                <div style={{ marginTop: 8, fontSize: '0.68rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                  {sitError instanceof Error ? sitError.message : String(sitError)}
+                </div>
               </div>
             )}
             {situation && <SituationTab report={situation} />}
@@ -179,6 +185,9 @@ export default function BriefingPage() {
             {briefError && (
               <div className="vs-card" style={{ padding: 20, color: '#f87171' }}>
                 Kneeboard unavailable — the engine may be unreachable or no round is active.
+                <div style={{ marginTop: 8, fontSize: '0.68rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                  {briefError instanceof Error ? briefError.message : String(briefError)}
+                </div>
               </div>
             )}
             {briefing && <KneeboardTab briefing={briefing} />}

@@ -489,6 +489,69 @@ function EngineLogAnalyzer() {
 
 // ── engine error feed (persisted server-side, survives the tab being closed) ──
 
+/**
+ * cfg artillery range overrides that no longer match the unit data bflib
+ * harvests from DCS. After a DCS patch moves a unit's range -- or renames it
+ * out of existence -- the override silently keeps applying the old number,
+ * and nothing anywhere said so. Renders nothing when everything agrees.
+ */
+function StaleOverridePanel() {
+  const { data = [], isError } = useQuery({
+    queryKey: ['unitdb', 'stale'],
+    queryFn: api.unitdbStale,
+    refetchInterval: 300_000,
+    retry: false,
+  })
+  if (isError || data.length === 0) return null
+
+  const m = (v: number | null | undefined) =>
+    v == null ? 'gone' : `${(v / 1000).toFixed(1)}km`
+
+  return (
+    <div className="vs-card" style={{ marginBottom: 16 }}>
+      <CardHeader
+        icon={<Alert size={13} style={{ color: 'var(--yellow)' }} />}
+        label="Stale range overrides"
+        badge={
+          <span className="font-mono-vs" style={{
+            fontSize: '0.6rem', color: 'var(--yellow)', border: '1px solid var(--border)', padding: '1px 6px',
+          }}>{data.length}</span>
+        }
+      />
+      <div style={{ padding: '10px 16px 14px' }}>
+        <div style={{ fontSize: '0.66rem', color: 'var(--text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
+          These cfg overrides disagree with the unit data harvested from DCS —
+          usually a patch moved the range, or the type no longer exists.
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.66rem' }}>
+            <thead>
+              <tr style={{ color: 'var(--text-dim)', textAlign: 'left' }}>
+                <th style={{ padding: '3px 8px 3px 0' }}>Unit type</th>
+                <th style={{ padding: '3px 8px' }}>cfg min→max</th>
+                <th style={{ padding: '3px 8px' }}>DCS min→max</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map(o => (
+                <tr key={o.typ} style={{ borderTop: '1px solid var(--border)' }}>
+                  <td style={{ padding: '4px 8px 4px 0', color: 'var(--text)' }}>{o.typ}</td>
+                  <td className="font-mono-vs" style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>
+                    {m(o.cfg_min_range_m)} → {m(o.cfg_max_range_m)}
+                  </td>
+                  <td className="font-mono-vs" style={{ padding: '4px 8px', color: 'var(--yellow)' }}>
+                    {m(o.dcs_min_range_m)} → {m(o.dcs_max_range_m)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function EngineErrorFeed({ lines }: { lines: string[] }) {
   const parsed = lines.map(parseEngineLine).reverse() // newest first
 
@@ -1053,6 +1116,9 @@ export default function AdminPage() {
             <PerfPanel title="" icon={null} rows={perf?.api} time={perf?.time} available={perf?.available} />
           )}
         </div>
+
+        {/* ── cfg overrides that drifted from the DCS unit db ── */}
+        <StaleOverridePanel />
 
         {/* ── Engine error/warning feed (persisted server-side) ── */}
         <EngineErrorFeed lines={engineErrors} />
