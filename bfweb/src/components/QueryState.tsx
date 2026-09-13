@@ -44,6 +44,15 @@ function describe(error: unknown): { headline: string; detail: string | null } {
   if (/^HTTP 40[13]/.test(msg)) {
     return { headline: 'Not authorised', detail: 'Sign in, or this data is locked to another coalition.' }
   }
+  // An unknown /api path falls through to the SPA's index.html, so the fetch
+  // succeeds and JSON.parse chokes on "<!doctype". That is not a parse bug --
+  // it means this dashboard is newer than the bfdb serving it.
+  if (/Unexpected token '<'|not valid JSON|JSON\.parse|Unexpected end of JSON/i.test(msg)) {
+    return {
+      headline: 'Not available on this server',
+      detail: 'The running bfdb does not have this endpoint yet — it likely predates the feature.',
+    }
+  }
   // A timed-out engine RPC comes back as bfdb's own message, which is
   // already written for a human -- show it as-is.
   return { headline: 'Could not load', detail: msg || null }

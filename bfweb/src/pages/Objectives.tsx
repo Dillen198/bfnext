@@ -10,6 +10,7 @@ import { useRound } from '../context/RoundContext'
 import { Objective, Alert, Shield, Pin, Capture } from '@icons'
 import CaptureTimeline from '../components/CaptureTimeline'
 import Panel from '../components/Panel'
+import ObjectiveDrawer from '../components/ObjectiveDrawer'
 
 const TT = {
   contentStyle: { background: 'var(--bg-elevated)', border: '1px solid var(--border-light)', borderRadius: 4, color: 'var(--text)', fontSize: 12 },
@@ -109,6 +110,10 @@ export default function Objectives() {
     queryFn: () => api.captureEvents(selectedRound, 200),
     refetchInterval: 60_000,
   })
+
+  // Clicking a row opens the detail drawer. Kept in the URL so a specific
+  // objective can be linked to, same as the round selector.
+  const [drawer, setDrawer] = useState<string | null>(null)
 
   const [filter, setFilter] = useState<Filter>('All')
   const [search, setSearch] = useState('')
@@ -410,7 +415,12 @@ export default function Objectives() {
                 {filtered.map(obj => {
                   const isCrit = obj.health < 40
                   return (
-                    <tr key={obj.id} className="kill-row" style={{ borderBottom: '1px solid var(--border)', background: isCrit ? 'rgba(239,68,68,0.02)' : 'transparent' }}>
+                    <tr
+                      key={obj.id}
+                      className="kill-row"
+                      onClick={() => setDrawer(obj.name)}
+                      style={{ borderBottom: '1px solid var(--border)', background: isCrit ? 'rgba(239,68,68,0.02)' : 'transparent', cursor: 'pointer' }}
+                    >
                       <td style={{ padding: '9px 14px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span style={{ color: KIND_COLORS[obj.kind] ?? 'var(--text-dim)' }}>{KIND_ICONS[obj.kind] ?? '■'}</span>
@@ -445,6 +455,12 @@ export default function Objectives() {
           </div>
         </div>
       </div>
+
+      <ObjectiveDrawer
+        objective={drawer}
+        onClose={() => setDrawer(null)}
+        onOpen={setDrawer}
+      />
     </div>
   )
 }

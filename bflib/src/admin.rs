@@ -27,7 +27,7 @@ use bfprotocols::{
     api::{
         ArtilleryEntry, Briefing, CampaignState, DeployableEntry, GroupInfo, LogisticsInfo,
         NavaidEntry, ObjectiveDetails, ObjectiveInfo, PlayerInfo, RadioEntry, ThreatEntry,
-        UnitInfo, WarehouseInfo,
+        InventoryInfo, SupplyLink, UnitInfo, WarehouseInfo, WarehouseVisibility,
     },
     cfg::{ActionKind, AwacsCfg, Cfg, DeployableKind, Rule, UnitTag},
     db::{group::GroupId, objective::ObjectiveId},
@@ -191,7 +191,11 @@ pub enum AdminCommand {
         group: GroupId,
     },
     QueryWarehouse {
+        /// Objective id, or its exact name.
         objective: String,
+        /// Coalition asking. `None` is an unscoped/admin query and sees
+        /// everything; anything else only sees its own objectives in full.
+        side: Option<Side>,
     },
     QueryLogistics,
     QueryCampaignState,
@@ -1305,8 +1309,78 @@ pub(crate) fn query_units(ctx: &Context, group_id: &GroupId) -> Result<Vec<UnitI
     Ok(units)
 }
 
-pub(crate) fn query_warehouse(ctx: &Context, objective_name: &str) -> Result<WarehouseInfo> {
-    let oid = get_airbase(&ctx.db, objective_name)?;
+/// Resolve an objective by id, then by EXACT name.
+///
+/// Deliberately not `get_airbase`, which falls back to compiling the caller's
+/// string as a regex: fine for an admin typing a prefix in chat, wrong for a
+/// UI passing a name through, where "FOB Alpha (1)" is a regex error and an
+/// ambiguous prefix silently picks the wrong base.
+pub(crate) fn resolve_objective(db: &Db, key: &str) -> Result<ObjectiveId> {
+    if let Ok(id) = key.parse::<ObjectiveId>() {
+        if db.persisted.objectives.get(&id).is_some() {
+            return Ok(id);
+        }
+    }
+    for (oid, obj) in db.objectives() {
+        if obj.name.as_str() == key {
+            return Ok(*oid);
+        }
+    }
+    bail!("no objective with id or exact name {key}")
+}
+
+/// Newest recon contact this side holds within `radius` of a point, if any.
+/// This is what makes an enemy warehouse readout honest: it is dated by when
+/// somebody actually looked, not by when the query ran.
+fn newest_intel_near(
+    ctx: &Context,
+    side: Side,
+    pos: Vector2,
+    radius: f64,
+) -> Option<DateTime<Utc>> {
+    let r2 = radius * radius;
+    ctx.db
+        .ephemeral
+        .intel_db
+        .contacts_for(side)
+        .filter(|c| {
+            let dx = c.pos.x - pos.x;
+            let dy = c.pos.y - pos.y;
+            dx * dx + dy * dy <= r2
+        })
+        .map(|c| c.detected_at)
+        .max()
+}
+
+/// Build a supply-line neighbour entry, flagging a leg an enemy objective is
+/// physically sitting on.
+fn supply_link(ctx: &Context, from: Vector2, side: Side, oid: ObjectiveId) -> Option<SupplyLink> {
+    let obj = ctx.db.persisted.objectives.get(&oid)?;
+    Some(SupplyLink {
+        id: oid,
+        name: obj.name.to_string(),
+        owner: format!("{:?}", obj.owner()),
+        interdicted: crate::db::logistics::route_is_interdicted(
+            &ctx.db.persisted,
+            side,
+            from,
+            obj.pos(),
+        ),
+    })
+}
+
+/// Warehouse state for one objective, scoped to what `for_side` may see.
+///
+/// Pass `for_side: None` for an unscoped/admin query. Anything else gets full
+/// detail only for its own objectives; enemy objectives collapse to whatever
+/// its intel database already knows, with an age stamp, so this cannot be
+/// used to read the other coalition's logistics for free.
+pub(crate) fn query_warehouse(
+    ctx: &Context,
+    key: &str,
+    for_side: Option<Side>,
+) -> Result<WarehouseInfo> {
+    let oid = resolve_objective(&ctx.db, key)?;
     let obj = ctx
         .db
         .persisted
@@ -1314,21 +1388,68 @@ pub(crate) fn query_warehouse(ctx: &Context, objective_name: &str) -> Result<War
         .get(&oid)
         .ok_or_else(|| anyhow!("no such objective {oid}"))?;
 
-    let mut equipment = HashMap::new();
-    for (item, inv) in obj.warehouse().equipment() {
-        equipment.insert(item.to_string(), inv.stored);
-    }
+    let own = for_side.map_or(true, |s| s == obj.owner());
+    let pos = obj.pos();
+    let intel_as_of = if own {
+        None
+    } else {
+        for_side.and_then(|s| newest_intel_near(ctx, s, pos, obj.radius().max(8000.0)))
+    };
+    let visibility = if own {
+        WarehouseVisibility::Full
+    } else if intel_as_of.is_some() {
+        WarehouseVisibility::Intel
+    } else {
+        WarehouseVisibility::Hidden
+    };
 
+    let mut equipment = HashMap::new();
     let mut liquids = HashMap::new();
-    for (liquid_type, inv) in obj.warehouse().liquids() {
-        liquids.insert(format!("{:?}", liquid_type), inv.stored);
+    let mut supplier = None;
+    let mut destinations = vec![];
+
+    // Stock lines and topology are the parts worth flying a recon sortie for,
+    // so they are withheld unless this is the asking side's own objective.
+    if visibility == WarehouseVisibility::Full {
+        for (item, inv) in obj.warehouse().equipment() {
+            equipment.insert(
+                item.to_string(),
+                InventoryInfo { stored: inv.stored, capacity: inv.capacity },
+            );
+        }
+        for (liquid_type, inv) in obj.warehouse().liquids() {
+            liquids.insert(
+                format!("{:?}", liquid_type),
+                InventoryInfo { stored: inv.stored, capacity: inv.capacity },
+            );
+        }
+        supplier = obj
+            .warehouse()
+            .supplier()
+            .and_then(|id| supply_link(ctx, pos, obj.owner(), id));
+        destinations = obj
+            .warehouse()
+            .destinations()
+            .filter_map(|id| supply_link(ctx, pos, obj.owner(), id))
+            .collect();
     }
 
     Ok(WarehouseInfo {
         objective_id: oid,
         objective_name: obj.name.to_string(),
+        kind: format!("{:?}", obj.kind()),
+        owner: format!("{:?}", obj.owner),
+        visibility,
+        intel_as_of,
+        health: obj.health(),
+        logi: obj.logi(),
+        supply: (visibility == WarehouseVisibility::Full).then(|| obj.supply()),
+        fuel: (visibility == WarehouseVisibility::Full).then(|| obj.fuel()),
+        damaged: obj.warehouse().is_damaged(),
         equipment,
         liquids,
+        supplier,
+        destinations,
     })
 }
 
@@ -2836,8 +2957,8 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     Err(e) => reply_err!("failed to query units: {e:?}"),
                 }
             }
-            AdminCommand::QueryWarehouse { objective } => {
-                match query_warehouse(ctx, &objective) {
+            AdminCommand::QueryWarehouse { objective, side } => {
+                match query_warehouse(ctx, &objective, side) {
                     Ok(warehouse) => match serde_json::to_string(&warehouse) {
                         Ok(json) => replies.push(NetIdxValue::from(json)),
                         Err(e) => reply_err!("failed to serialize warehouse: {e:?}"),

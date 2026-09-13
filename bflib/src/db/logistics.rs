@@ -953,6 +953,33 @@ impl Warehouse {
     pub fn liquids(&self) -> &MapS<LiquidType, Inventory> {
         &self.liquids
     }
+
+    /// The hub feeding this objective. `setup_supply_lines` maintains this
+    /// and re-homes it as the front moves.
+    pub fn supplier(&self) -> Option<ObjectiveId> {
+        self.supplier
+    }
+
+    /// The objectives this one feeds -- the other half of the supply forest.
+    pub fn destinations(&self) -> impl Iterator<Item = ObjectiveId> + '_ {
+        self.destination.into_iter().copied()
+    }
+
+    pub fn is_damaged(&self) -> bool {
+        self.damaged
+    }
+}
+
+/// Whether an enemy objective physically sits on the leg between two points,
+/// i.e. the supply route is cut. Public wrapper over the internal check so
+/// the admin/RPC layer can report per-edge status without duplicating it.
+pub fn route_is_interdicted(
+    persisted: &super::persisted::Persisted,
+    side: Side,
+    from: Vector2,
+    to: Vector2,
+) -> bool {
+    route_interdicted(persisted, side, from, to, 0.0)
 }
 
 /// Airframe entries sit as plain type-name keys in the same equipment map as

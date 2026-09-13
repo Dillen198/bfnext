@@ -635,14 +635,24 @@ impl Rpcs {
             publisher,
             base.append("query-warehouse"),
             "Query warehouse inventory for an objective (returns JSON)",
-            |c: RpcCall, objective: Chars| {
+            |c: RpcCall, objective: Chars, side: Chars| {
                 let (tx, rx) = oneshot::channel();
-                let cmd = AdminCommand::QueryWarehouse { objective: objective.as_ref().into() };
+                // Empty/absent side = unscoped admin query. Anything else is
+                // a coalition asking, and only sees its own bases in full.
+                let side = match side.as_ref() {
+                    "" => None,
+                    s => Side::from_str(s).ok(),
+                };
+                let cmd = AdminCommand::QueryWarehouse {
+                    objective: objective.as_ref().into(),
+                    side,
+                };
                 _q.push((cmd, tx));
                 Some((c, rx))
             },
             Some(wait.clone()),
-            objective: Chars = Value::Null; "The objective name"
+            objective: Chars = Value::Null; "The objective id or exact name",
+            side: Chars = Value::from(""); "Asking coalition (blue/red), or empty for unscoped"
         )?;
         let _q = Arc::clone(&q);
         let query_logistics = define_rpc!(

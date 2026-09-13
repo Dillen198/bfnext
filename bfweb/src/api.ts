@@ -727,6 +727,49 @@ export interface Health {
   build: BuildInfo
 }
 
+/** One stock line. `stored` alone is unreadable -- 40 rounds is full for one
+ *  base and nearly dry for another -- so capacity comes with it. */
+export interface WarehouseItem {
+  stored: number
+  capacity: number
+}
+
+/** A neighbour on the supply forest the engine maintains. */
+export interface SupplyLink {
+  id: string
+  name: string
+  owner: 'Red' | 'Blue' | 'Neutral'
+  /** An enemy objective physically sits on this leg -- the route is cut. */
+  interdicted: boolean
+}
+
+/** Warehouse + supply topology for one objective.
+ *
+ *  `visibility` is decided by the ENGINE, not here: own objectives come back
+ *  `full`, enemy objectives `intel` (coarse, with an age stamp) or `hidden`.
+ *  Enemy stock and edges are never put on the wire at all, so this cannot be
+ *  used to read the other coalition's logistics for free. */
+export interface Warehouse {
+  objective_id: string
+  objective_name: string
+  kind: string
+  owner: 'Red' | 'Blue' | 'Neutral'
+  visibility: 'full' | 'intel' | 'hidden'
+  /** When recon last saw it, for an enemy objective. */
+  intel_as_of: string | null
+  health: number
+  logi: number
+  /** Null when the asking side has not earned it. Withheld, not zero -- a
+   *  zero would read as "this base is dry". */
+  supply: number | null
+  fuel: number | null
+  damaged: boolean
+  equipment: Record<string, WarehouseItem>
+  liquids: Record<string, WarehouseItem>
+  supplier: SupplyLink | null
+  destinations: SupplyLink[]
+}
+
 export interface AuthUser {
   discord_id: string
   username:   string
@@ -1092,6 +1135,10 @@ export const api = {
   /** Probes the engine, so it is slower than most calls -- poll it, do not
    *  put it on a hot path. */
   health: () => get<Health>('/health'),
+  /** Warehouse + supply lines for one objective (id or exact name). Hits the
+   *  engine, so it is slower than the cached list routes. */
+  warehouse: (objective: string) =>
+    get<Warehouse>('/warehouse?objective=' + encodeURIComponent(objective)),
   /** Capture timeline for a round (default: the active one), newest first. */
   captureEvents: (round?: number, limit = 200) =>
     get<CaptureEvent[]>(

@@ -1269,6 +1269,65 @@ async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::R
     Ok(warp::reply::json(&body))
 }
 
+/// Warehouse + supply topology for one objective.
+///
+/// Coalition-gated on purpose. The engine decides what the asking side may
+/// see -- own objectives in full, enemy objectives reduced to whatever that
+/// side's intel database already knows -- so this route's only job is to
+/// resolve who is asking and pass it through. An admin with no resolvable
+/// coalition gets the unscoped view.
+async fn api_warehouse(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use netidx::publisher::Value;
+    let objective = query
+        .get("objective")
+        .cloned()
+        .ok_or_else(|| Error(anyhow::anyhow!("missing ?objective=<id or exact name>")))?;
+
+    // Unlike the briefing routes this does not hard-require a coalition:
+    // failing to resolve one simply means an unscoped query, which the engine
+    // answers in full. Admin sessions rely on that.
+    let side = match require_coalition(&query, session_id, &db, &bot_cfg, &inst).await {
+        Ok(c) => match c.side {
+            dcso3::coalition::Side::Red => "red",
+            _ => "blue",
+        },
+        Err(_) => "",
+    };
+
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(6),
+        call_engine_rpc_str(
+            &db,
+            &inst,
+            "query-warehouse",
+            vec![
+                ("objective", Value::from(objective.clone())),
+                ("side", Value::from(side.to_string())),
+            ],
+        ),
+    )
+    .await
+    {
+        Ok(Ok(data)) => Ok(json_response(data)),
+        Ok(Err(e)) => {
+            log::warn!("api_warehouse: query-warehouse failed for {objective}: {}", e.0);
+            Err(e)
+        }
+        Err(_) => {
+            log::warn!("api_warehouse: query-warehouse timed out after 6s for {objective}");
+            Err(Error(anyhow::anyhow!(
+                "engine did not answer query-warehouse (unreachable, or bflib.dll predates this feature)"
+            )))
+        }
+    }
+}
+
 async fn api_stats(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
@@ -5268,6 +5327,14 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_briefing);
 
+    let warehouse = warp::path!("api" / "warehouse")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_warehouse);
+
     let situation = warp::path!("api" / "situation")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
@@ -6061,6 +6128,7 @@ async fn main() -> Result<()> {
         .or(frontline)
         .or(briefing)
         .or(situation)
+        .or(warehouse)
         .or(kills)
         .or(capture_events)
         .or(pilot_sorties)

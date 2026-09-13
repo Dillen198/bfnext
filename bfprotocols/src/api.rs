@@ -3,6 +3,7 @@ use crate::db::{
     objective::ObjectiveId,
 };
 use dcso3::{coalition::Side, net::Ucid};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -111,15 +112,70 @@ pub struct UnitInfo {
     pub alive: bool,
 }
 
+/// One stock line. The old shape reported only `stored`, which is unreadable
+/// on its own -- 40 rounds is full for one base and nearly dry for another.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct InventoryInfo {
+    pub stored: u32,
+    pub capacity: u32,
+}
+
+/// A supply-line neighbour: the hub feeding an objective, or one of the
+/// objectives it feeds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupplyLink {
+    pub id: ObjectiveId,
+    pub name: String,
+    pub owner: String,
+    /// True when an enemy objective sits on the leg between the two, i.e. the
+    /// route is physically cut even though the link still exists.
+    pub interdicted: bool,
+}
+
+/// How much of this objective the asking side is allowed to see.
+///
+/// A warehouse readout is intelligence. Handing an enemy base's stock and
+/// supply topology to the other coalition would gut the recon systems that
+/// exist to earn exactly that information, so enemy objectives report only
+/// what the asking side's intel database already knows, with an age stamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WarehouseVisibility {
+    /// Own side (or an unscoped/admin query): everything.
+    Full,
+    /// Enemy objective that recon has touched: coarse state, no stock lines.
+    Intel,
+    /// Enemy objective nobody has looked at: existence and ownership only.
+    Hidden,
+}
+
 /// Warehouse/inventory information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WarehouseInfo {
     pub objective_id: ObjectiveId,
     pub objective_name: String,
-    /// Equipment inventory (vehicle type -> count)
-    pub equipment: HashMap<String, u32>,
-    /// Liquid inventory (fuel type -> amount)
-    pub liquids: HashMap<String, u32>,
+    pub kind: String,
+    pub owner: String,
+    pub visibility: WarehouseVisibility,
+    /// Newest recon contact near this objective, when `visibility` is `Intel`.
+    pub intel_as_of: Option<DateTime<Utc>>,
+    pub health: u8,
+    pub logi: u8,
+    /// None when the asking side has not earned it -- these are the numbers a
+    /// recon sortie exists to find out, so they are withheld rather than
+    /// zeroed (a zero would read as "this base is dry").
+    pub supply: Option<u8>,
+    pub fuel: Option<u8>,
+    /// True when the warehouse itself has been knocked out.
+    pub damaged: bool,
+    /// Equipment inventory (item -> stored/capacity). Empty unless `Full`.
+    pub equipment: HashMap<String, InventoryInfo>,
+    /// Liquid inventory (fuel type -> stored/capacity). Empty unless `Full`.
+    pub liquids: HashMap<String, InventoryInfo>,
+    /// The hub feeding this objective, if any.
+    pub supplier: Option<SupplyLink>,
+    /// Objectives this one feeds.
+    pub destinations: Vec<SupplyLink>,
 }
 
 /// Logistics state information
