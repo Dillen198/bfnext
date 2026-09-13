@@ -102,8 +102,8 @@ export default function BriefingPage() {
               : 'kneeboard data'
         }
         right={
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+          <div className="briefing-header-controls" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div className="briefing-tabgroup" style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
               {tabBtn('situation', 'Situation', critical > 0 ? `${critical}!` : undefined)}
               {tabBtn('kneeboard', 'Kneeboard')}
             </div>
@@ -123,9 +123,10 @@ export default function BriefingPage() {
                 ))}
               </div>
             ) : (
-              <span style={{
+              <span className="briefing-side-badge" style={{
                 padding: '4px 12px', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em',
                 borderRadius: 4, background: side === 'Blue' ? '#1d4ed8' : '#b91c1c', color: '#fff',
+                display: 'inline-flex', alignItems: 'center',
               }}>{side.toUpperCase()}</span>
             )}
             <button
@@ -140,7 +141,7 @@ export default function BriefingPage() {
             <button
               onClick={() => briefing && buildPdf(briefing, situation)}
               disabled={!briefing}
-              className="vs-btn"
+              className="vs-btn briefing-pdf-btn"
               title="Situation, tasking, comms card and the full kneeboard reference"
               style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.68rem', padding: '5px 12px' }}
             >

@@ -295,6 +295,10 @@ body {
    tasking list uses the full width, not half of it. */
 .briefing-map-toggle { position: relative; z-index: 500; }
 .briefing-map-card-collapsed { min-height: 0 !important; height: 34px; }
+/* Everything under the toggle is hidden outright rather than merely clipped:
+   the map's legend is positioned from the BOTTOM of the card, so once the
+   card shrank to the bar height the legend sat on top of the bar. */
+.briefing-map-card-collapsed > *:not(.briefing-map-toggle) { display: none; }
 .briefing-split-nomap { grid-template-columns: minmax(0, 1fr) !important; }
 
 .lb-card-head {
@@ -1272,6 +1276,33 @@ body::after {
     bottom: 12px;
     max-width: calc(100vw - 24px);
     text-align: center;
+  }
+
+  /* Briefing's header controls, laid out deliberately instead of just
+     allowed to wrap. Letting five items reflow put KNEEBOARD PDF alone on a
+     ragged second line with everything different widths.
+       row 1: the tab pair as a proper full-width segmented control
+       row 2: side badge, refresh, and the PDF button taking the slack
+     Equal heights across both rows so it reads as one block. */
+  .briefing-header-controls {
+    width: 100%;
+    gap: 8px;
+  }
+  .briefing-tabgroup {
+    flex: 1 0 100%;
+  }
+  .briefing-tabgroup > button {
+    flex: 1;
+    justify-content: center;
+  }
+  .briefing-header-controls > .briefing-pdf-btn {
+    flex: 1;
+    justify-content: center;
+  }
+  /* The side badge is a span, so the button minimums never touched it and it
+     sat 10px shorter than everything beside it. */
+  .briefing-side-badge {
+    min-height: 36px;
   }
 
   /* On the situation tab the body is overflow:hidden and only the inner grid
