@@ -1216,6 +1216,59 @@ async fn api_pilot_deploys(
     Ok(json_response(data))
 }
 
+/// Real health, as opposed to the string "ok".
+///
+/// The old endpoint was `.map(|| "ok")` -- it proved only that the HTTP
+/// listener was accepting connections, which is the one thing that is almost
+/// never what has broken. The interesting failure is bfdb up and healthy while
+/// the DCS server behind it is gone, and that looked identical.
+///
+/// So this actually probes the engine: a cheap in-memory RPC
+/// (`query-campaign-state`, which walks objectives and players and touches no
+/// disk) on a short timeout, timed. `ok` is true only when the engine answered.
+/// A dashboard can drive a three-state badge off this -- LIVE / ENGINE
+/// UNREACHABLE / OFFLINE -- instead of inferring liveness from the mere
+/// existence of a round row.
+async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+    let started = std::time::Instant::now();
+    let probe = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        call_engine_rpc_str(&db, &inst, "query-campaign-state", vec![]),
+    )
+    .await;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    let (engine_ok, engine_err) = match probe {
+        Ok(Ok(_)) => (true, None),
+        Ok(Err(e)) => (false, Some(e.0.to_string())),
+        Err(_) => (false, Some("engine RPC timed out after 3s".to_string())),
+    };
+
+    // The round row is campaign state, NOT liveness -- it survives the DCS
+    // server dying. Reported separately so a caller can tell the two apart.
+    let round = task::block_in_place(|| -> Result<Option<serde_json::Value>> {
+        let rounds = db.latest_rounds_for(&inst.id)?;
+        Ok(rounds
+            .iter()
+            .find(|(_, _, r)| r.end.is_none())
+            .map(|(_, rid, r)| serde_json::json!({ "id": rid.0, "start": r.start.to_rfc3339() })))
+    })?;
+
+    let body = serde_json::json!({
+        "ok": engine_ok,
+        "bfdb": "ok",
+        "instance": inst.id.to_string(),
+        "engine": {
+            "reachable": engine_ok,
+            "latency_ms": if engine_ok { Some(elapsed_ms) } else { None },
+            "error": engine_err,
+        },
+        "active_round": round,
+        "build": build_info_json(),
+    });
+    Ok(warp::reply::json(&body))
+}
+
 async fn api_stats(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
@@ -5268,7 +5321,9 @@ async fn main() -> Result<()> {
     // several Sled queries and can be slow while the stats archive is
     // still replaying at startup).
     let health = warp::path!("api" / "health")
-        .map(|| warp::reply::with_status("ok", warp::http::StatusCode::OK));
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_health);
 
     // This bfdb binary's own build identity (git rev + build time), compiled
     // in by build.rs. Public -- it's just build metadata.
