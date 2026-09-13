@@ -149,9 +149,15 @@ export default function Leaderboard() {
                   padding: '6px 16px', borderRadius: 6, cursor: 'pointer',
                   fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em',
                   textTransform: 'uppercase', transition: 'all 0.12s',
-                  background: active ? `${t.color}18` : 'var(--bg-card)',
-                  border: `1px solid ${active ? t.color : 'var(--border)'}`,
-                  color: active ? t.color : 'var(--text-dim)',
+                  // Solid accent when selected, matching .vs-btn and the
+                  // Situation/Kneeboard tabs on the briefing -- this strip was
+                  // the only place tinting itself per category (cyan here,
+                  // orange there), which read as a different app. The per-tab
+                  // colour still keys the stat columns below, where it is
+                  // doing real work telling the metrics apart.
+                  background: active ? 'var(--accent)' : 'var(--bg-card)',
+                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                  color: active ? '#0a0d07' : 'var(--text-dim)',
                   display: 'flex', alignItems: 'center', gap: 7,
                 }}
               >
