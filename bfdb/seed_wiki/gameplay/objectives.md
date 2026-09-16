@@ -158,38 +158,27 @@ For ~5 minutes after a base is taken, its new owner's assault troops hold it whi
 
 ## Reading Map Markers
 
-Typical objective marker format:
+The numbers are no longer printed on the map. An objective now shows its
+**name**, its rings, and a row of **four status hexagons** — see
+[Reading the F10 Map](/wiki/gameplay/reading-the-map) for the full key.
+
 ```
-Musa Airbase
-Health: 100
-Logi: 100
-Supply: 99
-Fuel: 100
-Points: 0
+   Aleppo
+   Health  Logi  Supply  Fuel
+     ⬢      ⬢      ⬢      ⬢
 ```
 
-Breakdown:
-- **Objective name** - First line
-- **Health**: 100 - Facility condition (0-100)
-- **Logi**: 100 - Infrastructure (0-100, must be 0 to capture)
-- **Supply**: 99 - Equipment stocks (0-100)
-- **Fuel**: 100 - Fuel stocks (0-100)
-- **Points**: 0 - Point value for capturing
+- **Green** above 66%, **amber** 33–66%, **red** below 33%.
+- A **gold outline** on a hex means that resource is unlimited.
+- A **gold owner ring** means the base has unlimited aircraft.
 
-A lone `*` on its own line **above** the objective name means that objective has **unlimited supply or unlimited aircraft** set by the mission — its stocks never run dry.
+The label keeps only what you have to act on — `>> CAPTURABLE`,
+`>> CONSOLIDATING 40% (2m10s left)`, `Infantry: 30%`, repair progress and the
+base's navaids.
 
-**Capturable Example**:
-```
-Enemy Base
-Health: 15
-Logi: 0
-Supply: 45
-Fuel: 30
-Points: 0
-```
-`Health: 15` (≤ 20%) with no infantry left means this objective CAN be captured.
-
-**Visual Indicator**: When an objective becomes capturable, the **circle around the airbase on the F10 map turns WHITE** instead of the owner's color. This is an easy way to spot capturable objectives at a glance.
+**Capturable:** health at or below 20% with no infantry left. The engine says so
+in the label, and the **inner ring turns WHITE** — the quickest way to spot a
+takeable base at a glance.
 
 ## Objective Zones
 

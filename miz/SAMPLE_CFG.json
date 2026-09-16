@@ -270,7 +270,34 @@
 
   "campaign_events": {
     "enable_random_events": true,
-    "event_interval_secs": 7200
+    "event_interval_secs": 7200,
+
+    "_reactive_cap_note": "Reactive CAP: AI fighters scramble when enemy FIXED-WING players are detected near an owned airbase, or when one side has cap_balance_gap more fixed-wing players airborne than the other. Needs plane-section groups named RCAP / BCAP in the .miz.",
+    "enemy_cap_enabled": true,
+    "cap_template_red": "RCAP",
+    "cap_template_blue": "BCAP",
+    "cap_balance_gap": 2,
+    "cap_trigger_on_known_players": true,
+    "cap_cold_start": true,
+
+    "_helo_patrol_note": "Reactive helicopter patrol: the rotary mirror of the above. Fixed-wing CAP ignores helicopters on purpose (fighters hunting NOE helos is lopsided, and SAMs are meant to cover it), which means a session where only helo pilots fly gets no AI response at all. This answers enemy helicopter players with armed AI helicopters, launching from the nearest owned Airbase, FARP or FOB -- helos do not need a runway, so the response comes from much closer than CAP does. On station they orbit helo_altitude_agl_m ABOVE THE TERRAIN under the station (not an absolute MSL block like CAP) and engage helicopters and ground units; fast movers are deliberately off their target list. REQUIRES groups named by helo_template_red / _blue in the .miz, one per coalition, copied from RCAP/BCAP but living in the HELICOPTER section (a helo in the plane section air-starts and the watchdog scraps the event). Late activation on, uncontrolled off; a single waypoint is enough, because the engine rewrites waypoint 0 into a ground start at the field the flight was scrambled from and issues the on-station orbit itself once airborne. Every unit type in the template must also appear in unit_classification or the spawn fails with 'unit type not classified'. Without the templates every scramble logs 'template not found' and cancels the event.",
+    "enemy_helo_enabled": false,
+    "helo_template_red": "RHELOCAP",
+    "helo_template_blue": "BHELOCAP",
+    "helo_duration_secs": 1800,
+    "helo_altitude_agl_m": 300,
+    "helo_speed_ms": 60,
+    "helo_max_push_m": 30000,
+    "helo_engage_radius_m": 15000,
+    "helo_idle_rtb_secs": 420,
+    "helo_trigger_radius_m": 40000,
+    "helo_max_concurrent": 2,
+    "helo_max_per_side": 1,
+    "helo_min_threat_count": 2,
+    "helo_respawn_cooldown_secs": 900,
+    "helo_trigger_on_known_players": true,
+    "helo_balance_gap": 2,
+    "helo_cold_start": true
   },
 
   "special_sam_sites": [],

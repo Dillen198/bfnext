@@ -56,6 +56,13 @@ use serde_derive::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 use std::{cmp::max, collections::VecDeque};
 
+/// How far a deployed group has to travel before its F10 pin is redrawn, in
+/// metres. See `mark_group_if_moved`: the pin costs two map commands out of a
+/// budget of `max_msgs_per_second` (3 on the live config) shared with every
+/// objective label and ring on the map, so redrawing it every second for every
+/// vehicle under way is what actually froze the F10 picture.
+const GROUP_MARK_MIN_MOVE: f64 = 500.;
+
 #[derive(Debug, Clone)]
 pub enum BirthRes {
     None,
@@ -219,8 +226,34 @@ impl Db {
             .filter_map(|gid| self.persisted.groups.get(gid))
     }
 
+    /// Re-pin a group only if it has actually gone somewhere -- at least
+    /// `min_move` metres from where its current pin sits.
+    ///
+    /// `update_unit_positions` calls this for every group with a unit that
+    /// shifted more than a metre since the last sample, which for anything
+    /// under way is every single pass. Each re-pin is a delete plus a draw in
+    /// the priority-1 queue, which drains ahead of all objective markup, so a
+    /// handful of moving convoys was enough to eat the whole per-second budget
+    /// and leave the F10 map's labels, rings and supply arrows permanently
+    /// stale. A pin that is up to `min_move` metres behind the group is worth
+    /// far more than one that is up to date and starves the rest of the map.
+    pub(super) fn mark_group_if_moved(&mut self, gid: &GroupId, min_move: f64) -> Result<()> {
+        if min_move > 0.
+            && let Some((_, at)) = self.ephemeral.group_marks.get(gid)
+        {
+            let at = *at;
+            let group = group!(self, gid)?;
+            let center =
+                centroid2d(group.units.into_iter().map(|uid| self.persisted.units[uid].pos));
+            if (center - at).norm() < min_move {
+                return Ok(());
+            }
+        }
+        self.mark_group(gid)
+    }
+
     pub(super) fn mark_group(&mut self, gid: &GroupId) -> Result<()> {
-        if let Some(id) = self.ephemeral.group_marks.remove(gid) {
+        if let Some((id, _)) = self.ephemeral.group_marks.remove(gid) {
             self.ephemeral.msgs.delete_mark(id)
         }
         let group = group_mut!(self, gid)?;
@@ -329,7 +362,7 @@ impl Db {
             DeployKind::Dismount { .. } => None,
         };
         if let Some(id) = id {
-            self.ephemeral.group_marks.insert(*gid, id);
+            self.ephemeral.group_marks.insert(*gid, (id, group_center));
         }
         Ok(())
     }
@@ -400,7 +433,7 @@ impl Db {
                 self.persisted.dismounts.remove_cow(gid);
             }
         }
-        if let Some(id) = self.ephemeral.group_marks.remove(gid) {
+        if let Some((id, _)) = self.ephemeral.group_marks.remove(gid) {
             self.ephemeral.msgs.delete_mark(id);
         }
         let mut units: SmallVec<[String; 16]> = smallvec![];
@@ -1243,7 +1276,7 @@ impl Db {
                     self.update_objective_status(&oid, now)?;
                     self.ephemeral.units_potentially_close_to_enemies.remove(&uid);
                     if health == 0 {
-                        if let Some(id) = self.ephemeral.group_marks.remove(&gid) {
+                        if let Some((id, _)) = self.ephemeral.group_marks.remove(&gid) {
                             self.ephemeral.msgs.delete_mark(id);
                         }
                     }
@@ -1541,9 +1574,15 @@ impl Db {
             }
             unit = Some(instance);
         }
+        // `moved` carries one entry per unit that shifted, so an eight-truck
+        // squad used to re-pin itself eight times in a single pass. Collapse it
+        // to one pin per group, and only redraw a pin the group has walked
+        // away from.
+        moved.sort();
+        moved.dedup();
         for gid in moved {
             self.ephemeral.dirty();
-            self.mark_group(&gid)?;
+            self.mark_group_if_moved(&gid, GROUP_MARK_MIN_MOVE)?;
         }
         Ok(dead)
     }

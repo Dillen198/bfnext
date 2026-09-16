@@ -32,7 +32,13 @@ use dcso3::{
     coalition::Side,
     env::miz::{Miz, MizIndex},
 };
-use std::{cmp::max, fs::File, path::Path, sync::Arc};
+use std::{
+    cmp::max,
+    fs::{self, File},
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::SystemTime,
+};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub mod actions;
@@ -258,6 +264,68 @@ impl Db {
         }
     }
 
+    /// decode one save file. both layers are checked here, the zstd frame
+    /// and the json inside it, so a candidate that returns Ok is known good
+    /// rather than merely present.
+    fn load_persisted(path: &Path) -> Result<Persisted> {
+        let file = File::open(path)
+            .map_err(|e| anyhow!("failed to open save file {:?}, {:?}", path, e))?;
+        let file = zstd::stream::Decoder::new(file)
+            .map_err(|e| anyhow!("failed to read save file {:?}, {:?}", path, e))?;
+        serde_json::from_reader(file)
+            .map_err(|e| anyhow!("failed to decode save file {:?}, {:?}", path, e))
+    }
+
+    /// every file we could fall back to if the live save is unreadable,
+    /// newest first: the timestamped rotations bg::save leaves behind on
+    /// every save, plus the temp file of a save that was interrupted before
+    /// its rename. a hard kill can leave the live save zero filled (the
+    /// rename reaches the disk, the data doesn't), and losing the whole
+    /// campaign to that is much worse than losing the last few minutes of it.
+    fn save_file_candidates(path: &Path) -> Vec<PathBuf> {
+        let candidates = || -> Result<Vec<(SystemTime, PathBuf)>> {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| anyhow!("save file with no name"))?;
+            let dir = path
+                .parent()
+                .ok_or_else(|| anyhow!("save file has no parent dir"))?;
+            let mut candidates = vec![];
+            for file in fs::read_dir(dir)? {
+                let file = file?;
+                if !file.file_type()?.is_file() {
+                    continue;
+                }
+                let fname = file.file_name();
+                let fname = match fname.to_str() {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let is_candidate = match fname.strip_prefix(name) {
+                    None => false,
+                    // the live save itself, already tried
+                    Some("") => false,
+                    Some(rest) => rest == ".tmp" || rest.parse::<i64>().is_ok(),
+                };
+                if is_candidate {
+                    candidates.push((file.metadata()?.modified()?, file.path()));
+                }
+            }
+            Ok(candidates)
+        };
+        match candidates() {
+            Err(e) => {
+                log::error!("could not list backup save files, {e:?}");
+                vec![]
+            }
+            Ok(mut candidates) => {
+                candidates.sort_by(|(a, _), (b, _)| b.cmp(a));
+                candidates.into_iter().map(|(_, path)| path).collect()
+            }
+        }
+    }
+
     pub fn load(
         miz: &Miz,
         idx: &MizIndex,
@@ -265,11 +333,27 @@ impl Db {
         cfg: Arc<Cfg>,
         path: &Path,
     ) -> Result<Self> {
-        let file = File::open(&path)
-            .map_err(|e| anyhow!("failed to open save file {:?}, {:?}", path, e))?;
-        let file = zstd::stream::Decoder::new(file)?;
-        let persisted: Persisted = serde_json::from_reader(file)
-            .map_err(|e| anyhow!("failed to decode save file {:?}, {:?}", path, e))?;
+        let persisted = match Self::load_persisted(path) {
+            Ok(persisted) => persisted,
+            Err(e) => {
+                log::error!("the save file is unreadable, looking for a backup, {e:?}");
+                let mut recovered = None;
+                for candidate in Self::save_file_candidates(path) {
+                    match Self::load_persisted(&candidate) {
+                        Ok(persisted) => {
+                            log::error!("resuming the campaign from backup save file {candidate:?}");
+                            recovered = Some(persisted);
+                            break;
+                        }
+                        Err(e) => log::warn!("backup save file is also unreadable, {e:?}"),
+                    }
+                }
+                match recovered {
+                    Some(persisted) => persisted,
+                    None => return Err(e.context("and no backup save file could be read either")),
+                }
+            }
+        };
         let mut db = Db {
             persisted,
             ephemeral: Ephemeral::default(),

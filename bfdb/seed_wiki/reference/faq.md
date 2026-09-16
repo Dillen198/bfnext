@@ -93,8 +93,15 @@ See [JTAC System](../f10-menu/jtac.md) for full guide.
 
 ## Logistics & Supply
 
-### Q: What does "Logi: 0" mean?
-**A**: The objective's infrastructure is completely destroyed — no repair, rearm or resupply. It does **not** by itself make the objective capturable; that needs health ≤ 20% and no infantry left.
+### Q: The numbers vanished from the map markers. Where did they go?
+**A**: They are the four coloured hexagons beside each base now — health, logi, supply, fuel, always in that order. Green is healthy, amber is thin, red is critical. Full key: [Reading the F10 Map](../gameplay/reading-the-map.md).
+
+### Q: My map markers disappeared when I zoomed out. Is it broken?
+**A**: No. The status shapes are drawn on the ground, so they shrink with the map — that is what stops the theatre view turning into a wall of markers. Zoom back in and they return.
+
+
+### Q: What does a red logi hex mean?
+**A**: The second hexagon in the row beside a base is its logistics. Red means the infrastructure is completely destroyed — no repair, rearm or resupply. It does **not** by itself make the objective capturable; that needs health ≤ 20% and no infantry left.
 
 ### Q: How do I repair logistics?
 **A**: An objective with working logistics repairs itself on a pulse — **but each repair costs it supplies and materiel, and if it doesn't have them the repair simply doesn't happen.** The player fix is a **Logistics Repair Kit** crate flown in and unpacked there, which also pays about what an air kill does. Admins can force one with `-admin repair`. See [Logistics & Supply](../gameplay/logistics.md).

@@ -2862,6 +2862,97 @@ pub struct CampaignEventsCfg {
     /// actual player counts (radar-independent). 0 disables. Default: 2.
     #[serde(default = "default_cap_balance_gap")]
     pub cap_balance_gap: u32,
+    /// Scramble CAP COLD -- engines off on the ramp, AI runs its own startup --
+    /// instead of hot with rotors/engines already turning. Cold is the default
+    /// because the startup + taxi + takeoff time is what gives a defending
+    /// flight a realistic reaction delay, and it is the warning the attacking
+    /// side gets. Set false if you want intercepts airborne sooner.
+    #[serde(default = "default_true")]
+    pub cap_cold_start: bool,
+
+    // ── Reactive helicopter patrol (the rotary mirror of reactive CAP) ──────
+    // Fixed-wing CAP deliberately ignores helicopters: fighters hunting NOE
+    // helos is lopsided, and SAMs are expected to cover that. So a session
+    // where only helo pilots are flying gets no AI response at all. These
+    // knobs answer helicopter players with armed AI helicopters instead --
+    // same trigger logic, same spawn/station/RTB machinery, rotary numbers.
+    /// Enable reactive AI helicopter patrols. Requires helicopter-section
+    /// groups named by `helo_template_red`/`_blue` in the .miz. Default: false.
+    #[serde(default)]
+    pub enemy_helo_enabled: bool,
+    /// Template group names for the AI helicopter patrol, per side. These must
+    /// be HELICOPTER-section groups in the mission file -- the ground-start
+    /// rewrite picks helipads (and open ground at padless FOBs) only when the
+    /// template's category is Helicopter.
+    #[serde(default = "default_helo_template_red")]
+    pub helo_template_red: String,
+    #[serde(default = "default_helo_template_blue")]
+    pub helo_template_blue: String,
+    /// How long (seconds) a helicopter patrol stays up before it RTBs and
+    /// despawns. Longer than CAP's -- helos cruise at a third of the speed and
+    /// need the time to reach their station. Default: 1800.
+    #[serde(default = "default_helo_duration")]
+    pub helo_duration_secs: u32,
+    /// Patrol height in metres ABOVE THE TERRAIN at the station (unlike
+    /// `cap_altitude_m`, which is absolute MSL). Terrain height under the
+    /// orbit point is sampled at task time and this is added to it, so the
+    /// same number works over the coast and over Hermon. Default: 300.
+    #[serde(default = "default_helo_altitude_agl_m")]
+    pub helo_altitude_agl_m: f64,
+    /// True airspeed (m/s) for patrol orbit and intercept legs. Default: 60
+    /// (~115 kt) -- a speed every attack helo in DCS can actually hold.
+    #[serde(default = "default_helo_speed_ms")]
+    pub helo_speed_ms: f64,
+    /// How far (metres) a patrol may push from the objective it defends toward
+    /// a contact. Much shorter than CAP's leash -- a helo that wanders is a
+    /// helo that runs out of fuel or finds a SAM. Default: 30000.
+    #[serde(default = "default_helo_max_push_m")]
+    pub helo_max_push_m: f64,
+    /// Engage-in-zone radius (metres) around the patrol's station. Roughly the
+    /// reach of helicopter weapons plus a short chase. Default: 15000.
+    #[serde(default = "default_helo_engage_radius_m")]
+    pub helo_engage_radius_m: f64,
+    /// Send the patrol home if its side has had nothing to work for this many
+    /// seconds. Default: 420.
+    #[serde(default = "default_helo_idle_rtb_secs")]
+    pub helo_idle_rtb_secs: u32,
+    /// Distance (metres) within which two enemy helicopter contacts count as
+    /// one incursion, and the radius the patrol is placed relative to. Smaller
+    /// than CAP's because the rotary fight happens at much shorter range.
+    /// Default: 40000.
+    #[serde(default = "default_helo_trigger_radius")]
+    pub helo_trigger_radius_m: f64,
+    /// Maximum helicopter patrols active across both sides at once. Counted
+    /// separately from CAP, so a busy air war doesn't starve the rotary
+    /// response (or vice versa). Default: 2.
+    #[serde(default = "default_helo_max_concurrent")]
+    pub helo_max_concurrent: usize,
+    /// Maximum helicopter patrols one side may have up at once. Default: 1.
+    #[serde(default = "default_helo_max_per_side")]
+    pub helo_max_per_side: usize,
+    /// Enemy helicopter players near an owned objective needed to scramble a
+    /// patrol. Default: 2.
+    #[serde(default = "default_helo_min_threat")]
+    pub helo_min_threat_count: u32,
+    /// Cooldown (seconds) after a side's patrol ends before it may launch
+    /// another. Default: 900 (15 minutes).
+    #[serde(default = "default_helo_respawn_cooldown")]
+    pub helo_respawn_cooldown_secs: u64,
+    /// As `cap_trigger_on_known_players`, for helicopters. Usually wanted:
+    /// radar rarely paints a helo flying NOE, so with this off the threat path
+    /// almost never fires and only the balance gap does. Default: true.
+    #[serde(default = "default_true")]
+    pub helo_trigger_on_known_players: bool,
+    /// Balance trigger: launch a patrol for whichever side has this many FEWER
+    /// helicopter players airborne than the other. This is the one that covers
+    /// "tonight it's only helo pilots" -- 0 disables. Default: 2.
+    #[serde(default = "default_helo_balance_gap")]
+    pub helo_balance_gap: u32,
+    /// As `cap_cold_start`, for the helicopter patrol. Cold by default for the
+    /// same reason -- and a helo that spools up on its pad is a helo you can
+    /// hear coming.
+    #[serde(default = "default_true")]
+    pub helo_cold_start: bool,
     /// How often (seconds) to call world.removeJunk to clean up debris. Default: 300 (5 min).
     /// Set to 0 to disable.
     #[serde(default = "default_junk_removal_interval")]
@@ -2874,6 +2965,21 @@ pub struct CampaignEventsCfg {
 
 fn default_cap_respawn_cooldown() -> u64 { 1800 }
 fn default_cap_balance_gap() -> u32 { 2 }
+
+fn default_helo_template_red() -> String { "RHELOCAP".into() }
+fn default_helo_template_blue() -> String { "BHELOCAP".into() }
+fn default_helo_duration() -> u32 { 1800 }
+fn default_helo_altitude_agl_m() -> f64 { 300.0 }
+fn default_helo_speed_ms() -> f64 { 60.0 }
+fn default_helo_max_push_m() -> f64 { 30_000.0 }
+fn default_helo_engage_radius_m() -> f64 { 15_000.0 }
+fn default_helo_idle_rtb_secs() -> u32 { 420 }
+fn default_helo_trigger_radius() -> f64 { 40_000.0 }
+fn default_helo_max_concurrent() -> usize { 2 }
+fn default_helo_max_per_side() -> usize { 1 }
+fn default_helo_min_threat() -> u32 { 2 }
+fn default_helo_respawn_cooldown() -> u64 { 900 }
+fn default_helo_balance_gap() -> u32 { 2 }
 
 fn default_event_check_interval() -> u32 { 300 }
 fn default_event_probability() -> f64 { 0.15 }
@@ -2942,6 +3048,24 @@ impl Default for CampaignEventsCfg {
             cap_respawn_cooldown_secs: default_cap_respawn_cooldown(),
             cap_trigger_on_known_players: false,
             cap_balance_gap: default_cap_balance_gap(),
+            cap_cold_start: true,
+            enemy_helo_enabled: false,
+            helo_template_red: default_helo_template_red(),
+            helo_template_blue: default_helo_template_blue(),
+            helo_duration_secs: default_helo_duration(),
+            helo_altitude_agl_m: default_helo_altitude_agl_m(),
+            helo_speed_ms: default_helo_speed_ms(),
+            helo_max_push_m: default_helo_max_push_m(),
+            helo_engage_radius_m: default_helo_engage_radius_m(),
+            helo_idle_rtb_secs: default_helo_idle_rtb_secs(),
+            helo_trigger_radius_m: default_helo_trigger_radius(),
+            helo_max_concurrent: default_helo_max_concurrent(),
+            helo_max_per_side: default_helo_max_per_side(),
+            helo_min_threat_count: default_helo_min_threat(),
+            helo_respawn_cooldown_secs: default_helo_respawn_cooldown(),
+            helo_trigger_on_known_players: true,
+            helo_balance_gap: default_helo_balance_gap(),
+            helo_cold_start: true,
             junk_removal_interval_secs: default_junk_removal_interval(),
             junk_removal_radius_m: default_junk_removal_radius(),
         }

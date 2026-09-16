@@ -132,3 +132,6 @@ DCSServerBot/plugins/fowlengine/fowlengine.yaml
 DCSServerBot/plugins/smartmod/smartmod.yaml
 # Packaged extension bundle -- rebuilt from DCSServerBot/extensions/
 DCSServerBot/extensions.zip
+
+# Dated config backups taken before a live edit -- local only
+miz/ODFv2_CFG.bak-*

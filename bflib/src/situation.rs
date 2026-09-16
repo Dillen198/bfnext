@@ -194,6 +194,8 @@ pub(crate) fn build(ctx: &Context, lua: MizLua, side: Side, opts: Opts) -> Situa
                     captureable: o.captureable(),
                     priority: o.priority(),
                     primary: is_primary(o.kind()),
+                    unlimited_supply: o.unlimited_supply(),
+                    unlimited_aircraft: o.unlimited_aircraft(),
                 }
             })
             .collect()

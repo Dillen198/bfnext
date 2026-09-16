@@ -27,7 +27,7 @@ use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use dcso3::{coalition::Side, net::Ucid, Vector2};
 use fxhash::FxHashMap;
-use log::info;
+use log::{debug, info};
 use rand::Rng;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
@@ -360,8 +360,11 @@ fn score_actions(
             .any(|e| match e {
                 // Block if a CommanderCap OR an EnemyCap for this defending side already exists.
                 // EnemyCap{cap_side} = the side that owns the CAP (defending side) = our side.
-                CampaignEvent::CommanderCap { cap_side: s, .. }
-                | CampaignEvent::EnemyCap { cap_side: s, .. } => *s == side,
+                CampaignEvent::CommanderCap { cap_side: s, .. } => *s == side,
+                // A rotary patrol is not CAP -- it answers helicopters and
+                // cannot cover jets, so it must not block the commander from
+                // buying a fixed-wing flight.
+                CampaignEvent::EnemyCap { cap_side: s, rotary, .. } => *s == side && !*rotary,
                 _ => false,
             })
     {
@@ -521,10 +524,18 @@ pub fn tick_events(
             db.persisted.treasury(side),
         );
 
+        // Record the check now, not only when an action comes out of it. It
+        // used to be set inside the `Some` arm, so a side that never found an
+        // action never advanced its clock: `side_should_check` saw
+        // `elapsed = i64::MAX` forever and the interval it is supposed to
+        // enforce -- including the 30s emergency interval -- did nothing at all
+        // until the side's first ever action, at which point the pacing changed
+        // under it. The outer `tick_period_secs` gate was the only thing
+        // actually limiting the rate.
+        set_side_check_time(scheduler, side, ts);
+
         let scored = score_actions(db, side, sc_cfg, events_cfg, &friendly, &enemy, scheduler, &alcm_groups, ts);
         if let Some((action, cost)) = select_best_action(&scored, &friendly) {
-            set_side_check_time(scheduler, side, ts);
-
             let action_label = match &action {
                 CommanderAction::Barrage { .. } => "barrage",
                 CommanderAction::MissileStrike { .. } => "missile strike",
@@ -636,48 +647,120 @@ fn tick_objective_funding(db: &mut Db, cfg: &SmartCommanderCfg, ts: DateTime<Utc
     }
     db.ephemeral.last_objective_fund = ts;
 
-    // Collect grants before mutating (avoids borrow conflict on db.persisted).
-    let grants: Vec<_> = db
-        .persisted
-        .objectives
-        .into_iter()
-        .filter_map(|(oid, obj)| {
-            let side = obj.owner();
-            if matches!(side, Side::Neutral) {
-                return None;
-            }
-            let dmg = (100u32.saturating_sub(obj.health() as u32)) as f64 / 100.0;
-            let weight = if obj.threatened() { 1.5_f64 } else { 1.0_f64 };
-            let grant = ((cfg.objective_fund_max_per_tick as f64) * dmg * weight)
-                .round()
-                .min(cfg.objective_fund_max_per_tick as f64) as i32;
-            if grant > 0 {
-                Some((*oid, side, grant, obj.name().to_owned()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    // What income actually delivers over one funding window, and therefore
+    // what this pass is allowed to hand out in total.
+    //
+    // Funding used to ask for up to `objective_fund_max_per_tick` for EVERY
+    // damaged objective, with nothing but the reserve floor to stop it. On the
+    // live config that is 200 per damaged base per 2 min against 200 of income
+    // per 2 min, so the ask outran income by an order of magnitude the moment a
+    // side held more than one damaged base. Observed over a 3.7h session: the
+    // side holding 94 objectives sat pinned on the reserve floor the whole
+    // time while the side holding 62 banked 272,000 points it had nothing to
+    // spend on.
+    //
+    // And because the grants were handed out in map iteration order until the
+    // floor was hit, *which* bases got funded was arbitrary -- the first few in
+    // the map took the full 200 each and a base actually under attack further
+    // down the list got nothing. Budget the pass, then share the budget out by
+    // need, so a side that is not under pressure spends less than it earns and
+    // accumulates for the actions the treasury exists to pay for.
+    let income_per_window = if cfg.treasury_income_period_secs == 0 {
+        cfg.treasury_income_amount
+    } else {
+        (cfg.treasury_income_amount * cfg.objective_fund_period_secs as i64)
+            / cfg.treasury_income_period_secs as i64
+    };
+
+    // Collect asks before mutating (avoids borrow conflict on db.persisted).
+    // `need` is what drives both the size of the ask and the priority when the
+    // budget cannot cover every ask.
+    let mut asks: Vec<(Side, f64, i64, ObjectiveId, CompactString)> = vec![];
+    for (oid, obj) in &db.persisted.objectives {
+        let side = obj.owner();
+        if matches!(side, Side::Neutral) {
+            continue;
+        }
+        let dmg = (100u32.saturating_sub(obj.health() as u32)) as f64 / 100.0;
+        let weight = if obj.threatened() { 1.5_f64 } else { 1.0_f64 };
+        let need = dmg * weight;
+        let want = ((cfg.objective_fund_max_per_tick as f64) * need)
+            .round()
+            .min(cfg.objective_fund_max_per_tick as f64) as i64;
+        if want > 0 {
+            asks.push((side, need, want, *oid, CompactString::from(obj.name())));
+        }
+    }
+    // Neediest first: they get the whole ask while the budget lasts, and the
+    // rounding remainder when it has to be shared.
+    asks.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     // Never let passive point-funding pull a side below the action reserve --
     // otherwise a losing side spends its whole income on drips and can never
     // afford a counterattack / barrage / CAP.
     let reserve = cfg.action_reserve.max(0);
-    for (oid, side, grant, name) in grants {
-        let available = db.persisted.treasury(side) - reserve;
-        if available <= 0 {
+    for side in [Side::Blue, Side::Red] {
+        let spendable = db.persisted.treasury(side) - reserve;
+        // A campaign configured with no recurring income funds out of
+        // treasury_start instead, so there is no income window to budget
+        // against -- fall back to the old ceiling there. Everything below
+        // still applies: the spend is shared out by need rather than handed to
+        // whoever sorts first.
+        let budget = if income_per_window <= 0 {
+            spendable
+        } else {
+            income_per_window.min(spendable)
+        };
+        if budget <= 0 {
             continue;
         }
-        let actual = grant.min(available.min(i32::MAX as i64) as i32);
-        db.persisted.adjust_treasury(side, -(actual as i64));
-        if let Some(obj) = db.persisted.objectives.get_mut_cow(&oid) {
-            obj.points += actual;
+        let total_want: i64 = asks
+            .iter()
+            .filter(|(s, ..)| *s == side)
+            .map(|(_, _, want, ..)| *want)
+            .sum();
+        if total_want <= 0 {
+            continue;
         }
-        info!(
-            "[Commander] {:?} funded {} +{} pts (treasury → {})",
-            side, name, actual, db.persisted.treasury(side)
-        );
-        db.ephemeral.dirty();
+        let mut left = budget;
+        let mut funded = 0usize;
+        let mut spent = 0i64;
+        for (s, _, want, oid, name) in asks.iter() {
+            if *s != side || left <= 0 {
+                continue;
+            }
+            // Scale every ask by the same factor when the budget is short, so a
+            // shortfall thins the whole side's funding evenly instead of
+            // starving whatever happens to sort last. At least 1 point, so a
+            // heavily contested side still moves every damaged base forward.
+            let share = if total_want <= budget {
+                *want
+            } else {
+                ((*want * budget) / total_want).max(1)
+            };
+            let actual = share.min(left);
+            if actual <= 0 {
+                continue;
+            }
+            left -= actual;
+            spent += actual;
+            funded += 1;
+            db.persisted.adjust_treasury(side, -actual);
+            if let Some(obj) = db.persisted.objectives.get_mut_cow(oid) {
+                obj.points += actual.min(i32::MAX as i64) as i32;
+            }
+            debug!("[Commander] {side:?} funded {name} +{actual} pts");
+        }
+        if funded > 0 {
+            // One line per side per pass, not one per objective: this used to
+            // be ~100 lines a session of "funded X +200" with no way to see the
+            // shape of the spend.
+            info!(
+                "[Commander] {side:?} funded {funded} objective(s) for {spent} pts                  (asked {total_want}, budget {budget} = income over the funding window,                  treasury → {})",
+                db.persisted.treasury(side)
+            );
+            db.ephemeral.dirty();
+        }
     }
 }
 

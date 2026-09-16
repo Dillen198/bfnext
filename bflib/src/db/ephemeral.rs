@@ -211,7 +211,10 @@ pub struct Ephemeral {
     /// Counter for generating unique helo mission IDs
     pub(super) helo_mission_counter: u32,
     pub(super) deployable_idx: FxHashMap<Side, Arc<DeployableIndex>>,
-    pub(super) group_marks: FxHashMap<GroupId, MarkId>,
+    /// The F10 pin drawn for a deployed group, and the position it was drawn
+    /// at. The position is what lets `mark_group_if_moved` skip a re-pin for a
+    /// group that has crawled a few metres -- see the comment there.
+    pub(super) group_marks: FxHashMap<GroupId, (MarkId, Vector2)>,
     objective_markup: FxHashMap<ObjectiveId, ObjectiveMarkup>,
     pub(super) object_id_by_uid: FxHashMap<UnitId, DcsOid<ClassUnit>>,
     pub(super) uid_by_object_id: FxHashMap<DcsOid<ClassUnit>, UnitId>,

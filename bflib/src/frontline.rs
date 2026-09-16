@@ -225,10 +225,10 @@ impl FrontLine {
         };
 
         for l in &fl.blue {
-            draw(l, Color::new(0.0, 0.4, 1.0, LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
+            draw(l, Color::azure(LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
         }
         for l in &fl.red {
-            draw(l, Color::new(1.0, 0.2, 0.2, LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
+            draw(l, Color::violet(LINE_ALPHA), EDGE_LINE, &mut self.marks, msgq);
         }
         for l in &fl.mid {
             draw(l, Color::new(1.0, 1.0, 1.0, LINE_ALPHA), MID_LINE, &mut self.marks, msgq);

@@ -348,6 +348,21 @@ impl Color {
         Color { r: 0.75, g: 1., b: 0., a }
     }
 
+    /// High-contrast stand-in for `red` on F10 map overlays. Pure red sits too
+    /// close to the terrain luminance on desert maps (Syria, Sinai, PG) to be
+    /// legible; violet separates cleanly from both sand and vegetation, and
+    /// leaves red free to mean "bad" in status glyphs.
+    pub fn violet(a: f32) -> Color {
+        Color { r: 0.72, g: 0.30, b: 1., a }
+    }
+
+    /// High-contrast stand-in for `blue` on F10 map overlays. Pure blue is
+    /// nearly invisible over water and dark terrain; azure keeps the coalition
+    /// reading while staying bright enough to pick out.
+    pub fn azure(a: f32) -> Color {
+        Color { r: 0.25, g: 0.65, b: 1., a }
+    }
+
     pub fn with_alpha(self, a: f32) -> Color {
         Color { a, ..self }
     }

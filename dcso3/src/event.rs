@@ -20,7 +20,7 @@ use super::{
     weapon::Weapon, world::MarkPanel, String, Time,
 };
 use anyhow::Result;
-use log::{debug, info};
+use log::debug;
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
 
@@ -360,7 +360,14 @@ fn translate<'a, 'lua: 'a>(
         52 => Event::MacExtraScore,
         53 => Event::MissionRestart,
         54 => {
-            info!("mission winner event {}", value_to_json(&value));
+            // debug, not info: this is a raw payload dump, and the payload it
+            // actually carries in DCS 2.9.29 ({initiator, place, subPlace}) is
+            // not the shape a mission-winner event has -- so either this id
+            // means something else in the running build or DCS reuses it.
+            // bflib does not consume `MissionWinner` either way. `log_event_ids`
+            // in bflib prints the live `world.event` table at mission start;
+            // check it there before trusting this name.
+            debug!("event id 54 (mapped to MissionWinner) {}", value_to_json(&value));
             Event::MissionWinner
         }
         55 => Event::PostponedTakeoff(AtPlace::from_lua(value, lua)?),

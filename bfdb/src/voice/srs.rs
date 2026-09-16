@@ -850,12 +850,46 @@ fn serve_once(c: &Inner) -> Result<()> {
 }
 
 fn manager_loop(c: Arc<Inner>) {
+    // SRS being unreachable is a normal state, not an incident -- the SRS
+    // server is routinely started after bfdb, or restarted under it. A flat 5s
+    // retry that logged every attempt turned a quiet outage into hundreds of
+    // identical WARN lines (212 per channel, across four channels, in one log)
+    // and buried everything else. Back off while the same failure repeats, and
+    // say so periodically with a count instead of once per attempt. Anything
+    // that changes -- including the first success -- resets both.
+    const MIN_BACKOFF: Duration = Duration::from_secs(5);
+    const MAX_BACKOFF: Duration = Duration::from_secs(60);
+    let mut backoff = MIN_BACKOFF;
+    let mut last: Option<(std::string::String, u32)> = None;
     loop {
-        if let Err(e) = serve_once(&c) {
-            log::warn!("voice srs[{}]: {e:#}", c.name);
+        match serve_once(&c) {
+            Ok(()) => {
+                backoff = MIN_BACKOFF;
+                last = None;
+            }
+            Err(e) => {
+                let msg = format!("{e:#}");
+                match &mut last {
+                    Some((prev, n)) if *prev == msg => {
+                        *n += 1;
+                        if *n % 20 == 0 {
+                            log::warn!(
+                                "voice srs[{}]: {msg} (still failing after {n} attempts)",
+                                c.name
+                            );
+                        }
+                        backoff = (backoff * 2).min(MAX_BACKOFF);
+                    }
+                    _ => {
+                        log::warn!("voice srs[{}]: {msg}", c.name);
+                        last = Some((msg, 1));
+                        backoff = MIN_BACKOFF;
+                    }
+                }
+            }
         }
         c.connected.store(false, Ordering::Relaxed);
-        std::thread::sleep(Duration::from_secs(5));
+        std::thread::sleep(backoff);
     }
 }
 

@@ -2,7 +2,14 @@ import { useMemo } from 'react'
 import Map, { Layer, Marker, Source } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useQuery } from '@tanstack/react-query'
-import { api, type Frontlines, type Hotspot, type SituationReport, type Task } from '../api'
+import {
+  api,
+  type Frontlines,
+  type Hotspot,
+  type MapObjective,
+  type SituationReport,
+  type Task,
+} from '../api'
 import { useTheme } from '../context/ThemeContext'
 import { Explosion } from '@icons'
 
@@ -38,8 +45,46 @@ const mapStyleFor = (theme: string) => ({
   ],
 })
 
+// Same palette the F10 map uses (bflib/src/mapcolor.rs): pure red is
+// unreadable over desert terrain, so Red is violet and Blue is azure. Keeping
+// the two maps in step matters more than matching DCS's stock colours.
 const OWNER_COLOR = (owner: string) =>
-  owner === 'Blue' ? '#4a8fd4' : owner === 'Red' ? '#cc4444' : '#8a8a6a'
+  owner === 'Blue' ? '#40a6ff' : owner === 'Red' ? '#b84dff' : '#ffffff'
+
+/** Status buckets, identical to the engine's: >66 good, 33-66 warn, else bad. */
+const BUCKET = (v: number) => (v > 66 ? '#33d94f' : v > 33 ? '#ffb300' : '#f22a2a')
+const GOLD = '#ffd24a'
+
+/**
+ * The four status hexes -- health, logi, supply, fuel, in that fixed order,
+ * exactly as they are drawn beside an objective on the F10 map. A gold outline
+ * means that resource is unlimited.
+ */
+function StatusHexes({ o }: { o: MapObjective }) {
+  const stats: [string, number | undefined, boolean][] = [
+    ['health', o.health, false],
+    ['logi', o.logi, false],
+    ['supply', o.supply, !!o.unlimited_supply],
+    ['fuel', o.fuel, false],
+  ]
+  return (
+    <span style={{ display: 'flex', gap: 2, pointerEvents: 'none' }}>
+      {stats.map(([label, v, unlimited]) =>
+        v == null ? null : (
+          <svg key={label} width={8} height={9} viewBox="0 0 20 22" aria-hidden>
+            <title>{`${label} ${v}%${unlimited ? ' (unlimited)' : ''}`}</title>
+            <polygon
+              points="10,0 20,5.5 20,16.5 10,22 0,16.5 0,5.5"
+              fill={BUCKET(v)}
+              stroke={unlimited ? GOLD : 'rgba(0,0,0,0.8)'}
+              strokeWidth={unlimited ? 3 : 1.5}
+            />
+          </svg>
+        ),
+      )}
+    </span>
+  )
+}
 
 const URGENCY_COLOR = (u: Task['urgency']) =>
   u === 'critical' ? '#f04747' : u === 'high' ? '#f0a030' : '#8ec83f'
@@ -244,13 +289,23 @@ export default function BriefingMap({ report, selectedTaskId, onSelectTask }: Pr
                 opacity: 0.35 + (o.health / 100) * 0.65,
                 border: o.captureable
                   ? '2px solid #fff'
-                  : o.threatened
-                    ? '2px solid #f0a030'
-                    : `1px solid ${theme === 'light' ? '#0006' : '#fff6'}`,
+                  : o.unlimited_aircraft
+                    ? `2px solid ${GOLD}`
+                    : o.threatened
+                      ? '2px solid #f0a030'
+                      : `1px solid ${theme === 'light' ? '#0006' : '#fff6'}`,
                 boxShadow: o.priority ? '0 0 0 3px #facc1566' : undefined,
                 cursor: 'default',
               }}
             />
+            <span
+              style={{
+                position: 'absolute', left: '50%', top: '100%',
+                transform: 'translate(-50%, 2px)',
+              }}
+            >
+              <StatusHexes o={o} />
+            </span>
             </div>
           </Marker>
         )

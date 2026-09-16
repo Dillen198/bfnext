@@ -365,6 +365,12 @@ pub struct MapObjective {
     pub priority: bool,
     /// Generates sorties (airbase / naval base / FARP).
     pub primary: bool,
+    /// Stocks that never run dry. Drawn as a gold outline on the supply hex
+    /// (materiel) and a gold ring (aircraft), matching the F10 map.
+    #[serde(default)]
+    pub unlimited_supply: bool,
+    #[serde(default)]
+    pub unlimited_aircraft: bool,
 }
 
 /// The whole picture for one coalition.

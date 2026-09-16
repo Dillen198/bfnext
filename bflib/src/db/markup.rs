@@ -27,7 +27,7 @@ use compact_str::{CompactString, format_compact};
 use dcso3::{
     Color, LuaVec3, Vector2, Vector3,
     coalition::Side,
-    trigger::{ArrowSpec, CircleSpec, LineSpec, LineType, MarkId, QuadSpec, SideFilter, TextSpec},
+    trigger::{ArrowSpec, CircleSpec, LineType, MarkId, QuadSpec, SideFilter, TextSpec},
 };
 use fxhash::FxHashMap;
 
@@ -54,19 +54,37 @@ fn make_pts(center: Vector2, r: f64, offsets: &[(f64, f64)]) -> Vec<LuaVec3> {
 /// line segments, each with its own MarkId.
 fn draw_polyline(center: Vector2, r: f64, offsets: &[(f64, f64)], sf: SideFilter, color: Color, msgq: &mut MsgQ) -> Vec<MarkId> {
     let pts = make_pts(center, r, offsets);
-    pts.windows(2)
-        .map(|seg| {
-            let id = MarkId::new();
-            msgq.line_to_all(sf, id, LineSpec {
-                start: seg[0],
-                end: seg[1],
-                color,
-                line_type: LineType::Solid,
-                read_only: true,
-            }, None);
-            id
-        })
-        .collect()
+    // DCS freeform (markupToAll shapeId 7) draws a connected multi-point shape
+    // as ONE mark. This used to chain N-1 two-point `lineToAll` calls -- 35
+    // MarkIds for the naval-base anchor alone, ~1000-1500 across the campaign,
+    // making the kind icons by far the most expensive layer on the map.
+    //
+    // Fewer than 3 points cannot be a freeform, and exactly 3 renders as an
+    // OPEN polyline rather than a closed shape, so pad the short cases.
+    if pts.len() < 2 {
+        return Vec::new();
+    }
+    let mut pts = pts;
+    while pts.len() < 4 {
+        let last = *pts.last().unwrap();
+        pts.push(last);
+    }
+    let id = MarkId::new();
+    msgq.freeform_to_all(
+        sf,
+        id,
+        dcso3::trigger::PolylineSpec {
+            points: pts,
+            color,
+            // Outline only: these are symbols, not areas, and an unfilled
+            // shape sidesteps the clockwise-winding fill bug entirely.
+            fill_color: Color::black(0.),
+            line_type: LineType::Solid,
+            read_only: true,
+        },
+        None,
+    );
+    vec![id]
 }
 
 /// Anchor icon for naval bases — derived from big-anchor-svgrepo-com.svg.
@@ -372,7 +390,8 @@ pub(super) struct ObjectiveMarkup {
     /// Consolidation progress as (percent, seconds remaining), bucketed by
     /// `hold_pct_for` so the countdown doesn't rewrite the label every tick.
     hold_pct: Option<(u8, i64)>,
-    points: i32,
+    /// The four health / logi / supply / fuel hexes.
+    status: StatusHexes,
     capture_pct: Option<u8>,
     /// (percent complete, seconds remaining)
     repair_pct: Option<(u8, i64)>,
@@ -389,13 +408,205 @@ pub(super) struct ObjectiveMarkup {
     kind_symbol: KindSymbol,
 }
 
-fn text_color(side: Side, a: f32) -> Color {
-    match side {
-        Side::Red => Color::red(a),
-        Side::Blue => Color::blue(a),
-        Side::Neutral => Color::white(a),
+// ────────────────────────────────────────────────────────────────────────────
+// Status hexes
+//
+// health / logi / supply / fuel used to be five lines of text on every
+// objective. They are now four filled hexagons in a fixed row beside the
+// zone, each coloured by a coarse bucket.
+//
+// Why shapes and not glyphs: a drawn shape is world-scaled, so the row keeps
+// its layout at every zoom AND fades out when you pull back to the whole
+// theatre -- which is the decluttering. Text and icons are screen-fixed, so a
+// row built from them fans apart zoomed in and piles up zoomed out.
+//
+// Why a bucket and not a number: a bucket only changes a handful of times in
+// a campaign, so a hex costs one `set_markup_fill_color` per crossing instead
+// of a label rewrite every time a stat moves by one.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Circumradius of a status hexagon, metres.
+const HEX_R: f64 = 420.;
+/// Centre-to-centre spacing along the row, metres.
+const HEX_GAP: f64 = 1150.;
+/// How far south of the objective centre the row sits, metres.
+const HEX_DROP: f64 = 1700.;
+/// Number of stats in the row: health, logi, supply, fuel.
+const N_HEX: usize = 4;
+
+/// Coarse state of one stat. Only a change here costs a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bucket {
+    Good,
+    Warn,
+    Bad,
+}
+
+impl Bucket {
+    fn of(v: u8) -> Bucket {
+        if v > 66 {
+            Bucket::Good
+        } else if v > 33 {
+            Bucket::Warn
+        } else {
+            Bucket::Bad
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Bucket::Good => Color::new(0.20, 0.85, 0.31, 1.),
+            Bucket::Warn => Color::new(1., 0.70, 0., 1.),
+            Bucket::Bad => Color::new(0.95, 0.16, 0.16, 1.),
+        }
     }
 }
+
+/// Outline of a normal hex -- dark, so the fill reads against any terrain.
+fn hex_outline() -> Color {
+    Color::black(0.80)
+}
+
+/// Outline used to say "this resource never runs out".
+///
+/// An unlimited stat is pinned at 100, so its FILL can never tell you
+/// anything -- which leaves the outline free to mark it. Outline and fill are
+/// separate fields on the same mark, so this costs nothing extra.
+fn unlimited_outline() -> Color {
+    Color::new(1., 0.82, 0.29, 1.)
+}
+
+/// Colour of the owner ring. Gold when the base has unlimited aircraft:
+/// that is a whole-objective property and there is no aircraft hex in the row
+/// of four, so the ring is its natural home.
+fn ring_color(obj: &Objective, a: f32) -> Color {
+    if obj.unlimited_aircraft {
+        unlimited_outline().with_alpha(a)
+    } else {
+        text_color(obj.owner, a)
+    }
+}
+
+/// Centre of the `i`th hex in the row under `pos`.
+fn hex_center(pos: Vector2, i: usize) -> Vector2 {
+    Vector2::new(
+        pos.x - HEX_DROP,
+        pos.y + (i as f64 - (N_HEX as f64 - 1.) / 2.) * HEX_GAP,
+    )
+}
+
+/// A closed hexagon as a point ring, flat side up. The last point repeats the
+/// first so the shape closes.
+fn hex_points(center: Vector2, r: f64) -> Vec<LuaVec3> {
+    (0..=6)
+        .map(|i| {
+            let a = (60. * i as f64 + 30.).to_radians();
+            LuaVec3(Vector3::new(
+                center.x + r * a.cos(),
+                0.,
+                center.y + r * a.sin(),
+            ))
+        })
+        .collect()
+}
+
+/// The four status hexes for one objective.
+#[derive(Debug, Clone)]
+struct StatusHexes {
+    ids: [MarkId; N_HEX],
+    buckets: [Bucket; N_HEX],
+    /// Tracked so the supply hex's outline can be flipped if the flag changes.
+    unlimited_supply: bool,
+}
+
+impl Default for StatusHexes {
+    /// Placeholder ids only. `ObjectiveMarkup::default()` is always populated
+    /// by `ObjectiveMarkup::new` before anything is drawn or deleted.
+    fn default() -> Self {
+        StatusHexes {
+            ids: [MarkId::from(0); N_HEX],
+            buckets: [Bucket::Good; N_HEX],
+            unlimited_supply: false,
+        }
+    }
+}
+
+impl StatusHexes {
+    fn stats(obj: &Objective) -> [u8; N_HEX] {
+        [obj.health, obj.logi, obj.supply, obj.fuel]
+    }
+
+    fn new(obj: &Objective, pos: Vector2, sf: SideFilter, msgq: &mut MsgQ) -> StatusHexes {
+        let vals = Self::stats(obj);
+        let mut ids = [MarkId::new(); N_HEX];
+        let mut buckets = [Bucket::Good; N_HEX];
+        for i in 0..N_HEX {
+            let id = MarkId::new();
+            let b = Bucket::of(vals[i]);
+            ids[i] = id;
+            buckets[i] = b;
+            // index 2 is supply -- the stat unlimited_supply pins
+            let outline = if i == 2 && obj.unlimited_supply {
+                unlimited_outline()
+            } else {
+                hex_outline()
+            };
+            msgq.freeform_to_all(
+                sf,
+                id,
+                dcso3::trigger::PolylineSpec {
+                    points: hex_points(hex_center(pos, i), HEX_R),
+                    color: outline,
+                    fill_color: b.color(),
+                    line_type: LineType::Solid,
+                    read_only: true,
+                },
+                None,
+            );
+        }
+        StatusHexes {
+            ids,
+            buckets,
+            unlimited_supply: obj.unlimited_supply,
+        }
+    }
+
+    fn update(&mut self, obj: &Objective, msgq: &mut MsgQ) {
+        let vals = Self::stats(obj);
+        for i in 0..N_HEX {
+            let b = Bucket::of(vals[i]);
+            if b != self.buckets[i] {
+                self.buckets[i] = b;
+                msgq.set_markup_fill_color(self.ids[i], b.color());
+            }
+        }
+        if obj.unlimited_supply != self.unlimited_supply {
+            self.unlimited_supply = obj.unlimited_supply;
+            let outline = if self.unlimited_supply {
+                unlimited_outline()
+            } else {
+                hex_outline()
+            };
+            msgq.set_markup_color(self.ids[2], outline);
+        }
+    }
+
+    fn remove(self, msgq: &mut MsgQ) {
+        for id in self.ids {
+            msgq.delete_mark(id)
+        }
+    }
+}
+
+fn text_color(side: Side, a: f32) -> Color {
+    crate::mapcolor::side_color(side, a)
+}
+
+/// Opacity of an objective's map label. `new()` used to draw at 1.0 while
+/// `update()` recoloured to 0.75 when the objective changed hands, so a base
+/// became permanently dimmer after its first capture -- exactly the front-line
+/// bases players most need to read. One constant now, used by both paths.
+const LABEL_ALPHA: f32 = 1.0;
 
 /// Format a seconds count as a short duration string, e.g. "3m20s", "1h05m", "42s".
 fn fmt_eta(secs: i64) -> CompactString {
@@ -421,34 +632,15 @@ fn objective_label(
     hold_pct: Option<(u8, i64)>,
 ) -> CompactString {
     use std::fmt::Write;
-    // A * on the line above the name marks an objective with an
-    // UNLIMITED_SUPPLY / UNLIMITED_AIRCRAFTS trigger-zone prop, so players
-    // can spot the never-runs-dry bases at a glance on the F10 map.
-    let name = if obj.unlimited_supply || obj.unlimited_aircraft {
-        format_compact!("*\n{}", name)
-    } else {
-        CompactString::from(name)
-    };
-    let name = name.as_str();
-    let mut s = match obj.kind {
-        ObjectiveKind::SpecialSamSite => format_compact!(
-            "{}\nHealth: {}\nSupply: {}\nFuel: {}\nPoints: {}",
-            name,
-            obj.health,
-            obj.supply,
-            obj.fuel,
-            obj.points
-        ),
-        _ => format_compact!(
-            "{}\nHealth: {}\nLogi: {}\nSupply: {}\nFuel: {}\nPoints: {}",
-            name,
-            obj.health,
-            obj.logi,
-            obj.supply,
-            obj.fuel,
-            obj.points
-        ),
-    };
+    // The * that used to flag an UNLIMITED_SUPPLY / UNLIMITED_AIRCRAFTS base
+    // is gone: unlimited supply now shows as a gold outline on the supply hex,
+    // and unlimited aircraft as a gold owner ring, so the name stays clean.
+    //
+    // health / logi / supply / fuel / points are no longer printed either --
+    // the status hexes carry them. What is left is the name plus anything that
+    // is an EVENT rather than a level: the states a player has to act on,
+    // which a three-way colour bucket cannot express.
+    let mut s = CompactString::from(name);
     // Both are mutually exclusive in practice (a carrier that's mid-repair
     // isn't simultaneously being boarded), but neither is asserted against
     // the other -- just append whichever is currently active.
@@ -519,7 +711,7 @@ impl ObjectiveMarkup {
             fuel: _,
             capture_hold: _,
             hold_pct: _,
-            points: _,
+            status,
             capture_pct: _,
             repair_pct: _,
             name: _,
@@ -536,6 +728,7 @@ impl ObjectiveMarkup {
         msgq.delete_mark(threatened_ring);
         msgq.delete_mark(capturable_ring);
         msgq.delete_mark(label);
+        status.remove(msgq);
         kind_symbol.remove(msgq);
         for (_, id) in supply_connections {
             msgq.delete_mark(id)
@@ -552,11 +745,13 @@ impl ObjectiveMarkup {
         repair_pct: Option<(u8, i64)>,
         hold_pct: Option<(u8, i64)>,
     ) {
+        // Cheap: only emits a message when a stat crosses a bucket boundary.
+        self.status.update(obj, msgq);
         if obj.owner != self.side {
             let text_color = |a| text_color(obj.owner, a);
             self.side = obj.owner;
-            msgq.set_markup_color(self.label, text_color(0.75));
-            msgq.set_markup_color(self.owner_ring, text_color(1.));
+            msgq.set_markup_color(self.label, text_color(LABEL_ALPHA));
+            msgq.set_markup_color(self.owner_ring, ring_color(obj, 1.));
             if obj.kind.is_special_sam_site() {
                 let capturable_color = if obj.health == 0 { Color::white(0.75) } else { text_color(0.75) };
                 msgq.set_markup_color(self.capturable_ring, capturable_color);
@@ -601,7 +796,6 @@ impl ObjectiveMarkup {
             || self.logi != obj.logi
             || self.supply != obj.supply
             || self.fuel != obj.fuel
-            || self.points != obj.points
             || self.capture_pct != capture_pct
             || self.repair_pct != repair_pct
             || self.hold_pct != hold_pct
@@ -626,7 +820,6 @@ impl ObjectiveMarkup {
             self.logi = obj.logi;
             self.supply = obj.supply;
             self.fuel = obj.fuel;
-            self.points = obj.points;
             self.capture_pct = capture_pct;
             self.repair_pct = repair_pct;
             self.hold_pct = hold_pct;
@@ -719,6 +912,7 @@ impl ObjectiveMarkup {
             _ => format_compact!("{} {}", obj.name, obj.kind.name()).into(),
         };
         t.pos = obj.zone.pos();
+        t.status = StatusHexes::new(obj, t.pos, draw_spec, msgq);
         let pos3 = Vector3::new(t.pos.x, 0., t.pos.y);
         macro_rules! threat_circle {
             ($radius:expr) => {
@@ -745,7 +939,7 @@ impl ObjectiveMarkup {
                     CircleSpec {
                         center: LuaVec3(pos3),
                         radius,
-                        color: text_color(1.),
+                        color: ring_color(obj, 1.),
                         fill_color: Color::white(0.),
                         line_type: LineType::Dashed,
                         read_only: true,
@@ -763,7 +957,7 @@ impl ObjectiveMarkup {
                         p1: LuaVec3(Vector3::new(points.p1.x, 0., points.p1.y)),
                         p2: LuaVec3(Vector3::new(points.p2.x, 0., points.p2.y)),
                         p3: LuaVec3(Vector3::new(points.p3.x, 0., points.p3.y)),
-                        color: text_color(1.),
+                        color: ring_color(obj, 1.),
                         fill_color: Color::white(0.),
                         line_type: LineType::Dashed,
                         read_only: true,
@@ -839,8 +1033,11 @@ impl ObjectiveMarkup {
             t.label,
             TextSpec {
                 pos: LuaVec3(Vector3::new(pos3.x + 1500., 1., pos3.z + 1500.)),
-                color: text_color(1.),
-                fill_color: Color::black(0.),
+                color: text_color(LABEL_ALPHA),
+                // A dark plate behind the glyphs. Without it legibility depends
+                // on whatever terrain is behind the label; with it every side
+                // colour reads on every map.
+                fill_color: crate::mapcolor::text_plate(),
                 font_size: 10,
                 read_only: true,
                 text: objective_label(&t.name, obj, &t.navaid, capture_pct, repair_pct, hold_pct)

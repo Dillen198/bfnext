@@ -197,8 +197,15 @@ async fn save(path: PathBuf, encoded: Bytes) -> Result<()> {
             .truncate(true)
             .create(true)
             .open(&tmp)?;
-        let mut file = zstd::stream::Encoder::new(file, 9)?.auto_finish();
+        let mut file = zstd::stream::Encoder::new(file, 9)?;
         io::copy(&mut &*encoded, &mut file)?;
+        // finish and sync by hand. auto_finish throws away the error from
+        // the final flush, which silently truncates the zstd frame, and
+        // without the sync the rename below can reach the disk before the
+        // data does, which after a hard kill leaves a save file of exactly
+        // the right size full of zeros and a mission that won't start.
+        let file = file.finish()?;
+        file.sync_all()?;
         drop(file);
         if let Err(e) = rotate_state(&path) {
             error!("failed to rotate backup files {e:?}")

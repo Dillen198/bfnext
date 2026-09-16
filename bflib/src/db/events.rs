@@ -101,6 +101,14 @@ pub enum CampaignEvent {
         /// False until the aircraft is actually spawned (first tick).
         #[serde(default)]
         spawned: bool,
+        /// True when this is a HELICOPTER patrol answering enemy helicopter
+        /// players rather than a fixed-wing CAP answering jets. Same event,
+        /// same spawn/station/RTB machinery -- every knob it reads (template,
+        /// altitude, speed, leash, duration, cooldown, launch-field kinds)
+        /// switches to the rotary set. Defaults to false so CAP events saved
+        /// before helicopter patrols existed load unchanged.
+        #[serde(default)]
+        rotary: bool,
     },
     /// Commander-dispatched CAP: a friendly AI CAP flight launched by the Smart
     /// Commander when friendly pilot coverage is thin.  Uses the same DCS spawn
@@ -138,7 +146,13 @@ impl CampaignEvent {
             Self::Barrage { side, .. } => format_compact!("{:?} Barrage", side),
             Self::MissileStrike { side, .. } => format_compact!("{:?} Missile Strike", side),
             Self::ConvoyAmbush { ambush_side, .. } => format_compact!("{:?} Convoy Ambush", ambush_side),
-            Self::EnemyCap { cap_side, .. } => format_compact!("{:?} Enemy CAP", cap_side),
+            Self::EnemyCap { cap_side, rotary, .. } => {
+                if *rotary {
+                    format_compact!("{:?} Enemy Helo Patrol", cap_side)
+                } else {
+                    format_compact!("{:?} Enemy CAP", cap_side)
+                }
+            }
             Self::CommanderCap { cap_side, .. } => format_compact!("{:?} Commander CAP", cap_side),
         }
     }
@@ -183,11 +197,15 @@ pub enum EventEffect {
         cap_side: Side,
         objective: ObjectiveId,
         obj_pos: Vector2,
+        /// Helicopter patrol rather than fixed-wing CAP.
+        rotary: bool,
     },
     /// Despawn all groups registered to a CAP event.
     DespawnCap {
         event_id: EventId,
         cap_side: Side,
+        /// Helicopter patrol rather than fixed-wing CAP.
+        rotary: bool,
     },
 
     /// Despawn all groups registered to a convoy-ambush event.
@@ -254,11 +272,13 @@ pub struct EventScheduler {
     /// CAP event → which side owns it (needed for retargeting, to know who the enemy is).
     #[serde(skip)]
     pub cap_side_by_event: FxHashMap<EventId, Side>,
-    /// Deferred CAP initial-task setup: GroupId → spawn position (used only
-    /// once, until DCS reports the group as alive; after that, dynamic
-    /// retargeting takes over).
+    /// Deferred CAP initial-task setup: GroupId → (spawn position, rotary).
+    /// Used only once, until DCS reports the group as alive; after that,
+    /// dynamic retargeting takes over. The flag rides along because the group
+    /// is tasked before we look its event up again, and a helicopter patrol
+    /// needs a different orbit block and target list than a CAP.
     #[serde(skip)]
-    pub pending_cap_tasks: FxHashMap<GroupId, Vector2>,
+    pub pending_cap_tasks: FxHashMap<GroupId, (Vector2, bool)>,
     /// CAP group → air-start watch state. A CAP is meant to ground-start (taxi
     /// + takeoff take a minute+). `enforce_cap_ground_start` polls the lead
     /// unit: the instant it is seen ON THE GROUND the watch is dropped (a real
@@ -294,6 +314,14 @@ pub struct EventScheduler {
     /// Same as above for Red.
     #[serde(default)]
     pub last_commander_cap_ended_red: Option<DateTime<Utc>>,
+    /// When Blue's last reactive HELICOPTER patrol ended (shot down or RTB'd).
+    /// Tracked apart from the CAP cooldown so a jet wave and a helo wave don't
+    /// gate each other -- they answer different threats and different players.
+    #[serde(default)]
+    pub last_helo_patrol_ended_blue: Option<DateTime<Utc>>,
+    /// Same as above for Red.
+    #[serde(default)]
+    pub last_helo_patrol_ended_red: Option<DateTime<Utc>>,
     /// Timestamp of the first tick in this server session. Not persisted — resets on
     /// every restart so hvt_startup_delay_secs counts from each fresh session start.
     #[serde(skip)]
@@ -430,7 +458,7 @@ impl EventScheduler {
                     }
                 }
 
-                CampaignEvent::EnemyCap { id, cap_side, objective, expires_at, spawned } => {
+                CampaignEvent::EnemyCap { id, cap_side, objective, expires_at, spawned, rotary } => {
                     if !*spawned {
                         *spawned = true;
                         let obj_pos = db.persisted.objectives.get(objective)
@@ -440,10 +468,11 @@ impl EventScheduler {
                             cap_side: *cap_side,
                             objective: *objective,
                             obj_pos,
+                            rotary: *rotary,
                         });
                     }
                     if now >= *expires_at {
-                        effects.push(EventEffect::DespawnCap { event_id: *id, cap_side: *cap_side });
+                        effects.push(EventEffect::DespawnCap { event_id: *id, cap_side: *cap_side, rotary: *rotary });
                         if let Some(marks) = self.event_marks.remove(id) {
                             effects.push(EventEffect::DeleteMarks { ids: marks });
                         }
@@ -461,10 +490,11 @@ impl EventScheduler {
                             cap_side: *cap_side,
                             objective: *objective,
                             obj_pos,
+                            rotary: false,
                         });
                     }
                     if now >= *expires_at {
-                        effects.push(EventEffect::DespawnCap { event_id: *id, cap_side: *cap_side });
+                        effects.push(EventEffect::DespawnCap { event_id: *id, cap_side: *cap_side, rotary: false });
                         if let Some(marks) = self.event_marks.remove(id) {
                             effects.push(EventEffect::DeleteMarks { ids: marks });
                         }

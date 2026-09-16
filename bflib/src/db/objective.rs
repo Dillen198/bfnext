@@ -545,6 +545,10 @@ impl Objective {
         self.unlimited_supply
     }
 
+    pub fn unlimited_aircraft(&self) -> bool {
+        self.unlimited_aircraft
+    }
+
     pub fn logistics_detached(&self) -> bool {
         self.logistics_detached
     }
@@ -816,6 +820,21 @@ impl Db {
             // Legacy: buildings only scale down the group-based rating.
             let remaining_frac = 1. - (destroyed as f32 / total as f32).min(1.);
             logi = ((logi as f32) * remaining_frac).round() as u8;
+        }
+
+        // A base only becomes Neutral by having its garrison wiped out (see
+        // `neutralize_depleted_objective` and `check_capture_hold`), and
+        // `obj.groups` is keyed by side -- there is no Neutral entry to count.
+        // So both of the "nothing left to destroy, read it as healthy" branches
+        // above fire on a neutralised base and hand it back a health of 100,
+        // and the scenery override then pins it to the surviving-warehouse
+        // fraction. Either way `captureable()` (health <= 20) goes false the
+        // moment anything recomputes the status -- a unit dying in the zone, a
+        // warehouse bombed, a scenery sync -- so the base the panel just told
+        // everyone "must be retaken with troops" could not be retaken at all.
+        // It has no garrison: its health is zero until somebody captures it.
+        if obj.owner == Side::Neutral && unit_total == 0 {
+            health = 0;
         }
 
         Ok((health, logi, infantry))
@@ -1859,7 +1878,7 @@ impl Db {
                 Ok(g) => g.kind,
                 Err(_) => continue,
             };
-            if let Some(id) = self.ephemeral.group_marks.remove(&gid) {
+            if let Some((id, _)) = self.ephemeral.group_marks.remove(&gid) {
                 self.ephemeral.msgs.delete_mark(id)
             }
             let uids: SmallVec<[UnitId; 32]> =
@@ -2527,17 +2546,33 @@ impl Db {
                 }
                 self.overrun_previous_occupants(oid, new_owner)?;
                 let is_sam = objective!(self, oid)?.kind.is_special_sam_site();
+                // Hand the DCS airfield over, if this objective is one. Not
+                // every objective is: a zone-only FOB or a command center has
+                // no `airbase_by_oid` entry, which is normal rather than an
+                // error. This used to `?` on a missing entry, and by this point
+                // the objective's owner has already flipped -- so the bail-out
+                // left the base owned by the capturing side with none of the
+                // work below done (no garrison revive, no warehouse handover,
+                // no consolidation hold, no redraw), and took every other
+                // objective's capture in the same pass down with it. Log and
+                // carry on instead.
                 if !is_sam {
-                    let abid = self
-                        .ephemeral
-                        .airbase_by_oid
-                        .get(&oid)
-                        .ok_or_else(|| anyhow!("no airbase for objective {:?}", oid))?;
-                    let airbase =
-                        Airbase::get_instance(lua, abid).context("getting captured airbase")?;
-                    airbase
-                        .set_coalition(*side)
-                        .context("setting airbase coalition")?;
+                    match self.ephemeral.airbase_by_oid.get(&oid) {
+                        None => info!("{name} has no DCS airbase to hand over"),
+                        Some(abid) => {
+                            match Airbase::get_instance(lua, abid)
+                                .context("getting captured airbase")
+                                .and_then(|ab| {
+                                    ab.set_coalition(*side)
+                                        .context("setting airbase coalition")
+                                }) {
+                                Ok(()) => (),
+                                Err(e) => {
+                                    error!("could not hand over the airfield at {name}: {e:?}")
+                                }
+                            }
+                        }
+                    }
                 }
                 self.repair_one_logi_step(*side, now, oid)
                     .context("repairing captured airbase logi")?;

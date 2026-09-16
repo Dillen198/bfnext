@@ -218,7 +218,12 @@ fn active_runway(
                     .collect()
             })
             .unwrap_or_default();
-        log::info!(
+        // debug, not info: this fires once per runway end per airbase on every
+        // ATIS regeneration -- ~46 fields plus the carriers, every 20 seconds.
+        // At info it was 86% of the whole engine log (90k of 104k lines in a
+        // 3.7h session) and rotated the log file every ~65 seconds, which threw
+        // away the history anything else has to be diagnosed from.
+        log::debug!(
             "[ATIS_RWY] {ab_name} (cs {ab_callsign}): runway name={raw_name:?} \
              course={course:.4}rad ({c1:.0}deg) pos={rwy_pos:?} parsed_parts={parts:?}"
         );
@@ -257,7 +262,7 @@ fn active_runway(
             angle_diff(wind_from_deg, a.0).total_cmp(&angle_diff(wind_from_deg, b.0))
         }
     });
-    log::info!(
+    log::debug!(
         "[ATIS_RWY] {ab_name}: wind {wind_from_deg:.0}deg/{wind_speed_kts:.0}kt (calm={calm}) \
          -> active {:?}",
         best.map(|(_, l, _)| l)

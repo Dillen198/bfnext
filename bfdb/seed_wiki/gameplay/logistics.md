@@ -349,23 +349,23 @@ in the desert spends the stock of the base you picked the crates up from.
 
 ### F10 Map Markers
 
-Typical format:
+Supply state is read off the **status hexagons** beside each base, not from
+text. The order never changes:
+
 ```
-Musa Airbase
-Health: 85
-Logi: 42
-Supply: 75
-Fuel: 100
-Points: 0
+   Health  Logi  Supply  Fuel
+     ⬢      ⬢      ⬢      ⬢
 ```
 
-- **Health**: 85 - Facility condition
-- **Logi**: 42 - Infrastructure (safe from capture, above 0)
-- **Supply**: 75 - Equipment stocks (good level)
-- **Fuel**: 100 - Fuel stocks (full)
-- **Points**: 0 - Capture point value
+Green is above 66%, amber 33–66%, red below 33%. A **gold outline** means that
+resource is unlimited and will never run dry.
 
-**Note**: Values are whole numbers 0-100.
+For logistics the two that matter are **Logi** (the infrastructure that lets a
+base repair and feed its neighbours) and **Supply** (munitions). A base with a
+red logi hex has had its infrastructure flattened — it will not recover on its
+own and it stops supplying anything downstream of it.
+
+Full key: [Reading the F10 Map](/wiki/gameplay/reading-the-map).
 
 ### In-Game Notifications
 

@@ -130,6 +130,9 @@ export interface Objective {
   priority?: boolean
   threatened?: boolean
   captureable?: boolean
+  /** Stocks that never run dry — drawn as a gold outline, like the F10 map. */
+  unlimited_supply?: boolean
+  unlimited_aircraft?: boolean
 }
 
 /** The frontline as three independent sets of [lat, lon] polylines: the

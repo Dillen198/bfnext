@@ -18,7 +18,7 @@ use crate::{
     env::miz::{Country, GroupId, UnitId},
     simple_enum, wrapped_table, Color, LuaEnv, LuaVec3, MizLua, String,
 };
-use anyhow::Result;
+use anyhow::{Result, bail};
 use mlua::{prelude::*, Value};
 use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
@@ -183,9 +183,15 @@ pub struct ArrowSpec {
     pub read_only: bool,
 }
 
-/// A connected polyline / filled polygon drawn via `trigger.action.outLineToAll`.
-/// Points are drawn in order as a single shape — the last point connects back to
-/// the first only if you repeat it.
+/// A connected polyline / filled polygon drawn as ONE mark via
+/// `trigger.action.markupToAll` with shapeId 7 (freeform).
+///
+/// Points are drawn in order as a single shape; the last point connects back to
+/// the first only if you repeat it. DCS wants at least 3.
+///
+/// This is the cheap way to draw a multi-point symbol. The obvious alternative
+/// -- chaining two-point `lineToAll` calls -- costs one MarkId per segment,
+/// which is how the objective kind icons came to burn 10-40 marks each.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolylineSpec {
     pub points: Vec<LuaVec3>,
@@ -194,6 +200,10 @@ pub struct PolylineSpec {
     pub line_type: LineType,
     pub read_only: bool,
 }
+
+/// `markupToAll` shape ids: 1 line, 2 circle, 3 rect, 4 arrow, 5 text,
+/// 6 quad, 7 freeform. Only freeform needs the varargs form.
+const FREEFORM_SHAPE_ID: i64 = 7;
 
 wrapped_table!(Action, None);
 
@@ -488,26 +498,42 @@ impl<'lua> Action<'lua> {
         )?)
     }
 
-    pub fn out_line_to_all(
+    /// Draw a connected multi-point shape as a single mark.
+    ///
+    /// `trigger.action.markupToAll` takes its points as VARARGS, not as a
+    /// table, so the argument list has to be built by hand:
+    ///   `(shapeId, coalition, id, p1, p2, ... pN, color, fillColor, lineType,
+    ///     readOnly, message)`
+    ///
+    /// The previous version of this function called `trigger.action.outLineToAll`,
+    /// which does not exist in DCS. Nothing called it, so it never threw.
+    pub fn freeform_to_all(
         &self,
         side: SideFilter,
         id: MarkId,
         spec: PolylineSpec,
         message: Option<String>,
     ) -> Result<()> {
-        Ok(self.call_function(
-            "outLineToAll",
-            (
-                side,
-                id,
-                spec.points,
-                spec.color,
-                spec.fill_color,
-                spec.line_type,
-                spec.read_only,
-                message,
-            ),
-        )?)
+        use mlua::MultiValue;
+        if spec.points.len() < 3 {
+            bail!(
+                "freeform_to_all needs at least 3 points, got {}",
+                spec.points.len()
+            )
+        }
+        let mut args: Vec<Value> = Vec::with_capacity(spec.points.len() + 8);
+        args.push(FREEFORM_SHAPE_ID.into_lua(self.lua)?);
+        args.push(side.into_lua(self.lua)?);
+        args.push(id.into_lua(self.lua)?);
+        for p in spec.points {
+            args.push(p.into_lua(self.lua)?);
+        }
+        args.push(spec.color.into_lua(self.lua)?);
+        args.push(spec.fill_color.into_lua(self.lua)?);
+        args.push(spec.line_type.into_lua(self.lua)?);
+        args.push(spec.read_only.into_lua(self.lua)?);
+        args.push(message.into_lua(self.lua)?);
+        Ok(self.call_function("markupToAll", MultiValue::from_vec(args))?)
     }
 
     pub fn arrow_to_all(

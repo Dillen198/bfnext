@@ -28,6 +28,7 @@ mod frontline;
 mod intel_marks;
 mod jtac;
 mod landcache;
+mod mapcolor;
 mod menu;
 mod msgq;
 mod navaids;
@@ -2068,18 +2069,26 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
             }
 
             // E: Spawn a CAP aircraft patrol over/near an objective
-            EventEffect::SpawnCap { event_id, cap_side, objective, obj_pos } => {
+            EventEffect::SpawnCap { event_id, cap_side, objective, obj_pos, rotary } => {
                 // CAP must ground-start from a real airbase (startup + taxi +
                 // takeoff is what gives flights their time separation). If the
                 // objective has no resolvable runtime airbase, don't spawn an
                 // air-started flight as a fallback -- cancel the event instead.
                 // Exactly the resolver spawn_group uses, so a field can't pass
                 // here and then fail to produce a parking start at spawn time.
-                let airbase_resolvable = ctx
-                    .db
-                    .ephemeral
-                    .resolve_airbase(lua, &ctx.db.persisted, &objective)
-                    .is_some();
+                //
+                // Helicopters skip this gate. Most FOBs have no DCS airbase or
+                // FARP pad object inside them at all, and spawn_group's
+                // TakeOffGroundHot fallback lifts a rotary flight off open
+                // ground there perfectly well -- the same discovery that let AI
+                // logistics helos launch from the fields nearest the fight
+                // instead of 150 km away.
+                let airbase_resolvable = rotary
+                    || ctx
+                        .db
+                        .ephemeral
+                        .resolve_airbase(lua, &ctx.db.persisted, &objective)
+                        .is_some();
                 if !airbase_resolvable {
                     warn!(
                         "SpawnCap: objective {:?} has no resolvable airbase -- cancelling CAP event, not spawning",
@@ -2099,12 +2108,17 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 let template: Option<dcso3::String> = None;
                 // Fall back to configured CAP template name
                 let template = template.unwrap_or_else(|| {
-                    let cap_tmpl = match cap_side {
-                        dcso3::coalition::Side::Red => cfg.campaign_events.as_ref()
+                    let ce = cfg.campaign_events.as_ref();
+                    let cap_tmpl = match (cap_side, rotary) {
+                        (dcso3::coalition::Side::Red, false) => ce
                             .map(|c| c.cap_template_red.as_str()).unwrap_or("RCAP"),
-                        dcso3::coalition::Side::Blue => cfg.campaign_events.as_ref()
+                        (dcso3::coalition::Side::Blue, false) => ce
                             .map(|c| c.cap_template_blue.as_str()).unwrap_or("BCAP"),
-                        dcso3::coalition::Side::Neutral => "RCAP",
+                        (dcso3::coalition::Side::Red, true) => ce
+                            .map(|c| c.helo_template_red.as_str()).unwrap_or("RHELOCAP"),
+                        (dcso3::coalition::Side::Blue, true) => ce
+                            .map(|c| c.helo_template_blue.as_str()).unwrap_or("BHELOCAP"),
+                        (dcso3::coalition::Side::Neutral, r) => if r { "RHELOCAP" } else { "RCAP" },
                     };
                     dcso3::String::from(cap_tmpl)
                 });
@@ -2121,11 +2135,35 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     },
                     &template,
                     DeployKind::Objective { origin: objective },
-                    bfprotocols::cfg::UnitTag::CAP.into(),
+                    {
+                        // Start on the ramp with the engines OFF and let the AI
+                        // run its own startup. The minutes of startup, taxi and
+                        // takeoff are the point: they are the defending side's
+                        // reaction delay and the attacking side's warning. Both
+                        // tags take the same waypoint-0 rewrite in spawn_group;
+                        // they differ only in engines-running.
+                        let cold = cfg
+                            .campaign_events
+                            .as_ref()
+                            .map(|c| if rotary { c.helo_cold_start } else { c.cap_cold_start })
+                            .unwrap_or(true);
+                        let mut tags: enumflags2::BitFlags<bfprotocols::cfg::UnitTag> =
+                            bfprotocols::cfg::UnitTag::CAP.into();
+                        if cold {
+                            tags |= bfprotocols::cfg::UnitTag::ColdStart;
+                        }
+                        tags
+                    },
                     None,
                 ) {
                     Ok(gid) => {
-                        info!("SpawnCap: spawned CAP {:?} for {:?} over {:?}", gid, cap_side, objective);
+                        info!(
+                            "SpawnCap: spawned {} {:?} for {:?} over {:?}",
+                            if rotary { "helo patrol" } else { "CAP" },
+                            gid,
+                            cap_side,
+                            objective
+                        );
                         ctx.event_scheduler.cap_spawn_ts.insert(
                             gid,
                             crate::db::events::CapSpawnWatch::new(Utc::now()),
@@ -2137,7 +2175,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         // Record which side owns this CAP event (needed for retargeting).
                         ctx.event_scheduler.cap_side_by_event.insert(event_id, cap_side);
                         // Queue initial task — deferred until DCS reports the group alive.
-                        ctx.event_scheduler.pending_cap_tasks.insert(gid, obj_pos);
+                        ctx.event_scheduler.pending_cap_tasks.insert(gid, (obj_pos, rotary));
                         // F10 mark so players can see the CAP threat
                         let enemy = match cap_side {
                             dcso3::coalition::Side::Red => dcso3::coalition::Side::Blue,
@@ -2154,20 +2192,30 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             mid,
                             CircleSpec {
                                 center: dcso3::LuaVec3(dcso3::Vector3::new(obj_pos.x, 5000., obj_pos.y)),
-                                radius: 25_000.,
+                                radius: if rotary { 12_000. } else { 25_000. },
                                 color: side_color(cap_side),
                                 fill_color: Color::new(0., 0., 0., 0.),
                                 line_type: LineType::Solid,
                                 read_only: true,
                             },
-                            Some(format_compact!("Enemy CAP [{:?}] — ACTIVE", cap_side).into()),
+                            Some(
+                                format_compact!(
+                                    "Enemy {} [{:?}] — ACTIVE",
+                                    if rotary { "helo patrol" } else { "CAP" },
+                                    cap_side
+                                )
+                                .into(),
+                            ),
                         );
                         ctx.event_scheduler.register_mark(event_id, mid);
                     }
                     Err(e) => {
                         warn!(
-                            "SpawnCap: CAP template '{}' not found — add a group named '{}' to your mission file. Cancelling event. ({e:?})",
-                            template, template
+                            "SpawnCap: {} template '{}' not found — add a {} group named '{}' to your mission file. Cancelling event. ({e:?})",
+                            if rotary { "helo patrol" } else { "CAP" },
+                            template,
+                            if rotary { "helicopter-section" } else { "plane-section" },
+                            template
                         );
                         // Cancel the event so it doesn't keep retrying
                         ctx.event_scheduler.active_events.retain(|ev| ev.id() != event_id);
@@ -2193,7 +2241,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
             }
 
             // E: Remove all CAP groups when the event expires
-            EventEffect::DespawnCap { event_id, cap_side } => {
+            EventEffect::DespawnCap { event_id, cap_side, rotary } => {
                 let now = Utc::now();
                 // Determine if this was a shootdown (all aircraft dead) or natural expiry.
                 // If shot down, record the time so check_air_threats can enforce a cooldown.
@@ -2213,14 +2261,17 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 // the "gap between waves" the cooldown is meant to enforce;
                 // gating it on shootdown only let a fresh wave spawn the
                 // instant the previous one timed out.
-                match cap_side {
-                    Side::Blue => ctx.event_scheduler.last_commander_cap_ended_blue = Some(now),
-                    Side::Red => ctx.event_scheduler.last_commander_cap_ended_red = Some(now),
+                match (cap_side, rotary) {
+                    (Side::Blue, false) => ctx.event_scheduler.last_commander_cap_ended_blue = Some(now),
+                    (Side::Red, false) => ctx.event_scheduler.last_commander_cap_ended_red = Some(now),
+                    (Side::Blue, true) => ctx.event_scheduler.last_helo_patrol_ended_blue = Some(now),
+                    (Side::Red, true) => ctx.event_scheduler.last_helo_patrol_ended_red = Some(now),
                     _ => {}
                 }
                 info!(
-                    "DespawnCap: {:?} CAP wave ended ({}) — respawn cooldown started",
+                    "DespawnCap: {:?} {} wave ended ({}) — respawn cooldown started",
                     cap_side,
+                    if rotary { "helo patrol" } else { "CAP" },
                     if was_shot_down { "shot down" } else { "timed out / RTB" }
                 );
                 
@@ -2252,7 +2303,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         };
 
                         let best_obj = ctx.db.persisted.objectives.into_iter()
-                            .filter(|(_, obj)| obj.owner == cap_side && matches!(*obj.kind(), bfprotocols::db::objective::ObjectiveKind::Airbase))
+                            .filter(|(_, obj)| obj.owner == cap_side && is_launch_field(obj.kind(), rotary))
                             .min_by(|(_, a), (_, b)| {
                                 let ap = a.pos();
                                 let bp = b.pos();
@@ -2283,7 +2334,11 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         }
                     }
                 }
-                info!("DespawnCap: CAP event {:?} expired, aircraft commanded to RTB", event_id);
+                info!(
+                    "DespawnCap: {} event {:?} expired, aircraft commanded to RTB",
+                    if rotary { "helo patrol" } else { "CAP" },
+                    event_id
+                );
             }
 
 
@@ -2292,6 +2347,60 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
 }
 
 
+
+/// Build the on-station task for one flight of a reactive air response.
+///
+/// Fixed-wing CAP orbits an absolute barometric block and engages air targets.
+/// A helicopter patrol orbits low over the ground at `helo_altitude_agl_m`
+/// ABOVE the terrain under its station -- an absolute altitude that works at
+/// the coast puts a helo inside a ridge inland, which is the same trap the AI
+/// logistics helos fell into -- and engages helicopters and ground units.
+/// Fixed-wing is deliberately absent from its target list: an attack helo told
+/// to chase a fast mover only flies itself somewhere it dies.
+fn air_station_task<'lua>(
+    station: dcso3::Vector2,
+    rotary: bool,
+    cfg: &bfprotocols::cfg::CampaignEventsCfg,
+    land: Option<&dcso3::land::Land>,
+) -> dcso3::controller::Task<'lua> {
+    use dcso3::attribute::Attribute;
+    use dcso3::controller::{OrbitPattern, Task};
+    let (speed, altitude, engage, targets) = if rotary {
+        let ground = land
+            .and_then(|l| l.get_height(dcso3::LuaVec2(station)).ok())
+            .unwrap_or(0.);
+        (
+            cfg.helo_speed_ms,
+            ground + cfg.helo_altitude_agl_m,
+            cfg.helo_engage_radius_m,
+            vec![Attribute::Helicopters, Attribute::GroundUnits],
+        )
+    } else {
+        (
+            cfg.cap_speed_ms,
+            cfg.cap_altitude_m,
+            cfg.cap_engage_radius_m,
+            vec![Attribute::Air],
+        )
+    };
+    // ComboTask keeps them on station (break to engage, then return) instead of
+    // completing a one-shot task and RTBing.
+    Task::ComboTask(vec![
+        Task::Orbit {
+            pattern: OrbitPattern::Circle,
+            point: Some(dcso3::LuaVec2(station)),
+            point2: None,
+            speed: Some(speed),
+            altitude: Some(altitude),
+        },
+        Task::EngageTargetsInZone {
+            point: dcso3::LuaVec2(station),
+            zone_radius: engage,
+            target_types: targets,
+            priority: None,
+        },
+    ])
+}
 
 /// Retry deferred move orders each slow tick until the group appears in DCS.
 fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
@@ -2372,23 +2481,27 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
         ctx.event_scheduler.pending_moves.remove(&gid);
     }
 
-    // Flush pending CAP orbit tasks (one per tick, same retry pattern).
+    // Flush pending CAP orbit tasks (same retry pattern as moves above).
+    // Look at every pending flight, not just one: a flight that is still
+    // sitting on the ramp is skipped without doing any Lua work beyond a name
+    // lookup, and with cold starts that wait is minutes long -- taking only the
+    // first would let one starting flight starve every other flight's initial
+    // task for its whole startup. The expensive part, set_task, is still capped
+    // per tick.
+    const CAP_TASKS_PER_TICK: usize = 2;
+    let mut cap_tasks_issued = 0usize;
     let pending_cap: Vec<_> = ctx.event_scheduler.pending_cap_tasks.iter()
         .map(|(gid, pos)| (*gid, *pos))
-        .take(1)
         .collect();
 
-    let (cap_alt, cap_spd, cap_engage) = ctx
+    let events_cfg = ctx
         .db
         .ephemeral
         .cfg
         .campaign_events
-        .as_ref()
-        .map(|c| (c.cap_altitude_m, c.cap_speed_ms, c.cap_engage_radius_m))
-        .unwrap_or((8000.0, 250.0, 45_000.0));
-    for (gid, orbit_center) in pending_cap {
-        use dcso3::controller::{OrbitPattern, Task};
-        use dcso3::attribute::Attribute;
+        .clone()
+        .unwrap_or_default();
+    for (gid, (orbit_center, rotary)) in pending_cap {
         let group_name = match ctx.db.persisted.groups.get(&gid) {
             Some(g) => g.name.clone(),
             None => {
@@ -2417,32 +2530,27 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
                 continue;
             }
         };
-        // Initial task: climb to the CAP block and orbit the spawn point with a
-        // MODEST engage leash. `retarget_cap_groups` re-stations it toward the
-        // real threat on the next slow tick. The old 200 km engage radius meant
-        // a fresh flight immediately bolted cross-map at the nearest contact,
-        // straight through enemy SAM belts -- spawn, die, respawn on a loop.
-        let hunt = Task::ComboTask(vec![
-            Task::Orbit {
-                pattern: OrbitPattern::Circle,
-                point: Some(LuaVec2(orbit_center)),
-                point2: None,
-                speed: Some(cap_spd),
-                altitude: Some(cap_alt),
-            },
-            Task::EngageTargetsInZone {
-                point: LuaVec2(orbit_center),
-                zone_radius: cap_engage,
-                target_types: vec![Attribute::Air],
-                priority: None,
-            },
-        ]);
+        // Initial task: climb to the patrol block and orbit the spawn point
+        // with a MODEST engage leash. `retarget_cap_groups` re-stations it
+        // toward the real threat on the next slow tick. The old 200 km engage
+        // radius meant a fresh flight immediately bolted cross-map at the
+        // nearest contact, straight through enemy SAM belts -- spawn, die,
+        // respawn on a loop.
+        let hunt = air_station_task(orbit_center, rotary, &events_cfg, Some(&land));
         if let Err(e) = controller.set_task(hunt) {
             error!("flush_pending_cap_tasks: set_task {group_name}: {e}");
         } else {
-            info!("flush_pending_cap_tasks: CAP {group_name} initial hunt from {:?}", orbit_center);
+            info!(
+                "flush_pending_cap_tasks: {} {group_name} initial hunt from {:?}",
+                if rotary { "helo patrol" } else { "CAP" },
+                orbit_center
+            );
         }
         ctx.event_scheduler.pending_cap_tasks.remove(&gid);
+        cap_tasks_issued += 1;
+        if cap_tasks_issued >= CAP_TASKS_PER_TICK {
+            break;
+        }
     }
 
 }
@@ -2456,58 +2564,48 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
 /// it RTBs. With nothing detected it orbits the defended objective rather than
 /// running a one-shot sweep that completes and sends it home.
 fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
-    use dcso3::controller::{OrbitPattern, Task};
-    use dcso3::attribute::Attribute;
-    use dcso3::coalition::Side;
+    use dcso3::land::Land;
     use dcso3::Vector2;
     use crate::db::events::CampaignEvent;
 
     // Restation only when the target has moved meaningfully -- re-issuing an
-    // identical task every tick interrupts an in-progress intercept.
+    // identical task every tick interrupts an in-progress intercept. A
+    // helicopter patrol works a much smaller box, so its threshold is smaller
+    // too: 15 km of drift is most of a rotary patrol's whole area.
     const RESTATION_THRESHOLD_M: f64 = 15_000.0;
-    let (cap_alt, cap_spd, cap_push, cap_idle_rtb, cap_engage) = ctx
+    const ROTARY_RESTATION_THRESHOLD_M: f64 = 5_000.0;
+    let events_cfg = ctx
         .db
         .ephemeral
         .cfg
         .campaign_events
-        .as_ref()
-        .map(|c| {
-            (
-                c.cap_altitude_m,
-                c.cap_speed_ms,
-                c.cap_max_push_m,
-                c.cap_idle_rtb_secs,
-                c.cap_engage_radius_m,
-            )
-        })
-        .unwrap_or((8000.0, 250.0, 60_000.0, 240, 45_000.0));
-
-    // In-air enemy player positions per side. A player in a radar gap is still a
-    // known threat, so this is unioned with the detected-track picture below.
-    let mut player_positions: fxhash::FxHashMap<Side, Vec<Vector2>> = fxhash::FxHashMap::default();
-    for (_, player) in ctx.db.persisted.players() {
-        if let Some((_, Some(inst))) = &player.current_slot {
-            if inst.in_air {
-                let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
-                player_positions.entry(player.side.opposite()).or_default().push(pos);
-            }
-        }
-    }
+        .clone()
+        .unwrap_or_default();
+    // Terrain lookup for rotary orbit altitudes. Not fatal if it fails -- the
+    // patrol just falls back to an orbit measured from sea level.
+    let land = Land::singleton(lua).ok();
 
     let cap_events: Vec<_> = ctx
         .event_scheduler
         .active_events
         .iter()
         .filter_map(|e| match e {
-            CampaignEvent::EnemyCap { id, cap_side, objective, .. }
-            | CampaignEvent::CommanderCap { id, cap_side, objective, .. } => {
-                Some((*id, *cap_side, *objective))
+            CampaignEvent::EnemyCap { id, cap_side, objective, rotary, .. } => {
+                Some((*id, *cap_side, *objective, *rotary))
+            }
+            CampaignEvent::CommanderCap { id, cap_side, objective, .. } => {
+                Some((*id, *cap_side, *objective, false))
             }
             _ => None,
         })
         .collect();
 
-    for (event_id, cap_side, objective) in cap_events {
+    for (event_id, cap_side, objective, rotary) in cap_events {
+        let (cap_push, cap_idle_rtb) = if rotary {
+            (events_cfg.helo_max_push_m, events_cfg.helo_idle_rtb_secs)
+        } else {
+            (events_cfg.cap_max_push_m, events_cfg.cap_idle_rtb_secs)
+        };
         let gids = match ctx.event_scheduler.cap_groups.get(&event_id) {
             Some(v) => v.clone(),
             None => continue,
@@ -2517,11 +2615,15 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         let home = ctx.db.persisted.objectives.get(&objective).map(|o| o.pos());
 
         // Everything cap_side's radar network sees, plus any airborne enemy
-        // player (covers radar gaps).
-        let mut threats = ctx.ewr.detected_enemy_positions(cap_side, now);
-        if let Some(pp) = player_positions.get(&cap_side) {
-            threats.extend_from_slice(pp);
-        }
+        // player (covers radar gaps) -- narrowed to helicopters for a rotary
+        // patrol, which cannot work a jet track and should not be sent chasing
+        // one.
+        let mut threats = if rotary {
+            ctx.ewr.detected_enemy_helo_positions(cap_side, now, &ctx.db)
+        } else {
+            ctx.ewr.detected_enemy_positions(cap_side, now)
+        };
+        threats.extend(enemy_player_positions(&ctx.db, cap_side.opposite(), rotary));
 
         // Idle CAP -> RTB. If this flight's side has painted nothing to work for
         // `cap_idle_rtb` seconds, expire the event now: the DespawnCap effect
@@ -2548,7 +2650,12 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                     }
                 }
                 ctx.event_scheduler.cap_last_threat_seen.remove(&event_id);
-                info!("retarget_cap_groups: CAP {:?} idle {}s -> RTB", event_id, cap_idle_rtb);
+                info!(
+                    "retarget_cap_groups: {} {:?} idle {}s -> RTB",
+                    if rotary { "helo patrol" } else { "CAP" },
+                    event_id,
+                    cap_idle_rtb
+                );
                 continue;
             }
         }
@@ -2590,33 +2697,21 @@ fn retarget_cap_groups(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
         };
 
         // Skip if we're already stationed here (within threshold).
+        let threshold = if rotary {
+            ROTARY_RESTATION_THRESHOLD_M
+        } else {
+            RESTATION_THRESHOLD_M
+        };
         let restation = ctx
             .event_scheduler
             .cap_station_by_event
             .get(&event_id)
-            .map_or(true, |prev| na::distance(&(*prev).into(), &station.into()) > RESTATION_THRESHOLD_M);
+            .map_or(true, |prev| na::distance(&(*prev).into(), &station.into()) > threshold);
         if !restation {
             continue;
         }
 
-        // CAP station: orbit the point and engage any air target in a wide zone
-        // around it. ComboTask keeps them on station (break to intercept, then
-        // return) instead of completing a one-shot task and RTBing.
-        let task = Task::ComboTask(vec![
-            Task::Orbit {
-                pattern: OrbitPattern::Circle,
-                point: Some(dcso3::LuaVec2(station)),
-                point2: None,
-                speed: Some(cap_spd),
-                altitude: Some(cap_alt),
-            },
-            Task::EngageTargetsInZone {
-                point: dcso3::LuaVec2(station),
-                zone_radius: cap_engage,
-                target_types: vec![Attribute::Air],
-                priority: None,
-            },
-        ]);
+        let task = air_station_task(station, rotary, &events_cfg, land.as_ref());
 
         let mut any_tasked = false;
         for gid in gids {
@@ -2750,9 +2845,11 @@ fn enforce_cap_ground_start(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) 
     }
 }
 
-/// Count of `enemy_side` players airborne in fixed-wing aircraft, straight from
-/// the DB (radar-independent). Backs `cap_trigger_on_known_players`.
-fn enemy_fixedwing_players_airborne(db: &db::Db, enemy_side: Side) -> usize {
+/// Count of `enemy_side` players airborne in one airframe class, straight from
+/// the DB (radar-independent). `rotary` selects helicopters instead of
+/// fixed-wing. Backs `cap_trigger_on_known_players` /
+/// `helo_trigger_on_known_players` and both balance gaps.
+fn enemy_players_airborne(db: &db::Db, enemy_side: Side, rotary: bool) -> usize {
     use bfprotocols::cfg::UnitTag;
     db.instanced_players()
         .filter(|(_, p, inst)| {
@@ -2763,14 +2860,23 @@ fn enemy_fixedwing_players_airborne(db: &db::Db, enemy_side: Side) -> usize {
                     .cfg
                     .unit_classification
                     .get(&inst.typ)
-                    .map(|t| t.contains(UnitTag::Aircraft) && !t.contains(UnitTag::Helicopter))
-                    .unwrap_or(true)
+                    .map(|t| {
+                        if rotary {
+                            t.contains(UnitTag::Helicopter)
+                        } else {
+                            t.contains(UnitTag::Aircraft) && !t.contains(UnitTag::Helicopter)
+                        }
+                    })
+                    // Unknown type: assume a jet. Counting it as a helo would
+                    // scramble the rotary response at something it can't catch.
+                    .unwrap_or(!rotary)
         })
         .count()
 }
 
-/// Positions of `enemy_side` fixed-wing players in the air (radar-independent).
-fn enemy_fixedwing_player_positions(db: &db::Db, enemy_side: Side) -> Vec<Vector2> {
+/// Positions of `enemy_side` players of one airframe class in the air
+/// (radar-independent).
+fn enemy_player_positions(db: &db::Db, enemy_side: Side, rotary: bool) -> Vec<Vector2> {
     use bfprotocols::cfg::UnitTag;
     db.instanced_players()
         .filter_map(|(_, p, inst)| {
@@ -2782,51 +2888,135 @@ fn enemy_fixedwing_player_positions(db: &db::Db, enemy_side: Side) -> Vec<Vector
                 .cfg
                 .unit_classification
                 .get(&inst.typ)
-                .map(|t| t.contains(UnitTag::Aircraft) && !t.contains(UnitTag::Helicopter))
-                .unwrap_or(true);
+                .map(|t| {
+                    if rotary {
+                        t.contains(UnitTag::Helicopter)
+                    } else {
+                        t.contains(UnitTag::Aircraft) && !t.contains(UnitTag::Helicopter)
+                    }
+                })
+                .unwrap_or(!rotary);
             ok.then(|| Vector2::new(inst.position.p.x, inst.position.p.z))
         })
         .collect()
 }
 
-/// Reactive CAP: detect in-air enemy players near owned objectives and spawn CAP intercepts.
-/// CAP is no longer an economic commander action — it fires automatically when real threats appear.
-fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
+/// The knobs one reactive-air-response pass reads, resolved for either the
+/// fixed-wing or the rotary side of `CampaignEventsCfg`. Everything downstream
+/// of this struct is shared, which is the whole point: a helicopter patrol is
+/// reactive CAP with rotary numbers, rotary templates and rotary launch
+/// fields, not a second copy of the machinery.
+struct ThreatResponseCfg {
+    /// Label for logs and the threat warning players receive.
+    label: &'static str,
+    trigger_radius_m: f64,
+    max_concurrent: usize,
+    max_per_side: usize,
+    min_threat: u32,
+    respawn_cooldown_secs: u64,
+    duration_secs: u32,
+    trigger_on_known_players: bool,
+    balance_gap: u32,
+}
+
+impl ThreatResponseCfg {
+    fn resolve(c: &bfprotocols::cfg::CampaignEventsCfg, rotary: bool) -> Self {
+        if rotary {
+            Self {
+                label: "Reactive helo patrol",
+                trigger_radius_m: c.helo_trigger_radius_m,
+                max_concurrent: c.helo_max_concurrent,
+                max_per_side: c.helo_max_per_side,
+                min_threat: c.helo_min_threat_count,
+                respawn_cooldown_secs: c.helo_respawn_cooldown_secs,
+                duration_secs: c.helo_duration_secs,
+                trigger_on_known_players: c.helo_trigger_on_known_players,
+                balance_gap: c.helo_balance_gap,
+            }
+        } else {
+            Self {
+                label: "Reactive CAP",
+                trigger_radius_m: c.cap_trigger_radius_m,
+                max_concurrent: c.cap_max_concurrent,
+                max_per_side: c.cap_max_per_side,
+                min_threat: c.cap_min_threat_count,
+                respawn_cooldown_secs: c.cap_respawn_cooldown_secs,
+                duration_secs: c.cap_duration_secs,
+                trigger_on_known_players: c.cap_trigger_on_known_players,
+                balance_gap: c.cap_balance_gap,
+            }
+        }
+    }
+}
+
+/// True if `kind` is a field the response can launch from. Fixed-wing CAP needs
+/// a runway; helicopters are happy with a FARP pad or, thanks to the
+/// open-ground hot start, a FOB with no pad object at all.
+fn is_launch_field(kind: &bfprotocols::db::objective::ObjectiveKind, rotary: bool) -> bool {
+    use bfprotocols::db::objective::ObjectiveKind as K;
+    if rotary {
+        matches!(kind, K::Airbase | K::Farp { .. } | K::Fob)
+    } else {
+        kind.is_airbase()
+    }
+}
+
+/// Reactive air response: detect in-air enemy players near owned objectives and
+/// scramble AI to meet them. Not an economic commander action -- it fires
+/// automatically when real threats appear.
+///
+/// Called once per slow tick for each airframe class. `rotary == false` is the
+/// original fixed-wing CAP: jets answering jets. `rotary == true` is the
+/// helicopter patrol: armed AI helos answering enemy helicopter players, which
+/// CAP deliberately ignores. Both paths share every step below -- the class
+/// only changes which config block, which detection filter, which launch
+/// fields and which cooldown are used.
+fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
     use crate::db::events::{bearing_to_compass, CampaignEvent, EventId};
     use dcso3::coalition::Side;
     use dcso3::Vector2;
 
     let events_cfg = match ctx.db.ephemeral.cfg.campaign_events.as_ref() {
-        Some(c) if c.enabled && c.enemy_cap_enabled => c.clone(),
+        Some(c)
+            if c.enabled && if rotary { c.enemy_helo_enabled } else { c.enemy_cap_enabled } =>
+        {
+            c.clone()
+        }
         _ => return,
     };
+    let rc = ThreatResponseCfg::resolve(&events_cfg, rotary);
 
-    let cluster_radius_sq = events_cfg.cap_trigger_radius_m.powi(2);
-    let max_concurrent = events_cfg.cap_max_concurrent;
-    let max_per_side = events_cfg.cap_max_per_side;
-    let min_threat = events_cfg.cap_min_threat_count as usize;
-    let respawn_cooldown = chrono::Duration::seconds(events_cfg.cap_respawn_cooldown_secs as i64);
+    let cluster_radius_sq = rc.trigger_radius_m.powi(2);
+    let max_concurrent = rc.max_concurrent;
+    let max_per_side = rc.max_per_side;
+    let min_threat = rc.min_threat as usize;
+    let respawn_cooldown = chrono::Duration::seconds(rc.respawn_cooldown_secs as i64);
 
-    // Count active EnemyCap events per side — CommanderCap is excluded (it's friendly support).
-    let mut active_cap_red: fxhash::FxHashSet<bfprotocols::db::objective::ObjectiveId> =
+    // Count active events per side, for THIS class only -- CommanderCap is
+    // excluded (it's friendly support), and a jet wave never consumes a
+    // helicopter slot or vice versa.
+    let mut active_red: fxhash::FxHashSet<bfprotocols::db::objective::ObjectiveId> =
         fxhash::FxHashSet::default();
-    let mut active_cap_blue: fxhash::FxHashSet<bfprotocols::db::objective::ObjectiveId> =
+    let mut active_blue: fxhash::FxHashSet<bfprotocols::db::objective::ObjectiveId> =
         fxhash::FxHashSet::default();
     for e in &ctx.event_scheduler.active_events {
-        if let CampaignEvent::EnemyCap { objective, cap_side, .. } = e {
+        if let CampaignEvent::EnemyCap { objective, cap_side, rotary: r, .. } = e {
+            if *r != rotary {
+                continue;
+            }
             match cap_side {
-                Side::Red  => { active_cap_red.insert(*objective); }
-                Side::Blue => { active_cap_blue.insert(*objective); }
+                Side::Red  => { active_red.insert(*objective); }
+                Side::Blue => { active_blue.insert(*objective); }
                 _ => {}
             }
         }
     }
 
-    let total_active = active_cap_red.len() + active_cap_blue.len();
+    let total_active = active_red.len() + active_blue.len();
     if total_active >= max_concurrent {
         return; // global cap reached
     }
-    if active_cap_red.len() >= max_per_side && active_cap_blue.len() >= max_per_side {
+    if active_red.len() >= max_per_side && active_blue.len() >= max_per_side {
         return; // both sides at per-side limit
     }
 
@@ -2847,55 +3037,68 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
         Vector2::new(centroid_sum.x / centroid_n as f64, centroid_sum.y / centroid_n as f64)
     };
 
-    // For each side that still has room for more CAP, check EWR detections and cluster them.
+    // For each side that still has room, check detections and cluster them.
     // We iterate Red-defends-against-Blue and Blue-defends-against-Red.
     for defending_side in [Side::Red, Side::Blue] {
         let side_active_count = match defending_side {
-            Side::Red  => active_cap_red.len(),
-            Side::Blue => active_cap_blue.len(),
+            Side::Red  => active_red.len(),
+            Side::Blue => active_blue.len(),
             _ => continue,
         };
         if side_active_count >= max_per_side {
             continue; // this side is already at its per-side limit
         }
-        if active_cap_red.len() + active_cap_blue.len() >= max_concurrent {
+        if active_red.len() + active_blue.len() >= max_concurrent {
             break; // global cap hit mid-loop
         }
 
-        // ── Step 1: gate on fixed-wing PLAYER count ─────────────────────────────
-        // Only enemy PLAYERS in fixed-wing aircraft trigger reactive CAP (AI
-        // and helicopters excluded). Normally this is what the defending
-        // side's radar network has actually painted; with
-        // `cap_trigger_on_known_players` it's the real count of enemy
-        // fixed-wing players in the air, so a radar-blind / EMCON side still
-        // scrambles. Require at least `min_threat` (default 2).
+        // ── Step 1: gate on enemy PLAYER count in this airframe class ───────────
+        // Only enemy PLAYERS trigger a reactive response (AI excluded), and
+        // only in the class this pass answers: jets for CAP, helicopters for
+        // the helo patrol. Normally this is what the defending side's radar
+        // network has actually painted; with `*_trigger_on_known_players` it's
+        // the real count of enemy players in the air, so a radar-blind / EMCON
+        // side still scrambles. Require at least `min_threat` (default 2).
         let attacking = match defending_side {
             Side::Red => Side::Blue,
             Side::Blue => Side::Red,
             _ => continue,
         };
-        let player_fw_count = if events_cfg.cap_trigger_on_known_players {
-            enemy_fixedwing_players_airborne(&ctx.db, attacking)
+        let player_threat_count = if rc.trigger_on_known_players {
+            enemy_players_airborne(&ctx.db, attacking, rotary)
         } else {
             ctx.ewr
-                .detected_enemy_fixedwing_player_count(defending_side, now, &ctx.db)
+                .detected_enemy_player_count(defending_side, now, &ctx.db, rotary)
         };
         // Air-balance: scramble for the outnumbered side even without a
-        // detected incursion (Blue 4 up, Red 1 up → Red gets a CAP).
-        let my_air = enemy_fixedwing_players_airborne(&ctx.db, defending_side);
-        let their_air = enemy_fixedwing_players_airborne(&ctx.db, attacking);
-        let outnumbered = events_cfg.cap_balance_gap > 0
-            && their_air >= my_air + events_cfg.cap_balance_gap as usize;
-        if player_fw_count < min_threat && !outnumbered {
+        // detected incursion (Blue 4 up, Red 1 up → Red gets one). This is the
+        // path that covers "tonight only helo pilots showed up".
+        let my_air = enemy_players_airborne(&ctx.db, defending_side, rotary);
+        let their_air = enemy_players_airborne(&ctx.db, attacking, rotary);
+        let outnumbered =
+            rc.balance_gap > 0 && their_air >= my_air + rc.balance_gap as usize;
+        if player_threat_count < min_threat && !outnumbered {
             // This runs every 10s per side, and on a quiet server the answer is
             // the same every time -- unthrottled it was 13% of the whole engine
             // log. Say it when the picture actually changes, and otherwise once
             // every 10 minutes so it still reads as a heartbeat.
             use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
-            static LAST_LOG: [AtomicI64; 2] = [AtomicI64::new(i64::MIN), AtomicI64::new(i64::MIN)];
-            static LAST_PIC: [AtomicU32; 2] = [AtomicU32::new(u32::MAX), AtomicU32::new(u32::MAX)];
-            let slot = if defending_side == Side::Red { 0 } else { 1 };
-            let pic = ((player_fw_count.min(255) as u32) << 16)
+            static LAST_LOG: [AtomicI64; 4] = [
+                AtomicI64::new(i64::MIN),
+                AtomicI64::new(i64::MIN),
+                AtomicI64::new(i64::MIN),
+                AtomicI64::new(i64::MIN),
+            ];
+            static LAST_PIC: [AtomicU32; 4] = [
+                AtomicU32::new(u32::MAX),
+                AtomicU32::new(u32::MAX),
+                AtomicU32::new(u32::MAX),
+                AtomicU32::new(u32::MAX),
+            ];
+            // One slot per (side, class) so the jet and helo heartbeats don't
+            // overwrite each other's "did the picture change" state.
+            let slot = if defending_side == Side::Red { 0 } else { 1 } + if rotary { 2 } else { 0 };
+            let pic = ((player_threat_count.min(255) as u32) << 16)
                 | ((my_air.min(255) as u32) << 8)
                 | their_air.min(255) as u32;
             let secs = now.timestamp();
@@ -2904,43 +3107,58 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
             if changed || stale {
                 LAST_LOG[slot].store(secs, Ordering::Relaxed);
                 info!(
-                    "Reactive CAP: {:?} not scrambling — {} enemy fixed-wing player(s) {} (need {}), \
-                     air balance {}v{} (gap {})",
+                    "{}: {:?} not scrambling — {} enemy {} player(s) {} (need {}), \
+                     balance {}v{} (gap {})",
+                    rc.label,
                     defending_side,
-                    player_fw_count,
-                    if events_cfg.cap_trigger_on_known_players { "airborne" } else { "on radar" },
+                    player_threat_count,
+                    if rotary { "helicopter" } else { "fixed-wing" },
+                    if rc.trigger_on_known_players { "airborne" } else { "on radar" },
                     min_threat,
                     my_air,
                     their_air,
-                    events_cfg.cap_balance_gap
+                    rc.balance_gap
                 );
             }
             continue;
         }
-        if outnumbered && player_fw_count < min_threat {
+        if outnumbered && player_threat_count < min_threat {
             info!(
-                "Reactive CAP: {:?} scrambling to balance the air ({}v{} fixed-wing players)",
-                defending_side, my_air, their_air
+                "{}: {:?} scrambling to balance ({}v{} {} players)",
+                rc.label,
+                defending_side,
+                my_air,
+                their_air,
+                if rotary { "helicopter" } else { "fixed-wing" }
             );
         }
 
         // ── Step 2: enemy positions for cluster geometry ────────────────────────
-        // Normally the radar picture (players + AI) so the CAP is placed
-        // nearest the real incursion. With cap_trigger_on_known_players, fall
+        // Normally the radar picture (players + AI) so the response is placed
+        // nearest the real incursion -- filtered to helicopter contacts on the
+        // rotary pass, since stationing a helo on a jet track sends it
+        // somewhere it cannot fight. With `*_trigger_on_known_players`, fall
         // back to the actual airborne-player positions when radar shows
-        // nothing -- otherwise a radar-blind side gates out here.
-        let mut detected = ctx.ewr.detected_enemy_positions(defending_side, now);
-        if detected.is_empty() && (events_cfg.cap_trigger_on_known_players || outnumbered) {
-            detected = enemy_fixedwing_player_positions(&ctx.db, attacking);
+        // nothing -- otherwise a radar-blind side gates out here. Helicopters
+        // flying NOE are rarely painted at all, which is exactly why
+        // `helo_trigger_on_known_players` defaults to true.
+        let mut detected = if rotary {
+            ctx.ewr.detected_enemy_helo_positions(defending_side, now, &ctx.db)
+        } else {
+            ctx.ewr.detected_enemy_positions(defending_side, now)
+        };
+        if detected.is_empty() && (rc.trigger_on_known_players || outnumbered) {
+            detected = enemy_player_positions(&ctx.db, attacking, rotary);
         }
         if detected.is_empty() {
             continue;
         }
 
-        // ── Step 3 (was 2): greedy spatial clustering ─────────────────────────────
-        // Group the detected contacts: if two contacts are within cap_trigger_radius_m
-        // of each other they belong to the same incursion. One CAP handles one cluster.
-        // This prevents 5 aircraft spread over 3 objectives from spawning 3 CAP flights.
+        // ── Step 3: greedy spatial clustering ─────────────────────────────────────
+        // Group the detected contacts: if two contacts are within the trigger
+        // radius of each other they belong to the same incursion. One response
+        // handles one cluster. This prevents 5 aircraft spread over 3
+        // objectives from spawning 3 flights.
         let mut assigned = vec![false; detected.len()];
         let mut clusters: Vec<(Vector2, usize)> = Vec::new(); // (centroid, count)
         for i in 0..detected.len() {
@@ -2963,10 +3181,10 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
             clusters.push((Vector2::new(cx / count as f64, cz / count as f64), count));
         }
 
-        // ── Step 4 (was 3): filter clusters below the minimum threat threshold ─────
-        // Even though we already checked player_fw_count, filter any cluster whose
+        // ── Step 4: filter clusters below the minimum threat threshold ────────────
+        // Even though we already checked player_threat_count, filter any cluster whose
         // raw position count is below min_threat (edge case: positions from AI only).
-        // When scrambling purely to balance the air, a single-contact cluster is fine.
+        // When scrambling purely to balance, a single-contact cluster is fine.
         let cluster_floor = if outnumbered { 1 } else { min_threat };
         clusters.retain(|(_, count)| *count >= cluster_floor);
         if clusters.is_empty() {
@@ -2976,29 +3194,30 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
         // Sort clusters largest → smallest so the most dangerous incursion gets covered first.
         clusters.sort_unstable_by(|a, b| b.1.cmp(&a.1));
 
-        // ── Step 5 (was 4): for each cluster find the nearest friendly objective ───
+        // ── Step 5: for each cluster find the nearest friendly launch field ───────
         let slots_remaining = (max_per_side - side_active_count)
-            .min(max_concurrent - (active_cap_red.len() + active_cap_blue.len()));
+            .min(max_concurrent - (active_red.len() + active_blue.len()));
 
         for (cluster_center, cluster_count) in clusters.into_iter().take(slots_remaining) {
-            // Find the closest friendly AIRBASE or FARP that doesn't already have active CAP.
-            // CAP cannot spawn from FOBs, logistics hubs, factories, etc. — only from
-            // objectives that have a runway or FARP pad. Neutral objectives are excluded
-            // (obj.owner() == defending_side already ensures non-neutral).
+            // Closest friendly field that doesn't already have an active
+            // response of this class. Fixed-wing CAP needs a runway; the helo
+            // patrol also accepts FARPs and FOBs, which is usually much closer
+            // to the rotary fight. Neutral objectives are excluded (owner ==
+            // defending_side already ensures non-neutral).
             let best_obj = ctx.db.persisted.objectives.into_iter()
                 .filter(|(oid, obj)| {
                     obj.owner() == defending_side
-                        && obj.is_airbase()
+                        && is_launch_field(obj.kind(), rotary)
                         && {
                             let already = match defending_side {
-                                Side::Red  => active_cap_red.contains(oid),
-                                Side::Blue => active_cap_blue.contains(oid),
+                                Side::Red  => active_red.contains(oid),
+                                Side::Blue => active_blue.contains(oid),
                                 _ => true,
                             };
                             !already
                         }
                 })
-                // Closest available friendly airbase to the incursion -- the
+                // Closest available friendly field to the incursion -- the
                 // comment always said "closest", the code was scrambling from
                 // the furthest one (deep rear), which is why intercepts never
                 // showed up and one flank got all the coverage.
@@ -3022,26 +3241,32 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
                 Some(o) => o,
                 None => {
                     info!(
-                        "Reactive CAP: {:?} has no owned airbase without active CAP near the incursion — skipping",
-                        defending_side
+                        "{}: {:?} has no owned {} without an active flight near the incursion — skipping",
+                        rc.label,
+                        defending_side,
+                        if rotary { "airbase/FARP/FOB" } else { "airbase" }
                     );
                     continue;
                 }
             };
 
             // ── Step 6: between-waves cooldown ──────────────────────────────────
-            // A side that just had a CAP wave end (shot down or RTB'd) waits
-            // `cap_respawn_cooldown_secs` before scrambling another.
-            let died_at = match defending_side {
-                Side::Blue => ctx.event_scheduler.last_commander_cap_ended_blue,
-                Side::Red => ctx.event_scheduler.last_commander_cap_ended_red,
+            // A side that just had a wave of this class end (shot down or
+            // RTB'd) waits out its cooldown before scrambling another. Jets and
+            // helicopters have separate clocks.
+            let ended_at = match (defending_side, rotary) {
+                (Side::Blue, false) => ctx.event_scheduler.last_commander_cap_ended_blue,
+                (Side::Red, false) => ctx.event_scheduler.last_commander_cap_ended_red,
+                (Side::Blue, true) => ctx.event_scheduler.last_helo_patrol_ended_blue,
+                (Side::Red, true) => ctx.event_scheduler.last_helo_patrol_ended_red,
                 _ => None,
             };
-            if let Some(died_at) = died_at {
-                if now - died_at < respawn_cooldown {
-                    let secs_remaining = (respawn_cooldown - (now - died_at)).num_seconds();
+            if let Some(ended_at) = ended_at {
+                if now - ended_at < respawn_cooldown {
+                    let secs_remaining = (respawn_cooldown - (now - ended_at)).num_seconds();
                     info!(
-                        "Reactive CAP: {:?} between-waves cooldown — {}s ({}m) left, not scrambling",
+                        "{}: {:?} between-waves cooldown — {}s ({}m) left, not scrambling",
+                        rc.label,
                         defending_side,
                         secs_remaining,
                         secs_remaining / 60
@@ -3050,7 +3275,6 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
                 }
             }
 
-            let _obj_pos = obj.pos();
             let obj_name = dcso3::String::from(obj.name.as_str());
             let direction = bearing_to_compass(centroid, cluster_center);
             let attacking_side = match defending_side {
@@ -3064,48 +3288,50 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>) {
                 id: event_id,
                 cap_side: defending_side,
                 objective: *oid,
-                expires_at: now + chrono::Duration::seconds(events_cfg.cap_duration_secs as i64),
+                expires_at: now + chrono::Duration::seconds(rc.duration_secs as i64),
                 spawned: false,
+                rotary,
             };
             ctx.event_scheduler.active_events.push(event);
             ctx.event_scheduler.total_events_spawned += 1;
 
-
             // Track locally so this loop iteration's later clusters don't double-book.
             match defending_side {
-                Side::Red  => { active_cap_red.insert(*oid); }
-                Side::Blue => { active_cap_blue.insert(*oid); }
+                Side::Red  => { active_red.insert(*oid); }
+                Side::Blue => { active_blue.insert(*oid); }
                 _ => {}
             }
 
             info!(
-                "Reactive CAP: {:?} scrambled over {} — EWR cluster of {} contacts to the {}",
-                defending_side, obj_name, cluster_count, direction
+                "{}: {:?} scrambled from {} — cluster of {} contacts to the {}",
+                rc.label, defending_side, obj_name, cluster_count, direction
             );
 
             ctx.db.ephemeral.msgs().panel_to_side(
                 20,
                 false,
                 attacking_side,
-                format_compact!(
-                    "THREAT: Enemy CAP scrambled to the {} - {} aircraft detected by EWR!",
-                    direction,
-                    cluster_count
-                ),
+                if rotary {
+                    format_compact!(
+                        "THREAT: Enemy attack helicopters inbound from the {} - {} contact(s)!",
+                        direction,
+                        cluster_count
+                    )
+                } else {
+                    format_compact!(
+                        "THREAT: Enemy CAP scrambled to the {} - {} aircraft detected by EWR!",
+                        direction,
+                        cluster_count
+                    )
+                },
             );
         }
     }
 }
 
 
-
-
 fn side_color(side: dcso3::coalition::Side) -> dcso3::Color {
-    match side {
-        dcso3::coalition::Side::Blue => dcso3::Color::blue(1.),
-        dcso3::coalition::Side::Red => dcso3::Color::red(1.),
-        dcso3::coalition::Side::Neutral => dcso3::Color::white(1.),
-    }
+    crate::mapcolor::side_color(side, 1.)
 }
 
 fn remove_junk_periodic(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
@@ -3539,7 +3765,11 @@ fn run_slow_timed_events(
                 // Retry deferred move orders for newly-spawned groups (1 per tick max).
                 flush_pending_moves(lua, ctx);
                 // Reactive CAP: spawn intercepts wherever enemy aircraft are detected
-                check_air_threats(ctx, start_ts);
+                check_air_threats(ctx, start_ts, false);
+                // Same pass for helicopters, which CAP deliberately ignores --
+                // otherwise a night where only helo pilots show up gets no AI
+                // response at all, on either side.
+                check_air_threats(ctx, start_ts, true);
                 // Kill any CAP that air-started instead of taxiing out.
                 enforce_cap_ground_start(lua, ctx, start_ts);
                 // AI helo missions: poll in-flight troop-insertion / resource-delivery
@@ -3687,12 +3917,23 @@ fn run_timed_events(
         let depth = ctx.db.ephemeral.msgs().len();
         if TICKS.fetch_add(1, Ordering::Relaxed) % 60 == 0 && depth > 0 {
             let secs = depth / max_rate.max(1);
+            // The per-priority split and the kind histogram are the actionable
+            // part: a backlog that is all `Mark`/`DeleteMark` is something
+            // re-pinning itself, one that is all `SetMarkupText` is objective
+            // labels churning, and either answer beats guessing at the rate.
+            let ([chat, marks, markup], by_kind) = ctx.db.ephemeral.msgs().depth_report();
             if secs > 60 {
                 warn!(
-                    "[MSGQ] {depth} map/chat commands queued, draining {max_rate}/s --                      ~{secs}s to clear. The F10 map is that far behind the campaign;                      raise max_msgs_per_second or draw less."
+                    "[MSGQ] {depth} map/chat commands queued (chat {chat}, marks {marks}, \
+                     markup {markup}), draining {max_rate}/s -- ~{secs}s to clear. The F10 \
+                     map is that far behind the campaign; raise max_msgs_per_second or draw \
+                     less. Queued: {by_kind}"
                 );
             } else {
-                info!("[MSGQ] {depth} commands queued, draining {max_rate}/s (~{secs}s to clear)");
+                info!(
+                    "[MSGQ] {depth} commands queued (chat {chat}, marks {marks}, markup \
+                     {markup}), draining {max_rate}/s (~{secs}s to clear). Queued: {by_kind}"
+                );
             }
         }
     }
@@ -3957,8 +4198,45 @@ fn init_hooks(lua: HooksLua) -> Result<()> {
     Ok(())
 }
 
+/// Print DCS's own `world.event` id table once at mission start.
+///
+/// dcso3 translates event ids through a hardcoded table, and DCS renumbers and
+/// appends to that enum between versions -- which is silent: a shifted id is
+/// handled as whatever we think it is, or dropped. This session's log had 20
+/// events arriving as id 54 ("mission winner") carrying an
+/// {initiator, place, subPlace} payload, which is the takeoff/landing shape,
+/// with no way to tell from the outside whether real events were being
+/// discarded. One table at startup makes that answerable from the log instead
+/// of from guesswork.
+fn log_event_ids(lua: MizLua) {
+    let ids = (|| -> Result<CompactString> {
+        use std::fmt::Write;
+        let world: mlua::Table = lua.inner().globals().raw_get("world")?;
+        let events: mlua::Table = world.raw_get("event")?;
+        let mut v: Vec<(i64, std::string::String)> = vec![];
+        for pair in events.pairs::<std::string::String, i64>() {
+            let (name, id) = pair?;
+            v.push((id, name));
+        }
+        v.sort();
+        let mut s = CompactString::default();
+        for (id, name) in v {
+            if !s.is_empty() {
+                s.push_str(", ");
+            }
+            let _ = write!(s, "{id}={name}");
+        }
+        Ok(s)
+    })();
+    match ids {
+        Ok(ids) => info!("[EVENT_IDS] DCS world.event: {ids}"),
+        Err(e) => warn!("[EVENT_IDS] could not read world.event from DCS: {e:?}"),
+    }
+}
+
 fn init_miz(lua: MizLua) -> Result<()> {
     info!("initializing mission");
+    log_event_ids(lua);
     let timer = Timer::singleton(lua)?;
     
     // Register the Lua API

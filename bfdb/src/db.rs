@@ -1665,6 +1665,17 @@ impl StatsDb {
                 let mut line = std::string::String::new();
                 let mut new_pos = last_pos;
                 let mut stats = Vec::new();
+                // Bad lines arrive in runs, not one at a time: a torn write
+                // (the engine hard-killed mid-append) leaves one truncated
+                // record followed by a stretch of fragments, and logging each
+                // one produced 151 consecutive ERROR lines from a single
+                // startup read. Count them and report once per pass, keeping
+                // the first reason -- which is the one that says what actually
+                // happened.
+                let mut unparsed = 0u64;
+                let mut first_unparsed: Option<std::string::String> = None;
+                let mut undecodable = 0u64;
+                let mut first_undecodable: Option<std::string::String> = None;
                 while reader.read_line(&mut line)? > 0 {
                     new_pos = reader.stream_position()?;
                     let trimmed = line.trim();
@@ -1680,15 +1691,38 @@ impl StatsDb {
                                 match serde_json::from_value::<Stat>(stat_val.clone()) {
                                     Ok(st) => stats.push((ts, st)),
                                     Err(e) => {
-                                        let preview: std::string::String = trimmed.chars().take(200).collect();
-                                        error!("failed to deserialize stat from JSONL: {e}, raw: {preview}");
+                                        undecodable += 1;
+                                        if first_undecodable.is_none() {
+                                            let preview: std::string::String =
+                                                trimmed.chars().take(200).collect();
+                                            first_undecodable =
+                                                Some(format!("{e}, raw: {preview}"));
+                                        }
                                     }
                                 }
                             }
                         }
-                        Err(e) => error!("failed to parse JSONL line: {e}"),
+                        Err(e) => {
+                            unparsed += 1;
+                            if first_unparsed.is_none() {
+                                first_unparsed = Some(format!("{e}"));
+                            }
+                        }
                     }
                     line.clear();
+                }
+                if let Some(first) = first_unparsed {
+                    error!(
+                        "skipped {unparsed} unparsable JSONL line(s) (stats.jsonl is torn or \
+                         truncated -- the records themselves are lost, the cursor moves past \
+                         them); first: {first}"
+                    );
+                }
+                if let Some(first) = first_undecodable {
+                    error!(
+                        "skipped {undecodable} JSONL line(s) that parsed but are not a known \
+                         Stat (bflib/bfdb schema mismatch); first: {first}"
+                    );
                 }
                 Ok((new_pos, stats))
             });
@@ -2111,6 +2145,37 @@ impl StatsDb {
         inst.latest_weather.read().ok()?.clone()
     }
 
+    /// The most recent session's `Cfg`, or `None` if no session record can be
+    /// read at all.
+    ///
+    /// Walks newest-first and stops at the first record that decodes. The two
+    /// callers only ever wanted the newest cfg, but both used to walk the whole
+    /// tree forwards and keep overwriting -- so every ancient record written
+    /// before a schema change was deserialized, failed, and logged, on every
+    /// startup, from two places. Reading backwards makes those records cost
+    /// nothing and say nothing, because nothing needs them.
+    pub(crate) fn latest_session_cfg(&self, who: &str) -> Option<Cfg> {
+        let mut skipped = 0u64;
+        for r in self.session.iter().rev() {
+            match r {
+                Ok((_, s)) => {
+                    if skipped > 0 {
+                        log::warn!(
+                            "{who}: skipped {skipped} unreadable session record(s) before \
+                             finding a readable one (written by an incompatible build)"
+                        );
+                    }
+                    return Some(s.cfg);
+                }
+                Err(_) => skipped += 1,
+            }
+        }
+        if skipped > 0 {
+            log::warn!("{who}: no readable session record at all ({skipped} tried)");
+        }
+        None
+    }
+
     pub(crate) fn latest_session_end(&self) -> Result<Option<SessionEnd>> {
         // Walk all sessions, newest last, return the most recent one that has a SessionEnd.
         // Skip individual records that fail to deserialize (e.g. written by an
@@ -2118,17 +2183,32 @@ impl StatsDb {
         // shutdown) instead of letting one bad entry permanently break
         // /api/admin/perf for every session that comes after it.
         let mut latest: Option<SessionEnd> = None;
+        let mut skipped = 0u64;
+        let mut first_err: Option<std::string::String> = None;
         for r in self.session.iter() {
             let session = match r {
                 Ok((_, session)) => session,
                 Err(e) => {
-                    log::warn!("latest_session_end: skipping unreadable session record: {e:?}");
+                    // Old records fail in runs, not singly -- one schema change
+                    // makes every session written before it undecodable, and
+                    // four different readers each walked the whole tree and
+                    // logged every one. Count them and say it once.
+                    skipped += 1;
+                    if first_err.is_none() {
+                        first_err = Some(format!("{e:?}"));
+                    }
                     continue;
                 }
             };
             if let Some(end) = session.end {
                 latest = Some(end);
             }
+        }
+        if let Some(first) = first_err {
+            log::warn!(
+                "latest_session_end: skipped {skipped} unreadable session record(s) \
+                 (written by an incompatible build); first: {first}"
+            );
         }
         Ok(latest)
     }
@@ -2159,17 +2239,7 @@ impl StatsDb {
         // Skip records that fail to deserialize (e.g. written by an older/
         // incompatible build) instead of letting one bad entry break this
         // for every session that comes after it -- see latest_session_end.
-        let mut latest_cfg: Option<Cfg> = None;
-        for r in self.session.iter() {
-            let (_, s) = match r {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!("session_bans_from_cfg: skipping unreadable session record: {e:?}");
-                    continue;
-                }
-            };
-            latest_cfg = Some(s.cfg);
-        }
+        let latest_cfg = self.latest_session_cfg("session_bans_from_cfg");
         let mut out = Vec::new();
         if let Some(cfg) = latest_cfg {
             for (ucid, (until, name)) in &cfg.banned {
@@ -2232,16 +2302,7 @@ impl StatsDb {
             return Ok(vec![]);
         };
         let snap: UnitDbSnapshot = serde_json::from_str(&json)?;
-        let mut latest_cfg: Option<Cfg> = None;
-        for r in self.session.iter() {
-            match r {
-                Ok((_, s)) => latest_cfg = Some(s.cfg),
-                Err(e) => {
-                    log::warn!("unit_db_stale_overrides: skipping unreadable session: {e:?}");
-                    continue;
-                }
-            }
-        }
+        let latest_cfg = self.latest_session_cfg("unit_db_stale_overrides");
         let Some(art) = latest_cfg.and_then(|c| c.artillery) else {
             return Ok(vec![]);
         };
@@ -2674,17 +2735,18 @@ impl StatsDb {
             ("playbooks/running-crates", "Running Crates & Building a Base", "Playbooks", 4, include_str!("../seed_wiki/playbooks/running-crates.md")),
             ("playbooks/calling-support", "Calling AWACS, Tankers & CAP", "Playbooks", 5, include_str!("../seed_wiki/playbooks/calling-support.md")),
             ("gameplay/objectives", "Objectives", "Core Gameplay", 0, include_str!("../seed_wiki/gameplay/objectives.md")),
-            ("gameplay/capturing-objectives", "Capturing Objectives", "Core Gameplay", 1, include_str!("../seed_wiki/gameplay/capturing-objectives.md")),
-            ("gameplay/logistics", "Logistics & Supply", "Core Gameplay", 2, include_str!("../seed_wiki/gameplay/logistics.md")),
-            ("gameplay/points-and-lives", "Points and Lives", "Core Gameplay", 3, include_str!("../seed_wiki/gameplay/points-and-lives.md")),
-            ("gameplay/chat-commands", "Chat Commands", "Core Gameplay", 4, include_str!("../seed_wiki/gameplay/chat-commands.md")),
-            ("gameplay/gci", "Live GCI (AWACS Calls)", "Core Gameplay", 5, include_str!("../seed_wiki/gameplay/gci.md")),
-            ("gameplay/briefing", "The Auto-Generated Briefing", "Core Gameplay", 6, include_str!("../seed_wiki/gameplay/briefing.md")),
-            ("gameplay/comms-plan", "Comms Plan", "Core Gameplay", 7, include_str!("../seed_wiki/gameplay/comms-plan.md")),
-            ("gameplay/tasking-board", "The Tasking Board", "Core Gameplay", 8, include_str!("../seed_wiki/gameplay/tasking-board.md")),
-            ("gameplay/war-economy", "Materiel & the War Economy", "Core Gameplay", 9, include_str!("../seed_wiki/gameplay/war-economy.md")),
-            ("gameplay/navaids", "Navaids & Approaches", "Core Gameplay", 10, include_str!("../seed_wiki/gameplay/navaids.md")),
-            ("gameplay/carrier-ops", "Carrier Operations", "Core Gameplay", 11, include_str!("../seed_wiki/gameplay/carrier-ops.md")),
+            ("gameplay/reading-the-map", "Reading the F10 Map", "Core Gameplay", 1, include_str!("../seed_wiki/gameplay/reading-the-map.md")),
+            ("gameplay/capturing-objectives", "Capturing Objectives", "Core Gameplay", 2, include_str!("../seed_wiki/gameplay/capturing-objectives.md")),
+            ("gameplay/logistics", "Logistics & Supply", "Core Gameplay", 3, include_str!("../seed_wiki/gameplay/logistics.md")),
+            ("gameplay/points-and-lives", "Points and Lives", "Core Gameplay", 4, include_str!("../seed_wiki/gameplay/points-and-lives.md")),
+            ("gameplay/chat-commands", "Chat Commands", "Core Gameplay", 5, include_str!("../seed_wiki/gameplay/chat-commands.md")),
+            ("gameplay/gci", "Live GCI (AWACS Calls)", "Core Gameplay", 6, include_str!("../seed_wiki/gameplay/gci.md")),
+            ("gameplay/briefing", "The Auto-Generated Briefing", "Core Gameplay", 7, include_str!("../seed_wiki/gameplay/briefing.md")),
+            ("gameplay/comms-plan", "Comms Plan", "Core Gameplay", 8, include_str!("../seed_wiki/gameplay/comms-plan.md")),
+            ("gameplay/tasking-board", "The Tasking Board", "Core Gameplay", 9, include_str!("../seed_wiki/gameplay/tasking-board.md")),
+            ("gameplay/war-economy", "Materiel & the War Economy", "Core Gameplay", 10, include_str!("../seed_wiki/gameplay/war-economy.md")),
+            ("gameplay/navaids", "Navaids & Approaches", "Core Gameplay", 11, include_str!("../seed_wiki/gameplay/navaids.md")),
+            ("gameplay/carrier-ops", "Carrier Operations", "Core Gameplay", 12, include_str!("../seed_wiki/gameplay/carrier-ops.md")),
             ("f10-menu/overview", "Overview", "F10 Menu Systems", 0, include_str!("../seed_wiki/f10-menu/overview.md")),
             ("f10-menu/actions", "Actions Menu", "F10 Menu Systems", 1, include_str!("../seed_wiki/f10-menu/actions.md")),
             ("f10-menu/jtac", "JTAC System", "F10 Menu Systems", 2, include_str!("../seed_wiki/f10-menu/jtac.md")),
@@ -2708,6 +2770,7 @@ impl StatsDb {
             ("advanced/deployables-guide", "Deployables Guide", "Advanced Topics", 3, include_str!("../seed_wiki/advanced/deployables-guide.md")),
             ("advanced/recon-intel-map", "Recon Intel Map (TARPS)", "Advanced Topics", 4, include_str!("../seed_wiki/advanced/recon-intel-map.md")),
             ("advanced/helo-missions", "AI Helo Missions", "Advanced Topics", 5, include_str!("../seed_wiki/advanced/helo-missions.md")),
+            ("advanced/ai-opposition", "AI Opposition (CAP & Helo Patrols)", "Advanced Topics", 6, include_str!("../seed_wiki/advanced/ai-opposition.md")),
         ];
         let mut refreshed = 0u32;
         for (slug, title, section, order, content) in seed {
@@ -2792,17 +2855,28 @@ impl StatsDb {
         // incompatible build) instead of letting one bad entry break this
         // for every session that comes after it -- see latest_session_end.
         let mut ends: Vec<SessionEnd> = Vec::new();
+        let mut skipped = 0u64;
+        let mut first_err: Option<std::string::String> = None;
         for r in self.session.iter() {
             let (_, s) = match r {
                 Ok(v) => v,
                 Err(e) => {
-                    log::warn!("session_perf_history: skipping unreadable session record: {e:?}");
+                    skipped += 1;
+                    if first_err.is_none() {
+                        first_err = Some(format!("{e:?}"));
+                    }
                     continue;
                 }
             };
             if let Some(end) = s.end {
                 ends.push(end);
             }
+        }
+        if let Some(first) = first_err {
+            log::warn!(
+                "session_perf_history: skipped {skipped} unreadable session record(s) \
+                 (written by an incompatible build); first: {first}"
+            );
         }
         if ends.len() > limit {
             ends.drain(0..ends.len() - limit);

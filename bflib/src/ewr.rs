@@ -1913,19 +1913,25 @@ impl Ewr {
     }
 
     /// Count the number of **enemy player** contacts currently detected by
-    /// `defending_side`'s EWR network that are flying **fixed-wing aircraft only**
-    /// (i.e. `UnitTag::Aircraft`, NOT `UnitTag::Helicopter`).
+    /// `defending_side`'s EWR network, in one airframe class.
     ///
-    /// Helicopters are excluded because SAMs are expected to handle them.
-    /// AI aircraft are excluded because they should not trigger reactive CAP
-    /// (a lone AI scout or logistics plane does not constitute an air threat).
+    /// With `rotary == false` this counts **fixed-wing only** (`UnitTag::
+    /// Aircraft`, NOT `UnitTag::Helicopter`) -- helicopters are left out
+    /// because fighters are the wrong answer to them and SAMs are expected to
+    /// cover that. With `rotary == true` it counts **helicopters only**, which
+    /// is what the reactive helicopter patrol scrambles against.
+    ///
+    /// AI aircraft are excluded either way because they should not trigger a
+    /// reactive response (a lone AI scout or logistics flight does not
+    /// constitute an air threat).
     ///
     /// Returns the count of qualifying fresh tracks.
-    pub fn detected_enemy_fixedwing_player_count(
+    pub fn detected_enemy_player_count(
         &self,
         defending_side: Side,
         now: DateTime<Utc>,
         db: &crate::db::Db,
+        rotary: bool,
     ) -> usize {
         use bfprotocols::cfg::UnitTag;
         use bfprotocols::stats::EnId;
@@ -1962,13 +1968,46 @@ impl Ewr {
                     });
                 match tags {
                     Some(tags) => {
-                        tags.contains(UnitTag::Aircraft)
-                            && !tags.contains(UnitTag::Helicopter)
+                        if rotary {
+                            tags.contains(UnitTag::Helicopter)
+                        } else {
+                            tags.contains(UnitTag::Aircraft)
+                                && !tags.contains(UnitTag::Helicopter)
+                        }
                     }
-                    // If we can't determine the type, be conservative and include it.
-                    None => true,
+                    // Type unknown. For CAP, be conservative and include it.
+                    // For the helicopter patrol, don't -- an unclassified
+                    // contact is far more likely to be a jet, and guessing
+                    // wrong there scrambles helos at fighters.
+                    None => !rotary,
                 }
             })
             .count()
+    }
+
+    /// Positions of the enemy **helicopter** contacts `defending_side` is
+    /// actually painting. The rotary counterpart of `detected_enemy_positions`,
+    /// which returns every class -- stationing a helicopter patrol on a jet
+    /// track would send it somewhere it cannot fight.
+    pub fn detected_enemy_helo_positions(
+        &self,
+        defending_side: Side,
+        now: DateTime<Utc>,
+        db: &crate::db::Db,
+    ) -> Vec<Vector2> {
+        let tracks = match self.tracks.get(&defending_side) {
+            Some(t) => t,
+            None => return vec![],
+        };
+        tracks
+            .iter()
+            .filter(|(id, t)| {
+                t.detected
+                    && t.side != defending_side
+                    && (now - t.last).num_seconds() <= DROP_AGE_SECS
+                    && Self::classify_contact(id, db) == ContactClass::Helicopter
+            })
+            .map(|(_, t)| Vector2::new(t.pos.p.x, t.pos.p.z))
+            .collect()
     }
 }

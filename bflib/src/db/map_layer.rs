@@ -59,12 +59,12 @@ use crate::msgq::MsgQ;
 // Helpers
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+/// Radius of the "under attack" ring -- just outside a typical objective's
+/// own rings, so it reads as an escalation rather than more clutter.
+const UNDER_ATTACK_RING_M: f64 = 3400.;
+
 fn side_color(side: Side, alpha: f32) -> Color {
-    match side {
-        Side::Red => Color::red(alpha),
-        Side::Blue => Color::blue(alpha),
-        Side::Neutral => Color::white(alpha),
-    }
+    crate::mapcolor::side_color(side, alpha)
 }
 
 fn side_filter(side: Side) -> SideFilter {
@@ -227,7 +227,7 @@ impl AirRouteMarks {
             TextSpec {
                 pos: v3(orbit_center.x, orbit_center.y),
                 color: col,
-                fill_color: Color::black(0.0),
+                fill_color: crate::mapcolor::text_plate(),
                 font_size: 10,
                 read_only: true,
                 text: label_text.into(),
@@ -298,7 +298,7 @@ impl SeaRouteMarks {
             TextSpec {
                 pos: v3(midpoint.x + 500., midpoint.y + 500.),
                 color: col,
-                fill_color: Color::black(0.0),
+                fill_color: crate::mapcolor::text_plate(),
                 font_size: 9,
                 read_only: true,
                 text: label_text.into(),
@@ -385,7 +385,7 @@ impl FireOverlay {
             TextSpec {
                 pos: v3(target_pos.x, target_pos.y),
                 color: col,
-                fill_color: Color::black(0.0),
+                fill_color: crate::mapcolor::text_plate(),
                 font_size: 11,
                 read_only: true,
                 text: txt.into(),
@@ -442,7 +442,7 @@ impl CsarMarks {
             TextSpec {
                 pos: v3(pos.x, pos.y),
                 color: Color::white(0.9),
-                fill_color: Color::black(0.0),
+                fill_color: crate::mapcolor::text_plate(),
                 font_size: 11,
                 read_only: true,
                 text: label_text.into(),
@@ -515,7 +515,7 @@ impl JtacLayerMarks {
             LineSpec {
                 start: v3(jtac_pos.x, jtac_pos.y),
                 end: v3(target_pos.x, target_pos.y),
-                color: Color::red(0.6),
+                color: Color::violet(0.6),
                 line_type: LineType::DotDash,
                 read_only: true,
             },
@@ -703,34 +703,19 @@ impl MapLayer {
     /// `detail` names what is actually short and by how much ("munitions 18% /
     /// fuel 9%"), taken from the same three numbers the objective's own label
     /// shows -- see the caller in `logistics.rs`.
+    /// Supply-critical used to drop a `! LOW SUPPLY` label at the objective.
+    /// That is now redundant: the objective's own supply/fuel status hexes go
+    /// red at the same threshold, in the same place, without a line of text.
+    /// Kept as a no-op so the logistics caller does not need to know.
     pub fn on_supply_critical(
         &mut self,
-        oid: ObjectiveId,
-        pos: Vector2,
-        side: Side,
-        name: &str,
-        detail: &str,
-        msgs: &mut MsgQ,
+        _oid: ObjectiveId,
+        _pos: Vector2,
+        _side: Side,
+        _name: &str,
+        _detail: &str,
+        _msgs: &mut MsgQ,
     ) {
-        if self.supply_critical_marks.contains_key(&oid) {
-            return;
-        }
-        let sf = side_filter(side);
-        let col = side_color(side, 0.9);
-        let mark = MarkId::new();
-        msgs.text_to_all(
-            sf,
-            mark,
-            TextSpec {
-                pos: v3(pos.x, pos.y),
-                color: col,
-                fill_color: Color::black(0.0),
-                font_size: 12,
-                read_only: true,
-                text: format_compact!("! LOW SUPPLY\n{}\n{}", name, detail).into(),
-            },
-        );
-        self.supply_critical_marks.insert(oid, mark);
     }
 
     /// Remove the supply-critical marker when supply has recovered.
@@ -776,7 +761,7 @@ impl MapLayer {
             TextSpec {
                 pos: v3(target_pos.x, target_pos.y),
                 color: col,
-                fill_color: Color::black(0.0),
+                fill_color: crate::mapcolor::text_plate(),
                 font_size: 11,
                 read_only: true,
                 text: format_compact!("RECON\n~{} enemy units", unit_count).into(),
@@ -836,7 +821,7 @@ impl MapLayer {
             TextSpec {
                 pos: v3(pos.x, pos.y),
                 color: enemy_col,
-                fill_color: Color::black(0.0),
+                fill_color: crate::mapcolor::text_plate(),
                 font_size: 10,
                 read_only: true,
                 text: text.into(),
@@ -863,33 +848,17 @@ impl MapLayer {
     /// objective, but the bearing was never the real threat direction (just
     /// a universal NE-converging placeholder), so it read as a stray colored
     /// arrow with no useful information -- dropped, keeping the label.
+    /// Threat used to drop an `ENEMY CONTACT` label at the objective. The
+    /// objective's yellow threatened ring already means exactly this, at the
+    /// same position, so the label was drawing the same fact twice. No-op.
     pub fn on_objective_threatened(
         &mut self,
-        obj_pos: Vector2,
-        side: Side,
-        obj_name: &str,
-        now: DateTime<Utc>,
-        msgs: &mut MsgQ,
+        _obj_pos: Vector2,
+        _side: Side,
+        _obj_name: &str,
+        _now: DateTime<Utc>,
+        _msgs: &mut MsgQ,
     ) {
-        let sf = side_filter(side);
-        let enemy_col = match side {
-            Side::Blue => Color::red(0.95),
-            _ => Color::blue(0.95),
-        };
-        let label = MarkId::new();
-        msgs.text_to_all(
-            sf,
-            label,
-            TextSpec {
-                pos: v3(obj_pos.x, obj_pos.y),
-                color: enemy_col,
-                fill_color: Color::black(0.0),
-                font_size: 12,
-                read_only: true,
-                text: format_compact!("ENEMY CONTACT\n{}", obj_name).into(),
-            },
-        );
-        self.timed_marks.push(TimedMark::one(label, 120, now));
     }
 
     /// "UNDER ATTACK" label at an objective that is actively under attack.
@@ -905,25 +874,27 @@ impl MapLayer {
         now: DateTime<Utc>,
         msgs: &mut MsgQ,
     ) {
+        // A thick red ring around the objective instead of an `UNDER ATTACK`
+        // label. The objective already carries a yellow ring for "threatened";
+        // escalating the same shape to red reads faster than a second floating
+        // caption, and it costs one mark that expires with the event.
+        let _ = obj_name;
         let sf = side_filter(side);
-        let enemy_col = match side {
-            Side::Blue => Color::red(1.),
-            _ => Color::blue(1.),
-        };
-        let label = MarkId::new();
-        msgs.text_to_all(
+        let ring = MarkId::new();
+        msgs.circle_to_all(
             sf,
-            label,
-            TextSpec {
-                pos: v3(obj_pos.x, obj_pos.y),
-                color: enemy_col,
-                fill_color: Color::black(0.0),
-                font_size: 13,
+            ring,
+            CircleSpec {
+                center: v3(obj_pos.x, obj_pos.y),
+                radius: UNDER_ATTACK_RING_M,
+                color: Color::new(0.95, 0.16, 0.16, 1.),
+                fill_color: Color::new(0.95, 0.16, 0.16, 0.06),
+                line_type: LineType::Solid,
                 read_only: true,
-                text: format_compact!("UNDER ATTACK\n{}", obj_name).into(),
             },
+            None,
         );
-        self.timed_marks.push(TimedMark::one(label, ttl_secs, now));
+        self.timed_marks.push(TimedMark::one(ring, ttl_secs, now));
     }
 
 
