@@ -85,6 +85,9 @@ hexes.
 | Arrow between two bases | A supply link — the chain that keeps a base stocked |
 | Dashed front line | The boundary between the coalitions |
 | Dot-dash line to a target | A **JTAC** bearing line, from the JTAC to what it is lasing |
+| **Diamond** at the end of that line | The lased target, with the **laser code** printed beside it |
+| **Chevron** on a convoy | Direction of travel |
+| **Gold star** on a circle | A posted task — somebody asked for this |
 
 Cut a supply arrow by taking the base at its source and everything downstream
 starves.
@@ -114,9 +117,9 @@ want the detail.
 | --- | --- |
 | Thick **yellow** ring | Enemy has entered an objective's exclusion zone |
 | Thick **red** ring | An objective is actively being attacked |
-| `FIRES` + circle | An artillery fire mission is landing there |
-| `RECON` | A recon pass found enemy units |
-| `CSAR` + circle | A downed pilot, with the countdown to capture |
+| **Burst star** in a circle | An artillery fire mission is landing there |
+| Row of **diamonds** in a dotted box | A recon pass found enemy units — one diamond per five, exact count in the pin |
+| White circle + **ripening hex** | A downed pilot. The hex runs green → amber → red as the capture timer expires |
 | Large circle at a base | A **CAP threat** — enemy fighters are up |
 | Small circle on a road | An **ambush** has spawned |
 | Circle on open ground | A missile strike is inbound to that point |
@@ -141,9 +144,22 @@ rather than guessed at.
 
 ## Intel contacts
 
-Contacts found by ELINT, SIGINT or a recon pass appear where the engine thinks
-they are — which is not always exactly where they are. Treat an intel mark as a
-lead, not a guarantee, and check the age on the label before you commit.
+A contact's **shape tells you what it is**, without reading anything:
+
+| Shape | Contact |
+| --- | --- |
+| Diamond | Air defence |
+| Square | Armour |
+| Triangle | Infantry |
+| Hexagon | Artillery |
+| Large hexagon | Naval or airbase |
+| Octagon | Unidentified — something is there, not yet classified |
+
+Around it is a **dashed uncertainty ring**. That ring is the engine telling you
+how sure it is about the position: a tight ring is a good fix, a wide one means
+the contact is somewhere in there. Fly against the ring, not the shape.
+
+Class, count, source, confidence and age are all still there — click the pin.
 
 ---
 

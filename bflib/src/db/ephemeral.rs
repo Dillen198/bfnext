@@ -723,8 +723,9 @@ impl Ephemeral {
             None => return,
         };
         let (updated, removed) = self.intel_db.tick_decay(&elint_cfg, now, 1.0);
-        for (rect, label) in removed {
-            self.map_layer.remove_intel_contact_marks(rect, label, &mut self.msgs);
+        for (shape, pin, ring) in removed {
+            self.map_layer
+                .remove_intel_contact_marks(shape, pin, ring, &mut self.msgs);
         }
         let ids = updated;
         for id in ids {

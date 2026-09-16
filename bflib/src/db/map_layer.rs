@@ -35,7 +35,7 @@ for more details.
 
 use super::{
     group::DeployKind,
-    intel::{IntelContact, IntelDatabase},
+    intel::{IntelContact, IntelDatabase, IntelUnitClass},
     logistics::{AirLogisticsRoute, ConvoyId, LogiRouteId, SeaLogisticsRoute, SupplyConvoy},
     persisted::Persisted,
     tasks::TaskId,
@@ -69,6 +69,99 @@ fn side_color(side: Side, alpha: f32) -> Color {
 
 fn side_filter(side: Side) -> SideFilter {
     side.into()
+}
+
+/// Draw a closed ring of (north, east) offsets around `c` as ONE mark.
+///
+/// Every status shape in this module is a single freeform (markupToAll
+/// shapeId 7), so a symbol costs one MarkId however many vertices it has.
+/// Shapes are drawn on the ground, so they shrink as you zoom out and fade at
+/// theatre zoom -- that IS the declutter. Anything a pilot must read at any
+/// zoom stays a pin or text.
+///
+/// DCS renders a 3-point freeform as an OPEN polyline, so short rings are
+/// padded rather than coming out as a bare "V".
+fn poly(c: Vector2, offsets: &[(f64, f64)], outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
+    let mut points: Vec<LuaVec3> = offsets.iter().map(|&(n, e)| v3(c.x + n, c.y + e)).collect();
+    if let Some(first) = points.first().copied() {
+        points.push(first);
+    }
+    while points.len() < 4 {
+        if let Some(last) = points.last().copied() {
+            points.push(last)
+        }
+    }
+    let id = MarkId::new();
+    msgs.freeform_to_all(
+        to,
+        id,
+        dcso3::trigger::PolylineSpec {
+            points,
+            color: outline,
+            fill_color: fill,
+            line_type: LineType::Solid,
+            read_only: true,
+        },
+        None,
+    );
+    id
+}
+
+/// Regular n-gon; `rot_deg` turns the first vertex off north.
+fn ngon(c: Vector2, r: f64, n: usize, rot_deg: f64, outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
+    let offs: Vec<(f64, f64)> = (0..n)
+        .map(|i| {
+            let a = (360. * i as f64 / n as f64 + rot_deg).to_radians();
+            (r * a.cos(), r * a.sin())
+        })
+        .collect();
+    poly(c, &offs, outline, fill, to, msgs)
+}
+
+/// A pointed burst: `spikes` points alternating between `r` and 0.42r.
+fn burst(c: Vector2, r: f64, spikes: usize, outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
+    let offs: Vec<(f64, f64)> = (0..spikes * 2)
+        .map(|i| {
+            let rad = if i % 2 == 0 { r } else { r * 0.42 };
+            let a = (180. * i as f64 / spikes as f64 - 90.).to_radians();
+            (rad * a.cos(), rad * a.sin())
+        })
+        .collect();
+    poly(c, &offs, outline, fill, to, msgs)
+}
+
+/// An arrowhead pointing along `heading_deg`, for direction of travel.
+fn chevron(c: Vector2, r: f64, heading_deg: f64, outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
+    let h = heading_deg.to_radians();
+    let (sn, cs) = (h.sin(), h.cos());
+    let body = [
+        (1.0, 0.0), (-0.2, 0.9), (-0.2, 0.35), (-1.0, 0.35),
+        (-1.0, -0.35), (-0.2, -0.35), (-0.2, -0.9),
+    ];
+    let offs: Vec<(f64, f64)> = body
+        .iter()
+        .map(|&(f, rt)| {
+            let (f, rt) = (f * r, rt * r);
+            (f * cs - rt * sn, f * sn + rt * cs)
+        })
+        .collect();
+    poly(c, &offs, outline, fill, to, msgs)
+}
+
+/// Status colour for a 0-100 value, matching the objective hexes exactly.
+fn bucket_color(v: u8) -> Color {
+    if v > 66 {
+        Color::new(0.20, 0.85, 0.31, 1.)
+    } else if v > 33 {
+        Color::new(1., 0.70, 0., 1.)
+    } else {
+        Color::new(0.95, 0.16, 0.16, 1.)
+    }
+}
+
+/// Outline for every status shape -- dark, so the fill reads on any terrain.
+fn shape_outline() -> Color {
+    Color::black(0.80)
 }
 
 fn v3(x: f64, y: f64) -> LuaVec3 {
@@ -117,6 +210,9 @@ struct ConvoyMarks {
     /// Cache of last known position so the pin is only re-dropped after the
     /// convoy has travelled a meaningful distance.
     last_pos: Vector2,
+    /// Arrowhead pointing along the convoy's heading, so direction of travel
+    /// reads off the map without clicking the pin open.
+    heading_arrow: MarkId,
 }
 
 impl ConvoyMarks {
@@ -124,25 +220,45 @@ impl ConvoyMarks {
         _origin: Vector2,
         _destination: Vector2,
         current_pos: Vector2,
-        _side: Side,
+        side: Side,
+        heading_deg: f64,
         cargo_label: impl Into<dcso3::String>,
         msgs: &mut MsgQ,
     ) -> Self {
         let text = cargo_label.into();
         let pin = msgs.mark_to_all(current_pos, true, text.clone());
-        Self { pin, text, last_pos: current_pos }
+        let heading_arrow = chevron(
+            current_pos,
+            900.,
+            heading_deg,
+            shape_outline(),
+            side_color(side, 0.95),
+            SideFilter::All,
+            msgs,
+        );
+        Self { pin, text, last_pos: current_pos, heading_arrow }
     }
 
     /// Call when the convoy moves. Re-drops the pin at the new position, but
     /// only once the convoy has moved far enough to matter -- a map pin can't
     /// be repositioned in place, so each move is a delete + re-add.
-    fn on_move(&mut self, new_pos: Vector2, _heading_deg: f64, msgs: &mut MsgQ) {
+    fn on_move(&mut self, new_pos: Vector2, heading_deg: f64, side: Side, msgs: &mut MsgQ) {
         if (new_pos - self.last_pos).norm() < 3_000. {
             return;
         }
         self.last_pos = new_pos;
         msgs.delete_mark(self.pin);
         self.pin = msgs.mark_to_all(new_pos, true, self.text.clone());
+        msgs.delete_mark(self.heading_arrow);
+        self.heading_arrow = chevron(
+            new_pos,
+            900.,
+            heading_deg,
+            shape_outline(),
+            side_color(side, 0.95),
+            SideFilter::All,
+            msgs,
+        );
     }
 }
 
@@ -372,24 +488,19 @@ impl FireOverlay {
             None,
         );
 
-        let label = MarkId::new();
-        let txt = format_compact!(
-            "FIRES [{:?}]\n{} gun group(s)\nRadius: {}m",
-            side,
-            gun_count,
-            radius_m as u32
-        );
-        msgs.text_to_all(
+        // A burst glyph at the aimpoint instead of a three-line caption. The
+        // impact circle already carries position and radius; the gun count and
+        // firing side were never something a pilot could act on mid-flight,
+        // and this label was the noisiest mark on the map.
+        let _ = gun_count;
+        let label = burst(
+            target_pos,
+            (radius_m * 0.45).clamp(300., 1200.),
+            8,
+            shape_outline(),
+            col,
             SideFilter::All,
-            label,
-            TextSpec {
-                pos: v3(target_pos.x, target_pos.y),
-                color: col,
-                fill_color: crate::mapcolor::text_plate(),
-                font_size: 11,
-                read_only: true,
-                text: txt.into(),
-            },
+            msgs,
         );
 
         Self {
@@ -407,8 +518,11 @@ impl FireOverlay {
 struct CsarMarks {
     /// Dashed white circle â€” search area around downed pilot
     search_ring: MarkId,
-    /// Text label with pilot name + capture countdown
+    /// Map pin carrying the pilot's name and the exact time remaining.
     label: MarkId,
+    /// Hexagon that ripens green -> amber -> red as the timer runs down, so
+    /// a rescue flight reads "how long have I got" without opening the pin.
+    urgency_hex: MarkId,
 }
 
 impl CsarMarks {
@@ -435,21 +549,23 @@ impl CsarMarks {
             None,
         );
 
-        let label = MarkId::new();
-        msgs.text_to_all(
+        // A hexagon that ripens as the capture timer runs down, instead of a
+        // live countdown in text. The pilot's name and exact time remaining
+        // move into a pin, so nothing is lost -- but a rescue flight can see
+        // how long it has without stopping to read.
+        let urgency_hex = ngon(
+            Vector2::new(pos.x - 2_200., pos.y),
+            700.,
+            6,
+            30.,
+            shape_outline(),
+            bucket_color(100),
             sf,
-            label,
-            TextSpec {
-                pos: v3(pos.x, pos.y),
-                color: Color::white(0.9),
-                fill_color: crate::mapcolor::text_plate(),
-                font_size: 11,
-                read_only: true,
-                text: label_text.into(),
-            },
+            msgs,
         );
+        let label = msgs.mark_to_side(side, pos, true, label_text);
 
-        Self { search_ring, label }
+        Self { search_ring, label, urgency_hex }
     }
 
     /// Change the ring border color as the capture timer runs down:
@@ -462,10 +578,28 @@ impl CsarMarks {
         };
         msgs.set_markup_color(self.search_ring, border);
         msgs.set_markup_fill_color(self.search_ring, fill);
+        msgs.set_markup_fill_color(
+            self.urgency_hex,
+            bucket_color(match level {
+                UrgencyLevel::Low => 100,
+                UrgencyLevel::Medium => 50,
+                UrgencyLevel::High => 10,
+            }),
+        );
     }
 
-    fn update_label(&self, text: impl Into<dcso3::String>, msgs: &mut MsgQ) {
-        msgs.set_markup_text(self.label, text.into());
+    /// DCS map pins cannot be re-texted in place, so the countdown pin is
+    /// dropped and re-dropped. This runs on the slow tick, and the urgency
+    /// hex -- not the pin -- is what a pilot actually reads in flight.
+    fn update_label(
+        &mut self,
+        pos: Vector2,
+        side: Side,
+        text: impl Into<dcso3::String>,
+        msgs: &mut MsgQ,
+    ) {
+        msgs.delete_mark(self.label);
+        self.label = msgs.mark_to_side(side, pos, true, text);
     }
 
 }
@@ -488,6 +622,10 @@ pub struct JtacLayerMarks {
     /// old lase-range circle + target circle + floating text panel, which
     /// were a big share of the F10 clutter around an active JTAC.
     info_pin: MarkId,
+    /// Diamond drawn on the lased target.
+    target_shape: MarkId,
+    /// The laser code, the one thing a pilot must read without clicking.
+    code_label: MarkId,
     /// Side the pin is shown to, kept so it can be re-dropped on target move
     /// (DCS map pins can't be moved in place).
     side: Side,
@@ -504,6 +642,7 @@ impl JtacLayerMarks {
         _lase_range_m: f64,
         side: Side,
         nine_line_text: impl Into<dcso3::String>,
+        laser_code: u16,
         msgs: &mut MsgQ,
     ) -> Self {
         let sf = side_filter(side);
@@ -524,8 +663,38 @@ impl JtacLayerMarks {
 
         let info_pin = msgs.mark_to_side(side, target_pos, true, nine_line_text);
 
+        // A diamond ON the target, so the thing being lased is a shape you
+        // can see rather than the bare end of a line, plus the laser code as
+        // the ONE piece of text -- it is what a pilot has to dial in, and
+        // digging it out of a pin mid-run is exactly the wrong moment.
+        let target_shape = ngon(
+            target_pos,
+            700.,
+            4,
+            0.,
+            shape_outline(),
+            Color::violet(0.95),
+            sf,
+            msgs,
+        );
+        let code_label = MarkId::new();
+        msgs.text_to_all(
+            sf,
+            code_label,
+            TextSpec {
+                pos: v3(target_pos.x - 1_600., target_pos.y),
+                color: Color::violet(1.),
+                fill_color: crate::mapcolor::text_plate(),
+                font_size: 12,
+                read_only: true,
+                text: format_compact!("{}", laser_code).into(),
+            },
+        );
+
         Self {
             bearing_line,
+            target_shape,
+            code_label,
             info_pin,
             side,
             last_target: target_pos,
@@ -549,6 +718,8 @@ impl JtacLayerMarks {
         msgs.set_markup_pos_end(self.bearing_line, v3(new_target.x, new_target.y));
         // Pins can't be repositioned in place -- drop and re-drop it.
         msgs.delete_mark(self.info_pin);
+        msgs.delete_mark(self.target_shape);
+        msgs.delete_mark(self.code_label);
         self.info_pin = msgs.mark_to_side(self.side, new_target, true, new_nine_line);
     }
 
@@ -578,6 +749,9 @@ impl JtacLayerMarks {
 struct TaskMarks {
     area: MarkId,
     pin: MarkId,
+    /// Gold star over the task circle, so a tasked objective stands out from
+    /// the ordinary rings around it.
+    star: MarkId,
 }
 
 impl TaskMarks {
@@ -599,12 +773,24 @@ impl TaskMarks {
             None,
         );
         let pin = msgs.mark_to_side(task.side, task.pos, true, task.pin_text().as_str());
-        Self { area, pin }
+        // A star on top of the task circle. The circle alone is easy to miss
+        // among the objective rings; the star says "somebody asked for this".
+        let star_id = burst(
+            task.pos,
+            1_000.,
+            5,
+            shape_outline(),
+            Color::new(1., 0.82, 0.29, 1.),
+            side_filter(task.side),
+            msgs,
+        );
+        Self { area, pin, star: star_id }
     }
 
     fn remove(self, msgs: &mut MsgQ) {
         msgs.delete_mark(self.area);
         msgs.delete_mark(self.pin);
+        msgs.delete_mark(self.star);
     }
 }
 
@@ -619,6 +805,7 @@ impl TimedMark {
     fn one(id: MarkId, ttl_secs: i64, now: DateTime<Utc>) -> Self {
         Self { ids: [Some(id), None, None], expires: now + Duration::seconds(ttl_secs) }
     }
+    #[allow(dead_code)]
     fn two(a: MarkId, b: MarkId, ttl_secs: i64, now: DateTime<Utc>) -> Self {
         Self { ids: [Some(a), Some(b), None], expires: now + Duration::seconds(ttl_secs) }
     }
@@ -633,12 +820,32 @@ impl TimedMark {
     }
 }
 
+/// A timed group of arbitrarily many marks, for shapes drawn in a row.
+#[derive(Debug)]
+struct TimedGroup {
+    ids: Vec<MarkId>,
+    expires: DateTime<Utc>,
+}
+
+impl TimedGroup {
+    fn new(ids: Vec<MarkId>, ttl_secs: i64, now: DateTime<Utc>) -> Self {
+        Self { ids, expires: now + Duration::seconds(ttl_secs) }
+    }
+    fn remove(self, msgs: &mut MsgQ) {
+        for id in self.ids {
+            msgs.delete_mark(id);
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct MapLayer {
     convoy_marks: FxHashMap<ConvoyId, ConvoyMarks>,
     air_route_marks: FxHashMap<LogiRouteId, AirRouteMarks>,
     sea_route_marks: FxHashMap<LogiRouteId, SeaRouteMarks>,
     fire_marks: Vec<FireOverlay>,
+    /// Multi-shape transient overlays (recon strength rows).
+    timed_groups: Vec<TimedGroup>,
     csar_marks: FxHashMap<GroupId, CsarMarks>,
     pub jtac_marks: FxHashMap<GroupId, JtacLayerMarks>,
     supply_critical_marks: FxHashMap<ObjectiveId, MarkId>,
@@ -678,13 +885,14 @@ impl MapLayer {
         lase_range_m: f64,
         side: Side,
         nine_line_text: impl Into<dcso3::String>,
+        laser_code: u16,
         msgs: &mut MsgQ,
     ) {
         if let Some(old) = self.jtac_marks.remove(&gid) {
             old.remove(msgs);
         }
         let marks = JtacLayerMarks::new(
-            jtac_pos, target_pos, lase_range_m, side, nine_line_text, msgs,
+            jtac_pos, target_pos, lase_range_m, side, nine_line_text, laser_code, msgs,
         );
         self.jtac_marks.insert(gid, marks);
     }
@@ -754,20 +962,29 @@ impl MapLayer {
             },
             None,
         );
-        let label = MarkId::new();
-        msgs.text_to_all(
-            sf,
-            label,
-            TextSpec {
-                pos: v3(target_pos.x, target_pos.y),
-                color: col,
-                fill_color: crate::mapcolor::text_plate(),
-                font_size: 11,
-                read_only: true,
-                text: format_compact!("RECON\n~{} enemy units", unit_count).into(),
-            },
+        // Strength as a row of diamonds -- one per five units, capped at five
+        // -- so the SCALE of a contact reads at a glance. The exact count is
+        // not thrown away: it moves into a map pin, which stays collapsed to
+        // an icon until somebody clicks it. Shapes to glance at, pin for detail.
+        let pips = (unit_count / 5).clamp(1, 5);
+        let mut ids: Vec<MarkId> = (0..pips)
+            .map(|i| {
+                let c = Vector2::new(
+                    target_pos.x - scan_radius_m * 0.55,
+                    target_pos.y + (i as f64 - (pips as f64 - 1.) / 2.) * 1500.,
+                );
+                ngon(c, 620., 4, 0., shape_outline(), col, sf, msgs)
+            })
+            .collect();
+        ids.push(rect);
+        self.timed_groups.push(TimedGroup::new(ids, 120, now));
+        let pin = msgs.mark_to_side(
+            side,
+            target_pos,
+            true,
+            format_compact!("RECON\n~{} enemy units", unit_count).as_str(),
         );
-        self.timed_marks.push(TimedMark::two(rect, label, 120, now));
+        self.timed_marks.push(TimedMark::one(pin, 120, now));
     }
 
     /// Place or refresh an F10 map marker for an ELINT/SIGINT intel contact.
@@ -786,6 +1003,9 @@ impl MapLayer {
         if let Some(label_id) = contact.map_mark_label.take() {
             msgs.delete_mark(label_id);
         }
+        if let Some(ring_id) = contact.map_mark_ring.take() {
+            msgs.delete_mark(ring_id);
+        }
 
         // The mark is shown only to the side that owns the intel.
         let sf = side_filter(contact.side);
@@ -797,15 +1017,34 @@ impl MapLayer {
             Side::Red  => (Color::new(0.2, 0.4, 0.9, alpha), Color::new(0.2, 0.4, 0.9, fill_alpha)),
             _          => (Color::white(alpha),                Color::white(fill_alpha)),
         };
-        let r = 300.0_f64; // display square half-size in meters
         let pos = contact.pos;
-        let rect_id = MarkId::new();
-        msgs.rect_to_all(
+
+        // The SHAPE carries the class, so one look tells you what kind of thing
+        // is there: diamond = air defence, square = armour, triangle = infantry,
+        // hexagon = artillery, larger hexagon = naval or airbase. Anything
+        // unidentified stays a near-circular octagon, which reads as "something
+        // here, not yet classified".
+        let (sides, rot, r) = match contact.unit_class {
+            IntelUnitClass::AirDefense => (4usize, 0., 620.),
+            IntelUnitClass::Armor => (4, 45., 560.),
+            IntelUnitClass::Infantry => (3, 90., 640.),
+            IntelUnitClass::Artillery => (6, 0., 560.),
+            IntelUnitClass::Naval | IntelUnitClass::AirBase => (6, 30., 700.),
+            IntelUnitClass::Unknown => (8, 0., 520.),
+        };
+        let shape_id = ngon(pos, r, sides, rot, enemy_col, fill_col, sf, msgs);
+
+        // Confidence stops being a word and becomes the position-uncertainty
+        // ring: the bigger the ring, the less sure the engine is about where
+        // this actually is. That is the part a pilot has to fly against.
+        let unc = (contact.pos_uncertainty_m as f64).clamp(600., 12_000.);
+        let ring_id = MarkId::new();
+        msgs.circle_to_all(
             sf,
-            rect_id,
-            RectSpec {
-                start: v3(pos.x - r, pos.y - r),
-                end:   v3(pos.x + r, pos.y + r),
+            ring_id,
+            CircleSpec {
+                center: v3(pos.x, pos.y),
+                radius: unc,
                 color: enemy_col,
                 fill_color: fill_col,
                 line_type: LineType::Dashed,
@@ -813,33 +1052,33 @@ impl MapLayer {
             },
             None,
         );
-        let label_id = MarkId::new();
-        let text = IntelDatabase::marker_text(contact, cfg);
-        msgs.text_to_all(
-            sf,
-            label_id,
-            TextSpec {
-                pos: v3(pos.x, pos.y),
-                color: enemy_col,
-                fill_color: crate::mapcolor::text_plate(),
-                font_size: 10,
-                read_only: true,
-                text: text.into(),
-            },
+
+        // Class, count, source, confidence and age all still exist -- they move
+        // into a pin, collapsed to an icon until clicked, rather than a caption
+        // stacked over every contact on the map.
+        let pin_id = msgs.mark_to_side(
+            contact.side,
+            pos,
+            true,
+            IntelDatabase::marker_text(contact, cfg).as_str(),
         );
-        contact.map_mark_rect  = Some(rect_id);
-        contact.map_mark_label = Some(label_id);
+
+        contact.map_mark_rect = Some(shape_id);
+        contact.map_mark_label = Some(pin_id);
+        contact.map_mark_ring = Some(ring_id);
     }
 
     /// Remove F10 map marks for a deleted intel contact.
     pub fn remove_intel_contact_marks(
         &mut self,
-        rect: Option<dcso3::trigger::MarkId>,
-        label: Option<dcso3::trigger::MarkId>,
+        shape: Option<dcso3::trigger::MarkId>,
+        pin: Option<dcso3::trigger::MarkId>,
+        ring: Option<dcso3::trigger::MarkId>,
         msgs: &mut MsgQ,
     ) {
-        if let Some(id) = rect  { msgs.delete_mark(id); }
-        if let Some(id) = label { msgs.delete_mark(id); }
+        for id in [shape, pin, ring].into_iter().flatten() {
+            msgs.delete_mark(id);
+        }
     }
 
 
@@ -909,6 +1148,15 @@ impl MapLayer {
                 i += 1;
             }
         }
+        let mut i = 0;
+        while i < self.timed_groups.len() {
+            if now >= self.timed_groups[i].expires {
+                let g = self.timed_groups.swap_remove(i);
+                g.remove(msgs);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     // â”€â”€ Full diff-based update (call from slow tick) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -964,7 +1212,7 @@ impl MapLayer {
                 } else {
                     0.
                 };
-                marks.on_move(convoy.last_pos, hdg, msgs);
+                marks.on_move(convoy.last_pos, hdg, convoy.side, msgs);
             } else {
                 let origin_pos = persisted
                     .objectives
@@ -986,11 +1234,21 @@ impl MapLayer {
                         .map(|o| o.name.as_str())
                         .unwrap_or("unknown")
                 );
+                // Same heading estimate the update path uses: toward the
+                // destination, so the arrow points where the convoy is going
+                // rather than where it happens to be facing this instant.
+                let delta = dst_pos - convoy.last_pos;
+                let hdg = if delta.norm() > 1. {
+                    delta.y.atan2(delta.x).to_degrees()
+                } else {
+                    0.
+                };
                 let marks = ConvoyMarks::new(
                     origin_pos,
                     dst_pos,
                     convoy.last_pos,
                     convoy.side,
+                    hdg,
                     cargo_str,
                     msgs,
                 );
@@ -1002,6 +1260,7 @@ impl MapLayer {
         self.convoy_marks.retain(|id, marks| {
             if !active_convoys.contains_key(id.as_str()) {
                 msgs.delete_mark(marks.pin);
+                msgs.delete_mark(marks.heading_arrow);
                 false
             } else {
                 true
@@ -1175,17 +1434,19 @@ impl MapLayer {
                 (format_compact!("CSAR\n{}\nAwaiting rescue", name), UrgencyLevel::Low)
             };
 
+            // Position of the downed pilot: first unit of the group, O(1).
+            // Hoisted out of the else-branch because the update path now
+            // needs it too -- a pin has to be re-dropped to change its text.
+            let pos = group.units.into_iter()
+                .next()
+                .and_then(|uid| persisted.units.get(uid))
+                .map(|u| u.pos)
+                .unwrap_or_default();
             if self.csar_marks.contains_key(gid) {
-                let marks = self.csar_marks.get(gid).unwrap();
+                let marks = self.csar_marks.get_mut(gid).unwrap();
                 marks.set_urgency(urgency, msgs);
-                marks.update_label(label, msgs);
+                marks.update_label(pos, group.side, label, msgs);
             } else {
-                // Position: take the first unit from the group â€” O(1), no full scan needed
-                let pos = group.units.into_iter()
-                    .next()
-                    .and_then(|uid| persisted.units.get(uid))
-                    .map(|u| u.pos)
-                    .unwrap_or_default();
                 let marks = CsarMarks::new(pos, group.side, label, msgs);
                 self.csar_marks.insert(*gid, marks);
                 let marks = self.csar_marks.get(gid).unwrap();
@@ -1198,6 +1459,7 @@ impl MapLayer {
             if !live_pilots.contains(gid) {
                 msgs.delete_mark(marks.search_ring);
                 msgs.delete_mark(marks.label);
+                msgs.delete_mark(marks.urgency_hex);
                 false
             } else {
                 true
@@ -1282,6 +1544,9 @@ impl MapLayer {
         }
         for m in self.timed_marks.drain(..) {
             m.remove(msgs);
+        }
+        for g in self.timed_groups.drain(..) {
+            g.remove(msgs);
         }
     }
 }

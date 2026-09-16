@@ -145,6 +145,9 @@ pub struct IntelContact {
     /// Active F10 map marker ID (None until the mark is placed).
     pub map_mark_rect: Option<MarkId>,
     pub map_mark_label: Option<MarkId>,
+    /// Position-uncertainty ring. Its radius is how unsure the engine is about
+    /// where this contact actually is, which is the part a pilot acts on.
+    pub map_mark_ring: Option<MarkId>,
 }
 
 // ─── Database ────────────────────────────────────────────────────────────────
@@ -228,6 +231,7 @@ impl IntelDatabase {
                 confidence: 1.0,
                 detected_at: now,
                 map_mark_rect: None,
+                map_mark_ring: None,
                 map_mark_label: None,
             });
             self.by_side.entry(side).or_default().push(id);
@@ -243,9 +247,9 @@ impl IntelDatabase {
         cfg: &ElintConfig,
         _now: DateTime<Utc>,
         dt_secs: f64,
-    ) -> (Vec<ContactId>, Vec<(Option<MarkId>, Option<MarkId>)>) {
+    ) -> (Vec<ContactId>, Vec<(Option<MarkId>, Option<MarkId>, Option<MarkId>)>) {
         let mut updated: Vec<ContactId> = Vec::new();
-        let mut removed: Vec<(Option<MarkId>, Option<MarkId>)> = Vec::new();
+        let mut removed: Vec<(Option<MarkId>, Option<MarkId>, Option<MarkId>)> = Vec::new();
         let ln2 = std::f64::consts::LN_2;
 
         self.contacts.retain(|_, c| {
@@ -253,7 +257,7 @@ impl IntelDatabase {
             let lambda = ln2 / half_life;
             c.confidence *= (-lambda * dt_secs).exp() as f32;
             if c.confidence < cfg.confidence_delete_threshold {
-                removed.push((c.map_mark_rect, c.map_mark_label));
+                removed.push((c.map_mark_rect, c.map_mark_label, c.map_mark_ring));
                 // Also remove from by_side index
                 false
             } else {

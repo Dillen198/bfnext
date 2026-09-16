@@ -753,6 +753,7 @@ impl Jtac {
                         self.lase_range_m,
                         self.side,
                         text,
+                        self.code,
                         msgs,
                     );
                 }
