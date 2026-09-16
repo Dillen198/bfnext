@@ -82,7 +82,14 @@ fn side_filter(side: Side) -> SideFilter {
 /// DCS renders a 3-point freeform as an OPEN polyline, so short rings are
 /// padded rather than coming out as a bare "V".
 fn poly(c: Vector2, offsets: &[(f64, f64)], outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
-    let mut points: Vec<LuaVec3> = offsets.iter().map(|&(n, e)| v3(c.x + n, c.y + e)).collect();
+    // DCS only shades a freeform whose points run CLOCKWISE; a counter-
+    // clockwise ring renders as an empty outline. Reverse here so every caller
+    // can define its shape in the natural order and still get a filled symbol.
+    let mut points: Vec<LuaVec3> = offsets
+        .iter()
+        .rev()
+        .map(|&(n, e)| v3(c.x + n, c.y + e))
+        .collect();
     if let Some(first) = points.first().copied() {
         points.push(first);
     }
@@ -146,6 +153,25 @@ fn chevron(c: Vector2, r: f64, heading_deg: f64, outline: Color, fill: Color, to
         })
         .collect();
     poly(c, &offs, outline, fill, to, msgs)
+}
+
+/// How far a contact must move before its pin is worth re-dropping.
+const INTEL_PIN_MOVE_M: f64 = 750.;
+
+/// Outline and fill for an intel contact at a given confidence alpha.
+fn intel_colors(side: Side, alpha: f32) -> (Color, Color) {
+    let fill_alpha = alpha * 0.15;
+    match side {
+        Side::Blue => (
+            Color::new(0.72, 0.30, 1., alpha),
+            Color::new(0.72, 0.30, 1., fill_alpha),
+        ),
+        Side::Red => (
+            Color::new(0.25, 0.65, 1., alpha),
+            Color::new(0.25, 0.65, 1., fill_alpha),
+        ),
+        _ => (Color::white(alpha), Color::white(fill_alpha)),
+    }
 }
 
 /// Status colour for a 0-100 value, matching the objective hexes exactly.
@@ -520,6 +546,8 @@ struct CsarMarks {
     search_ring: MarkId,
     /// Map pin carrying the pilot's name and the exact time remaining.
     label: MarkId,
+    /// Last text drawn on the pin, so it is only re-dropped when it changes.
+    label_text: dcso3::String,
     /// Hexagon that ripens green -> amber -> red as the timer runs down, so
     /// a rescue flight reads "how long have I got" without opening the pin.
     urgency_hex: MarkId,
@@ -563,9 +591,10 @@ impl CsarMarks {
             sf,
             msgs,
         );
-        let label = msgs.mark_to_side(side, pos, true, label_text);
+        let label_text = label_text.into();
+        let label = msgs.mark_to_side(side, pos, true, label_text.clone());
 
-        Self { search_ring, label, urgency_hex }
+        Self { search_ring, label, label_text, urgency_hex }
     }
 
     /// Change the ring border color as the capture timer runs down:
@@ -588,9 +617,11 @@ impl CsarMarks {
         );
     }
 
-    /// DCS map pins cannot be re-texted in place, so the countdown pin is
-    /// dropped and re-dropped. This runs on the slow tick, and the urgency
-    /// hex -- not the pin -- is what a pilot actually reads in flight.
+    /// DCS map pins cannot be re-texted in place, so changing the countdown
+    /// costs a delete plus a create in the pin queue -- which outranks markup.
+    /// Doing that every tick per downed pilot is how the queue ends up minutes
+    /// behind, so the pin is only re-dropped when its text actually CHANGES.
+    /// The urgency hex, which updates for free, is what a pilot reads anyway.
     fn update_label(
         &mut self,
         pos: Vector2,
@@ -598,6 +629,11 @@ impl CsarMarks {
         text: impl Into<dcso3::String>,
         msgs: &mut MsgQ,
     ) {
+        let text = text.into();
+        if text == self.label_text {
+            return;
+        }
+        self.label_text = text.clone();
         msgs.delete_mark(self.label);
         self.label = msgs.mark_to_side(side, pos, true, text);
     }
@@ -996,7 +1032,35 @@ impl MapLayer {
         cfg: &bfprotocols::cfg::ElintConfig,
         msgs: &mut MsgQ,
     ) {
-        // Remove stale marks first.
+        // This runs for EVERY live contact on every decay tick, so it must not
+        // rebuild anything it does not have to. A map pin cannot be edited in
+        // place -- re-dropping one costs a delete plus a create in the pin
+        // queue, which outranks markup. Doing that per contact per tick buried
+        // the queue under ~900 pin commands and put the map five minutes
+        // behind the campaign.
+        //
+        // So: if the marks already exist and the contact has not meaningfully
+        // MOVED, only recolour them. Colour updates coalesce per mark, so a
+        // decaying contact costs at most one pending command per mark.
+        let moved = (contact.pos - contact.mark_pos).norm() > INTEL_PIN_MOVE_M;
+        let have_marks = contact.map_mark_rect.is_some()
+            && contact.map_mark_label.is_some()
+            && contact.map_mark_ring.is_some();
+        if have_marks && !moved {
+            let alpha = (contact.confidence * 0.9 + 0.05).clamp(0.1, 0.95);
+            let col = intel_colors(contact.side, alpha);
+            if let Some(id) = contact.map_mark_rect {
+                msgs.set_markup_color(id, col.0);
+                msgs.set_markup_fill_color(id, col.1);
+            }
+            if let Some(id) = contact.map_mark_ring {
+                msgs.set_markup_color(id, col.0);
+                msgs.set_markup_fill_color(id, col.1);
+            }
+            return;
+        }
+
+        // Moved, or first draw: rebuild.
         if let Some(rect_id) = contact.map_mark_rect.take() {
             msgs.delete_mark(rect_id);
         }
@@ -1006,17 +1070,13 @@ impl MapLayer {
         if let Some(ring_id) = contact.map_mark_ring.take() {
             msgs.delete_mark(ring_id);
         }
+        contact.mark_pos = contact.pos;
 
         // The mark is shown only to the side that owns the intel.
         let sf = side_filter(contact.side);
         // Color fades from bright hostile-red towards dark as confidence drops.
         let alpha = (contact.confidence * 0.9 + 0.05).clamp(0.1, 0.95);
-        let fill_alpha = alpha * 0.15;
-        let (enemy_col, fill_col) = match contact.side {
-            Side::Blue => (Color::new(0.9, 0.2, 0.2, alpha), Color::new(0.9, 0.2, 0.2, fill_alpha)),
-            Side::Red  => (Color::new(0.2, 0.4, 0.9, alpha), Color::new(0.2, 0.4, 0.9, fill_alpha)),
-            _          => (Color::white(alpha),                Color::white(fill_alpha)),
-        };
+        let (enemy_col, fill_col) = intel_colors(contact.side, alpha);
         let pos = contact.pos;
 
         // The SHAPE carries the class, so one look tells you what kind of thing

@@ -145,6 +145,9 @@ pub struct IntelContact {
     /// Active F10 map marker ID (None until the mark is placed).
     pub map_mark_rect: Option<MarkId>,
     pub map_mark_label: Option<MarkId>,
+    /// Where the marks were last drawn. A pin cannot be edited in place, so it
+    /// is only re-dropped once the contact has actually moved.
+    pub mark_pos: Vector2,
     /// Position-uncertainty ring. Its radius is how unsure the engine is about
     /// where this contact actually is, which is the part a pilot acts on.
     pub map_mark_ring: Option<MarkId>,
@@ -232,6 +235,7 @@ impl IntelDatabase {
                 detected_at: now,
                 map_mark_rect: None,
                 map_mark_ring: None,
+                mark_pos: pos,
                 map_mark_label: None,
             });
             self.by_side.entry(side).or_default().push(id);

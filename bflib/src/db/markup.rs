@@ -259,6 +259,7 @@ fn carrier_path() -> &'static [(f64, f64)] {
 }
 
 /// Airbase icon — simple top-down aircraft silhouette, nose pointing north.
+#[allow(dead_code)] // DCS labels real airfields itself; kept as reference geometry
 fn airbase_path() -> &'static [(f64, f64)] {
     &[
         ( 0.90,  0.00), // nose
@@ -497,10 +498,14 @@ fn hex_center(pos: Vector2, i: usize) -> Vector2 {
 
 /// A closed hexagon as a point ring, flat side up. The last point repeats the
 /// first so the shape closes.
+///
+/// Wound CLOCKWISE on purpose: DCS only shades a freeform whose points run
+/// clockwise, and a counter-clockwise ring comes out as an empty outline.
+/// (Angle runs backwards here because the pair is (north, east), not (x, y).)
 fn hex_points(center: Vector2, r: f64) -> Vec<LuaVec3> {
     (0..=6)
         .map(|i| {
-            let a = (60. * i as f64 + 30.).to_radians();
+            let a = (30. - 60. * i as f64).to_radians();
             LuaVec3(Vector3::new(
                 center.x + r * a.cos(),
                 0.,
@@ -1058,9 +1063,10 @@ impl ObjectiveMarkup {
             ObjectiveKind::CarrierGroup { .. } => KindSymbol::Single(
                 draw_polyline(t.pos, sym_r, carrier_path(), draw_spec, sym_color, msgq)
             ),
-            ObjectiveKind::Airbase => KindSymbol::Single(
-                draw_polyline(t.pos, sym_r, airbase_path(), draw_spec, sym_color, msgq)
-            ),
+            // No symbol for a real airbase: DCS already draws the airfield,
+            // its runways and its name on the F10 map. Ours only sat on top of
+            // that, so it cost marks to say something already said.
+            ObjectiveKind::Airbase => KindSymbol::None,
             ObjectiveKind::Fob => KindSymbol::Single(
                 draw_polyline(t.pos, sym_r, fob_path(), draw_spec, sym_color, msgq)
             ),
