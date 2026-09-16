@@ -155,6 +155,11 @@ fn chevron(c: Vector2, r: f64, heading_deg: f64, outline: Color, fill: Color, to
     poly(c, &offs, outline, fill, to, msgs)
 }
 
+/// The bearing line follows the target this closely (cheap markup update).
+const JTAC_LINE_FOLLOW_M: f64 = 50.;
+/// The pin and target symbols only chase the target this far (pin churn).
+const JTAC_SYMBOL_FOLLOW_M: f64 = 600.;
+
 /// How far a contact must move before its pin is worth re-dropping.
 const INTEL_PIN_MOVE_M: f64 = 750.;
 
@@ -662,6 +667,11 @@ pub struct JtacLayerMarks {
     target_shape: MarkId,
     /// The laser code, the one thing a pilot must read without clicking.
     code_label: MarkId,
+    /// Kept so the code label can be redrawn when the target moves.
+    laser_code: u16,
+    /// Where the pin and symbols were last drawn, as opposed to where the
+    /// bearing line currently ends.
+    last_symbol_pos: Vector2,
     /// Side the pin is shown to, kept so it can be re-dropped on target move
     /// (DCS map pins can't be moved in place).
     side: Side,
@@ -731,6 +741,8 @@ impl JtacLayerMarks {
             bearing_line,
             target_shape,
             code_label,
+            laser_code,
+            last_symbol_pos: target_pos,
             info_pin,
             side,
             last_target: target_pos,
@@ -747,16 +759,51 @@ impl JtacLayerMarks {
         new_nine_line: impl Into<dcso3::String>,
         msgs: &mut MsgQ,
     ) {
-        if (new_target - self.last_target).norm() < 20. {
+        // The bearing line follows the target cheaply -- set_markup_pos_end is
+        // a coalescing markup update, so it can track closely.
+        if (new_target - self.last_target).norm() < JTAC_LINE_FOLLOW_M {
+            return;
+        }
+        msgs.set_markup_pos_end(self.bearing_line, v3(new_target.x, new_target.y));
+
+        // The pin and the two symbols cannot be moved in place, so they cost a
+        // delete plus a create EACH to follow. At a 20 m threshold a JTAC on a
+        // rolling convoy re-dropped them every couple of seconds and buried the
+        // pin queue, so they only chase the target once it has really gone.
+        if (new_target - self.last_symbol_pos).norm() < JTAC_SYMBOL_FOLLOW_M {
+            self.last_target = new_target;
             return;
         }
         self.last_target = new_target;
-        msgs.set_markup_pos_end(self.bearing_line, v3(new_target.x, new_target.y));
-        // Pins can't be repositioned in place -- drop and re-drop it.
+        self.last_symbol_pos = new_target;
+        let sf = side_filter(self.side);
         msgs.delete_mark(self.info_pin);
         msgs.delete_mark(self.target_shape);
         msgs.delete_mark(self.code_label);
         self.info_pin = msgs.mark_to_side(self.side, new_target, true, new_nine_line);
+        self.target_shape = ngon(
+            new_target,
+            700.,
+            4,
+            0.,
+            shape_outline(),
+            Color::violet(0.95),
+            sf,
+            msgs,
+        );
+        self.code_label = MarkId::new();
+        msgs.text_to_all(
+            sf,
+            self.code_label,
+            TextSpec {
+                pos: v3(new_target.x - 1_600., new_target.y),
+                color: Color::violet(1.),
+                fill_color: crate::mapcolor::text_plate(),
+                font_size: 12,
+                read_only: true,
+                text: format_compact!("{}", self.laser_code).into(),
+            },
+        );
     }
 
     /// Call when the JTAC itself moves (airborne JTAC / drone).
@@ -1571,6 +1618,7 @@ impl MapLayer {
     pub fn remove_all(&mut self, msgs: &mut MsgQ) {
         for (_, c) in self.convoy_marks.drain() {
             msgs.delete_mark(c.pin);
+            msgs.delete_mark(c.heading_arrow);
         }
         for (_, a) in self.air_route_marks.drain() {
             msgs.delete_mark(a.transit_line);
@@ -1591,10 +1639,13 @@ impl MapLayer {
         for (_, c) in self.csar_marks.drain() {
             msgs.delete_mark(c.search_ring);
             msgs.delete_mark(c.label);
+            msgs.delete_mark(c.urgency_hex);
         }
         for (_, j) in self.jtac_marks.drain() {
             msgs.delete_mark(j.bearing_line);
             msgs.delete_mark(j.info_pin);
+            msgs.delete_mark(j.target_shape);
+            msgs.delete_mark(j.code_label);
         }
         for (_, m) in self.supply_critical_marks.drain() {
             msgs.delete_mark(m);
