@@ -195,6 +195,22 @@ impl MsgQ {
             self.0[pri].retain(|cmd| match cmd {
                 Cmd::DeleteMark(_) => true,
                 Cmd::Send(msg) => match msg {
+                    // A pin create that has not drained yet is pointless once
+                    // the same mark is being deleted -- drop BOTH. Without
+                    // this a re-dropped pin left a dead create and a dead
+                    // delete in the queue behind it, which is how pin churn
+                    // doubled its own cost.
+                    Msg::Message {
+                        typ: MsgTyp::Mark { id, .. },
+                        ..
+                    } => {
+                        if *id == did {
+                            push = false;
+                            false
+                        } else {
+                            true
+                        }
+                    }
                     Msg::Message { .. } => true,
                     Msg::Circle { id, .. }
                     | Msg::Rect { id, .. }
