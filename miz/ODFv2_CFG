@@ -13,7 +13,7 @@
     "ca": "AlwaysAllowed"
   },
   "name_filter": ".*",
-  "max_msgs_per_second": 3,
+  "max_msgs_per_second": 20,
   "shutdown": 10,
   "points": {
     "new_player_join": 30000,

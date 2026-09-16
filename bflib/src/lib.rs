@@ -3811,7 +3811,6 @@ fn run_timed_events(
     let ts = Utc::now();
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let net = Net::singleton(lua)?;
-    let act = Trigger::singleton(lua)?.action()?;
     force_players_to_spectators(ctx, &net, ts);
     match ctx.db.update_unit_positions_incremental(lua, ts, ctx.last_unit_position) {
         Err(e) => error!("could not update unit positions {e}"),
@@ -3937,7 +3936,11 @@ fn run_timed_events(
             }
         }
     }
-    ctx.db.ephemeral.msgs().process(max_rate, &net, &act);
+    // The queue is drained by its own timer at MSGQ_DRAIN_HZ, not here -- see
+    // start_msgq_drain. Draining once per second meant the whole per-second
+    // budget landed in a single DCS frame, which is why the budget had to stay
+    // tiny and the map ran minutes behind. `max_rate` is still read above for
+    // the [MSGQ] report.
     record_perf(&mut perf.process_messages, now);
     if let Err(e) = ctx.db.logistics_step(lua, perf, ts) {
         error!("error running logistics events {e:?}")
@@ -3959,8 +3962,56 @@ fn run_timed_events(
     Ok(AdminResult::Continue)
 }
 
+/// How many times a second the message queue is drained.
+///
+/// `max_msgs_per_second` is a SUSTAINED rate; this is what keeps it from
+/// arriving as one lump. Each pass sends at most `rate / MSGQ_DRAIN_HZ`
+/// commands, so the work landing in any single DCS frame stays small however
+/// high the configured rate goes -- which is the thing the limit is actually
+/// protecting.
+const MSGQ_DRAIN_HZ: usize = 5;
+
+/// Drain the message queue on its own fast timer, independently of the
+/// once-per-second event tick.
+fn start_msgq_drain(lua: MizLua) -> Result<()> {
+    let timer = Timer::singleton(lua)?;
+    let period = 1f32 / MSGQ_DRAIN_HZ as f32;
+    timer.schedule_function(timer.get_time()? + period, mlua::Value::Nil, move |lua, _, now| {
+        let ctx = unsafe { Context::get_mut() };
+        // Round up so a rate that does not divide evenly is never throttled
+        // below its configured value.
+        let per_pass = ctx
+            .db
+            .ephemeral
+            .cfg
+            .max_msgs_per_second
+            .div_ceil(MSGQ_DRAIN_HZ)
+            .max(1);
+        match (Net::singleton(lua), Trigger::singleton(lua).and_then(|t| t.action())) {
+            (Ok(net), Ok(act)) => {
+                if let Err(e) = catch_unwind(AssertUnwindSafe(|| {
+                    ctx.db.ephemeral.msgs().process(per_pass, &net, &act)
+                })) {
+                    error!("msgq drain panicked {e:?}")
+                }
+            }
+            (net, act) => {
+                if let Err(e) = net {
+                    error!("msgq drain: no net singleton {e:?}")
+                }
+                if let Err(e) = act {
+                    error!("msgq drain: no trigger action {e:?}")
+                }
+            }
+        }
+        Ok(Some(now + period))
+    })?;
+    Ok(())
+}
+
 fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<()> {
     ctx.last_slow_timed_events = Utc::now();
+    start_msgq_drain(lua)?;
     let timer = Timer::singleton(lua)?;
     timer.schedule_function(timer.get_time()? + 1., mlua::Value::Nil, {
         let path = path.clone();

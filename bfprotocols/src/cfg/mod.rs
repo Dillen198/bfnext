@@ -2282,7 +2282,10 @@ impl Default for PlayerReconCfg {
 }
 
 fn default_msgs_per_second() -> usize {
-    5
+    // Sustained, and spread over several drains per second rather than sent in
+    // one burst. The old value of 5 was a per-second BURST, so this is a higher
+    // throughput at a lower peak.
+    20
 }
 
 fn default_cull_after() -> u32 {
@@ -3453,6 +3456,12 @@ pub struct Cfg {
     pub name_filter: Option<NameFilter>,
     /// The maximum number of messages, including markup, we will push to dcs
     /// per second.
+    ///
+    /// This is a SUSTAINED rate, not a burst. The engine drains the queue
+    /// several times a second (see `MSGQ_DRAIN_HZ`) and sends at most
+    /// `max_msgs_per_second / MSGQ_DRAIN_HZ` in any one go, so raising this
+    /// buys throughput without increasing the amount of work landing in a
+    /// single DCS frame -- which is what the limit exists to protect.
     #[serde(default = "default_msgs_per_second")]
     pub max_msgs_per_second: usize,
     /// shutdown after the specified number of hours, don't shutdown

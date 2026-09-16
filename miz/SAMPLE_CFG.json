@@ -20,7 +20,7 @@
 
   "name_filter": ".*",
 
-  "max_msgs_per_second": 3,
+  "max_msgs_per_second": 20,
 
   "shutdown": 10,
 
