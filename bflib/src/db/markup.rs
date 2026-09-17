@@ -434,6 +434,12 @@ const HEX_GAP: f64 = 1150.;
 const HEX_DROP: f64 = 1700.;
 /// Number of stats in the row: health, logi, supply, fuel.
 const N_HEX: usize = 4;
+/// Opacity of the supply-connection arrows between objectives. They are drawn
+/// with `LineType::NoLine`, so the fill IS the arrow -- there is no outline
+/// underneath it. Supply links are context rather than something to act on, so
+/// they sit well back from the status shapes.
+const SUPPLY_ARROW_ALPHA: f32 = 0.30;
+
 /// Fill opacity of a status hex. Solid fill hides the terrain under it and
 /// reads heavier than the rings around it; letting a little map through keeps
 /// the row legible without it dominating the objective.
@@ -1103,8 +1109,8 @@ impl ObjectiveMarkup {
                         ArrowSpec {
                             start: LuaVec3(Vector3::new(dpos.x, 0., dpos.y)),
                             end: LuaVec3(Vector3::new(spos.x, 0., spos.y)),
-                            color: Color::gray(0.5),
-                            fill_color: Color::gray(0.5),
+                            color: Color::gray(SUPPLY_ARROW_ALPHA),
+                            fill_color: Color::gray(SUPPLY_ARROW_ALPHA),
                             line_type: LineType::NoLine,
                             read_only: true,
                         },
@@ -1128,8 +1134,8 @@ impl ObjectiveMarkup {
                             ArrowSpec {
                                 start: LuaVec3(Vector3::new(dpos.x, 0., dpos.y)),
                                 end: LuaVec3(Vector3::new(spos.x, 0., spos.y)),
-                                color: Color::gray(0.5),
-                                fill_color: Color::gray(0.5),
+                                color: Color::gray(SUPPLY_ARROW_ALPHA),
+                                fill_color: Color::gray(SUPPLY_ARROW_ALPHA),
                                 line_type: LineType::NoLine,
                                 read_only: true,
                             },

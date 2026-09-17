@@ -788,7 +788,15 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
         }
         Ok(())
     };
-    let add_pos_group = |root: GroupSubMenu, name: String, action: bool| -> Result<()> {
+    // `price` is Some only for the Move action, whose real cost is per
+    // kilometre travelled, not the flat number in the menu title. It carries
+    // (troop step, deployable step, cost per step) so each destination can be
+    // priced against the group that would make the trip.
+    let add_pos_group = |root: GroupSubMenu,
+                         name: String,
+                         action: bool,
+                         price: Option<(u32, u32, u32)>|
+     -> Result<()> {
         // Collect carrier group IDs if we're processing actions (e.g., CarrierWaypoint)
         // by checking objectives_by_group to see which groups belong to carrier objectives
         let mut carrier_group_ids: Vec<DbGid> = Vec::new();
@@ -880,15 +888,16 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             // Only a group that actually gets an entry claims a slot --
             // counting the skipped ones used to open a "Next>>" page early.
             if let Some(key) = key {
-                entries.push((*gid, key, mine));
+                let is_troop = matches!(group.origin, DeployKind::Troop { .. });
+                entries.push((*gid, key, mine, is_troop));
             }
         }
         // Stable, so within "mine" and "everyone else" the original order is
         // untouched. Yours are marked so the list stays readable once both are
         // on the same page.
-        entries.sort_by_key(|(_, _, mine)| !*mine);
+        entries.sort_by_key(|(_, _, mine, _)| !*mine);
         let mut p = Pager::new(arg.snd, root);
-        for (gid, key, mine) in entries {
+        for (gid, key, mine, is_troop) in entries {
             let label = if mine {
                 format_compact!("* {gid}({key})")
             } else {
@@ -896,10 +905,35 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             };
             let groot = p.submenu(&mc, label.into())?;
             let mut gp = Pager::new(arg.snd, groot);
+            // A move is charged per step of distance, so the same menu entry can
+            // cost ten points or three thousand depending on which mark it is.
+            // Marks are unlabelled dots in this list ("Mark 1", "Mark 2", ...),
+            // so without the range and the price next to them a player has no way
+            // to tell the near one from the one on the far side of the map --
+            // reported in game after a squad relocation quietly cost 3300 points.
+            let quote = price.and_then(|(troop_step, dep_step, unit_cost)| {
+                let step = if is_troop { troop_step } else { dep_step };
+                let from = ctx.db.group_center(&gid).ok()?;
+                Some((from, step.max(1), unit_cost))
+            });
             for (text, mk) in &marks {
+                let text = match quote {
+                    None => text.clone(),
+                    Some((from, step, unit_cost)) => {
+                        let to = Vector2::new(mk.pos.x, mk.pos.z);
+                        let dist = (to - from).norm();
+                        // Same arithmetic the charge itself uses, so the number
+                        // on the menu is the number that leaves your account.
+                        let cost = (dist / (step as f64)) as u32 * unit_cost;
+                        String::from(format_compact!(
+                            "{text} {:.0}km ({cost} pts)",
+                            dist / 1000.
+                        ))
+                    }
+                };
                 gp.command(
                     &mc,
-                    text.clone(),
+                    text,
                     run_pos_group_action,
                     ArgPent {
                         fst: arg.fst,
@@ -1091,11 +1125,24 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             | ActionKind::DroneWaypoint
             | ActionKind::CarrierWaypoint => {
                 let root = p.submenu(&mc, title)?;
-                add_pos_group(root.clone(), name.clone(), true)?
+                add_pos_group(root.clone(), name.clone(), true, None)?
             }
-            ActionKind::Move(_) => {
+            ActionKind::Move(cfg) => {
+                // The flat "(N pts)" title lies for a move -- N buys one step of
+                // distance, not the whole trip. Say so on the tin, and price each
+                // destination individually inside.
+                let title = if action.cost > 0 {
+                    String::from(format_compact!("{name}({} pts/km)", action.cost))
+                } else {
+                    name.clone()
+                };
                 let root = p.submenu(&mc, title)?;
-                add_pos_group(root.clone(), name.clone(), false)?
+                add_pos_group(
+                    root.clone(),
+                    name.clone(),
+                    false,
+                    Some((cfg.troop, cfg.deployable, action.cost)),
+                )?
             }
             ActionKind::Attackers(_)
             | ActionKind::Sead(_)

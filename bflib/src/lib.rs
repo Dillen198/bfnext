@@ -338,6 +338,14 @@ struct Context {
     /// carrying one command per page.
     objective_pages: FxHashMap<dcso3::env::miz::GroupId, menu::objectives::StatusPages>,
     subscribed_jtac_menus: FxHashMap<SlotId, JtacSlotIfo>,
+    /// Objectives that currently have at least one JTAC on them, per side, as of
+    /// the last contact update. The JTAC menu's location list is built once when
+    /// a player opens it and then only refreshed for the locations they have
+    /// already expanded, so a JTAC that appears somewhere new -- a freshly
+    /// deployed Reaper, most often -- used to be invisible until the player
+    /// happened to hit "Refresh Locations". Comparing this against the live set
+    /// each tick catches exactly that, and nothing else.
+    jtac_locations: FxHashMap<Side, FxHashSet<ObjectiveId>>,
     subscribed_action_menus: FxHashSet<SlotId>,
     connected: Connected,
     landcache: LandCache,
@@ -1642,6 +1650,38 @@ fn update_jtac_contacts(ctx: &mut Context, lua: MizLua) {
                             if expunge {
                                 ctx.subscribed_jtac_menus.remove(slot);
                             }
+                        }
+                    }
+                }
+            }
+            // A JTAC appearing at (or leaving) a location that is not on any
+            // player's expanded list still changes the location list itself, so
+            // every player on that side needs the root rebuilt. That is three
+            // DCS calls per slot and the set only moves when a JTAC is created,
+            // destroyed, or crosses into another objective's area, so it is far
+            // cheaper than it looks.
+            let mut live: FxHashMap<Side, FxHashSet<ObjectiveId>> = FxHashMap::default();
+            for jtac in ctx.jtac.jtacs() {
+                live.entry(jtac.side())
+                    .or_default()
+                    .insert(jtac.location().oid);
+            }
+            let empty: FxHashSet<ObjectiveId> = FxHashSet::default();
+            let moved: SmallVec<[Side; 3]> = [Side::Blue, Side::Red, Side::Neutral]
+                .into_iter()
+                .filter(|side| {
+                    live.get(side).unwrap_or(&empty) != ctx.jtac_locations.get(side).unwrap_or(&empty)
+                })
+                .collect();
+            if !moved.is_empty() {
+                ctx.jtac_locations = live;
+                for (_, player, _) in ctx.db.instanced_players() {
+                    if !moved.contains(&player.side) {
+                        continue;
+                    }
+                    if let Some((slot, _)) = player.current_slot.as_ref() {
+                        if !dirty_slots.contains(slot) {
+                            dirty_slots.push(*slot);
                         }
                     }
                 }

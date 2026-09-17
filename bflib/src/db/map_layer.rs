@@ -257,15 +257,20 @@ impl ConvoyMarks {
         cargo_label: impl Into<dcso3::String>,
         msgs: &mut MsgQ,
     ) -> Self {
+        // Own side only. The pin names the cargo and the destination, so drawn
+        // to everyone it told the enemy which base was being resupplied, with
+        // what, and exactly where the trucks were -- intel that is supposed to
+        // cost a recon flight or a JTAC. Finding a convoy to interdict is now
+        // the same job as finding anything else.
         let text = cargo_label.into();
-        let pin = msgs.mark_to_all(current_pos, true, text.clone());
+        let pin = msgs.mark_to_side(side, current_pos, true, text.clone());
         let heading_arrow = chevron(
             current_pos,
             900.,
             heading_deg,
             shape_outline(),
             side_color(side, 0.95),
-            SideFilter::All,
+            side_filter(side),
             msgs,
         );
         Self { pin, text, last_pos: current_pos, heading_arrow }
@@ -280,7 +285,7 @@ impl ConvoyMarks {
         }
         self.last_pos = new_pos;
         msgs.delete_mark(self.pin);
-        self.pin = msgs.mark_to_all(new_pos, true, self.text.clone());
+        self.pin = msgs.mark_to_side(side, new_pos, true, self.text.clone());
         msgs.delete_mark(self.heading_arrow);
         self.heading_arrow = chevron(
             new_pos,
@@ -288,7 +293,7 @@ impl ConvoyMarks {
             heading_deg,
             shape_outline(),
             side_color(side, 0.95),
-            SideFilter::All,
+            side_filter(side),
             msgs,
         );
     }
@@ -491,9 +496,14 @@ impl FireOverlay {
     ) -> Self {
         let col = side_color(side, 1.);
 
+        // Own side only. This line starts at the battery, so drawing it to
+        // everyone handed the enemy a free counter-battery fix every time the
+        // guns fired -- the same intel the ARTY/COUNTER-BATTERY label was torn
+        // out for. The impact circle below stays public: that is where the
+        // rounds land, and being shelled is not a secret.
         let trajectory = MarkId::new();
         msgs.line_to_all(
-            SideFilter::All,
+            side_filter(side),
             trajectory,
             LineSpec {
                 start: v3(gun_pos.x, gun_pos.y),

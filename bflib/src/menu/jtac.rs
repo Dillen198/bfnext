@@ -14,7 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{ArgQuad, ArgTriple, ArgTuple, Pager};
+use super::{ArgPent, ArgQuad, ArgTriple, ArgTuple, Pager};
 use crate::{
     Context,
     db::{
@@ -1122,9 +1122,21 @@ pub(super) fn add_menu_for_jtac(
     Ok(())
 }
 
+/// Expand one location into the JTACs standing on it.
+///
+/// `pnt` is the exact text of the entry that was clicked, passed along rather
+/// than rebuilt here: the label carries a JTAC count that may already have
+/// changed by the time the click lands, and the removal has to match the
+/// command that is actually on the menu or the entry is left behind.
+///
+/// Building a JTAC's full menu runs to about seventy DCS calls, so this stays
+/// lazy -- which means DCS closes the F10 menu on the click, exactly as it does
+/// for any command. Players read that as the menu breaking ("I click a jtac and
+/// the menu disappears, no other menu opens"), so say plainly what happened and
+/// where the new submenu is.
 fn add_jtacs_by_location(
     lua: MizLua,
-    arg: ArgQuad<Ucid, GroupId, ObjectiveId, GroupSubMenu>,
+    arg: ArgPent<Ucid, GroupId, ObjectiveId, GroupSubMenu, String>,
 ) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let player = ctx
@@ -1141,10 +1153,11 @@ fn add_jtacs_by_location(
         let mc = MissionCommands::singleton(lua)?;
         let name = ctx.db.objective(&arg.trd)?.name.clone();
         let mut cmd: Vec<String> = arg.fth.clone().into();
-        cmd.push(format_compact!("{name}>>").into());
+        cmd.push(arg.pnt.clone());
         mc.remove_command_for_group(arg.snd, cmd.into())?;
-        let root = mc.add_submenu_for_group(arg.snd, name, Some(arg.fth))?;
+        let root = mc.add_submenu_for_group(arg.snd, name.clone(), Some(arg.fth))?;
         let mut p = Pager::new(arg.snd, root);
+        let mut n = 0;
         for jtac in ctx.jtac.jtacs() {
             if jtac.side() == player.side && jtac.location().oid == arg.trd {
                 let page = p.page(&mc)?;
@@ -1158,8 +1171,17 @@ fn add_jtacs_by_location(
                     &arg.fst,
                     slot,
                 )?;
+                n += 1;
             }
         }
+        ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            15,
+            &arg.fst,
+            format_compact!(
+                "{n} JTAC near {name} loaded.\nRe-open F10 and go to JTAC > {name} to work them."
+            ),
+        );
     }
     Ok(())
 }
@@ -1240,7 +1262,7 @@ fn add_jtac_locations(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Res
             o => o,
         }
     });
-    for jte in jtacs {
+    for jte in &jtacs {
         if jte.pinned {
             let page = p.page(&mc)?;
             add_menu_for_jtac(
@@ -1255,19 +1277,26 @@ fn add_jtac_locations(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Res
             )?;
         } else if !roots.contains(&jte.near) {
             roots.push(jte.near.clone());
+            // This list is PLACES, not JTACs -- one entry per objective that has
+            // any. Players kept reading it as the JTAC list itself and then
+            // reporting that "my drone isn't in the list", so each entry says how
+            // many JTACs are waiting behind it.
+            let n = jtacs.iter().filter(|o| o.oid == jte.oid).count();
+            let label = String::from(format_compact!("{} ({n} JTAC)>>", jte.near));
             // The expanded list is hung off the same page this entry sits on,
             // so a location that lands on "More >>" expands there too.
             let page = p.page(&mc)?;
             mc.add_command_for_group(
                 arg.snd,
-                format_compact!("{}>>", jte.near).into(),
+                label.clone(),
                 Some(page.clone()),
                 add_jtacs_by_location,
-                ArgQuad {
+                ArgPent {
                     fst: arg.fst,
                     snd: arg.snd,
                     trd: jte.oid,
                     fth: page,
+                    pnt: label,
                 },
             )?;
         }
@@ -1280,6 +1309,12 @@ pub(crate) fn init_jtac_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &Slo
         Some(ucid) => ucid,
         None => return Ok(()),
     };
+    // Callers that rebuild on a JTAC change reach every player on the side, not
+    // just the ones who already have this menu, so the authorization rule is
+    // checked here rather than only at slot init.
+    if !ctx.db.ephemeral.cfg.rules.jtac.check(ucid) {
+        return Ok(());
+    }
     let si = ctx
         .db
         .ephemeral
