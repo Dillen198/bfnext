@@ -403,6 +403,18 @@ export interface MapObjective {
   captureable: boolean
   priority: boolean
   primary: boolean
+  /**
+   * Stocks that never run dry. Drawn as a gold outline on the supply hex
+   * (materiel) and a gold ring (aircraft), matching the F10 map.
+   *
+   * Optional because bfweb and bfdb deploy independently -- Vercel builds this
+   * from git, bfdb ships to the server box on its own schedule -- so a newer
+   * dashboard can talk to an older engine that predates these fields. That is
+   * the same reason `bfprotocols::situation::MapObjective` marks them
+   * `#[serde(default)]`. Read them as falsy when absent.
+   */
+  unlimited_supply?: boolean
+  unlimited_aircraft?: boolean
 }
 
 export interface SituationReport {
