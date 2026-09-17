@@ -5,7 +5,26 @@ spawns, and how to use it. **Which of these your server actually offers is
 config** — this is the catalogue, not the menu. The menu is the authority for
 what you can call and what it costs.
 
-> The live mission's action set is listed in [Actions Menu](../f10-menu/actions.md).
+## What this server offers
+
+Generated from the campaign config of **the server selected in the top bar** — switch
+servers there and these lists change. The catalogue below explains what each *type*
+does; these are the ones you can actually call.
+
+### Blue
+
+{{list:actions.Blue|_This server publishes no action list. Check F10 → Actions in game._}}
+
+### Red
+
+{{list:actions.Red|_This server publishes no action list. Check F10 → Actions in game._}}
+
+The **Type** column is the engine's own name for the action kind, and matches the
+headings in the catalogue below. `Cost` is charged when the action starts; see
+[How costs and limits work](#how-costs-and-limits-work).
+
+---
+
 
 ## Support aircraft
 
@@ -93,12 +112,12 @@ artillery alive, with per-battery control under `F10 → JTAC`. See
 
 ### Logistics Repair
 Flies in a repair to an objective's logistics infrastructure. Pays
-{{cfg:points.logistics_repair|350}} points on completion — one of the
+{{cfg:points.logistics_repair|25}} points on completion — one of the
 best-paying things in the campaign, and one of the least flown.
 
 ### Logistics Transfer
 Moves supply between objectives. Pays
-{{cfg:points.logistics_transfer|350}}.
+{{cfg:points.logistics_transfer|15}}.
 
 Both are worth roughly an air kill. See
 [Logistics & Supply](../gameplay/logistics.md) and

@@ -52,7 +52,7 @@ see [C-130 Hercules & Airdrop](../advanced/c130-airdrop.md).
 - Fuel bladders
 - Special cargo (server-dependent)
 
-**Crate limit**: you may have up to **{{cfg:max_crates|4}}** crate sets
+**Crate limit**: you may have up to **{{cfg:max_crates|8}}** crate sets
 outstanding at once. Spawned crates are scattered within
 {{cfg:crate_spread|250}} m.
 

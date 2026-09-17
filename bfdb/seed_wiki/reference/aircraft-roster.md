@@ -6,17 +6,27 @@ Every airframe belongs to a **life role**, and every role has its own life pool 
 
 ## Life Roles
 
+These are read from the config of **the server selected in the top bar**.
+
 | Role | Lives | Refill | Description |
 |------|-------|--------|-------------|
-| **Standard** | 3 | every 6h | Front-line multirole fighters — the core combat pool |
-| **Intercept** | 4 | every 6h | Dedicated air-to-air fighters for defending your airspace |
-| **Attack** | 4 | every 6h | CAS jets and attack helicopters built for hitting ground targets |
-| **Recon** | 6 | every 6h | Light and reconnaissance airframes — lowest risk, most lives |
-| **Logistics** | 6 | every 6h | Transports and utility helicopters that move cargo and troops |
+| **Standard** | {{cfg:default_lives.Standard[0]|3}} | every {{cfg:default_lives.Standard[1]|21600}} s | Front-line multirole fighters — the core combat pool |
+| **Intercept** | {{cfg:default_lives.Intercept[0]|4}} | every {{cfg:default_lives.Intercept[1]|21600}} s | Dedicated air-to-air fighters for defending your airspace |
+| **Attack** | {{cfg:default_lives.Attack[0]|4}} | every {{cfg:default_lives.Attack[1]|21600}} s | CAS jets and attack helicopters built for hitting ground targets |
+| **Recon** | {{cfg:default_lives.Recon[0]|6}} | every {{cfg:default_lives.Recon[1]|21600}} s | Light and reconnaissance airframes — lowest risk, most lives |
+| **Logistics** | {{cfg:default_lives.Logistics[0]|6}} | every {{cfg:default_lives.Logistics[1]|21600}} s | Transports and utility helicopters that move cargo and troops |
 
-**Important**: Life limits are a server setting and can be switched off entirely. If lives aren't being taken on death, that's the server running with unlimited lives, not a bug. Check `-status` or `-lives` in-game to see what's currently active.
+Life limits are only enforced when the server has them switched on — this one has
+`limited_lives` = **{{cfg:limited_lives|no}}**. When it reads *no*, nothing is deducted
+on death and the pools above are inert.
 
 ## BLUFOR Roster
+
+> **The rosters below are the live campaign's.** Unlike the numbers above, the airframe
+> list cannot be generated per server: it comes from the mission's own warehouse, which
+> this wiki does not read. A server flying a different era — say a 2008 campaign of
+> Su-25s, MiG-29As and L-39s — has a completely different list. The authority is always
+> the slot list on the server you are on; `-lives` in game shows your own pools.
 
 ### Standard (3 lives)
 F-14A Tomcat, F-14B Tomcat, F-15C Eagle, F-15E Strike Eagle, F-16C Viper (Block 50), F/A-18C Hornet
@@ -58,7 +68,9 @@ C-130J-30 Super Hercules, CH-47F Chinook, Mi-8MT Hip, SA342L Gazelle, SA342 Gaze
 
 A handful of airframes are available to **both coalitions**: the F-14 Tomcat family, F-16C (Block 50), F-4E Phantom II, F-5E, the C-130J-30, the CH-47F, and the UH-1H. Everything else is side-exclusive.
 
-**Note**: Lives shown here are per-round design values for the current server profile — rosters and life counts may change with future patches. Check `-lives` in-game for whether life limits are currently active and your exact remaining count.
+**Note**: the life pools at the top of this page follow the server you select; the
+rosters do not. Check the in-game slot list for the airframes actually flying on your
+server, and `-lives` for your remaining pools.
 
 ## See Also
 

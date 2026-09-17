@@ -135,8 +135,12 @@ available artillery: [54321(25)]
 ## Current Mission Deployable Artillery & Range
 
 Every artillery battery and missile TEL deployable via crates on this server, with
-the exact min/max fire range the JTAC menu enforces — pulled live from the server's
-`ODFv2_CFG`. Battery names below match what you'll see in the F10 → Deploy menu and
+the exact min/max fire range the JTAC menu enforces. **The table below is the live
+campaign's set** — each DCS server this wiki fronts runs its own config and names its
+own batteries, so check
+[Deployable Units Reference](../reference/deployables.md), which regenerates itself for
+whichever server you pick in the top bar. Battery names here match what you'll see in
+the F10 → Deploy menu and
 the JTAC ammo listing. See [Deployable Units Reference](../reference/deployables.md)
 for crate weights and deploy limits on every deployable, not just artillery.
 

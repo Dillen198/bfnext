@@ -106,7 +106,7 @@ Three carriers, each with its own strengths and its own vulnerability:
 | Carrier | Live? | Speed | Notes |
 | --- | --- | --- | --- |
 | Ground convoys | {{cfg:warehouse.convoy.enabled|yes}} | {{cfg:warehouse.convoy.speed_kph|60}} km/h | {{cfg:warehouse.convoy.trucks_per_convoy|5}} trucks each, up to {{cfg:warehouse.convoy.max_concurrent_convoys|10}} at once. Follows roads, blocked by the front line, killable. |
-| Air logistics | {{cfg:warehouse.air_logistics.enabled|yes}} | {{cfg:warehouse.air_logistics.speed_kph|400}} km/h | Crosses the front line. Up to {{cfg:warehouse.air_logistics.max_concurrent_routes|6}} routes, triggered when a base drops below {{cfg:warehouse.air_logistics.supply_threshold|50}}% supply. Killable, and a fat target at {{cfg:warehouse.air_logistics.altitude_m|2500}} m. |
+| Air logistics | {{cfg:warehouse.air_logistics.enabled|yes}} | {{cfg:warehouse.air_logistics.speed_kph|780}} km/h | Crosses the front line. Up to {{cfg:warehouse.air_logistics.max_concurrent_routes|6}} routes, triggered when a base drops below {{cfg:warehouse.air_logistics.supply_threshold|50}}% supply. Killable, and a fat target at {{cfg:warehouse.air_logistics.altitude_m|2500}} m. |
 | Sea logistics | {{cfg:warehouse.sea_logistics.enabled|no}} | {{cfg:warehouse.sea_logistics.speed_kph|30}} km/h | Naval resupply, where the map and the server enable it. |
 
 **Every one of these is a target.** Killing an enemy transport aircraft or a
@@ -259,7 +259,7 @@ F10 → Cargo → Crates → Logistics → Logistics Repair Kit
 ```
 
 One crate is enough ({{cfg:repair_crate.Blue.required|1}} required). Delivering
-one also earns **{{cfg:points.logistics_repair|350}} points** — comparable to an
+one also earns **{{cfg:points.logistics_repair|25}} points** — comparable to an
 air kill — and at a base that has just been captured it pushes the
 [consolidation](./capturing-objectives.md) clock forward.
 
@@ -270,7 +270,7 @@ Carrier repairs work the same way with a **Carrier Repair** crate; see
 
 **Base Fuel Resupply** and **Base Ammo Resupply** crates move
 {{cfg:warehouse.supply_transfer_size|25}}% of a base's supply to another one.
-Delivering one pays {{cfg:points.logistics_transfer|350}} points. This is the
+Delivering one pays {{cfg:points.logistics_transfer|15}} points. This is the
 manual way to push stock into a base the automatic distribution cannot reach —
 a cut-off objective, or one you have just taken.
 

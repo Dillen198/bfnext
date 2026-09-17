@@ -12,12 +12,12 @@ now** (see below).
 
 | What | Points |
 | --- | --- |
-| Air kill | {{cfg:points.air_kill|350}} |
-| Ground kill | {{cfg:points.ground_kill|200}} |
-| Long-range SAM bonus (on top of the ground kill) | {{cfg:points.lr_sam_bonus|50}} |
-| Capturing an objective | {{cfg:points.capture|1000}} |
-| Logistics repair | {{cfg:points.logistics_repair|350}} |
-| Logistics transfer | {{cfg:points.logistics_transfer|350}} |
+| Air kill | {{cfg:points.air_kill|25}} |
+| Ground kill | {{cfg:points.ground_kill|2}} |
+| Long-range SAM bonus (on top of the ground kill) | {{cfg:points.lr_sam_bonus|5}} |
+| Capturing an objective | {{cfg:points.capture|15}} |
+| Logistics repair | {{cfg:points.logistics_repair|25}} |
+| Logistics transfer | {{cfg:points.logistics_transfer|15}} |
 | Killing a supply convoy truck | {{cfg:points.convoy_interdiction_points|10}} |
 | CSAR pilot delivered | {{cfg:csar.rescue_reward|50}} |
 | Starting balance, new player | {{cfg:points.new_player_join|30000}} |

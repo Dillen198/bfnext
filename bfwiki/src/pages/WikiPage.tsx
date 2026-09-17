@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext'
 import WikiMarkdown from '../components/WikiMarkdown'
 import InstanceSelect from '../components/InstanceSelect'
 import { useInstance } from '../context/InstanceContext'
-import { hasCfgTokens } from '../lib/cfgTokens'
+import { hasCfgTokens, hasListTokens } from '../lib/cfgTokens'
 
 export default function WikiPage() {
   const params = useParams()
@@ -70,7 +70,7 @@ export default function WikiPage() {
       {/* Pages that quote campaign numbers are only correct for one server.
           Say which one, and let the reader switch without hunting for the
           topbar control. */}
-      {multi && hasCfgTokens(page.content) && (
+      {multi && (hasCfgTokens(page.content) || hasListTokens(page.content)) && (
         <div className="wiki-instance-note">
           <span>
             Numbers on this page are from <strong>{current?.label ?? 'the default server'}</strong>.

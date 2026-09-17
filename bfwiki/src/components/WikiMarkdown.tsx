@@ -3,7 +3,7 @@ import remarkGfm from 'remark-gfm'
 import { Link, useLocation } from 'react-router-dom'
 import { API_ROOT } from '../api'
 import { useInstance } from '../context/InstanceContext'
-import { applyCfgTokens } from '../lib/cfgTokens'
+import { applyCfgTokens, applyListTokens } from '../lib/cfgTokens'
 
 // Rewrites bare "/api/..." image paths (used by seed content and any
 // hand-typed markdown) to include API_ROOT, so images still resolve when
@@ -46,7 +46,8 @@ export default function WikiMarkdown({ children, slug }: { children: string; slu
   const location = useLocation()
   // Numbers in a page belong to one DCS server instance -- see lib/cfgTokens.
   const { facts } = useInstance()
-  const body = applyCfgTokens(children, facts?.facts)
+  // Lists first: a rendered row may itself contain a {{cfg:}} token.
+  const body = applyCfgTokens(applyListTokens(children, facts?.facts), facts?.facts)
   // Prefer an explicit slug (the edit-page preview passes it) over the router
   // location so relative links resolve against the page being edited, not "/edit".
   const basePath = slug ? `/${slug}` : location.pathname
