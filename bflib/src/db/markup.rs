@@ -434,6 +434,10 @@ const HEX_GAP: f64 = 1150.;
 const HEX_DROP: f64 = 1700.;
 /// Number of stats in the row: health, logi, supply, fuel.
 const N_HEX: usize = 4;
+/// Fill opacity of a status hex. Solid fill hides the terrain under it and
+/// reads heavier than the rings around it; letting a little map through keeps
+/// the row legible without it dominating the objective.
+const HEX_FILL_ALPHA: f32 = 0.50;
 
 /// Coarse state of one stat. Only a change here costs a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -456,9 +460,9 @@ impl Bucket {
 
     fn color(self) -> Color {
         match self {
-            Bucket::Good => Color::new(0.20, 0.85, 0.31, 1.),
-            Bucket::Warn => Color::new(1., 0.70, 0., 1.),
-            Bucket::Bad => Color::new(0.95, 0.16, 0.16, 1.),
+            Bucket::Good => Color::new(0.20, 0.85, 0.31, HEX_FILL_ALPHA),
+            Bucket::Warn => Color::new(1., 0.70, 0., HEX_FILL_ALPHA),
+            Bucket::Bad => Color::new(0.95, 0.16, 0.16, HEX_FILL_ALPHA),
         }
     }
 }

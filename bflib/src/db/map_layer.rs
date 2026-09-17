@@ -179,12 +179,15 @@ fn intel_colors(side: Side, alpha: f32) -> (Color, Color) {
 
 /// Status colour for a 0-100 value, matching the objective hexes exactly.
 fn bucket_color(v: u8) -> Color {
+    // Same opacity as the objective status hexes, so every status shape on the
+    // map reads as one family rather than two.
+    const A: f32 = 0.50;
     if v > 66 {
-        Color::new(0.20, 0.85, 0.31, 1.)
+        Color::new(0.20, 0.85, 0.31, A)
     } else if v > 33 {
-        Color::new(1., 0.70, 0., 1.)
+        Color::new(1., 0.70, 0., A)
     } else {
-        Color::new(0.95, 0.16, 0.16, 1.)
+        Color::new(0.95, 0.16, 0.16, A)
     }
 }
 

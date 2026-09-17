@@ -53,6 +53,8 @@ const OWNER_COLOR = (owner: string) =>
 
 /** Status buckets, identical to the engine's: >66 good, 33-66 warn, else bad. */
 const BUCKET = (v: number) => (v > 66 ? '#33d94f' : v > 33 ? '#ffb300' : '#f22a2a')
+/** Same 50% fill the F10 map uses, so the two maps read the same. */
+const HEX_FILL_OPACITY = 0.5
 const GOLD = '#ffd24a'
 
 /**
@@ -76,6 +78,7 @@ function StatusHexes({ o }: { o: MapObjective }) {
             <polygon
               points="10,0 20,5.5 20,16.5 10,22 0,16.5 0,5.5"
               fill={BUCKET(v)}
+              fillOpacity={HEX_FILL_OPACITY}
               stroke={unlimited ? GOLD : 'rgba(0,0,0,0.8)'}
               strokeWidth={unlimited ? 3 : 1.5}
             />
