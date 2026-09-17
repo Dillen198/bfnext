@@ -496,16 +496,18 @@ fn hex_center(pos: Vector2, i: usize) -> Vector2 {
     )
 }
 
-/// A closed hexagon as a point ring, flat side up. The last point repeats the
-/// first so the shape closes.
+/// A hexagon as a point ring, flat side up.
 ///
-/// Wound CLOCKWISE on purpose: DCS only shades a freeform whose points run
-/// clockwise, and a counter-clockwise ring comes out as an empty outline.
-/// (Angle runs backwards here because the pair is (north, east), not (x, y).)
+/// Six points, NOT seven: do not repeat the first point to close the ring.
+/// DCS closes a freeform itself, and an explicit duplicate leaves a
+/// zero-length final edge that breaks the fill while still drawing the
+/// outline -- which is exactly how these shipped as empty outlines twice.
+/// This matches, vertex for vertex, the geometry that fills correctly as a
+/// baked mission-editor drawing.
 fn hex_points(center: Vector2, r: f64) -> Vec<LuaVec3> {
-    (0..=6)
+    (0..6)
         .map(|i| {
-            let a = (30. - 60. * i as f64).to_radians();
+            let a = (60. * i as f64 + 30.).to_radians();
             LuaVec3(Vector3::new(
                 center.x + r * a.cos(),
                 0.,

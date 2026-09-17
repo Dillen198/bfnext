@@ -71,33 +71,21 @@ fn side_filter(side: Side) -> SideFilter {
     side.into()
 }
 
-/// Draw a closed ring of (north, east) offsets around `c` as ONE mark.
+/// Draw a ring of (north, east) offsets around `c` as ONE freeform mark.
 ///
-/// Every status shape in this module is a single freeform (markupToAll
-/// shapeId 7), so a symbol costs one MarkId however many vertices it has.
-/// Shapes are drawn on the ground, so they shrink as you zoom out and fade at
-/// theatre zoom -- that IS the declutter. Anything a pilot must read at any
-/// zoom stays a pin or text.
+/// Give it the ring's DISTINCT vertices only. Do not repeat the first point
+/// to close it: DCS closes a freeform itself, and an explicit duplicate
+/// leaves a zero-length final edge that kills the fill while still drawing
+/// the outline. That is what shipped the status hexes as empty outlines.
 ///
-/// DCS renders a 3-point freeform as an OPEN polyline, so short rings are
-/// padded rather than coming out as a bare "V".
+/// Every status shape here is a single mark, so a symbol costs one MarkId
+/// however many vertices it has. Shapes are drawn on the ground, so they
+/// shrink as you zoom out and fade at theatre zoom -- that IS the declutter.
 fn poly(c: Vector2, offsets: &[(f64, f64)], outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
-    // DCS only shades a freeform whose points run CLOCKWISE; a counter-
-    // clockwise ring renders as an empty outline. Reverse here so every caller
-    // can define its shape in the natural order and still get a filled symbol.
-    let mut points: Vec<LuaVec3> = offsets
+    let points: Vec<LuaVec3> = offsets
         .iter()
-        .rev()
         .map(|&(n, e)| v3(c.x + n, c.y + e))
         .collect();
-    if let Some(first) = points.first().copied() {
-        points.push(first);
-    }
-    while points.len() < 4 {
-        if let Some(last) = points.last().copied() {
-            points.push(last)
-        }
-    }
     let id = MarkId::new();
     msgs.freeform_to_all(
         to,
@@ -116,12 +104,22 @@ fn poly(c: Vector2, offsets: &[(f64, f64)], outline: Color, fill: Color, to: Sid
 
 /// Regular n-gon; `rot_deg` turns the first vertex off north.
 fn ngon(c: Vector2, r: f64, n: usize, rot_deg: f64, outline: Color, fill: Color, to: SideFilter, msgs: &mut MsgQ) -> MarkId {
-    let offs: Vec<(f64, f64)> = (0..n)
+    let mut offs: Vec<(f64, f64)> = (0..n)
         .map(|i| {
             let a = (360. * i as f64 / n as f64 + rot_deg).to_radians();
             (r * a.cos(), r * a.sin())
         })
         .collect();
+    // DCS draws a 3-point freeform as an OPEN polyline. Give a triangle a
+    // fourth DISTINCT vertex -- the midpoint of its last edge -- rather than a
+    // duplicate, which would be a zero-length edge and break the fill instead.
+    if offs.len() == 3 {
+        let (ax, ay) = offs[2];
+        let (bx, by) = offs[0];
+        // The midpoint of the v2->v0 edge belongs last in the ring, which is
+        // where push already puts it.
+        offs.push(((ax + bx) / 2., (ay + by) / 2.));
+    }
     poly(c, &offs, outline, fill, to, msgs)
 }
 
