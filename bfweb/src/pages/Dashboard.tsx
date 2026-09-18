@@ -602,7 +602,7 @@ export default function Dashboard() {
   const { data: fronts = { mid: [], blue: [], red: [] } } = useQuery<Frontlines>({ queryKey: ['frontline', selectedRound], queryFn: () => api.frontline(selectedRound), refetchInterval: 30_000 })
   const { data: kills      = [] } = useQuery({ queryKey: ['kills-dash', selectedRound], queryFn: () => api.kills(selectedRound, campaign.dashboardKillFeedCount + 20), refetchInterval: 15_000 })
   const { data: stats            } = useQuery({ queryKey: ['stats'],                    queryFn: api.stats,                                                            refetchInterval: 60_000 })
-  const { data: news             } = useQuery({ queryKey: ['news'],                     queryFn: () => api.news(5),                                                    refetchInterval: 5 * 60_000 })
+  const { data: news, error: newsErr } = useQuery({ queryKey: ['news'],                   queryFn: () => api.news(5),                                                    refetchInterval: 5 * 60_000 })
 
   const nameMap = useMemo(() => {
     const m = new Map<string, string>()
@@ -724,7 +724,7 @@ export default function Dashboard() {
               )}
             </div>
             <div style={{ overflowY: 'auto', flex: 1 }}>
-              <NewsPanel days={news?.days} />
+              <NewsPanel days={news?.days} error={newsErr} />
             </div>
           </div>
         </div>

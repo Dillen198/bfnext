@@ -34,9 +34,12 @@ export default function NewsPage() {
             War Diary
           </h1>
           <p style={{ margin: '6px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.55 }}>
-            A dispatch for every day of the campaign, written from what actually
-            happened on the server — captures, losses, who took what and how
-            long a line has held. Both coalitions read the same report.
+            A dispatch for every day of the campaign, written from what
+            actually happened on the server: captures, equipment destroyed by
+            category, the state of each side's rear, and how long a line has
+            held. The figures are the server's; the prose is written fresh each
+            day and never reuses yesterday's. Both coalitions read the same
+            report.
           </p>
         </header>
 
@@ -55,8 +58,8 @@ export default function NewsPage() {
 
         {!isLoading && error == null && days.length === 0 && (
           <p style={{ padding: 18, fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            Nothing has been filed yet. The first dispatch is written once the
-            campaign has a day of events behind it.
+            Nothing has been filed yet. The first dispatch goes out within the
+            hour of the campaign's opening day.
           </p>
         )}
 

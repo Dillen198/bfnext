@@ -2092,7 +2092,11 @@ impl StatsDb {
     ) -> Result<Vec<crate::news::NewsDigest>> {
         let mut out: Vec<crate::news::NewsDigest> = Vec::new();
         for r in self.news.iter() {
-            let ((rid, _day), digest) = r?;
+            // A digest written by an older build may no longer decode -- the
+            // shape of a day's facts grows as the analysis does. That is not
+            // worth failing the whole history for: skip it and it is rewritten
+            // on the next pass over a non-final day.
+            let Ok(((rid, _day), digest)) = r else { continue };
             if rid == round {
                 out.push(digest);
             }
@@ -3125,6 +3129,36 @@ impl StatsDb {
     /// Helicopter. Exposed separately so API consumers (e.g. the Discord
     /// kill-streak/achievement poller) can filter on the same definition
     /// instead of guessing from the raw DCS unit-type string.
+    /// When a round opened, so "day N of the campaign" can be counted. The
+    /// round tree is keyed by scenario as well as id, so this is a scan.
+    pub(crate) fn round_start(&self, round: RoundId) -> Option<DateTime<Utc>> {
+        for r in self.round.iter() {
+            let Ok(((_scenario, rid), rd)) = r else { continue };
+            if rid == round {
+                return Some(rd.start);
+            }
+        }
+        None
+    }
+
+    /// The tags the dead unit carried, for classifying a loss.
+    ///
+    /// The engine's own tags beat guessing from the DCS type string: a
+    /// `Strela-1 9P31` is `SAM` here whatever its name looks like. Players are
+    /// always in aircraft and carry no unit record, so they come back `None`
+    /// and the caller falls back to the airframe type.
+    pub(crate) fn victim_tags(&self, round: RoundId, victim: &Who) -> Option<UnitTags> {
+        match victim {
+            Who::Player { .. } => None,
+            Who::AI { uid, .. } => self
+                .units
+                .get(&(round, EnId::Unit(*uid)))
+                .ok()
+                .flatten()
+                .map(|u| u.tags),
+        }
+    }
+
     pub(crate) fn victim_is_air(&self, round: RoundId, victim: &Who) -> Result<bool> {
         Ok(match victim {
             Who::Player { .. } => true,

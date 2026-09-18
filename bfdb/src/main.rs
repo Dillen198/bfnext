@@ -51,6 +51,7 @@ struct Assets;
 struct SiteAssets;
 
 mod news;
+mod news_llm;
 mod db;
 mod db_id;
 mod atc;
@@ -249,6 +250,25 @@ struct Args {
     /// name shown in GET /api/rounds (usually "campaign").
     #[arg(long = "merge-rounds", value_name = "SORTIE")]
     merge_rounds: Option<String>,
+    /// Chat-completions endpoint that writes the daily war diary (see
+    /// `news_llm.rs`). Any OpenAI-compatible URL works -- OpenAI, OpenRouter,
+    /// Groq, or a local Ollama/llama.cpp/vLLM server -- as does the Anthropic
+    /// messages API, which is detected from the URL. Defaults to OpenAI's
+    /// endpoint when only a key is given. Falls back to $BFDB_NEWS_LLM_URL.
+    ///
+    /// Leave this and --news-llm-key unset and the diary still runs, writing
+    /// from its template bank instead: same facts, flatter prose.
+    #[arg(long = "news-llm-url")]
+    news_llm_url: Option<String>,
+    /// API key for --news-llm-url. Omit for a local endpoint that needs none.
+    /// Falls back to $BFDB_NEWS_LLM_KEY, then $OPENAI_API_KEY.
+    #[arg(long = "news-llm-key")]
+    news_llm_key: Option<String>,
+    /// Model id for --news-llm-url (default gpt-4o-mini). One short call per
+    /// campaign day, so the cheap tier is the right one. Falls back to
+    /// $BFDB_NEWS_LLM_MODEL.
+    #[arg(long = "news-llm-model")]
+    news_llm_model: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -4252,8 +4272,18 @@ const UNKNOWN_DCS_VERSION: &str = "unknown";
 ///
 /// Backfills any missing day since the round opened on first run, so turning
 /// this on mid-campaign still produces a history rather than starting blank.
-async fn news_generator(db: StatsDb, inst: Inst) {
+///
+/// The prose is written by `news_llm` when an endpoint is configured, and only
+/// when the analysis has actually moved: the digest carries a hash of its own
+/// angles, so a day that is rebuilt every ten minutes is re-*written* only when
+/// something happened. Rebuilding it otherwise would burn a model call every
+/// ten minutes and, worse, reword the page under whoever is reading it.
+async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::WriterCfg>) {
     use chrono::{Duration as ChronoDuration, Utc};
+    /// A first run on a long campaign has a lot of days to write. Cap the calls
+    /// per tick and let the backfill walk forward over the following ticks
+    /// rather than firing a hundred requests at once.
+    const MAX_WRITES_PER_TICK: usize = 5;
     // Let the stats reader catch up before judging what was newsworthy.
     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(10 * 60));
@@ -4262,6 +4292,7 @@ async fn news_generator(db: StatsDb, inst: Inst) {
         tick.tick().await;
         let db = db.clone();
         let inst = inst.clone();
+        let writer = writer.clone();
         let res = task::block_in_place(move || -> Result<usize> {
             let rounds = db.latest_rounds_for(&inst.id)?;
             let Some((_, rid, round)) = rounds
@@ -4278,12 +4309,15 @@ async fn news_generator(db: StatsDb, inst: Inst) {
             let earliest = today - ChronoDuration::days(news::HISTORY_KEEP_DAYS);
             let mut day = first.max(earliest);
             let mut written = 0usize;
+            let mut calls = 0usize;
             while day <= today {
                 let key = day.format("%Y-%m-%d").to_string();
-                // A finished day is immutable; only today is rebuilt.
                 let existing = db.news_get(rid, &key)?;
+                // A finished day is immutable -- unless a writer has since been
+                // configured and it never got a dispatch, in which case it is
+                // still carrying template prose and deserves the real thing.
                 let needs = match &existing {
-                    Some(d) => !d.final_,
+                    Some(d) => !d.final_ || (writer.is_some() && d.body.is_empty()),
                     None => true,
                 };
                 if needs {
@@ -4293,7 +4327,58 @@ async fn news_generator(db: StatsDb, inst: Inst) {
                         .into_iter()
                         .filter(|d| d.day < key)
                         .collect();
-                    let digest = news::build(&db, rid, day, &hist)?;
+                    let mut digest = news::build(&db, rid, day, &hist)?;
+                    // Carry the existing prose over unless there is a real
+                    // reason to rewrite it. Two gates, and both matter:
+                    //
+                    //  * the analysis has to have moved (`facts_hash`), and
+                    //  * not more than once an hour, because some of the inputs
+                    //    (garrison strength, logistics health) drift all day and
+                    //    would otherwise trigger a rewrite every tick.
+                    //
+                    // The exception is the last rebuild of a day, as it is
+                    // frozen: that one always gets the full day's copy.
+                    let becoming_final =
+                        digest.final_ && existing.as_ref().map(|p| !p.final_).unwrap_or(false);
+                    let settled = existing.as_ref().filter(|p| {
+                        !p.body.is_empty()
+                            && !becoming_final
+                            && (p.facts_hash == digest.facts_hash
+                                || Utc::now().signed_duration_since(p.generated)
+                                    < ChronoDuration::hours(1))
+                    });
+                    if let Some(prev) = settled {
+                        digest.headline = prev.headline.clone();
+                        digest.body = prev.body.clone();
+                        digest.written_by = prev.written_by.clone();
+                        digest.generated = prev.generated;
+                    } else if let Some(w) = &writer {
+                        if calls >= MAX_WRITES_PER_TICK {
+                            // Out of budget: leave the day for the next tick
+                            // rather than freezing template prose into it.
+                            break;
+                        }
+                        calls += 1;
+                        match news_llm::write_dispatch(w, &digest, &hist) {
+                            Ok(out) => {
+                                digest.headline = out.headline;
+                                digest.body = out.body;
+                                digest.written_by = w.model.clone();
+                            }
+                            Err(e) => {
+                                log::warn!("news: writer failed for {key}: {e}");
+                                // Better yesterday's dispatch than a downgrade
+                                // to templates on a day that already had one.
+                                if let Some(prev) = existing.as_ref().filter(|p| !p.body.is_empty())
+                                {
+                                    digest.headline = prev.headline.clone();
+                                    digest.body = prev.body.clone();
+                                    digest.written_by = prev.written_by.clone();
+                                    digest.generated = prev.generated;
+                                }
+                            }
+                        }
+                    }
                     db.news_put(rid, &digest)?;
                     written += 1;
                 }
@@ -5598,6 +5683,21 @@ async fn main() -> Result<()> {
     // its own live-unit broadcast, and its own fog-of-war tactical cache. The
     // websocket routes resolve `?instance=` and pick the matching one, so two
     // servers never bleed contacts into each other's scope.
+    // The war diary's writer, shared by every instance's generator. None when
+    // no endpoint is configured, in which case the diary renders from its own
+    // template bank -- see `news_llm.rs`.
+    let news_writer = news_llm::WriterCfg::resolve(
+        args.news_llm_url.clone(),
+        args.news_llm_key.clone(),
+        args.news_llm_model.clone(),
+    );
+    match &news_writer {
+        Some(w) => log::info!("news: dispatches written by {} at {}", w.model, w.url),
+        None => log::info!(
+            "news: no --news-llm-url/--news-llm-key -- the war diary will use its template bank"
+        ),
+    }
+
     let live_map: LiveMap = {
         let mut m = std::collections::HashMap::new();
         for cfg in db.instances().all() {
@@ -5625,7 +5725,7 @@ async fn main() -> Result<()> {
             if cfg.base.is_some() {
                 tokio::spawn(tacmap_poller(db.clone(), inst.clone(), tac.clone()));
                 tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
-                tokio::spawn(news_generator(db.clone(), inst.clone()));
+                tokio::spawn(news_generator(db.clone(), inst.clone(), news_writer.clone()));
             }
             m.insert(id, InstanceLive { live, live_tx, tac });
         }

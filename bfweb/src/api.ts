@@ -1121,7 +1121,16 @@ export interface NewsItem {
   subject: string
   /** 0-100. The server has already ordered by this; it drives emphasis only. */
   weight: number
+  /** The numbers behind the claim -- the same ones the writer was given. */
+  vars?: Record<string, string>
+  /** Fallback sentence from the template bank, shown when `body` is empty. */
   text: string
+}
+
+/** Losses in one category, split by who lost them. */
+export interface LossTally {
+  blue: number
+  red: number
 }
 
 export interface NewsFacts {
@@ -1134,6 +1143,17 @@ export interface NewsFacts {
   red_held: number
   neutral_held: number
   changed_hands: string[]
+  /** 1-based day of the campaign. */
+  campaign_day?: number
+  /** Today's losses, category -> per-side count. Categories match the kill feed's. */
+  losses?: Record<string, LossTally>
+  /** The same accumulated since the campaign opened. */
+  losses_total?: Record<string, LossTally>
+  blue_airbases?: number
+  red_airbases?: number
+  /** Mean logistics health per side, 0-100. */
+  blue_logi?: number
+  red_logi?: number
 }
 
 export interface NewsDay {
@@ -1142,6 +1162,13 @@ export interface NewsDay {
   generated: string
   round: number
   headline: string
+  /**
+   * The written dispatch, one entry per paragraph. Empty when bfdb has no
+   * writer configured, in which case fall back to the per-item sentences.
+   */
+  body?: string[]
+  /** Model id that wrote `body`, or `templates`. */
+  written_by?: string
   items: NewsItem[]
   facts: NewsFacts
   /** False while the day is still running and the digest is being rebuilt. */

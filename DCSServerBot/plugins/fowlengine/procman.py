@@ -515,6 +515,11 @@ class Procman:
             "--config": self._resolved("config"),
             "--intel-dir": self._resolved("intel_dir"),
             "--log-file": self._resolved("log_file"),
+            # The war diary's writer. Omit all three and bfdb still files a
+            # dispatch every day, from its own template bank.
+            "--news-llm-url": (c.get("news_llm_url") or None),
+            "--news-llm-key": (c.get("news_llm_key") or None),
+            "--news-llm-model": (c.get("news_llm_model") or None),
         }
         if instances_file:
             # Multi-instance: every per-server path/port/base lives in the file,
