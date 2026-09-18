@@ -4,6 +4,8 @@ import { Link, useLocation } from 'react-router-dom'
 import { API_ROOT } from '../api'
 import { useInstance } from '../context/InstanceContext'
 import { applyCfgTokens, applyListTokens } from '../lib/cfgTokens'
+import StatusHexes, { HexLegend, type HexSpec } from './StatusHexes'
+import MapSymbolList, { type SymbolRow } from './MapSymbol'
 
 // Rewrites bare "/api/..." image paths (used by seed content and any
 // hand-typed markdown) to include API_ROOT, so images still resolve when
@@ -42,6 +44,34 @@ function resolveHref(href: string, basePath: string): string | null {
   return resolved + hash
 }
 
+
+/**
+ * A fenced block whose language we render ourselves rather than as code.
+ *
+ * ```statushexes
+ * { "health": 82, "logi": 45, "supply": 12, "fuel": 90 }
+ * ```
+ *
+ * Returns the language when `node` is such a block, so `pre` can swap the
+ * whole <pre><code> for a component instead of printing JSON at the reader.
+ */
+function customBlock(node: unknown): { lang: string; text: string } | null {
+  const el = node as
+    | { children?: { tagName?: string; properties?: { className?: unknown }; children?: { value?: string }[] }[] }
+    | undefined
+  const code = el?.children?.find(c => c.tagName === 'code')
+  if (!code) return null
+  const classes = Array.isArray(code.properties?.className)
+    ? (code.properties!.className as unknown[]).map(String)
+    : []
+  const lang = classes
+    .find(c => c.startsWith('language-'))
+    ?.slice('language-'.length)
+  if (lang !== 'statushexes' && lang !== 'hexlegend' && lang !== 'mapsymbols') return null
+  const text = (code.children ?? []).map(c => c.value ?? '').join('')
+  return { lang, text }
+}
+
 export default function WikiMarkdown({ children, slug }: { children: string; slug?: string }) {
   const location = useLocation()
   // Numbers in a page belong to one DCS server instance -- see lib/cfgTokens.
@@ -56,6 +86,27 @@ export default function WikiMarkdown({ children, slug }: { children: string; slu
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
+        pre: ({ node, children }) => {
+          const block = customBlock(node)
+          if (!block) return <pre>{children}</pre>
+          if (block.lang === 'hexlegend') return <HexLegend />
+          if (block.lang === 'mapsymbols') {
+            try {
+              return <MapSymbolList rows={JSON.parse(block.text) as SymbolRow[]} />
+            } catch {
+              return <pre>{children}</pre>
+            }
+          }
+          let spec: HexSpec
+          try {
+            spec = JSON.parse(block.text) as HexSpec
+          } catch {
+            // Bad JSON in a page should show the author their mistake, not
+            // blank the section.
+            return <pre>{children}</pre>
+          }
+          return <StatusHexes {...spec} />
+        },
         img: ({ src, alt, title }) => <img src={resolveSrc(src)} alt={alt} title={title} />,
         a: ({ href, children, title }) => {
           if (href && isExternal(href)) {

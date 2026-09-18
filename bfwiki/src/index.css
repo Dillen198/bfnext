@@ -298,6 +298,62 @@ body {
   font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-mono);
 }
 
+/* The four status hexes, drawn by components/StatusHexes.tsx from a
+   ```statushexes fenced block. Matches the F10 overlay and the dashboard's
+   BriefingMap, so all three read the same. */
+.wiki-hexrow {
+  margin: 18px 0; padding: 14px 16px;
+  background: var(--bg-input); border: 1px solid var(--border-light);
+  border-left: 2px solid var(--accent); border-radius: 3px;
+}
+.wiki-hexrow-row { display: flex; gap: 26px; flex-wrap: wrap; align-items: flex-end; }
+.wiki-hexrow-cell {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  transition: opacity .15s;
+}
+.wiki-hexrow-label {
+  font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.wiki-hexrow-value { font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600; }
+.wiki-hexrow figcaption {
+  margin-top: 12px; font-size: 0.74rem; color: var(--text-muted); line-height: 1.5;
+}
+.wiki-hexlegend { display: flex; flex-direction: column; gap: 10px; }
+.wiki-hexlegend-row {
+  display: grid; grid-template-columns: 30px 110px 1fr;
+  align-items: center; gap: 12px; font-size: 0.8rem;
+}
+.wiki-hexlegend-row strong { font-family: var(--font-mono); font-size: 0.74rem; }
+@media (max-width: 560px) {
+  .wiki-hexrow-row { gap: 16px; }
+  .wiki-hexlegend-row { grid-template-columns: 26px 1fr; row-gap: 2px; }
+  .wiki-hexlegend-row span { grid-column: 2; }
+}
+
+/* A drawn legend of F10 map symbols -- components/MapSymbol.tsx, from a
+   ```mapsymbols fenced block. */
+.wiki-symbols {
+  margin: 18px 0; padding: 6px 0;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.wiki-symbol-row {
+  display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 14px;
+  padding: 9px 12px; border-radius: 3px;
+  border: 1px solid transparent;
+}
+.wiki-symbol-row:nth-child(odd) { background: var(--bg-input); border-color: var(--border-light); }
+.wiki-symbol-art { display: flex; align-items: center; justify-content: center; }
+.wiki-symbol-copy { display: flex; flex-direction: column; gap: 3px; }
+.wiki-symbol-copy strong {
+  font-family: var(--font-mono); font-size: 0.74rem; letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.wiki-symbol-copy span { font-size: 0.86rem; line-height: 1.5; color: var(--text-muted); }
+@media (max-width: 560px) {
+  .wiki-symbol-row { grid-template-columns: 50px 1fr; gap: 10px; padding: 8px; }
+}
+
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
