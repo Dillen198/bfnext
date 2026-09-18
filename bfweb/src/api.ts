@@ -1108,6 +1108,50 @@ export interface InstanceList {
   instances: ServerInstance[]
 }
 
+
+/**
+ * A day of the war, as written by `bfdb/src/news.rs`.
+ *
+ * `angle` and `facts` are the structured claim behind the prose — kept so the
+ * renderer can change (a model could write these sentences later) without the
+ * client needing to know.
+ */
+export interface NewsItem {
+  angle: string
+  subject: string
+  /** 0-100. The server has already ordered by this; it drives emphasis only. */
+  weight: number
+  text: string
+}
+
+export interface NewsFacts {
+  blue_captures: number
+  red_captures: number
+  objectives_traded: number
+  air_kills: number
+  ground_kills: number
+  blue_held: number
+  red_held: number
+  neutral_held: number
+  changed_hands: string[]
+}
+
+export interface NewsDay {
+  /** YYYY-MM-DD, UTC. */
+  day: string
+  generated: string
+  round: number
+  headline: string
+  items: NewsItem[]
+  facts: NewsFacts
+  /** False while the day is still running and the digest is being rebuilt. */
+  final_: boolean
+}
+
+export interface NewsArchive {
+  days: NewsDay[]
+}
+
 export const api = {
   /** The DCS servers this bfdb fronts. Never instance-scoped itself. */
   instances: async (): Promise<InstanceList> => {
@@ -1166,6 +1210,8 @@ export const api = {
   /** cfg range overrides that disagree with the harvested DCS unit db. */
   unitdbStale: () => get<StaleOverride[]>('/unitdb/stale-overrides'),
   srs:   () => get<SrsStatus>('/srs'),
+  /** Daily war dispatches, newest first. Public and not side-scoped. */
+  news:  (limit = 30) => get<NewsArchive>(`/news?limit=${limit}`),
   units: () => get<MapUnit[]>('/units'),
   trails: () => get<TrailPoint[]>('/trails'),
   auth: {

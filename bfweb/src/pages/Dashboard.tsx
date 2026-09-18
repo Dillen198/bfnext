@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import NewsPanel from '../components/NewsPanel'
 import { useQuery } from '@tanstack/react-query'
 import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
@@ -32,7 +33,7 @@ import {
   TrendingUp,
   RefreshCw,
 } from '@icons'
-import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type SrsClient, type SrsRadio, type SrsStatus, type Frontlines } from '../api'
+import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type Frontlines } from '../api'
 import { campaign } from '../config/campaign'
 import PanelBase from '../components/Panel'
 import { classifyTargetClass, TARGET_CLASS_COLOR, fmtTimeZ, windDir, visStr, cloudStr } from '../lib/format'
@@ -564,108 +565,11 @@ function TopShooters({ pilots }: { pilots: Pilot[] }) {
   )
 }
 
-// ── SRS radio panel ───────────────────────────────────────────────────────────
+// The SRS radio-net panel lived here until the war news replaced it in the
+// SITREP column. If it is wanted back it is in git history: a self-contained
+// SrsPanel plus fmtFreq/fmtMod/isLiveRadio helpers, fed by api.srs(). The
+// /api/srs endpoint is untouched and still serves it.
 
-function fmtFreq(hz: number): string {
-  const mhz = hz / 1_000_000
-  return mhz.toFixed(3) + ' MHz'
-}
-
-function fmtMod(mod: number): string {
-  return mod === 1 ? 'FM' : mod === 2 ? 'IC' : mod === 3 ? 'OFF' : 'AM'
-}
-
-// Radio slot 0 is the intercom in a real cockpit, and a disabled placeholder on
-// the GCI's own clients, so it is never the frequency anyone is working. A real
-// channel is an aviation frequency on AM or FM.
-function isLiveRadio(r: SrsRadio): boolean {
-  return r.freq > 1_000_000 && (r.modulation === 0 || r.modulation === 1)
-}
-
-function SrsPanel({ srs }: { srs: SrsStatus | undefined }) {
-  const clients = srs?.clients ?? []
-  const blue    = clients.filter(c => c.Coalition === 2)
-  const red     = clients.filter(c => c.Coalition === 1)
-  const spec    = clients.filter(c => c.Coalition === 0)
-
-  function getActive(c: SrsClient): { freq: number; mod: number } | null {
-    // This used to filter on `r.enabled`, which is not a field SRS (or our own
-    // GCI client) ever sends. Every find() therefore failed and every row fell
-    // back to slot 0 -- which is why Magic and Overlord read "AM 0.000 MHz" on
-    // the dashboard while they were transmitting perfectly well on 251/252.
-    const radios = c.RadioInfo?.radios ?? []
-    const r = radios.find(isLiveRadio) ?? radios[0]
-    return r ? { freq: r.freq, mod: r.modulation } : null
-  }
-
-  function ClientRow({ c, sideColor }: { c: SrsClient; sideColor: string }) {
-    const active = getActive(c)
-    const inAir  = c.RadioInfo?.inAircraft ?? false
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 12px', borderBottom: '1px solid var(--border)' }}>
-        <span style={{ width: 5, height: 5, background: sideColor, flexShrink: 0, marginTop: 1 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            {inAir && <Aircraft size={8} style={{ color: sideColor, flexShrink: 0, opacity: 0.8 }} />}
-            <span style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {c.Name}
-            </span>
-          </div>
-          {active && (
-            <div className="font-mono-vs" style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: 1 }}>
-              <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{fmtMod(active.mod)}</span>
-              {' '}{fmtFreq(active.freq)}
-            </div>
-          )}
-        </div>
-        {(c.RadioInfo?.radios ?? []).filter(isLiveRadio).length > 1 && (
-          <span className="font-mono-vs" style={{ fontSize: '0.63rem', color: 'var(--text-dim)', flexShrink: 0 }}>
-            +{(c.RadioInfo?.radios ?? []).filter(isLiveRadio).length - 1}
-          </span>
-        )}
-      </div>
-    )
-  }
-
-  if (!srs) return (
-    <div style={{ padding: '10px 12px', fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', letterSpacing: '0.12em', textAlign: 'center' }}>
-      SRS OFFLINE — start bfdb with --srs-url
-    </div>
-  )
-
-  if (!clients.length) return (
-    <div style={{ padding: '10px 12px', fontSize: '0.6rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', letterSpacing: '0.12em', textAlign: 'center' }}>
-      NO CLIENTS CONNECTED
-    </div>
-  )
-
-  function Section({ label, items, color }: { label: string; items: SrsClient[]; color: string }) {
-    if (!items.length) return null
-    return (
-      <>
-        <div style={{ padding: '2px 12px', background: `${color}0a`, borderBottom: `1px solid ${color}18` }}>
-          <span style={{ fontSize: '0.6rem', color, letterSpacing: '0.18em', fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
-            {label} · {items.length}
-          </span>
-        </div>
-        {items.map(c => <ClientRow key={c.ClientGuid} c={c} sideColor={color} />)}
-      </>
-    )
-  }
-
-  return (
-    <>
-      <Section label={campaign.blueLabel.toUpperCase()} items={blue} color={campaign.blueColor} />
-      <Section label={campaign.redLabel.toUpperCase()}  items={red}  color={campaign.redColor}  />
-      {spec.length > 0 && <Section label="SPECTATOR" items={spec} color="var(--text-dim)" />}
-    </>
-  )
-}
-
-// ── Panel wrapper ─────────────────────────────────────────────────────────────
-
-
-/** Dashboard panels own a fixed slice of a flex column and scroll inside. */
 const PANEL_BODY: React.CSSProperties = { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
 
 // ── Live badge ─────────────────────────────────────────────────────────────────
@@ -698,7 +602,7 @@ export default function Dashboard() {
   const { data: fronts = { mid: [], blue: [], red: [] } } = useQuery<Frontlines>({ queryKey: ['frontline', selectedRound], queryFn: () => api.frontline(selectedRound), refetchInterval: 30_000 })
   const { data: kills      = [] } = useQuery({ queryKey: ['kills-dash', selectedRound], queryFn: () => api.kills(selectedRound, campaign.dashboardKillFeedCount + 20), refetchInterval: 15_000 })
   const { data: stats            } = useQuery({ queryKey: ['stats'],                    queryFn: api.stats,                                                            refetchInterval: 60_000 })
-  const { data: srs              } = useQuery({ queryKey: ['srs'],                      queryFn: api.srs,                                                              refetchInterval: 5_000  })
+  const { data: news             } = useQuery({ queryKey: ['news'],                     queryFn: () => api.news(5),                                                    refetchInterval: 5 * 60_000 })
 
   const nameMap = useMemo(() => {
     const m = new Map<string, string>()
@@ -802,26 +706,25 @@ export default function Dashboard() {
             <TacMap objectives={objectives} fronts={fronts} onOpenTacmap={() => navigate('/map')} />
           </div>
 
-          {/* SRS radio panel */}
+          {/* War news, in place of the SRS radio net: the daily dispatch is
+              what brings people back, and SRS client state reads better
+              in-game than on a dashboard. /api/srs is untouched. */}
           <div style={isMobile
-            ? { flex: '0 0 auto', maxHeight: 220, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }
+            ? { flex: '0 0 auto', maxHeight: 260, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }
             : { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }}>
             <div style={{ padding: '5px 12px', background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
               <Comms size={9} style={{ color: 'var(--accent)' }} />
               <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', flex: 1 }}>
-                SRS RADIO NET
+                WAR NEWS
               </span>
-              {srs && srs.clients.length > 0 && (
+              {news?.days?.[0] && !news.days[0].final_ && (
                 <span className="vs-pulse font-mono-vs" style={{ fontSize: '0.63rem', color: 'var(--accent)', border: '1px solid var(--accent-border)', padding: '1px 5px' }}>
-                  {srs.clients.length} ONLINE
+                  TODAY
                 </span>
-              )}
-              {srs?.version && (
-                <span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>v{srs.version}</span>
               )}
             </div>
             <div style={{ overflowY: 'auto', flex: 1 }}>
-              <SrsPanel srs={srs} />
+              <NewsPanel days={news?.days} />
             </div>
           </div>
         </div>

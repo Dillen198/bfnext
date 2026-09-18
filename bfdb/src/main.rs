@@ -50,6 +50,7 @@ struct Assets;
 #[folder = "../bfsite/dist/"]
 struct SiteAssets;
 
+mod news;
 mod db;
 mod db_id;
 mod atc;
@@ -2614,6 +2615,31 @@ fn wiki_summarize_actions(actions: &serde_json::Value) -> serde_json::Value {
     serde_json::Value::Object(out)
 }
 
+/// `GET /api/news` -- the campaign's daily war reports, newest day first.
+///
+/// Deliberately public and deliberately NOT fog-of-war scoped: both coalitions
+/// read the same wire report, because in a real war the enemy reads the paper
+/// too. `news.rs` has the reasoning for how a day is judged newsworthy.
+async fn api_news(
+    db: StatsDb,
+    limit: Option<usize>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<serde_json::Value> {
+        let rounds = db.latest_rounds_for(&inst.id)?;
+        let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
+            Some((_, rid, _)) => *rid,
+            None => match rounds.first() {
+                Some((_, rid, _)) => *rid,
+                None => return Ok(serde_json::json!({ "days": [] })),
+            },
+        };
+        Ok(serde_json::json!({ "days": db.news_history(rid, limit.unwrap_or(30))? }))
+    })
+    .map_err(Error)?;
+    Ok(warp::reply::json(&data))
+}
+
 /// `GET /api/wiki/facts` -- the selected instance's campaign numbers, for the
 /// `{{cfg:...}}` placeholders in wiki pages.
 ///
@@ -4216,6 +4242,73 @@ enum TacView {
 /// Storage key used when the engine could not report the running DCS build.
 const UNKNOWN_DCS_VERSION: &str = "unknown";
 
+/// Keeps the war news current.
+///
+/// The digest for *today* is rebuilt on a timer while the day is running, so
+/// the dashboard shows the war as it happens. Once the date rolls over the day
+/// is written one last time with `final_` set and never touched again -- which
+/// matters, because `news.rs` reads yesterday's digests both for its trend
+/// comparisons and for the cooldown that stops a story leading twice.
+///
+/// Backfills any missing day since the round opened on first run, so turning
+/// this on mid-campaign still produces a history rather than starting blank.
+async fn news_generator(db: StatsDb, inst: Inst) {
+    use chrono::{Duration as ChronoDuration, Utc};
+    // Let the stats reader catch up before judging what was newsworthy.
+    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(10 * 60));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        let db = db.clone();
+        let inst = inst.clone();
+        let res = task::block_in_place(move || -> Result<usize> {
+            let rounds = db.latest_rounds_for(&inst.id)?;
+            let Some((_, rid, round)) = rounds
+                .iter()
+                .find(|(_, _, r)| r.end.is_none())
+                .or_else(|| rounds.first())
+                .cloned()
+            else {
+                return Ok(0);
+            };
+            let today = Utc::now().date_naive();
+            let first = round.start.date_naive().min(today);
+            // Only go back as far as the history the module will ever read.
+            let earliest = today - ChronoDuration::days(news::HISTORY_KEEP_DAYS);
+            let mut day = first.max(earliest);
+            let mut written = 0usize;
+            while day <= today {
+                let key = day.format("%Y-%m-%d").to_string();
+                // A finished day is immutable; only today is rebuilt.
+                let existing = db.news_get(rid, &key)?;
+                let needs = match &existing {
+                    Some(d) => !d.final_,
+                    None => true,
+                };
+                if needs {
+                    // History is "every digest before this day", newest first.
+                    let hist: Vec<_> = db
+                        .news_history(rid, 400)?
+                        .into_iter()
+                        .filter(|d| d.day < key)
+                        .collect();
+                    let digest = news::build(&db, rid, day, &hist)?;
+                    db.news_put(rid, &digest)?;
+                    written += 1;
+                }
+                day += ChronoDuration::days(1);
+            }
+            Ok(written)
+        });
+        match res {
+            Ok(0) => {}
+            Ok(n) => log::info!("news: wrote {n} digest(s)"),
+            Err(e) => log::warn!("news: generation failed: {e}"),
+        }
+    }
+}
+
 /// Slow on purpose. The data only changes when DCS or a mod updates, which
 /// means a restart, which means we re-read it anyway.
 async fn unitdb_refresher(db: StatsDb, inst: Inst) {
@@ -5532,6 +5625,7 @@ async fn main() -> Result<()> {
             if cfg.base.is_some() {
                 tokio::spawn(tacmap_poller(db.clone(), inst.clone(), tac.clone()));
                 tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
+                tokio::spawn(news_generator(db.clone(), inst.clone()));
             }
             m.insert(id, InstanceLive { live, live_tx, tac });
         }
@@ -6059,6 +6153,15 @@ async fn main() -> Result<()> {
 
     // Instance-scoped: the numbers a page quotes come from whichever DCS
     // server the reader picked in the wiki's instance selector.
+    let news_route = warp::path!("api" / "news")
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(|db, q: std::collections::HashMap<String, String>, inst| {
+            let limit = q.get("limit").and_then(|s| s.parse().ok());
+            api_news(db, limit, inst)
+        });
+
     let wiki_facts_route = warp::path!("api" / "wiki" / "facts")
         .and(with_db(db.clone()))
         .and(with_instance(db.clone()))
@@ -6207,6 +6310,7 @@ async fn main() -> Result<()> {
         .or(wiki_list_route)
         .or(wiki_get_route)
         .or(wiki_get_image_route)
+        .or(news_route)
         .or(wiki_facts_route)
         .or(intel_list_route)
         .or(intel_get_image_route)

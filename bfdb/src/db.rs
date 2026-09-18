@@ -837,6 +837,11 @@ pub(crate) struct StatsDbInner {
     aircraft_sorties: Tree<(RoundId, std::string::String), (u32, f32)>,
     // Admin-managed ban list (bfdb-native, separate from bflib's cfg.banned)
     admin_bans: Tree<Ucid, BanRecord>,
+    // Daily war news, keyed (RoundId, "YYYY-MM-DD"). Generated from the
+    // event stream by news.rs; see that module for why it is stored rather
+    // than computed per request (the trend comparisons and the
+    // anti-repetition cooldown both read yesterday's digests).
+    news: Tree<(RoundId, std::string::String), crate::news::NewsDigest>,
     // bfwiki content, keyed by page slug (e.g. "gameplay/objectives")
     wiki_pages: Tree<std::string::String, WikiPage>,
     // bfwiki uploaded images (screenshots etc.), keyed by generated Uuid
@@ -1089,6 +1094,7 @@ impl StatsDb {
             deploys: Tree::open(&db, "deploys")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
+            news: Tree::open(&db, "news")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
             intel_captures: Tree::open(&db, "intel_captures")?,
@@ -2074,6 +2080,41 @@ impl StatsDb {
 
     /// Recent capture events for a round, newest first, with pilot
     /// attribution -- distinct from most_captured, which is just a count.
+    /// Every stored digest for a round, newest day first.
+    ///
+    /// `news.rs` needs the history for two different reasons: the "is this
+    /// unusual?" comparisons, and the cooldown that stops the same story
+    /// leading two days running.
+    pub(crate) fn news_history(
+        &self,
+        round: RoundId,
+        limit: usize,
+    ) -> Result<Vec<crate::news::NewsDigest>> {
+        let mut out: Vec<crate::news::NewsDigest> = Vec::new();
+        for r in self.news.iter() {
+            let ((rid, _day), digest) = r?;
+            if rid == round {
+                out.push(digest);
+            }
+        }
+        out.sort_by(|a, b| b.day.cmp(&a.day));
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    pub(crate) fn news_put(&self, round: RoundId, digest: &crate::news::NewsDigest) -> Result<()> {
+        self.news.insert(&(round, digest.day.clone()), digest)?;
+        Ok(())
+    }
+
+    pub(crate) fn news_get(
+        &self,
+        round: RoundId,
+        day: &str,
+    ) -> Result<Option<crate::news::NewsDigest>> {
+        Ok(self.news.get(&(round, day.to_string()))?)
+    }
+
     pub(crate) fn recent_captures(&self, round: RoundId, limit: usize) -> Result<Vec<CaptureRecord>> {
         let mut result = Vec::new();
         for r in self.captures.scan_prefix(&round)?.rev() {

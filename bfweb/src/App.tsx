@@ -1,4 +1,5 @@
 import { lazy, Suspense, type ReactNode } from 'react'
+import NewsPage from './pages/NewsPage'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RoundProvider } from './context/RoundContext'
@@ -98,6 +99,7 @@ export default function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="map" element={<ScopePage />} />
                 <Route path="scope" element={<Navigate to="/map" replace />} />
+                <Route path="news" element={<NewsPage />} />
                 <Route path="objectives" element={<Objectives />} />
                 <Route path="briefing" element={<RequireCoalition what="briefing"><BriefingPage /></RequireCoalition>} />
                 <Route path="leaderboard" element={<Leaderboard />} />
