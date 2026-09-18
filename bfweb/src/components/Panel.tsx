@@ -39,12 +39,31 @@ export default function Panel({
 }: PanelProps) {
   const sm = size === 'sm'
   return (
-    // flexShrink: 0 is load-bearing. `overflow: hidden` makes a flex item's
-    // automatic minimum size resolve to 0 instead of its content height, so
-    // inside the page's flex column the card collapsed to its borders. The
-    // caller's `style` still wins -- Dashboard's panels pass their own `flex`,
-    // which re-enables shrinking where the layout depends on it.
-    <div className={`vs-card ${className}`} style={{ overflow: 'hidden', flexShrink: 0, ...style }}>
+    // The card is a flex column, and that is load-bearing rather than
+    // cosmetic: `.vs-card` is a plain block, so a `bodyStyle` of `flex: 1`
+    // resolved to nothing and the body took its full content height. Inside a
+    // card with `overflow: hidden` that reads as a panel whose list is cut off
+    // and cannot be scrolled -- the body's own `overflow: auto` never has a
+    // bounded height to scroll within. Stacking a header above a body is what
+    // block flow was already doing, so this changes nothing for the panels
+    // that do not scroll.
+    //
+    // flexShrink: 0 is load-bearing too. `overflow: hidden` makes a flex
+    // item's automatic minimum size resolve to 0 instead of its content
+    // height, so inside the page's flex column the card collapsed to its
+    // borders. The caller's `style` still wins -- Dashboard's panels pass
+    // their own `flex`, which re-enables shrinking where the layout depends
+    // on it.
+    <div
+      className={`vs-card ${className}`}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        flexShrink: 0,
+        ...style,
+      }}
+    >
       <div
         style={{
           display: 'flex', alignItems: 'center', gap: 8,
