@@ -3825,7 +3825,7 @@ fn run_slow_timed_events(
                 if let Err(e) =
                     catch_unwind(AssertUnwindSafe(|| retarget_cap_groups(lua, ctx, start_ts)))
                 {
-                    error!("retarget_cap_groups panicked {e:?} {}", Backtrace::capture())
+                    error!("retarget_cap_groups panicked: {}", panic_msg(&e))
                 }
                 // Check SF HVT capture missions (proximity + timeout)
 
@@ -4032,7 +4032,7 @@ fn start_msgq_drain(lua: MizLua) -> Result<()> {
                 if let Err(e) = catch_unwind(AssertUnwindSafe(|| {
                     ctx.db.ephemeral.msgs().process(per_pass, &net, &act)
                 })) {
-                    error!("msgq drain panicked {e:?}")
+                    error!("msgq drain panicked: {}", panic_msg(&e))
                 }
             }
             (net, act) => {
@@ -4047,6 +4047,72 @@ fn start_msgq_drain(lua: MizLua) -> Result<()> {
         Ok(Some(now + period))
     })?;
     Ok(())
+}
+
+/// The message out of a caught panic payload.
+///
+/// `catch_unwind` hands back `Box<dyn Any + Send>`, whose `Debug` is the
+/// useless `Any { .. }` for every payload there is -- which is what every
+/// "panicked Any { .. }" line in the engine log was. The payload of a normal
+/// `panic!` is a `&str` or a `String`; pull it out.
+fn panic_msg(e: &Box<dyn std::any::Any + Send>) -> &str {
+    e.downcast_ref::<&'static str>()
+        .copied()
+        .or_else(|| e.downcast_ref::<std::string::String>().map(|s| s.as_str()))
+        .unwrap_or("<panic payload was not a string>")
+}
+
+/// Log every panic with its location and a real backtrace, once, at the point
+/// it happens.
+///
+/// The `catch_unwind`s below keep a panicking tick from taking the server
+/// down, and that part works -- but what they can report is next to nothing.
+/// The payload alone has no location, and `Backtrace::capture()` at the catch
+/// site unwinds from the catch, not from the panic, and is a no-op unless
+/// `RUST_BACKTRACE` was already set when the runtime first looked at it (the
+/// `set_var` in `bflib()` is too late for that, which is why the live log says
+/// "disabled backtrace"). A panic hook runs *at the panic site*, before
+/// unwinding, and `force_capture` ignores the environment -- between them a
+/// panic finally names the file and line it came from.
+fn install_panic_hook() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            // The hook logs, and the logger can itself panic (it formats, it
+            // allocates, it publishes over netidx). Recursing into the hook
+            // from inside it would replace one legible panic with a stack
+            // overflow, so report the inner one to stderr and stop.
+            thread_local! {
+                static IN_HOOK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+            }
+            if IN_HOOK.with(|f| f.replace(true)) {
+                eprintln!("bflib: panic while reporting a panic: {info}");
+                return;
+            }
+            struct Reset;
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    IN_HOOK.with(|f| f.set(false));
+                }
+            }
+            let _reset = Reset;
+            let msg = info
+                .payload()
+                .downcast_ref::<&'static str>()
+                .copied()
+                .or_else(|| {
+                    info.payload()
+                        .downcast_ref::<std::string::String>()
+                        .map(|s| s.as_str())
+                })
+                .unwrap_or("<panic payload was not a string>");
+            let loc = match info.location() {
+                Some(l) => format!("{}:{}:{}", l.file(), l.line(), l.column()),
+                None => std::string::String::from("<unknown location>"),
+            };
+            error!("PANIC at {loc}: {msg}\n{}", Backtrace::force_capture());
+        }));
+    });
 }
 
 fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<()> {
@@ -4074,14 +4140,9 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
                     println!("removing timer event");
                     return Ok(None);
                 }
-                Err(e) => match e.downcast_ref::<anyhow::Error>() {
-                    Some(e) => {
-                        error!("run_timed_events panicked {e:?} {}", Backtrace::capture())
-                    }
-                    None => {
-                        error!("run_timed_events panicked {e:?} {}", Backtrace::capture())
-                    }
-                },
+                // The hook has already logged the location and backtrace;
+                // this says which tick died, so the two can be paired up.
+                Err(e) => error!("run_timed_events panicked: {}", panic_msg(&e)),
             }
             Ok(Some(now + 1.))
         }
@@ -4370,10 +4431,13 @@ fn init_miz(lua: MizLua) -> Result<()> {
 #[mlua::lua_module]
 fn bflib(lua: &Lua) -> LuaResult<LuaTable<'_>> {
     // ensure we capture backtraces on panic
-    let _ = unsafe { 
+    let _ = unsafe {
         std::env::set_var("RUST_BACKTRACE", "1"); // bactrace for panics
         std::env::set_var("RUST_LIB_BACKTRACE", "0"); // no backtrace for Error
     };
+    // Must come after the env vars and before anything can panic: the hook is
+    // the only thing that sees a panic's location.
+    install_panic_hook();
     unsafe { Context::get_mut() }.init_async_bg(lua.inner()).map_err(dcso3::lua_err)?;
     dcso3::create_root_module(lua, init_hooks, init_miz)
 }
