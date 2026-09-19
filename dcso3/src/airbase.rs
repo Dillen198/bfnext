@@ -111,10 +111,16 @@ pub struct ParkingSpot {
     pub term_type: i64,
     pub pos: LuaVec3,
     pub dist_to_rw: f64,
-    /// Whether the spot can be used as a takeoff position at all. Spots with
-    /// this false exist (maintenance areas, some FARP pads) and DCS will
-    /// silently air-start a group assigned to one.
-    pub to_ac: bool,
+    /// Whether the spot can be used as a takeoff position at all, as DCS
+    /// reports it. `None` means DCS did not report the field.
+    ///
+    /// Spots that are genuinely `Some(false)` exist (maintenance areas, some
+    /// FARP pads) and DCS will silently air-start a group assigned to one.
+    /// Absent is a different thing and must not be read as `false`: on the
+    /// live server every free spot at a Caucasus airdrome came back without
+    /// it, so a field with 31 free open-big stands reported "0 of 47 usable"
+    /// and the flight went out with no parking assignment at all.
+    pub to_ac: Option<bool>,
 }
 
 impl ParkingSpot {
@@ -138,8 +144,14 @@ impl ParkingSpot {
     /// (MOOSE's `AIRBASE.TerminalType` / `_CheckTerminalType`): fixed wing take
     /// shelters and open medium/big ramp, helicopters take helipads and open
     /// ramp, and nobody parks on the runway.
+    /// A spot DCS explicitly marked as not usable for takeoff. Distinct from
+    /// one it said nothing about -- see [`ParkingSpot::to_ac`].
+    pub fn takeoff_denied(&self) -> bool {
+        self.to_ac == Some(false)
+    }
+
     pub fn usable_by(&self, helicopter: bool) -> bool {
-        if !self.to_ac || self.term_type == term_type::RUNWAY {
+        if self.takeoff_denied() || self.term_type == term_type::RUNWAY {
             return false;
         }
         if helicopter {
@@ -164,9 +176,11 @@ impl<'lua> FromLua<'lua> for ParkingSpot {
             term_type: tbl.raw_get("Term_Type")?,
             pos: tbl.raw_get("vTerminalPos")?,
             dist_to_rw: tbl.raw_get::<_, Option<f64>>("fDistToRW")?.unwrap_or(0.),
-            // Absent on some spots/terrains -- absent means "not usable for
-            // takeoff", which is the safe reading.
-            to_ac: tbl.raw_get::<_, Option<bool>>("TO_AC")?.unwrap_or(false),
+            // Kept as the three states DCS actually has. `Option<bool>` is
+            // `None` only for a missing key -- Lua's own truthiness makes
+            // anything present-but-not-`false` read as `true` -- so this
+            // distinguishes "DCS says no" from "DCS did not say".
+            to_ac: tbl.raw_get::<_, Option<bool>>("TO_AC")?,
         })
     }
 }

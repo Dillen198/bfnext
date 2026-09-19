@@ -1900,21 +1900,18 @@ impl Ephemeral {
                             });
                             usable.truncate(want);
                             if usable.len() < want {
-                                // Say *why* nothing matched. Every ground start
-                                // on the live server came back "0 of N usable"
-                                // with N as high as 59, which is not a real
-                                // constraint -- an airfield with 59 free spots
-                                // has somewhere to put one fighter. Without the
-                                // breakdown there is no way to tell whether the
-                                // spots were all rejected for TO_AC (which we
-                                // default to false when DCS omits the field) or
-                                // for a Term_Type this build doesn't know about.
-                                let mut no_to_ac = 0usize;
+                                // Say *why* nothing matched, and keep the two
+                                // TO_AC states apart: a spot DCS explicitly
+                                // refuses for takeoff is a real constraint, a
+                                // spot it said nothing about is not, and
+                                // conflating them is what made a field with 31
+                                // free open-big stands report nothing usable.
+                                let mut denied = 0usize;
                                 let mut by_type: FxHashMap<i64, usize> =
                                     FxHashMap::default();
                                 for sp in &rejected {
-                                    if !sp.to_ac {
-                                        no_to_ac += 1;
+                                    if sp.takeoff_denied() {
+                                        denied += 1;
                                     }
                                     *by_type.entry(sp.term_type).or_default() += 1;
                                 }
@@ -1923,8 +1920,8 @@ impl Ephemeral {
                                 types.sort_by_key(|(t, _)| *t);
                                 warn!(
                                     "[GROUND_START] {} wanted {want} parking spots, only {} of {total} free spots are usable by this airframe \
-                                     (helicopter={helicopter}; rejected: {no_to_ac} with TO_AC unset/false, Term_Type counts {types:?}) \
-                                     -- the rest go on the field for DCS to assign",
+                                     (helicopter={helicopter}; rejected: {denied} that DCS marks TO_AC=false, \
+                                     Term_Type counts {types:?}) -- the rest go on the field for DCS to assign",
                                     group.name,
                                     usable.len()
                                 );
