@@ -148,7 +148,7 @@ DEFAULT:
     listen_address: "0.0.0.0:8880"
     site_address: "0.0.0.0:8766"
     netidx_base: "/local/fowl/campaign"          # blank -> run bfdb offline, no resolver
-    sortie: ""                                   # -> bfdb --sortie; blank = auto-detect (set to e.g. "ODFv2" only if RPCs time out)
+    sortie: ""                                   # leave blank: bfdb asks the resolver where the engine publishes. NOT a display name -- that is `label`.
     netidx_resolver_config: "E:\\Github\\bfnext-vector\\netidx-resolver.json"
     own_resolver: false                          # true -> also stop the resolver on bot shutdown
     engine_config: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\ODFv2_CFG"
@@ -205,7 +205,7 @@ DEFAULT:
     #     label: "Vector Strike #1"
     #     dcs_server_name: "[VS] Vector Strike - Vector Strike | Dynamic Campaign PVP Modern"
     #     netidx_base: "/local/fowl/vs1"
-    #     sortie: ""
+    #     sortie: ""    # leave blank -- auto-detected. The campaign's display name is `label`.
     #     stats_jsonl: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\Logs\stats.jsonl"
     #     stats_dir:   "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\Logs\stats"
     #     engine_config: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\ODFv2_CFG"

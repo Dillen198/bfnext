@@ -70,8 +70,13 @@ pub(crate) struct InstanceCfg {
     /// `<base>/<sortie>`; two instances MUST NOT share a base.
     #[serde(default)]
     pub base: Option<NetidxPath>,
-    /// Pin the live engine subscriptions to this sortie instead of learning it
-    /// from the stats stream (the old global `--sortie`, per instance now).
+    /// Starting guess for the sortie (netidx path segment) this instance's
+    /// bflib publishes under. Leave it unset.
+    ///
+    /// bfdb asks the netidx resolver what actually exists under `base` and
+    /// uses that; this is only what it points at until the first answer
+    /// arrives, and a value that disagrees is logged and ignored. It is NOT a
+    /// display name -- that is `label`.
     #[serde(default)]
     pub sortie: Option<String>,
     /// This instance's `Logs/stats.jsonl`.

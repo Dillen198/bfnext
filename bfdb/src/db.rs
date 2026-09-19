@@ -683,9 +683,22 @@ pub(crate) struct InstanceState {
     subscriber: Option<Subscriber>,
     /// `cfg.base` -- the netidx base this instance's bflib publishes under.
     base: Option<NetidxPath>,
-    /// Per-instance `sortie` override: when set, the LIVE engine subscriptions
-    /// (RPC + log) use this instead of the sortie learned from the stats stream.
+    /// Per-instance `sortie` hint from the config file. Used only until the
+    /// resolver says otherwise -- see `discovered_sortie` and `live_sortie`.
     sortie_override: Option<Scenario>,
+    /// The sortie bflib is ACTUALLY publishing under right now, read from the
+    /// netidx resolver by `sortie_discovery_loop`.
+    ///
+    /// This is the only authoritative source. The other two candidates are
+    /// both names of things that merely tend to coincide with it:
+    ///   * `sortie_override` is what somebody typed in `instances.json`, and
+    ///   * `current_sortie` is the name the *round* was opened under, which is
+    ///     frozen at campaign start -- rename the .miz mid-campaign and the
+    ///     engine moves to the new path while the round keeps the old name.
+    /// Either being wrong pointed every live subscription at a path nothing
+    /// publishes, so every RPC timed out and the dashboard fell back to what
+    /// the DB already had: a live server showing hours-old data.
+    discovered_sortie: StdMutex<Option<Scenario>>,
     stats_dir: Option<PathBuf>,
     stats_jsonl: Option<PathBuf>,
     /// The sortie name of this instance's currently/most-recently active round,
@@ -694,6 +707,18 @@ pub(crate) struct InstanceState {
     /// must be appended to `base` before subscribing -- a bare `base` path
     /// will never resolve.
     current_sortie: StdMutex<Option<Scenario>>,
+    /// Engine-unreachable breaker: consecutive failed RPCs, and when the
+    /// breaker last let a probe through.
+    ///
+    /// Every live RPC caller bounds its own call with a multi-second timeout
+    /// and falls back to persisted data. That is right when the engine is
+    /// merely slow, but when it is *gone* each of those timeouts is paid in
+    /// full on every request: /api/objectives alone then takes 8s to answer,
+    /// which is what made switching the dashboard's server selector sit on the
+    /// old theatre's map for ten seconds before redrawing. Once enough calls in
+    /// a row have failed, fail the rest instantly and let one probe through
+    /// periodically to notice the engine coming back.
+    rpc_failures: StdMutex<(u32, Option<std::time::Instant>)>,
     /// Subscribed engine RPC procedures, keyed by (sortie, proc name).
     ///
     /// `Proc::new` performs a resolver lookup and a subscription handshake, and
@@ -738,6 +763,8 @@ impl InstanceState {
             subscriber,
             base: cfg.base.clone(),
             sortie_override: cfg.sortie.as_deref().map(Scenario::from),
+            discovered_sortie: StdMutex::new(None),
+            rpc_failures: StdMutex::new((0, None)),
             stats_dir: cfg.stats_dir.clone(),
             stats_jsonl: cfg.stats_jsonl.clone(),
             current_sortie: StdMutex::new(None),
@@ -757,11 +784,53 @@ impl InstanceState {
         self.live_sortie().map(|s| s.to_string())
     }
 
+    /// Whether an engine RPC may go out now, per the unreachable breaker. A
+    /// `false` means the caller should fail immediately rather than wait out
+    /// its own timeout against an engine that is not answering anything.
+    fn rpc_allowed(&self) -> bool {
+        let mut g = self.rpc_failures.lock().unwrap();
+        if g.0 < RPC_FAIL_THRESHOLD {
+            return true;
+        }
+        match g.1 {
+            Some(last) if last.elapsed() < std::time::Duration::from_secs(RPC_PROBE_SECS) => false,
+            _ => {
+                g.1 = Some(std::time::Instant::now());
+                true
+            }
+        }
+    }
+
+    /// Record how a call went. Any *reply* counts as reachable, including one
+    /// carrying a logical error from bflib -- the breaker is about transport,
+    /// not about whether the engine liked the arguments.
+    fn note_rpc_result(&self, reached: bool) {
+        let mut g = self.rpc_failures.lock().unwrap();
+        if reached {
+            if g.0 >= RPC_FAIL_THRESHOLD {
+                info!("[{}] engine RPCs answering again", self.id);
+            }
+            *g = (0, None);
+        } else {
+            g.0 = g.0.saturating_add(1);
+            if g.0 == RPC_FAIL_THRESHOLD {
+                warn!(
+                    "[{}] {} engine RPCs in a row went unanswered -- failing further calls \
+                     immediately (one probe every {}s) so the dashboard stops waiting on them",
+                    self.id, RPC_FAIL_THRESHOLD, RPC_PROBE_SECS
+                );
+            }
+        }
+    }
+
     /// The sortie to point live subscriptions at, or `None` while the mission
     /// hasn't reported in yet.
     fn live_sortie(&self) -> Option<Scenario> {
-        self.sortie_override
+        self.discovered_sortie
+            .lock()
+            .unwrap()
             .clone()
+            .or_else(|| self.sortie_override.clone())
             .or_else(|| self.current_sortie.lock().unwrap().clone())
     }
 }
@@ -883,6 +952,31 @@ pub(crate) struct StatsDbInner {
 // fight or a slow leak -- ~20k lines is a few MB of Strings.
 const ENGINE_LOG_HISTORY_CAP: usize = 20_000;
 const ENGINE_ERROR_HISTORY_CAP: usize = 4_000;
+/// How often each instance re-asks the netidx resolver where its engine is
+/// publishing. Two cheap list calls; the point is to notice a mission reload
+/// within a few seconds, not to poll hard.
+const SORTIE_DISCOVERY_SECS: u64 = 10;
+/// Consecutive unanswered engine RPCs before `InstanceState`'s breaker opens.
+/// Low enough that a genuinely dead engine is recognised within one poll
+/// cycle, high enough that a single slow frame does not trip it.
+const RPC_FAIL_THRESHOLD: u32 = 3;
+/// How often the open breaker lets one call through to see if the engine is
+/// back. Matches the sortie-discovery poll.
+const RPC_PROBE_SECS: u64 = 10;
+
+/// Drop guard that reports an engine RPC's fate to the instance's breaker.
+/// Dropped without `reached` being set means the caller's timeout fired and
+/// took the whole future with it, i.e. the engine never replied.
+struct RpcOutcome<'a> {
+    inst: &'a InstanceState,
+    reached: bool,
+}
+
+impl Drop for RpcOutcome<'_> {
+    fn drop(&mut self) {
+        self.inst.note_rpc_result(self.reached);
+    }
+}
 
 /// Matches the `[ERROR]`/`[WARN]`/`[WARNING]` level tags bflib's engine log
 /// lines carry -- mirrors ENGINE_LOG_LEVEL_RE in the fowlengine Discord plugin
@@ -1122,6 +1216,13 @@ impl StatsDb {
                 let _t = t.clone();
                 let _st = st.clone();
                 task::spawn(async move {
+                    if let Err(e) = _t.sortie_discovery_loop(_st.clone()).await {
+                        error!("[{}] sortie discovery failed {e:?}", _st.id)
+                    }
+                });
+                let _t = t.clone();
+                let _st = st.clone();
+                task::spawn(async move {
                     if let Err(e) = _t.engine_log_loop(_st.clone()).await {
                         error!("[{}] engine log subscription failed {e:?}", _st.id)
                     }
@@ -1284,6 +1385,127 @@ impl StatsDb {
         }
         Ok(out)
     }
+    /// Ask the netidx resolver which sortie bflib is *actually* publishing
+    /// under, and keep `discovered_sortie` pointed at it.
+    ///
+    /// bflib publishes at `<netidx_base>/<sortie>/{log,stats,api/*}`, where
+    /// `<sortie>` comes from the loaded .miz. bfdb used to guess that name --
+    /// from the `sortie` field of `instances.json`, or from the scenario name
+    /// of the open round. Both drift: the first is hand-typed (it is easy to
+    /// put the campaign's display name there, "Modern", rather than the miz's
+    /// "ODFv2"), and the second is frozen at campaign start, so renaming the
+    /// .miz moves the engine without moving the round. Either way every
+    /// subscription lands on a path nothing publishes, every RPC times out,
+    /// and the dashboard silently serves whatever the DB last stored -- a live
+    /// server showing hours-old data with nothing in the UI saying so.
+    ///
+    /// The resolver knows the real answer, so ask it rather than guessing.
+    async fn sortie_discovery_loop(self, inst: Arc<InstanceState>) -> Result<()> {
+        let (subscriber, base) = match (&inst.subscriber, &inst.base) {
+            (Some(s), Some(b)) => (s.clone(), b.clone()),
+            _ => return Ok(()),
+        };
+        let resolver = subscriber.resolver();
+        // Only complain about a given disagreement once, so a misconfigured
+        // instance says so clearly at startup instead of once every poll.
+        let mut complained: Option<Scenario> = None;
+        let mut absent_since: Option<std::time::Instant> = None;
+        loop {
+            match Self::discover_sortie(&resolver, &base).await {
+                Ok(Some(found)) => {
+                    absent_since = None;
+                    let changed = {
+                        let mut cur = inst.discovered_sortie.lock().unwrap();
+                        if cur.as_ref() == Some(&found) {
+                            false
+                        } else {
+                            *cur = Some(found.clone());
+                            true
+                        }
+                    };
+                    if changed {
+                        info!(
+                            "[{}] live engine found at {} (sortie {:?})",
+                            inst.id,
+                            base.append(&found),
+                            found.as_str()
+                        );
+                        complained = None;
+                    }
+                    if complained.as_ref() != Some(&found) {
+                        if let Some(pinned) = &inst.sortie_override {
+                            if pinned != &found {
+                                warn!(
+                                    "[{}] configured sortie {:?} is not what the engine publishes \
+                                     ({:?}) -- using {:?}. Fix `sortie` in the instances file, or \
+                                     drop it: it is only a hint now.",
+                                    inst.id,
+                                    pinned.as_str(),
+                                    found.as_str(),
+                                    found.as_str()
+                                );
+                                complained = Some(found.clone());
+                            }
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Mission loading, DCS restarting, or the resolver has not
+                    // heard from it yet. Keep the last known sortie: dropping
+                    // it would make every RPC fail with "no active sortie"
+                    // during a routine mission reload.
+                    let since = *absent_since.get_or_insert_with(std::time::Instant::now);
+                    if since.elapsed() > std::time::Duration::from_secs(300)
+                        && inst.discovered_sortie.lock().unwrap().is_none()
+                    {
+                        warn!(
+                            "[{}] nothing is publishing under {} -- bflib is not running, or its \
+                             `netidx_base` does not match this instance's `base`",
+                            inst.id, base
+                        );
+                        absent_since = Some(std::time::Instant::now());
+                    }
+                }
+                Err(e) => debug!("[{}] sortie discovery failed: {e:?}", inst.id),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(SORTIE_DISCOVERY_SECS)).await;
+        }
+    }
+
+    /// The one child of `base` that looks like a running bflib: it has an
+    /// `api` subtree, where the RPC procs live. `None` when nothing does.
+    async fn discover_sortie(
+        resolver: &netidx::resolver_client::ResolverRead,
+        base: &NetidxPath,
+    ) -> Result<Option<Scenario>> {
+        let children = resolver.list(base.clone()).await?;
+        let mut found: Option<Scenario> = None;
+        for child in children.iter() {
+            let Some(name) = NetidxPath::basename(child) else { continue };
+            let Ok(sub) = resolver.list(child.clone()).await else { continue };
+            if !sub.iter().any(|p| NetidxPath::basename(p) == Some("api")) {
+                continue;
+            }
+            match &found {
+                // Two live publishers under one base means two DCS servers
+                // share a `netidx_base`, which crosses their stats and RPCs.
+                // Registry::new rejects that within one bfdb; it can still
+                // happen against a base bfdb does not own, so say so and keep
+                // the first rather than flapping between them.
+                Some(first) => warn!(
+                    "{} has more than one live sortie ({:?} and {:?}) -- two missions are \
+                     publishing under the same netidx_base; using {:?}",
+                    base,
+                    first.as_str(),
+                    name,
+                    first.as_str()
+                ),
+                None => found = Some(Scenario::from(name)),
+            }
+        }
+        Ok(found)
+    }
+
     /// A live subscription to the running bflib engine's log stream,
     /// published over netidx at `<base>/<sortie>/log` by `bflib::bg::logpub`
     /// (bflib appends its mission sortie name to `netidx_base` before
@@ -1314,11 +1536,9 @@ impl StatsDb {
             dval.updates(UpdatesFlags::empty(), tx);
             let mut seen_len = 0usize;
             while let Some(batch) = rx.next().await {
-                // With a --sortie override the target never changes; otherwise
-                // resubscribe when the live sortie moves (new mission/round).
-                if inst.sortie_override.is_none()
-                    && inst.current_sortie.lock().unwrap().as_ref() != Some(&sortie)
-                {
+                // Resubscribe when the live sortie moves (new mission/round,
+                // or discovery correcting a wrong configured name).
+                if inst.live_sortie().as_ref() != Some(&sortie) {
                     break;
                 }
                 for (_id, ev) in batch.iter() {
@@ -1347,15 +1567,11 @@ impl StatsDb {
                     }
                 }
             }
-            if inst.sortie_override.is_some() {
-                // Sortie is pinned: the subscription just ended (engine restart
-                // / mission reload). Pause, then resubscribe on the next loop.
+            // The subscription ended without the sortie changing: the engine
+            // restarted or reloaded the mission. Pause and resubscribe rather
+            // than giving up on the log for the rest of the process's life.
+            if inst.live_sortie().as_ref() == Some(&sortie) {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                continue;
-            }
-            if inst.current_sortie.lock().unwrap().as_ref() == Some(&sortie) {
-                // subscription itself ended (not a sortie change) -- nothing left to do
-                return Ok(());
             }
         }
     }
@@ -1410,6 +1626,13 @@ impl StatsDb {
                 inst.cfg.id
             )
         })?;
+        if !inst.rpc_allowed() {
+            bail!(
+                "instance {:?}: engine not answering (breaker open, retrying every {}s)",
+                inst.cfg.id,
+                RPC_PROBE_SECS
+            );
+        }
         // Reuse the subscription; only pay for it the first time this sortie
         // calls this procedure. Cloning the Proc out of the map keeps the lock
         // held for the lookup only, not for the call itself -- two pollers
@@ -1427,7 +1650,15 @@ impl StatsDb {
                 }
             }
         };
-        proc.call(args).await
+        // A timed-out caller does not cancel `proc.call`, it drops the whole
+        // future -- so the outcome has to be recorded from a guard that runs on
+        // drop, not from the code after the await (which never runs).
+        let mut guard = RpcOutcome { inst, reached: false };
+        let res = proc.call(args).await;
+        // A reply carrying bflib's own error still means the engine is there;
+        // a transport error does not.
+        guard.reached = res.is_ok();
+        res
     }
 
     async fn background_loop(self, inst: Arc<InstanceState>) -> Result<()> {

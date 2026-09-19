@@ -12,9 +12,18 @@ import { useAuth } from './AuthContext'
  * context is just the React-visible mirror of it, plus the list of instances
  * to choose from.
  *
- * Changing the instance invalidates the whole react-query cache: essentially
- * every cached response is scoped to one server, so keeping any of it would
- * show the previous server's data until each query happened to refetch.
+ * Changing the instance drops the whole react-query cache: essentially every
+ * cached response is scoped to one server, so keeping any of it would show the
+ * previous server's data until each query happened to refetch.
+ *
+ * Dropping, not invalidating. The instance is not part of any query key -- it
+ * rides along as a module variable in `api.ts` -- so an invalidated query keeps
+ * serving its old data while it refetches, and react-query has no way to know
+ * that data now belongs to a different server. Switching from the Syria server
+ * to the Caucasus one therefore left the map sitting on Syria for as long as
+ * the slowest request took (up to 8s while an engine is unreachable) before
+ * everything swapped at once. Removing the entries instead makes each page show
+ * its own loading state immediately and redraw as the new server's data lands.
  */
 interface InstanceContextValue {
   /** Every instance this bfdb fronts, in configured order. Empty while loading. */
@@ -27,6 +36,9 @@ interface InstanceContextValue {
   multi: boolean
   select: (id: string) => void
 }
+
+/** Query keys whose responses span every server, not one of them. */
+const INSTANCE_AGNOSTIC = new Set(['instances', 'rounds'])
 
 const InstanceContext = createContext<InstanceContextValue>({
   instances: [],
@@ -64,7 +76,7 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
     if (!instances.some(i => i.id === selected)) {
       setInstance(undefined)
       setSelected(undefined)
-      qc.invalidateQueries()
+      qc.removeQueries({ predicate: q => !INSTANCE_AGNOSTIC.has(q.queryKey[0] as string) })
     }
   }, [data, instances, selected, qc])
 
@@ -72,8 +84,10 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
     if (id === selected) return
     setInstance(id)
     setSelected(id)
-    // Everything cached belongs to the server we just left.
-    qc.invalidateQueries()
+    // Everything cached belongs to the server we just left -- except the two
+    // queries that are about the whole bfdb rather than one server. Keeping
+    // those stops the server selector itself blanking out mid-switch.
+    qc.removeQueries({ predicate: q => !INSTANCE_AGNOSTIC.has(q.queryKey[0] as string) })
   }, [selected, qc])
 
   const current = useMemo(

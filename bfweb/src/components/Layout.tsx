@@ -178,8 +178,15 @@ function DiscordIcon({ size = 11 }: { size?: number }) {
   )
 }
 
-function roundLabel(r: Round) {
-  if (r.active) return `${r.scenario} — Active`
+/* A round's `scenario` is the sortie name of the .miz the campaign was
+   STARTED under -- frozen at that moment, so a server that began life on
+   `campaign.miz` still reads "campaign" months later under a differently
+   named mission. That is fine as a history label, where it sits next to
+   dates and distinguishes one past round from another, but it is noise for
+   the live round in multi-server mode: the <optgroup> above it already
+   names the server and its campaign. `named` drops it there. */
+function roundLabel(r: Round, named = true) {
+  if (r.active) return named ? `${r.scenario} — Active` : 'Current — Active'
   const start = new Date(r.start).toLocaleDateString([], { month: 'short', day: 'numeric' })
   const end   = r.end ? new Date(r.end).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '?'
   return `${r.scenario} · ${start}–${end}`
@@ -228,7 +235,7 @@ function CampaignSelect({
             label={`${instance.label}${instance.public === false ? ' [test]' : ''}`}
           >
             <option value={`${instance.id}|`}>
-              {live ? roundLabel(live) : 'Latest Round'}
+              {live ? roundLabel(live, false) : 'Latest Round'}
             </option>
             {past.map(r => (
               <option key={r.id} value={`${instance.id}|${r.id}`}>{roundLabel(r)}</option>

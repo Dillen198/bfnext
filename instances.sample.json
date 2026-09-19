@@ -10,7 +10,7 @@
 
       "//base": "netidx_base from THIS instance's engine CFG. Two instances must never share one.",
       "base": "/local/fowl/vs1",
-      "//sortie": "Leave null to auto-detect from the stats stream. Set only if RPCs time out (see --sortie).",
+      "//sortie": "Leave null. bfdb asks the netidx resolver which sortie the engine is publishing under; a value here is only the hint used until it answers, and a WRONG one is logged and ignored.",
       "sortie": null,
 
       "stats_jsonl": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats.jsonl",

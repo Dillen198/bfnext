@@ -313,9 +313,27 @@ sortie currently publishing:
 ```
 
 `"sortie": null` on a `"live": true` instance means bfdb has a netidx base for it
-but the mission has not reported in — that server is down, or its
-`netidx_base`/sortie don't match. The dashboard's selector shows those as
-`(down)`.
+but nothing is publishing under that base — that server is down, or its engine
+CFG's `netidx_base` is not the one in the instances file. The dashboard's
+selector shows those as `(down)`.
+
+The sortie itself is **not** something you configure. bfdb asks the netidx
+resolver which child of `<base>` has an `api` subtree and uses that. The
+per-instance `sortie` key is only the hint it uses before the first answer
+arrives; if it disagrees with what the engine publishes, bfdb logs
+
+```
+[vs1] configured sortie "Modern" is not what the engine publishes ("ODFv2") -- using "ODFv2".
+```
+
+and ignores it. Leave it `null`. It is not a display name — that is `label`.
+
+Note that a round's **scenario** (what the campaign selector shows for past
+rounds) is a different thing again: it is the sortie name the campaign was
+*started* under, recorded once at `Stat::NewRound` and never rewritten. A
+server whose campaign began on `campaign.miz` keeps showing `campaign` in its
+round history even after the mission is renamed — correct, and unrelated to
+where the engine publishes today.
 
 ### Degraded objective reads
 
