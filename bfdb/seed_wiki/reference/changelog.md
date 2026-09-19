@@ -1,0 +1,148 @@
+# Changelog — v2.0
+
+What's changed since the original open-source Fowl Engine. This page only lists what's **different from stock Fowl Engine** — not a full commit history, and not core mechanics (F10 menus, JTAC, cargo, points/lives, capturing objectives) that were already part of the base engine and are simply documented elsewhere in this wiki.
+
+## New Campaign Systems
+
+**IADN — Integrated Air Defence Network**
+SAM sites are no longer isolated units. They share a live sensor picture across the coalition, keep search radars dark until a real threat is confirmed, and actively defend each other: fire a HARM or other anti-radiation missile at one and it goes dark to deny the lock, while short-range point-defense systems (Pantsir, Shilka) stay alert specifically to shoot the missile down. A new **Command Center** objective ties into overall network integrity.
+
+**Advanced Radar Physics**
+Detection is no longer a simple binary "in range = detected." Probability now depends on target aspect (hot/flank/beam/cold), altitude, and closure rate — flying beam-aspect with low closure rate ("the notch") makes you nearly invisible to pulse-Doppler radars, the way it does in reality. Radar tracks are smoothed instead of snapping between raw returns. AWACS and ground-based EWR are properly differentiated (AWACS gets look-down capability, ground radar degrades at low altitude).
+
+**ELINT/SIGINT Intel Database**
+Recon flights now build a persistent, decaying intel picture instead of a one-shot report: detected enemy ground units are classified, clustered, and tracked with a confidence score that fades over time (faster for older/lower-quality sources). Shown as F10 map markers and in a radio "intel picture" report.
+
+**Live GCI — proactive AWACS radio calls**
+On servers that enable it, a live GCI controller watches the coalition radar picture and transmits calls to players over SRS, addressed by flight callsign — threat, SAM launch, splash, bogey/bandit/hostile with NATO reporting names, coalition-wide group naming ("north group"), merged, faded, split/converge and periodic picture, all fog-of-war true. Players can also key up and ask (bogey dope, picture, declare, commit) where speech recognition is on, and get GCI-flown intercept vectors after a commit. A short "GCI: &lt;callsign&gt; on &lt;freq&gt;" note shows on slot entry. See [Live GCI](../gameplay/gci.md).
+
+**Player Recon Pass**
+Recon-capable airframes (server-configured) get an **F10 → Recon** menu. Start a timed pass while within range of an enemy objective, hold station for the dwell time, and every enemy unit your aircraft has line-of-sight to — SAM and AAA sites included — is revealed on the coalition F10 map through the same decaying intel picture. See [Reconnaissance](../f10-menu/recon.md).
+
+**JTAC eyes-on also marks the map**
+Any target a JTAC (ground, drone, or player) has confirmed line-of-sight on now feeds the same intel picture automatically — no menu action needed. The mark stays fresh while the JTAC keeps watching and lingers for a long time (about an hour by default) after it loses the target, instead of vanishing the moment the JTAC looks away.
+
+**Mechanized Infantry**
+Infantry squads can board and dismount IFVs/APCs for overland transport, not just helicopters — troops embark near a friendly vehicle and can be dropped off anywhere it can drive.
+
+**CSAR — Combat Search & Rescue**
+Ejecting no longer costs a life outright. A downed pilot unit spawns at the crash site; a friendly helicopter can locate and extract them via the F10 → CSAR menu, restoring the lost life and earning the rescuer bonus points. Eject over a friendly airbase, FARP or carrier and the pilot walks in on their own — no helo needed. A downed pilot is held by an enemy-capture countdown (server-configurable, 30 min by default), but as long as a friendly rescue helicopter is sitting on top of them the timer can't take them, so a pickup that's a few seconds late still works.
+
+**C-130 Hercules & Airdrop System**
+A dedicated logistics role: the C-130 can deliver cargo, troops, and vehicles via parachute or LAPES (low-altitude extraction) runs to unprepared landing zones, with automatic detection-and-unpack on delivery — no manual trigger needed. See [C-130 Hercules & Airdrop](../advanced/c130-airdrop.md).
+
+**Capture mechanics — health/infantry gate, troop scaling, consolidation, anti-revolving-door**
+A base is capturable once its **health is ≤ 20% and every infantry defender is dead** — not when its logistics hit zero (a base bombed to Health 0 flips straight to Neutral on its own). The hold timer is **180 s base, divided by how many troop squads you have in the zone** (more squads = faster, floored at 30 s). You can't stage troops or crates from a base that is itself capturable — bring them from elsewhere.
+
+After the timer completes the base flips, then your troops **hold for a ~5-minute consolidation window**. During that hold **the enemy cannot start a fresh capture timer** — to take it back they have to physically wipe out your holding troops. If they do that **and** the base is still shot up (Health ≤ 20%) it goes **Neutral**; if your new garrison has already brought it above 20% it consolidates and stays yours. For **~2 minutes after any capture or Neutral flip** a cooldown blocks a new capture timer entirely.
+
+On capture the previous owner's surviving combat units are destroyed and the new owner gets back only a **light garrison — AAA and infantry, ~25% health, no SAMs** (`capture_garrison_revive_fraction` / `capture_garrison_revive_include_sam`). Everything heavier rebuilds slowly through auto-repair or has to be delivered by deployable crate, so a freshly-taken base is a soft target you invest in rather than an instant fortress. SAM sites (the classified ones) still capture instantly with no timer. See [Capturing Objectives](../gameplay/capturing-objectives.md).
+
+**Carrier groups change hands**
+Disable an enemy carrier (sink its escorts to knock its logistics to 0) and take the naval base it's linked to, and the carrier group now **passes to the captor as their own ships** — the enemy task force is replaced by your coalition's carrier group in the same spot, with your deck slots. It comes across at 50% and can be brought back up with **carrier repair crates** (air-dropped or flown in by helo — stack several to repair faster, ~30 min at one crate) or, where the server configures them, the **Repair / Respawn Carrier** actions off the naval-base menu. A carrier whose linked naval base is still friendly and stocked also repairs automatically. An `-admin capture <objective> <blue|red|neutral>` command was also added to force any objective to change hands.
+
+**Artillery — missile TELs, salvos, auto-turn**
+The JTAC artillery menu now also commands **ballistic/cruise missile launchers** (Scud, Iskander, Silkworm), enforces each unit type's real min/max range, and adds a **"Fire All Groups Together"** salvo and an **"all ammo"** option. Batteries that spawn facing the wrong way now **reposition to bring the launcher onto the target bearing** before firing, so hull-traverse systems that used to silently no-op actually shoot. The **Move** action follows roads instead of driving cross-country. See [Artillery Missions](../advanced/artillery.md).
+
+**ATIS & weather**
+The airfield ATIS now reports the **real DCS runway designator** (it was deriving the number from runway heading and sometimes naming a runway that doesn't exist), fixes a mirrored surface-wind bearing, and adds field elevation, QFE, cloud base AGL, visibility and precipitation — all in **both metric and imperial**. Live weather sync also corrects the wind-speed units and syncs the upper (2000 m / 8000 m) wind layers, not just the surface.
+
+**Last Stand**
+A coalition reduced to its last primary objective (airbase, naval base, or FARP) gets a do-or-die countdown timer instead of being able to turtle indefinitely.
+
+**Automated Convoys & Strategic Infrastructure**
+Ground supply convoys run automatically between logistics hubs and the front — and can be interdicted. Real map buildings (warehouses, fuel depots, industrial complexes) near objectives, when destroyed, permanently degrade that objective's logistics — a second, independent way to attack enemy supply. Each objective's logistics buildings are pinned on the F10 map for the owning coalition while a friendly aircraft is nearby (they cull with the objective's units so the map stays clean). **Factories** are a new objective type that passively produces ground units for their owner. An objective flagged **fully detached** from the supply chain gets no automatic resupply at all — convoy, cargo plane, or otherwise — and has to be sustained by hand with transport crates and C-130 drops.
+
+**Frontline on the F10 map**
+When enabled, the division between blue-held and red-held ground is drawn as three smooth lines per front — blue on the blue side, white down the centre, red on the red side, with a gap between them. It's the zero line of a smooth influence field: every owned objective pulls the ground toward its side with a pull that fades over distance, so the front follows the overall shape of the theatre and ignores a lone base behind enemy lines. A theatre with an island and two land borders shows up as several distinct fronts; nothing is drawn where one side holds everything. Redraws whenever an objective changes hands.
+
+**Live Weather Sync**
+Server weather now syncs automatically from the running DCS mission via `bftools`/DCSServerBot integration, instead of being fixed at mission build time.
+
+**Coalition tasking board**
+Any player can post a task — CAP, CAS, SEAD, STRIKE, LOGISTICS, CSAR at a map
+mark, or CAPTURE / SUPPLY against a base — and the whole coalition sees the area
+and its pin on the F10 map, ranked into the briefing and called out on the GCI
+net. Objective tasks **close themselves out** when the coalition actually does
+the job. Free, twelve slots per side. See
+[The Tasking Board](../gameplay/tasking-board.md).
+
+**AI helo missions**
+Order an AI logistics helo to cold-start at a real field, fly, **land**, and
+deliver — capture troops into an objective, or supply into a base running dry.
+Shoot it down en route and nothing arrives. Orderable from any slot. See
+[AI Helo Missions](../advanced/helo-missions.md).
+
+**Capture Advisor**
+`F10 → Objectives` now answers "why won't this base flip?" with a card listing
+the specific blockers, the repair outlook, the post-capture cooldown, whether a
+capture is already running, and which of your troops are in the zone — including
+the ones that **cannot capture because of their troop type**. See
+[Objectives Menu](../f10-menu/objectives.md).
+
+**Materiel & the war economy**
+Repairs and deployments are now paid for in a real commodity that has to
+physically reach the base spending it — no materiel, no repair. Production
+output scales with how much healthy territory a side holds (a factory is worth
+four airbases), hubs keep an operational reserve, and **supply routing follows
+the front line**: a base whose road is cut can only be resupplied by air. See
+[Materiel & the War Economy](../gameplay/war-economy.md).
+
+**Captured airframes**
+Taking a base now inherits a fraction of the aircraft the losing side left on
+the ramp — capped per type, and not flyable until the base is consolidated and
+repaired.
+
+**Auto-generated briefing & comms plan**
+Every round writes its own per-coalition situational briefing — slot-entry
+panel, six F10 pages, and the dashboard map — built from what your side has
+actually detected. A server-wide frequency plan keeps the two coalitions on
+non-overlapping radios. See [The Auto-Generated Briefing](../gameplay/briefing.md)
+and [Comms Plan](../gameplay/comms-plan.md).
+
+**Auto-generated navaids**
+FARPs, FOBs, logistics hubs, naval bases and carrier groups — the objective
+kinds DCS gives nothing — now get generated TACAN, NDB, ICLS, ACLS and Link-4,
+allocated per round from per-coalition channel pools and re-lit when a base
+changes hands. Listed in `F10 → Info → Navaids Directory`. See
+[Navaids & Approaches](../gameplay/navaids.md).
+
+**Objectives and Info menus**
+Two new top-level F10 menus: base reports, threat lists and the Capture Advisor
+under **Objectives**; your status, the situation briefing, support frequencies,
+convoys in transit, navaids, weather and in-cockpit help under **Info**.
+
+**F10 menus page instead of silently truncating**
+DCS drops anything past the tenth entry in a radio menu, with no error. Every
+list in the engine now spends its last slot on **`More >>`** and carries on
+inside it, so the eleventh JTAC, deployable or objective is reachable instead of
+invisible.
+
+## New Tools & Interfaces
+
+**In-DCS Cockpit UI**
+An overlay panel that renders inside the DCS window itself (EWR reports, a C-130J CARP bombing-solution planner, crate spawning) for players who install it — strictly additive, the F10 menu is unchanged and always available alongside it.
+
+**bfweb Ops Dashboard**
+A full web dashboard: live tactical map with pilot names and NATO-style unit symbology (and a light/dark theme), A/A / A/G / Logistics leaderboard tabs, objective Health/Logistics/Supply/Fuel status with colour-graded bars and repair-progress percentages, sortable columns (ascending/descending) on the Objectives, Kill Feed and Admin tables, engine performance history and hardware monitoring, and Discord OAuth login. Carrier groups appear in the Objectives list with full status but no map position (their location stays hidden). Map objective icons are clean lucide symbols with no coloured glow, and the Pilots page flight/kill/deploy logs scroll cleanly on mobile. The **Briefing** page (navaids, radios, artillery, deployables, RWR/HARM threats, kneeboard PDF) is coalition-locked — you get your own side's briefing and can't pull the enemy's.
+
+**Recon Intel Map (TARPS)**
+A shared, coalition-only reconnaissance picture on the dashboard, built from F-14 TARPS photography. Upload your TARPS captures and they're geo-referenced from the filename metadata, perspective-warped onto the map, and made visible only to your own side. Includes a corner-drag align editor for lining a photo up with terrain, and it's wiped with the campaign. See [Recon Intel Map (TARPS)](../advanced/recon-intel-map.md).
+
+**bfwiki**
+This wiki — an admin-editable player reference, separate from the web dashboard, backed by the same login. Where one bfdb fronts several DCS servers, the wiki carries a **server selector**: the prose is shared, but every campaign number on a page is read live from the selected server's own engine config, so the two never disagree.
+
+**Discord Integration**
+Kill-streak achievement announcements, capture alerts with pilot attribution, and bot plugins for announcements, FAQ, rules, tickets, and server administration.
+
+**In-game Help Menu**
+A built-in F10 help menu for quick reference without leaving the game.
+
+## See Also
+
+- [Introduction](../introduction.md)
+- [F10 Menu Overview](../f10-menu/overview.md)
+- [Materiel & the War Economy](../gameplay/war-economy.md)
+- [The Tasking Board](../gameplay/tasking-board.md)
+- [C-130 Hercules & Airdrop](../advanced/c130-airdrop.md)
+- [Capturing Objectives](../gameplay/capturing-objectives.md)

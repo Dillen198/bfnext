@@ -1,0 +1,311 @@
+{
+  "name": "Kola",
+  "center": [
+    67.64233037640517,
+    25.557186289246864
+  ],
+  "airports": [
+    {
+      "name": "Banak",
+      "position": [
+        70.06878427148166,
+        24.973510825421126
+      ],
+      "heli": false
+    },
+    {
+      "name": "Rovaniemi",
+      "position": [
+        66.56484570781977,
+        25.830487406985476
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kemi Tornio",
+      "position": [
+        65.78148440712323,
+        24.58228366626518
+      ],
+      "heli": false
+    },
+    {
+      "name": "Vuojarvi",
+      "position": [
+        67.0691327982912,
+        26.539804412076442
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kiruna",
+      "position": [
+        67.82200496760647,
+        20.33680992884745
+      ],
+      "heli": false
+    },
+    {
+      "name": "Severomorsk-3",
+      "position": [
+        68.86706165750464,
+        33.71811545483975
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bodo",
+      "position": [
+        67.26920346211635,
+        14.365362809769824
+      ],
+      "heli": false
+    },
+    {
+      "name": "Severomorsk-1",
+      "position": [
+        69.03050246074682,
+        33.42299530931186
+      ],
+      "heli": false
+    },
+    {
+      "name": "Olenya",
+      "position": [
+        68.15177821727656,
+        33.46429926759709
+      ],
+      "heli": false
+    },
+    {
+      "name": "Monchegorsk",
+      "position": [
+        67.9890427212917,
+        33.01867229102987
+      ],
+      "heli": false
+    },
+    {
+      "name": "Jokkmokk",
+      "position": [
+        66.49634574969447,
+        20.147010507474306
+      ],
+      "heli": false
+    },
+    {
+      "name": "Murmansk International",
+      "position": [
+        68.78164956885114,
+        32.75135995745224
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kalixfors",
+      "position": [
+        67.76496336735374,
+        20.251008770084244
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kirkenes",
+      "position": [
+        69.72536399910601,
+        29.890070417536002
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kallax",
+      "position": [
+        65.54378580653861,
+        22.12186733025816
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kuusamo",
+      "position": [
+        65.98736723001444,
+        29.23994726377976
+      ],
+      "heli": false
+    },
+    {
+      "name": "Vidsel",
+      "position": [
+        65.8752659080627,
+        20.14986553081449
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ivalo",
+      "position": [
+        68.60711751031062,
+        27.40483772467008
+      ],
+      "heli": false
+    },
+    {
+      "name": "Alakurtti",
+      "position": [
+        66.97273317469791,
+        30.34853547589011
+      ],
+      "heli": false
+    },
+    {
+      "name": "Andoya",
+      "position": [
+        69.29758139595346,
+        16.13540862608866
+      ],
+      "heli": false
+    },
+    {
+      "name": "Bardufoss",
+      "position": [
+        69.05534769540871,
+        18.543503915474698
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kittila",
+      "position": [
+        67.70099219092764,
+        24.846872296745392
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hosio",
+      "position": [
+        65.89611126111599,
+        25.70385400075062
+      ],
+      "heli": false
+    },
+    {
+      "name": "Alta",
+      "position": [
+        69.97726050137709,
+        23.365899396227757
+      ],
+      "heli": false
+    },
+    {
+      "name": "Evenes",
+      "position": [
+        68.49119042779472,
+        16.67813997596596
+      ],
+      "heli": false
+    },
+    {
+      "name": "Enontekio",
+      "position": [
+        68.36249732136709,
+        23.42409624563399
+      ],
+      "heli": false
+    },
+    {
+      "name": "Sodankyla",
+      "position": [
+        67.39503313124114,
+        26.619135109805125
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kilpyavr",
+      "position": [
+        69.09491219369816,
+        32.400590592443955
+      ],
+      "heli": false
+    },
+    {
+      "name": "Luostari Pechenga",
+      "position": [
+        69.40238638821204,
+        30.990917087470258
+      ],
+      "heli": false
+    },
+    {
+      "name": "Koshka Yavr",
+      "position": [
+        69.2512176752187,
+        31.196376928540996
+      ],
+      "heli": false
+    },
+    {
+      "name": "Poduzhemye",
+      "position": [
+        64.91865462900535,
+        34.262988692831875
+      ],
+      "heli": false
+    },
+    {
+      "name": "Kalevala",
+      "position": [
+        65.20950700832003,
+        31.133596072143266
+      ],
+      "heli": false
+    },
+    {
+      "name": "Afrikanda",
+      "position": [
+        67.45730501308806,
+        32.78401739236309
+      ],
+      "heli": false
+    },
+    {
+      "name": "Boden Heli Base",
+      "position": [
+        65.80932573084029,
+        21.69452276063302
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hemavan",
+      "position": [
+        65.80545862482168,
+        15.08359469093044
+      ],
+      "heli": false
+    },
+    {
+      "name": "Arvidsjaur",
+      "position": [
+        65.59150127001413,
+        19.277801763584826
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tromso",
+      "position": [
+        69.68150848269906,
+        18.917732804396525
+      ],
+      "heli": false
+    }
+  ],
+  "projection": {
+    "centralMeridian": 21,
+    "falseEasting": -62702.00000000087,
+    "falseNorthing": -7543624.999999979,
+    "scaleFactor": 0.9996
+  }
+}

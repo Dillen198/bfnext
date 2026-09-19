@@ -53,6 +53,10 @@ pub struct PerfStat {
     pub logistics_transfer: HistStat,
     pub logistics_sync_from: HistStat,
     pub logistics_sync_to: HistStat,
+    pub logistics_convoy: HistStat,
+    pub logistics_air_routes: HistStat,
+    pub logistics_sea_routes: HistStat,
+    pub frontline: HistStat,
     pub logistics_items: u64,
 }
 
@@ -86,6 +90,10 @@ impl Default for PerfStat {
             logistics_transfer: HistStat::empty("logistics_transfer", false),
             logistics_sync_from: HistStat::empty("logistics_sync_from", false),
             logistics_sync_to: HistStat::empty("logistics_sync_to", false),
+            logistics_convoy: HistStat::empty("logistics_convoy", false),
+            logistics_air_routes: HistStat::empty("logistics_air_routes", false),
+            logistics_sea_routes: HistStat::empty("logistics_sea_routes", false),
+            frontline: HistStat::empty("frontline", false),
             logistics_items: 0,
         }
     }
@@ -121,6 +129,10 @@ impl PerfStat {
             logistics_transfer,
             logistics_sync_from,
             logistics_sync_to,
+            logistics_convoy,
+            logistics_air_routes,
+            logistics_sea_routes,
+            frontline,
             logistics_items,
         } = self;
         let stats = [
@@ -151,6 +163,10 @@ impl PerfStat {
             logistics_transfer,
             logistics_sync_from,
             logistics_sync_to,
+            logistics_convoy,
+            logistics_air_routes,
+            logistics_sea_routes,
+            frontline,
         ];
         let max_len = stats
             .iter()
@@ -190,12 +206,16 @@ pub struct PerfInner {
     pub logistics_transfer: HistogramSer,
     pub logistics_sync_from: HistogramSer,
     pub logistics_sync_to: HistogramSer,
+    pub logistics_convoy: HistogramSer,
+    pub logistics_air_routes: HistogramSer,
+    pub logistics_sea_routes: HistogramSer,
+    pub frontline: HistogramSer,
     // CR evilkipper: remove this once the warehouse client/server desync bug is fixed
     pub logistics_items: FxHashSet<(String, ObjectiveId)>,
 }
 
 impl PerfInner {
-    fn stat(&self, frame: &HistogramSer) -> PerfStat {
+    pub fn stat(&self, frame: &HistogramSer) -> PerfStat {
         let Self {
             timed_events,
             slow_timed,
@@ -223,6 +243,10 @@ impl PerfInner {
             logistics_transfer,
             logistics_sync_from,
             logistics_sync_to,
+            logistics_convoy,
+            logistics_air_routes,
+            logistics_sea_routes,
+            frontline,
             logistics_items,
         } = self;
         PerfStat {
@@ -265,6 +289,10 @@ impl PerfInner {
             logistics_transfer: HistStat::new(logistics_transfer, "logistics_transfer", false),
             logistics_sync_from: HistStat::new(logistics_sync_from, "logistics_sync_from", false),
             logistics_sync_to: HistStat::new(logistics_sync_to, "logistics_sync_to", false),
+            logistics_convoy: HistStat::new(logistics_convoy, "logistics_convoy", false),
+            logistics_air_routes: HistStat::new(logistics_air_routes, "logistics_air_routes", false),
+            logistics_sea_routes: HistStat::new(logistics_sea_routes, "logistics_sea_routes", false),
+            frontline: HistStat::new(frontline, "frontline", false),
             logistics_items: logistics_items.len() as u64,
         }
     }

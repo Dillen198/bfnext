@@ -25,6 +25,12 @@
 - [Troop Transport](./f10-menu/troops.md)
 - [Early Warning Radar (EWR)](./f10-menu/ewr.md)
 
+# Server Setup
+
+- [Overview](./server-setup/overview.md)
+- [Local Testing](./server-setup/local-testing.md)
+- [Dedicated Server](./server-setup/server-setup.md)
+
 # Advanced Topics
 
 - [Artillery Missions](./advanced/artillery.md)

@@ -145,24 +145,26 @@ Display available commands.
 
 ## Unit Management Commands
 
+### Account Linking
+
+#### `-bind <uuid>`
+Links your pilot to the web dashboard. The dashboard login page shows a UUID --
+paste it here once and the two are connected.
+
+```
+-bind 3f2a91c4-8d1e-4b77-9a02-5c6e1d84b0f3
+```
+
+**This does not bind groups.** It only accepts a UUID in the `8-4-4-4-12` form;
+anything else (a group id, for instance) is rejected with "Invalid token".
+
+---
+
 ### Troop Operations
 
-#### `-bind <troop-id>`
-Bind troops to your user for movement commands.
-
-```
--bind 12345
-```
-
-**Usage**:
-- After deploying troops
-- Enables movement commands
-- Troops follow your orders
-
-**Finding Troop ID**:
-- Check F10 map markers
-- System message after deployment
-- Format: usually numeric
+Moving something you deployed needs **no binding of any kind**. Go straight to
+`F10 → Actions>> → Move (Units/Troops)`, pick the group, then pick a map
+marker. Your own groups are listed first and marked with a `*`.
 
 ---
 
@@ -303,6 +305,26 @@ Repair one step at airbase.
 ```
 
 Increases logi by one step.
+
+---
+
+#### `-admin capture <objective> <blue|red|neutral>`
+Force an objective to change hands, with all the normal capture side effects (logistics/services repair, garrison revival, warehouse and supply-line transfer, markers). Works on carrier groups. Objective names with spaces are fine.
+
+```
+-admin capture Mersin red
+-admin capture Blue Strike Group red
+```
+
+---
+
+#### `-admin tim <key> [size] [alt]`
+Detonate explosions at every F10 map mark whose text is `<key>`. `size` defaults to 3000; `alt` is an optional altitude.
+
+```
+-admin tim boom
+-admin tim boom 500
+```
 
 ---
 

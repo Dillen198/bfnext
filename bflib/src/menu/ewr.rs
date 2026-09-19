@@ -21,19 +21,68 @@ use crate::{
 };
 use anyhow::{Context as ErrContext, Result};
 use chrono::prelude::*;
-use compact_str::format_compact;
-use dcso3::{env::miz::GroupId, mission_commands::MissionCommands, MizLua};
+use compact_str::{format_compact, CompactString};
+use dcso3::{net::Ucid, Vector2, env::miz::GroupId, mission_commands::MissionCommands, MizLua};
 use std::fmt::Write;
+
+// ─── Shared report-building logic ──────────────────────────────────────────
+// Used by both the F10 menu closures below and the cockpit-UI RPC handlers
+// in bflib/src/admin.rs (AdminCommand::Ewr*), so the two UIs can never drift
+// out of sync with each other.
+
+pub(crate) fn ewr_toggle_for(ctx: &mut Context, ucid: &Ucid) -> bool {
+    ctx.ewr.toggle(ucid)
+}
+
+pub(crate) fn ewr_set_units_for(ctx: &mut Context, ucid: &Ucid, imperial: bool) {
+    ctx.ewr.set_units(
+        ucid,
+        if imperial { EwrUnits::Imperial } else { EwrUnits::Metric },
+    );
+}
+
+pub(crate) fn build_braa_report(ctx: &mut Context, ucid: &Ucid, friendly: bool) -> CompactString {
+    let mut report = format_compact!("{} BRAA\n", if friendly { "Friendlies" } else { "Bandits" });
+    let mode = ctx.db.ephemeral.cfg.ewr_mode;
+    let delay = ctx.db.ephemeral.cfg.ewr_delay;
+    if let Some(player) = ctx.db.player(ucid) {
+        if let Some((_, Some(inst))) = &player.current_slot {
+            let contacts = ctx
+                .ewr
+                .where_chicken(Utc::now(), friendly, true, ucid, player, inst, mode, delay);
+            let _ = write!(report, "{}\n", ewr::HEADER);
+            for braa in contacts {
+                let _ = write!(report, "{braa}\n");
+            }
+        }
+    }
+    report
+}
+
+pub(crate) fn build_ground_intel_report(ctx: &mut Context, ucid: &Ucid) -> CompactString {
+    let mut report = format_compact!("Ground Intel\n");
+    if let Some(player) = ctx.db.player(ucid) {
+        let side = player.side;
+        if let Some((_, Some(inst))) = &player.current_slot {
+            let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
+            let lines = ctx.ewr.intel_picture(side, pos, &ctx.db.ephemeral.intel_db);
+            for line in lines {
+                let _ = write!(report, "{line}\n");
+            }
+        } else {
+            let _ = write!(report, "Not in a slot");
+        }
+    }
+    report
+}
+
+// ─── F10 menu glue ──────────────────────────────────────────────────────────
 
 fn toggle_ewr(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        let st = if ctx.ewr.toggle(ucid) {
-            "enabled"
-        } else {
-            "disabled"
-        };
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let st = if ewr_toggle_for(ctx, &ucid) { "enabled" } else { "disabled" };
         ctx.db.ephemeral.msgs().panel_to_group(
             5,
             false,
@@ -47,56 +96,28 @@ fn toggle_ewr(lua: MizLua, gid: GroupId) -> Result<()> {
 fn ewr_report(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    let mut report = format_compact!("Bandits BRAA\n");
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        if let Some(player) = ctx.db.player(ucid) {
-            if let Some((_, Some(inst))) = &player.current_slot {
-                let chickens = ctx
-                    .ewr
-                    .where_chicken(Utc::now(), false, true, ucid, player, inst, ctx.db.ephemeral.cfg.ewr_mode, ctx.db.ephemeral.cfg.ewr_delay);
-                write!(report, "{}\n", ewr::HEADER)?;
-                for braa in chickens {
-                    write!(report, "{braa}\n")?;
-                }
-            }
-        }
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let report = build_braa_report(ctx, &ucid, false);
+        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, report);
     }
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_group(10, false, gid, report);
     Ok(())
 }
 
 fn friendly_ewr_report(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    let mut report = format_compact!("Friendlies BRAA\n");
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        if let Some(player) = ctx.db.player(ucid) {
-            if let Some((_, Some(inst))) = &player.current_slot {
-                let friendlies = ctx
-                    .ewr
-                    .where_chicken(Utc::now(), true, true, ucid, player, inst, ctx.db.ephemeral.cfg.ewr_mode, ctx.db.ephemeral.cfg.ewr_delay);
-                write!(report, "{}\n", ewr::HEADER)?;
-                for braa in friendlies {
-                    write!(report, "{braa}\n")?;
-                }
-            }
-        }
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let report = build_braa_report(ctx, &ucid, true);
+        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, report);
     }
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_group(10, false, gid, report);
     Ok(())
 }
 
 fn ewr_units_imperial(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        ctx.ewr.set_units(ucid, EwrUnits::Imperial);
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        ewr_set_units_for(ctx, &ucid, true);
         ctx.db
             .ephemeral
             .msgs()
@@ -108,8 +129,8 @@ fn ewr_units_imperial(lua: MizLua, gid: GroupId) -> Result<()> {
 fn ewr_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
-    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot) {
-        ctx.ewr.set_units(ucid, EwrUnits::Metric);
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        ewr_set_units_for(ctx, &ucid, false);
         ctx.db
             .ephemeral
             .msgs()
@@ -118,42 +139,129 @@ fn ewr_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
     Ok(())
 }
 
+fn gci_toggle(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let st = if ctx.ewr.gci_toggle(&ucid) { "enabled" } else { "disabled" };
+        ctx.db.ephemeral.msgs().panel_to_group(
+            5,
+            false,
+            gid,
+            format_compact!("GCI voice calls are {st}"),
+        );
+    }
+    Ok(())
+}
+
+/// Unprompted calls on/off. Distinct from `gci_toggle`, which removes the
+/// player from the controller's picture altogether: with auto off the
+/// controller still answers a request, it just never speaks first.
+fn gci_toggle_auto(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let on = ctx.ewr.gci_toggle_auto(&ucid);
+        let msg = if on {
+            "GCI will call you unprompted (threats, new groups, picture)"
+        } else {
+            "GCI will stay quiet unless you call — key up and ask for a bogey dope or picture"
+        };
+        ctx.db
+            .ephemeral
+            .msgs()
+            .panel_to_group(8, false, gid, format_compact!("{msg}"));
+    }
+    Ok(())
+}
+
+fn gci_units_set(lua: MizLua, gid: GroupId, units: Option<crate::ewr::EwrUnits>, label: &str) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        ctx.ewr.gci_set_units(&ucid, units);
+        ctx.db.ephemeral.msgs().panel_to_group(
+            5,
+            false,
+            gid,
+            format_compact!("GCI calls will use {label} units"),
+        );
+    }
+    Ok(())
+}
+
+fn gci_units_imperial(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_units_set(lua, gid, Some(crate::ewr::EwrUnits::Imperial), "imperial")
+}
+
+fn gci_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_units_set(lua, gid, Some(crate::ewr::EwrUnits::Metric), "metric")
+}
+
+fn gci_units_auto(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_units_set(lua, gid, None, "the server default")
+}
+
+fn gci_ref_set(lua: MizLua, gid: GroupId, refmode: Option<u8>, label: &str) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        ctx.ewr.gci_set_reference(&ucid, refmode);
+        ctx.db.ephemeral.msgs().panel_to_group(
+            5,
+            false,
+            gid,
+            format_compact!("GCI calls will use {label}"),
+        );
+    }
+    Ok(())
+}
+
+fn gci_ref_braa(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_ref_set(lua, gid, Some(0), "BRAA from your aircraft")
+}
+
+fn gci_ref_bullseye(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_ref_set(lua, gid, Some(1), "bullseye reference")
+}
+
+fn gci_ref_clock(lua: MizLua, gid: GroupId) -> Result<()> {
+    gci_ref_set(lua, gid, Some(2), "clock position")
+}
+
+fn ground_intel_report(lua: MizLua, gid: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
+        let report = build_ground_intel_report(ctx, &ucid);
+        ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, report);
+    }
+    Ok(())
+}
+
 pub(super) fn add_ewr_menu_for_group(mc: &MissionCommands, group: GroupId) -> Result<()> {
-    let root = mc.add_submenu_for_group(group, "EWR".into(), None)?;
-    mc.add_command_for_group(
-        group,
-        "Report".into(),
-        Some(root.clone()),
-        ewr_report,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Toggle".into(),
-        Some(root.clone()),
-        toggle_ewr,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Friendly Report".into(),
-        Some(root.clone()),
-        friendly_ewr_report,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Units to Imperial".into(),
-        Some(root.clone()),
-        ewr_units_imperial,
-        group,
-    )?;
-    mc.add_command_for_group(
-        group,
-        "Units to Metric".into(),
-        Some(root.clone()),
-        ewr_units_metric,
-        group,
-    )?;
+    use super::Pager;
+    let root = mc.add_submenu_for_group(group, "GCI/EWR".into(), None)?;
+
+    // Both levels are paged: the root is already near DCS's 10-entry cap and
+    // gains entries as features land, and the GCI submenu likewise.
+    let mut p = Pager::new(group, root.clone());
+    p.command(mc, "Report".into(), ewr_report, group)?;
+    p.command(mc, "Toggle".into(), toggle_ewr, group)?;
+    p.command(mc, "Friendly Report".into(), friendly_ewr_report, group)?;
+    p.command(mc, "Units to Imperial".into(), ewr_units_imperial, group)?;
+    p.command(mc, "Units to Metric".into(), ewr_units_metric, group)?;
+    p.command(mc, "Ground Intel".into(), ground_intel_report, group)?;
+
+    let gci = p.submenu(mc, "GCI Voice".into())?;
+    let mut g = Pager::new(group, gci);
+    g.command(mc, "Toggle GCI Calls".into(), gci_toggle, group)?;
+    g.command(mc, "Toggle Auto Callouts".into(), gci_toggle_auto, group)?;
+    g.command(mc, "Units: Imperial".into(), gci_units_imperial, group)?;
+    g.command(mc, "Units: Metric".into(), gci_units_metric, group)?;
+    g.command(mc, "Units: Server Default".into(), gci_units_auto, group)?;
+    g.command(mc, "Reference: BRAA".into(), gci_ref_braa, group)?;
+    g.command(mc, "Reference: Bullseye".into(), gci_ref_bullseye, group)?;
+    g.command(mc, "Reference: Clock".into(), gci_ref_clock, group)?;
     Ok(())
 }

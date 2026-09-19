@@ -1,0 +1,80 @@
+{
+  "_comment": "Dashboard/website branding config. Copy this, rename it (e.g. campaign.json), keep only the keys you want to change, then pass it to bfdb.",
+  "_usage":   "bfdb.exe --db \"E:\\Saved Games\\DCS\\bfdb\" --config \"E:\\campaign.json\" --listen-address 0.0.0.0:8080",
+  "_note":    "Served at GET /api/config and deep-merged over the built-in defaults (bfweb/src/config/campaign.ts) at runtime. Every key is optional. The values below ARE the current defaults -- override what you need. This file only styles bfweb (the dashboard); bfsite (the public site) and bfwiki carry their own copy, and the engine (gameplay) config is a separate file -- see _engine_note.",
+
+  "_section_identity": "──── IDENTITY ────────────────────────────────────────────────────────────",
+  "name":      "Vector Strike",
+  "shortName": "VS",
+  "tagline":   "Where every sortie shapes the war.",
+  "version":   "v3.0",
+  "_logo_note": "logoUrl: URL or path to a logo image (shown in the sidebar). Empty = text monogram.",
+  "logoUrl":   "",
+
+  "_section_links": "──── LINKS ───────────────────────────────────────────────────────────────",
+  "discord":     "https://discord.gg/XyGkb3WAXS",
+  "server":      "The Coop · Operation Vector Strike",
+  "_serverip_note": "serverIp: 'host:port' shown in the topbar so pilots can direct-connect. Empty = hidden.",
+  "serverIp":    "",
+  "websiteUrl":  "",
+  "_wiki_note":  "wikiUrl: link to the wiki (opens the WIKI item in the sidebar). Empty = hidden.",
+  "wikiUrl":     "https://wiki.vectorstrike.org",
+  "_donation_note": "donationUrl: Ko-fi / Patreon / etc. Empty = the SUPPORT button is hidden.",
+  "donationUrl": "",
+
+  "_section_factions": "──── FACTION LABELS ──────────────────────────────────────────────────────",
+  "blueLabel": "BLUFOR",
+  "redLabel":  "REDFOR",
+
+  "_section_colors": "──── COLORS ──────────────────────────────────────────────────────────────",
+  "_color_note": "CSS colour strings. Omit any key to keep the default. accent* drive the OD-green UI accent; blue/red are the coalition colours; bg* are the dark-theme surfaces (the light theme has its own fixed palette).",
+  "accentColor":      "#4d7c0f",
+  "accentHoverColor": "#65a30d",
+  "blueColor":        "#3b82f6",
+  "redColor":         "#ef4444",
+  "bgColor":          "#0a0a0a",
+  "bgCardColor":      "#111111",
+  "bgElevatedColor":  "#191919",
+  "borderColor":      "#2a2a2a",
+
+  "_section_background": "──── BACKGROUND / THEME ──────────────────────────────────────────────────",
+  "_bg_image_note": "backgroundImage: URL (HTTPS or relative path) to an image drawn faintly behind the whole UI. Empty = none.",
+  "_bg_image_examples": ["https://example.com/camo-texture.jpg", "/assets/map-bg.jpg"],
+  "backgroundImage":        "",
+  "backgroundImageOpacity": 0.08,
+  "backgroundImageSize":    "cover",
+  "backgroundImageBlend":   "overlay",
+  "_camo_note": "camoPattern: built-in CSS overlay pattern. 'none' | 'digital' | 'hex' | 'terrain' | 'multicam'. Renders on top of backgroundImage if both are set.",
+  "camoPattern": "none",
+  "camoOpacity": 0.05,
+
+  "_section_map": "──── MAP ─────────────────────────────────────────────────────────────────",
+  "_map_note": "mapCenter [lat, lon] / mapZoom only position the SITREP page's mini-map. The TACMAP page auto-detects the DCS theatre from the campaign objectives. Preset centres: Caucasus [42.35,43.50], Syria [35.0,38.5], Persia [26.5,55.5], Sinai [31.0,32.0], Kola [67.6,25.6], Nevada [36.7,-115.6], Normandy [49.0,-0.5].",
+  "mapCenter": [33.0, 36.5],
+  "mapZoom":   7,
+
+  "_tacmap_note": "TACMAP is a server-authoritative fog-of-war picture over WS /ws/tacmap: each coalition only sees what its own sensors detect, streamed per side from the engine's query-tacmap RPC. Nothing to set here. AIR contacts = the EWR/AWACS network + friendly airborne datalink (automatic). GROUND contacts (JTAC eyes-on, recon/ELINT) only appear if the ENGINE config has an `elint` and/or `player_recon` block -- with neither, the ground picture is always empty. /ws/units and /api/units (raw god's-eye feed) are admin-only.",
+
+  "_section_dashboard": "──── DASHBOARD ───────────────────────────────────────────────────────────",
+  "dashboardKillFeedCount": 30,
+  "_dashboard_legacy_note": "dashboardRightPanelWidth / dashboardObjectivesHeight are read but unused by the current dashboard layout; kept for back-compat.",
+  "dashboardRightPanelWidth":  300,
+  "dashboardObjectivesHeight": 220,
+
+  "_section_integrations": "──── INTEGRATIONS ────────────────────────────────────────────────────────",
+  "_srs_note": "srsUrl: an http(s) URL to proxy (SRS's own HTTP_SERVER feature) OR a local path to the JSON file SRS writes when CLIENT_EXPORT_ENABLED=True. Empty = the SRS radio panel is hidden. --srs-url on the bfdb command line overrides this.",
+  "srsUrl": "",
+  "_gci_note": "Live GCI (proactive AWACS-style SRS callouts over two persistent SRS connections) has its OWN file -- see gci.sample.json in the repo root, wired via --gci-config (or $gciConfigPath in bfsystem.ps1). A `gci` object may be placed here as a fallback (same keys as gci.sample.json) but --gci-config wins.",
+  "_engine_note": "Gameplay/engine config (objectives, deployables, EWR, elint, player_recon, logistics, ...) is a SEPARATE file loaded by bflib, editable in-dashboard when bfdb is started with --engine-config <path> (e.g. miz/ODFv2_CFG). It is NOT this file.",
+
+  "_section_credits": "──── CREDITS ─────────────────────────────────────────────────────────────",
+  "_credits_note": "engineCredits show on the ABOUT page as the Fowl Engine authors; serverCredits as the people running this server.",
+  "engineCredits": [
+    { "name": "EvilKipper", "handle": "",                 "role": "Creator"              },
+    { "name": "KillerDog",  "handle": "No15 | KillerDog",  "role": "Lead Developer"       },
+    { "name": "EagleEye",   "handle": "[.ID] EagleEye",    "role": "Tester & Contributor" }
+  ],
+  "serverCredits": [
+    { "name": "Hacker", "role": "Server Host — Founder, 61st ATP" }
+  ]
+}

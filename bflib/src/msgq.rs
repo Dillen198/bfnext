@@ -19,7 +19,10 @@ use dcso3::{
     coalition::Side,
     env::miz::{GroupId, UnitId},
     net::{Net, PlayerId},
-    trigger::{Action, ArrowSpec, CircleSpec, MarkId, QuadSpec, RectSpec, SideFilter, TextSpec},
+    trigger::{
+        Action, ArrowSpec, CircleSpec, LineSpec, MarkId, PolylineSpec, QuadSpec, RectSpec,
+        SideFilter, TextSpec,
+    },
 };
 use log::error;
 use std::collections::VecDeque;
@@ -33,7 +36,6 @@ pub enum PanelDest {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum MarkDest {
     All,
     Side(Side),
@@ -57,7 +59,6 @@ pub enum MsgTyp {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum Msg {
     Message {
         typ: MsgTyp,
@@ -90,6 +91,19 @@ pub enum Msg {
         id: MarkId,
         to: SideFilter,
         spec: ArrowSpec,
+        message: Option<String>,
+    },
+    Line {
+        id: MarkId,
+        to: SideFilter,
+        spec: LineSpec,
+        message: Option<String>,
+    },
+    /// A connected multi-point shape drawn as ONE mark (markupToAll shapeId 7).
+    Freeform {
+        id: MarkId,
+        to: SideFilter,
+        spec: PolylineSpec,
         message: Option<String>,
     },
     SetMarkupColor {
@@ -133,6 +147,36 @@ impl Default for MsgQ {
     }
 }
 
+/// Replace a markup mutation that is still sitting in the queue for the same
+/// mark, instead of queueing a second one behind it.
+///
+/// Every one of these means "make mark N look like this now", so only the last
+/// one for a given mark carries any information -- the ones in front of it just
+/// spend the per-second budget replaying states the campaign has already moved
+/// past. That is what produced labels contradicting themselves (a base reading
+/// "Health: 100" and ">> CAPTURABLE" at once, from two different renders) once
+/// the queue got behind. Collapsing them also stops a backlog from growing
+/// without bound: the queue holds at most one pending update per mark per kind.
+macro_rules! coalesce {
+    ($self:ident, $variant:ident { $id:ident, $field:ident }, $new:expr) => {{
+        for cmd in $self.0[2].iter_mut() {
+            if let Cmd::Send(Msg::$variant {
+                id: qid,
+                $field: qval,
+            }) = cmd
+                && *qid == $id
+            {
+                *qval = $new;
+                return;
+            }
+        }
+        $self.0[2].push_back(Cmd::Send(Msg::$variant {
+            id: $id,
+            $field: $new,
+        }))
+    }};
+}
+
 impl MsgQ {
     fn send_with_priority<S: Into<String>>(&mut self, p: usize, typ: MsgTyp, text: S) {
         self.0[p].push_back(Cmd::Send(Msg::Message {
@@ -151,12 +195,30 @@ impl MsgQ {
             self.0[pri].retain(|cmd| match cmd {
                 Cmd::DeleteMark(_) => true,
                 Cmd::Send(msg) => match msg {
+                    // A pin create that has not drained yet is pointless once
+                    // the same mark is being deleted -- drop BOTH. Without
+                    // this a re-dropped pin left a dead create and a dead
+                    // delete in the queue behind it, which is how pin churn
+                    // doubled its own cost.
+                    Msg::Message {
+                        typ: MsgTyp::Mark { id, .. },
+                        ..
+                    } => {
+                        if *id == did {
+                            push = false;
+                            false
+                        } else {
+                            true
+                        }
+                    }
                     Msg::Message { .. } => true,
                     Msg::Circle { id, .. }
                     | Msg::Rect { id, .. }
                     | Msg::Quad { id, .. }
                     | Msg::Text { id, .. }
-                    | Msg::Arrow { id, .. } => {
+                    | Msg::Arrow { id, .. }
+                    | Msg::Line { id, .. }
+                    | Msg::Freeform { id, .. } => {
                         if *id == did {
                             push = false;
                             false
@@ -180,7 +242,6 @@ impl MsgQ {
         }
     }
 
-    #[allow(dead_code)]
     pub fn mark_to_all<S: Into<String>>(
         &mut self,
         position: Vector2,
@@ -222,7 +283,6 @@ impl MsgQ {
         id
     }
 
-    #[allow(dead_code)]
     pub fn mark_to_group<S: Into<String>>(
         &mut self,
         group: GroupId,
@@ -244,7 +304,6 @@ impl MsgQ {
         id
     }
 
-    #[allow(dead_code)]
     pub fn panel_to_all<S: Into<String>>(&mut self, display_time: i64, clear_view: bool, text: S) {
         self.send_with_priority(
             0,
@@ -326,7 +385,6 @@ impl MsgQ {
         }))
     }
 
-    #[allow(dead_code)]
     pub fn rect_to_all(
         &mut self,
         to: SideFilter,
@@ -357,8 +415,24 @@ impl MsgQ {
         }))
     }
 
+    /// Text markup goes in the markup queue, not the mark queue, even though it
+    /// reads like a label. It has to: `set_markup_text` and friends queue the
+    /// *mutations* of a text mark at priority 2, and a mutation that overtakes
+    /// its own create addresses a mark DCS hasn't drawn yet -- the update is
+    /// lost and the label sits on whatever text it was created with. Keeping
+    /// the create and its mutations in one queue keeps them in issue order.
     pub fn text_to_all(&mut self, to: SideFilter, id: MarkId, spec: TextSpec) {
-        self.0[1].push_back(Cmd::Send(Msg::Text { id, to, spec }))
+        self.0[2].push_back(Cmd::Send(Msg::Text { id, to, spec }))
+    }
+
+    pub fn line_to_all(
+        &mut self,
+        to: SideFilter,
+        id: MarkId,
+        spec: LineSpec,
+        message: Option<String>,
+    ) {
+        self.0[2].push_back(Cmd::Send(Msg::Line { id, to, spec, message }))
     }
 
     pub fn arrow_to(
@@ -376,43 +450,143 @@ impl MsgQ {
         }))
     }
 
-    pub fn set_markup_color(&mut self, id: MarkId, color: Color) {
-        self.0[2].push_back(Cmd::Send(Msg::SetMarkupColor { id, color }))
+    /// Queue a connected multi-point shape. Priority 2, same as every other
+    /// markup draw, so it shares the objective-markup budget rather than
+    /// competing with group pins.
+    pub fn freeform_to_all(
+        &mut self,
+        to: SideFilter,
+        id: MarkId,
+        spec: PolylineSpec,
+        message: Option<String>,
+    ) {
+        self.0[2].push_back(Cmd::Send(Msg::Freeform {
+            id,
+            to,
+            spec,
+            message,
+        }))
     }
 
-    #[allow(dead_code)]
+    pub fn set_markup_color(&mut self, id: MarkId, color: Color) {
+        coalesce!(self, SetMarkupColor { id, color }, color)
+    }
+
     pub fn set_markup_fill_color(&mut self, id: MarkId, color: Color) {
-        self.0[2].push_back(Cmd::Send(Msg::SetMarkupFillColor { id, color }))
+        coalesce!(self, SetMarkupFillColor { id, color }, color)
     }
 
     pub fn set_markup_text(&mut self, id: MarkId, text: String) {
-        self.0[2].push_back(Cmd::Send(Msg::SetMarkupText { id, text }))
+        coalesce!(self, SetMarkupText { id, text }, text)
     }
 
     pub fn set_markup_pos_start(&mut self, id: MarkId, pos: LuaVec3) {
-        self.0[2].push_back(Cmd::Send(Msg::SetMarkupStart { id, pos }))
+        coalesce!(self, SetMarkupStart { id, pos }, pos)
     }
 
     pub fn set_markup_pos_end(&mut self, id: MarkId, pos: LuaVec3) {
-        self.0[2].push_back(Cmd::Send(Msg::SetMarkupEnd { id, pos }))
+        coalesce!(self, SetMarkupEnd { id, pos }, pos)
     }
 
     pub fn len(&self) -> usize {
         self.0.iter().fold(0, |acc, q| acc + q.len())
     }
 
+    /// Queue depth per priority (chat/panels, marks, markup) plus a breakdown
+    /// by command kind, biggest first. The depth on its own only says the F10
+    /// map is behind; this says what is holding it up, which is the difference
+    /// between raising the rate and stopping whatever keeps redrawing itself.
+    pub fn depth_report(&self) -> ([usize; 3], std::string::String) {
+        use std::fmt::Write;
+        let mut counts: Vec<(&'static str, usize)> = vec![];
+        for q in &self.0 {
+            for cmd in q {
+                let kind = Self::kind(cmd);
+                match counts.iter_mut().find(|(k, _)| *k == kind) {
+                    Some((_, n)) => *n += 1,
+                    None => counts.push((kind, 1)),
+                }
+            }
+        }
+        counts.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut by_kind = std::string::String::new();
+        for (kind, n) in counts.iter().take(6) {
+            if !by_kind.is_empty() {
+                by_kind.push_str(", ");
+            }
+            let _ = write!(by_kind, "{kind}={n}");
+        }
+        ([self.0[0].len(), self.0[1].len(), self.0[2].len()], by_kind)
+    }
+
+    fn kind(cmd: &Cmd) -> &'static str {
+        match cmd {
+            Cmd::DeleteMark(_) => "DeleteMark",
+            Cmd::Send(Msg::Message {
+                typ: MsgTyp::Mark { .. },
+                ..
+            }) => "Mark",
+            Cmd::Send(Msg::Message {
+                typ: MsgTyp::Chat(_),
+                ..
+            }) => "Chat",
+            Cmd::Send(Msg::Message {
+                typ: MsgTyp::Panel { .. },
+                ..
+            }) => "Panel",
+            Cmd::Send(Msg::Circle { .. }) => "Circle",
+            Cmd::Send(Msg::Rect { .. }) => "Rect",
+            Cmd::Send(Msg::Quad { .. }) => "Quad",
+            Cmd::Send(Msg::Text { .. }) => "Text",
+            Cmd::Send(Msg::Arrow { .. }) => "Arrow",
+            Cmd::Send(Msg::Line { .. }) => "Line",
+            Cmd::Send(Msg::Freeform { .. }) => "Freeform",
+            Cmd::Send(Msg::SetMarkupColor { .. }) => "SetMarkupColor",
+            Cmd::Send(Msg::SetMarkupFillColor { .. }) => "SetMarkupFillColor",
+            Cmd::Send(Msg::SetMarkupText { .. }) => "SetMarkupText",
+            Cmd::Send(Msg::SetMarkupStart { .. }) => "SetMarkupStart",
+            Cmd::Send(Msg::SetMarkupEnd { .. }) => "SetMarkupEnd",
+        }
+    }
+
     pub fn process(&mut self, max_rate: usize, net: &Net, act: &Action) {
+        // Draining in strict priority order starves the markup queue. Chat,
+        // panels and group pins (priorities 0 and 1) are produced continuously
+        // -- every event sends a panel, every vehicle under way re-pins itself
+        // -- so while those are drained first and without limit, the F10 markup
+        // behind them never gets a turn and the map's labels, rings and supply
+        // arrows stop tracking the campaign altogether. Reserve a share of
+        // every pass for the markup queue so it always makes progress.
+        //
+        // A budget of one leaves nothing to split -- reserving it would starve
+        // chat and panels instead, which is the worse trade.
+        let reserved = if self.0[2].is_empty() || max_rate < 2 {
+            0
+        } else {
+            (max_rate / 3).max(1)
+        };
+        let urgent_budget = max_rate.saturating_sub(reserved);
+        let mut urgent = 0;
         for _ in 0..max_rate {
-            let cmd = match self.0[0].pop_front() {
-                Some(cmd) => cmd,
-                None => match self.0[1].pop_front() {
-                    Some(cmd) => cmd,
-                    None => match self.0[2].pop_front() {
-                        Some(cmd) => cmd,
-                        None => return,
-                    },
-                },
+            let cmd = if urgent < urgent_budget {
+                match self.0[0].pop_front().or_else(|| self.0[1].pop_front()) {
+                    Some(cmd) => {
+                        urgent += 1;
+                        Some(cmd)
+                    }
+                    None => self.0[2].pop_front(),
+                }
+            } else {
+                match self.0[2].pop_front() {
+                    Some(cmd) => Some(cmd),
+                    None => self.0[0].pop_front().or_else(|| self.0[1].pop_front()),
+                }
             };
+            let cmd = match cmd {
+                Some(cmd) => cmd,
+                None => return,
+            };
+            let kind = Self::kind(&cmd);
             let res = match cmd {
                 Cmd::DeleteMark(id) => act.remove_mark(id),
                 Cmd::Send(Msg::Message { typ, text }) => match typ {
@@ -476,6 +650,18 @@ impl MsgQ {
                     spec,
                     message,
                 }) => act.arrow_to_all(to, id, spec, message),
+                Cmd::Send(Msg::Line {
+                    id,
+                    to,
+                    spec,
+                    message,
+                }) => act.line_to_all(to, id, spec, message),
+                Cmd::Send(Msg::Freeform {
+                    id,
+                    to,
+                    spec,
+                    message,
+                }) => act.freeform_to_all(to, id, spec, message),
                 Cmd::Send(Msg::SetMarkupColor { id, color }) => act.set_markup_color(id, color),
                 Cmd::Send(Msg::SetMarkupFillColor { id, color }) => {
                     act.set_markup_fill_color(id, color)
@@ -487,7 +673,7 @@ impl MsgQ {
                 Cmd::Send(Msg::SetMarkupText { id, text }) => act.set_markup_text(id, text),
             };
             if let Err(e) = res {
-                error!("could not send message {:?}", e)
+                error!("could not send message ({kind}) {:?}", e)
             }
         }
     }

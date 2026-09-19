@@ -1,0 +1,111 @@
+{
+  "name": "TheChannel",
+  "center": [
+    51.031832351283356,
+    1.278251231515635
+  ],
+  "airports": [
+    {
+      "name": "Abbeville Drucat",
+      "position": [
+        50.14345084634776,
+        1.8319462661300971
+      ],
+      "heli": false
+    },
+    {
+      "name": "Merville Calonne",
+      "position": [
+        50.619514048756535,
+        2.638131360304339
+      ],
+      "heli": false
+    },
+    {
+      "name": "Saint Omer Longuenesse",
+      "position": [
+        50.7287000838069,
+        2.231933186031852
+      ],
+      "heli": false
+    },
+    {
+      "name": "Dunkirk Mardyck",
+      "position": [
+        51.029623601861395,
+        2.252448845869218
+      ],
+      "heli": false
+    },
+    {
+      "name": "Manston",
+      "position": [
+        51.34197963294575,
+        1.3461414037815187
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hawkinge",
+      "position": [
+        51.111906108008824,
+        1.1602570194882944
+      ],
+      "heli": false
+    },
+    {
+      "name": "Lympne",
+      "position": [
+        51.080664932700344,
+        1.017045353313116
+      ],
+      "heli": false
+    },
+    {
+      "name": "Detling",
+      "position": [
+        51.30504215948129,
+        0.5998626222618286
+      ],
+      "heli": false
+    },
+    {
+      "name": "Eastchurch",
+      "position": [
+        51.39013699729312,
+        0.846900380952439
+      ],
+      "heli": false
+    },
+    {
+      "name": "High Halden",
+      "position": [
+        51.1216409899785,
+        0.6937473331821475
+      ],
+      "heli": false
+    },
+    {
+      "name": "Headcorn",
+      "position": [
+        51.18261207888572,
+        0.6894982481053885
+      ],
+      "heli": false
+    },
+    {
+      "name": "Biggin Hill",
+      "position": [
+        51.32671673533415,
+        0.03110275876738013
+      ],
+      "heli": false
+    }
+  ],
+  "projection": {
+    "centralMeridian": 3,
+    "falseEasting": 99376.00000000288,
+    "falseNorthing": -5636889.00000001,
+    "scaleFactor": 0.9996
+  }
+}
