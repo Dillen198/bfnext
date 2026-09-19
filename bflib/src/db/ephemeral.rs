@@ -31,7 +31,7 @@ use crate::{
     bg::Task,
     maybe,
     msgq::MsgQ,
-    spawnctx::{Despawn, SpawnCtx, Spawned},
+    spawnctx::{Despawn, SpawnCtx, SpawnLoc, Spawned},
 };
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
@@ -852,7 +852,21 @@ impl Ephemeral {
                 }
             }
         } else if slen > 0 {
-            for _ in 0..max(1, slen >> 4) {
+            // `slen >> 4` is a queue-depth budget, and on its own it is a
+            // frame-time hazard: a mass spawn makes it ten groups, and one
+            // `Coalition.addGroup` measured 534ms at the 99.9th on the live
+            // server -- ten of those in a single DCS frame is a multi-second
+            // freeze for everyone on the server. DCS's cost per group is not
+            // something bflib can lower, but how many of them land in one
+            // frame is. Stop at a frame's worth and take the rest next tick;
+            // at 1Hz a deep queue still drains in seconds. Always at least
+            // one, so the queue cannot stall however slow a single spawn is.
+            const SPAWN_BUDGET: chrono::Duration = chrono::Duration::milliseconds(15);
+            let st = Utc::now();
+            for i in 0..max(1, slen >> 4) {
+                if i > 0 && Utc::now() - st > SPAWN_BUDGET {
+                    break;
+                }
                 if let Some(gid) = self.spawnq.pop_front() {
                     let group = maybe!(persisted.groups, gid, "group")?;
                     self.spawn_group(perf, persisted, idx, spctx, group, vec![])?;
@@ -2058,6 +2072,21 @@ impl Ephemeral {
                                 "[GROUND_START] {} has no resolvable airbase for {:?} -- starting from open ground at ({:.0},{:.0}) elev {alt:.0}",
                                 group.name, group.origin, first.pos.x, first.pos.y
                             );
+                        }
+                        // An action whose spawn location *is* an air start
+                        // asked for this. Reporting it as a failure to find an
+                        // airbase reads like a broken drone every mission
+                        // start, when nothing is wrong: the template has no
+                        // field because it was never meant to use one.
+                        _ if matches!(
+                            &group.origin,
+                            DeployKind::Action { loc: SpawnLoc::InAir { .. }, .. }
+                        ) =>
+                        {
+                            info!(
+                                "[GROUND_START] {} starts in the air, as its action specifies",
+                                group.name
+                            )
                         }
                         _ => warn!(
                             "[GROUND_START] {} has no resolvable airbase for {:?} -- leaving template waypoint 0, so this flight will air-start (a CAP is then scrapped by enforce_cap_ground_start)",

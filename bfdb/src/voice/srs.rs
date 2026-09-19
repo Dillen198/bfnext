@@ -793,12 +793,17 @@ fn serve_once(c: &Inner) -> Result<()> {
     // ping write or a read error/EOF instead; keep this only as a long
     // backstop for a silently half-open socket.
     // A near-empty server genuinely sends an idle EAM client nothing for
-    // minutes at a time. 150s was tripping a reconnect storm every few
-    // minutes on a quiet server (each reconnect briefly churns 10054/10061).
-    // A dead socket surfaces as a failed PING write within tens of seconds
-    // regardless, so this only needs to be a long backstop for a silently
-    // half-open connection.
-    const IDLE_BAIL: Duration = Duration::from_secs(600);
+    // minutes at a time, so this is not a liveness signal -- a dead socket
+    // surfaces as a failed PING write within tens of seconds regardless, and
+    // this only exists as a backstop for a silently half-open connection.
+    //
+    // 150s tripped a reconnect storm every few minutes; 600s still did, just
+    // slower. The live log has 158 reconnects in 5.5 hours across four
+    // channels -- every one of them a working connection torn down for being
+    // quiet, and every one a window where GCI and ATC cannot transmit. A
+    // backstop that fires on healthy connections is not a backstop, so put it
+    // far beyond any real quiet period and let the ping write do its job.
+    const IDLE_BAIL: Duration = Duration::from_secs(3 * 3600);
     loop {
         match tcp.read(&mut rd) {
             Ok(0) => anyhow::bail!("SRS server closed the connection"),
