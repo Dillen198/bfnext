@@ -376,12 +376,73 @@ fn parse_bot_datetime(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc))
 }
 
+/// Which of DCSServerBot's servers belongs to `inst`.
+///
+/// With one DCS server behind bfdb, "the first one" and "the right one" are
+/// the same server and nobody noticed the difference. With two they are not:
+/// the bot's `/servers` list is in its own order, so every instance was handed
+/// the first entry's weather and restart time. A Syria campaign and a Caucasus
+/// campaign, each baking its own METAR station into its own mission, both read
+/// the same conditions on the dashboard -- and worse, `/api/stats` pushes that
+/// reading back into the engine via `set-server-info`, so one server's in-game
+/// ATIS and F10 Info showed the other server's weather. The same bug on
+/// `bot_instance_action` means an admin restarting a server restarts whichever
+/// one the bot happens to list first.
+///
+/// `dcs_server_name` on the instance is the match. It already exists for the
+/// fowlengine plugin's lookup in the other direction.
+fn pick_bot_server(servers: Vec<BotServerInfo>, inst: &Inst) -> anyhow::Result<BotServerInfo> {
+    if let Some(want) = inst.cfg.dcs_server_name.as_deref() {
+        return servers
+            .into_iter()
+            .find(|s| s.name == want)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "DCSServerBot has no server named {want:?}, which instance {:?} claims -- \
+                     fix `dcs_server_name` in the instances file so it matches the bot exactly",
+                    inst.id
+                )
+            });
+    }
+    let mut it = servers.into_iter();
+    match (it.next(), it.next()) {
+        (Some(only), None) => Ok(only),
+        // Guessing here is how one server ends up flying another's weather.
+        (Some(_), Some(_)) => anyhow::bail!(
+            "instance {:?} has no `dcs_server_name` and DCSServerBot fronts more than one \
+             server -- set it, or bfdb cannot tell which server's weather, restart time and \
+             controls belong to this instance",
+            inst.id
+        ),
+        (None, _) => anyhow::bail!("DCSServerBot has no servers registered"),
+    }
+}
+
+/// A misconfigured `dcs_server_name` is permanent until somebody edits the
+/// file, and `/api/stats` is polled every 30s by every open dashboard tab, so
+/// saying so on every request would bury the log. Say it, then say it again
+/// occasionally.
+fn warn_bot_lookup(inst: &Inst, e: &anyhow::Error) {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    const QUIET_SECS: i64 = 300;
+    static LAST: AtomicI64 = AtomicI64::new(i64::MIN);
+    let now = chrono::Utc::now().timestamp();
+    let last = LAST.load(Ordering::Relaxed);
+    if now - last >= QUIET_SECS {
+        LAST.store(now, Ordering::Relaxed);
+        log::warn!("[{}] DCSServerBot server lookup failed: {e:#}", inst.id);
+    }
+}
+
 /// Fetches DCSServerBot's GET {prefix}/servers -- never fails outright,
 /// same never-fails contract as resolve_ucid_via_bot (a dashboard falling
 /// back to bflib-derived data, or nothing, beats /api/stats breaking
 /// because the bot is down). Backs both the restart countdown and live
 /// weather, which live in the same response.
-async fn fetch_bot_server_info(bot_cfg: &Option<BotLinkConfig>) -> Option<BotServerInfo> {
+async fn fetch_bot_server_info(
+    bot_cfg: &Option<BotLinkConfig>,
+    inst: &Inst,
+) -> Option<BotServerInfo> {
     let cfg = bot_cfg.as_ref()?;
     let result: anyhow::Result<Option<BotServerInfo>> = async {
         let http = reqwest::Client::new();
@@ -394,12 +455,12 @@ async fn fetch_bot_server_info(bot_cfg: &Option<BotLinkConfig>) -> Option<BotSer
             .json()
             .await
             .map_err(|e| anyhow::anyhow!("DCSServerBot servers response parse failed: {e}"))?;
-        Ok(servers.into_iter().next())
+        Ok(Some(pick_bot_server(servers, inst)?))
     }.await;
     match result {
         Ok(v) => v,
         Err(e) => {
-            log::warn!("DCSServerBot /servers lookup failed: {e:?}");
+            warn_bot_lookup(inst, &e);
             None
         }
     }
@@ -415,6 +476,7 @@ async fn fetch_bot_server_info(bot_cfg: &Option<BotLinkConfig>) -> Option<BotSer
 /// server), so the caller needs to know if it actually happened.
 async fn bot_instance_action(
     bot_cfg: &Option<BotLinkConfig>,
+    inst: &Inst,
     path: &str,
 ) -> anyhow::Result<serde_json::Value> {
     let cfg = bot_cfg.as_ref().ok_or_else(|| {
@@ -430,12 +492,16 @@ async fn bot_instance_action(
         .json()
         .await
         .map_err(|e| anyhow::anyhow!("DCSServerBot /servers response parse failed: {e}"))?;
-    let name = servers
-        .into_iter()
-        .next()
+    // Stopping or restarting the wrong DCS server is not a thing to guess at.
+    let name = pick_bot_server(servers, inst)
         .map(|s| s.name)
-        .filter(|n| !n.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("DCSServerBot has no servers registered"))?;
+        .and_then(|n| {
+            if n.is_empty() {
+                anyhow::bail!("DCSServerBot reported a server with an empty name")
+            } else {
+                Ok(n)
+            }
+        })?;
     let resp = http
         .post(format!("{}/{path}", cfg.base_url))
         .header("X-API-Key", &cfg.api_key)
@@ -1471,7 +1537,7 @@ async fn api_stats(
         }))
     })?;
 
-    let bot_info = fetch_bot_server_info(&bot_cfg).await;
+    let bot_info = fetch_bot_server_info(&bot_cfg, &inst).await;
 
     // DCSServerBot's Scheduler plugin is what actually restarts this server
     // (bflib's own stop_time isn't in play here) -- prefer its restart_time
@@ -2345,9 +2411,10 @@ async fn api_admin_bot_status(
     session_id: Option<Uuid>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
-    let info = fetch_bot_server_info(&bot_cfg).await;
+    let info = fetch_bot_server_info(&bot_cfg, &inst).await;
     Ok(warp::reply::json(&serde_json::json!({
         "configured": bot_cfg.is_some(),
         "name": info.as_ref().map(|s| s.name.clone()),
@@ -2361,11 +2428,12 @@ async fn api_admin_bot_action(
     session_id: Option<Uuid>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
     path: &'static str,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
-    let body = bot_instance_action(&bot_cfg, path).await.map_err(Error)?;
-    log::info!("ADMIN: DCSServerBot {path} triggered");
+    let body = bot_instance_action(&bot_cfg, &inst, path).await.map_err(Error)?;
+    log::info!("ADMIN: DCSServerBot {path} triggered on instance {:?}", inst.id);
     Ok(warp::reply::json(&body))
 }
 
@@ -2374,8 +2442,9 @@ async fn api_admin_bot_start(
     session_id: Option<Uuid>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    api_admin_bot_action(session_id, db, bot_cfg, "instance/start").await
+    api_admin_bot_action(session_id, db, bot_cfg, inst, "instance/start").await
 }
 
 /// POST /api/admin/bot/stop  — DCSServerBot: stop the DCS server instance
@@ -2383,8 +2452,9 @@ async fn api_admin_bot_stop(
     session_id: Option<Uuid>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    api_admin_bot_action(session_id, db, bot_cfg, "instance/stop").await
+    api_admin_bot_action(session_id, db, bot_cfg, inst, "instance/stop").await
 }
 
 /// POST /api/admin/bot/restart  — DCSServerBot: restart the DCS server instance
@@ -2392,8 +2462,9 @@ async fn api_admin_bot_restart(
     session_id: Option<Uuid>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    api_admin_bot_action(session_id, db, bot_cfg, "instance/restart").await
+    api_admin_bot_action(session_id, db, bot_cfg, inst, "instance/restart").await
 }
 
 /// POST /api/admin/bot/mission/restart  — DCSServerBot: restart the current mission
@@ -2401,8 +2472,9 @@ async fn api_admin_bot_mission_restart(
     session_id: Option<Uuid>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    api_admin_bot_action(session_id, db, bot_cfg, "instance/mission/restart").await
+    api_admin_bot_action(session_id, db, bot_cfg, inst, "instance/mission/restart").await
 }
 
 /// POST /api/admin/bot/mission/pause  — DCSServerBot: pause the current mission
@@ -2410,8 +2482,9 @@ async fn api_admin_bot_mission_pause(
     session_id: Option<Uuid>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    api_admin_bot_action(session_id, db, bot_cfg, "instance/mission/pause").await
+    api_admin_bot_action(session_id, db, bot_cfg, inst, "instance/mission/pause").await
 }
 
 /// POST /api/admin/bot/mission/unpause  — DCSServerBot: unpause the current mission
@@ -2419,8 +2492,9 @@ async fn api_admin_bot_mission_unpause(
     session_id: Option<Uuid>,
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    api_admin_bot_action(session_id, db, bot_cfg, "instance/mission/unpause").await
+    api_admin_bot_action(session_id, db, bot_cfg, inst, "instance/mission/unpause").await
 }
 
 /// GET /api/admin/cfg  — read the current campaign engine config JSON (admin only)
@@ -5955,6 +6029,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_bot_status);
 
     let admin_bot_start = warp::path!("api" / "admin" / "bot" / "start")
@@ -5962,6 +6037,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_bot_start);
 
     let admin_bot_stop = warp::path!("api" / "admin" / "bot" / "stop")
@@ -5969,6 +6045,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_bot_stop);
 
     let admin_bot_restart = warp::path!("api" / "admin" / "bot" / "restart")
@@ -5976,6 +6053,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_bot_restart);
 
     let admin_bot_mission_restart = warp::path!("api" / "admin" / "bot" / "mission" / "restart")
@@ -5983,6 +6061,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_bot_mission_restart);
 
     let admin_bot_mission_pause = warp::path!("api" / "admin" / "bot" / "mission" / "pause")
@@ -5990,6 +6069,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_bot_mission_pause);
 
     let admin_bot_mission_unpause = warp::path!("api" / "admin" / "bot" / "mission" / "unpause")
@@ -5997,6 +6077,7 @@ async fn main() -> Result<()> {
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
         .then(api_admin_bot_mission_unpause);
 
     let admin_perf = warp::path!("api" / "admin" / "perf")
