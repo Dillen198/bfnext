@@ -274,16 +274,38 @@
 
     "_reactive_cap_note": "Reactive CAP: AI fighters scramble when enemy FIXED-WING players are detected near an owned airbase, or when one side has cap_balance_gap more fixed-wing players airborne than the other. Needs plane-section groups named RCAP / BCAP in the .miz.",
     "enemy_cap_enabled": true,
-    "cap_template_red": "RCAP",
-    "cap_template_blue": "BCAP",
+    "_cap_roster_note": "Roster of CAP templates -- the only way to name one, and required when enemy_cap_enabled is on. Each scramble picks one entry at random by weight, from the entries whose min_threat the detected incursion meets -- so a two-ship probe and a full package are not answered by the same flight. Entries are tried in pick order, so a name that is not in the .miz is skipped rather than cancelling the scramble. A roster of one entry behaves exactly like the single cap_template_red/blue keys this replaced.",
+    "cap_templates_red": [
+      { "template": "RCAP", "weight": 3, "min_threat": 0 },
+      { "template": "RCAP_MIG21", "weight": 2, "min_threat": 0 },
+      { "template": "RCAP_MIG29", "weight": 2, "min_threat": 3 },
+      { "template": "RCAP_SU27", "weight": 1, "min_threat": 5 }
+    ],
+    "cap_templates_blue": [
+      { "template": "BCAP", "weight": 3, "min_threat": 0 },
+      { "template": "BCAP_F5", "weight": 2, "min_threat": 0 },
+      { "template": "BCAP_F16", "weight": 2, "min_threat": 3 },
+      { "template": "BCAP_F15", "weight": 1, "min_threat": 5 }
+    ],
     "cap_balance_gap": 2,
+    "_cap_cooldown_note": "cap_respawn_cooldown_secs is PER AIRFIELD: the field that launched a wave waits this long before launching another, while every other field stays free. The side-wide limit is cap_max_sorties_per_hour. cap_engaged_extension_secs stops a flight that still has a contact inside its engage radius being ordered home mid-merge; it can earn at most cap_duration_secs of overtime.",
+    "cap_respawn_cooldown_secs": 1800,
+    "cap_max_sorties_per_hour": 6,
+    "cap_engaged_extension_secs": 180,
+    "helo_max_sorties_per_hour": 4,
     "cap_trigger_on_known_players": true,
     "cap_cold_start": true,
 
-    "_helo_patrol_note": "Reactive helicopter patrol: the rotary mirror of the above. Fixed-wing CAP ignores helicopters on purpose (fighters hunting NOE helos is lopsided, and SAMs are meant to cover it), which means a session where only helo pilots fly gets no AI response at all. This answers enemy helicopter players with armed AI helicopters, launching from the nearest owned Airbase, FARP or FOB -- helos do not need a runway, so the response comes from much closer than CAP does. On station they orbit helo_altitude_agl_m ABOVE THE TERRAIN under the station (not an absolute MSL block like CAP) and engage helicopters and ground units; fast movers are deliberately off their target list. REQUIRES groups named by helo_template_red / _blue in the .miz, one per coalition, copied from RCAP/BCAP but living in the HELICOPTER section (a helo in the plane section air-starts and the watchdog scraps the event). Late activation on, uncontrolled off; a single waypoint is enough, because the engine rewrites waypoint 0 into a ground start at the field the flight was scrambled from and issues the on-station orbit itself once airborne. Every unit type in the template must also appear in unit_classification or the spawn fails with 'unit type not classified'. Without the templates every scramble logs 'template not found' and cancels the event.",
+    "_helo_patrol_note": "Reactive helicopter patrol: the rotary mirror of the above. Fixed-wing CAP ignores helicopters on purpose (fighters hunting NOE helos is lopsided, and SAMs are meant to cover it), which means a session where only helo pilots fly gets no AI response at all. This answers enemy helicopter players with armed AI helicopters, launching from the nearest owned Airbase, FARP or FOB -- helos do not need a runway, so the response comes from much closer than CAP does. On station they orbit helo_altitude_agl_m ABOVE THE TERRAIN under the station (not an absolute MSL block like CAP) and engage helicopters and ground units; fast movers are deliberately off their target list. REQUIRES the groups listed in helo_templates_red / helo_templates_blue to exist in the .miz, one per coalition, copied from RCAP/BCAP but living in the HELICOPTER section (a helo in the plane section air-starts and the watchdog scraps the event). Late activation on, uncontrolled off; a single waypoint is enough, because the engine rewrites waypoint 0 into a ground start at the field the flight was scrambled from and issues the on-station orbit itself once airborne. Every unit type in the template must also appear in unit_classification or the spawn fails with 'unit type not classified'. Without the templates every scramble logs 'template not found' and cancels the event.",
     "enemy_helo_enabled": false,
-    "helo_template_red": "RHELOCAP",
-    "helo_template_blue": "BHELOCAP",
+    "helo_templates_red": [
+      { "template": "RHELOCAP", "weight": 3, "min_threat": 0 },
+      { "template": "RHELOCAP_MI24", "weight": 1, "min_threat": 3 }
+    ],
+    "helo_templates_blue": [
+      { "template": "BHELOCAP", "weight": 3, "min_threat": 0 },
+      { "template": "BHELOCAP_AH64", "weight": 1, "min_threat": 3 }
+    ],
     "helo_duration_secs": 1800,
     "helo_altitude_agl_m": 300,
     "helo_speed_ms": 60,

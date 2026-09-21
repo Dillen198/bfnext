@@ -569,6 +569,44 @@ cargo build --release --package=bftools
 If you're adding or updating Special SAM Sites, run `bftools special-sam`
 too — see [Special SAM Sites](#special-sam-sites-new) above.
 
+**F10 map view (spectator map spying):** `bftools miz` now forces DCS's
+*extended* F10 view options into the mission, so what you can see on the F10
+map depends on the role you are in:
+
+| Role | View |
+|---|---|
+| Pilot, Forward observer, Tactical cmdr, Airboss/LSO | whatever `--options` forces (unchanged) |
+| Observer, **Spectator** | `optview_onlymap` — terrain and markup, **no units** |
+
+That closes the "drop to spectator, read the whole battlefield off the F10
+map, jump back into a jet" loop. Pilots are not affected: the player view is
+inherited from the options template, so if you were not restricting people in
+a cockpit before, you still aren't.
+
+* `--map-view <all|allies|onlyallies|myaircraft|onlymap>` — set the in-slot
+  view explicitly instead of inheriting it. `allies` is DCS's "fog of war".
+* `--spectator-map-view <…>` — same values; defaults to `onlymap`.
+* `--no-force-map-view` — leave `forcedOptions` exactly as `--options` has it.
+
+**The camera side of it is a server setting, not a mission one.** F5
+(nearest aircraft), F11 (free camera) and spectator external views are `misc` /
+non-enforceable options in DCS, so no mission file can turn them off — they are
+read from the server's own `Config/options.lua`. The **`BFViewLock` DCSServerBot
+extension** (`DCSServerBot/extensions/bfviewlock`) writes them before every DCS
+start and is enabled for both instances in `config/nodes.yaml`:
+
+```yaml
+BFViewLock:
+  f5_nearest_ac: false
+  f11_free_camera: false
+  spectator_external_views: false
+```
+
+Set `external_views: false` there as well if you want to take F2 away from
+people in a cockpit too — that one *is* mission-enforceable, but keeping every
+view switch in one place is easier to reason about. A key set to `null` is left
+at whatever the server already has.
+
 **Warehouses:** `bftools miz` forces **weapons and fuel to limited** on every
 airbase and every ship warehouse (carriers included) regardless of what the
 inventory template or editor has set — bflib is the sole authority for

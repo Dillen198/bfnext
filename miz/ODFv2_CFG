@@ -1,5 +1,5 @@
 {
-  "netidx_base": "/local/fowl/campaign",
+  "netidx_base": "/local/fowl/modern",
   "admins": {
     "43009af9ad72caf2a3ff31396bed074f": "[.ID] EagleEye",
     "eba008f7ec70d3629065a7ae0ebb8f67": "â„–15 | KillerDog"
@@ -4592,6 +4592,14 @@
       "Logistics",
       "Unarmed"
     ],
+    "Mi-28N": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "CHAP_TigerUHT": [
+      "Aircraft",
+      "Helicopter"
+    ],
     "Mi-24P": [
       "Aircraft",
       "Helicopter"
@@ -5983,9 +5991,9 @@
     "half_life_recon_secs": 600,
     "half_life_awacs_secs": 300,
     "half_life_ewr_secs": 180,
-    "half_life_jtac_secs": 3600,
+    "half_life_jtac_secs": 1200,
     "confidence_delete_threshold": 0.05,
-    "max_contacts_per_side": 200,
+    "max_contacts_per_side": 120,
     "show_unit_class": true,
     "show_confidence_on_map": true
   },
@@ -6393,8 +6401,19 @@
   "campaign_events": {
     "enabled": true,
     "enemy_cap_enabled": true,
-    "cap_template_red": "RCAP",
-    "cap_template_blue": "BCAP",
+    "_cap_roster_note": "Roster of CAP templates: the .miz group names a scramble may spawn. This is the ONLY way to name a CAP template (it replaced the old single cap_template_red/blue keys) and the engine refuses to start with enemy_cap_enabled on and this empty. Every scramble picks one entry at random by weight, from the entries whose min_threat the incursion actually meets -- so a two-ship probe gets answered by something lighter than an eight-ship push, and the same field stops sending the identical flight every time. Each template must be a plane-section group in the .miz set up exactly like RCAP/BCAP (late activation on, uncontrolled off, one waypoint; the engine rewrites waypoint 0 into a ground start at the scrambling field). A name that isn't in the .miz just falls through to the next candidate instead of cancelling the scramble. Tiers escalate with the size of the incursion. min_threat 0 is what a two-ship probe meets and EVERY side needs one, or a small push finds nothing eligible and falls back to the whole roster (a pair of players pulling a MiG-31). min_threat 3 is a real push, two entries deep for variety. min_threat 5 is the apex interceptor, and carries the HIGHEST weight on purpose: eligibility is cumulative, so once it unlocks it is competing with every lighter entry and only a bigger weight makes a big push actually feel heavier. Red and blue are mirrored so neither side escalates sooner or harder. Contact counts come from the radar picture and include AI, so they run a little above raw player count.",
+    "cap_templates_red": [
+      { "template": "RCAPMIG29", "weight": 4, "min_threat": 0 },
+      { "template": "RCAPJ11A", "weight": 4, "min_threat": 3 },
+      { "template": "RCAPSU33", "weight": 2, "min_threat": 3 },
+      { "template": "RCAPMIG31", "weight": 5, "min_threat": 5 }
+    ],
+    "cap_templates_blue": [
+      { "template": "BCAPF18C", "weight": 4, "min_threat": 0 },
+      { "template": "BCAPF16C", "weight": 4, "min_threat": 3 },
+      { "template": "BCAPF14BU", "weight": 2, "min_threat": 3 },
+      { "template": "BCAPF15C", "weight": 5, "min_threat": 5 }
+    ],
     "cap_duration_secs": 600,
     "cap_altitude_m": 8000,
     "cap_speed_ms": 250,
@@ -6407,14 +6426,24 @@
     "cap_max_per_side": 2,
     "cap_min_threat_count": 2,
     "cap_respawn_cooldown_secs": 1800,
+    "_cap_cooldown_note": "cap_respawn_cooldown_secs is now PER AIRFIELD, not per side -- one wave ending on a quiet flank no longer grounds the whole coalition. cap_max_sorties_per_hour is the side-wide throttle that replaces it. cap_engaged_extension_secs keeps a flight that is still in contact from being ordered home mid-merge; it can earn at most cap_duration_secs of overtime.",
+    "cap_max_sorties_per_hour": 6,
+    "cap_engaged_extension_secs": 180,
     "cap_balance_gap": 2,
     "cap_trigger_on_known_players": true,
     "cap_cold_start": true,
 
-    "_helo_patrol_note": "Reactive AI helicopter patrol -- the rotary mirror of reactive CAP. Fixed-wing CAP ignores helicopters on purpose, so a session where only helo pilots fly gets no AI response; this answers helicopter players with armed AI helicopters instead. REQUIRES groups named RHELOCAP (red coalition) and BHELOCAP (blue) in the .miz, copied from RCAP/BCAP but in the HELICOPTER section (a plane-section helo air-starts and the watchdog scraps the event). Late activation on, uncontrolled off, one waypoint is enough -- the engine rewrites waypoint 0 into a ground start at the scrambling field and issues the on-station orbit itself. Every unit type must exist in unit_classification or the spawn errors 'unit type not classified'; Mi-24P and AH-64D_BLK_II already do. Flip enemy_helo_enabled to true once the groups exist, or every scramble just logs 'template not found' and cancels.",
+    "_helo_patrol_note": "Reactive AI helicopter patrol -- the rotary mirror of reactive CAP. Fixed-wing CAP ignores helicopters on purpose, so a session where only helo pilots fly gets no AI response; this answers helicopter players with armed AI helicopters instead. REQUIRES the groups listed in helo_templates_red / helo_templates_blue to exist in the .miz, copied from RCAP/BCAP but in the HELICOPTER section (a plane-section helo air-starts and the watchdog scraps the event). Late activation on, uncontrolled off, one waypoint is enough -- the engine rewrites waypoint 0 into a ground start at the scrambling field and issues the on-station orbit itself. Every unit type must exist in unit_classification or the spawn errors 'unit type not classified'; Mi-24P and AH-64D_BLK_II already do. Flip enemy_helo_enabled to true once the groups exist, or every scramble just logs 'template not found' and cancels.",
     "enemy_helo_enabled": false,
-    "helo_template_red": "RHELOCAP",
-    "helo_template_blue": "BHELOCAP",
+    "_helo_roster_note": "As _cap_roster_note, for the helicopter patrol; every entry must be a HELICOPTER-section group. Required when enemy_helo_enabled is on.",
+    "helo_templates_red": [
+      { "template": "RHELOCAP_MI24P", "weight": 3, "min_threat": 0 },
+      { "template": "RHELOCAP_MI28N", "weight": 4, "min_threat": 2 }
+    ],
+    "helo_templates_blue": [
+      { "template": "BHELOCAP_EC665", "weight": 3, "min_threat": 0 },
+      { "template": "BHELOCAP_AH64D", "weight": 4, "min_threat": 2 }
+    ],
     "helo_duration_secs": 1800,
     "helo_altitude_agl_m": 300,
     "helo_speed_ms": 60,
@@ -6426,6 +6455,7 @@
     "helo_max_per_side": 1,
     "helo_min_threat_count": 2,
     "helo_respawn_cooldown_secs": 900,
+    "helo_max_sorties_per_hour": 4,
     "helo_trigger_on_known_players": true,
     "helo_balance_gap": 2,
     "helo_cold_start": true,
