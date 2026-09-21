@@ -77,27 +77,20 @@ struct MizCmd {
     /// local date/time (of the machine running bftools)
     #[clap(long)]
     live_time: bool,
-    /// override the mission's ground-level temperature, QNH, and wind with
-    /// live real-world weather (fetched from open-meteo.com, no API key
-    /// required). Upper winds and clouds are left as authored in the options
-    /// template. Requires --live-weather-lat and --live-weather-lon
+    /// override the mission's temperature, QNH, wind, clouds and obscurants
+    /// with live real-world weather. The surface layer is the real decoded
+    /// METAR from --metar-station; the winds aloft come from open-meteo's
+    /// model at that station's position. Requires --metar-station and
+    /// --checkwx-api-key
     #[clap(long)]
     live_weather: bool,
-    /// latitude to fetch live weather for, required by --live-weather
-    #[clap(long)]
-    live_weather_lat: Option<f64>,
-    /// longitude to fetch live weather for, required by --live-weather
-    #[clap(long)]
-    live_weather_lon: Option<f64>,
-    /// checkwxapi.com API key. When set together with --metar-station, the
-    /// mission's surface layer (wind, temp, QNH, clouds) is taken from that
-    /// station's real decoded METAR instead of the open-meteo model; the winds
-    /// aloft still come from open-meteo. A failed METAR fetch falls back to
-    /// open-meteo for everything.
+    /// checkwxapi.com API key, required by --live-weather
     #[clap(long)]
     checkwx_api_key: Option<String>,
-    /// ICAO of the METAR station driving the surface layer (e.g. "OSDI"
-    /// Damascus, "LTAG" Incirlik). Only used with --checkwx-api-key.
+    /// ICAO of the METAR station the weather is taken from (e.g. "UGKO"
+    /// Kutaisi, "OSDI" Damascus). Required by --live-weather: it sets both
+    /// the surface conditions and, from the station's own coordinates, where
+    /// the winds aloft are sampled
     #[clap(long)]
     metar_station: Option<String>,
     /// optional JSON file of DCS client option overrides (e.g.
@@ -111,6 +104,22 @@ struct MizCmd {
     /// mentioned are left as copied from --options
     #[clap(long)]
     options_overrides: Option<PathBuf>,
+    /// F10 map view forced on players who are IN a slot: one of all, allies
+    /// (fog of war), onlyallies, myaircraft, onlymap. Defaults to whatever
+    /// --options forces, or "all" if it forces nothing -- i.e. leaving this
+    /// alone does not change what pilots see
+    #[clap(long)]
+    map_view: Option<String>,
+    /// F10 map view forced on spectators and observers -- the people who are
+    /// not in a slot. Defaults to "onlymap": terrain and markup, no units.
+    /// This is what stops players dropping to spectator to read the whole
+    /// battlefield off the F10 map and then jumping back into a jet
+    #[clap(long, default_value = "onlymap")]
+    spectator_map_view: String,
+    /// don't touch the F10 map view at all: take forcedOptions from --options
+    /// exactly as it is
+    #[clap(long)]
+    no_force_map_view: bool,
 }
 
 #[derive(Subcommand, Clone, Debug, Serialize)]

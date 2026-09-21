@@ -1968,6 +1968,12 @@ struct CheckWxSurface {
     wind_from_dir: f64,
     cloud_cover_pct: f64,
     precipitation_mm: f64,
+    /// the station's own position, as reported by checkwx. Lets --live-weather
+    /// run off nothing but an ICAO -- the winds aloft still need a lat/lon for
+    /// open-meteo, and this is the station we're already taking the surface
+    /// from, so it is the right one to use.
+    lat: Option<f64>,
+    lon: Option<f64>,
 }
 
 fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<CheckWxSurface> {
@@ -2055,6 +2061,12 @@ fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<CheckWxSurface>
         })
         .unwrap_or(0.0);
 
+    // checkwx reports the station position as GeoJSON, so coordinates are
+    // [lon, lat] -- not the other way around.
+    let coords = d.pointer("/station/geometry/coordinates");
+    let coord = |i: usize| coords.and_then(|c| c.get(i)).and_then(|v| v.as_f64());
+    let (lon, lat) = (coord(0), coord(1));
+
     Ok(CheckWxSurface {
         temp_c,
         pressure_hpa,
@@ -2062,33 +2074,54 @@ fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<CheckWxSurface>
         wind_from_dir,
         cloud_cover_pct,
         precipitation_mm,
+        lat,
+        lon,
     })
 }
 
-/// fetch current real-world weather at (lat, lon) from open-meteo.com (no API
-/// key required) and apply temperature, QNH, wind (ground plus two upper
-/// bands), clouds, and fog/dust obscurant state to the mission's weather
-/// table. With `checkwx_key` + `metar_station` set, the surface layer comes
-/// from that station's real decoded METAR instead (winds aloft still open-
-/// meteo; a failed METAR fetch falls back to open-meteo for everything).
+/// apply real-world weather to the mission's weather table: temperature, QNH,
+/// wind (ground plus two upper bands), clouds, and fog/dust obscurant state.
+///
+/// The station's decoded METAR is the whole surface layer, and its own
+/// coordinates are where open-meteo (no API key required) is sampled for the
+/// winds aloft, which METAR has nothing to say about. One ICAO is therefore
+/// the entire configuration -- there is no lat/lon to keep in sync with it.
+///
+/// Both fetches are required: if either service is down this returns an error
+/// rather than a half-real sky, and the caller is expected to fall back to the
+/// weather authored in the options template.
 ///
 /// Winds are clamped hard (ground 8, 2000 m 12, 8000 m 20 m/s) -- DCS blends
 /// the layers, so a stiff upper wind drags low-level flight around; the caps
 /// keep it flyable, especially for helicopters.
 fn apply_live_weather(
     mission: &miz::Miz<'static>,
-    lat: f64,
-    lon: f64,
-    checkwx_key: Option<&str>,
-    metar_station: Option<&str>,
+    checkwx_key: &str,
+    metar_station: &str,
 ) -> Result<()> {
+    let metar = fetch_checkwx_surface(checkwx_key, metar_station)
+        .with_context(|| format!("fetching METAR for {metar_station}"))?;
+    info!(
+        "CheckWX {metar_station}: temp={:.0}C qnh={:.0}hPa wind={:.1}m/s@{:.0} cloud={:.0}% precip={:.1}mm",
+        metar.temp_c,
+        metar.pressure_hpa,
+        metar.wind_speed_ms,
+        metar.wind_from_dir,
+        metar.cloud_cover_pct,
+        metar.precipitation_mm,
+    );
+    let (lat, lon) = match (metar.lat, metar.lon) {
+        (Some(lat), Some(lon)) => (lat, lon),
+        _ => bail!(
+            "checkwx has no position for station {metar_station} -- is that a real ICAO?"
+        ),
+    };
+    info!("winds aloft sampled at {metar_station} ({lat}, {lon})");
     let url = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=\
-         temperature_2m,pressure_msl,\
-         wind_speed_10m,wind_direction_10m,\
          wind_speed_700hPa,wind_direction_700hPa,\
          wind_speed_300hPa,wind_direction_300hPa,\
-         cloud_cover,precipitation,visibility\
+         visibility\
          &wind_speed_unit=ms"
     );
     let body = ureq::get(&url)
@@ -2108,38 +2141,21 @@ fn apply_live_weather(
             .and_then(|v| v.as_f64())
             .with_context(|| format!("live weather response missing {key}"))
     };
-    let mut temp_c = get("temperature_2m")?;
-    let mut pressure_hpa = get("pressure_msl")?;
-    let mut wind_speed_ground = get("wind_speed_10m")?;
-    let mut wind_from_dir_ground = get("wind_direction_10m")?;
+    // open-meteo is asked for nothing the METAR already answers: only the two
+    // upper wind bands, and the visibility the fog/dust layer is derived from.
     let wind_speed_2000 = get("wind_speed_700hPa")?;
     let wind_from_dir_2000 = get("wind_direction_700hPa")?;
     let wind_speed_8000 = get("wind_speed_300hPa")?;
     let wind_from_dir_8000 = get("wind_direction_300hPa")?;
-    let mut cloud_cover_pct = get("cloud_cover")?;
-    let mut precipitation_mm = get("precipitation")?;
     let visibility_m = get("visibility")?;
 
-    // METAR station override for the surface layer.
-    if let (Some(key), Some(station)) = (checkwx_key, metar_station) {
-        match fetch_checkwx_surface(key, station) {
-            Ok(m) => {
-                info!(
-                    "CheckWX {station}: temp={:.0}C qnh={:.0}hPa wind={:.1}m/s@{:.0} cloud={:.0}% precip={:.1}mm -- overriding open-meteo surface",
-                    m.temp_c, m.pressure_hpa, m.wind_speed_ms, m.wind_from_dir, m.cloud_cover_pct, m.precipitation_mm,
-                );
-                temp_c = m.temp_c;
-                pressure_hpa = m.pressure_hpa;
-                wind_speed_ground = m.wind_speed_ms;
-                wind_from_dir_ground = m.wind_from_dir;
-                cloud_cover_pct = m.cloud_cover_pct;
-                precipitation_mm = m.precipitation_mm;
-            }
-            Err(e) => {
-                info!("CheckWX fetch for {station} failed ({e:#}) -- keeping open-meteo surface");
-            }
-        }
-    }
+    // the surface layer is the station's, in full.
+    let temp_c = metar.temp_c;
+    let pressure_hpa = metar.pressure_hpa;
+    let wind_speed_ground = metar.wind_speed_ms;
+    let wind_from_dir_ground = metar.wind_from_dir;
+    let cloud_cover_pct = metar.cloud_cover_pct;
+    let precipitation_mm = metar.precipitation_mm;
 
     // Sanity caps -- DCS interpolates between bands, so a stiff wind aloft
     // drags the low-altitude wind up. Keep it flyable.
@@ -2607,6 +2623,125 @@ fn json_value_to_lua<'lua>(lua: &'lua Lua, v: &serde_json::Value) -> Result<Valu
     })
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// F10 map view enforcement
+//
+// A player who drops to spectator gets the F10 map with whatever unit
+// visibility the mission allows -- which, on "all", is every enemy unit and
+// its exact coordinates. Jump back into a jet afterwards and you are flying a
+// strike against a target list nobody had to find. DCS can express this
+// properly: `forcedOptions.optionsView = "optview_extended"` switches on a
+// per-ROLE table, `optionsViewExtended`, so the people in a cockpit can keep
+// the view the mission intends while spectators and observers get terrain and
+// markup only.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Role indices in `optionsViewExtended`, as the Mission Editor numbers them
+/// (see MissionEditor/modules/me_extendedF10ViewOptions_role_wgt.lua).
+const ROLE_PILOT: i64 = 1;
+const ROLE_FORWARD_OBSERVER: i64 = 2;
+const ROLE_TACTICAL_CMDR: i64 = 3;
+const ROLE_OBSERVER: i64 = 4;
+const ROLE_SPECTATOR: i64 = 5;
+const ROLE_AIRBOSS: i64 = 6;
+
+/// Number of bits in `visibleUnitLayersMask`: three coalition slices
+/// (allies / enemies / neutral) for each of five categories (planes,
+/// helicopters, ground, naval, weapons). Keys run 0..=14.
+const UNIT_LAYER_BITS: i64 = 15;
+
+/// Accept both the DCS spelling and the short name the Mission Editor shows.
+fn parse_map_view(v: &str) -> Result<&'static str> {
+    Ok(match v.trim().to_lowercase().as_str() {
+        "all" | "optview_all" => "optview_all",
+        "allies" | "fogofwar" | "fog_of_war" | "optview_allies" => "optview_allies",
+        "onlyallies" | "alliesonly" | "optview_onlyallies" => "optview_onlyallies",
+        "myaircraft" | "myplane" | "optview_myaircraft" => "optview_myaircraft",
+        "onlymap" | "maponly" | "optview_onlymap" => "optview_onlymap",
+        other => bail!(
+            "unknown map view {other:?}, expected one of: all, allies, onlyallies, myaircraft, onlymap"
+        ),
+    })
+}
+
+fn unit_layer_mask(lua: &'static Lua, visible: bool) -> Result<Table<'static>> {
+    let t = lua.create_table()?;
+    for i in 0..UNIT_LAYER_BITS {
+        t.raw_set(i, visible)?;
+    }
+    Ok(t)
+}
+
+/// Force the per-role F10 map view onto the generated mission.
+///
+/// Roles that are in a cockpit keep `player_view`; spectators and observers
+/// get `spectator_view`. `player_view` defaults to whatever the options
+/// template already forced, so a mission that was not restricting pilots
+/// still isn't -- the only thing that changes is what you can see with no
+/// aircraft under you.
+fn enforce_map_view(
+    lua: &'static Lua,
+    mission: &Miz<'static>,
+    player_view: Option<&str>,
+    spectator_view: &str,
+) -> Result<()> {
+    let forced: Table = mission
+        .raw_get("forcedOptions")
+        .context("getting forcedOptions")?;
+    let current: Option<std::string::String> = match forced.raw_get("optionsView")? {
+        Value::String(s) => Some(s.to_str()?.to_string()),
+        _ => None,
+    };
+    // If the template already uses the extended table, inherit the pilot
+    // entry rather than the marker value "optview_extended".
+    let inherited = match current.as_deref() {
+        Some("optview_extended") => match forced.raw_get::<_, Value>("optionsViewExtended")? {
+            Value::Table(t) => match t.raw_get::<_, Value>(ROLE_PILOT)? {
+                Value::Table(role) => match role.raw_get::<_, Value>("f10ViewOption")? {
+                    Value::String(s) => Some(s.to_str()?.to_string()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        },
+        other => other.map(|s| s.to_string()),
+    };
+    let player_view = match player_view {
+        Some(v) => parse_map_view(v)?,
+        None => match inherited.as_deref() {
+            Some(v) => parse_map_view(v)?,
+            None => "optview_all",
+        },
+    };
+    let spectator_view = parse_map_view(spectator_view)?;
+    let extended = lua.create_table()?;
+    for (role, view) in [
+        (ROLE_PILOT, player_view),
+        (ROLE_FORWARD_OBSERVER, player_view),
+        (ROLE_TACTICAL_CMDR, player_view),
+        (ROLE_AIRBOSS, player_view),
+        (ROLE_OBSERVER, spectator_view),
+        (ROLE_SPECTATOR, spectator_view),
+    ] {
+        let entry = lua.create_table()?;
+        entry.raw_set("f10ViewOption", view)?;
+        // The mask is ignored for onlymap/myaircraft, but DCS still expects
+        // the field to be there for every role.
+        entry.raw_set(
+            "visibleUnitLayersMask",
+            unit_layer_mask(lua, view != "optview_onlymap")?,
+        )?;
+        extended.raw_set(role, entry)?;
+    }
+    forced.raw_set("optionsView", "optview_extended")?;
+    forced.raw_set("optionsViewExtended", extended)?;
+    info!(
+        "forced F10 map view: players {player_view}, spectators/observers {spectator_view}"
+    );
+    Ok(())
+}
+
 pub fn run(cfg: &MizCmd) -> Result<()> {
     let lua = Box::leak(Box::new(Lua::new()));
     lua.gc_stop();
@@ -2680,6 +2815,17 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
     base.mission
         .raw_set("forcedOptions", forced_options)
         .context("setting forcedOptions on base mission")?;
+    if cfg.no_force_map_view {
+        info!("--no-force-map-view: leaving the F10 map view exactly as --options has it");
+    } else {
+        enforce_map_view(
+            lua,
+            &base.mission,
+            cfg.map_view.as_deref(),
+            &cfg.spectator_map_view,
+        )
+        .context("forcing the F10 map view")?;
+    }
     // copy weather/time settings configured in the options template mission
     let weather: Table = options_template
         .mission
@@ -2707,20 +2853,15 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
         apply_live_time(&base.mission).context("applying live time")?;
     }
     if cfg.live_weather {
-        let lat = cfg
-            .live_weather_lat
-            .ok_or_else(|| anyhow!("--live-weather requires --live-weather-lat"))?;
-        let lon = cfg
-            .live_weather_lon
-            .ok_or_else(|| anyhow!("--live-weather requires --live-weather-lon"))?;
-        apply_live_weather(
-            &base.mission,
-            lat,
-            lon,
-            cfg.checkwx_api_key.as_deref(),
-            cfg.metar_station.as_deref(),
-        )
-        .context("applying live weather")?;
+        let key = cfg
+            .checkwx_api_key
+            .as_deref()
+            .ok_or_else(|| anyhow!("--live-weather requires --checkwx-api-key"))?;
+        let station = cfg
+            .metar_station
+            .as_deref()
+            .ok_or_else(|| anyhow!("--live-weather requires --metar-station"))?;
+        apply_live_weather(&base.mission, key, station).context("applying live weather")?;
     }
     let s = serialize_to_lua("mission", Value::Table((&*base.mission).clone()))?;
     fs::write(&base.miz.files["mission"], &s)

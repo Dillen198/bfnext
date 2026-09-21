@@ -184,8 +184,17 @@ impl Display for LuaSerVal {
                 }
                 tbl.for_each(|k: Value, v: Value| {
                     if let Some(max) = seq_max {
-                        if k.is_integer() && k.as_integer().unwrap() <= max {
-                            return Ok(());
+                        // Only the 1..=max run was already written by the
+                        // sequence pass. A key of 0 (or a negative one) is
+                        // NOT part of that run -- skipping it here silently
+                        // dropped it from the output, which is how a DCS
+                        // table indexed from zero, like the F10 view
+                        // options' visibleUnitLayersMask, lost its first
+                        // entry on every round trip.
+                        if let Some(i) = k.as_integer() {
+                            if i >= 1 && i <= max {
+                                return Ok(());
+                            }
                         }
                     }
                     write_elt!(k, v);
