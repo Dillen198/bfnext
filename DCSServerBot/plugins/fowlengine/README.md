@@ -113,6 +113,7 @@ live on the web dashboard now -- `/fe_dashboard` points there.
 - **Coalition roles** (`/api/admin/pilot-sides` → `db.all_pilot_sides`): admin-gated, because the full roster of who flies for whom is itself something the fog of war hides. One pass over `pilot_round_info` with the same rule as `pilot_current_side` — the active round's registration wins, else the most recent Blue/Red on record, which after a `reset_campaign_data` means "this campaign".
 - **Process ownership** (`bfdb.manage`, `procman.py`): the bot runs `bfdb.exe` + the netidx resolver as children, health-checks bfdb, renders `gci.json` from YAML.
 - **Restart-cycle binary swap** (`extensions/bfbinaries`): `prepare()` swaps a staged `bflib.dll` while DCS is down; a staged `bfdb.exe` is applied by procman on its next restart. Both back up the previous binary and never block a restart.
+- **View lock** (`extensions/bfviewlock`): `prepare()` writes the camera restrictions DCS only reads from the *server's* `Config/options.lua` -- F5 nearest-aircraft, F11 free camera and spectator external views, all off by default. These cannot go in a mission's `forcedOptions` (they are not enforceable there), unlike the per-role F10 map view, which `bftools miz` bakes into every generated mission. Re-applied on every restart, idempotent, and never blocks a start.
 
 - **Multiple DCS servers on one machine:** one bfdb fronts them all. Add a
   `bfdb.instances:` list to `fowlengine.yaml` and procman renders bfdb's

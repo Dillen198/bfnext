@@ -398,6 +398,14 @@ class Procman:
                 # its rounds are left out of the all-time pilot totals so
                 # testing can't inflate the public leaderboard.
                 "public": bool(inst.get("public", True)),
+                # Who the two sides are, for the war diary. Per instance
+                # because the belligerents belong to the campaign, not to the
+                # bfdb process. Unset -> bfdb names each side after the
+                # country it started the campaign holding.
+                "blue_faction": inst.get("blue_faction") or None,
+                "red_faction": inst.get("red_faction") or None,
+                "blue_adjective": inst.get("blue_adjective") or None,
+                "red_adjective": inst.get("red_adjective") or None,
             }
             entries.append(entry)
         payload = {

@@ -25,7 +25,7 @@ DEFAULT:
     url: "https://wiki.vectorstrike.org/playbooks/first-sortie"
     fields:
       - name: "Joining a side"
-        value: "Just take a slot — your first slot pick registers you to that coalition. You can also type `blue` or `red` in chat from spectators. You only get a limited number of side switches per round (`-switch blue` / `-switch red`)."
+        value: "Just take a slot — your first slot pick registers you to that coalition, there is nothing to type. You only get a limited number of side switches per round (`-switch blue` / `-switch red`)."
         inline: false
       - name: "Read the briefing before you fly"
         value: "The engine writes one per round for your side. A short panel appears about 20 seconds after you slot in; `-brief` in chat gives it on demand; **F10 → Info → Situation** has the full six pages — Overview, Tasking, Hotspots, Threats & Air, Logistics, Comms."
@@ -213,7 +213,7 @@ DEFAULT:
         value: "`-status` — objectives held, your points and streak, your convoys\n`-brief` — the short situational briefing\n`-balance` — points\n`-lives` — life counts (when lives are enabled)\n`-weather` — weather at your position\n`-time` — mission time and restart schedule\n`-help` — the full list in game"
         inline: false
       - name: "Sides"
-        value: "`blue` / `red` — register with a coalition\n`-switch blue` / `-switch red` — change sides (limited per round)"
+        value: "your first slot pick registers you to that coalition — nothing to type\n`-switch blue` / `-switch red` — change sides (limited per round, spectators only)"
         inline: false
       - name: "Economy & units"
         value: "`-transfer <amount> <player|objective>` — give points to a teammate or fund an objective\n`-action <name> <args>` — run an action from chat (`-action help` lists them)\n`-delete <group-id>` — remove something you deployed and get **half its cost back**\n`-bind <troop-id>` — bind a troop group for control"

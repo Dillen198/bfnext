@@ -57,13 +57,18 @@ class BFWeather(Extension):
                 weapon: 'E:\\Saved Games\\DCS\\Missions\\Vector\\v2\\weapons.miz'
                 options: 'E:\\Saved Games\\DCS\\Missions\\Vector\\v2\\options.miz'
                 warehouse: 'E:\\Saved Games\\DCS\\Missions\\Vector\\v2\\warehouse.miz'  # optional
-                lat: 33.4114
-                lon: 36.5156
-                live_time: false                     # optional, default false
-                options_overrides: 'E:\\...\\overrides.json'  # optional
+                checkwx_api_key: 'your-checkwxapi.com-key'
+                metar_station: 'UGKO'                 # ICAO the weather comes from
+                live_time: false                      # optional, default false
+                options_overrides: 'E:\\...\\overrides.json'  # optional -- a path that does not
+                # exist is skipped with a warning rather than failing the build
                 timeout: 120                          # optional, seconds, default 120
-                checkwx_api_key: 'your-checkwxapi.com-key'  # optional
-                metar_station: 'OSDI'                 # optional, ICAO; needs checkwx_api_key
+
+    The ICAO is the whole weather configuration: the station's decoded METAR
+    is the surface layer, and its own coordinates are where the winds aloft
+    are sampled. Pick a station that is also an airfield on the map you're
+    running -- UGKO (Kutaisi) for Caucasus, OSDI (Damascus) for Syria -- so
+    the reported conditions are the conditions over the fight.
     """
 
     def __init__(self, server: Server, config: dict):
@@ -83,10 +88,33 @@ class BFWeather(Extension):
         if warehouse and not os.path.exists(os.path.expandvars(warehouse)):
             self.log.error(f"  => {self.name}: warehouse path {warehouse!r} not found.")
             return False
-        if self.config.get('lat') is None or self.config.get('lon') is None:
-            self.log.error(f"  => {self.name}: 'lat' and 'lon' are required in your nodes.yaml.")
-            return False
+        # the station is both the weather and the position it's sampled at, so
+        # it's the one thing we can't run without.
+        for key in ('checkwx_api_key', 'metar_station'):
+            if not self.config.get(key):
+                self.log.error(f"  => {self.name}: missing '{key}' in your nodes.yaml.")
+                return False
         return True
+
+    def _optional_path(self, key: str) -> str | None:
+        """A configured path that is allowed to be missing.
+
+        `options_overrides` is an extra on top of the build, not part of it:
+        a mission without one builds fine. But a stale or mistyped path would
+        make bftools exit non-zero, and a failed bftools means no rebuild at
+        all -- so one dead file would silently cost every restart its live
+        weather. Drop the flag and say so instead.
+        """
+        raw = self.config.get(key)
+        if not raw:
+            return None
+        path = os.path.expandvars(raw)
+        if not os.path.exists(path):
+            self.log.warning(
+                f"  => {self.name}: {key} {raw!r} does not exist -- building without it."
+            )
+            return None
+        return path
 
     def _build_command(self, output: str) -> list[str]:
         cfg = self.config
@@ -97,20 +125,16 @@ class BFWeather(Extension):
             '--options', os.path.expandvars(cfg['options']),
             '--output', output,
             '--live-weather',
-            '--live-weather-lat', str(cfg['lat']),
-            '--live-weather-lon', str(cfg['lon']),
+            '--checkwx-api-key', str(cfg['checkwx_api_key']),
+            '--metar-station', str(cfg['metar_station']),
         ]
         if cfg.get('warehouse'):
             cmd += ['--warehouse', os.path.expandvars(cfg['warehouse'])]
         if cfg.get('live_time'):
             cmd.append('--live-time')
-        if cfg.get('checkwx_api_key') and cfg.get('metar_station'):
-            cmd += [
-                '--checkwx-api-key', str(cfg['checkwx_api_key']),
-                '--metar-station', str(cfg['metar_station']),
-            ]
-        if cfg.get('options_overrides'):
-            cmd += ['--options-overrides', os.path.expandvars(cfg['options_overrides'])]
+        options_overrides = self._optional_path('options_overrides')
+        if options_overrides:
+            cmd += ['--options-overrides', options_overrides]
         if cfg.get('blue_production_template'):
             cmd += ['--blue-production-template', cfg['blue_production_template']]
         if cfg.get('red_production_template'):
@@ -184,5 +208,5 @@ class BFWeather(Extension):
         return {
             "name": self.name,
             "version": self.version,
-            "value": f"({self.config.get('lat')}, {self.config.get('lon')})",
+            "value": str(self.config.get('metar_station') or "not configured"),
         }
