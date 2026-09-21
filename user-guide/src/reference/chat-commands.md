@@ -8,8 +8,6 @@ Quick reference for all Fowl Engine chat commands.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `blue` | Register for Blue team | `blue` |
-| `red` | Register for Red team | `red` |
 | `-switch blue` | Switch to Blue team | `-switch blue` |
 | `-switch red` | Switch to Red team | `-switch red` |
 | `-lives` | Check lives, points, status | `-lives` |

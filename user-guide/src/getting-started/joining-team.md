@@ -68,13 +68,10 @@ This displays:
 
 ## Common Issues
 
-### "You are already on the Blue team"
-You're already registered! No action needed.
-
 ### "You must be in spectators to switch sides"
 Leave your current slot and return to spectators before switching coalitions.
 
-### "You are already on {team} team, and you may not switch sides"
+### "you can't switch sides again this round"
 You've used all your side switches, or the server doesn't allow switching.
 
 ### A wrong-coalition slot is rejected
