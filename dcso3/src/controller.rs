@@ -1654,9 +1654,36 @@ impl<'lua> AirOption<'lua> {
     }
 
     fn from_tag_val(lua: &'lua Lua, tag: u8, val: Value<'lua>) -> LuaResult<Self> {
+        // The radio usage options (21/22/23) carry a SET OF ATTRIBUTES, and DCS
+        // writes that set into the mission three different ways in the same
+        // table: a `targetTypes` array, a `noTargetTypes` array, and `value` as
+        // the selected names joined with ';' -- e.g. "Air Defence;". We are
+        // handed `value`, so a string is the ordinary case, not an error.
+        //
+        // Only the empty selection ("none") was handled, so any mission where
+        // Radio Usage Contact/Engage/Kill was actually set refused to load:
+        //   unknown option, air: expected a table, got String("Air Defence;")
+        // The message is doubly unhelpful -- the option is tried against Air,
+        // Ground and Naval in turn, so the real failure is buried among two
+        // "unknown option 21" complaints from parsers that never handled it --
+        // and it names neither the group nor the mission.
+        //
+        // An unrecognised attribute name is not fatal: `Attribute` has a
+        // `Custom` catch-all, so it round-trips unchanged.
         let attr_or_none = |val: Value<'lua>| match val {
-            Value::String(s) if s.to_string_lossy().as_ref().starts_with("none") => {
-                Attributes::new(lua).map_err(|e| err(&format_compact!("{}", e)))
+            Value::String(s) => {
+                let attrs = Attributes::new(lua).map_err(|e| err(&format_compact!("{}", e)))?;
+                let s = s.to_string_lossy();
+                if !s.starts_with("none") {
+                    for name in s.split(';').map(|n| n.trim()).filter(|n| !n.is_empty()) {
+                        let attr =
+                            Attribute::from_lua(Value::String(lua.create_string(name)?), lua)?;
+                        attrs
+                            .set(attr, true)
+                            .map_err(|e| err(&format_compact!("{}", e)))?;
+                    }
+                }
+                Ok(attrs)
             }
             v => FromLua::from_lua(v, lua),
         };
