@@ -122,6 +122,22 @@ impl IntelSource {
             Self::HumanInt       => cfg.half_life_sf_secs,
         }
     }
+
+    /// How well this sensor locates what it found, as a 1-sigma radius in
+    /// metres. A JTAC with eyes on a target knows exactly where it is; a
+    /// radar fusion track is a guess with a kilometre or two in it. The map
+    /// draws this as the uncertainty ring, and only bothers when there is
+    /// enough of it to be worth flying against.
+    pub fn pos_uncertainty_m(self) -> f32 {
+        match self {
+            Self::Jtac => 150.,
+            Self::SpecialForces => 300.,
+            Self::ReconFlight => 600.,
+            Self::HumanInt => 1_000.,
+            Self::Awacs => 2_500.,
+            Self::EwrFusion => 4_000.,
+        }
+    }
 }
 
 /// A single geo-located intelligence contact.
@@ -148,6 +164,10 @@ pub struct IntelContact {
     /// Where the marks were last drawn. A pin cannot be edited in place, so it
     /// is only re-dropped once the contact has actually moved.
     pub mark_pos: Vector2,
+    /// Confidence the marker text was written at, so a decaying contact's
+    /// marker is refreshed a few times over its life instead of either
+    /// freezing at its first reading or being re-dropped every tick.
+    pub mark_confidence: f32,
     /// Position-uncertainty ring. Its radius is how unsure the engine is about
     /// where this contact actually is, which is the part a pilot acts on.
     pub map_mark_ring: Option<MarkId>,
@@ -160,6 +180,10 @@ pub struct IntelDatabase {
     pub contacts: FxHashMap<ContactId, IntelContact>,
     /// Per-side index for fast enumeration.
     by_side: FxHashMap<Side, Vec<ContactId>>,
+    /// Marks belonging to contacts that were dropped outside the decay pass
+    /// (the per-side cap evicting the least confident one). Drained by
+    /// `Ephemeral::tick_intel_decay`, which is what actually talks to the map.
+    pub orphaned_marks: Vec<(Option<MarkId>, Option<MarkId>, Option<MarkId>)>,
 }
 
 impl IntelDatabase {
@@ -199,6 +223,7 @@ impl IntelDatabase {
                 );
                 c.unit_count = c.unit_count.max(unit_count);
                 c.source = source;
+                c.pos_uncertainty_m = source.pos_uncertainty_m();
                 c.confidence = 1.0;
                 c.detected_at = now;
             }
@@ -217,7 +242,15 @@ impl IntelDatabase {
                     })
                     .copied()
                 {
-                    self.contacts.remove(&evict_id);
+                    // Take the evicted contact's marks with it. Dropping the
+                    // contact alone left its shape, ring and pin on the F10
+                    // map with nothing tracking them, so once a side hit the
+                    // contact cap every further detection added permanent
+                    // clutter that no decay could ever clear.
+                    if let Some(c) = self.contacts.remove(&evict_id) {
+                        self.orphaned_marks
+                            .push((c.map_mark_rect, c.map_mark_label, c.map_mark_ring));
+                    }
                     side_ids.retain(|&id| id != evict_id);
                 }
             }
@@ -227,7 +260,7 @@ impl IntelDatabase {
                 side,
                 enemy_side,
                 pos,
-                pos_uncertainty_m: 1500.0,
+                pos_uncertainty_m: source.pos_uncertainty_m(),
                 unit_class,
                 unit_count,
                 source,
@@ -236,6 +269,7 @@ impl IntelDatabase {
                 map_mark_rect: None,
                 map_mark_ring: None,
                 mark_pos: pos,
+                mark_confidence: 1.0,
                 map_mark_label: None,
             });
             self.by_side.entry(side).or_default().push(id);

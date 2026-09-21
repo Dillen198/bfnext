@@ -2757,12 +2757,20 @@ pub struct CampaignEventsCfg {
     /// Enable automatic enemy CAP intercept spawns when players are deep in enemy territory
     #[serde(default)]
     pub enemy_cap_enabled: bool,
-    /// Template name prefix for enemy CAP aircraft (e.g. "RCAP" for red, "BCAP" for blue).
-    /// The system appends the side prefix automatically.
-    #[serde(default = "default_cap_template_red")]
-    pub cap_template_red: String,
-    #[serde(default = "default_cap_template_blue")]
-    pub cap_template_blue: String,
+    /// Roster of CAP templates for red / blue: the .miz group names a scramble
+    /// may spawn. One entry is picked at random by weight, from those whose
+    /// `min_threat` the incursion actually meets -- a pair of MiG-21s for a
+    /// two-ship probe, Flankers when six players push -- instead of the same
+    /// flight every single time. A roster of one behaves exactly like the
+    /// single `cap_template_red` / `cap_template_blue` names these replaced.
+    ///
+    /// Required when `enemy_cap_enabled` is set: an empty roster is rejected at
+    /// config load rather than discovered as a silently cancelled scramble
+    /// hours into a session.
+    #[serde(default)]
+    pub cap_templates_red: Vec<CapTemplateCfg>,
+    #[serde(default)]
+    pub cap_templates_blue: Vec<CapTemplateCfg>,
     /// How long (seconds) a CAP orbit lasts before despawning. Default: 600.
     #[serde(default = "default_cap_duration")]
     pub cap_duration_secs: u32,
@@ -2845,12 +2853,28 @@ pub struct CampaignEventsCfg {
     /// a real incursion of 2+ aircraft will. Default: 2.
     #[serde(default = "default_cap_min_threat")]
     pub cap_min_threat_count: u32,
-    /// Cooldown (seconds) after a side's reactive CAP wave ends -- shot down OR
-    /// flown its full duration and RTB'd -- before that side may scramble
-    /// another. Gives the attacking side a real window between waves.
-    /// Default: 1800 (30 minutes).
+    /// Cooldown (seconds) after a reactive CAP wave ends -- shot down OR flown
+    /// its full duration and RTB'd -- before ANOTHER WAVE MAY LAUNCH FROM THE
+    /// SAME FIELD. Per airbase, not per side: one wave ending on the east flank
+    /// no longer locks the entire coalition out of the air, which is what made
+    /// `cap_max_per_side = 2` effectively mean one. Side-wide throttling is
+    /// `cap_max_sorties_per_hour`. Default: 1800 (30 minutes).
     #[serde(default = "default_cap_respawn_cooldown")]
     pub cap_respawn_cooldown_secs: u64,
+    /// Side-wide ceiling on reactive CAP launches per rolling hour. This is the
+    /// coalition's sortie budget -- it stops a long busy night turning into an
+    /// endless conveyor of AI fighters now that the per-field cooldown no
+    /// longer gates the whole side. 0 = unlimited. Default: 6.
+    #[serde(default = "default_cap_max_sorties_per_hour")]
+    pub cap_max_sorties_per_hour: u32,
+    /// Grace (seconds) granted to a CAP flight that still has a live contact
+    /// inside its engage radius when its clock runs out. Without this, a flight
+    /// in the middle of a merge is told to go home, which reads in-game as the
+    /// AI disengaging for no reason. The flight keeps earning extensions while
+    /// it is in contact, up to `cap_duration_secs` of total overtime, then goes
+    /// home regardless. 0 disables. Default: 180.
+    #[serde(default = "default_cap_engaged_extension_secs")]
+    pub cap_engaged_extension_secs: u32,
     /// When true, reactive CAP triggers on the actual count of enemy fixed-wing
     /// PLAYERS airborne on the attacking side, not on what the defending side's
     /// radar network has painted. Use this if a side (usually Red) never
@@ -2879,18 +2903,21 @@ pub struct CampaignEventsCfg {
     // where only helo pilots are flying gets no AI response at all. These
     // knobs answer helicopter players with armed AI helicopters instead --
     // same trigger logic, same spawn/station/RTB machinery, rotary numbers.
-    /// Enable reactive AI helicopter patrols. Requires helicopter-section
-    /// groups named by `helo_template_red`/`_blue` in the .miz. Default: false.
+    /// Enable reactive AI helicopter patrols. Requires a non-empty
+    /// `helo_templates_red`/`_blue` roster naming helicopter-section groups
+    /// that exist in the .miz. Default: false.
     #[serde(default)]
     pub enemy_helo_enabled: bool,
-    /// Template group names for the AI helicopter patrol, per side. These must
-    /// be HELICOPTER-section groups in the mission file -- the ground-start
-    /// rewrite picks helipads (and open ground at padless FOBs) only when the
-    /// template's category is Helicopter.
-    #[serde(default = "default_helo_template_red")]
-    pub helo_template_red: String,
-    #[serde(default = "default_helo_template_blue")]
-    pub helo_template_blue: String,
+    /// As `cap_templates_red` / `_blue`, for the helicopter patrol. Every entry
+    /// must name a HELICOPTER-section group in the mission file -- the
+    /// ground-start rewrite picks helipads (and open ground at padless FOBs)
+    /// only when the template's category is Helicopter.
+    ///
+    /// Required when `enemy_helo_enabled` is set.
+    #[serde(default)]
+    pub helo_templates_red: Vec<CapTemplateCfg>,
+    #[serde(default)]
+    pub helo_templates_blue: Vec<CapTemplateCfg>,
     /// How long (seconds) a helicopter patrol stays up before it RTBs and
     /// despawns. Longer than CAP's -- helos cruise at a third of the speed and
     /// need the time to reach their station. Default: 1800.
@@ -2937,10 +2964,15 @@ pub struct CampaignEventsCfg {
     /// patrol. Default: 2.
     #[serde(default = "default_helo_min_threat")]
     pub helo_min_threat_count: u32,
-    /// Cooldown (seconds) after a side's patrol ends before it may launch
-    /// another. Default: 900 (15 minutes).
+    /// Cooldown (seconds) after a patrol ends before ANOTHER MAY LAUNCH FROM
+    /// THE SAME FIELD (per airbase/FARP/FOB, not per side -- see
+    /// `cap_respawn_cooldown_secs`). Default: 900 (15 minutes).
     #[serde(default = "default_helo_respawn_cooldown")]
     pub helo_respawn_cooldown_secs: u64,
+    /// Side-wide ceiling on helicopter-patrol launches per rolling hour.
+    /// 0 = unlimited. Default: 4.
+    #[serde(default = "default_helo_max_sorties_per_hour")]
+    pub helo_max_sorties_per_hour: u32,
     /// As `cap_trigger_on_known_players`, for helicopters. Usually wanted:
     /// radar rarely paints a helo flying NOE, so with this off the threat path
     /// almost never fires and only the balance gap does. Default: true.
@@ -2968,9 +3000,39 @@ pub struct CampaignEventsCfg {
 
 fn default_cap_respawn_cooldown() -> u64 { 1800 }
 fn default_cap_balance_gap() -> u32 { 2 }
+fn default_cap_max_sorties_per_hour() -> u32 { 6 }
+fn default_helo_max_sorties_per_hour() -> u32 { 4 }
+fn default_cap_engaged_extension_secs() -> u32 { 180 }
+fn default_cap_template_weight() -> u32 { 1 }
 
-fn default_helo_template_red() -> String { "RHELOCAP".into() }
-fn default_helo_template_blue() -> String { "BHELOCAP".into() }
+/// One entry in a reactive-response template roster
+/// (`cap_templates_red`/`_blue`, `helo_templates_red`/`_blue`).
+///
+/// A scramble filters the roster to the entries this incursion qualifies for
+/// (`min_threat` at or below the size of the detected cluster), then picks one
+/// at random weighted by `weight`. If every entry is out of reach -- a roster
+/// where the cheapest tier needs 3 contacts and only 2 showed up -- the whole
+/// roster is used rather than nothing scrambling.
+///
+/// Templates are tried in pick order: if the chosen group is missing from the
+/// .miz the next candidate is tried, so one typo'd name degrades the roster
+/// instead of cancelling every scramble.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CapTemplateCfg {
+    /// Group name in the .miz, exactly as for the single-template knobs.
+    pub template: String,
+    /// Relative pick weight among eligible entries. 3 is picked three times as
+    /// often as 1. Default: 1.
+    #[serde(default = "default_cap_template_weight")]
+    pub weight: u32,
+    /// Smallest detected contact count this entry answers. Use it to hold the
+    /// heavy metal back for real pushes: `min_threat: 4` on a Flanker flight
+    /// means two players probing get MiGs and eight get Flankers. Default: 0
+    /// (always eligible).
+    #[serde(default)]
+    pub min_threat: u32,
+}
+
 fn default_helo_duration() -> u32 { 1800 }
 fn default_helo_altitude_agl_m() -> f64 { 300.0 }
 fn default_helo_speed_ms() -> f64 { 60.0 }
@@ -2991,8 +3053,6 @@ fn default_vip_reward() -> i32 { 300 }
 fn default_evac_reward() -> i32 { 50 }
 fn default_barrage_duration() -> u32 { 300 }
 fn default_ambush_duration() -> u32 { 600 }
-fn default_cap_template_red() -> String { "RCAP".into() }
-fn default_cap_template_blue() -> String { "BCAP".into() }
 fn default_cap_altitude_m() -> f64 { 8000.0 }
 fn default_cap_speed_ms() -> f64 { 250.0 }
 fn default_cap_max_push_m() -> f64 { 60000.0 }
@@ -3027,8 +3087,8 @@ impl Default for CampaignEventsCfg {
             ambush_enabled: true,
             ambush_duration_secs: default_ambush_duration(),
             enemy_cap_enabled: false,
-            cap_template_red: default_cap_template_red(),
-            cap_template_blue: default_cap_template_blue(),
+            cap_templates_red: Vec::new(),
+            cap_templates_blue: Vec::new(),
             cap_duration_secs: default_cap_duration(),
             cap_altitude_m: default_cap_altitude_m(),
             cap_speed_ms: default_cap_speed_ms(),
@@ -3049,12 +3109,14 @@ impl Default for CampaignEventsCfg {
             cap_max_per_side: default_cap_max_per_side(),
             cap_min_threat_count: default_cap_min_threat(),
             cap_respawn_cooldown_secs: default_cap_respawn_cooldown(),
+            cap_max_sorties_per_hour: default_cap_max_sorties_per_hour(),
+            cap_engaged_extension_secs: default_cap_engaged_extension_secs(),
             cap_trigger_on_known_players: false,
             cap_balance_gap: default_cap_balance_gap(),
             cap_cold_start: true,
             enemy_helo_enabled: false,
-            helo_template_red: default_helo_template_red(),
-            helo_template_blue: default_helo_template_blue(),
+            helo_templates_red: Vec::new(),
+            helo_templates_blue: Vec::new(),
             helo_duration_secs: default_helo_duration(),
             helo_altitude_agl_m: default_helo_altitude_agl_m(),
             helo_speed_ms: default_helo_speed_ms(),
@@ -3066,6 +3128,7 @@ impl Default for CampaignEventsCfg {
             helo_max_per_side: default_helo_max_per_side(),
             helo_min_threat_count: default_helo_min_threat(),
             helo_respawn_cooldown_secs: default_helo_respawn_cooldown(),
+            helo_max_sorties_per_hour: default_helo_max_sorties_per_hour(),
             helo_trigger_on_known_players: true,
             helo_balance_gap: default_helo_balance_gap(),
             helo_cold_start: true,
@@ -4098,6 +4161,37 @@ impl Cfg {
         }
         if has_deprecated {
             fs::write(path, serde_json::to_string_pretty(&cfg)?)?
+        }
+        // A reactive air response with no templates to spawn is a config that
+        // looks enabled and does nothing: every scramble picks from an empty
+        // roster and cancels itself, hours into a session, in the log only.
+        // Refuse to start instead.
+        if let Some(ce) = &cfg.campaign_events {
+            if ce.enabled && ce.enemy_cap_enabled {
+                for (side, roster) in
+                    [("red", &ce.cap_templates_red), ("blue", &ce.cap_templates_blue)]
+                {
+                    if roster.is_empty() {
+                        bail!(
+                            "campaign_events.enemy_cap_enabled is on but cap_templates_{side} \
+                             is empty -- list at least one plane-section group from the .miz, \
+                             e.g. [{{\"template\": \"RCAP\"}}]"
+                        )
+                    }
+                }
+            }
+            if ce.enabled && ce.enemy_helo_enabled {
+                for (side, roster) in
+                    [("red", &ce.helo_templates_red), ("blue", &ce.helo_templates_blue)]
+                {
+                    if roster.is_empty() {
+                        bail!(
+                            "campaign_events.enemy_helo_enabled is on but helo_templates_{side} \
+                             is empty -- list at least one helicopter-section group from the .miz"
+                        )
+                    }
+                }
+            }
         }
         Ok(cfg)
     }

@@ -32,7 +32,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{Cfg, SpecialSamSiteCfg, SpecialSamUnitCfg, Vehicle},
+    cfg::{Cfg, SpecialSamSiteCfg, SpecialSamUnitCfg, UnitTag, Vehicle},
     db::{
         group::GroupId,
         objective::{ObjectiveId, ObjectiveKind},
@@ -321,6 +321,35 @@ impl Db {
     /// Deliberately also drops the units from their objective's group set: the
     /// health fraction is computed over that set, and leaving stale ids in it
     /// would make every affected objective read as permanently damaged.
+    /// Drop every crate carried over from the previous session.
+    ///
+    /// Crates are a delivery in progress, not campaign state. The physical
+    /// ones are tracked in `ephemeral.c130_crates`, which does NOT survive a
+    /// restart -- so a crate that came back with the save came back as a
+    /// static nobody could unpack, load or clear, and they accumulated at
+    /// every logistics base across restarts. Anything a player actually
+    /// finished is already a deployed group and is unaffected; an unfinished
+    /// delivery has to be flown again.
+    pub(super) fn purge_carried_over_crates(&mut self) -> Result<()> {
+        let doomed: SmallVec<[GroupId; 64]> =
+            self.persisted.crates.into_iter().copied().collect();
+        self.ephemeral.c130_crates.clear();
+        if doomed.is_empty() {
+            return Ok(());
+        }
+        for gid in &doomed {
+            if let Err(e) = self.delete_group(gid) {
+                warn!("[CRATE] could not drop carried-over crate {gid}: {e:?}");
+            }
+        }
+        info!(
+            "[CRATE] dropped {} crate(s) left over from the previous session",
+            doomed.len()
+        );
+        self.ephemeral.dirty();
+        Ok(())
+    }
+
     pub(super) fn purge_logi_family_groups(&mut self) -> Result<()> {
         if self.ephemeral.cfg.logi_from_scenery.is_none() {
             return Ok(());
@@ -1789,6 +1818,31 @@ impl Db {
                 }
             }
         }
+        // Reactive CAP and helicopter patrols are session-scoped. Everything
+        // that owns one -- the event's group list, the RTB sweep, the station
+        // map -- lives in the non-persisted half of the scheduler, so a flight
+        // that was airborne when the server went down comes back with nothing
+        // able to retask, land or despawn it: it respawns at its field and
+        // sits there, alive and weapons-free, for the rest of the campaign.
+        // Clear them out before anything is queued to spawn.
+        let stale_cap: SmallVec<[GroupId; 8]> = self
+            .persisted
+            .groups
+            .into_iter()
+            .filter(|(_, g)| g.tags.contains(UnitTag::CAP))
+            .map(|(gid, _)| *gid)
+            .collect();
+        if !stale_cap.is_empty() {
+            info!(
+                "respawn_after_load: dropping {} orphaned CAP flight(s) from the save",
+                stale_cap.len()
+            );
+            for gid in stale_cap {
+                if let Err(e) = self.delete_group(&gid) {
+                    error!("respawn_after_load: could not drop stale CAP group {gid:?}: {e:?}");
+                }
+            }
+        }
         // Allocate navaids before any group spawns so the spawn hooks can light
         // the beacons on the first spawn rather than waiting for the slow tick.
         crate::navaids::reallocate(&mut self.persisted, &self.ephemeral.cfg.navaids);
@@ -1832,6 +1886,10 @@ impl Db {
         // respawn (and don't drop invisible FARP pads on runways).
         self.purge_logi_family_groups()
             .context("purging carried-over logi groups")?;
+        // Same idea for crates: they are an in-flight delivery, not state
+        // worth restoring, and their physical-crate tracking is ephemeral.
+        self.purge_carried_over_crates()
+            .context("purging carried-over crates")?;
         info!("[CARRIER_LOAD] Spawning carrier groups before other entities");
         while self.ephemeral.spawnq_len() > 0 {
             self.ephemeral.process_spawn_queue(perf, &self.persisted, Utc::now(), idx, spctx)?

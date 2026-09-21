@@ -109,6 +109,13 @@ pub enum CampaignEvent {
         /// before helicopter patrols existed load unchanged.
         #[serde(default)]
         rotary: bool,
+        /// How many contacts the cluster that triggered this scramble held.
+        /// Chooses which templates in the side's roster are eligible, so a
+        /// two-ship probe and an eight-ship push are not answered by the same
+        /// flight. Defaults to 0 (every roster entry eligible) for events
+        /// saved before rosters existed.
+        #[serde(default)]
+        threat: u32,
     },
     /// Commander-dispatched CAP: a friendly AI CAP flight launched by the Smart
     /// Commander when friendly pilot coverage is thin.  Uses the same DCS spawn
@@ -199,11 +206,15 @@ pub enum EventEffect {
         obj_pos: Vector2,
         /// Helicopter patrol rather than fixed-wing CAP.
         rotary: bool,
+        /// Contact count of the incursion, for roster template selection.
+        threat: u32,
     },
     /// Despawn all groups registered to a CAP event.
     DespawnCap {
         event_id: EventId,
         cap_side: Side,
+        /// The field this wave launched from -- its cooldown starts here.
+        objective: ObjectiveId,
         /// Helicopter patrol rather than fixed-wing CAP.
         rotary: bool,
     },
@@ -298,6 +309,28 @@ pub struct EventScheduler {
     /// is sent home early instead of burning its full `cap_duration_secs`.
     #[serde(skip)]
     pub cap_last_threat_seen: FxHashMap<EventId, DateTime<Utc>>,
+    /// (launch field, rotary) -> when that field's last wave of this class
+    /// ended. The between-waves cooldown is enforced per FIELD, not per side:
+    /// a wave ending on one flank must not ground the whole coalition.
+    #[serde(skip)]
+    pub cap_field_cooldown: FxHashMap<(ObjectiveId, bool), DateTime<Utc>>,
+    /// Launch times of recent reactive scrambles, (side, rotary, when). Read
+    /// as a rolling-hour window for the side's sortie budget and pruned to the
+    /// last hour on every check, so it stays a handful of entries.
+    #[serde(skip)]
+    pub cap_sortie_log: Vec<(Side, bool, DateTime<Utc>)>,
+    /// Flights that have been sent home and are still flying the approach.
+    /// GroupId -> when the RTB order was issued. `flush_cap_rtb` deletes each
+    /// one once it is down (or once it has had long enough to get there);
+    /// before this existed every timed-out wave stayed parked at its field
+    /// forever, alive and weapons-free, and persisted into the save.
+    #[serde(skip)]
+    pub cap_rtb: FxHashMap<GroupId, DateTime<Utc>>,
+    /// CAP event -> the latest it may stay up no matter how much fighting it
+    /// is doing. Set at spawn; bounds the in-contact extensions so a flight
+    /// trading shots with a stream of players can't loiter indefinitely.
+    #[serde(skip)]
+    pub cap_hard_expiry: FxHashMap<EventId, DateTime<Utc>>,
 
 
     #[serde(skip)]
@@ -458,7 +491,7 @@ impl EventScheduler {
                     }
                 }
 
-                CampaignEvent::EnemyCap { id, cap_side, objective, expires_at, spawned, rotary } => {
+                CampaignEvent::EnemyCap { id, cap_side, objective, expires_at, spawned, rotary, threat } => {
                     if !*spawned {
                         *spawned = true;
                         let obj_pos = db.persisted.objectives.get(objective)
@@ -469,10 +502,11 @@ impl EventScheduler {
                             objective: *objective,
                             obj_pos,
                             rotary: *rotary,
+                            threat: *threat,
                         });
                     }
                     if now >= *expires_at {
-                        effects.push(EventEffect::DespawnCap { event_id: *id, cap_side: *cap_side, rotary: *rotary });
+                        effects.push(EventEffect::DespawnCap { event_id: *id, cap_side: *cap_side, objective: *objective, rotary: *rotary });
                         if let Some(marks) = self.event_marks.remove(id) {
                             effects.push(EventEffect::DeleteMarks { ids: marks });
                         }
@@ -491,10 +525,11 @@ impl EventScheduler {
                             objective: *objective,
                             obj_pos,
                             rotary: false,
+                            threat: 0,
                         });
                     }
                     if now >= *expires_at {
-                        effects.push(EventEffect::DespawnCap { event_id: *id, cap_side: *cap_side, rotary: false });
+                        effects.push(EventEffect::DespawnCap { event_id: *id, cap_side: *cap_side, objective: *objective, rotary: false });
                         if let Some(marks) = self.event_marks.remove(id) {
                             effects.push(EventEffect::DeleteMarks { ids: marks });
                         }

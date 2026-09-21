@@ -427,11 +427,17 @@ pub(super) struct ObjectiveMarkup {
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Circumradius of a status hexagon, metres.
-const HEX_R: f64 = 420.;
+///
+/// The row started out nearly 3.5 km wide, which is wider than most of the
+/// objectives it describes: at a FOB the four hexes spilled across the
+/// surrounding map and read as loose shapes scattered near the base rather
+/// than as that base's status. Same layout, roughly half the size, so the row
+/// sits under the zone it belongs to.
+const HEX_R: f64 = 260.;
 /// Centre-to-centre spacing along the row, metres.
-const HEX_GAP: f64 = 1150.;
+const HEX_GAP: f64 = 640.;
 /// How far south of the objective centre the row sits, metres.
-const HEX_DROP: f64 = 1700.;
+const HEX_DROP: f64 = 1100.;
 /// Number of stats in the row: health, logi, supply, fuel.
 const N_HEX: usize = 4;
 /// Opacity of the supply-connection arrows between objectives. They are drawn

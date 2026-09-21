@@ -3214,7 +3214,24 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 }
             }
             AdminCommand::SetServerInfo { restart_at, weather } => {
-                ctx.shutdown = restart_at.map(crate::AutoShutdown::new);
+                // bfdb pushes this every time anybody loads the dashboard, so
+                // it arrives many times a minute. Rebuilding the countdown on
+                // each push re-armed every warning, which is why the panel
+                // repeated "The server will restart in 30 minutes" forever --
+                // and said 30 even when the real restart was eleven minutes
+                // out. Keep the running countdown unless the time actually
+                // moved; the bot's own value jitters by a second or two
+                // between pushes, so allow a minute of slack.
+                let now = Utc::now();
+                ctx.shutdown = match (restart_at, ctx.shutdown) {
+                    (None, _) => None,
+                    (Some(at), Some(cur))
+                        if (cur.when - at).num_seconds().abs() <= 60 =>
+                    {
+                        Some(cur)
+                    }
+                    (Some(at), _) => Some(crate::AutoShutdown::scheduled(at, now)),
+                };
                 ctx.bot_weather = weather;
                 reply_ok!("server info updated");
             }

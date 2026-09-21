@@ -35,7 +35,7 @@ for more details.
 
 use super::{
     group::DeployKind,
-    intel::{IntelContact, IntelDatabase, IntelUnitClass},
+    intel::{IntelContact, IntelDatabase},
     logistics::{AirLogisticsRoute, ConvoyId, LogiRouteId, SeaLogisticsRoute, SupplyConvoy},
     persisted::Persisted,
     tasks::TaskId,
@@ -161,21 +161,9 @@ const JTAC_SYMBOL_FOLLOW_M: f64 = 600.;
 /// How far a contact must move before its pin is worth re-dropping.
 const INTEL_PIN_MOVE_M: f64 = 750.;
 
-/// Outline and fill for an intel contact at a given confidence alpha.
-fn intel_colors(side: Side, alpha: f32) -> (Color, Color) {
-    let fill_alpha = alpha * 0.15;
-    match side {
-        Side::Blue => (
-            Color::new(0.72, 0.30, 1., alpha),
-            Color::new(0.72, 0.30, 1., fill_alpha),
-        ),
-        Side::Red => (
-            Color::new(0.25, 0.65, 1., alpha),
-            Color::new(0.25, 0.65, 1., fill_alpha),
-        ),
-        _ => (Color::white(alpha), Color::white(fill_alpha)),
-    }
-}
+/// How much a contact's confidence has to change before its marker text is
+/// worth re-dropping (a marker cannot be edited in place).
+const INTEL_PIN_CONF_STEP: f32 = 0.25;
 
 /// Status colour for a 0-100 value, matching the objective hexes exactly.
 fn bucket_color(v: u8) -> Color {
@@ -1081,109 +1069,49 @@ impl MapLayer {
         self.timed_marks.push(TimedMark::one(pin, 120, now));
     }
 
-    /// Place or refresh an F10 map marker for an ELINT/SIGINT intel contact.
-    /// The marker label and opacity track the contact's confidence score.
-    /// Old marks are deleted and replaced when refreshed.
+    /// Place or refresh the F10 map marker for an ELINT/SIGINT intel contact.
+    ///
+    /// Intel is a MARKER and nothing else. It used to also draw a class
+    /// symbol and a position-uncertainty ring per contact, so a contested
+    /// base carried three pieces of markup per cluster and a front line's
+    /// worth of them buried the map -- which is exactly what players reported.
+    /// The marker carries class, count, source, confidence and accuracy in
+    /// its text, so nothing is actually lost by not drawing it as well.
+    ///
+    /// A marker cannot be edited in place: refreshing one costs a delete plus
+    /// a create. So it is only re-dropped when the contact has really moved,
+    /// or when its confidence has decayed far enough that the number in the
+    /// text would be misleading.
     pub fn update_intel_contact_mark(
         &mut self,
         contact: &mut IntelContact,
         cfg: &bfprotocols::cfg::ElintConfig,
         msgs: &mut MsgQ,
     ) {
-        // This runs for EVERY live contact on every decay tick, so it must not
-        // rebuild anything it does not have to. A map pin cannot be edited in
-        // place -- re-dropping one costs a delete plus a create in the pin
-        // queue, which outranks markup. Doing that per contact per tick buried
-        // the queue under ~900 pin commands and put the map five minutes
-        // behind the campaign.
-        //
-        // So: if the marks already exist and the contact has not meaningfully
-        // MOVED, only recolour them. Colour updates coalesce per mark, so a
-        // decaying contact costs at most one pending command per mark.
+        // Drawn markup from an older build (or an older contact) goes away
+        // the first time we touch the contact.
+        if let Some(id) = contact.map_mark_rect.take() {
+            msgs.delete_mark(id);
+        }
+        if let Some(id) = contact.map_mark_ring.take() {
+            msgs.delete_mark(id);
+        }
         let moved = (contact.pos - contact.mark_pos).norm() > INTEL_PIN_MOVE_M;
-        let have_marks = contact.map_mark_rect.is_some()
-            && contact.map_mark_label.is_some()
-            && contact.map_mark_ring.is_some();
-        if have_marks && !moved {
-            let alpha = (contact.confidence * 0.9 + 0.05).clamp(0.1, 0.95);
-            let col = intel_colors(contact.side, alpha);
-            if let Some(id) = contact.map_mark_rect {
-                msgs.set_markup_color(id, col.0);
-                msgs.set_markup_fill_color(id, col.1);
-            }
-            if let Some(id) = contact.map_mark_ring {
-                msgs.set_markup_color(id, col.0);
-                msgs.set_markup_fill_color(id, col.1);
-            }
+        let faded = (contact.confidence - contact.mark_confidence).abs() > INTEL_PIN_CONF_STEP;
+        if contact.map_mark_label.is_some() && !moved && !faded {
             return;
         }
-
-        // Moved, or first draw: rebuild.
-        if let Some(rect_id) = contact.map_mark_rect.take() {
-            msgs.delete_mark(rect_id);
-        }
-        if let Some(label_id) = contact.map_mark_label.take() {
-            msgs.delete_mark(label_id);
-        }
-        if let Some(ring_id) = contact.map_mark_ring.take() {
-            msgs.delete_mark(ring_id);
+        if let Some(id) = contact.map_mark_label.take() {
+            msgs.delete_mark(id);
         }
         contact.mark_pos = contact.pos;
-
-        // The mark is shown only to the side that owns the intel.
-        let sf = side_filter(contact.side);
-        // Color fades from bright hostile-red towards dark as confidence drops.
-        let alpha = (contact.confidence * 0.9 + 0.05).clamp(0.1, 0.95);
-        let (enemy_col, fill_col) = intel_colors(contact.side, alpha);
-        let pos = contact.pos;
-
-        // The SHAPE carries the class, so one look tells you what kind of thing
-        // is there: diamond = air defence, square = armour, triangle = infantry,
-        // hexagon = artillery, larger hexagon = naval or airbase. Anything
-        // unidentified stays a near-circular octagon, which reads as "something
-        // here, not yet classified".
-        let (sides, rot, r) = match contact.unit_class {
-            IntelUnitClass::AirDefense => (4usize, 0., 620.),
-            IntelUnitClass::Armor => (4, 45., 560.),
-            IntelUnitClass::Infantry => (3, 90., 640.),
-            IntelUnitClass::Artillery => (6, 0., 560.),
-            IntelUnitClass::Naval | IntelUnitClass::AirBase => (6, 30., 700.),
-            IntelUnitClass::Unknown => (8, 0., 520.),
-        };
-        let shape_id = ngon(pos, r, sides, rot, enemy_col, fill_col, sf, msgs);
-
-        // Confidence stops being a word and becomes the position-uncertainty
-        // ring: the bigger the ring, the less sure the engine is about where
-        // this actually is. That is the part a pilot has to fly against.
-        let unc = (contact.pos_uncertainty_m as f64).clamp(600., 12_000.);
-        let ring_id = MarkId::new();
-        msgs.circle_to_all(
-            sf,
-            ring_id,
-            CircleSpec {
-                center: v3(pos.x, pos.y),
-                radius: unc,
-                color: enemy_col,
-                fill_color: fill_col,
-                line_type: LineType::Dashed,
-                read_only: true,
-            },
-            None,
-        );
-
-        // Class, count, source, confidence and age all still exist -- they move
-        // into a pin, collapsed to an icon until clicked, rather than a caption
-        // stacked over every contact on the map.
-        let pin_id = msgs.mark_to_side(
+        contact.mark_confidence = contact.confidence;
+        contact.map_mark_label = Some(msgs.mark_to_side(
             contact.side,
-            pos,
+            contact.pos,
             true,
             IntelDatabase::marker_text(contact, cfg).as_str(),
-        );
-
-        contact.map_mark_rect = Some(shape_id);
-        contact.map_mark_label = Some(pin_id);
-        contact.map_mark_ring = Some(ring_id);
+        ));
     }
 
     /// Remove F10 map marks for a deleted intel contact.

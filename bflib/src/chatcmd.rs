@@ -2,7 +2,7 @@ use crate::{
     Context,
     admin::{self, AdminCommand, Caller},
     bg::Task,
-    db::{actions::ActionCmd, group::DeployKind, player::RegErr},
+    db::{actions::ActionCmd, group::DeployKind},
     jtac::JtId,
     lives,
     menu::{self, ArgQuad, ArgTriple, ArgTuple},
@@ -41,57 +41,6 @@ pub(crate) fn register_success(ctx: &mut Context, id: PlayerId, name: String, si
         MsgTyp::Chat(None),
         format_compact!("{} has joined {:?} team", name, side),
     );
-}
-
-pub(crate) fn register_already_on(ctx: &mut Context, id: PlayerId, side: Side) {
-    ctx.db.ephemeral.msgs().send(
-        MsgTyp::Chat(Some(id)),
-        format_compact!("you are already on {:?} team!", side),
-    )
-}
-
-fn register_player(ctx: &mut Context, lua: HooksLua, id: PlayerId, msg: String) -> Result<String> {
-    let ifo = ctx.connected.get_or_lookup_player_info(lua, id)?;
-    let name = ifo.name.clone();
-    let side = if msg.eq_ignore_ascii_case("blue") {
-        Side::Blue
-    } else if msg.eq_ignore_ascii_case("red") {
-        Side::Red
-    } else {
-        bail!("side \"{msg}\" is not blue or red")
-    };
-    match ctx
-        .db
-        .register_player(ifo.ucid.clone(), ifo.name.clone(), side)
-    {
-        Ok(()) => register_success(ctx, id, name, side),
-        Err(RegErr::AlreadyOn(side)) => register_already_on(ctx, id, side),
-        Err(RegErr::AlreadyRegistered(side_switches, orig_side)) => {
-            let msg = String::from(match side_switches {
-                None => format_compact!(
-                    "You are already on the {:?} team. You may switch sides by typing -switch {:?}.",
-                    orig_side,
-                    side
-                ),
-                Some(0) => format_compact!(
-                    "You are already on {:?} team, and you may not switch sides.",
-                    orig_side
-                ),
-                Some(1) => format_compact!(
-                    "You are already on {:?} team. You may sitch sides 1 time by typing -switch {:?}.",
-                    orig_side,
-                    side
-                ),
-                Some(n) => format_compact!(
-                    "You are already on {:?} team. You may switch sides {n} times. Type -switch {:?}.",
-                    orig_side,
-                    side
-                ),
-            });
-            ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
-        }
-    }
-    Ok("".into())
 }
 
 pub(crate) fn sideswitch_success(ctx: &mut Context, name: String, side: Side) {
@@ -360,7 +309,7 @@ fn brief_command(ctx: &mut Context, lua: HooksLua, id: PlayerId) {
     let Some(side) = ctx.db.player(&ucid).map(|p| p.side) else {
         ctx.db.ephemeral.msgs().send(
             MsgTyp::Chat(Some(id)),
-            " you aren't registered yet -- type blue or red first",
+            " you aren't registered yet -- take any slot on the side you want to fly",
         );
         return;
     };
@@ -731,7 +680,7 @@ fn bind_command(ctx: &mut Context, id: PlayerId, s: &str) {
     match ctx.connected.get(&id) {
         None => ctx.db.ephemeral.msgs().send(
             MsgTyp::Chat(Some(id)),
-            "You must register first. Type red or blue in chat",
+            "I don't have your player info yet. Take a slot and try again.",
         ),
         Some(ifo) => {
             let rx = RX.get_or_init(|| {
@@ -975,8 +924,6 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
         Some(ifo) => ctx.db.ephemeral.cfg.admins.contains_key(&ifo.ucid),
     };
     for cmd in [
-        " blue: join the blue team",
-        " red: join the red team",
         " -switch <color>: side switch to <color>",
         " -lives: display your current lives",
         " -time: how long until server restart",
@@ -1009,9 +956,7 @@ pub(super) fn process(
     id: PlayerId,
     msg: String,
 ) -> Result<String> {
-    if msg.eq_ignore_ascii_case("blue") || msg.eq_ignore_ascii_case("red") {
-        register_player(ctx, lua, id, msg)
-    } else if msg.eq_ignore_ascii_case("-switch blue") || msg.eq_ignore_ascii_case("-switch red") {
+    if msg.eq_ignore_ascii_case("-switch blue") || msg.eq_ignore_ascii_case("-switch red") {
         sideswitch_player(ctx, lua, id, msg)
     } else if msg.eq_ignore_ascii_case("-lives") {
         if let Err(e) = lives_command(ctx, id) {

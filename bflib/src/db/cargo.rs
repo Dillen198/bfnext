@@ -51,7 +51,7 @@ use dcso3::{
     unit::Unit,
 };
 use enumflags2::BitFlags;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use log::{debug, error, info};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
@@ -226,6 +226,24 @@ pub struct C130Cargo {
     pub vehicle_def: Option<C130Vehicle>,
     /// If false the crate must be manually unpacked (helicopter dynamic cargo)
     pub auto_unpack: bool,
+    /// True while the crate is riding inside a player's aircraft.
+    ///
+    /// DCS's own cargo system (F8 ground crew -> load cargo, what the CH-47
+    /// and Mi-8 use) does not remove the static object when a crate is loaded
+    /// -- it keeps existing and travels at the aircraft's position. So every
+    /// "crates near the player" scan used to find the player's own load
+    /// sitting at zero metres, which is how "unpack nearby crates" unpacked
+    /// the four crates still in the cargo bay along with the one on the
+    /// ground. Refreshed each tick by `update_c130_crates`.
+    #[serde(default)]
+    pub aboard: bool,
+    /// Where the crate was on the previous tick. Only used when DCS cannot
+    /// answer `getCargosOnBoard`: a crate that jumps a few metres while
+    /// standing still has just been set down out of a cargo bay, which is
+    /// the moment it stops being part of somebody's load. (`last_pos` cannot
+    /// serve here -- it deliberately only follows moves over ten metres.)
+    #[serde(default)]
+    pub tick_pos: Option<Vector2>,
     /// Whether the "need more crates" panel message has already been sent for
     /// this crate while landed but incomplete -- auto-unpack retries every
     /// tick (so a late-arriving sibling still triggers unpack promptly), but
@@ -280,6 +298,8 @@ impl C130Cargo {
             crate_def,
             vehicle_def: None,
             auto_unpack,
+            aboard: false,
+            tick_pos: None,
             notified_missing: false,
             missing_marker: None,
             retry_after: None,
@@ -314,6 +334,8 @@ impl C130Cargo {
             crate_def,
             vehicle_def: Some(vehicle_def),
             auto_unpack: true,
+            aboard: false,
+            tick_pos: None,
             notified_missing: false,
             missing_marker: None,
             retry_after: None,
@@ -587,6 +609,13 @@ impl Db {
         Ok(st)
     }
 
+    /// Every crate of any side on the ground within `max_dist` of `point`.
+    ///
+    /// Crates riding inside (or slung under) an aircraft are deliberately not
+    /// listed: DCS keeps a loaded crate's object alive at the aircraft's
+    /// position, so without this every scan "found" the player's own cargo at
+    /// zero metres -- unpacking it, destroying it, or refusing to spawn a new
+    /// crate because that spot was occupied.
     fn list_crates_near_point<'a>(
         &'a self,
         point: Vector2,
@@ -595,6 +624,15 @@ impl Db {
         let mut res: SmallVec<[NearbyCrate; 4]> = smallvec![];
         for gid in &self.persisted.crates {
             let group = group!(self, gid)?;
+            if self
+                .ephemeral
+                .c130_crates
+                .get(&group.name)
+                .map(|c| c.aboard)
+                .unwrap_or(false)
+            {
+                continue;
+            }
             let (oid, crate_def) = match &group.origin {
                 DeployKind::Crate {
                     origin: oid,
@@ -2971,13 +3009,31 @@ impl Db {
             .iter()
             .filter(|(_, c)| {
                 !c.auto_unpack
+                    // Not the ones still in the cargo bay -- a player who
+                    // drops one crate to place a single vehicle should get
+                    // one vehicle, not everything they were carrying.
+                    && !c.aboard
                     && c.side == st.side
                     && na::distance(&c.last_pos.into(), &st.point.into()) <= radius
             })
             .map(|(name, c)| (name.clone(), c.clone()))
             .collect();
 
+        // Crates still in the cargo bay are excluded above, so tell a player
+        // sitting on a full load that, rather than reporting "no crates".
+        let carried = self
+            .ephemeral
+            .c130_crates
+            .values()
+            .filter(|c| c.aboard && c.side == st.side)
+            .count();
         if nearby.is_empty() {
+            if carried > 0 {
+                return Ok(String::from(format_compact!(
+                    "Nothing on the ground here to unpack -- your {} crate(s) are still loaded. Set one down (F8 -> Ground Crew -> Cargo) first.",
+                    carried
+                )));
+            }
             return Ok(String::from(format_compact!(
                 "No friendly dynamic crates within {} meters to unpack",
                 self.ephemeral.cfg.crate_load_distance
@@ -3005,11 +3061,17 @@ impl Db {
                 None => uniq.push((m, 1)),
             }
         }
-        let msgs: Vec<compact_str::CompactString> = uniq
+        let mut msgs: Vec<compact_str::CompactString> = uniq
             .into_iter()
             .map(|(m, n)| if n > 1 { format_compact!("{m} (x{n})") } else { m })
             .collect();
 
+        if carried > 0 {
+            msgs.push(format_compact!(
+                "({} crate(s) still loaded in your aircraft were left alone)",
+                carried
+            ));
+        }
         Ok(String::from(msgs.join("\n").as_str()))
     }
 
@@ -3642,10 +3704,85 @@ impl Db {
         Ok(())
     }
 
+    /// Which tracked crates are currently loaded inside a player's aircraft,
+    /// and where every player's aircraft is.
+    ///
+    /// Crates are loaded and unloaded through DCS's own cargo menu (F8 ->
+    /// Ground Crew), which does NOT remove the crate's static object -- it
+    /// keeps existing and rides at the aircraft's position. So every "crates
+    /// near the player" scan found the player's own load sitting at zero
+    /// metres, which is how unpacking one crate on the ground unpacked the
+    /// four still in the cargo bay with it.
+    ///
+    /// The authoritative answer is DCS's own `getCargosOnBoard`, the same
+    /// list that menu shows. The returned bool says whether we got it; if
+    /// this build of DCS does not have that call, `update_c130_crates` falls
+    /// back to watching which crates move with an aircraft.
+    fn crates_aboard_aircraft(
+        &self,
+        lua: MizLua,
+    ) -> (bool, FxHashSet<String>, SmallVec<[Vector2; 8]>) {
+        let mut aboard: FxHashSet<String> = FxHashSet::default();
+        let mut aircraft: SmallVec<[Vector2; 8]> = smallvec![];
+        let mut loaded: FxHashSet<String> = FxHashSet::default();
+        let mut have_api = false;
+        if self.ephemeral.c130_crates.is_empty() {
+            return (have_api, aboard, aircraft);
+        }
+        for slot in self.ephemeral.players_by_slot.keys() {
+            let unit = match self.ephemeral.slot_instance_unit(lua, slot) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            // DCS reports cargo by static object name, which is the crate's
+            // UNIT name -- crates are tracked by group name, so they are
+            // matched up through the spawned group below.
+            match unit.get_cargos_on_board() {
+                Ok(names) => {
+                    have_api = true;
+                    loaded.extend(names);
+                }
+                Err(e) => debug!("[C130_CARGO] getCargosOnBoard unavailable: {e:?}"),
+            }
+            if let Ok(p) = unit.get_position() {
+                aircraft.push(Vector2::new(p.p.x, p.p.z));
+            }
+        }
+        if have_api {
+            for (name, c) in self.ephemeral.c130_crates.iter() {
+                let carried = self
+                    .persisted
+                    .groups
+                    .get(&c.group_id)
+                    .map(|g| {
+                        g.units.into_iter().any(|uid| {
+                            self.persisted
+                                .units
+                                .get(uid)
+                                .map(|u| loaded.contains(u.name.as_str()))
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false);
+                if carried {
+                    aboard.insert(name.clone());
+                }
+            }
+        }
+        (have_api, aboard, aircraft)
+    }
+
+    /// How close a crate has to be to an aircraft to be considered part of
+    /// its load, when DCS will not answer the question directly.
+    const ABOARD_NEAR_M: f64 = 20.;
+    /// ...and how far it has to get before it is definitely not.
+    const ABOARD_CLEAR_M: f64 = 25.;
+
     /// Track physical crate state changes and implement auto-unpack
     pub fn update_c130_crates(&mut self, lua: MizLua, idx: &MizIndex) -> Result<()> {
         let mut to_unpack = Vec::new();
         let mut groups_to_mark = Vec::new();
+        let (have_cargo_api, aboard, aircraft) = self.crates_aboard_aircraft(lua);
 
         debug!("[C130_CARGO] update_c130_crates: tracking {} crates", self.ephemeral.c130_crates.len());
         debug!("[C130_CARGO] update_c130_crates: object_id_by_gid has {} entries", self.ephemeral.object_id_by_gid.len());
@@ -3680,6 +3817,36 @@ impl Db {
                 crate_name, crate_data.state, in_air, speed, pos.p.x, pos.p.z);
 
             let new_pos = Vector2::new(pos.p.x, pos.p.z);
+            // A crate that is aboard is going wherever the aircraft goes. It
+            // is not "slingload delivered" and it has not "landed", so keep
+            // the state machine (and auto-unpack with it) off it entirely --
+            // the position tracking below still runs, so its map marker
+            // follows the aircraft carrying it.
+            let moved_this_tick = crate_data
+                .tick_pos
+                .map(|p| na::distance(&p.into(), &new_pos.into()))
+                .unwrap_or(0.);
+            crate_data.tick_pos = Some(new_pos);
+            if have_cargo_api {
+                crate_data.aboard = aboard.contains(crate_name);
+            } else {
+                // No direct answer from DCS: infer it. A crate that is moving
+                // while sitting on top of an aircraft is part of that
+                // aircraft's load; it stops being part of it when it is left
+                // behind, or when it is set down (it shifts a few metres onto
+                // the ground while its carrier stays put).
+                let near = aircraft
+                    .iter()
+                    .map(|p| na::distance(&(*p).into(), &new_pos.into()))
+                    .fold(f64::INFINITY, f64::min);
+                if crate_data.aboard {
+                    if near > Self::ABOARD_CLEAR_M || (moved_this_tick > 2. && speed < 1.) {
+                        crate_data.aboard = false;
+                    }
+                } else if near <= Self::ABOARD_NEAR_M && speed > 2. {
+                    crate_data.aboard = true;
+                }
+            }
 
             // Update marker if crate has moved significantly (> 10 meters)
             if na::distance(&new_pos.into(), &crate_data.last_pos.into()) > 10.0 {
@@ -3701,6 +3868,10 @@ impl Db {
                 }
 
                 groups_to_mark.push(crate_data.group_id);
+            }
+
+            if crate_data.aboard {
+                continue;
             }
 
             // State machine for crate tracking
@@ -3846,11 +4017,15 @@ impl Db {
                     // aircraft) and Airborne (mid-drop) are excluded. This makes a
                     // mixed set work either direction -- airdrop some + helo the
                     // rest, or helo some + airdrop the rest -- and the 500 m radius
-                    // check below keeps unrelated staged crates out.
+                    // check below keeps unrelated staged crates out. A crate
+                    // DCS says is inside somebody's cargo bay is excluded
+                    // however it is labelled: a helo crate loaded through the
+                    // F8 menu keeps whatever state it had when it was picked
+                    // up, so state alone never caught it.
                     let state_ok = matches!(
                         other_data.state,
                         C130CargoState::Landed | C130CargoState::Spawned
-                    );
+                    ) && !other_data.aboard;
                     if state_ok && other_data.side == crate_data.side {
                         // Check if it's for the same deployable
                         if let C130CargoType::Deployable { name: other_crate_name } = &other_data.crate_type {

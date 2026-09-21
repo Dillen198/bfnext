@@ -3090,12 +3090,22 @@ impl Db {
             // free-for-all again.
             let held_health = objective!(self, oid)?.health();
             if alive.is_empty() && held_health <= 20 {
-                {
+                let dead_hold: Vec<GroupId> = {
                     let obj = objective_mut!(self, oid)?;
+                    let gids = std::mem::take(&mut obj.capture_hold);
                     obj.clear_capture_hold();
                     obj.owner = Side::Neutral;
                     obj.spawned = false;
                     obj.last_activate = now;
+                    gids
+                };
+                // Nothing in there is alive any more -- drop the wrecks rather
+                // than leaving a dead squad sitting in the zone for the rest
+                // of the campaign.
+                for gid in dead_hold {
+                    if let Err(e) = self.delete_group(&gid) {
+                        warn!("could not remove wiped-out assault group {gid}: {e:?}");
+                    }
                 }
                 self.ephemeral.last_owner_change.insert(oid, now);
                 self.ephemeral.msgs().panel_to_all(
@@ -3177,17 +3187,37 @@ impl Db {
             }
             // Consolidated: either the window is fully banked, or the assault
             // force died with the revived garrison still standing.
-            {
+            let stood_down: Vec<GroupId> = {
                 let obj = objective_mut!(self, oid)?;
+                let gids = std::mem::take(&mut obj.capture_hold);
                 obj.clear_capture_hold();
                 obj.spawned = false;
                 obj.last_activate = now;
+                gids
+            };
+            // The squads that took the base are absorbed by the garrison that
+            // is moving in -- that is what "consolidated" means, and it is
+            // what the no-consolidation path has always done at the moment of
+            // capture. Leaving them spawned left every captured objective
+            // carrying its assault force forever: permanent extra units, and
+            // a squad that still counted as capture troops elsewhere.
+            let n = stood_down.len();
+            for gid in stood_down {
+                if let Err(e) = self.delete_group(&gid) {
+                    warn!("could not stand down assault group {gid}: {e:?}");
+                }
             }
             self.ephemeral.msgs().panel_to_side(
                 10,
                 false,
                 owner,
-                format_compact!("{name} consolidated -- garrison moving in"),
+                if n > 0 {
+                    format_compact!(
+                        "{name} consolidated -- garrison moving in, assault troops stood down"
+                    )
+                } else {
+                    format_compact!("{name} consolidated -- garrison moving in")
+                },
             );
             let obj = objective!(self, oid)?;
             self.ephemeral.create_objective_markup(&self.persisted, obj);

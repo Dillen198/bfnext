@@ -320,6 +320,13 @@ pub struct Ephemeral {
     pub(crate) carrier_repair_crates: FxHashMap<ObjectiveId, u32>,
     /// ELINT/SIGINT persistent intel database (populated when cfg.elint is Some).
     pub(crate) intel_db: IntelDatabase,
+    /// When intel confidence was last decayed, so the decay runs in real
+    /// seconds. It used to advance by one second per call from a tick that
+    /// only fires every `slow_timed_events_freq` seconds, which stretched
+    /// every configured half life by that factor -- a JTAC contact set to
+    /// fade over an hour instead sat on the F10 map for most of a day, and
+    /// the map filled up with everything anybody had ever seen.
+    last_intel_decay: Option<DateTime<Utc>>,
     /// Ground vehicle passenger manifests: vehicle UnitId -> passengers.
     pub(crate) ground_vehicle_passengers: FxHashMap<bfprotocols::db::group::UnitId, GroundVehiclePassengers>,
     /// In-progress player "Recon Pass" sessions, keyed by pilot ucid.
@@ -412,6 +419,7 @@ impl Default for Ephemeral {
             last_under_attack_notif: FxHashMap::default(),
             carrier_repair_crates: FxHashMap::default(),
             intel_db: IntelDatabase::default(),
+            last_intel_decay: None,
             ground_vehicle_passengers: FxHashMap::default(),
             recon_sessions: FxHashMap::default(),
             recon_cooldown: FxHashMap::default(),
@@ -722,7 +730,17 @@ impl Ephemeral {
             None if self.cfg.player_recon.is_some() => bfprotocols::cfg::ElintConfig::default(),
             None => return,
         };
-        let (updated, removed) = self.intel_db.tick_decay(&elint_cfg, now, 1.0);
+        // Real elapsed seconds, clamped: the first tick after load (or after
+        // a long stall) must not delete the whole picture in one step.
+        let dt = match self.last_intel_decay {
+            Some(last) => ((now - last).num_milliseconds() as f64 / 1000.).clamp(0., 120.),
+            None => 0.,
+        };
+        self.last_intel_decay = Some(now);
+        let (updated, mut removed) = self.intel_db.tick_decay(&elint_cfg, now, dt);
+        // Contacts the per-side cap evicted since the last pass still own
+        // marks on the map; they come out here rather than being stranded.
+        removed.append(&mut std::mem::take(&mut self.intel_db.orphaned_marks));
         for (shape, pin, ring) in removed {
             self.map_layer
                 .remove_intel_contact_marks(shape, pin, ring, &mut self.msgs);

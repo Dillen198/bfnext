@@ -177,6 +177,37 @@ impl<'lua> Unit<'lua> {
     pub fn get_ammo(&self) -> Result<Sequence<'lua, Ammo<'lua>>> {
         Ok(record_perf!(get_ammo, self.t.call_method("getAmmo", ())?))
     }
+
+    /// The names of the DCS cargo objects currently loaded inside this unit.
+    ///
+    /// This is DCS's own cargo transport system -- the one behind the F8
+    /// ground crew "Load cargo" menu that the CH-47 and Mi-8 use. A crate
+    /// loaded that way is not removed from the world: the static object keeps
+    /// existing and rides along at the aircraft's position, which is why
+    /// anything that scans for crates "on the ground near the player" has to
+    /// ask this question first.
+    ///
+    /// Returns an empty list for an aircraft that carries nothing (and for a
+    /// type that cannot carry cargo at all). Errors if the running DCS does
+    /// not have `getCargosOnBoard`, so callers can fall back rather than
+    /// treat "cannot tell" as "nothing on board".
+    pub fn get_cargos_on_board(&self) -> Result<Vec<String>> {
+        let cargos: Option<mlua::Table> = self.t.call_method("getCargosOnBoard", ())?;
+        let mut res = vec![];
+        if let Some(cargos) = cargos {
+            for v in cargos.sequence_values::<mlua::Table>() {
+                let cargo = v?;
+                // A cargo object is a StaticObject; getName is the mission
+                // name of the static, which is what the crate tracking keys
+                // off. Skip anything that will not answer rather than failing
+                // the whole scan.
+                if let Ok(name) = cargo.call_method::<_, String>("getName", ()) {
+                    res.push(name)
+                }
+            }
+        }
+        Ok(res)
+    }
 }
 
 #[derive(Debug, Clone)]
