@@ -15,6 +15,17 @@ The EWR system provides:
 - Friendly aircraft locations
 - Tactical intelligence
 
+**Where the picture comes from.** It is not free. Your coalition sees what its
+sensors see: the early-warning radar sites it holds, the search radars on its
+SAM sites, and any AWACS it has paid to put up. EWR sites are objectives in
+their own right — set back from the front, capturable like anything else, and
+each defended by a small escort rather than sitting bare.
+
+So the report degrades as you lose them. A sector whose radar has been taken or
+destroyed goes quiet on this menu, and that silence is not the same as empty
+sky. The reverse is the cheapest SEAD mission available: kill one enemy radar
+site and you blind a whole sector without touching the batteries inside it.
+
 ## The menu
 
 ```

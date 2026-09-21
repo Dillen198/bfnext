@@ -62,6 +62,24 @@ High-value integrated air defense sites, networked with other sensors:
 - Ownership can flip either way, including from neutral — a captured site re-arms under its new owner's coalition and defends *their* airspace, not the enemy's
 - Captures instantly once troops hold the zone (no capture timer) — see [Capturing Objectives](./capturing-objectives.md)
 
+**Taking a base does not give you air defence.** Objectives carry point defence
+only — guns and short-range launchers that cover their own perimeter. Everything
+with real reach lives in a SAM site, which stands off several kilometres from
+whatever it protects precisely so that it has to be found and fought for
+separately. Capture the airbase and the battery covering it is still out there,
+still hostile, and still yours to deal with.
+
+That cuts both ways. Your own strategic cover comes from the SAM sites your
+coalition holds and from what your pilots deploy by crate — not from the
+objective list. Lose the sites and the bases behind them are naked however many
+you own.
+
+**Early-warning radars are their own sites.** They sit further back than the
+SAM batteries, they are what feeds the networked picture, and they are
+capturable on the same terms. Killing one blinds a sector without having to
+fight the batteries in it — the cheapest SEAD you will ever fly, and the same
+is true in reverse when yours go down.
+
 ![Hidden SAM site tucked into rocky terrain](/api/wiki/images/0ce0f6d9-ab3e-4f5b-87e3-799b0e2964cd)
 
 **Warning**: SAM sites don't just sit there with radars blaring — they share detections across the coalition's whole sensor network and only light up their radar for a confirmed threat, so a "quiet" site isn't necessarily undefended. Fire a HARM or other anti-radiation missile at one and it'll go dark to deny you a lock — and some sites keep a short-range point-defense system (Pantsir, Shilka) alert the entire time specifically to shoot your missile down before it arrives. Don't treat radar silence as an all-clear.

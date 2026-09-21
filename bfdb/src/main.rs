@@ -50,6 +50,7 @@ struct Assets;
 #[folder = "../bfsite/dist/"]
 struct SiteAssets;
 
+mod geo;
 mod news;
 mod news_llm;
 mod db;
@@ -178,6 +179,24 @@ struct Args {
     /// and DCS-SR-ExternalAudio.exe (ships with SRS).
     #[arg(long = "gci-config")]
     gci_config: Option<PathBuf>,
+    /// What the war diary calls the two sides, for a single-server bfdb. The
+    /// `--instances` file has per-instance `blue_faction`/`red_faction` keys
+    /// that do the same job; these are the equivalent for a bfdb started with
+    /// the plain flags, which otherwise had no way to say it at all and left
+    /// the diary reporting "Blue" and "Red".
+    ///
+    /// Left unset, the diary names each side after the country whose ground it
+    /// started the campaign holding, worked out from the objectives' own
+    /// positions -- so this is only needed to override that.
+    #[arg(long = "blue-faction")]
+    blue_faction: Option<String>,
+    #[arg(long = "red-faction")]
+    red_faction: Option<String>,
+    /// The adjectival forms ("Syrian", "Georgian"). Default to the names.
+    #[arg(long = "blue-adjective")]
+    blue_adjective: Option<String>,
+    #[arg(long = "red-adjective")]
+    red_adjective: Option<String>,
     /// Origin(s) allowed to make cross-origin, credentialed API requests
     /// (e.g. https://dashboard.example.com). Repeat for multiple origins.
     /// Pass this when bfweb/bfsite are hosted separately from bfdb instead of
@@ -264,9 +283,9 @@ struct Args {
     /// Falls back to $BFDB_NEWS_LLM_KEY, then $OPENAI_API_KEY.
     #[arg(long = "news-llm-key")]
     news_llm_key: Option<String>,
-    /// Model id for --news-llm-url (default gpt-4o-mini). One short call per
-    /// campaign day, so the cheap tier is the right one. Falls back to
-    /// $BFDB_NEWS_LLM_MODEL.
+    /// Model id for --news-llm-url (default gpt-4o-mini). The volume is a
+    /// dozen or two short calls a day at the top end, so the cheap tier is the
+    /// right one. Falls back to $BFDB_NEWS_LLM_MODEL.
     #[arg(long = "news-llm-model")]
     news_llm_model: Option<String>,
 }
@@ -1465,6 +1484,37 @@ async fn api_warehouse(
     }
 }
 
+/// Whether the engine still needs to be told about this server info.
+///
+/// `/api/stats` runs on every dashboard poll from every open tab, and each run
+/// used to fire a `set-server-info` RPC at the engine. Send it when something
+/// actually changed, and otherwise no more than once a minute -- enough to
+/// re-seed an engine that restarted, without hammering it with a value it
+/// already has.
+fn should_push_server_info(inst: &Inst, payload: &str) -> bool {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::sync::{LazyLock, Mutex};
+    const QUIET_SECS: i64 = 60;
+    static LAST: LazyLock<Mutex<std::collections::HashMap<std::string::String, (i64, u64)>>> =
+        LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+    let mut h = DefaultHasher::new();
+    payload.hash(&mut h);
+    let hash = h.finish();
+    let now = chrono::Utc::now().timestamp();
+    let mut last = match LAST.lock() {
+        Ok(l) => l,
+        Err(e) => e.into_inner(),
+    };
+    match last.get(&inst.id.to_string()) {
+        Some((ts, h)) if *h == hash && now - *ts < QUIET_SECS => false,
+        _ => {
+            last.insert(inst.id.to_string(), (now, hash));
+            true
+        }
+    }
+}
+
 async fn api_stats(
     db: StatsDb,
     bot_cfg: Arc<Option<BotLinkConfig>>,
@@ -1592,16 +1642,18 @@ async fn api_stats(
             "weather": bot_weather_json,
         })
         .to_string();
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            call_engine_rpc_str(
-                &db,
-                &inst,
-                "set-server-info",
-                vec![("info", netidx::publisher::Value::from(payload))],
-            ),
-        )
-        .await;
+        if should_push_server_info(&inst, &payload) {
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                call_engine_rpc_str(
+                    &db,
+                    &inst,
+                    "set-server-info",
+                    vec![("info", netidx::publisher::Value::from(payload))],
+                ),
+            )
+            .await;
+        }
     }
 
     Ok(json_response(serde_json::to_string(&value).map_err(anyhow::Error::from)?))
@@ -4362,6 +4414,7 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(10 * 60));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut first_pass = true;
     loop {
         tick.tick().await;
         let db = db.clone();
@@ -4375,8 +4428,25 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
                 .or_else(|| rounds.first())
                 .cloned()
             else {
+                // Worth a line: an empty diary with no explanation looks
+                // identical to a broken one.
+                log::info!(
+                    "[{}] news: no round recorded for this instance yet --                      nothing to report on",
+                    inst.id
+                );
                 return Ok(0);
             };
+            // Who the two sides are, for this campaign. Per instance, because
+            // the belligerents belong to the scenario rather than to the bfdb
+            // process -- one server can be running a modern coalition war and
+            // another the 2008 Caucasus. Unset leaves the diary saying Blue
+            // and Red.
+            let factions = news::Factions::new(
+                inst.cfg.blue_faction.as_deref(),
+                inst.cfg.red_faction.as_deref(),
+                inst.cfg.blue_adjective.as_deref(),
+                inst.cfg.red_adjective.as_deref(),
+            );
             let today = Utc::now().date_naive();
             let first = round.start.date_naive().min(today);
             // Only go back as far as the history the module will ever read.
@@ -4384,6 +4454,16 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
             let mut day = first.max(earliest);
             let mut written = 0usize;
             let mut calls = 0usize;
+            if first_pass {
+                log::info!(
+                    "[{}] news: round {} opened {}, filing {} day(s) up to {}",
+                    inst.id,
+                    rid.0,
+                    round.start.date_naive(),
+                    (today - day).num_days() + 1,
+                    today
+                );
+            }
             while day <= today {
                 let key = day.format("%Y-%m-%d").to_string();
                 let existing = db.news_get(rid, &key)?;
@@ -4401,7 +4481,7 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
                         .into_iter()
                         .filter(|d| d.day < key)
                         .collect();
-                    let mut digest = news::build(&db, rid, day, &hist)?;
+                    let mut digest = news::build(&db, rid, day, &hist, &factions)?;
                     // Carry the existing prose over unless there is a real
                     // reason to rewrite it. Two gates, and both matter:
                     //
@@ -4465,6 +4545,7 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
             Ok(n) => log::info!("news: wrote {n} digest(s)"),
             Err(e) => log::warn!("news: generation failed: {e}"),
         }
+        first_pass = false;
     }
 }
 
@@ -5282,6 +5363,13 @@ fn registry_from_args(args: &Args) -> Result<Registry> {
             gci_config: args.gci_config.clone(),
             dcs_server_name: None,
             public: true,
+            // Single-server mode gets the same per-campaign faction naming the
+            // instances file has, off the command line. Unset, the diary names
+            // the sides after the ground they hold.
+            blue_faction: args.blue_faction.clone(),
+            red_faction: args.red_faction.clone(),
+            blue_adjective: args.blue_adjective.clone(),
+            red_adjective: args.red_adjective.clone(),
         })),
     }
 }
@@ -5307,6 +5395,12 @@ fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
             gci_config: None,
             dcs_server_name: None,
             public: true,
+            // The offline maintenance modes never write a dispatch, so the
+            // faction names do not matter here.
+            blue_faction: None,
+            red_faction: None,
+            blue_adjective: None,
+            red_adjective: None,
         });
     }
     StatsDb::new(None, db_path, reg, None, None)

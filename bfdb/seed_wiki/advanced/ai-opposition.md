@@ -27,9 +27,23 @@ moves, pushing no more than
 nothing to work for {{cfg:campaign_events.cap_idle_rtb_secs|240}} s they go
 home early rather than loiter.
 
-After a wave ends — shot down **or** timed out and RTB'd — that side waits
-{{cfg:campaign_events.cap_respawn_cooldown_secs|1800}} s before scrambling
-another. That gap is deliberate: it is your window.
+They also do not break off a fight because a timer expired: a flight with a
+contact inside its engage radius keeps earning
+{{cfg:campaign_events.cap_engaged_extension_secs|180}} s at a time, up to
+double its normal time on station.
+
+After a wave ends — shot down **or** timed out and RTB'd — **the airfield it
+launched from** waits {{cfg:campaign_events.cap_respawn_cooldown_secs|1800}} s
+before launching another. That is per base, not per coalition, so the answer to
+a second push is the *next* field over rather than nothing at all. What limits
+the side as a whole is its sortie budget:
+{{cfg:campaign_events.cap_max_sorties_per_hour|6}} reactive scrambles per hour
+(helicopter patrols have their own,
+{{cfg:campaign_events.helo_max_sorties_per_hour|4}}).
+
+So the window is no longer "half an hour anywhere". It is: the field you just
+beat is out of the fight, the coalition is out once it has burned its budget,
+and the rest of the hour depends on how hard you keep pushing.
 
 ## Helicopter patrols — helos answering helos
 
@@ -48,7 +62,7 @@ you is spooling up on its pad while you are still inbound — with rotary number
 | Station altitude | a fixed height above sea level | {{cfg:campaign_events.helo_altitude_agl_m|300}} m **above the terrain** |
 | Engages | anything in the air | helicopters and ground units |
 | Push limit | {{cfg:campaign_events.cap_max_push_m|60000}} m | {{cfg:campaign_events.helo_max_push_m|30000}} m |
-| Between waves | {{cfg:campaign_events.cap_respawn_cooldown_secs|1800}} s | {{cfg:campaign_events.helo_respawn_cooldown_secs|900}} s |
+| Between waves (per field) | {{cfg:campaign_events.cap_respawn_cooldown_secs|1800}} s | {{cfg:campaign_events.helo_respawn_cooldown_secs|900}} s |
 
 Two differences matter to you in the air.
 
@@ -70,20 +84,29 @@ CAP slot.
 Both systems log a heartbeat every ten minutes (or whenever the picture
 changes) saying why a side is *not* scrambling — the count it can see, what it
 needed, and the current balance. If you expect opposition and are not getting
-any, that line names the reason: below the threshold, no free launch field, or
-still inside the between-waves cooldown.
+any, that line names the reason: below the threshold, no free launch field
+(every nearby base is either already flying or still on its post-wave
+cooldown), or the side has spent its sortie budget for the hour.
 
 ## Server setup
 
 Both need template groups in the mission file, and neither spawns without them:
 
-- CAP: **plane**-section groups named
-  `{{cfg:campaign_events.cap_template_red|RCAP}}` and
-  `{{cfg:campaign_events.cap_template_blue|BCAP}}`.
-- Helo patrols: **helicopter**-section groups named
-  `{{cfg:campaign_events.helo_template_red|RHELOCAP}}` and
-  `{{cfg:campaign_events.helo_template_blue|BHELOCAP}}`, armed for the job you
-  want them doing.
+- CAP: a **roster** — `cap_templates_red` / `cap_templates_blue` — listing
+  **plane**-section groups, each entry carrying a `weight` and a `min_threat`.
+- Helo patrols: `helo_templates_red` / `helo_templates_blue`, listing
+  **helicopter**-section groups armed for the job you want them doing.
+
+A scramble draws from the entries the incursion is big enough to qualify for,
+so a two-ship probe and an eight-ship push stop getting the same flight, and
+the same field stops sending the identical jets every time. Entries are tried
+in pick order, so a name that is not in the mission is skipped in favour of the
+next one instead of cancelling the scramble — you can list the roster you
+intend to build and add the groups as you go. A roster of one entry is simply
+the same flight every time, which is how this worked before rosters existed.
+
+An enabled system with an empty roster is refused at startup rather than
+failing quietly at the first scramble.
 
 Two things about the templates are easy to get wrong:
 
@@ -93,7 +116,7 @@ actually a helicopter group. A helo sitting in the plane section air-starts,
 and the air-start watchdog then scraps the whole event.
 
 **Copy the CAP templates otherwise.** Late activation on, uncontrolled off, and
-a single waypoint is all `RCAP` / `BCAP` have — the engine rewrites waypoint 0
+a single waypoint is all a CAP template needs — the engine rewrites waypoint 0
 into a ground start at whichever field the flight was scrambled from, and
 issues the on-station orbit itself once the flight is airborne, so the
 template's own route does not need to go anywhere.

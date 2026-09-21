@@ -103,6 +103,33 @@ pub(crate) struct InstanceCfg {
     /// command on a given DCS server to the right `?instance=`.
     #[serde(default)]
     pub dcs_server_name: Option<String>,
+    /// What the two sides are called in the war diary.
+    ///
+    /// Per instance rather than per bfdb, because the belligerents are a
+    /// property of the campaign, not of the server process: one instance can
+    /// be running a modern coalition war and another the 2008 Caucasus.
+    ///
+    /// These are an *override*. Left unset, the diary works out who the two
+    /// sides are from the ground they started the campaign holding: the
+    /// objectives' own coordinates say which real country each one stands in
+    /// (see `geo.rs`), so a side holding Incirlik and Adana is Turkey and one
+    /// holding Aleppo is Syria, with no configuration at all. Set them when
+    /// the scenario's belligerents are not the countries the fighting is on --
+    /// an expeditionary coalition, a civil war, a fictional pairing.
+    ///
+    /// `*_faction` is the noun the dispatch uses for the side itself
+    /// ("Russia now holds 33 objectives"); `*_adjective` is the form that
+    /// modifies a noun ("Russian forces took Gori"). The adjective falls back
+    /// to the name when unset, which reads acceptably for a coalition name
+    /// that is already adjectival ("NATO forces").
+    #[serde(default)]
+    pub blue_faction: Option<String>,
+    #[serde(default)]
+    pub red_faction: Option<String>,
+    #[serde(default)]
+    pub blue_adjective: Option<String>,
+    #[serde(default)]
+    pub red_adjective: Option<String>,
     /// Whether this instance is part of the *public* picture. Default true.
     ///
     /// A `false` instance -- a test/staging server -- is:

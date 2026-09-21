@@ -114,14 +114,20 @@ You cannot transfer to the other coalition.
 
 ## Lives
 
-**Lives are not being enforced on this server.** `limited_lives` is off, which
-means **no life is taken when you take off or when you die**, and the lives
+**Lives enforced on this server: {{cfg:limited_lives|no}}.**
+
+This differs between campaigns, so check the server selector at the top of the
+page before planning around it. The 2008 Caucasus campaign runs with lives
+**on** — losing an airframe costs you a slot in that role for the rest of the
+refill window. The modern Syria campaign runs with them **off**.
+
+When it reads **no**, nothing is deducted on takeoff or death and the lives
 block does not appear in `My Status`. Fly as often as you like; the cost of
 dying is the points and the time, not a quota.
 
-The system below is what happens when a server turns it on.
+When it reads **yes**, everything below applies.
 
-### How it works when enabled
+### How it works
 
 Lives are tracked **separately per role**, so running dry in a fighter does not
 ground you from flying logistics:

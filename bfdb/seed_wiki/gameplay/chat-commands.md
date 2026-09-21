@@ -18,26 +18,13 @@ All system commands start with a dash `-`:
 
 ### Registration & Status
 
-#### `blue` / `red`
-Register for a team (first-time only).
+There is no join command. Taking your first slot on the DCS slot screen registers
+you to that coalition automatically, and the server confirms it in chat:
 
-```
-blue
-```
-```
-red
-```
-
-**Response**:
 ```
 Welcome to the Blue team. You may only occupy slots
 belonging to your team. Good luck!
 ```
-
-**Usage**:
-- First time joining server
-- Must be in spectator mode
-- Permanent choice (unless server allows switching)
 
 ---
 
@@ -84,9 +71,10 @@ Shows:
 - Points balance
 - Available side switches
 
-**Note**: lives are a campaign setting and are **switched off on the live
-mission** — no life is taken on takeoff or death. When a server runs with lives
-off, there is nothing for this command to count. See
+**Note**: lives are a per-campaign setting — **{{cfg:limited_lives|no}}** on the
+server you have selected. The 2008 Caucasus campaign enforces them; the modern
+Syria one does not. When a server runs with lives off there is nothing for this
+command to count and the block is omitted. See
 [Points and Lives](./points-and-lives.md).
 
 ---
@@ -637,8 +625,6 @@ Some commands have shortcuts:
 
 | Full Command | Alias | Notes |
 |--------------|-------|-------|
-| `blue` | (none) | Registration only |
-| `red` | (none) | Registration only |
 | `help` | `-help` | Both work |
 | `points` | `-balance` | System interprets |
 | `credits` | `-balance` | System interprets |

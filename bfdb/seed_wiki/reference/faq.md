@@ -5,15 +5,17 @@ Common questions and answers about Fowl Engine.
 ## Getting Started
 
 ### Q: How do I join the server?
-**A**: Find the server in the DCS multiplayer browser (see your Discord for the exact name and IP), pick a **BLUFOR** or **REDFOR** aircraft slot, and fly. Taking your first slot registers you to that coalition automatically — you don't have to type anything. You *can* still type `blue` or `red` in chat from spectators if you prefer. See [Your First Sortie](../playbooks/first-sortie.md).
+**A**: Find the server in the DCS multiplayer browser (see your Discord for the exact name and IP), pick a **BLUFOR** or **REDFOR** aircraft slot, and fly. Taking your first slot registers you to that coalition automatically — there is nothing to type. See [Your First Sortie](../playbooks/first-sortie.md).
 
 ### Q: Can I change teams?
 **A**: Your coalition is permanent unless the server grants side switches. If it does, go to spectators and use `-switch blue` / `-switch red`. Check your remaining switches with `F10 → Info → My Status`, which also says whether sides are locked this round.
 
 ### Q: Why can't I occupy any slots?
-**A**: Usually you're registered to the other coalition — you can only take slots for your side. Registration happens on your first slot pick; if you're still in spectators you can also type `blue` or `red` in chat.
+**A**: Usually you're registered to the other coalition — you can only take slots for your side. Registration happens on your first slot pick, so whichever side you slot into first is the side you are on.
 
-Two other causes: the **base has no airframes of that type left** (warehouses are finite — see [Materiel & the War Economy](../gameplay/war-economy.md)), or the server is enforcing **lives** and you're out for that role. Lives are switched off on the live mission, so it's almost always one of the first two.
+Two other causes: the **base has no airframes of that type left** (warehouses are finite — see [Materiel & the War Economy](../gameplay/war-economy.md)), or the server is enforcing **lives** and you're out for that role. Lives are
+**{{cfg:limited_lives|no}}** on the server you have selected — enforced on the
+2008 Caucasus campaign, off on the modern Syria one.
 
 ## Gameplay
 
@@ -181,7 +183,7 @@ If not enabled, this command won't work.
 ### Q: Commands don't work!
 **A**:
 - Check spelling
-- Include dash `-` prefix (except `blue`/`red`)
+- Include the dash `-` prefix
 - Verify you have permission
 - Some commands require admin
 

@@ -20,7 +20,10 @@ Ground vehicles are the objective's close-in muscle and the backbone of any coun
 
 - **IFVs/APCs** (RED: BMPT Terminator, ZBD-04A, BTR-82A; BLUE: M2A2 Bradley, M1130 Stryker, MRAP MaxxPro, MRAP M-ATV) are cheap, fast to deploy in numbers (limits of 20 on most types), and good for screening a landing zone or contesting a capture in progress.
 - **MBTs** (RED: ZTZ-96B, T-84 Oplot, T-90M; BLUE: Leopard 2A6M, M1A2C Abrams, Merkava IV) cost more crates (3 per unit) and have a lower unit limit (15), but hit harder and survive longer — they're built to slug it out at the objective itself. Merkava IV is the only MBT on this server with a listed JTAC range (8 km, LOS required).
-- **Artillery/MLRS** (RED: 2S19 Msta, PLZ-05, Smerch CM/HE, TOS-1A, 9K57; BLUE: Firtina 155MM, Dana 152MM, HIMARS GMLRS HE/CM, HIMARS ATACMS HE/CM) sit behind the front line and reach out to suppress or destroy troops and vehicles massing at a contested objective without exposing themselves to direct fire. HE variants are for point targets and structures; CM (cluster munition) variants are for soft/area targets.
+- **Artillery/MLRS** (what each side fields depends on the campaign — see
+  [Deployables](../reference/deployables.md) for the live list on the server you
+  have selected; the 2008 Caucasus campaign is restricted to period Soviet and
+  Czech guns, the modern Syria one is not) sit behind the front line and reach out to suppress or destroy troops and vehicles massing at a contested objective without exposing themselves to direct fire. HE variants are for point targets and structures; CM (cluster munition) variants are for soft/area targets.
 
 ## JTAC and Recon Vehicles
 
@@ -39,7 +42,7 @@ A dedicated recon/JTAC vehicle (RED: Scout BRDM, 8 km range, no LOS required; BL
 - **Screening a landing zone against helicopters**: an IR SAM or AAA piece — cheap, fast, punishes the low-altitude approach.
 - **Denying fixed-wing CAS over an objective**: a radar SAM (Hawk/IRIS-T SLM for BLUE, Kub/SA-3/HQ-7 for RED), backed by AAA so SEAD alone doesn't clear the sky.
 - **Reinforcing a contested capture**: IFVs first (cheap, fast, high unit limit), MBTs if the fight is expected to last.
-- **Hitting a target beyond your own defensive range**: HIMARS/artillery, not a direct ground push.
+- **Hitting a target beyond your own defensive range**: artillery or MLRS, not a direct ground push.
 - **Enabling CAS tasking on a position**: a JTAC/recon vehicle before committing other forces.
 
 ## See Also

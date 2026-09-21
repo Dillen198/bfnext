@@ -46,6 +46,7 @@
 //! the paper too.
 
 use crate::db::{RoundId, StatsDb};
+use crate::geo;
 use anyhow::Result;
 use bfprotocols::{cfg::UnitTag, db::objective::ObjectiveKind, shots::Dead};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
@@ -65,6 +66,7 @@ const RECURRING: &[&str] = &[
     "losses_tally",
     "losses_cumulative",
     "holdings",
+    "territory",
     "air_war",
     "front_stalled",
     "static_front",
@@ -96,7 +98,8 @@ pub struct NewsItem {
     pub text: String,
 }
 
-/// Losses in one category, split by who lost them.
+/// A pair of per-side counts: losses in one category, objectives held in
+/// one country. Serialised as `{blue, red}` either way.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct LossTally {
     pub blue: u32,
@@ -159,6 +162,23 @@ pub struct DigestFacts {
     pub blue_logi: u8,
     #[serde(default)]
     pub red_logi: u8,
+    /// The DCS terrain this campaign is fought on — "Syria", "Caucasus".
+    /// Worked out from where the objectives are, so it is right for rounds
+    /// recorded long before anyone thought to record it.
+    #[serde(default)]
+    pub theatre: String,
+    /// The countries whose territory is actually in play: every country that
+    /// at least one objective stands in. This is what lets the dispatch say
+    /// "inside Syria" and "on the Jordanian border" instead of "Red's half of
+    /// the map".
+    #[serde(default)]
+    pub territory: Vec<String>,
+    /// Objectives held tonight, by the country they stand in.
+    #[serde(default)]
+    pub held_by_country: BTreeMap<String, LossTally>,
+    /// Where the day's captures happened, by country.
+    #[serde(default)]
+    pub fighting_in: BTreeMap<String, u32>,
 }
 
 /// One day of the war.
@@ -180,6 +200,11 @@ pub struct NewsDigest {
     pub written_by: String,
     pub items: Vec<NewsItem>,
     pub facts: DigestFacts,
+    /// The faction names this day was written with, stored rather than looked
+    /// up so an old dispatch keeps reading the way it was filed after someone
+    /// renames a side.
+    #[serde(default)]
+    pub factions: Factions,
     /// Fingerprint of the analysis. The dispatch is only rewritten when this
     /// changes, so a day that is rebuilt every ten minutes does not burn a
     /// model call (or reword itself under the reader) every ten minutes.
@@ -468,12 +493,187 @@ fn pick<'a>(options: &[&'a str], parts: &[&str]) -> &'a str {
     options[(seed(parts) % options.len() as u64) as usize]
 }
 
-fn side_name(side: &str) -> &str {
-    match side {
-        "Blue" => "Blue",
-        "Red" => "Red",
-        _ => "Neutral",
+/// What the two sides are called in the dispatch.
+///
+/// Per campaign, not per server: "Blue took Gori" is the language of a briefing
+/// slide, not of war reporting, and the belligerents differ between a modern
+/// coalition scenario and the 2008 Caucasus. The canonical side keys stay
+/// `Blue`/`Red` everywhere in the analysis and in `DigestFacts` -- these are
+/// display names, applied at the point a sentence is built, so renaming a
+/// faction never rewrites the record.
+///
+/// `name` is the side itself ("Russia now holds 33 objectives"); `adj` modifies
+/// a noun ("Russian forces took Gori"). Unset, both fall back to Blue and Red,
+/// which is exactly what this did before factions existed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Factions {
+    pub blue: String,
+    pub red: String,
+    pub blue_adj: String,
+    pub red_adj: String,
+    /// The countries whose ground the side started the campaign holding, most
+    /// first. One entry for a national army, several for a coalition -- on the
+    /// Syria map a side can open holding airfields in Israel, Turkey and
+    /// Jordan, and a bulletin that never names them is not reporting the war
+    /// it is looking at.
+    #[serde(default)]
+    pub blue_members: Vec<String>,
+    #[serde(default)]
+    pub red_members: Vec<String>,
+}
+
+impl Default for Factions {
+    fn default() -> Self {
+        Self {
+            blue: "Blue".to_string(),
+            red: "Red".to_string(),
+            blue_adj: "Blue".to_string(),
+            red_adj: "Red".to_string(),
+            blue_members: Vec::new(),
+            red_members: Vec::new(),
+        }
     }
+}
+
+impl Factions {
+    /// Build from config, filling the adjective from the name when it is not
+    /// given -- which reads correctly for names that are already adjectival
+    /// ("NATO forces", "Coalition forces").
+    pub fn new(
+        blue: Option<&str>,
+        red: Option<&str>,
+        blue_adj: Option<&str>,
+        red_adj: Option<&str>,
+    ) -> Self {
+        // A nested fn rather than a closure: a closure's inferred lifetime is
+        // unified across all four calls, which ties the borrow of `blue` to
+        // the caller's arguments and does not compile.
+        fn clean(v: Option<&str>) -> Option<&str> {
+            v.map(str::trim).filter(|v| !v.is_empty())
+        }
+        let blue = clean(blue).unwrap_or("Blue").to_string();
+        let red = clean(red).unwrap_or("Red").to_string();
+        Self {
+            blue_adj: clean(blue_adj).unwrap_or(&blue).to_string(),
+            red_adj: clean(red_adj).unwrap_or(&red).to_string(),
+            blue,
+            red,
+            blue_members: Vec::new(),
+            red_members: Vec::new(),
+        }
+    }
+
+    /// Name the belligerents after the ground they started the war holding.
+    ///
+    /// Config wins wherever it said something; this only fills the gaps, so an
+    /// operator who has written down who the two sides are keeps exactly what
+    /// they wrote. `blue_home` and `red_home` are the countries each side held
+    /// on the opening day, most-held first.
+    ///
+    /// A side sitting in one country is that country. A side spread across
+    /// several without a clear centre of gravity is a coalition, and the
+    /// members are carried separately so the dispatch can still name them.
+    /// And if both sides come out as the same country -- a civil war, where
+    /// the geography genuinely cannot tell them apart -- neither is renamed,
+    /// because two belligerents both called "Syria" is worse than Blue and Red.
+    pub fn with_home_ground(
+        mut self,
+        blue_home: &[(String, u32)],
+        red_home: &[(String, u32)],
+    ) -> Self {
+        self.blue_members = blue_home.iter().map(|(c, _)| c.clone()).collect();
+        self.red_members = red_home.iter().map(|(c, _)| c.clone()).collect();
+        let b = derived_name(blue_home);
+        let r = derived_name(red_home);
+        if let (Some((bn, _)), Some((rn, _))) = (&b, &r) {
+            if bn == rn {
+                return self;
+            }
+        }
+        if self.blue == "Blue" {
+            if let Some((name, adj)) = b {
+                self.blue = name;
+                self.blue_adj = adj;
+            }
+        }
+        if self.red == "Red" {
+            if let Some((name, adj)) = r {
+                self.red = name;
+                self.red_adj = adj;
+            }
+        }
+        self
+    }
+
+    /// The side's own name.
+    pub fn name(&self, side: &str) -> &str {
+        match side {
+            "Blue" => &self.blue,
+            "Red" => &self.red,
+            _ => "Neutral",
+        }
+    }
+
+    /// The adjectival form, for "<X> forces".
+    pub fn adj(&self, side: &str) -> &str {
+        match side {
+            "Blue" => &self.blue_adj,
+            "Red" => &self.red_adj,
+            _ => "Neutral",
+        }
+    }
+
+    /// The member states of a side, when it is a coalition of more than one
+    /// and the name does not already say so.
+    pub fn members(&self, side: &str) -> &[String] {
+        let m = match side {
+            "Blue" => &self.blue_members,
+            "Red" => &self.red_members,
+            _ => return &[],
+        };
+        if m.len() > 1 && !m.iter().any(|c| c == self.name(side)) {
+            m
+        } else {
+            &[]
+        }
+    }
+}
+
+/// "Syria" -> "Syrian". Falls back to the name itself for anything the
+/// geography module does not know, which reads acceptably ("the Coalition
+/// forces") and never invents a demonym.
+fn country_adj(name: &str) -> String {
+    geo::THEATRES
+        .iter()
+        .flat_map(|t| t.countries.iter())
+        .find(|c| c.name == name)
+        .map(|c| c.adj.to_string())
+        .unwrap_or_else(|| name.to_string())
+}
+
+/// The (name, adjective) a side's home ground implies, if it implies one.
+///
+/// Two thirds is the bar for calling a spread-out side by its largest member:
+/// above it there is a lead nation and everyone else is along for the ride,
+/// below it there is not, and "the Coalition" is both more accurate and what
+/// the belligerent would be called in print anyway. The member states are
+/// kept either way, so the dispatch can still say who the coalition is.
+fn derived_name(home: &[(String, u32)]) -> Option<(String, String)> {
+    let (lead, n) = home.first()?;
+    let total: u32 = home.iter().map(|(_, n)| *n).sum();
+    if total == 0 {
+        return None;
+    }
+    if home.len() == 1 || *n * 3 >= total * 2 {
+        let adj = geo::THEATRES
+            .iter()
+            .flat_map(|t| t.countries.iter())
+            .find(|x| x.name == lead.as_str())
+            .map(|x| x.adj.to_string())
+            .unwrap_or_else(|| lead.clone());
+        return Some((lead.clone(), adj));
+    }
+    Some(("the Coalition".to_string(), "coalition".to_string()))
 }
 
 fn other_side(side: &str) -> &'static str {
@@ -521,25 +721,52 @@ fn fill(template: &str, a: &Angle) -> String {
 fn render(a: &Angle, day: &str) -> String {
     let t: &[&str] = match a.kind {
         "opening_day" => &[
-            "The campaign opened today. Blue begins the war holding {blue} objectives, {blue_ab} of them airbases; Red holds {red}, with {red_ab} airbases.",
-            "First day of the war. The opening disposition gives Blue {blue} objectives and {blue_ab} airbases against Red's {red} and {red_ab}.",
-            "Hostilities began this morning. Blue starts with {blue} objectives ({blue_ab} airbases) and Red with {red} ({red_ab}).",
+            "The campaign opened today. {blue_side} begins the war holding {blue} objectives, {blue_ab} of them airbases; {red_side} holds {red}, with {red_ab} airbases.",
+            "First day of the war. The opening disposition gives {blue_side} {blue} objectives and {blue_ab} airbases against {red_side}'s {red} and {red_ab}.",
+            "Hostilities began this morning. {blue_side} starts with {blue} objectives ({blue_ab} airbases) and {red_side} with {red} ({red_ab}).",
         ],
         "opening_line" => &[
             "The line of contact runs the length of the theatre; its closest point is between {a} and {b}, {km} km apart.",
             "The two sides face each other across the whole map. The narrowest gap is {km} km, between {a} and {b}.",
             "{a} and {b} sit {km} km apart — the tightest point on the opening line, and the likeliest place for it to break.",
         ],
+        "objective_taken" if a.vars.contains_key("country") => &[
+            "{side_adj} forces took {subject}, in {country}, today.",
+            "{subject} fell to {side}, taking the fighting further into {country}.",
+            "{side} is reported in control of {subject}, on {country_adj} ground, as of this evening.",
+            "{subject} changed hands, {side} now holding it. It is the {country_adj} side of the line.",
+        ],
         "objective_taken" => &[
-            "{side} forces took {subject} today.",
+            "{side_adj} forces took {subject} today.",
             "{subject} fell to {side}.",
             "{side} is reported in control of {subject} as of this evening.",
             "{subject} changed hands, {side} now holding it.",
         ],
+        "objective_taken_by" if a.vars.contains_key("country") => &[
+            "{side} took {subject}, in {country}, the ground secured by {pilot}.",
+            "{subject} fell to {side_adj} troops in {country} after {pilot} put them into the zone.",
+            "{pilot} is credited with the capture of {subject}, on {country_adj} territory, for {side}.",
+        ],
         "objective_taken_by" => &[
             "{side} took {subject}, the ground secured by {pilot}.",
-            "{subject} fell to {side} after {pilot} put troops into the zone.",
+            "{subject} fell to {side_adj} troops after {pilot} put them into the zone.",
             "{pilot} is credited with the capture of {subject} for {side}.",
+        ],
+        "country_sector" if a.vars.contains_key("elsewhere") => &[
+            "The weight of the day fell on {country_adj} ground: {count} of the objectives that changed hands were inside {country}, against {elsewhere} elsewhere.",
+            "Most of the fighting was inside {country} — {count} objectives there, {elsewhere} on the rest of the front.",
+            "{count} of the day's captures were on {country_adj} territory; {elsewhere} were not.",
+        ],
+        "country_sector" => &[
+            "All of the day's fighting was inside {country}, where {count} objectives changed hands.",
+            "The war stayed on {country_adj} ground today: {count} objectives turned over, none anywhere else.",
+            "{count} objectives changed hands, every one of them inside {country}.",
+        ],
+        "territory" => &[
+            "Ground held tonight, by country: {split}.",
+            "The map by territory — {split}.",
+            "Across {theatre} the split runs {split}.",
+            "The war is being fought over {countries}. Tonight that stands {split}.",
         ],
         "objective_traded" => &[
             "{subject} has now changed hands {count} times — neither side has been able to hold it.",
@@ -577,15 +804,15 @@ fn render(a: &Angle, day: &str) -> String {
             "{days} quiet days ended this morning.",
         ],
         "losses_tally" => &[
-            "Losses over the past 24 hours — Blue: {blue}. Red: {red}.",
-            "Equipment destroyed in the last day. Blue: {blue}. Red: {red}.",
-            "The day's bill: Blue lost {blue}; Red lost {red}.",
-            "Confirmed destroyed in the last 24 hours — Blue: {blue}; Red: {red}.",
+            "Losses over the past 24 hours — {blue_side}: {blue}. {red_side}: {red}.",
+            "Equipment destroyed in the last day. {blue_side}: {blue}. {red_side}: {red}.",
+            "The day's bill: {blue_side} lost {blue}; {red_side} lost {red}.",
+            "Confirmed destroyed in the last 24 hours — {blue_side}: {blue}; {red_side}: {red}.",
         ],
         "losses_cumulative" => &[
-            "Cumulative losses since the campaign opened, day {days} — Blue: {blue}. Red: {red}.",
-            "Running totals after {days} days of war. Blue: {blue}. Red: {red}.",
-            "Total confirmed losses to date — Blue: {blue}; Red: {red}.",
+            "Cumulative losses since the campaign opened, day {days} — {blue_side}: {blue}. {red_side}: {red}.",
+            "Running totals after {days} days of war. {blue_side}: {blue}. {red_side}: {red}.",
+            "Total confirmed losses to date — {blue_side}: {blue}; {red_side}: {red}.",
         ],
         "attrition_spike" => &[
             "It was the heaviest day of the war so far: {count} units destroyed against a daily average of {avg}.",
@@ -595,11 +822,11 @@ fn render(a: &Angle, day: &str) -> String {
         "sead" => &[
             "{side}'s air-defence network took the brunt of it, losing {count} systems.",
             "SEAD work told against {side}: {count} air-defence systems destroyed.",
-            "{count} {side} air-defence systems were knocked out — the sky over that sector is opening up.",
+            "{count} {side_adj} air-defence systems were knocked out — the sky over that sector is opening up.",
         ],
         "logistics_struck" => &[
             "Strikes on the rear are telling. {side}'s logistics network is down to {logi}%, from {was}% yesterday.",
-            "{side}'s supply infrastructure lost ground today: logistics health fell from {was}% to {logi}%.",
+            "{side_adj} supply infrastructure lost ground today: logistics health fell from {was}% to {logi}%.",
             "The war on {side}'s rear continues — logistics now at {logi}%, down from {was}%.",
         ],
         "pressure" => &[
@@ -632,9 +859,9 @@ fn render(a: &Angle, day: &str) -> String {
             "{count} of today's kills came from one weapon: the {weapon}.",
         ],
         "holdings" => &[
-            "The map stands at {blue} to Blue, {red} to Red.",
-            "Holdings tonight: Blue {blue}, Red {red}.",
-            "{blue} objectives fly Blue colours, {red} Red.",
+            "The map stands at {blue} to {blue_side}, {red} to {red_side}.",
+            "Holdings tonight: {blue_side} {blue}, {red_side} {red}.",
+            "{blue} objectives are in {blue_side} hands, {red} in {red_side}.",
         ],
         "quiet" => &[
             "A quiet day. No ground changed hands and no significant action was reported.",
@@ -646,7 +873,7 @@ fn render(a: &Angle, day: &str) -> String {
     fill(pick(t, &[day, a.kind, &a.subject]), a)
 }
 
-fn headline(items: &[NewsItem], facts: &DigestFacts, day: &str) -> String {
+fn headline(items: &[NewsItem], facts: &DigestFacts, day: &str, f: &Factions) -> String {
     let Some(top) = items.first() else {
         return pick(
             &["A QUIET DAY ON THE FRONT", "NO MOVEMENT REPORTED", "THE LINE HOLDS"],
@@ -660,9 +887,11 @@ fn headline(items: &[NewsItem], facts: &DigestFacts, day: &str) -> String {
         }
         "objective_traded" => format!("{} CHANGES HANDS AGAIN", top.subject.to_uppercase()),
         "axis_activity" => format!("PRESSURE ON THE {} DIRECTION", top.subject.to_uppercase()),
+        "country_sector" => format!("THE FIGHTING MOVES INTO {}", top.subject.to_uppercase()),
         "streak" => {
-            let side = if facts.blue_captures > facts.red_captures { "BLUE" } else { "RED" };
-            format!("{side} ADVANCES ON A BROAD FRONT")
+            let side =
+                if facts.blue_captures > facts.red_captures { &f.blue } else { &f.red };
+            format!("{} ADVANCES ON A BROAD FRONT", side.to_uppercase())
         }
         "front_stalled" => pick(&["STALEMATE HOLDS", "THE LINE DOES NOT MOVE"], &[day]).to_string(),
         "static_front" => pick(
@@ -702,6 +931,7 @@ pub fn build(
     round: RoundId,
     day: NaiveDate,
     history: &[NewsDigest],
+    factions: &Factions,
 ) -> Result<NewsDigest> {
     let day_s = day.format("%Y-%m-%d").to_string();
     let start = day.and_hms_opt(0, 0, 0).unwrap().and_utc();
@@ -735,12 +965,29 @@ pub fn build(
     // Positions are kept for the axis naming; health and logi for the rear and
     // pressure angles.
     let objs = db.objectives_for_round(round)?;
+    // Which real place this is. Every DCS terrain is somewhere on Earth and
+    // bfdb has had each objective's latitude and longitude all along, so the
+    // map -- and the country each objective stands in -- fall out of data that
+    // is already in the database. Nothing has to be sent from the engine, and
+    // this is just as right for a round recorded months ago.
+    let theatre = geo::theatre_of(objs.iter().map(|(_, o)| (o.pos.latitude, o.pos.longitude)));
+    let country_at = |lat: f64, lon: f64| theatre.and_then(|t| t.country_at(lat, lon));
+    facts.theatre = theatre.map(|t| t.name.to_string()).unwrap_or_default();
+
     let mut pos_of: HashMap<String, (f64, f64)> = HashMap::new();
+    let mut country_of: HashMap<String, &'static geo::Country> = HashMap::new();
     let mut majors: Vec<(String, (f64, f64))> = Vec::new();
     let mut logi_sum: HashMap<String, (u32, u32)> = HashMap::new();
     let mut under_pressure: Vec<(String, String, u8)> = Vec::new();
     for (_, o) in objs.iter() {
         let side = format!("{:?}", o.owner);
+        // A carrier group has no country and is not given one; the sea is not
+        // anybody's territory and pretending otherwise would be the sort of
+        // invented detail this whole module exists to avoid.
+        if let Some(c) = country_at(o.pos.latitude, o.pos.longitude) {
+            country_of.insert(o.name.to_string(), c);
+            facts.held_by_country.entry(c.name.to_string()).or_default().add(&side);
+        }
         match side.as_str() {
             "Blue" => facts.blue_held += 1,
             "Red" => facts.red_held += 1,
@@ -778,6 +1025,69 @@ pub fn build(
     };
     facts.blue_logi = mean_logi("Blue");
     facts.red_logi = mean_logi("Red");
+
+    // The countries actually in play, busiest first -- this is the list the
+    // dispatch is allowed to name ground by.
+    {
+        let mut t: Vec<(String, u32)> = facts
+            .held_by_country
+            .iter()
+            .map(|(c, n)| (c.clone(), n.total()))
+            .collect();
+        t.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        facts.territory = t.into_iter().map(|(c, _)| c).collect();
+    }
+
+    // Who held what on the opening day, reconstructed by rolling the capture
+    // log back: an objective that has ever been taken was, before the first
+    // time it was taken, held by the other side. That is the status quo ante,
+    // and it is what says who these belligerents are -- unlike tonight's map,
+    // which moves every time somebody takes an airfield.
+    let factions = {
+        let mut first_cap: HashMap<&str, (DateTime<Utc>, String)> = HashMap::new();
+        for c in all_caps.iter() {
+            let side = format!("{:?}", c.side);
+            // A base going neutral says nothing about who held it before, and
+            // `other_side` would turn "Neutral" into "Blue" out of thin air.
+            if side != "Blue" && side != "Red" {
+                continue;
+            }
+            match first_cap.get(c.objective_name.as_str()) {
+                Some((t, _)) if *t <= c.time => {}
+                _ => {
+                    first_cap.insert(c.objective_name.as_str(), (c.time, side));
+                }
+            }
+        }
+        let mut home: HashMap<String, HashMap<String, u32>> = HashMap::new();
+        for (_, o) in objs.iter() {
+            let Some(c) = country_of.get(o.name.as_str()) else { continue };
+            let owner = match first_cap.get(o.name.as_str()) {
+                Some((_, taker)) => other_side(taker).to_string(),
+                None => format!("{:?}", o.owner),
+            };
+            if owner != "Blue" && owner != "Red" {
+                continue;
+            }
+            *home.entry(owner).or_default().entry(c.name.to_string()).or_default() += 1;
+        }
+        let ordered = |side: &str| -> Vec<(String, u32)> {
+            let mut v: Vec<(String, u32)> =
+                home.get(side).map(|m| m.iter().map(|(k, n)| (k.clone(), *n)).collect())
+                    .unwrap_or_default();
+            v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            v
+        };
+        factions.clone().with_home_ground(&ordered("Blue"), &ordered("Red"))
+    };
+    let factions = &factions;
+
+    // Where today's fighting was, by country.
+    for c in &today {
+        if let Some(cn) = country_of.get(c.objective_name.as_str()) {
+            *facts.fighting_in.entry(cn.name.to_string()).or_default() += 1;
+        }
+    }
 
     // --- losses -----------------------------------------------------------
     let kills = db.recent_kills(round, KILL_SCAN)?;
@@ -849,6 +1159,8 @@ pub fn build(
     if opening {
         angles.push(
             Angle::new("opening_day", "the campaign", 100)
+                .var("blue_side", factions.blue.clone())
+                .var("red_side", factions.red.clone())
                 .var("blue", facts.blue_held.to_string())
                 .var("red", facts.red_held.to_string())
                 .var("blue_ab", facts.blue_airbases.to_string())
@@ -934,18 +1246,45 @@ pub fn build(
             }
         }
 
+        // Whose ground the war was fought on today. On a map that spans
+        // several countries this is the difference between "four objectives
+        // changed hands" and "the fighting moved onto Jordanian territory",
+        // and the second is the one a reader learns something from. It only
+        // runs when the day was actually concentrated somewhere -- if the
+        // captures were spread over three countries there is no such story.
+        if let Some((c, n)) = facts.fighting_in.iter().max_by_key(|(_, n)| **n) {
+            let spread = facts.fighting_in.len();
+            if *n >= 2 && (spread == 1 || *n * 2 > today.len() as u32) {
+                let adj = country_adj(c);
+                let mut a = Angle::new("country_sector", c.clone(), 69)
+                    .var("country", c.clone())
+                    .var("country_adj", adj)
+                    .var("count", n.to_string());
+                if spread > 1 {
+                    a = a.var("elsewhere", (today.len() as u32 - n).to_string());
+                }
+                angles.push(a);
+            }
+        }
+
         // Each capture, with the pilot when we know them.
         for c in today.iter().take(6) {
-            let side = side_name(&format!("{:?}", c.side)).to_string();
+            let key = format!("{:?}", c.side);
+            let side = factions.name(&key).to_string();
+            let adj = factions.adj(&key).to_string();
             let pilot = c.by.iter().find_map(|u| db.pilot_name(u));
-            let a = match pilot {
+            let mut a = match pilot {
                 Some(p) => Angle::new("objective_taken_by", c.objective_name.clone(), 60)
                     .var("side", side)
+                    .var("side_adj", adj)
                     .var("pilot", p),
-                None => {
-                    Angle::new("objective_taken", c.objective_name.clone(), 55).var("side", side)
-                }
+                None => Angle::new("objective_taken", c.objective_name.clone(), 55)
+                    .var("side", side)
+                    .var("side_adj", adj),
             };
+            if let Some(cn) = country_of.get(c.objective_name.as_str()) {
+                a = a.var("country", cn.name).var("country_adj", cn.adj);
+            }
             angles.push(a);
         }
 
@@ -954,6 +1293,7 @@ pub fn build(
         } else {
             ("Red", facts.red_captures)
         };
+        let lead_name = factions.name(lead).to_string();
         let best_before = history
             .iter()
             .take(TREND_WINDOW_DAYS as usize)
@@ -962,7 +1302,10 @@ pub fn build(
             .unwrap_or(0);
         if n >= 3 && n > best_before {
             angles.push(
-                Angle::new("streak", lead, 80).var("side", lead).var("count", n.to_string()),
+                Angle::new("streak", lead_name.clone(), 80)
+                    .var("side", lead_name)
+                    .var("side_adj", factions.adj(lead))
+                    .var("count", n.to_string()),
             );
         }
 
@@ -974,7 +1317,12 @@ pub fn build(
                 .iter()
                 .any(|c| c.time < start && other_side(&format!("{:?}", c.side)) == l);
             if !lost_before && !opening {
-                angles.push(Angle::new("first_loss", l.clone(), 88).var("side", l));
+                let name = factions.name(&l).to_string();
+                angles.push(
+                    Angle::new("first_loss", name.clone(), 88)
+                        .var("side", name)
+                        .var("side_adj", factions.adj(&l)),
+                );
             }
         }
     }
@@ -986,6 +1334,8 @@ pub fn build(
     if day_losses > 0 {
         angles.push(
             Angle::new("losses_tally", "the day's losses", 65)
+                .var("blue_side", factions.blue.clone())
+                .var("red_side", factions.red.clone())
                 .var("blue", tally_phrase(&facts.losses, "Blue"))
                 .var("red", tally_phrase(&facts.losses, "Red")),
         );
@@ -1014,8 +1364,12 @@ pub fn build(
         if let Some(ad) = facts.losses.get("AIR DEF") {
             let (side, n) = if ad.blue >= ad.red { ("Blue", ad.blue) } else { ("Red", ad.red) };
             if n >= 3 {
+                let name = factions.name(side).to_string();
                 angles.push(
-                    Angle::new("sead", side, 68).var("side", side).var("count", n.to_string()),
+                    Angle::new("sead", name.clone(), 68)
+                        .var("side", name)
+                        .var("side_adj", factions.adj(side))
+                        .var("count", n.to_string()),
                 );
             }
         }
@@ -1029,9 +1383,11 @@ pub fn build(
             ("Red", facts.red_logi, prev.facts.red_logi),
         ] {
             if was > 0 && was.saturating_sub(now) >= 6 {
+                let name = factions.name(side).to_string();
                 angles.push(
-                    Angle::new("logistics_struck", side, 62)
-                        .var("side", side)
+                    Angle::new("logistics_struck", name.clone(), 62)
+                        .var("side", name)
+                        .var("side_adj", factions.adj(side))
                         .var("logi", now.to_string())
                         .var("was", was.to_string()),
                 );
@@ -1044,7 +1400,8 @@ pub fn build(
     for (name, side, health) in under_pressure.iter().take(2) {
         angles.push(
             Angle::new("pressure", name.clone(), 52)
-                .var("side", side.clone())
+                .var("side", factions.name(side))
+                .var("side_adj", factions.adj(side))
                 .var("health", health.to_string()),
         );
     }
@@ -1063,7 +1420,8 @@ pub fn build(
         if won >= 3 && won >= lost * 3 {
             angles.push(
                 Angle::new("air_war_lopsided", "the air war", 72)
-                    .var("side", winner)
+                    .var("side", factions.name(winner))
+                    .var("side_adj", factions.adj(winner))
                     .var("won", won.to_string())
                     .var("lost", lost.to_string()),
             );
@@ -1104,15 +1462,42 @@ pub fn build(
 
     angles.push(
         Angle::new("holdings", "the map", 20)
+            .var("blue_side", factions.blue.clone())
+            .var("red_side", factions.red.clone())
             .var("blue", facts.blue_held.to_string())
             .var("red", facts.red_held.to_string()),
     );
+
+    // Who holds whose ground. A standing item, because on a multi-country map
+    // it is the clearest single statement of where the war has got to: a side
+    // that has taken ten objectives without ever crossing a border has done
+    // something different from one that is fighting in the next country.
+    if facts.held_by_country.len() > 1 {
+        let mut by: Vec<(&String, &LossTally)> = facts.held_by_country.iter().collect();
+        by.sort_by(|a, b| b.1.total().cmp(&a.1.total()).then_with(|| a.0.cmp(b.0)));
+        let phrase = by
+            .iter()
+            .take(4)
+            .map(|(c, t)| {
+                format!("in {c}, {} to {} and {} to {}", t.blue, factions.blue, t.red, factions.red)
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        angles.push(
+            Angle::new("territory", "the ground", 30)
+                .var("split", phrase)
+                .var("theatre", facts.theatre.clone())
+                .var("countries", geo::join_names(&facts.territory)),
+        );
+    }
 
     // The attrition line last, the way these bulletins close on the totals.
     let total_losses: u32 = facts.losses_total.values().map(|v| v.total()).sum();
     if total_losses > 0 {
         angles.push(
             Angle::new("losses_cumulative", "the war", 18)
+                .var("blue_side", factions.blue.clone())
+                .var("red_side", factions.red.clone())
                 .var("days", campaign_day.to_string())
                 .var("blue", tally_phrase(&facts.losses_total, "Blue"))
                 .var("red", tally_phrase(&facts.losses_total, "Red")),
@@ -1167,7 +1552,7 @@ pub fn build(
     };
 
     Ok(NewsDigest {
-        headline: headline(&items, &facts, &day_s),
+        headline: headline(&items, &facts, &day_s, factions),
         day: day_s,
         generated: Utc::now(),
         round: round.0,
@@ -1175,6 +1560,7 @@ pub fn build(
         written_by: "templates".to_string(),
         items,
         facts,
+        factions: factions.clone(),
         facts_hash,
         final_: day < Utc::now().date_naive(),
     })

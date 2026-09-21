@@ -16,9 +16,13 @@
 //! reads like a form letter, which is the thing this module exists to fix.
 //!
 //! Any OpenAI-compatible chat-completions endpoint works (OpenAI, OpenRouter,
-//! Groq, together.ai, or a local Ollama / llama.cpp / vLLM server), as does the
-//! Anthropic messages API, which is detected from the URL. A local model is
-//! entirely reasonable here: one short call a day.
+//! Groq, Google AI Studio, or a local Ollama / llama.cpp / vLLM server), as
+//! does the Anthropic messages API, which is detected from the URL.
+//!
+//! Volume: one call per finished day, plus up to one an hour while the current
+//! day is still running and its facts keep moving -- so roughly a dozen or two
+//! a day at the top end, not one. Still small enough that a local model on the
+//! network is a perfectly sensible way to run this.
 
 use crate::news::NewsDigest;
 use anyhow::{anyhow, bail, Result};
@@ -75,9 +79,13 @@ impl WriterCfg {
 const SYSTEM: &str = "\
 You are the duty editor of a wire service filing one short dispatch a day about \
 an ongoing war. The war is a persistent multiplayer DCS World campaign fought \
-between two coalitions, Blue and Red, over a fixed set of objectives — \
-airbases, forward operating bases, logistics hubs, naval bases and SAM sites. \
-The pilots named in the brief are real people flying in it.
+between two belligerents over a fixed set of objectives — airbases, forward \
+operating bases, logistics hubs, naval bases and SAM sites. The brief names the \
+two sides; refer to them by those names and their ordinary adjectival forms, and \
+never as 'Blue' or 'Red'. The pilots named in the brief are real people flying \
+in it. The brief also names the theatre and the countries whose territory the \
+war is being fought over; name ground by its country the way a wire report does \
+— 'inside Syria', 'on the Jordanian border' — using only the countries listed.
 
 Rules, in order of priority:
 
@@ -85,7 +93,11 @@ Rules, in order of priority:
 dispatch must come from the SITUATION block you are given. If it is not there, \
 it did not happen and you do not mention it. In particular: no human casualties, \
 no civilians, no politics or diplomacy, no weather, no quotes, no named \
-commanders or units beyond those given, no equipment types beyond those given.
+commanders or units beyond those given, no equipment types beyond those given. \
+This covers the countries too. A country may be named as the ground something \
+happened on, or as a listed member of a coalition. It is never an actor: you do \
+not know what any one member state did, only what its side did, and 'Turkish \
+armour' is an invented fact unless Turkey is the side's own name.
 2. You may draw the inference a desk would draw from the facts you have — that a \
 position at 18% strength is unlikely to hold, that a coalition losing its \
 air-defence network is losing control of its sky — but write it as assessment, \
@@ -112,18 +124,70 @@ fn user_prompt(d: &NewsDigest, history: &[NewsDigest]) -> String {
     let mut s = String::new();
     s.push_str(&format!("DAY {} OF THE CAMPAIGN — {}\n\n", f.campaign_day, d.day));
 
+    // Named first, where the model cannot miss them. The analysis already
+    // substitutes these into every sentence it hands over, but the standing
+    // numbers below are per-side and need them spelled out.
+    s.push_str(&format!(
+        "THE BELLIGERENTS: {} (adjective: {}) against {} (adjective: {}). \
+         Use only these names.\n",
+        d.factions.blue, d.factions.blue_adj, d.factions.red, d.factions.red_adj
+    ));
+    // A coalition's member states, where a side is not simply one country.
+    // The writer may say who the coalition is; it may not attribute anything
+    // to one member, because nothing here knows which member did what.
+    for side in ["Blue", "Red"] {
+        let m = d.factions.members(side);
+        if !m.is_empty() {
+            s.push_str(&format!(
+                "{} is a coalition of {}. Name the members only when describing who it \
+                 is; every action belongs to the coalition, not to one member.\n",
+                d.factions.name(side),
+                crate::geo::join_names(m)
+            ));
+        }
+    }
+    // Where the war is. This is what lets the dispatch name ground the way a
+    // real one does, and the closed list is what stops it reaching for a
+    // country that is not on the map.
+    if !d.facts.theatre.is_empty() && !d.facts.territory.is_empty() {
+        s.push_str(&format!(
+            "THE THEATRE: {}. The fighting is on the territory of {} — these are the \
+             only countries you may name, and only as places.\n",
+            d.facts.theatre,
+            crate::geo::join_names(&d.facts.territory)
+        ));
+    }
+    s.push('\n');
+
     s.push_str("SITUATION — the only facts you have, most important first:\n");
     s.push_str(&d.brief());
 
     s.push_str("\nSTANDING NUMBERS:\n");
     s.push_str(&format!(
-        "- holdings: Blue {} objectives ({} airbases), Red {} ({} airbases), {} neutral\n",
-        f.blue_held, f.blue_airbases, f.red_held, f.red_airbases, f.neutral_held
+        "- holdings: {} {} objectives ({} airbases), {} {} ({} airbases), {} neutral\n",
+        d.factions.blue,
+        f.blue_held,
+        f.blue_airbases,
+        d.factions.red,
+        f.red_held,
+        f.red_airbases,
+        f.neutral_held
     ));
     s.push_str(&format!(
-        "- mean logistics health: Blue {}%, Red {}%\n",
-        f.blue_logi, f.red_logi
+        "- mean logistics health: {} {}%, {} {}%\n",
+        d.factions.blue, f.blue_logi, d.factions.red, f.red_logi
     ));
+    if !f.held_by_country.is_empty() {
+        let by = f
+            .held_by_country
+            .iter()
+            .map(|(c, t)| {
+                format!("{c}: {} {}, {} {}", d.factions.blue, t.blue, d.factions.red, t.red)
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        s.push_str(&format!("- objectives held, by the country they stand in — {by}\n"));
+    }
     s.push_str(&format!(
         "- objectives that changed hands today: {}\n",
         if f.changed_hands.is_empty() {
@@ -132,6 +196,15 @@ fn user_prompt(d: &NewsDigest, history: &[NewsDigest]) -> String {
             f.changed_hands.join(", ")
         }
     ));
+    if !f.fighting_in.is_empty() {
+        let w = f
+            .fighting_in
+            .iter()
+            .map(|(c, n)| format!("{n} in {c}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        s.push_str(&format!("- where those captures were: {w}\n"));
+    }
     s.push_str(&format!(
         "- aircraft and helicopters destroyed today: {}; ground and naval units: {}\n",
         f.air_kills, f.ground_kills
@@ -203,8 +276,12 @@ pub fn write_dispatch(
     history: &[NewsDigest],
 ) -> Result<Written> {
     let prompt = user_prompt(digest, history);
+    // Generous on purpose. This runs on a timer in the background and nothing
+    // waits on it, while a local model on a CPU-only box can take minutes to
+    // produce a few hundred tokens -- a tight timeout here would fail exactly
+    // the setup that is most attractive for this job.
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(90))
+        .timeout(Duration::from_secs(300))
         .build()?;
 
     let raw = if cfg.is_anthropic() {

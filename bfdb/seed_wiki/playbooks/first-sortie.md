@@ -11,8 +11,7 @@ time on the server. Every step links to the page with the full detail.
    the back foot, where the front line is, and what the current objective is.
 2. **Pick a side and a slot.** Choose **BLUFOR** or **REDFOR** and take any
    aircraft slot for that side. The engine registers you to that coalition the
-   first moment you take a slot — you don't have to type anything. (You *can*
-   still type `blue` or `red` in chat from spectator if you prefer.) Your
+   first moment you take a slot — there is nothing to type. Your
    coalition is **permanent** unless the server grants side switches — see
    [Joining a Team](../getting-started/joining-team.md).
 3. **Know your role's life pool.** Lives are tracked per role (Standard,

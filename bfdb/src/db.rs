@@ -910,7 +910,15 @@ pub(crate) struct StatsDbInner {
     // event stream by news.rs; see that module for why it is stored rather
     // than computed per request (the trend comparisons and the
     // anti-repetition cooldown both read yesterday's digests).
-    news: Tree<(RoundId, std::string::String), crate::news::NewsDigest>,
+    /// Daily war-diary digests, stored as JSON rather than as a typed value.
+    ///
+    /// Deliberate: yats encodes values with positional bincode, so adding a
+    /// field to `NewsDigest` makes every row an older build wrote undecodable
+    /// -- and `#[serde(default)]` does not save you, because bincode has no
+    /// field names to miss. This type is the newest and most-iterated thing in
+    /// bfdb; it WILL grow fields. JSON costs a little space and makes a new
+    /// field a non-event.
+    news: Tree<(RoundId, std::string::String), std::string::String>,
     // bfwiki content, keyed by page slug (e.g. "gameplay/objectives")
     wiki_pages: Tree<std::string::String, WikiPage>,
     // bfwiki uploaded images (screenshots etc.), keyed by generated Uuid
@@ -963,6 +971,31 @@ const RPC_FAIL_THRESHOLD: u32 = 3;
 /// How often the open breaker lets one call through to see if the engine is
 /// back. Matches the sortie-discovery poll.
 const RPC_PROBE_SECS: u64 = 10;
+
+/// How long an instance's `stats.jsonl` may go without growing before the
+/// reader says so, and how often it repeats itself afterwards. Long enough
+/// that an empty server at 4am does not spam the log, short enough that a
+/// misconfigured instance is obvious within one session.
+const JSONL_QUIET_WARN_SECS: u64 = 900;
+
+/// What one pass of the JSONL reader found. It used to return
+/// `(cursor, vec![])` for "file missing" and for "nothing new" alike, so an
+/// instance reading a path its engine never writes was indistinguishable from
+/// an idle one -- and neither said anything at all.
+enum JsonlRead {
+    /// The file could not be opened.
+    Missing(std::string::String),
+    /// The file is exactly as long as the cursor: caught up, nothing new.
+    Idle,
+    /// The file is *shorter* than the cursor, so it is not the file we were
+    /// reading: deleted and recreated, truncated, or restored from a copy.
+    Replaced { len: u64 },
+    /// New bytes, parsed.
+    Read {
+        pos: u64,
+        stats: Vec<(DateTime<Utc>, Stat)>,
+    },
+}
 
 /// Drop guard that reports an engine RPC's fate to the instance's breaker.
 /// Dropped without `reached` being set means the caller's timeout fired and
@@ -1188,7 +1221,11 @@ impl StatsDb {
             deploys: Tree::open(&db, "deploys")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
-            news: Tree::open(&db, "news")?,
+            // Named apart from the original bincode `news` tree: rows written
+            // before the switch cannot be read as JSON, and silently dropping
+            // them is better than a decode error on every pass. The old tree is
+            // left alone and ages out -- at most 120 days of small records.
+            news: Tree::open(&db, "news_json")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
             intel_captures: Tree::open(&db, "intel_captures")?,
@@ -1857,6 +1894,49 @@ impl StatsDb {
 
         info!("[{}] starting JSONL reader from {jsonl_path:?} at offset {last_pos}", inst.id);
 
+        // Say out loud what this instance is actually reading and how that
+        // compares to the cursor. When a server shows no new data the answer
+        // is usually right here: a file that does not exist, or one that is no
+        // bigger than the offset we resume from.
+        match std::fs::metadata(&jsonl_path) {
+            Ok(md) => {
+                let len = md.len();
+                let age = md
+                    .modified()
+                    .ok()
+                    .and_then(|m| std::time::SystemTime::now().duration_since(m).ok())
+                    .map(|d| format!("{}m ago", d.as_secs() / 60))
+                    .unwrap_or_else(|| "unknown".into());
+                if len < last_pos {
+                    warn!(
+                        "[{}] {jsonl_path:?} is {len} bytes but the cursor is at {last_pos} -- it \
+                         is not the file we were reading; starting over from the top",
+                        inst.id
+                    );
+                } else {
+                    info!(
+                        "[{}] {jsonl_path:?} is {len} bytes, last written {age}, {} byte(s) \
+                         behind the cursor",
+                        inst.id,
+                        len.saturating_sub(last_pos)
+                    );
+                }
+            }
+            Err(e) => warn!(
+                "[{}] {jsonl_path:?} does not exist ({e}) -- nothing will be ingested for this \
+                 instance until its engine writes there. `stats_jsonl` must point at that DCS \
+                 server's own Saved Games folder.",
+                inst.id
+            ),
+        }
+
+        // A file that never grows used to be completely silent: the reader
+        // swallowed both "missing" and "cursor at EOF" without a word, so an
+        // instance whose engine writes somewhere else simply stopped showing
+        // new data with nothing in the log to say why.
+        let mut quiet_since = std::time::Instant::now();
+        let mut last_quiet_warn: Option<std::time::Instant> = None;
+
         loop {
             timer.tick().await;
 
@@ -1881,20 +1961,18 @@ impl StatsDb {
                 }
             }
 
-            let read_result = task::block_in_place(|| -> Result<(u64, Vec<(DateTime<Utc>, Stat)>)> {
+            let read_result = task::block_in_place(|| -> Result<JsonlRead> {
                 let file = match std::fs::File::open(&jsonl_path) {
                     Ok(f) => f,
-                    Err(e) => {
-                        if e.kind() != std::io::ErrorKind::NotFound {
-                            error!("failed to open JSONL file: {e:?}");
-                        }
-                        return Ok((last_pos, vec![]));
-                    }
+                    Err(e) => return Ok(JsonlRead::Missing(format!("{e}"))),
                 };
                 let metadata = file.metadata()?;
                 let file_len = metadata.len();
-                if file_len <= last_pos {
-                    return Ok((last_pos, vec![]));
+                if file_len < last_pos {
+                    return Ok(JsonlRead::Replaced { len: file_len });
+                }
+                if file_len == last_pos {
+                    return Ok(JsonlRead::Idle);
                 }
                 use std::io::Seek;
                 let mut reader = std::io::BufReader::new(file);
@@ -1961,10 +2039,64 @@ impl StatsDb {
                          Stat (bflib/bfdb schema mismatch); first: {first}"
                     );
                 }
-                Ok((new_pos, stats))
+                Ok(JsonlRead::Read {
+                    pos: new_pos,
+                    stats,
+                })
             });
+            let quiet_for = quiet_since.elapsed().as_secs();
+            // Say it once, then at most once every JSONL_QUIET_WARN_SECS.
+            let warn_due = last_quiet_warn
+                .map_or(true, |t| t.elapsed().as_secs() >= JSONL_QUIET_WARN_SECS);
             match read_result {
-                Ok((pos, stats)) => {
+                Ok(JsonlRead::Missing(e)) => {
+                    if warn_due {
+                        last_quiet_warn = Some(std::time::Instant::now());
+                        warn!(
+                            "[{}] cannot read {jsonl_path:?} ({e}) -- no stats ingested for this \
+                             instance in {}m. Its engine writes stats.jsonl under its own Saved \
+                             Games folder; check `stats_jsonl` in the instances file.",
+                            inst.id,
+                            quiet_for / 60
+                        );
+                    }
+                }
+                Ok(JsonlRead::Idle) => {
+                    if quiet_for >= JSONL_QUIET_WARN_SECS && warn_due {
+                        last_quiet_warn = Some(std::time::Instant::now());
+                        warn!(
+                            "[{}] {jsonl_path:?} has not grown in {}m (stuck at {last_pos} bytes) \
+                             -- this instance's engine is not writing stats there, so everything \
+                             round-scoped on the dashboard stays as it is. Either that DCS server \
+                             is down, or `stats_jsonl` points at another instance's folder.",
+                            inst.id,
+                            quiet_for / 60
+                        );
+                    }
+                }
+                Ok(JsonlRead::Replaced { len }) => {
+                    // A shrinking append-only file means a *different* file is
+                    // now at that path: deleted and recreated by a log cleanup,
+                    // a fresh server install, a restore from a copy. Without
+                    // this the cursor sat past EOF forever and the instance
+                    // went dark with nothing in the log -- exactly the "server
+                    // 2 shows no live data" failure. Re-read from the top;
+                    // repeated kills are caught by `kill_seen`.
+                    warn!(
+                        "[{}] {jsonl_path:?} shrank to {len} bytes, below the cursor at \
+                         {last_pos} -- it is a new file; re-reading it from the start",
+                        inst.id
+                    );
+                    if let Err(e) = self.0.jsonl_cursor.insert(&inst_key, &0u64) {
+                        error!("failed to reset JSONL cursor: {e:?}");
+                    }
+                    last_pos = 0;
+                    quiet_since = std::time::Instant::now();
+                    last_quiet_warn = None;
+                }
+                Ok(JsonlRead::Read { pos, stats }) => {
+                    quiet_since = std::time::Instant::now();
+                    last_quiet_warn = None;
                     if !stats.is_empty() {
                         let count = stats.len();
                         for (ts, st) in stats {
@@ -2323,13 +2455,16 @@ impl StatsDb {
     ) -> Result<Vec<crate::news::NewsDigest>> {
         let mut out: Vec<crate::news::NewsDigest> = Vec::new();
         for r in self.news.iter() {
-            // A digest written by an older build may no longer decode -- the
-            // shape of a day's facts grows as the analysis does. That is not
-            // worth failing the whole history for: skip it and it is rewritten
-            // on the next pass over a non-final day.
-            let Ok(((rid, _day), digest)) = r else { continue };
-            if rid == round {
-                out.push(digest);
+            // Skip anything that will not decode rather than failing the whole
+            // history for one bad row; the generator rewrites any day it cannot
+            // read back.
+            let Ok(((rid, _day), raw)) = r else { continue };
+            if rid != round {
+                continue;
+            }
+            match serde_json::from_str::<crate::news::NewsDigest>(&raw) {
+                Ok(d) => out.push(d),
+                Err(e) => warn!("news: dropping an unreadable digest: {e}"),
             }
         }
         out.sort_by(|a, b| b.day.cmp(&a.day));
@@ -2338,7 +2473,8 @@ impl StatsDb {
     }
 
     pub(crate) fn news_put(&self, round: RoundId, digest: &crate::news::NewsDigest) -> Result<()> {
-        self.news.insert(&(round, digest.day.clone()), digest)?;
+        let json = serde_json::to_string(digest)?;
+        self.news.insert(&(round, digest.day.clone()), &json)?;
         Ok(())
     }
 
@@ -2347,7 +2483,19 @@ impl StatsDb {
         round: RoundId,
         day: &str,
     ) -> Result<Option<crate::news::NewsDigest>> {
-        Ok(self.news.get(&(round, day.to_string()))?)
+        // A day that cannot be read back is treated as absent, so the generator
+        // rewrites it. Returning the error instead would abort the whole tick
+        // on the first stale row and the diary would never recover.
+        Ok(match self.news.get(&(round, day.to_string()))? {
+            Some(raw) => match serde_json::from_str(&raw) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    warn!("news: {day} is unreadable, rewriting it: {e}");
+                    None
+                }
+            },
+            None => None,
+        })
     }
 
     pub(crate) fn recent_captures(&self, round: RoundId, limit: usize) -> Result<Vec<CaptureRecord>> {

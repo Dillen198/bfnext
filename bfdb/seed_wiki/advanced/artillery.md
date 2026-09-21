@@ -1,10 +1,15 @@
 # Artillery Missions
 
-Coordinate devastating artillery strikes using the JTAC system.
-
-![HIMARS rocket artillery firing on a target](/api/wiki/images/b7c7cf5d-7559-4a43-b97e-b304cc4d8ccb)
+Coordinate artillery strikes using the JTAC system.
 
 **Also via chat**: `-jtac <id> arty <id|all> <n>` directs a specific gun or every friendly battery in range to fire N rounds at the JTAC's current target — same system as the F10 menu flow below, just faster once you know the syntax.
+
+**What you can actually field depends on the campaign.** The modern Syria
+campaign has access to Western rocket artillery; the 2008 Caucasus one is
+restricted to what was in the theatre that August — 2S3 Akatsiya, 2S1
+Gvozdika, 2S19 Msta, DANA, the Grad family, BM-27 Uragan and BM-30 Smerch, plus
+the 2S9 Nona on the Russian side. The live list for the server you have
+selected is on the [Deployables](../reference/deployables.md) page.
 
 ## Overview
 
@@ -17,8 +22,10 @@ Artillery provides:
 ## Requirements
 
 1. **JTAC unit** with target
-2. **Artillery battery** in range — this includes **missile TELs** (Scud,
-   Iskander/9K720, Silkworm) as well as tube guns and MLRS
+2. **Artillery battery** in range — this includes **missile TELs** where the
+   campaign has them (Scud, Silkworm and similar) as well as tube guns and
+   MLRS. Not every campaign fields TELs: the 2008 Caucasus one does not,
+   because nothing of that class was used in that war
 3. **Clear line of fire**
 4. **Ammunition**
 

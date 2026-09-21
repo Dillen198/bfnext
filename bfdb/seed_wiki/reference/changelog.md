@@ -2,6 +2,45 @@
 
 What's changed since the original open-source Fowl Engine. This page only lists what's **different from stock Fowl Engine** — not a full commit history, and not core mechanics (F10 menus, JTAC, cargo, points/lives, capturing objectives) that were already part of the base engine and are simply documented elsewhere in this wiki.
 
+## Campaign Balance Pass
+
+Applies to the campaigns run on this server rather than to the engine, so the
+numbers below move with whichever server you have selected at the top of the page.
+
+**Air defence moved out of the objectives**
+Objectives used to carry their own strategic SAM cover — a Buk battery at every
+airfield and an S-125 at most other objectives on the Caucasus map, a full
+NASAMS battery in 32 Blue objectives on Syria. That made the classified SAM
+sites largely decorative: the real threat arrived free with the ground and was
+captured along with it. Garrisons now hold **point defence only** (guns,
+short-range launchers). Everything with reach is a SAM site you have to find,
+or a deployable you pay for. See [Objectives](../gameplay/objectives.md).
+
+**Early warning is now a network you can dismantle**
+Both campaigns gained dedicated EWR sites, placed for area coverage and
+capturable on the same terms as a SAM site. Syria had none at all before — the
+coalition had no radar anywhere on the map. Caucasus had two Georgian sets,
+both on the west coast, leaving Tbilisi and Vaziani more than 250 km from the
+nearest one.
+
+**Lives are enforced on the 2008 campaign**
+The Caucasus campaign now runs with `limited_lives` **on**, tracked per role —
+scarce for air superiority, generous for transport. Syria still runs with them
+off. See [Points and Lives](../gameplay/points-and-lives.md).
+
+**Points now constrain**
+Deployables, troops and premium airframes all cost points on the 2008 campaign,
+and the starting grant was cut to match what a sortie actually earns. Previously
+every deployable cost nothing and a new pilot arrived with the equivalent of
+1,200 air kills. The live prices are on
+[Deployables](./deployables.md).
+
+**Period-correct equipment on the 2008 campaign**
+HIMARS, M270 MLRS, M109, T155 Firtina, PLZ-05, TOS-1A and Iskander have been
+removed from the Caucasus mission — none of them was in that theatre in August
+2008. Both sides gained the guns they did have: 2S3 Akatsiya and 2S1 Gvozdika
+for Georgia and Russia, plus the 2S9 Nona for the Russian airborne.
+
 ## New Campaign Systems
 
 **IADN — Integrated Air Defence Network**
