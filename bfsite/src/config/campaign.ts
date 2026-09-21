@@ -15,7 +15,14 @@ export const campaign = {
     'airfields, and tip the balance of power. Your kills are tracked, your ' +
     'achievements recorded. The war never stops.',
   discord: 'https://discord.gg/XyGkb3WAXS',
-  server: 'The Coop · Operation Vector Strike',
+  // Kept for copy that reads naturally with one name. Anything that lists
+  // the servers should use `servers` (and the Field Manual's own selector,
+  // which is driven by config/servers.ts).
+  server: 'Vector Strike',
+  servers: [
+    '[VS] Vector Strike | Dynamic Campaign PVP Modern',
+    '[VS] Vector Strike | Dynamic Campaign PVP 2008',
+  ],
   dashboardUrl: 'https://dashboard.vectorstrike.org',
   wikiUrl: 'https://wiki.vectorstrike.org',
   blueLabel: 'BLUFOR',
@@ -98,7 +105,7 @@ export const campaign = {
     {
       number: '01',
       title: 'Own DCS World',
-      description: 'Download DCS World from Eagle Dynamics. Any aircraft module that flies in our current theater will get you in the fight.',
+      description: 'Download DCS World from Eagle Dynamics. Any module on either server’s roster will get you in the fight — and the free Su-25T is on the Red roster on both.',
     },
     {
       number: '02',
@@ -108,7 +115,7 @@ export const campaign = {
     {
       number: '03',
       title: 'Connect to the Server',
-      description: 'Search for "The Coop · Operation Vector Strike" in the DCS multiplayer browser, or use the direct IP from Discord.',
+      description: 'Search for "[VS] Vector Strike" in the DCS multiplayer browser — there are two: the modern campaign, and the 2008 Russo-Georgian War in the Caucasus. Either one, or use the direct IP from Discord.',
     },
     {
       number: '04',

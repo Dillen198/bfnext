@@ -6,6 +6,7 @@
 
 import React, { useState } from 'react'
 import { SERVERS, DEFAULT_SERVER_ID } from '../config/servers'
+import type { ServerProfile } from '../config/servers'
 import Reveal from './Reveal'
 
 const SUBSECTION_HEADING: React.CSSProperties = {
@@ -305,6 +306,26 @@ function ServerSelector({
   )
 }
 
+/** One line on which campaign the sections below are describing. */
+function ServerSummary({ server }: { server: ServerProfile }) {
+  return (
+    <p
+      style={{
+        fontSize: '0.84rem',
+        color: 'var(--text-muted)',
+        lineHeight: 1.55,
+        margin: '0.75rem 0 0',
+        maxWidth: 680,
+      }}
+    >
+      <span style={{ ...LABEL_STYLE, color: 'var(--accent)', marginRight: '0.6rem' }}>
+        {server.era}
+      </span>
+      {server.summary}
+    </p>
+  )
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Main Component
 // ──────────────────────────────────────────────────────────────────────────────
@@ -405,6 +426,7 @@ export default function ManualSection() {
           </div>
 
           <ServerSelector activeId={serverId} onChange={setServerId} />
+          <ServerSummary server={server} />
         </div>
 
         {/* ── Divider ──────────────────────────────────────────────────────── */}
@@ -1312,7 +1334,7 @@ export default function ManualSection() {
                   margin: '0 0 1rem 0',
                 }}
               >
-                BLUFOR
+                {server.blueLabel}
               </h4>
               {server.roster.blue.map((grp) => (
                 <div key={grp.role} style={{ marginBottom: '1rem' }}>
@@ -1359,7 +1381,7 @@ export default function ManualSection() {
                   margin: '0 0 1rem 0',
                 }}
               >
-                REDFOR
+                {server.redLabel}
               </h4>
               {server.roster.red.map((grp) => (
                 <div key={grp.role} style={{ marginBottom: '1rem' }}>
@@ -1390,9 +1412,22 @@ export default function ManualSection() {
 
           <Callout type="info">
             A handful of airframes — {server.sharedAircraft} — are available to both coalitions.
-            Everything else is side-exclusive. Lives shown here are per-round design values;
-            check <strong style={{ color: 'var(--text)' }}>-lives</strong> in-game for whether
-            life limits are currently active.
+            Everything else is side-exclusive.{' '}
+            {server.livesEnforced ? (
+              <>
+                Life limits are <strong style={{ color: 'var(--text)' }}>active</strong> on{' '}
+                {server.label}: run a pool dry and you are grounded in that role until it
+                refills.
+              </>
+            ) : (
+              <>
+                Life limits are currently <strong style={{ color: 'var(--text)' }}>off</strong> on{' '}
+                {server.label} — the counts above are the campaign's design values, not a cap
+                being enforced.
+              </>
+            )}{' '}
+            Check <strong style={{ color: 'var(--text)' }}>-lives</strong> in-game for the live
+            answer.
           </Callout>
         </Subsection>
         </Reveal>

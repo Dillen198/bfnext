@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { campaign } from '../config/campaign'
+import { SERVERS } from '../config/servers'
 import {
   ArrowRight,
   Award as Trophy,
@@ -35,6 +36,15 @@ export default function StatsSection() {
   const { data: stats, isLoading: statsLoading } = useQuery({ queryKey: ['site-stats', instance],    queryFn: () => api.stats(instance),       refetchInterval: 30_000 })
   const { data: objectives = [], isLoading: objectivesLoading } = useQuery({ queryKey: ['site-objectives', instance], queryFn: () => api.objectives(instance), refetchInterval: 30_000 })
   const { data: pilots = [], isLoading: pilotsLoading }     = useQuery({ queryKey: ['site-pilots'],     queryFn: api.leaderboard, refetchInterval: 60_000 })
+
+  // The two sides are not BLUFOR/REDFOR on every campaign -- the 2008 server
+  // is Georgia against Russia. The server profiles carry the names, tied to
+  // the bfdb instance by `instanceId`, so the live panel and the Pilot Field
+  // Manual below call the same server's sides the same thing. Falls back to
+  // the site-wide labels for an instance with no profile yet.
+  const profile = SERVERS.find(s => s.instanceId === instance)
+  const blueLabel = profile?.blueLabel ?? campaign.blueLabel ?? 'BLUFOR'
+  const redLabel  = profile?.redLabel  ?? campaign.redLabel  ?? 'REDFOR'
 
   const total       = objectives.length
   const blueCount   = objectives.filter(o => o.owner === 'Blue').length
@@ -149,7 +159,7 @@ export default function StatsSection() {
                       {Math.round(bluePct)}%
                     </div>
                     <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
-                      {campaign.blueLabel ?? 'BLUFOR'} · {blueCount} obj
+                      {blueLabel} · {blueCount} obj
                     </div>
                   </div>
                   <div className="text-center">
@@ -165,7 +175,7 @@ export default function StatsSection() {
                       {Math.round(redPct)}%
                     </div>
                     <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
-                      {campaign.redLabel ?? 'REDFOR'} · {redCount} obj
+                      {redLabel} · {redCount} obj
                     </div>
                   </div>
                 </div>
