@@ -69,6 +69,10 @@ function Paragraphs({ day, compact }: { day: NewsDay; compact?: boolean }) {
 export function NewsDayBlock({ day, compact }: { day: NewsDay; compact?: boolean }) {
   const blueLost = lossTotal(day, 'blue')
   const redLost = lossTotal(day, 'red')
+  // Older digests predate per-campaign faction names; fall back to what they
+  // were written with rather than mislabelling them.
+  const blueName = (day.factions?.blue ?? 'Blue').toUpperCase()
+  const redName = (day.factions?.red ?? 'Red').toUpperCase()
   return (
     <article style={{ padding: compact ? '9px 12px' : '18px', borderBottom: '1px solid var(--border)' }}>
       <header style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
@@ -105,8 +109,8 @@ export function NewsDayBlock({ day, compact }: { day: NewsDay; compact?: boolean
             color: 'var(--text-dim)',
           }}
         >
-          <span>BLUE HOLDS {day.facts.blue_held}</span>
-          <span>RED HOLDS {day.facts.red_held}</span>
+          <span>{blueName} HOLDS {day.facts.blue_held}</span>
+          <span>{redName} HOLDS {day.facts.red_held}</span>
           {day.facts.changed_hands.length > 0 && <span>{day.facts.changed_hands.length} CHANGED HANDS</span>}
           {day.facts.air_kills > 0 && <span>{day.facts.air_kills} AIR KILLS</span>}
           {(blueLost > 0 || redLost > 0) && (
@@ -114,12 +118,49 @@ export function NewsDayBlock({ day, compact }: { day: NewsDay; compact?: boolean
               LOSSES {blueLost}/{redLost}
             </span>
           )}
+          {day.facts.theatre && <span style={{ opacity: 0.6 }}>{day.facts.theatre.toUpperCase()}</span>}
           {day.written_by && day.written_by !== 'templates' && (
             <span style={{ opacity: 0.6 }}>FILED BY {day.written_by.toUpperCase()}</span>
           )}
         </div>
       )}
+
+      {!compact && <TerritorySplit day={day} />}
     </article>
+  )
+}
+
+/**
+ * Who holds whose ground. Only worth a line when the war spans more than one
+ * country -- on a single-country map it would just restate the holdings above.
+ */
+function TerritorySplit({ day }: { day: NewsDay }) {
+  const by = day.facts.held_by_country
+  if (!by || Object.keys(by).length < 2) return null
+  const rows = Object.entries(by)
+    .map(([country, t]) => ({ country, blue: t?.blue ?? 0, red: t?.red ?? 0 }))
+    .sort((a, b) => b.blue + b.red - (a.blue + a.red))
+  return (
+    <div
+      className="font-mono-vs"
+      style={{
+        marginTop: 6,
+        display: 'flex',
+        gap: 14,
+        flexWrap: 'wrap',
+        fontSize: '0.58rem',
+        color: 'var(--text-dim)',
+      }}
+    >
+      {rows.map((r) => (
+        <span key={r.country}>
+          {r.country.toUpperCase()}{' '}
+          <span style={{ color: 'var(--blue)' }}>{r.blue}</span>
+          {'/'}
+          <span style={{ color: 'var(--red)' }}>{r.red}</span>
+        </span>
+      ))}
+    </div>
   )
 }
 

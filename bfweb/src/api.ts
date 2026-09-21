@@ -1154,6 +1154,35 @@ export interface NewsFacts {
   /** Mean logistics health per side, 0-100. */
   blue_logi?: number
   red_logi?: number
+  /**
+   * The DCS terrain the campaign is fought on ("Syria", "Caucasus"), worked
+   * out server-side from where the objectives actually are.
+   */
+  theatre?: string
+  /** The countries whose territory is in play, busiest first. */
+  territory?: string[]
+  /** Objectives held tonight, keyed by the country they stand in. */
+  held_by_country?: Record<string, LossTally>
+  /** Today's captures, keyed by the country they happened in. */
+  fighting_in?: Record<string, number>
+}
+
+/**
+ * What the two sides are called in this campaign's dispatches. Stored on each
+ * day rather than looked up, so an old dispatch keeps reading the way it was
+ * filed after someone renames a faction.
+ */
+export interface NewsFactions {
+  blue: string
+  red: string
+  blue_adj: string
+  red_adj: string
+  /**
+   * The countries whose ground the side started the campaign holding. One
+   * entry for a national army, several when the side is a coalition.
+   */
+  blue_members?: string[]
+  red_members?: string[]
 }
 
 export interface NewsDay {
@@ -1171,6 +1200,7 @@ export interface NewsDay {
   written_by?: string
   items: NewsItem[]
   facts: NewsFacts
+  factions?: NewsFactions
   /** False while the day is still running and the digest is being rebuilt. */
   final_: boolean
 }

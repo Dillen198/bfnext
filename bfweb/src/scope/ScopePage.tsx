@@ -291,8 +291,8 @@ export default function ScopePage(): ReactElement {
         </div>
         <div className="max-w-md leading-relaxed">
           {reason === 'nocoalition'
-            ? 'You are signed in but the dashboard can’t resolve your coalition. Link Discord (-linkme in DCS chat) and register a side this campaign.'
-            : 'Sign in and register a coalition to see the live scope. Fog of war is enforced server-side — you only ever see what your side’s sensors detect.'}
+            ? 'You are signed in but the dashboard can’t resolve your coalition. Link Discord (-linkme in DCS chat) and fly a slot on either side this campaign.'
+            : 'Sign in with a pilot who has flown a coalition slot to see the live scope. Fog of war is enforced server-side — you only ever see what your side’s sensors detect.'}
         </div>
       </div>
     )

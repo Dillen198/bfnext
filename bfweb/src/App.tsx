@@ -74,8 +74,8 @@ function RequireCoalition({ what, children }: { what: string; children: ReactNod
         <div style={{ maxWidth: 400, lineHeight: 1.6 }}>
           The {what} is locked to your coalition, and the dashboard can't tell
           which side you're on. Make sure your Discord is linked
-          (<code>-linkme</code> in DCS chat), and that you've registered a
-          coalition on the server this campaign, then reload.
+          (<code>-linkme</code> in DCS chat), and that you've taken a slot on the
+          server this campaign, then reload.
         </div>
       </div>
     )

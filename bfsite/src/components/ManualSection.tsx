@@ -482,10 +482,6 @@ export default function ManualSection() {
                 desc: 'Shows weather at nearby airfields: QNH (barometric pressure), temperature, wind direction and speed.',
               },
               {
-                cmd: 'Register',
-                desc: 'Register your pilot profile with the campaign. Do this on first join — required before the system tracks your stats.',
-              },
-              {
                 cmd: 'Menu → Action',
                 desc: 'Deploy troops or vehicles, call in strikes, and manage active deployments at objectives.',
               },
