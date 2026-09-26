@@ -156,17 +156,18 @@ class BFBinaries(Extension):
     def _prune_backups(self) -> None:
         d = os.path.dirname(self._dll_path)
         base = os.path.basename(self._dll_path)
-        try:
-            backups = sorted(
-                (f for f in os.listdir(d) if f.startswith(f"{base}.backup-")), reverse=True
-            )
-        except OSError:
-            return
-        for stale in backups[self._keep:]:
+        for kind in ("backup", "failed"):
             try:
-                os.remove(os.path.join(d, stale))
+                old = sorted(
+                    (f for f in os.listdir(d) if f.startswith(f"{base}.{kind}-")), reverse=True
+                )
             except OSError:
-                pass
+                return
+            for stale in old[self._keep:]:
+                try:
+                    os.remove(os.path.join(d, stale))
+                except OSError:
+                    pass
 
     def _warn_foreign_pending(self) -> None:
         """A pending DLL for the OTHER engine in this instance's staging dir is
@@ -197,7 +198,11 @@ class BFBinaries(Extension):
             pass
         self._last_swap = None
         live = self._dll_path
-        backup = f"{live}.backup-{_now_tag()}"
+        # A rollback swaps OUT the build that just failed: keep it for a
+        # post-mortem, but as .failed-*, never as .backup-* -- the updater
+        # restores the newest backup, and that must not be the bad build.
+        kind = "failed" if sidecar.get("rollback") else "backup"
+        backup = f"{live}.{kind}-{_now_tag()}"
         try:
             if os.path.exists(live):
                 shutil.copy2(live, backup)
@@ -219,14 +224,14 @@ class BFBinaries(Extension):
                     pass
         self._prune_backups()
         if sidecar.get("rollback"):
-            note = f"engine ROLLED BACK: restored `{name}` from a backup (backup of the bad one `{os.path.basename(backup)}`)."
+            note = f"engine ROLLED BACK: restored `{name}` from a backup (the bad one is kept as `{os.path.basename(backup)}`)."
         else:
             note = f"engine updated: swapped in staged `{name}` (backup `{os.path.basename(backup)}`)."
             if sidecar.get("tag"):
                 note = note[:-1] + f" -- release {sidecar['tag']}."
         self.log.warning(f"{self.name}: {note}")
         self._last_swap = {"dll": name, "live": live,
-                           "backup": backup if os.path.exists(backup) else None,
+                           "backup": backup if kind == "backup" and os.path.exists(backup) else None,
                            "sidecar": sidecar}
         return note
 
@@ -268,7 +273,9 @@ class BFBinaries(Extension):
             procman = getattr(cog, "procman", None)
             pw = getattr(cog, "_bfdb_admin_password", None)
             if procman and procman.enabled and pw:
-                self.loop.create_task(procman.restart(pw))
+                # several servers starting together each nudge; procman cycles
+                # bfdb once, for the first, and the rest find nothing pending
+                self.loop.create_task(procman.restart_if_pending(pw))
                 self.log.info(f"{self.name}: staged bfdb.exe pending -- asked FowlEngine to cycle bfdb")
         except Exception as ex:  # noqa: BLE001
             self.log.warning(f"{self.name}: could not nudge bfdb for a staged update: {ex}")

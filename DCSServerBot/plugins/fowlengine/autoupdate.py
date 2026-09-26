@@ -6,9 +6,13 @@ What it does, on a loop driven by the FowlEngine cog:
   1. CHECK   a release source for a newer engine build: GitHub Releases on the
              repo (tags `engine-...`, published by deploy/publish-release.ps1),
              or a plain folder of releases on this PC / a LAN share.
-  2. FETCH   the release's files into <staging>/_downloads/<tag>/ and verify
-             every one against the sha256 in its manifest.json. A file that
-             doesn't match is never staged.
+  2. FETCH   the release's manifest.json and its minisign signature
+             (manifest.json.sig), verify the signature against the public key
+             pinned in fowlengine.yaml (`autoupdate.public_key`) -- no key, no
+             signature or a bad one and NOTHING is fetched or staged -- then
+             the release's files into <staging>/_downloads/<tag>/, each checked
+             against the sha256 in that (now authenticated) manifest. A file
+             that doesn't match is never staged.
   3. STAGE   each file the same way a Discord drag-and-drop upload does
              (upload.py): `<name>.pending` + a `.pending.json` sidecar in the
              right staging dir -- every campaign server's own dir for
@@ -30,7 +34,8 @@ early. A binary an admin dropped into Discord keeps its old meaning -- it
 lands at the next restart -- whatever the policy says. Probation and rollback
 cover both, since a hand-uploaded build can be just as bad.
 
-Release manifest (manifest.json, one per release -- see publish-release.ps1):
+Release manifest (manifest.json, one per release -- see publish-release.ps1,
+which also writes manifest.json.sig; deploy/auto-update.md has the key setup):
 
   {
     "schema": 1,
@@ -77,6 +82,8 @@ ROLLBACK_SOURCE = "rollback"
 ENGINE_FILES = ("bflib.dll", "bfrange.dll", "bfdb.exe", "bftools.exe")
 DLL_FILES = ("bflib.dll", "bfrange.dll")
 BOT_PLUGIN_ZIP = "fowlengine-bot.zip"
+MANIFEST = "manifest.json"
+MANIFEST_SIG = "manifest.json.sig"
 
 APPLY_POLICIES = ("next_restart", "when_idle", "immediately")
 
@@ -143,12 +150,18 @@ class UpdateConfig:
     bftools_path: Optional[str] = None
     bot_plugin: bool = False
     paused: bool = False
+    # The minisign public key every release manifest must be signed with
+    # ("RW..." or a `tauri signer` .pub file's contents). Unset = nothing is
+    # ever staged.
+    public_key: Optional[str] = None
 
     # Keys the Ops page may change at runtime (persisted as overrides in the
-    # updater's state file, so no YAML is rewritten for a toggle).
+    # updater's state file, so no YAML is rewritten for a toggle). Deliberately
+    # NOT bot_plugin: it lets a release unpack Python into the running bot,
+    # which is a decision for whoever edits fowlengine.yaml on the box.
     RUNTIME_KEYS = ("enabled", "channel", "apply", "bfdb_apply", "idle_minutes",
                     "apply_window", "check_minutes", "paused", "rollback_on_crash",
-                    "probation_minutes", "bot_plugin")
+                    "probation_minutes")
 
     @classmethod
     def from_dicts(cls, yaml_block: Optional[dict], overrides: Optional[dict] = None) -> "UpdateConfig":
@@ -186,7 +199,18 @@ class UpdateConfig:
         c.bftools_path = _clean(raw.get("bftools_path"))
         c.bot_plugin = bool(raw.get("bot_plugin", c.bot_plugin))
         c.paused = bool(raw.get("paused", c.paused))
+        c.public_key = _clean(raw.get("public_key"))
         return c
+
+    def key_id(self) -> Optional[str]:
+        """The pinned key's id as minisign prints it, or None."""
+        if not self.public_key:
+            return None
+        from .minisign import SignatureError, parse_public_key
+        try:
+            return parse_public_key(self.public_key)[0][::-1].hex().upper()
+        except SignatureError:
+            return "INVALID"
 
     def public(self) -> dict:
         """What the Ops page shows (no token)."""
@@ -201,7 +225,7 @@ class UpdateConfig:
             "probation_minutes": self.probation_minutes,
             "load_timeout_minutes": self.load_timeout_minutes,
             "rollback_on_crash": self.rollback_on_crash, "bot_plugin": self.bot_plugin,
-            "paused": self.paused,
+            "paused": self.paused, "signing_key_id": self.key_id(),
         }
 
 
@@ -245,6 +269,29 @@ def parse_manifest(doc: Any) -> dict:
         "notes": str(doc.get("notes") or "")[:4000],
         "files": clean_files,
     }
+
+
+def verify_manifest(raw: bytes, sig_text: Optional[str], public_key: Optional[str]) -> dict:
+    """Authenticate a release's manifest.json bytes against its minisign
+    signature, then parse it. Raises ValueError (with the reason) for a
+    missing key, a missing signature or one that doesn't verify -- nothing
+    unsigned is ever staged."""
+    from .minisign import SignatureError, verify
+
+    if not public_key:
+        raise ValueError("autoupdate.public_key is not set in fowlengine.yaml -- refusing to stage "
+                         "unsigned engine releases (see deploy/auto-update.md, 'Signing releases')")
+    if not sig_text or not sig_text.strip():
+        raise ValueError(f"the release has no {MANIFEST_SIG} -- refusing an unsigned release")
+    try:
+        verify(raw, sig_text, public_key)
+    except SignatureError as ex:
+        raise ValueError(f"{MANIFEST} signature check failed: {ex} -- refusing the release") from None
+    try:
+        doc = json.loads(raw)
+    except ValueError as ex:
+        raise ValueError(f"{MANIFEST} is not JSON: {ex}") from None
+    return parse_manifest(doc)
 
 
 def pick_github_release(releases: list, tag_prefix: str, channel: str,
@@ -381,6 +428,11 @@ class Updater:
         self._orderly: dict = {}                  # server name -> ts of an orderly/requested shutdown
         self._idle_since: dict = {}               # server name -> ts the server was last seen empty
         self._last_tick = time.monotonic()
+        # sample_status(): per-second status, and unexpected downs it counted
+        # for servers on probation (consumed by _probation_phase)
+        self._sampling = False
+        self._fast_status: dict = {}
+        self._unexpected_down: dict = {}
 
     # ---- config / state -------------------------------------------------
 
@@ -599,6 +651,11 @@ class Updater:
         import aiohttp
 
         cfg = self.cfg
+        if not cfg.public_key:
+            # Say so before touching the network: without a pinned key there
+            # is nothing a release could be checked against.
+            raise RuntimeError("autoupdate.public_key is not set in fowlengine.yaml -- refusing to stage "
+                               "unsigned engine releases (see deploy/auto-update.md, 'Signing releases')")
         root = self.download_root()
         os.makedirs(root, exist_ok=True)
         if cfg.source == "folder":
@@ -608,7 +665,23 @@ class Updater:
                 None, lambda: pick_folder_release(cfg.folder, cfg.channel, self.bad))
             if not rel:
                 return {"ok": True, "latest": None, "message": f"no usable release in {cfg.folder}"}
-            manifest = rel["manifest"]
+
+            def read_signed():
+                with open(os.path.join(rel["root"], MANIFEST), "rb") as fh:
+                    raw = fh.read()
+                try:
+                    with open(os.path.join(rel["root"], MANIFEST_SIG), encoding="utf-8") as fh:
+                        sig = fh.read()
+                except OSError:
+                    sig = None
+                return raw, sig
+            raw, sig = await asyncio.get_running_loop().run_in_executor(None, read_signed)
+            try:
+                manifest = verify_manifest(raw, sig, cfg.public_key)
+            except ValueError as ex:
+                raise RuntimeError(f"release in {rel['root']}: {ex}") from None
+            if manifest["tag"] != rel["tag"]:
+                raise RuntimeError(f"{rel['root']} changed while it was being read -- retrying next check")
             dest_dir = os.path.join(root, manifest["tag"])
             os.makedirs(dest_dir, exist_ok=True)
             urls = {}
@@ -638,15 +711,27 @@ class Updater:
                                        f"({cfg.channel} channel)"}
                 massets = rel["assets"]
                 headers = {"User-Agent": "fowlengine-autoupdate"}
-                murl = massets["manifest.json"].get("browser_download_url")
                 if cfg.token:
-                    murl = massets["manifest.json"].get("url")
                     headers.update({"Authorization": f"Bearer {cfg.token}",
                                     "Accept": "application/octet-stream"})
-                async with http.get(murl, headers=headers, timeout=30) as r:
-                    if r.status != 200:
-                        raise RuntimeError(f"manifest.json download -> HTTP {r.status}")
-                    manifest = parse_manifest(json.loads(await r.read()))
+
+                async def asset_bytes(name: str) -> Optional[bytes]:
+                    asset = massets.get(name)
+                    if not asset:
+                        return None
+                    url = asset.get("url") if cfg.token else asset.get("browser_download_url")
+                    async with http.get(url, headers=headers, timeout=30) as r:
+                        if r.status != 200:
+                            raise RuntimeError(f"{name} download -> HTTP {r.status}")
+                        return await r.read()
+
+                raw = await asset_bytes(MANIFEST)
+                sig = await asset_bytes(MANIFEST_SIG)
+                try:
+                    manifest = verify_manifest(raw or b"", sig.decode("utf-8", "replace") if sig else None,
+                                               cfg.public_key)
+                except ValueError as ex:
+                    raise RuntimeError(f"release {rel['tag']}: {ex}") from None
                 if manifest["tag"] != rel["tag"]:
                     raise RuntimeError(f"release {rel['tag']} carries a manifest for {manifest['tag']}")
                 dest_dir = os.path.join(root, manifest["tag"])
@@ -819,16 +904,38 @@ class Updater:
                           f"GitHub source can stage there; skipped")
             return False
         from core import UploadStatus
+        node = t.server.node
+        pending = self._pending(t.staging_dir, dll)
+        part = pending + ".part"
         try:
             try:
-                await t.server.node.create_directory(t.staging_dir)
+                await node.create_directory(t.staging_dir)
             except Exception:  # noqa: BLE001
                 pass
-            rc = await t.server.node.write_file(self._pending(t.staging_dir, dll), url, overwrite=True)
+            rc = await node.write_file(part, url, overwrite=True)
             if rc != UploadStatus.OK:
                 raise RuntimeError(getattr(rc, "name", rc))
+            # The node fetched the URL itself, so what it wrote was never
+            # checked here: read it back and hold it to the (signed)
+            # manifest's sha256 before it may become the .pending file.
+            data = await node.read_file(part)
+            if not isinstance(data, (bytes, bytearray)):
+                raise RuntimeError(f"could not read the download back ({data})")
+            got = hashlib.sha256(data).hexdigest()
+            if got != meta["sha256"]:
+                raise RuntimeError(f"sha256 mismatch (got {got[:12]}, manifest says {meta['sha256'][:12]}) "
+                                   f"-- refusing it")
+            try:
+                await node.remove_file(pending)
+            except Exception:  # noqa: BLE001 - nothing staged there yet
+                pass
+            await node.rename_file(part, pending)
         except Exception as ex:  # noqa: BLE001
-            self.log.warning(f"FowlEngine/autoupdate: staging {dll} on node {t.server.node.name} failed: {ex}")
+            self.log.warning(f"FowlEngine/autoupdate: staging {dll} on node {node.name} failed: {ex}")
+            try:
+                await node.remove_file(part)
+            except Exception:  # noqa: BLE001
+                pass
             return False
         remote_done[key] = latest.get("tag")
         self._save_state()
@@ -922,7 +1029,7 @@ class Updater:
             if go:
                 await self._notify("🔁 Applying staged **bfdb.exe** (auto-update) -- dashboard and GCI "
                                    "blip for a few seconds.")
-                await pm.restart(self.cog._bfdb_admin_password)
+                await pm.restart_if_pending(self.cog._bfdb_admin_password)
 
         # engine DLLs: needs that DCS server down
         for t in self.pending_dll_servers():
@@ -1011,6 +1118,7 @@ class Updater:
             "crashes": 0,
         }
         self._orderly.pop(server.name, None)
+        self._unexpected_down.pop(server.name, None)
         self._history("probation_start", f"{dll_name} on {server.name}", tag=sidecar.get("tag"),
                       server=server.name)
         # also remember what's installed, for the Ops page
@@ -1048,6 +1156,27 @@ class Updater:
                                  f"{got}, the release said {p['git']}")
         return True
 
+    def sample_status(self) -> None:
+        """Every second, from the cog. A scheduled restart or an admin's
+        shutdown passes through SHUTTING_DOWN (DCSServerBot's do_shutdown)
+        or STOPPED, often for only a few seconds -- the 30 s tick used to miss
+        it and roll back a perfectly good engine as "crashed". A crash goes
+        straight from RUNNING to SHUTDOWN/UNREGISTERED. Cheap: attribute
+        reads only."""
+        now = time.time()
+        self._sampling = True
+        on_probation = self.state.get("probation") or {}
+        for s in list(self.cog.bot.servers.values()):
+            st = getattr(s.status, "name", str(s.status))
+            prev = self._fast_status.get(s.name)
+            self._fast_status[s.name] = st
+            if st in ("SHUTTING_DOWN", "STOPPED"):
+                self._orderly[s.name] = now
+            if (s.name in on_probation and prev in ("RUNNING", "PAUSED", "LOADING")
+                    and st in ("SHUTDOWN", "UNREGISTERED")
+                    and now - self._orderly.get(s.name, 0) >= 300):
+                self._unexpected_down[s.name] = self._unexpected_down.get(s.name, 0) + 1
+
     async def _probation_phase(self, dt: float) -> None:
         from core import Status
 
@@ -1067,10 +1196,17 @@ class Updater:
             if st in (Status.RUNNING, Status.PAUSED):
                 p["running_secs"] = p.get("running_secs", 0.0) + dt
                 changed = True
-            went_down = (prev in ("RUNNING", "PAUSED", "LOADING")
-                         and st in (Status.SHUTDOWN, Status.UNREGISTERED))
-            orderly = time.time() - self._orderly.get(name, 0) < 300
-            if went_down and not orderly:
+            if self._sampling:
+                # sample_status() saw every transition, a second apart, and
+                # counted only the ones that skipped the orderly SHUTTING_DOWN
+                crashed = self._unexpected_down.pop(name, 0) > 0
+            else:
+                # no status watch (tests, or it hasn't started): judge from
+                # this tick's coarse before/after
+                went_down = (prev in ("RUNNING", "PAUSED", "LOADING")
+                             and st in (Status.SHUTDOWN, Status.UNREGISTERED))
+                crashed = went_down and time.time() - self._orderly.get(name, 0) >= 300
+            if crashed:
                 p["crashes"] = p.get("crashes", 0) + 1
                 changed = True
                 self.log.warning(f"FowlEngine/autoupdate: {name} went down unexpectedly during "
@@ -1142,6 +1278,11 @@ class Updater:
 
     @staticmethod
     def _newest_backup(live: str) -> Optional[str]:
+        """The newest `.backup-*` that is not the build running now. A build
+        that was rolled away from is kept as `.failed-*` by BFBinaries, never
+        as a backup, so it can't be "restored" by a second rollback; and a
+        backup identical to the live DLL would be a rollback that changes
+        nothing."""
         if not live:
             return None
         d, base = os.path.dirname(live), os.path.basename(live)
@@ -1149,7 +1290,12 @@ class Updater:
             backups = sorted((f for f in os.listdir(d) if f.startswith(f"{base}.backup-")), reverse=True)
         except OSError:
             return None
-        return os.path.join(d, backups[0]) if backups else None
+        live_sha = sha256_file(live)
+        for f in backups:
+            path = os.path.join(d, f)
+            if live_sha is None or sha256_file(path) != live_sha:
+                return path
+        return None
 
     def _cancel_tag_everywhere(self, tag: str) -> None:
         """A release just failed somewhere: pull it from every staging dir it
