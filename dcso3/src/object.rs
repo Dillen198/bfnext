@@ -153,6 +153,12 @@ impl<'lua> Object<'lua> {
         ))
     }
 
+    /// Teleport this object to the given Position3.
+    /// Uses DCS Object.setPosition() which immediately moves the object.
+    pub fn set_position(&self, pos: Position3) -> Result<()> {
+        Ok(self.t.call_method("setPosition", pos)?)
+    }
+
     pub fn get_velocity(&self) -> Result<LuaVec3> {
         Ok(record_perf!(
             get_velocity,
@@ -162,6 +168,12 @@ impl<'lua> Object<'lua> {
 
     pub fn in_air(&self) -> Result<bool> {
         Ok(self.t.call_method("inAir", ())?)
+    }
+
+    /// Coalition of a CoalitionObject (unit, static, weapon, airbase). Errors
+    /// for a scenery object, which has none.
+    pub fn get_coalition(&self) -> Result<crate::coalition::Side> {
+        Ok(self.t.call_method("getCoalition", ())?)
     }
 
     pub fn is_exist(&self) -> Result<bool> {

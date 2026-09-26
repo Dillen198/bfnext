@@ -34,6 +34,7 @@ use std::{mem, ops::Deref};
 string_enum!(PointType, u8, [
     TakeOffGround => "TakeOffGround",
     TakeOffGroundHot => "TakeOffGroundHot",
+    TakeOffParkingHot => "TakeOffParkingHot",
     TurningPoint => "Turning Point",
     TakeOffParking => "TakeOffParking",
     TakeOff => "TakeOff",
@@ -57,7 +58,13 @@ string_enum!(OrbitPattern, u8, [
 
 string_enum!(TurnMethod, u8, [
     FlyOverPoint => "Fly Over Point",
-    OffRoad => "Off Road"
+    OffRoad => "Off Road",
+    FromParkingArea => "From Parking Area",
+    FromParkingAreaHot => "From Parking Area Hot",
+    FromGroundArea => "From Ground Area",
+    FromGroundAreaHot => "From Ground Area Hot",
+    FromRunway => "From Runway",
+    Landing => "Landing"
 ]);
 
 string_enum!(Designation, u8, [
@@ -71,6 +78,12 @@ string_enum!(Designation, u8, [
 string_enum!(AltType, u8, [
     BARO => "BARO",
     RADIO => "RADIO"
+]);
+
+// TACAN channel band, as selected on the aircraft's TACAN control panel.
+string_enum!(TacanBand, u8, [
+    X => "X",
+    Y => "Y"
 ]);
 
 simple_enum!(FACCallsign, u8, [
@@ -335,7 +348,7 @@ impl<'lua> FromLua<'lua> for MissionPoint<'lua> {
         let tbl: LuaTable = FromLua::from_lua(value, lua)?;
         Ok(Self {
             typ: tbl.raw_get("type")?,
-            airdrome_id: tbl.raw_get("airdromId")?,
+            airdrome_id: tbl.raw_get("airdromeId")?,
             time_re_fu_ar: tbl.raw_get("timeReFuAr")?,
             helipad: tbl.raw_get("helipadId")?,
             link_unit: tbl.raw_get("linkUnit")?,
@@ -357,7 +370,7 @@ impl<'lua> IntoLua<'lua> for MissionPoint<'lua> {
     fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
         let iter = [
             ("type", self.typ.into_lua(lua)?),
-            ("airdromId", self.airdrome_id.into_lua(lua)?),
+            ("airdromeId", self.airdrome_id.into_lua(lua)?),
             ("timeReFuAr", self.time_re_fu_ar.into_lua(lua)?),
             ("helipadId", self.helipad.into_lua(lua)?),
             ("linkUnit", self.link_unit.into_lua(lua)?),
@@ -1182,6 +1195,16 @@ pub enum Command {
         name: Option<String>,
         callsign: String,
         frequency: i64,
+        /// TACAN channel number (1-126). Only meaningful when `system` is a TACAN variant;
+        /// when set, DCS derives the beacon's actual RF frequency from this + `mode_channel`
+        /// instead of using `frequency` directly.
+        channel: Option<i64>,
+        /// TACAN channel band (X or Y). Only meaningful alongside `channel`.
+        mode_channel: Option<TacanBand>,
+        /// Air-to-air TACAN (set for beacons mounted on aircraft, e.g. tankers/AWACS).
+        aa: Option<bool>,
+        /// Whether the beacon provides bearing information.
+        bearing: Option<bool>,
     },
     DeactivateBeacon,
     ActivateICLS {
@@ -1190,6 +1213,17 @@ pub enum Command {
         name: Option<String>,
     },
     DeactivateICLS,
+    /// Activates the MiG-29 GCI (ground controlled intercept) station on the unit.
+    /// `x`/`y` are latitude/longitude in degrees (not map coordinates) — the unit's
+    /// own position, converted via `coord.lo_to_ll`.
+    ActivateGci {
+        unit: UnitId,
+        latitude: f64,
+        longitude: f64,
+        channel: i64,
+        /// Max control radius in meters.
+        radius: u32,
+    },
     EPLRS {
         enable: bool,
         group: Option<GroupId>,
@@ -1290,6 +1324,10 @@ impl<'lua> IntoLua<'lua> for Command {
                 name,
                 callsign,
                 frequency,
+                channel,
+                mode_channel,
+                aa,
+                bearing,
             } => {
                 root.raw_set("id", "ActivateBeacon")?;
                 params.raw_set("type", typ)?;
@@ -1298,6 +1336,18 @@ impl<'lua> IntoLua<'lua> for Command {
                 params.raw_set("frequency", frequency)?;
                 if let Some(name) = name {
                     params.raw_set("name", name)?;
+                }
+                if let Some(channel) = channel {
+                    params.raw_set("channel", channel)?;
+                }
+                if let Some(mode_channel) = mode_channel {
+                    params.raw_set("modeChannel", mode_channel)?;
+                }
+                if let Some(aa) = aa {
+                    params.raw_set("AA", aa)?;
+                }
+                if let Some(bearing) = bearing {
+                    params.raw_set("bearing", bearing)?;
                 }
             }
             Self::DeactivateBeacon => root.raw_set("id", "DeactivateBeacon")?,
@@ -1315,6 +1365,20 @@ impl<'lua> IntoLua<'lua> for Command {
                 }
             }
             Self::DeactivateICLS => root.raw_set("id", "DeactivateICLS")?,
+            Self::ActivateGci {
+                unit,
+                latitude,
+                longitude,
+                channel,
+                radius,
+            } => {
+                root.raw_set("id", "ActivateGCI")?;
+                params.raw_set("unitId", unit)?;
+                params.raw_set("x", longitude)?;
+                params.raw_set("y", latitude)?;
+                params.raw_set("channel", channel)?;
+                params.raw_set("radius", radius)?;
+            }
             Self::EPLRS { enable, group } => {
                 root.raw_set("id", "EPLRS")?;
                 params.raw_set("value", enable)?;
@@ -1414,9 +1478,27 @@ impl<'lua> FromLua<'lua> for Command {
                 name: params.raw_get("name")?,
                 callsign: params.raw_get("callsign")?,
                 frequency: params.raw_get("frequency")?,
+                channel: params.raw_get("channel")?,
+                mode_channel: params.raw_get("modeChannel")?,
+                aa: params.raw_get("AA")?,
+                bearing: params.raw_get("bearing")?,
             }),
             "DeactivateBeacon" => Ok(Self::DeactivateBeacon),
-            "DeactivateICLS" => Ok(Self::DeactivateACLS),
+            "ActivateICLS" => Ok(Self::ActivateICLS {
+                channel: params.raw_get("channel")?,
+                unit: params.raw_get("unitId")?,
+                name: params.raw_get("name")?,
+            }),
+            "DeactivateICLS" => Ok(Self::DeactivateICLS),
+            "ActivateGCI" => Ok(Self::ActivateGci {
+                unit: params.raw_get("unitId")?,
+                // written as x = longitude, y = latitude (see into_lua)
+                latitude: params.raw_get("y")?,
+                longitude: params.raw_get("x")?,
+                channel: params.raw_get("channel")?,
+                radius: params.raw_get("radius")?,
+            }),
+            "SMOKE_ON_OFF" => Ok(Self::Smoke(params.raw_get("value")?)),
             "EPLRS" => Ok(Self::EPLRS {
                 enable: params.raw_get("value")?,
                 group: params.raw_get("groupId")?,
@@ -1586,9 +1668,36 @@ impl<'lua> AirOption<'lua> {
     }
 
     fn from_tag_val(lua: &'lua Lua, tag: u8, val: Value<'lua>) -> LuaResult<Self> {
+        // The radio usage options (21/22/23) carry a SET OF ATTRIBUTES, and DCS
+        // writes that set into the mission three different ways in the same
+        // table: a `targetTypes` array, a `noTargetTypes` array, and `value` as
+        // the selected names joined with ';' -- e.g. "Air Defence;". We are
+        // handed `value`, so a string is the ordinary case, not an error.
+        //
+        // Only the empty selection ("none") was handled, so any mission where
+        // Radio Usage Contact/Engage/Kill was actually set refused to load:
+        //   unknown option, air: expected a table, got String("Air Defence;")
+        // The message is doubly unhelpful -- the option is tried against Air,
+        // Ground and Naval in turn, so the real failure is buried among two
+        // "unknown option 21" complaints from parsers that never handled it --
+        // and it names neither the group nor the mission.
+        //
+        // An unrecognised attribute name is not fatal: `Attribute` has a
+        // `Custom` catch-all, so it round-trips unchanged.
         let attr_or_none = |val: Value<'lua>| match val {
-            Value::String(s) if s.to_string_lossy().as_ref().starts_with("none") => {
-                Attributes::new(lua).map_err(|e| err(&format_compact!("{}", e)))
+            Value::String(s) => {
+                let attrs = Attributes::new(lua).map_err(|e| err(&format_compact!("{}", e)))?;
+                let s = s.to_string_lossy();
+                if !s.starts_with("none") {
+                    for name in s.split(';').map(|n| n.trim()).filter(|n| !n.is_empty()) {
+                        let attr =
+                            Attribute::from_lua(Value::String(lua.create_string(name)?), lua)?;
+                        attrs
+                            .set(attr, true)
+                            .map_err(|e| err(&format_compact!("{}", e)))?;
+                    }
+                }
+                Ok(attrs)
             }
             v => FromLua::from_lua(v, lua),
         };

@@ -1,3 +1,14 @@
+## 0.1.10
+
+- derive `schemars::JsonSchema` across the `dcso3`-defined types used in
+  campaign config (`String`, `simple_enum!`/`string_enum!`-generated enums
+  like `Side`/`Country`/`AltType`) so a JSON Schema can be generated
+  directly from the real config types
+- gracefully ignore unrecognized DCS event ids instead of erroring — DCS
+  periodically adds new `world.event` ids (observed: simulation
+  freeze/unfreeze, human aircraft repair start/finish, and others past the
+  previous table's max of 57) that aren't relevant to campaign logic
+
 ## 0.1.9
 
 - update the PlayerLeaveUnit event to ED's new format

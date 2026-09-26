@@ -19,7 +19,7 @@ use crate::{
     record_perf, simple_enum, wrapped_table, LuaEnv, LuaVec2, LuaVec3, MizLua, Position3, Sequence,
 };
 use anyhow::{bail, Result};
-use log::warn;
+use log::debug;
 use mlua::{prelude::*, Value};
 use na::Vector2;
 use serde_derive::{Deserialize, Serialize};
@@ -154,12 +154,36 @@ impl<'lua> Unit<'lua> {
         Ok(self.t.call_method("getCallsign", ())?)
     }
 
-    pub fn get_life(&self) -> Result<i32> {
+    /// Current hit points. DCS returns a fraction for a damaged unit (0.4 of
+    /// a hit point is a real value), so this is a float -- reading it as an
+    /// integer truncated a badly damaged but living unit to 0 and called it
+    /// dead.
+    pub fn get_life(&self) -> Result<f64> {
         Ok(self.t.call_method("getLife", ())?)
     }
 
-    pub fn get_life0(&self) -> Result<i32> {
+    pub fn get_life0(&self) -> Result<f64> {
         Ok(self.t.call_method("getLife0", ())?)
+    }
+
+    /// Animation argument `arg` of the unit's 3D model, usually 0..1 (gear,
+    /// tailhook, refuelling probe, flaps). Argument numbers are per model --
+    /// check them in the DCS Model Viewer. Aircraft args replicate to a
+    /// dedicated server; a carrier's arresting-wire args do not.
+    pub fn get_draw_argument_value(&self, arg: i64) -> Result<f64> {
+        Ok(self.t.call_method("getDrawArgumentValue", arg)?)
+    }
+
+    pub fn get_coalition(&self) -> Result<crate::coalition::Side> {
+        Ok(self.t.call_method("getCoalition", ())?)
+    }
+
+    pub fn get_country(&self) -> Result<crate::country::Country> {
+        Ok(self.t.call_method("getCountry", ())?)
+    }
+
+    pub fn has_attribute(&self, attr: &str) -> Result<bool> {
+        Ok(self.t.call_method("hasAttribute", attr)?)
     }
 
     pub fn get_fuel(&self) -> Result<f32> {
@@ -176,6 +200,37 @@ impl<'lua> Unit<'lua> {
 
     pub fn get_ammo(&self) -> Result<Sequence<'lua, Ammo<'lua>>> {
         Ok(record_perf!(get_ammo, self.t.call_method("getAmmo", ())?))
+    }
+
+    /// The names of the DCS cargo objects currently loaded inside this unit.
+    ///
+    /// This is DCS's own cargo transport system -- the one behind the F8
+    /// ground crew "Load cargo" menu that the CH-47 and Mi-8 use. A crate
+    /// loaded that way is not removed from the world: the static object keeps
+    /// existing and rides along at the aircraft's position, which is why
+    /// anything that scans for crates "on the ground near the player" has to
+    /// ask this question first.
+    ///
+    /// Returns an empty list for an aircraft that carries nothing (and for a
+    /// type that cannot carry cargo at all). Errors if the running DCS does
+    /// not have `getCargosOnBoard`, so callers can fall back rather than
+    /// treat "cannot tell" as "nothing on board".
+    pub fn get_cargos_on_board(&self) -> Result<Vec<String>> {
+        let cargos: Option<mlua::Table> = self.t.call_method("getCargosOnBoard", ())?;
+        let mut res = vec![];
+        if let Some(cargos) = cargos {
+            for v in cargos.sequence_values::<mlua::Table>() {
+                let cargo = v?;
+                // A cargo object is a StaticObject; getName is the mission
+                // name of the static, which is what the crate tracking keys
+                // off. Skip anything that will not answer rather than failing
+                // the whole scan.
+                if let Ok(name) = cargo.call_method::<_, String>("getName", ()) {
+                    res.push(name)
+                }
+            }
+        }
+        Ok(res)
     }
 }
 
@@ -202,12 +257,12 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
             lua: lua.inner(),
         };
         if !t.is_exist()? {
-            warn!("{} is an invalid unit", id.id);
+            debug!("{} is an invalid unit", id.id);
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
-        if t.get_life()? <= 0 {
-            warn!("{} is dead", id.id);
+        if t.get_life()? < 1. {
+            debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
         Ok(t)
@@ -226,12 +281,12 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
     fn change_instance(self, id: &DcsOid<Self::Class>) -> Result<Self> {
         self.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            warn!("{} is an invalid unit", id.id);
+            debug!("{} is an invalid unit", id.id);
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
-        if self.get_life()? <= 0 {
-            warn!("{} is dead", id.id);
+        if self.get_life()? < 1. {
+            debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
         Ok(self)
@@ -241,12 +296,12 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
         id.check_implements(MizLua(self.lua), "Unit")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
-            warn!("{} is an invalid unit", id.id);
+            debug!("{} is an invalid unit", id.id);
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
-        if self.get_life()? <= 0 {
-            warn!("{} is dead", id.id);
+        if self.get_life()? < 1. {
+            debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
         Ok(self)

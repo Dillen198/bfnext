@@ -31,42 +31,654 @@ use dcso3::{
 };
 use fxhash::FxHashMap;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Kind symbols — one connected polyline path per symbol, one MarkId each.
+//
+// Coordinate convention: north_offset = Vector3.x direction (up on F10 map),
+// east_offset = Vector3.z direction (right on F10 map).
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn pt(center: Vector2, dn: f64, de: f64) -> LuaVec3 {
+    LuaVec3(Vector3::new(center.x + dn, 0., center.y + de))
+}
+
+/// Scale a slice of (north, east) normalized offsets by `r` and translate to `center`.
+fn make_pts(center: Vector2, r: f64, offsets: &[(f64, f64)]) -> Vec<LuaVec3> {
+    offsets.iter().map(|&(n, e)| pt(center, n * r, e * r)).collect()
+}
+
+/// Draws a connected multi-point shape as a chain of 2-point segments.
+///
+/// DCS's `trigger.action` has no native "draw a connected polyline" call — only
+/// `lineToAll` (exactly 2 points). So a symbol with N points becomes N-1 individual
+/// line segments, each with its own MarkId.
+fn draw_polyline(center: Vector2, r: f64, offsets: &[(f64, f64)], sf: SideFilter, color: Color, msgq: &mut MsgQ) -> Vec<MarkId> {
+    let pts = make_pts(center, r, offsets);
+    // DCS freeform (markupToAll shapeId 7) draws a connected multi-point shape
+    // as ONE mark. This used to chain N-1 two-point `lineToAll` calls -- 35
+    // MarkIds for the naval-base anchor alone, ~1000-1500 across the campaign,
+    // making the kind icons by far the most expensive layer on the map.
+    //
+    // Fewer than 3 points cannot be a freeform, and exactly 3 renders as an
+    // OPEN polyline rather than a closed shape, so pad the short cases.
+    if pts.len() < 2 {
+        return Vec::new();
+    }
+    let mut pts = pts;
+    while pts.len() < 4 {
+        let last = *pts.last().unwrap();
+        pts.push(last);
+    }
+    let id = MarkId::new();
+    msgq.freeform_to_all(
+        sf,
+        id,
+        dcso3::trigger::PolylineSpec {
+            points: pts,
+            color,
+            // Outline only: these are symbols, not areas, and an unfilled
+            // shape sidesteps the clockwise-winding fill bug entirely.
+            fill_color: Color::black(0.),
+            line_type: LineType::Solid,
+            read_only: true,
+        },
+        None,
+    );
+    vec![id]
+}
+
+/// Anchor icon for naval bases — derived from big-anchor-svgrepo-com.svg.
+///
+/// SVG viewBox: 0 0 372.479 372.479, centre (186.24, 186.24).
+/// Normalisation:  east  = (svg_x − 186.24) / 186.24
+///                 north = −(svg_y − 186.24) / 186.24  (SVG y-down → DCS north-up)
+///
+/// Structural measurements from SVG:
+///   Eye ring   — centre svg(187.74, 51.998), outer r=26.655  → N=0.721, r=0.143
+///   Stock      — y=151.993, half-span=63.205, ball-cap r=22.766
+///                → N=0.184, E=±0.339, cap-r=0.122
+///   Crown      — bottom of shank y≈306                       → N=−0.644
+///   Left fluke — bezier endpoints svg(104,327),(80,299),(73,309)
+///                → (N=−0.756,E=−0.441), (N=−0.608,E=−0.568), (N=−0.657,E=−0.607)
+///   Bottom     — trace start svg(186.24,372.479)             → N=−1.000
+///
+/// Single connected trace:
+///   eye ring → shank → left ball cap → centre → right ball cap →
+///   centre → shank → crown → left fluke → bottom → right fluke → crown
+fn anchor_path() -> &'static [(f64, f64)] {
+    &[
+        // ── Eye ring: 8-pt circle (N=0.721, E=0, r=0.143), start at bottom ──
+        ( 0.578,  0.000), // S  — shank junction
+        ( 0.619, -0.101), // SW
+        ( 0.721, -0.143), // W
+        ( 0.821, -0.101), // NW
+        ( 0.863,  0.000), // N  — top of eye
+        ( 0.821,  0.101), // NE
+        ( 0.721,  0.143), // E
+        ( 0.619,  0.101), // SE
+        ( 0.578,  0.000), // close eye
+
+        // ── Shank to stock level (y=151.993 → N=0.184) ──
+        ( 0.184,  0.000),
+
+        // ── Left ball cap (centre N=0.184, E=−0.339, r=0.122) ──
+        // Enter from E (stock junction), trace CW, exit back to stock
+        ( 0.184, -0.217), // E edge  (−0.339 + 0.122)
+        ( 0.062, -0.339), // S       (0.184 − 0.122)
+        ( 0.184, -0.461), // W edge  (−0.339 − 0.122)
+        ( 0.306, -0.339), // N       (0.184 + 0.122)
+        ( 0.184, -0.217), // back to E edge
+
+        // ── Back to shank centre ──
+        ( 0.184,  0.000),
+
+        // ── Right ball cap (centre N=0.184, E=+0.339, r=0.122) ──
+        ( 0.184,  0.217), // W edge
+        ( 0.062,  0.339), // S
+        ( 0.184,  0.461), // E edge
+        ( 0.306,  0.339), // N
+        ( 0.184,  0.217), // back to W edge
+
+        // ── Back to shank centre, down to crown ──
+        ( 0.184,  0.000),
+        (-0.644,  0.000), // crown — bottom of shank (svg y≈306)
+
+        // ── Left fluke (bezier-endpoint approximation from SVG path) ──
+        // M(186,372) c(−82,−45)→ c(−24,−28)→ l(−7,+10)
+        (-0.756, -0.441), // svg(104, 327) — outer fluke sweep
+        (-0.608, -0.568), // svg(80,  299) — fluke arm
+        (-0.657, -0.607), // svg(73,  309) — fluke tip corner
+
+        // ── Bottom of anchor (SVG trace M-point, svg(186, 372)) ──
+        (-1.000,  0.000),
+
+        // ── Right fluke (symmetric) ──
+        (-0.657,  0.607),
+        (-0.608,  0.568),
+        (-0.756,  0.441),
+
+        // ── Return to crown ──
+        (-0.644,  0.000),
+    ]
+}
+
+/// SAM site symbol for both sides — APP-6C friendly rectangle frame + missile.
+///
+/// Red used to get the hostile DIAMOND frame; players asked for every diamond
+/// off the map, and the side is already carried by the colour.
+/// Frame corners chosen to match APP-6 proportions (height ≈ width × 0.8).
+///
+/// Trace: rectangle → top-centre → centre spine → missile + arc (identical to hostile).
+fn friendly_sam_path() -> &'static [(f64, f64)] {
+    &[
+        // Rectangle frame (CW from top-left)
+        ( 0.800, -0.650), // top-left
+        ( 0.800,  0.650), // top-right
+        (-0.800,  0.650), // bottom-right
+        (-0.800, -0.650), // bottom-left
+        ( 0.800, -0.650), // close
+        ( 0.800,  0.000), // top-centre (on top edge — starts centre spine)
+        // Centre spine → missile nose tip
+        ( 0.342,  0.000),
+        // Left side of missile body
+        ( 0.155, -0.130),
+        (-0.341, -0.130),
+        // Launcher arc (same as hostile)
+        (-0.468, -0.498),
+        (-0.373, -0.280),
+        (-0.337,  0.000),
+        (-0.373,  0.280),
+        (-0.468,  0.498),
+        // Right side of missile body
+        (-0.334,  0.130),
+        ( 0.155,  0.130),
+        ( 0.260,  0.065),
+        ( 0.342,  0.000),
+    ]
+}
+
+/// Carrier group icon — single traced hull silhouette.
+///
+/// Elongated N-S hull: pointed bow (N), flat stern (S), island stub on starboard (E).
+fn carrier_path() -> &'static [(f64, f64)] {
+    &[
+        // Hull outline starting from stern-port (SW corner), going CW
+        (-0.85, -0.22), // stern-port
+        (-0.85,  0.22), // stern-starboard
+        ( 0.55,  0.22), // mid-starboard (before island)
+        // Island superstructure stub on starboard
+        ( 0.55,  0.40),
+        ( 0.20,  0.40),
+        ( 0.20,  0.22),
+        // Continue hull to bow
+        ( 0.85,  0.22), // bow-starboard shoulder
+        ( 1.00,  0.00), // bow tip
+        ( 0.85, -0.22), // bow-port shoulder
+        (-0.85, -0.22), // back to stern-port (close hull)
+    ]
+}
+
+/// Airbase icon — simple top-down aircraft silhouette, nose pointing north.
+#[allow(dead_code)] // DCS labels real airfields itself; kept as reference geometry
+fn airbase_path() -> &'static [(f64, f64)] {
+    &[
+        ( 0.90,  0.00), // nose
+        ( 0.15,  0.08), // fuselage, starboard wing root
+        ( 0.05,  0.75), // starboard wingtip, forward edge
+        (-0.05,  0.70), // starboard wingtip, trailing edge
+        (-0.15,  0.10), // fuselage, aft of wing
+        (-0.75,  0.25), // starboard tailplane tip
+        (-0.85,  0.08), // starboard tailplane root
+        (-0.95,  0.00), // tail
+        (-0.85, -0.08), // port tailplane root
+        (-0.75, -0.25), // port tailplane tip
+        (-0.15, -0.10), // fuselage, aft of wing
+        (-0.05, -0.70), // port wingtip, trailing edge
+        ( 0.05, -0.75), // port wingtip, forward edge
+        ( 0.15, -0.08), // fuselage, port wing root
+        ( 0.90,  0.00), // close at nose
+    ]
+}
+
+/// FOB icon — simple tent/outpost pentagon, apex to the north.
+fn fob_path() -> &'static [(f64, f64)] {
+    &[
+        ( 0.90,  0.00), // apex
+        ( 0.30,  0.60), // starboard eave
+        (-0.70,  0.60), // starboard base corner
+        (-0.70, -0.60), // port base corner
+        ( 0.30, -0.60), // port eave
+        ( 0.90,  0.00), // close at apex
+    ]
+}
+
+/// Factory icon — building with a sawtooth roofline (classic industrial pictogram).
+fn factory_path() -> &'static [(f64, f64)] {
+    &[
+        (-0.80, -0.80), // base, port-aft
+        ( 0.30, -0.80), // wall top, port-aft
+        ( 0.70, -0.53), // roof peak 1
+        ( 0.30, -0.27), // roof valley 1
+        ( 0.70,  0.00), // roof peak 2
+        ( 0.30,  0.27), // roof valley 2
+        ( 0.70,  0.53), // roof peak 3
+        ( 0.30,  0.80), // wall top, starboard-aft
+        (-0.80,  0.80), // base, starboard-aft
+        (-0.80, -0.80), // close at base
+    ]
+}
+
+/// FARP icon — "H" helipad marking, the standard real-world symbol for a
+/// helicopter landing point. Traced as one continuous stroke (retraces part
+/// of the port bar to reach the crossbar without lifting the pen).
+fn farp_path() -> &'static [(f64, f64)] {
+    &[
+        (-0.90, -0.50), // port bar, bottom
+        ( 0.90, -0.50), // port bar, top
+        ( 0.00, -0.50), // back down to mid, port side
+        ( 0.00,  0.50), // crossbar to mid, starboard side
+        ( 0.90,  0.50), // starboard bar, top
+        (-0.90,  0.50), // starboard bar, bottom
+    ]
+}
+
+/// Logistics hub icon — hexagon (package/crate outline).
+fn logistics_path() -> &'static [(f64, f64)] {
+    &[
+        ( 1.00,  0.00),
+        ( 0.50,  0.866),
+        (-0.50,  0.866),
+        (-1.00,  0.00),
+        (-0.50, -0.866),
+        ( 0.50, -0.866),
+        ( 1.00,  0.00), // close
+    ]
+}
+
+/// Command Center icon — five-pointed star, the standard HQ/command symbol.
+fn command_center_path() -> &'static [(f64, f64)] {
+    &[
+        ( 1.000,  0.000), // outer, N
+        ( 0.324,  0.235), // inner
+        ( 0.309,  0.951), // outer
+        (-0.124,  0.380), // inner
+        (-0.809,  0.588), // outer
+        (-0.400,  0.000), // inner
+        (-0.809, -0.588), // outer
+        (-0.124, -0.380), // inner
+        ( 0.309, -0.951), // outer
+        ( 0.324, -0.235), // inner
+        ( 1.000,  0.000), // close
+    ]
+}
+
+#[derive(Debug, Clone, Default)]
+enum KindSymbol {
+    #[default]
+    None,
+    Single(Vec<MarkId>),
+}
+
+impl KindSymbol {
+    fn remove(self, msgq: &mut MsgQ) {
+        if let Self::Single(ids) = self {
+            for id in ids {
+                msgq.delete_mark(id);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(super) struct ObjectiveMarkup {
-    side: Side,
+    /// Owner at the time the marks were created. Read by
+    /// `Ephemeral::update_objective_markup` to notice a carrier changing hands,
+    /// which needs a full redraw because the side filter is baked into the
+    /// marks and `update` cannot change it.
+    pub(super) side: Side,
     threatened: bool,
+    capturable: bool,
     health: u8,
     logi: u8,
     supply: u8,
     fuel: u8,
-    points: i32,
+    /// Whether the base is mid consolidation-hold. The label prints ">> NOT
+    /// CONSOLIDATED" vs ">> CAPTURABLE" off this, and neither `health` nor
+    /// `capture_pct` necessarily changes when the hold clears (a base taken at
+    /// 100% health), so the label has to key off this flag directly or it
+    /// freezes on "NOT CONSOLIDATED".
+    capture_hold: bool,
+    /// Consolidation progress as (percent, seconds remaining), bucketed by
+    /// `hold_pct_for` so the countdown doesn't rewrite the label every tick.
+    hold_pct: Option<(u8, i64)>,
+    /// The four health / logi / supply / fuel hexes.
+    status: StatusHexes,
+    capture_pct: Option<u8>,
+    /// (percent complete, seconds remaining)
+    repair_pct: Option<(u8, i64)>,
     name: String,
+    /// Cached navaid summary (see `crate::navaids`), so the label only rebuilds
+    /// when it actually changes.
+    navaid: CompactString,
     owner_ring: MarkId,
     capturable_ring: MarkId,
     threatened_ring: MarkId,
     label: MarkId,
     pos: Vector2,
     supply_connections: FxHashMap<ObjectiveId, MarkId>,
+    kind_symbol: KindSymbol,
 }
 
-fn text_color(side: Side, a: f32) -> Color {
-    match side {
-        Side::Red => Color::red(a),
-        Side::Blue => Color::blue(a),
-        Side::Neutral => Color::white(a),
+// ────────────────────────────────────────────────────────────────────────────
+// Status hexes
+//
+// health / logi / supply / fuel used to be five lines of text on every
+// objective. They are now four filled hexagons in a fixed row beside the
+// zone, each coloured by a coarse bucket.
+//
+// Why shapes and not glyphs: a drawn shape is world-scaled, so the row keeps
+// its layout at every zoom AND fades out when you pull back to the whole
+// theatre -- which is the decluttering. Text and icons are screen-fixed, so a
+// row built from them fans apart zoomed in and piles up zoomed out.
+//
+// Why a bucket and not a number: a bucket only changes a handful of times in
+// a campaign, so a hex costs one `set_markup_fill_color` per crossing instead
+// of a label rewrite every time a stat moves by one.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Circumradius of a status hexagon, metres.
+///
+/// The row started out nearly 3.5 km wide, which is wider than most of the
+/// objectives it describes: at a FOB the four hexes spilled across the
+/// surrounding map and read as loose shapes scattered near the base rather
+/// than as that base's status. Same layout, roughly half the size, so the row
+/// sits under the zone it belongs to.
+const HEX_R: f64 = 260.;
+/// Centre-to-centre spacing along the row, metres.
+const HEX_GAP: f64 = 640.;
+/// How far south of the objective centre the row sits, metres.
+const HEX_DROP: f64 = 1100.;
+/// Number of stats in the row: health, logi, supply, fuel.
+const N_HEX: usize = 4;
+/// Opacity of the supply-connection arrows between objectives. They are drawn
+/// with `LineType::NoLine`, so the fill IS the arrow -- there is no outline
+/// underneath it. Supply links are context rather than something to act on, so
+/// they sit well back from the status shapes.
+const SUPPLY_ARROW_ALPHA: f32 = 0.30;
+
+/// Fill opacity of a status hex. Solid fill hides the terrain under it and
+/// reads heavier than the rings around it; letting a little map through keeps
+/// the row legible without it dominating the objective.
+const HEX_FILL_ALPHA: f32 = 0.50;
+
+/// Coarse state of one stat. Only a change here costs a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bucket {
+    Good,
+    Warn,
+    Bad,
+}
+
+impl Bucket {
+    fn of(v: u8) -> Bucket {
+        if v > 66 {
+            Bucket::Good
+        } else if v > 33 {
+            Bucket::Warn
+        } else {
+            Bucket::Bad
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Bucket::Good => Color::new(0.20, 0.85, 0.31, HEX_FILL_ALPHA),
+            Bucket::Warn => Color::new(1., 0.70, 0., HEX_FILL_ALPHA),
+            Bucket::Bad => Color::new(0.95, 0.16, 0.16, HEX_FILL_ALPHA),
+        }
     }
 }
 
-fn objective_label(name: &str, obj: &Objective) -> CompactString {
-    format_compact!(
-        "{}\nHealth: {}\nLogi: {}\nSupply: {}\nFuel: {}\nPoints: {}",
-        name,
-        obj.health,
-        obj.logi,
-        obj.supply,
-        obj.fuel,
-        obj.points
+/// Outline of a normal hex -- dark, so the fill reads against any terrain.
+fn hex_outline() -> Color {
+    Color::black(0.80)
+}
+
+/// Outline used to say "this resource never runs out".
+///
+/// An unlimited stat is pinned at 100, so its FILL can never tell you
+/// anything -- which leaves the outline free to mark it. Outline and fill are
+/// separate fields on the same mark, so this costs nothing extra.
+fn unlimited_outline() -> Color {
+    Color::new(1., 0.82, 0.29, 1.)
+}
+
+/// Colour of the owner ring. Gold when the base has unlimited aircraft:
+/// that is a whole-objective property and there is no aircraft hex in the row
+/// of four, so the ring is its natural home.
+fn ring_color(obj: &Objective, a: f32) -> Color {
+    if obj.unlimited_aircraft {
+        unlimited_outline().with_alpha(a)
+    } else {
+        text_color(obj.owner, a)
+    }
+}
+
+/// Centre of the `i`th hex in the row under `pos`.
+fn hex_center(pos: Vector2, i: usize) -> Vector2 {
+    Vector2::new(
+        pos.x - HEX_DROP,
+        pos.y + (i as f64 - (N_HEX as f64 - 1.) / 2.) * HEX_GAP,
     )
+}
+
+/// A hexagon as a point ring, flat side up.
+///
+/// Six points, NOT seven: do not repeat the first point to close the ring.
+/// DCS closes a freeform itself, and an explicit duplicate leaves a
+/// zero-length final edge that breaks the fill while still drawing the
+/// outline -- which is exactly how these shipped as empty outlines twice.
+/// This matches, vertex for vertex, the geometry that fills correctly as a
+/// baked mission-editor drawing.
+fn hex_points(center: Vector2, r: f64) -> Vec<LuaVec3> {
+    (0..6)
+        .map(|i| {
+            let a = (60. * i as f64 + 30.).to_radians();
+            LuaVec3(Vector3::new(
+                center.x + r * a.cos(),
+                0.,
+                center.y + r * a.sin(),
+            ))
+        })
+        .collect()
+}
+
+/// The four status hexes for one objective.
+#[derive(Debug, Clone)]
+struct StatusHexes {
+    ids: [MarkId; N_HEX],
+    buckets: [Bucket; N_HEX],
+    /// Tracked so the supply hex's outline can be flipped if the flag changes.
+    unlimited_supply: bool,
+}
+
+impl Default for StatusHexes {
+    /// Placeholder ids only. `ObjectiveMarkup::default()` is always populated
+    /// by `ObjectiveMarkup::new` before anything is drawn or deleted.
+    fn default() -> Self {
+        StatusHexes {
+            ids: [MarkId::from(0); N_HEX],
+            buckets: [Bucket::Good; N_HEX],
+            unlimited_supply: false,
+        }
+    }
+}
+
+impl StatusHexes {
+    fn stats(obj: &Objective) -> [u8; N_HEX] {
+        [obj.health, obj.logi, obj.supply, obj.fuel]
+    }
+
+    fn new(obj: &Objective, pos: Vector2, sf: SideFilter, msgq: &mut MsgQ) -> StatusHexes {
+        let vals = Self::stats(obj);
+        let mut ids = [MarkId::new(); N_HEX];
+        let mut buckets = [Bucket::Good; N_HEX];
+        for i in 0..N_HEX {
+            let id = MarkId::new();
+            let b = Bucket::of(vals[i]);
+            ids[i] = id;
+            buckets[i] = b;
+            // index 2 is supply -- the stat unlimited_supply pins
+            let outline = if i == 2 && obj.unlimited_supply {
+                unlimited_outline()
+            } else {
+                hex_outline()
+            };
+            msgq.freeform_to_all(
+                sf,
+                id,
+                dcso3::trigger::PolylineSpec {
+                    points: hex_points(hex_center(pos, i), HEX_R),
+                    color: outline,
+                    fill_color: b.color(),
+                    line_type: LineType::Solid,
+                    read_only: true,
+                },
+                None,
+            );
+        }
+        StatusHexes {
+            ids,
+            buckets,
+            unlimited_supply: obj.unlimited_supply,
+        }
+    }
+
+    fn update(&mut self, obj: &Objective, msgq: &mut MsgQ) {
+        let vals = Self::stats(obj);
+        for i in 0..N_HEX {
+            let b = Bucket::of(vals[i]);
+            if b != self.buckets[i] {
+                self.buckets[i] = b;
+                msgq.set_markup_fill_color(self.ids[i], b.color());
+            }
+        }
+        if obj.unlimited_supply != self.unlimited_supply {
+            self.unlimited_supply = obj.unlimited_supply;
+            let outline = if self.unlimited_supply {
+                unlimited_outline()
+            } else {
+                hex_outline()
+            };
+            msgq.set_markup_color(self.ids[2], outline);
+        }
+    }
+
+    fn remove(self, msgq: &mut MsgQ) {
+        for id in self.ids {
+            msgq.delete_mark(id)
+        }
+    }
+}
+
+fn text_color(side: Side, a: f32) -> Color {
+    crate::mapcolor::side_color(side, a)
+}
+
+/// Opacity of an objective's map label. `new()` used to draw at 1.0 while
+/// `update()` recoloured to 0.75 when the objective changed hands, so a base
+/// became permanently dimmer after its first capture -- exactly the front-line
+/// bases players most need to read. One constant now, used by both paths.
+const LABEL_ALPHA: f32 = 1.0;
+
+/// Format a seconds count as a short duration string, e.g. "3m20s", "1h05m", "42s".
+fn fmt_eta(secs: i64) -> CompactString {
+    let secs = secs.max(0);
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format_compact!("{h}h{m:02}m")
+    } else if m > 0 {
+        format_compact!("{m}m{s:02}s")
+    } else {
+        format_compact!("{s}s")
+    }
+}
+
+fn objective_label(
+    name: &str,
+    obj: &Objective,
+    navaid: &str,
+    capture_pct: Option<u8>,
+    repair_pct: Option<(u8, i64)>,
+    hold_pct: Option<(u8, i64)>,
+) -> CompactString {
+    use std::fmt::Write;
+    // The * that used to flag an UNLIMITED_SUPPLY / UNLIMITED_AIRCRAFTS base
+    // is gone: unlimited supply now shows as a gold outline on the supply hex,
+    // and unlimited aircraft as a gold owner ring, so the name stays clean.
+    //
+    // health / logi / supply / fuel / points are no longer printed either --
+    // the status hexes carry them. What is left is the name plus anything that
+    // is an EVENT rather than a level: the states a player has to act on,
+    // which a three-way colour bucket cannot express.
+    let mut s = CompactString::from(name);
+    // Both are mutually exclusive in practice (a carrier that's mid-repair
+    // isn't simultaneously being boarded), but neither is asserted against
+    // the other -- just append whichever is currently active.
+    // Tell players why a battered objective is or isn't takeable yet -- the
+    // health bar alone doesn't reveal that the last infantry must also be dead.
+    if obj.in_capture_hold() {
+        // A live countdown, so a crew can tell a running hold from a stuck
+        // one -- and a plain statement of what is stopping it when the
+        // holding troops wander out of the zone.
+        match (hold_pct, obj.capture_hold_stalled()) {
+            (_, true) => {
+                let _ = write!(s, "\n>> CONSOLIDATION PAUSED - no troops in the zone");
+            }
+            (Some((pct, remaining)), false) => {
+                let _ = write!(
+                    s,
+                    "\n>> CONSOLIDATING {pct}% ({} left) - hold the zone with troops",
+                    fmt_eta(remaining)
+                );
+            }
+            (None, false) => {
+                let _ = write!(
+                    s,
+                    "\n>> NOT CONSOLIDATED - hold with troops or it goes Neutral"
+                );
+            }
+        }
+    } else if obj.captureable() {
+        // Say WHO can take it. This label is drawn to both sides in the
+        // owner's colour, and a bare "CAPTURABLE" over a battered Blue base
+        // sent Blue players flying troops (and fuel) to their own base, which
+        // can never capture it. It also sits well off the zone centre, so
+        // point at the ring rather than at "the zone".
+        let _ = match obj.owner {
+            Side::Neutral => write!(s, "\n>> NEUTRAL - either side captures: land troops inside the ring"),
+            Side::Red => write!(s, "\n>> UNDEFENDED - BLUE captures: land troops inside the ring"),
+            Side::Blue => write!(s, "\n>> UNDEFENDED - RED captures: land troops inside the ring"),
+        };
+    } else if obj.health <= 20 && obj.infantry > 0 {
+        let _ = write!(s, "\nInfantry: {}% — clear all defenders to capture", obj.infantry);
+    }
+    if let Some(pct) = capture_pct {
+        let _ = write!(s, "\nCapturing: {pct}%");
+    }
+    if let Some((pct, remaining)) = repair_pct {
+        let _ = write!(s, "\nRepairing: {pct}% (ETA {})", fmt_eta(remaining));
+    }
+    // Carriers publish a navaid per ship (TACAN / ICLS / Link-4 / ACLS), which
+    // is several lines of dense text on every carrier marker -- players get all
+    // of that from the carrier ATIS / kneeboard, and it's a big contributor to
+    // F10-map clutter and lag. Keep it off the map label.
+    if !navaid.is_empty() && !matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
+        let _ = write!(s, "\n{navaid}");
+    }
+    s
 }
 
 fn arrow_coords(obj: &Objective, dst: &Objective) -> (Vector2, Vector2) {
@@ -84,23 +696,32 @@ impl ObjectiveMarkup {
         let ObjectiveMarkup {
             side: _,
             threatened: _,
+            capturable: _,
             health: _,
             logi: _,
             supply: _,
             fuel: _,
-            points: _,
+            capture_hold: _,
+            hold_pct: _,
+            status,
+            capture_pct: _,
+            repair_pct: _,
             name: _,
+            navaid: _,
             pos: _,
             owner_ring,
             capturable_ring,
             threatened_ring,
             supply_connections,
             label,
+            kind_symbol,
         } = self;
         msgq.delete_mark(owner_ring);
         msgq.delete_mark(threatened_ring);
         msgq.delete_mark(capturable_ring);
         msgq.delete_mark(label);
+        status.remove(msgq);
+        kind_symbol.remove(msgq);
         for (_, id) in supply_connections {
             msgq.delete_mark(id)
         }
@@ -112,12 +733,21 @@ impl ObjectiveMarkup {
         msgq: &mut MsgQ,
         obj: &Objective,
         moved: &[ObjectiveId],
+        capture_pct: Option<u8>,
+        repair_pct: Option<(u8, i64)>,
+        hold_pct: Option<(u8, i64)>,
     ) {
+        // Cheap: only emits a message when a stat crosses a bucket boundary.
+        self.status.update(obj, msgq);
         if obj.owner != self.side {
             let text_color = |a| text_color(obj.owner, a);
             self.side = obj.owner;
-            msgq.set_markup_color(self.label, text_color(0.75));
-            msgq.set_markup_color(self.owner_ring, text_color(1.));
+            msgq.set_markup_color(self.label, text_color(LABEL_ALPHA));
+            msgq.set_markup_color(self.owner_ring, ring_color(obj, 1.));
+            if obj.kind.is_special_sam_site() {
+                let capturable_color = if obj.health == 0 { Color::white(0.75) } else { text_color(0.75) };
+                msgq.set_markup_color(self.capturable_ring, capturable_color);
+            }
             for (_, id) in self.supply_connections.drain() {
                 msgq.delete_mark(id);
             }
@@ -129,24 +759,68 @@ impl ObjectiveMarkup {
                 Color::yellow(if self.threatened { 0.75 } else { 0. }),
             );
         }
+        // The inner capturable ring must track captureable() directly. It used
+        // to only refresh when `logi` changed, but capturability is now
+        // `health <= 20 && infantry == 0` -- a base can flip to capturable with
+        // logi untouched, which left the ring invisible. (SAM sites drive this
+        // ring from owner/health blocks instead, so skip them here.)
+        let capturable_changed = obj.captureable() != self.capturable;
+        if !obj.kind.is_special_sam_site() && capturable_changed {
+            self.capturable = obj.captureable();
+            msgq.set_markup_color(
+                self.capturable_ring,
+                Color::white(if self.capturable { 0.75 } else { 0. }),
+            );
+        }
+        let hold_changed = obj.in_capture_hold() != self.capture_hold;
+        // Carrier navaids are deliberately kept off the F10 label (see
+        // objective_label) -- don't spend the summarize() every redraw either.
+        let navaid = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
+            CompactString::default()
+        } else {
+            persisted
+                .navaids
+                .get(&obj.id)
+                .map(|navs| crate::navaids::summarize(navs))
+                .unwrap_or_default()
+        };
         if self.health != obj.health
             || self.logi != obj.logi
             || self.supply != obj.supply
             || self.fuel != obj.fuel
-            || self.points != obj.points
+            || self.capture_pct != capture_pct
+            || self.repair_pct != repair_pct
+            || self.hold_pct != hold_pct
+            || self.navaid != navaid
+            || hold_changed
+            || capturable_changed
         {
-            if self.logi != obj.logi {
-                msgq.set_markup_color(
-                    self.capturable_ring,
-                    Color::white(if obj.captureable() { 0.75 } else { 0. }),
-                );
+            self.capture_hold = obj.in_capture_hold();
+            // Non-SAM capturable ring is handled by the captureable() check
+            // above; here only the SAM-site ring (owner colour / white when
+            // the site is dead) needs refreshing on a health change.
+            if obj.kind.is_special_sam_site() && self.health != obj.health {
+                let text_color = |a| text_color(obj.owner, a);
+                let capturable_color = if obj.health == 0 {
+                    Color::white(0.75)
+                } else {
+                    text_color(0.75)
+                };
+                msgq.set_markup_color(self.capturable_ring, capturable_color);
             }
             self.health = obj.health;
             self.logi = obj.logi;
             self.supply = obj.supply;
             self.fuel = obj.fuel;
-            self.points = obj.points;
-            msgq.set_markup_text(self.label, objective_label(&self.name, obj).into());
+            self.capture_pct = capture_pct;
+            self.repair_pct = repair_pct;
+            self.hold_pct = hold_pct;
+            self.navaid = navaid;
+            msgq.set_markup_text(
+                self.label,
+                objective_label(&self.name, obj, &self.navaid, capture_pct, repair_pct, hold_pct)
+                    .into(),
+            );
         }
         if let Zone::Circle { pos, .. } = obj.zone
             && self.pos != pos
@@ -173,28 +847,69 @@ impl ObjectiveMarkup {
         }
     }
 
-    pub(super) fn new(cfg: &Cfg, msgq: &mut MsgQ, obj: &Objective, persisted: &Persisted) -> Self {
+    pub(super) fn new(
+        cfg: &Cfg,
+        msgq: &mut MsgQ,
+        obj: &Objective,
+        persisted: &Persisted,
+        capture_pct: Option<u8>,
+        repair_pct: Option<(u8, i64)>,
+        hold_pct: Option<(u8, i64)>,
+    ) -> Self {
         let text_color = |a| text_color(obj.owner, a);
-        let all_spec = match obj.kind {
-            ObjectiveKind::Airbase | ObjectiveKind::Fob | ObjectiveKind::Logistics => {
-                SideFilter::All
-            }
-            ObjectiveKind::Farp { .. } => obj.owner.into(),
+        // Land objectives are drawn for both coalitions: hiding an enemy FARP
+        // conceals nothing -- it is a pad you fly over, at a fixed place -- and
+        // it leaves attacking players unable to see what they are being asked
+        // to take.
+        //
+        // Two kinds are owner-only, for the same reason: their position is a
+        // live secret that the map would otherwise hand to the enemy for free.
+        //
+        //   * A carrier group moves. A task force drawn on the F10 map is a
+        //     task force nobody ever has to search for -- the label carries its
+        //     exact position, health and fuel, updated as it steams.
+        //   * A special SAM site is meant to be found by flying into it (or by
+        //     ELINT). It used to be hidden from *both* sides, which meant its
+        //     own coalition could not see the SAM protecting them either.
+        let draw_spec = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. })
+            || obj.kind.is_special_sam_site()
+        {
+            SideFilter::from(obj.owner)
+        } else {
+            SideFilter::All
         };
         let mut t = ObjectiveMarkup::default();
         t.side = obj.owner;
         t.threatened = obj.threatened;
+        t.capturable = obj.captureable();
+        t.capture_hold = obj.in_capture_hold();
         t.health = obj.health;
         t.logi = obj.logi;
         t.supply = obj.supply;
         t.fuel = obj.fuel;
-        t.name = format_compact!("{} {}", obj.name, obj.kind.name()).into();
+        t.capture_pct = capture_pct;
+        t.repair_pct = repair_pct;
+        t.hold_pct = hold_pct;
+        t.navaid = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
+            CompactString::default()
+        } else {
+            persisted
+                .navaids
+                .get(&obj.id)
+                .map(|navs| crate::navaids::summarize(navs))
+                .unwrap_or_default()
+        };
+        t.name = match obj.kind {
+            ObjectiveKind::SpecialSamSite => format_compact!("{}", obj.name).into(),
+            _ => format_compact!("{} {}", obj.name, obj.kind.name()).into(),
+        };
         t.pos = obj.zone.pos();
+        t.status = StatusHexes::new(obj, t.pos, draw_spec, msgq);
         let pos3 = Vector3::new(t.pos.x, 0., t.pos.y);
         macro_rules! threat_circle {
             ($radius:expr) => {
                 msgq.circle_to_all(
-                    all_spec,
+                    draw_spec,
                     t.threatened_ring,
                     CircleSpec {
                         center: LuaVec3(pos3),
@@ -211,12 +926,12 @@ impl ObjectiveMarkup {
         match obj.zone {
             Zone::Circle { radius, .. } => {
                 msgq.circle_to_all(
-                    all_spec,
+                    draw_spec,
                     t.owner_ring,
                     CircleSpec {
                         center: LuaVec3(pos3),
                         radius,
-                        color: text_color(1.),
+                        color: ring_color(obj, 1.),
                         fill_color: Color::white(0.),
                         line_type: LineType::Dashed,
                         read_only: true,
@@ -227,14 +942,14 @@ impl ObjectiveMarkup {
             }
             Zone::Quad { points, pos } => {
                 msgq.quad_to_all(
-                    all_spec,
+                    draw_spec,
                     t.owner_ring,
                     QuadSpec {
                         p0: LuaVec3(Vector3::new(points.p0.x, 0., points.p0.y)),
                         p1: LuaVec3(Vector3::new(points.p1.x, 0., points.p1.y)),
                         p2: LuaVec3(Vector3::new(points.p2.x, 0., points.p2.y)),
                         p3: LuaVec3(Vector3::new(points.p3.x, 0., points.p3.y)),
-                        color: text_color(1.),
+                        color: ring_color(obj, 1.),
                         fill_color: Color::white(0.),
                         line_type: LineType::Dashed,
                         read_only: true,
@@ -246,7 +961,7 @@ impl ObjectiveMarkup {
                 } else {
                     let points = points.scale(1.1);
                     msgq.quad_to_all(
-                        all_spec,
+                        draw_spec,
                         t.threatened_ring,
                         QuadSpec {
                             p0: LuaVec3(Vector3::new(points.p0.x, 0., points.p0.y)),
@@ -263,15 +978,22 @@ impl ObjectiveMarkup {
                 }
             }
         }
+        // For SpecialSamSite, the capturable ring shows owner color when healthy,
+        // white when destroyed (health=0), since logi is always 0 and captureable() is always true.
+        let capturable_color = if obj.kind.is_special_sam_site() {
+            if obj.health == 0 { Color::white(0.75) } else { text_color(0.75) }
+        } else {
+            Color::white(if obj.captureable() { 0.75 } else { 0. })
+        };
         match obj.zone {
             Zone::Circle { pos: _, radius } => {
                 msgq.circle_to_all(
-                    all_spec,
+                    draw_spec,
                     t.capturable_ring,
                     CircleSpec {
                         center: LuaVec3(pos3),
                         radius: radius as f64 * 0.9,
-                        color: Color::white(if obj.captureable() { 0.75 } else { 0. }),
+                        color: capturable_color,
                         fill_color: Color::white(0.),
                         line_type: LineType::Solid,
                         read_only: true,
@@ -282,14 +1004,14 @@ impl ObjectiveMarkup {
             Zone::Quad { pos: _, points } => {
                 let points = points.scale(0.9);
                 msgq.quad_to_all(
-                    all_spec,
+                    draw_spec,
                     t.capturable_ring,
                     QuadSpec {
                         p0: LuaVec3(Vector3::new(points.p0.x, 0., points.p0.y)),
                         p1: LuaVec3(Vector3::new(points.p1.x, 0., points.p1.y)),
                         p2: LuaVec3(Vector3::new(points.p2.x, 0., points.p2.y)),
                         p3: LuaVec3(Vector3::new(points.p3.x, 0., points.p3.y)),
-                        color: Color::white(if obj.captureable() { 0.75 } else { 0. }),
+                        color: capturable_color,
                         fill_color: Color::white(0.),
                         line_type: LineType::Solid,
                         read_only: true,
@@ -299,42 +1021,102 @@ impl ObjectiveMarkup {
             }
         }
         msgq.text_to_all(
-            all_spec,
+            draw_spec,
             t.label,
             TextSpec {
                 pos: LuaVec3(Vector3::new(pos3.x + 1500., 1., pos3.z + 1500.)),
-                color: text_color(1.),
-                fill_color: Color::black(0.),
+                color: text_color(LABEL_ALPHA),
+                // A dark plate behind the glyphs. Without it legibility depends
+                // on whatever terrain is behind the label; with it every side
+                // colour reads on every map.
+                fill_color: crate::mapcolor::text_plate(),
                 font_size: 10,
                 read_only: true,
-                text: objective_label(&t.name, obj).into(),
+                text: objective_label(&t.name, obj, &t.navaid, capture_pct, repair_pct, hold_pct)
+                    .into(),
             },
         );
+        // Draw kind-specific icon symbol inside the objective zone
+        let sym_r = obj.zone.radius().max(500.) * 0.45;
+        let sym_color = text_color(0.85);
+        t.kind_symbol = match obj.kind {
+            ObjectiveKind::SpecialSamSite => {
+                KindSymbol::Single(draw_polyline(t.pos, sym_r, friendly_sam_path(), draw_spec, sym_color, msgq))
+            }
+            ObjectiveKind::NavalBase => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, anchor_path(), draw_spec, sym_color, msgq)
+            ),
+            ObjectiveKind::CarrierGroup { .. } => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, carrier_path(), draw_spec, sym_color, msgq)
+            ),
+            // No symbol for a real airbase: DCS already draws the airfield,
+            // its runways and its name on the F10 map. Ours only sat on top of
+            // that, so it cost marks to say something already said.
+            ObjectiveKind::Airbase => KindSymbol::None,
+            ObjectiveKind::Fob => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, fob_path(), draw_spec, sym_color, msgq)
+            ),
+            ObjectiveKind::Farp { .. } => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, farp_path(), draw_spec, sym_color, msgq)
+            ),
+            ObjectiveKind::Logistics => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, logistics_path(), draw_spec, sym_color, msgq)
+            ),
+            ObjectiveKind::Factory { .. } => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, factory_path(), draw_spec, sym_color, msgq)
+            ),
+            ObjectiveKind::CommandCenter => KindSymbol::Single(
+                draw_polyline(t.pos, sym_r, command_center_path(), draw_spec, sym_color, msgq)
+            ),
+        };
+
         match obj.kind {
-            ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob => (),
+            ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob | ObjectiveKind::Factory { .. } | ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. } | ObjectiveKind::CommandCenter => (),
             ObjectiveKind::Logistics => {
                 for oid in &obj.warehouse.destination {
                     let id = MarkId::new();
                     let dobj = &persisted.objectives[oid];
                     let (spos, dpos) = arrow_coords(obj, dobj);
                     msgq.arrow_to(
-                        if dobj.is_farp() {
-                            dobj.owner.into()
-                        } else {
-                            all_spec
-                        },
+                        draw_spec,
                         id,
                         ArrowSpec {
                             start: LuaVec3(Vector3::new(dpos.x, 0., dpos.y)),
                             end: LuaVec3(Vector3::new(spos.x, 0., spos.y)),
-                            color: Color::gray(0.5),
-                            fill_color: Color::gray(0.5),
+                            color: Color::gray(SUPPLY_ARROW_ALPHA),
+                            fill_color: Color::gray(SUPPLY_ARROW_ALPHA),
                             line_type: LineType::NoLine,
                             read_only: true,
                         },
                         None,
                     );
                     t.supply_connections.insert(*oid, id);
+                }
+            }
+            ObjectiveKind::NavalBase => {
+                for oid in &obj.warehouse.destination {
+                    let dst_obj = &persisted.objectives[oid];
+                    if let ObjectiveKind::CarrierGroup { .. } = dst_obj.kind {
+                        let id = MarkId::new();
+                        let (spos, dpos) = arrow_coords(obj, dst_obj);
+                        // The port itself is public, but this arrow ends on the
+                        // carrier -- drawing it to both sides hands the enemy
+                        // the position the carrier's own markup is now hiding.
+                        msgq.arrow_to(
+                            SideFilter::from(dst_obj.owner),
+                            id,
+                            ArrowSpec {
+                                start: LuaVec3(Vector3::new(dpos.x, 0., dpos.y)),
+                                end: LuaVec3(Vector3::new(spos.x, 0., spos.y)),
+                                color: Color::gray(SUPPLY_ARROW_ALPHA),
+                                fill_color: Color::gray(SUPPLY_ARROW_ALPHA),
+                                line_type: LineType::NoLine,
+                                read_only: true,
+                            },
+                            None,
+                        );
+                        t.supply_connections.insert(*oid, id);
+                    }
                 }
             }
         }

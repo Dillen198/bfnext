@@ -17,6 +17,7 @@ compact_str = { workspace = true }
 crossbeam = { workspace = true }
 dcso3 = { version = "0.1", path = "../dcso3", features = ["perf"] }
 enumflags2 = { workspace = true, features = ["serde"] }
+schemars = { workspace = true }
 futures = { workspace = true }
 fxhash = { workspace = true }
 hdrhistogram = { workspace = true }
@@ -33,6 +34,7 @@ once_cell = { workspace = true }
 parking_lot = { workspace = true }
 paste = { workspace = true }
 rand = { workspace = true }
+rstar = { workspace = true }
 regex = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
@@ -40,4 +42,6 @@ serde = { workspace = true }
 simplelog = { workspace = true }
 smallvec = { workspace = true }
 tokio = { workspace = true }
+ureq = { workspace = true }
+zip = { workspace = true }
 zstd = { workspace = true }

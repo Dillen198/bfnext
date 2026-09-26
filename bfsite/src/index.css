@@ -1,0 +1,279 @@
+@import "tailwindcss";
+
+/* ── Design Tokens ── */
+:root {
+  --bg:           #0a0a0a;
+  --bg-alt:       #0d0d0d;
+  --bg-alt2:      #060606;
+  --bg-card:      #111111;
+  --bg-elevated:  #181818;
+  --accent:       #4d7c0f;
+  --accent-warm:  #f97316;
+  --accent-hover: #65a30d;
+  --accent-fg:    #ffffff;
+  --blue:         #3b82f6;
+  --red:          #ef4444;
+  --text:         #f1f5f9;
+  --text-muted:   #64748b;
+  --text-dim:     #374151;
+  --border:       #222222;
+  --border-strong: #2a2a2a;
+
+  --nav-bg:          rgba(10,10,10,0.95);
+  --nav-bg-mobile:   rgba(10,10,10,0.98);
+  --overlay-border:      rgba(255,255,255,0.2);
+  --overlay-border-hover: rgba(255,255,255,0.4);
+  --overlay-bg-hover:     rgba(255,255,255,0.05);
+  --standby-bg:      rgba(30,30,30,0.5);
+  --standby-border:  rgba(40,40,40,0.8);
+  --divider-dim:     rgba(255,255,255,0.15);
+
+  --scrollbar:       #222222;
+  --scrollbar-hover:  #4d7c0f60;
+}
+
+/* ── Light theme — toggled via data-theme="light" on <html> ── */
+:root[data-theme="light"] {
+  --bg:           #f6f7f3;
+  --bg-alt:       #eef0e8;
+  --bg-alt2:      #e6e9de;
+  --bg-card:      #ffffff;
+  --bg-elevated:  #f0f2ea;
+  --accent:       #3c6511;
+  --accent-warm:  #c2530d;
+  --accent-hover: #4d7c0f;
+  --accent-fg:    #ffffff;
+  --blue:         #2f6cb3;
+  --red:          #c0392b;
+  --text:         #171a15;
+  --text-muted:   #55604a;
+  --text-dim:     #7a8570;
+  --border:       #dde1d4;
+  --border-strong: #cfd5c3;
+
+  --nav-bg:          rgba(255,255,255,0.92);
+  --nav-bg-mobile:   rgba(255,255,255,0.98);
+  --overlay-border:      rgba(0,0,0,0.15);
+  --overlay-border-hover: rgba(0,0,0,0.3);
+  --overlay-bg-hover:     rgba(0,0,0,0.04);
+  --standby-bg:      rgba(0,0,0,0.04);
+  --standby-border:  rgba(0,0,0,0.1);
+  --divider-dim:     rgba(0,0,0,0.15);
+
+  --scrollbar:       #dde1d4;
+  --scrollbar-hover:  #4d7c0f60;
+}
+
+/* Elements meant to always render dark regardless of site theme
+   (e.g. the photographic hero, which keeps a dark scrim for legibility). */
+.theme-locked-dark {
+  --bg:           #0a0a0a;
+  --bg-alt:       #0d0d0d;
+  --bg-alt2:      #060606;
+  --bg-card:      #111111;
+  --bg-elevated:  #181818;
+  --accent:       #4d7c0f;
+  --accent-warm:  #f97316;
+  --accent-hover: #65a30d;
+  --accent-fg:    #ffffff;
+  --blue:         #3b82f6;
+  --red:          #ef4444;
+  --text:         #f1f5f9;
+  --text-muted:   #64748b;
+  --text-dim:     #374151;
+  --border:       #222222;
+  --border-strong: #2a2a2a;
+  --overlay-border:      rgba(255,255,255,0.2);
+  --overlay-border-hover: rgba(255,255,255,0.4);
+  --overlay-bg-hover:     rgba(255,255,255,0.05);
+}
+
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+html, body, #root { margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
+
+/* ── Typography helpers ── */
+.font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.05em; }
+.font-mono-vs { font-family: 'JetBrains Mono', monospace; }
+
+/* ── Section title ── */
+.vs-section-label {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* ── Feature card ── */
+.feature-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--accent);
+  border-radius: 2px;
+  padding: 1.5rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.feature-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 4px 24px rgba(77,124,15,0.08);
+}
+
+/* ── Stat box ── */
+.stat-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 2px;
+  padding: 1.25rem;
+}
+
+/* ── Button ── */
+.vs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.5rem;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 1rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 2px solid var(--accent);
+  border-radius: 2px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, transform 0.1s;
+}
+.vs-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+
+.vs-btn-outline {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--overlay-border);
+}
+.vs-btn-outline:hover {
+  background: var(--overlay-bg-hover);
+  border-color: var(--overlay-border-hover);
+  transform: translateY(-1px);
+}
+
+/* ── Territory bar ── */
+.territory-bar {
+  height: 6px;
+  display: flex;
+  overflow: hidden;
+  border-radius: 1px;
+  background: rgba(75,85,99,0.15);
+}
+.territory-bar-blue { background: linear-gradient(90deg, #1d4ed8, #3b82f6); transition: width 0.7s ease; }
+.territory-bar-neutral { background: #374151; transition: width 0.7s ease; }
+.territory-bar-red { background: linear-gradient(90deg, #dc2626, #991b1b); transition: width 0.7s ease; }
+
+/* ── Territory bar loading state — arrows advancing toward the front line ── */
+.territory-loading {
+  height: 22px;
+  border-radius: 2px;
+  overflow: hidden;
+  display: flex;
+  background: rgba(75,85,99,0.12);
+}
+.territory-loading-half {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+.territory-loading-half::before {
+  content: '';
+  position: absolute;
+  inset: -1px -28px;
+  background-repeat: repeat;
+  background-size: 28px 100%;
+  opacity: 0.6;
+}
+.territory-loading-blue::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='22'%3E%3Cpath d='M4 2 L16 11 L4 20' stroke='%233b82f6' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  animation: chevrons-right 0.9s linear infinite;
+}
+.territory-loading-red::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='22'%3E%3Cpath d='M24 2 L12 11 L24 20' stroke='%23ef4444' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  animation: chevrons-left 0.9s linear infinite;
+}
+@keyframes chevrons-right {
+  from { background-position-x: 0; }
+  to   { background-position-x: 28px; }
+}
+@keyframes chevrons-left {
+  from { background-position-x: 0; }
+  to   { background-position-x: -28px; }
+}
+
+/* ── Animations ── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 0.6s ease-out forwards; }
+.fade-up-d1 { animation-delay: 0.1s; opacity: 0; }
+.fade-up-d2 { animation-delay: 0.2s; opacity: 0; }
+.fade-up-d3 { animation-delay: 0.3s; opacity: 0; }
+.fade-up-d4 { animation-delay: 0.4s; opacity: 0; }
+
+@keyframes vs-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+.vs-pulse { animation: vs-pulse 2s ease-in-out infinite; }
+
+@keyframes scroll-indicator {
+  0%, 100% { transform: translateY(0); opacity: 0.6; }
+  50%       { transform: translateY(6px); opacity: 1; }
+}
+
+/* ── Red divider line ── */
+.vs-divider {
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--accent), transparent);
+  margin: 0;
+}
+
+/* ── Corner brackets ── */
+.vs-brackets { position: relative; }
+.vs-brackets::before, .vs-brackets::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+.vs-brackets::before { top: -2px; left: -2px; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); }
+.vs-brackets::after  { bottom: -2px; right: -2px; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+
+/* ── Brand logo mark (theme-swapped) ─────────────────────────────
+   LogoMark renders both variants; CSS shows the one that fits the
+   active theme. Files: /public/logo.png (light-on-dark, default)
+   and /public/logo-dark.png (dark-on-light). */
+.logo-mark--dark { display: none !important; }
+:root[data-theme="light"] .logo-mark--light { display: none !important; }
+:root[data-theme="light"] .logo-mark--dark { display: block !important; }
+
+/* Inside an always-dark region (e.g. the hero, or the nav while it overlays it)
+   the white-on-dark logo is always the right one, regardless of site theme. */
+.theme-locked-dark .logo-mark--light { display: block !important; }
+.theme-locked-dark .logo-mark--dark  { display: none  !important; }
