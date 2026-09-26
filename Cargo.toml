@@ -3,7 +3,11 @@
 codegen-units = 1
 opt-level = 3
 lto = true
-debug = false
+# Line tables only: enough for a panic backtrace to name file:line instead of
+# a column of bare addresses, without full debug info's size. On MSVC this
+# lands in the separate .pdb (the .dll barely changes) -- ship the .pdb next
+# to the .dll or the backtraces stay unsymbolised.
+debug = "line-tables-only"
 
 # for quick dev
 # currently mlua only performs it's special linking steps on a release build

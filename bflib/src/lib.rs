@@ -140,7 +140,11 @@ struct Connected {
     info_by_player_id: FxHashMap<PlayerId, PlayerInfo>,
     id_by_ucid: FxHashMap<Ucid, PlayerId>,
     id_by_name: FxHashMap<String, PlayerId>,
-    id_by_addr: FxHashMap<Option<String>, PlayerId>,
+    /// Only players whose address is known. This was keyed by
+    /// `Option<String>`, so every player DCS reported without an address
+    /// collided on `None`: the second of them was refused as "already
+    /// connected from your ip address".
+    id_by_addr: FxHashMap<String, PlayerId>,
 }
 
 impl Connected {
@@ -161,9 +165,7 @@ impl Connected {
         lua: L,
         id: PlayerId,
     ) -> Result<&'a PlayerInfo> {
-        if self.info_by_player_id.contains_key(&id) {
-            Ok(&self.info_by_player_id[&id])
-        } else {
+        if !self.info_by_player_id.contains_key(&id) {
             let net = Net::singleton(lua)?;
             let ifo = net.get_player_info(id)?;
             let ucid =
@@ -171,24 +173,38 @@ impl Connected {
             let name = ifo.name()?.unwrap_or_default();
             let addr = ifo.ip()?;
             info!("player name: '{}', id: {:?}, ucid: {:?}", name, id, ucid);
-            self.player_connected(id, PlayerInfo { name, addr, ucid })?;
-            Ok(&self.info_by_player_id[&id])
+            // No IP check here: this player is already on the server, and
+            // refusing them now can't disconnect them -- it only locked them
+            // out of every slot.
+            self.player_connected(id, PlayerInfo { name, addr, ucid }, false)?;
         }
+        self.info_by_player_id
+            .get(&id)
+            .ok_or_else(|| anyhow!("player {id:?} vanished while connecting"))
     }
 
-    pub fn player_connected(&mut self, id: PlayerId, ifo: PlayerInfo) -> Result<()> {
+    pub fn player_connected(
+        &mut self,
+        id: PlayerId,
+        ifo: PlayerInfo,
+        one_player_per_ip: bool,
+    ) -> Result<()> {
         if let Some(id) = self.id_by_ucid.remove(&ifo.ucid) {
             self.player_disconnected(id);
         }
         if self.id_by_name.contains_key(&ifo.name) {
             bail!("your callsign is already taken by another player")
         }
-        if self.id_by_addr.contains_key(&ifo.addr) {
-            bail!("another player is already connected from your ip address")
+        if let Some(addr) = &ifo.addr {
+            if one_player_per_ip && self.id_by_addr.contains_key(addr) {
+                bail!("another player is already connected from your ip address")
+            }
+            // with sharing allowed the first player on an address keeps the
+            // entry; it's only consulted by the check above
+            self.id_by_addr.entry(addr.clone()).or_insert(id);
         }
         self.id_by_ucid.insert(ifo.ucid, id);
         self.id_by_name.insert(ifo.name.clone(), id);
-        self.id_by_addr.insert(ifo.addr.clone(), id);
         self.info_by_player_id.insert(id, ifo);
         Ok(())
     }
@@ -197,7 +213,13 @@ impl Connected {
         self.info_by_player_id.remove(&id).map(|ifo| {
             self.id_by_name.remove(&ifo.name);
             self.id_by_ucid.remove(&ifo.ucid);
-            self.id_by_addr.remove(&ifo.addr);
+            if let Some(addr) = &ifo.addr {
+                // only if it's ours -- with shared addresses allowed it may
+                // belong to another player still connected from there
+                if self.id_by_addr.get(addr) == Some(&id) {
+                    self.id_by_addr.remove(addr);
+                }
+            }
             ifo
         })
     }
@@ -380,6 +402,17 @@ struct Context {
     event_scheduler: EventScheduler,
     last_junk_removal: DateTime<Utc>,
     last_weather_publish: DateTime<Utc>,
+    /// When each held player last got the takeoff-hold countdown panel.
+    takeoff_nag_last: FxHashMap<UnitId, DateTime<Utc>>,
+    /// True once `db` holds a real campaign (initialized or loaded). Until
+    /// then it is `Db::default()`, and saving it would overwrite the save
+    /// file with an empty campaign.
+    db_loaded: bool,
+    /// Set once the timed-events loop has started shutting DCS down: counts
+    /// the attempts to call `DCS.exitProcess`. Nothing may save after this --
+    /// a campaign reset has already removed the save file on purpose.
+    exit_attempts: Option<u32>,
+    last_bg_check: DateTime<Utc>,
 }
 
 impl Context {
@@ -418,7 +451,10 @@ impl Context {
         if let Some(to_bg) = &self.to_background {
             match to_bg.send(task) {
                 Ok(()) => (),
-                Err(e) => log::error!("background thread is dead, task dropped: {e}"),
+                // log::error! would go to the same dead thread
+                Err(e) => bg::fallback_log(
+                    format!("bflib: background thread is dead, task dropped: {e}\n").as_bytes(),
+                ),
             }
         }
     }
@@ -449,6 +485,33 @@ impl Context {
             });
             info!("landcache {}", self.landcache.stats())
         }
+    }
+
+    /// Once a minute: ping the background thread and complain -- to the
+    /// fallback log if need be -- when it is dead or not keeping up. It does
+    /// every save, and nothing else would notice it had stopped.
+    fn check_bg_health(&mut self, now: DateTime<Utc>) {
+        if now - self.last_bg_check < Duration::seconds(60) {
+            return;
+        }
+        self.last_bg_check = now;
+        let Some(to_bg) = &self.to_background else { return };
+        if to_bg.is_closed() {
+            error!(
+                "the background thread is DEAD: the campaign is not being saved and stats \
+                 are not being published. Restart the mission."
+            );
+            return;
+        }
+        if let Some(age) = bg::heartbeat_age(now) {
+            if age > 180 {
+                warn!(
+                    "the background thread has not finished a task in {age}s (saves, stats \
+                     and logging are stalled behind it)"
+                );
+            }
+        }
+        self.do_bg_task(Task::Ping);
     }
 }
 
@@ -496,6 +559,7 @@ fn on_player_try_connect(
     if let Err(e) = ctx.connected.player_connected(
         id,
         PlayerInfo { name: name.clone(), addr: Some(addr.clone()), ucid },
+        ctx.db.ephemeral.cfg.one_player_per_ip,
     ) {
         return Ok(Some(String::from(format_compact!("{e}"))));
     }
@@ -790,6 +854,8 @@ fn unit_killed(
     now: DateTime<Utc>,
 ) -> Result<()> {
     ctx.recently_landed.remove(&id);
+    // a dead unit never lands, so nothing else would ever take it out
+    ctx.airborne.remove(&id);
     ctx.shots_out.dead(id.clone(), now);
     if let Err(e) = ctx.jtac.unit_dead(lua, &mut ctx.db, &id) {
         error!("jtac unit dead failed for {:?} {:?}", id, e)
@@ -800,7 +866,188 @@ fn unit_killed(
     Ok(())
 }
 
+thread_local! {
+    /// Greater than zero while a timed-events tick (or the mission init) is
+    /// running with `&mut Context` in hand. See `DeferEvents`.
+    static DEFER_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Objects whose Birth arrived while `DEFER_DEPTH > 0`, in arrival order.
+    static DEFERRED_BIRTHS: std::cell::RefCell<Vec<DcsOid<dcso3::object::ClassObject>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// DCS fires some events synchronously *inside* the API call that caused
+/// them: `coalition.addGroup` fires Birth for every unit it creates, before
+/// it returns. Those land in `on_event`, which takes a second `&mut Context`
+/// while the tick that made the call is still holding the first one -- two
+/// live mutable references to the same state, which is undefined behaviour
+/// however carefully the code on either side is written (the compiler may
+/// assume the caller's view of the state didn't change across the call).
+///
+/// While one of these guards is alive, `on_event` queues Birth instead of
+/// handling it, and the tick drains the queue (`drain_deferred_events`)
+/// between subsystems, where no borrow of the state is held. Birth is the
+/// event our own calls fire in bulk -- every spawn -- and the only one whose
+/// handler needs nothing that is gone by the time the tick gets to it: the
+/// unit still exists, so it is re-resolved from its object id.
+///
+/// The events our `destroy()` calls fire (Dead, UnitLost, PlayerLeaveUnit,
+/// Kill) are NOT deferred. Their handlers read the dying object (life,
+/// position for dismounts / CSAR / passenger ejection, the player's slot),
+/// and that object no longer exists by the end of the call that destroyed
+/// it. The despawn paths are written for this: they drop the unit's object-id
+/// mappings *before* calling destroy, so those handlers find nothing of ours
+/// to touch. Events a player causes (slotting in, a real death, an F10 mark)
+/// come from the simulation, never from inside our calls, and are handled
+/// immediately as before.
+struct DeferEvents;
+
+impl DeferEvents {
+    fn begin() -> Self {
+        DEFER_DEPTH.with(|d| d.set(d.get().saturating_add(1)));
+        DeferEvents
+    }
+}
+
+impl Drop for DeferEvents {
+    fn drop(&mut self) {
+        DEFER_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+/// Handle every Birth queued while events were deferred. Handlers can spawn
+/// in turn (queueing more), so keep going until the queue stays empty --
+/// bounded, in case something spawns on every birth.
+fn drain_deferred_events(lua: MizLua, ctx: &mut Context) {
+    for _ in 0..16 {
+        let births = DEFERRED_BIRTHS.with(|q| std::mem::take(&mut *q.borrow_mut()));
+        if births.is_empty() {
+            return;
+        }
+        for oid in births {
+            match dcso3::object::Object::get_instance(lua, &oid) {
+                Ok(obj) => {
+                    if let Err(e) = handle_birth(lua, ctx, &obj) {
+                        error!("deferred birth of {oid:?} failed {e:?}")
+                    }
+                }
+                // spawned and removed again within the same tick
+                Err(e) => debug!("deferred birth: {oid:?} no longer exists {e:?}"),
+            }
+        }
+    }
+    warn!("deferred births still arriving after 16 passes, leaving the rest for the next drain");
+}
+
+fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Object) -> Result<()> {
+    if let Ok(unit) = initiator.as_unit() {
+        ctx.recently_born.insert(unit.object_id()?, Utc::now());
+        match ctx.db.unit_born(lua, &unit, &ctx.connected) {
+            Ok(BirthRes::None) => (),
+            Ok(BirthRes::OccupiedSlot(slot)) => {
+                ctx.menu_init_queue.insert(slot.clone());
+                if let Err(e) = atis::schedule_atis(lua, slot.clone()) {
+                    error!("could not schedule atis: {:?}", e);
+                }
+                // The auto-generated situational briefing, sequenced
+                // after the ATIS so they don't overwrite each other.
+                if let Err(e) = situation::schedule_slot_briefing(lua, slot) {
+                    error!("could not schedule situation briefing: {:?}", e);
+                }
+                // Force EPLRS on for every player group so fixed-wing
+                // slots show up on the coalition F10 map / datalink the
+                // same way helicopters (which usually have it enabled in
+                // the .miz) already do. Best effort -- a failure here
+                // just means that slot relies on the .miz setting.
+                if let Err(e) = unit
+                    .get_controller()
+                    .and_then(|c| c.set_command(dcso3::controller::Command::EPLRS {
+                        enable: true,
+                        group: None,
+                    }))
+                {
+                    debug!("could not enable EPLRS for born slot {slot}: {e:?}");
+                }
+            }
+            Ok(BirthRes::DynamicSlotDenied(ucid, rej)) => {
+                if let Some(id) = ctx.connected.id_by_ucid.get(&ucid) {
+                    process_slot_rejection(ctx, *id, ucid, rej)
+                }
+                // just in case destroying the unit didn't work
+                ctx.db.ephemeral.force_player_to_spectators(&ucid);
+            }
+            Err(e) => {
+                error!("unit born failed {:?} {:?}", unit, e);
+            }
+        }
+    } else if let Ok(st) = initiator.as_static() {
+        if let Err(e) = ctx.db.static_born(&st) {
+            error!("static born failed {:?} {:?}", st, e);
+        }
+    }
+    Ok(())
+}
+
+/// Hit and Kill. A Kill is final even when DCS has already removed the target
+/// by the time we ask about it: `get_life()` then errors, and the old `?` on
+/// it threw the whole event away -- so the kill lost its attribution (a gun or
+/// rocket kill, most often, where Kill is the only event carrying the
+/// shooter) and the unit was never marked dead here.
+fn on_hit(
+    lua: MizLua,
+    ctx: &mut Context,
+    e: dcso3::event::WeaponUse,
+    is_kill: bool,
+    start_ts: DateTime<Utc>,
+) -> Result<()> {
+    if let Some(target) = e.target.as_ref().and_then(|t| t.as_unit().ok()) {
+        let dead = match target.get_life() {
+            Ok(life) => life < 1.,
+            Err(_) => is_kill,
+        };
+        if let Some(shooter) = e.initiator.and_then(|u| u.as_unit().ok()) {
+            if let Err(e) =
+                ctx.shots_out
+                    .hit(&ctx.db, start_ts, dead, &target, &shooter, e.weapon_name)
+            {
+                error!("error processing hit event {:?}", e)
+            }
+        }
+        if dead {
+            let dismount = try_capture_dismount_info(ctx, &target);
+            try_gv_passenger_eject(lua, ctx, &target);
+            if let Err(e) = unit_killed(lua, ctx, target.object_id()?, start_ts) {
+                error!("0 unit killed failed {:?}", e)
+            }
+            spawn_dismount(lua, ctx, dismount);
+        }
+    } else if let Some(target) = e.target.as_ref().and_then(|t| t.as_static().ok()) {
+        let dead = match target.get_life() {
+            Ok(life) => life < 1,
+            Err(_) => is_kill,
+        };
+        if dead {
+            let id = target.object_id()?;
+            if let Err(e) = ctx.db.respawn_protected_static(lua, &ctx.idx, &id) {
+                error!("respawn protected static failed {e:?}")
+            }
+            if let Err(e) = ctx.db.static_dead(&id, start_ts) {
+                error!("static dead failed {e:?}")
+            }
+        }
+    }
+    Ok(())
+}
+
 fn on_event(lua: MizLua, ev: Event) -> Result<()> {
+    if DEFER_DEPTH.with(|d| d.get()) > 0 {
+        if let Event::Birth(b) = &ev {
+            // Don't touch Context (or Perf) here at all -- the tick that
+            // caused this birth is holding them. See DeferEvents.
+            let oid = b.initiator.object_id()?;
+            DEFERRED_BIRTHS.with(|q| q.borrow_mut().push(oid));
+            return Ok(());
+        }
+    }
     let start_ts = Utc::now();
     let ctx = unsafe { Context::get_mut() };
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
@@ -827,53 +1074,10 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         ev => debug!("onEvent: {:?}", ev),
     }
     match ev {
-        Event::Birth(b) => {
-            if let Some(unit) = b.initiator.as_ref().and_then(|o| o.as_unit().ok()) {
-                ctx.recently_born.insert(unit.object_id()?, Utc::now());
-                match ctx.db.unit_born(lua, &unit, &ctx.connected) {
-                    Ok(BirthRes::None) => (),
-                    Ok(BirthRes::OccupiedSlot(slot)) => {
-                        ctx.menu_init_queue.insert(slot.clone());
-                        if let Err(e) = atis::schedule_atis(lua, slot.clone()) {
-                            error!("could not schedule atis: {:?}", e);
-                        }
-                        // The auto-generated situational briefing, sequenced
-                        // after the ATIS so they don't overwrite each other.
-                        if let Err(e) = situation::schedule_slot_briefing(lua, slot) {
-                            error!("could not schedule situation briefing: {:?}", e);
-                        }
-                        // Force EPLRS on for every player group so fixed-wing
-                        // slots show up on the coalition F10 map / datalink the
-                        // same way helicopters (which usually have it enabled in
-                        // the .miz) already do. Best effort -- a failure here
-                        // just means that slot relies on the .miz setting.
-                        if let Err(e) = unit
-                            .get_controller()
-                            .and_then(|c| c.set_command(dcso3::controller::Command::EPLRS {
-                                enable: true,
-                                group: None,
-                            }))
-                        {
-                            debug!("could not enable EPLRS for born slot {slot}: {e:?}");
-                        }
-                    }
-                    Ok(BirthRes::DynamicSlotDenied(ucid, rej)) => {
-                        if let Some(id) = ctx.connected.id_by_ucid.get(&ucid) {
-                            process_slot_rejection(ctx, *id, ucid, rej)
-                        }
-                        // just in case destroying the unit didn't work
-                        ctx.db.ephemeral.force_player_to_spectators(&ucid);
-                    }
-                    Err(e) => {
-                        error!("unit born failed {:?} {:?}", unit, e);
-                    }
-                }
-            } else if let Some(st) = b.initiator.as_ref().and_then(|o| o.as_static().ok()) {
-                if let Err(e) = ctx.db.static_born(&st) {
-                    error!("static born failed {:?} {:?}", st, e);
-                }
-            }
-        }
+        Event::Birth(b) => match b.initiator.as_ref() {
+            Some(initiator) => handle_birth(lua, ctx, initiator)?,
+            None => debug!("Birth with no initiator (object already gone)"),
+        },
         Event::PlayerLeaveUnit(e) => {
             if let Some(initiator) = e.initiator {
                 // Snapshot what we need before the deslot invalidates it.
@@ -936,57 +1140,21 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 debug!("PlayerLeaveUnit with no initiator (benign)")
             }
         }
-        Event::Hit(e) | Event::Kill(e) => {
-            if let Some(target) = e.target.as_ref().and_then(|t| t.as_unit().ok()) {
-                let dead = target.get_life()? < 1.;
-                if let Some(shooter) = e.initiator.and_then(|u| u.as_unit().ok()) {
-                    if let Err(e) = ctx.shots_out.hit(
-                        &ctx.db,
-                        start_ts,
-                        dead,
-                        &target,
-                        &shooter,
-                        e.weapon_name,
-                    ) {
-                        error!("error processing hit event {:?}", e)
-                    }
-                }
-                if dead {
-                    let dismount = try_capture_dismount_info(ctx, &target);
-                    try_gv_passenger_eject(lua, ctx, &target);
-                    if let Err(e) = unit_killed(lua, ctx, target.object_id()?, start_ts) {
-                        error!("0 unit killed failed {:?}", e)
-                    }
-                    spawn_dismount(lua, ctx, dismount);
-                }
-            } else if let Some(target) =
-                e.target.as_ref().and_then(|t| t.as_static().ok())
-            {
-                if target.get_life()? < 1 {
-                    let id = target.object_id()?;
-                    if let Err(e) = ctx.db.respawn_protected_static(lua, &ctx.idx, &id) {
-                        error!("respawn protected static failed {e:?}")
-                    }
-                    if let Err(e) = ctx.db.static_dead(&id, start_ts) {
-                        error!("static dead failed {e:?}")
-                    }
-                }
-            }
-        }
+        Event::Hit(e) => on_hit(lua, ctx, e, false, start_ts)?,
+        Event::Kill(e) => on_hit(lua, ctx, e, true, start_ts)?,
         Event::Shot(e) => {
             if let Err(e) = ctx.shots_out.shot(&ctx.db, start_ts, &e) {
                 error!("error processing shot event {:?}", e)
             }
-            // Record shot position for artillery/launcher units only so nearby enemy
-            // objectives stay awake while shells/missiles are inbound.
+            // (Artillery/launcher shots used to be pushed onto
+            // `ephemeral.recent_shots` here "to keep nearby objectives awake",
+            // but nothing ever read that list -- it just grew by one entry per
+            // shell for the whole session.)
             if let Some(Ok(obj_id)) = e.initiator.as_ref().map(|u| u.object_id()) {
                 let shooter_info = ctx.db.ephemeral.get_uid_by_object_id(&obj_id)
                     .and_then(|uid| ctx.db.unit(uid).ok())
                     .map(|u| (u.side, u.tags.0, u.pos));
                 if let Some((side, tags, pos)) = shooter_info {
-                    if tags.contains(UnitTag::Artillery) || tags.contains(UnitTag::Launcher) {
-                        ctx.db.ephemeral.recent_shots.push((pos, side, start_ts));
-                    }
                     // Live voice GCI: an enemy SAM firing -> "SAM launch, defend"
                     // for nearby friendly flights (see admin::query_gci).
                     if side != Side::Neutral
@@ -1017,6 +1185,29 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             // and repositioning batteries stacked overlapping copies. The
             // `counter_battery` cfg key is now ignored.)
             ()
+        }
+        // UNIT_LOST fires for any unit leaving the world, not only for
+        // deaths -- a despawn (ours, via destroy()) or a player's aircraft
+        // going away with them. Handled exactly like Dead it ran unit_killed
+        // on those too, which credits a kill to whoever last hit the unit and
+        // calls "splash" on GCI. Our despawns drop the unit's object-id
+        // mapping before destroying it, and a real death normally reaches Dead
+        // / Kill first (which drop it too), so a unit that is still mapped
+        // here is one that died without either -- the case UnitLost exists to
+        // catch. Anything else is a despawn: ignore it.
+        Event::UnitLost(e)
+            if e
+                .initiator
+                .as_ref()
+                .and_then(|u| u.as_unit().ok())
+                .and_then(|u| u.object_id().ok())
+                .map(|id| {
+                    ctx.db.ephemeral.get_uid_by_object_id(&id).is_none()
+                        && ctx.db.ephemeral.get_slot_by_object_id(&id).is_none()
+                })
+                .unwrap_or(false) =>
+        {
+            debug!("UnitLost for a unit we no longer track (despawn), ignored")
         }
         Event::Dead(e) | Event::UnitLost(e) => {
             if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
@@ -1181,6 +1372,21 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             }
         }
         Event::MissionEnd => unsafe {
+            // The Db is about to be dropped. Everything since the last
+            // slow-tick snapshot used to go with it, along with every open
+            // sortie. Not after a shutdown (a campaign reset has deleted the
+            // save on purpose, and admin_shutdown already saved otherwise),
+            // and never before a campaign was actually loaded -- that would
+            // write an empty Db over the real save.
+            if ctx.db_loaded && ctx.exit_attempts.is_none() {
+                info!("mission ending, saving the campaign");
+                return_lives(lua, ctx, DateTime::<Utc>::MAX_UTC);
+                ctx.db.close_open_sorties();
+                ctx.do_bg_task(Task::SaveState(
+                    ctx.miz_state_path.clone(),
+                    ctx.db.persisted.clone(),
+                ));
+            }
             Context::reset();
             Perf::reset();
             Context::get_mut().init_async_bg(lua.inner())?;
@@ -1393,13 +1599,27 @@ fn announce_takeoff_holds(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
             nags.push((uid, secs));
         }
     }
+    // Every five seconds, not every second: a one-second panel per held
+    // player per tick was a steady stream of priority-0 commands competing
+    // with every chat line and alert for the same send budget.
+    const NAG_EVERY: i64 = 5;
+    ctx.takeoff_nag_last
+        .retain(|uid, _| nags.iter().any(|(u, _)| u == uid));
     for (uid, secs) in nags {
-        ctx.db.ephemeral.msgs().panel_to_unit(
-            1,
-            false,
-            uid,
-            format_compact!("Takeoff hold: {secs}s remaining"),
-        );
+        let due = ctx
+            .takeoff_nag_last
+            .get(&uid)
+            .map(|last| now - *last >= Duration::seconds(NAG_EVERY))
+            .unwrap_or(true);
+        if due {
+            ctx.takeoff_nag_last.insert(uid, now);
+            ctx.db.ephemeral.msgs().panel_to_unit(
+                NAG_EVERY.min(secs),
+                false,
+                uid,
+                format_compact!("Takeoff hold: {secs}s remaining"),
+            );
+        }
     }
     for (ucid, uid) in cleared {
         ctx.db.ephemeral.msgs().panel_to_unit(
@@ -2389,6 +2609,10 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
 
 
                 ctx.event_scheduler.cap_station_by_event.remove(&event_id);
+                // per-event bookkeeping that nothing else ever removed -- one
+                // entry leaked per CAP wave for the life of the mission
+                ctx.event_scheduler.cap_side_by_event.remove(&event_id);
+                ctx.event_scheduler.cap_last_threat_seen.remove(&event_id);
                 if let Some(gids) = ctx.event_scheduler.cap_groups.remove(&event_id) {
                     for gid in gids {
                         ctx.event_scheduler.cap_spawn_ts.remove(&gid);
@@ -3773,6 +3997,31 @@ fn maybe_reallocate_navaids(lua: MizLua, ctx: &mut Context) {
     }
 }
 
+/// Run one subsystem of the timed events inside its own panic boundary, then
+/// handle the DCS events it caused (see `DeferEvents`).
+///
+/// The whole tick used to share one `catch_unwind`, so a panic in any
+/// subsystem -- or an early `?` -- skipped everything after it, including the
+/// save. One broken subsystem now costs only itself.
+fn step<R>(
+    lua: MizLua,
+    ctx: &mut Context,
+    what: &str,
+    f: impl FnOnce(&mut Context) -> R,
+) -> Option<R> {
+    let r = match catch_unwind(AssertUnwindSafe(|| f(ctx))) {
+        Ok(r) => Some(r),
+        Err(e) => {
+            error!("{what} panicked: {}", panic_msg(&e));
+            None
+        }
+    };
+    if let Err(e) = catch_unwind(AssertUnwindSafe(|| drain_deferred_events(lua, ctx))) {
+        error!("handling deferred events after {what} panicked: {}", panic_msg(&e))
+    }
+    r
+}
+
 fn run_slow_timed_events(
     lua: MizLua,
     ctx: &mut Context,
@@ -3781,15 +4030,30 @@ fn run_slow_timed_events(
     ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
     let freq = Duration::seconds(ctx.db.ephemeral.cfg.slow_timed_events_freq as i64);
-    if ts - ctx.last_slow_timed_events >= freq {
-        let start_ts = Utc::now();
-        ctx.last_slow_timed_events = start_ts;
+    if ts - ctx.last_slow_timed_events < freq {
+        return Ok(AdminResult::Continue);
+    }
+    let start_ts = Utc::now();
+    ctx.last_slow_timed_events = start_ts;
 
-        // DCS doesn't reliably fire onPlayerDisconnect for abrupt
-        // disconnects (client crash, network drop), which would otherwise
-        // leave a player stuck "connected" forever in the persisted db.
-        // Reconcile against the live player list and force-disconnect
-        // anyone we think is connected that DCS no longer reports.
+    // Save first. The snapshot used to be taken near the end of this tick,
+    // after two dozen subsystems, so any one of them panicking or bailing out
+    // early skipped the save -- every tick, for as long as it kept failing.
+    // Whatever this tick changes is simply in the next snapshot.
+    step(lua, ctx, "snapshot", |ctx| {
+        let now = Utc::now();
+        if let Some(snap) = ctx.db.maybe_snapshot() {
+            ctx.do_bg_task(bg::Task::SaveState(path.clone(), snap));
+        }
+        record_perf(&mut perf.snapshot, now);
+    });
+
+    // DCS doesn't reliably fire onPlayerDisconnect for abrupt
+    // disconnects (client crash, network drop), which would otherwise
+    // leave a player stuck "connected" forever in the persisted db.
+    // Reconcile against the live player list and force-disconnect
+    // anyone we think is connected that DCS no longer reports.
+    step(lua, ctx, "player reconciliation", |ctx| {
         match Net::singleton(lua).and_then(|net| net.get_player_list()) {
             Ok(live) => {
                 let mut live_ids: FxHashSet<PlayerId> = FxHashSet::default();
@@ -3821,18 +4085,22 @@ fn run_slow_timed_events(
             }
             Err(e) => warn!("failed to get live player list for connection reconciliation {e:?}"),
         }
+    });
 
-        // Dispatch pending achievements
+    // Dispatch pending achievements
+    step(lua, ctx, "achievements", |ctx| {
         let achievements = std::mem::take(&mut ctx.db.ephemeral.pending_achievements);
         for achievement in achievements {
             crate::api::dispatch_event(lua, "achievement", &achievement);
         }
+    });
 
-        match check_auto_shutdown(ctx, lua, ts) {
-            Ok(AdminResult::Continue) => (),
-            Ok(AdminResult::Shutdown) => return Ok(AdminResult::Shutdown),
-            Err(e) => error!("failed to check for auto shutdown {e:?}"),
-        }
+    match step(lua, ctx, "auto shutdown", |ctx| check_auto_shutdown(ctx, lua, ts)) {
+        Some(Ok(AdminResult::Continue)) | None => (),
+        Some(Ok(AdminResult::Shutdown)) => return Ok(AdminResult::Shutdown),
+        Some(Err(e)) => error!("failed to check for auto shutdown {e:?}"),
+    }
+    step(lua, ctx, "warehouse sync", |ctx| {
         for (oid, vh) in ctx.db.ephemeral.warehouses_to_sync() {
             if let Err(e) = ctx.db.sync_vehicle_at_obj(lua, oid, vh.clone()) {
                 error!(
@@ -3841,69 +4109,76 @@ fn run_slow_timed_events(
                 )
             }
         }
+    });
+    step(lua, ctx, "return lives", |ctx| {
         return_lives(lua, ctx, ts);
         ctx.recently_born.retain(|_, ts| start_ts - *ts <= Duration::seconds(5));
-        {
-            // report kills
-            let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
-            for dead in ctx.shots_out.bring_out_your_dead(ts) {
-                info!("kill {:?}", dead);
-                if let Some(points) = cfg.points.as_ref() {
-                    ctx.db.award_kill_points(points, &dead)
-                }
-                // Detect convoy interdiction
-                if let bfprotocols::shots::Who::AI { gid, side, .. } = &dead.victim {
-                    if let Some(convoy_info) = ctx.db.convoy_info_for_group(gid) {
-                        let killer_ucid = dead.shots.iter().find_map(|s| match &s.shooter {
-                            bfprotocols::shots::Who::Player { ucid, .. } => Some(*ucid),
-                            _ => None,
-                        });
-                        info!("Convoy unit destroyed! Side: {:?}, GroupId: {:?}", side, gid);
-                        ctx.do_bg_task(Task::Stat(Stat::ConvoyDestroyed {
-                            from: convoy_info.0,
-                            to: convoy_info.1,
-                            side: *side,
-                            killer: killer_ucid,
-                        }));
-                        // Award interdiction points to the killing player
-                        if let (Some(ucid), Some(points)) = (killer_ucid, cfg.points.as_ref()) {
-                            let award = points.convoy_interdiction_points as i32;
-                            if award > 0 {
-                                ctx.db.adjust_points(
-                                    &ucid,
-                                    award,
-                                    "convoy interdiction",
-                                );
-                            }
+    });
+    step(lua, ctx, "report kills", |ctx| {
+        let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
+        for dead in ctx.shots_out.bring_out_your_dead(ts) {
+            info!("kill {:?}", dead);
+            if let Some(points) = cfg.points.as_ref() {
+                ctx.db.award_kill_points(points, &dead)
+            }
+            // Detect convoy interdiction
+            if let bfprotocols::shots::Who::AI { gid, side, .. } = &dead.victim {
+                if let Some(convoy_info) = ctx.db.convoy_info_for_group(gid) {
+                    let killer_ucid = dead.shots.iter().find_map(|s| match &s.shooter {
+                        bfprotocols::shots::Who::Player { ucid, .. } => Some(*ucid),
+                        _ => None,
+                    });
+                    info!("Convoy unit destroyed! Side: {:?}, GroupId: {:?}", side, gid);
+                    ctx.do_bg_task(Task::Stat(Stat::ConvoyDestroyed {
+                        from: convoy_info.0,
+                        to: convoy_info.1,
+                        side: *side,
+                        killer: killer_ucid,
+                    }));
+                    // Award interdiction points to the killing player
+                    if let (Some(ucid), Some(points)) = (killer_ucid, cfg.points.as_ref()) {
+                        let award = points.convoy_interdiction_points as i32;
+                        if award > 0 {
+                            ctx.db.adjust_points(&ucid, award, "convoy interdiction");
                         }
                     }
                 }
-
-                ctx.do_bg_task(Task::Stat(Stat::Kill(dead)));
             }
+
+            ctx.do_bg_task(Task::Stat(Stat::Kill(dead)));
         }
+    });
+    step(lua, ctx, "repairs", |ctx| {
         if let Err(e) = ctx.db.maybe_do_repairs(ts) {
             error!("error doing repairs {:?}", e)
         }
         record_perf(&mut perf.do_repairs, start_ts);
+    });
 
-        maybe_reallocate_navaids(lua, ctx);
+    step(lua, ctx, "navaids", |ctx| maybe_reallocate_navaids(lua, ctx));
 
-        // Process C-130 physical cargo spawn queue (one shared queue for all
-        // players, not per-slot -- each queued crate carries its own frozen
-        // spawn anchor from when it was queued)
+    // Process C-130 physical cargo spawn queue (one shared queue for all
+    // players, not per-slot -- each queued crate carries its own frozen
+    // spawn anchor from when it was queued)
+    step(lua, ctx, "C-130 spawn queue", |ctx| {
         if let Err(e) = ctx.db.process_c130_spawn_queue(lua, &ctx.idx) {
             error!("error processing C-130 spawn queue: {:?}", e)
         }
+    });
 
-        // Update C-130 physical crates (track airdrops and auto-unpack)
+    // Update C-130 physical crates (track airdrops and auto-unpack)
+    step(lua, ctx, "C-130 crates", |ctx| {
         if let Err(e) = ctx.db.update_c130_crates(lua, &ctx.idx) {
             error!("error updating C-130 crates: {:?}", e)
         }
+    });
 
+    step(lua, ctx, "actions", |ctx| {
         if let Err(e) = ctx.db.advance_actions(lua, &ctx.idx, &ctx.jtac, start_ts) {
             error!("could not advance actions {e:?}")
         }
+    });
+    step(lua, ctx, "ewr tracks", |ctx| {
         let ts = Utc::now();
         if let Err(e) = ctx.ewr.update_tracks(
             lua,
@@ -3916,24 +4191,36 @@ fn run_slow_timed_events(
             error!("could not update ewr tracks {e}")
         }
         record_perf(&mut perf.ewr_tracks, ts);
+    });
 
-        // ELINT/SIGINT: decay intel contacts and refresh/remove their F10 marks.
-        ctx.db.ephemeral.tick_intel_decay(ts);
+    // ELINT/SIGINT: decay intel contacts and refresh/remove their F10 marks.
+    step(lua, ctx, "intel decay", |ctx| ctx.db.ephemeral.tick_intel_decay(Utc::now()));
 
-        // Player recon passes: advance timers, run scans, reveal contacts.
-        if let Err(e) = ctx.db.tick_recon_sessions(lua, &mut ctx.landcache, ts) {
+    // Player recon passes: advance timers, run scans, reveal contacts.
+    step(lua, ctx, "recon sessions", |ctx| {
+        if let Err(e) = ctx.db.tick_recon_sessions(lua, &mut ctx.landcache, Utc::now()) {
             error!("could not tick recon sessions {e}")
         }
+    });
 
+    step(lua, ctx, "ewr reports", |ctx| {
         let ts = Utc::now();
         if let Err(e) = generate_ewr_reports(ctx, ts) {
             error!("could not generate ewr reports {e}")
         }
         record_perf(&mut perf.ewr_reports, ts);
+    });
+    step(lua, ctx, "unit culling", |ctx| {
         let ts = Utc::now();
         match ctx.db.cull_or_respawn_objectives(lua, &mut ctx.landcache, ts) {
             Err(e) => error!("could not cull or respawn objectives {e}"),
             Ok((threatened, cleared)) => {
+                // An objective that has gone quiet can be threatened again.
+                // `threat_notified` used to only ever grow, so each objective
+                // announced "enemy contact" once per mission and never again.
+                for oid in cleared {
+                    ctx.db.ephemeral.threat_notified.remove(&oid);
+                }
                 for oid in threatened {
                     // Special SAM sites are position-classified: no F10 label,
                     // no rings (see create_objective_markup). Drawing an
@@ -3949,12 +4236,21 @@ fn run_slow_timed_events(
                         continue;
                     }
                     if ctx.db.ephemeral.threat_notified.insert(oid) {
-                        let obj = ctx.db.objective(&oid)?;
-                        let (owner, pos, name) = (obj.owner(), obj.pos(), obj.name().to_string());
-                        ctx.db.ephemeral.on_objective_threatened(pos, owner, &name, ts);
+                        // was `?`, which abandoned the rest of the tick --
+                        // save included -- over one missing objective
+                        if let Ok(obj) = ctx.db.objective(&oid) {
+                            let (owner, pos, name) =
+                                (obj.owner(), obj.pos(), obj.name().to_string());
+                            ctx.db.ephemeral.on_objective_threatened(pos, owner, &name, ts);
+                        }
                     }
                     // Under-attack notification with cooldown
-                    let ua_cooldown = ctx.db.ephemeral.cfg.under_attack.as_ref()
+                    let ua_cooldown = ctx
+                        .db
+                        .ephemeral
+                        .cfg
+                        .under_attack
+                        .as_ref()
                         .map(|c| c.cooldown_secs);
                     if let Some(cooldown_secs) = ua_cooldown {
                         let cooldown = chrono::Duration::seconds(cooldown_secs as i64);
@@ -3962,13 +4258,19 @@ fn run_slow_timed_events(
                         if last.map(|t| ts - t >= cooldown).unwrap_or(true) {
                             ctx.db.ephemeral.last_under_attack_notif.insert(oid, ts);
                             if let Ok(obj) = ctx.db.objective(&oid) {
-                                let (owner, pos, name) = (obj.owner(), obj.pos(), obj.name().to_string());
-                                ctx.db.ephemeral.on_objective_under_attack(pos, owner, &name, cooldown_secs as i64, ts);
+                                let (owner, pos, name) =
+                                    (obj.owner(), obj.pos(), obj.name().to_string());
+                                ctx.db.ephemeral.on_objective_under_attack(
+                                    pos,
+                                    owner,
+                                    &name,
+                                    cooldown_secs as i64,
+                                    ts,
+                                );
                             }
                         }
                     }
                 }
-                let _ = cleared;
             }
         }
         // Mercy timer check
@@ -3976,11 +4278,15 @@ fn run_slow_timed_events(
             ctx.db.trigger_last_stand_victory(ts, losing_side.opposite());
         }
         record_perf(&mut perf.unit_culling, ts);
+    });
+    step(lua, ctx, "objective markup", |ctx| {
         let ts = Utc::now();
         if let Err(e) = ctx.db.update_objectives_markup() {
             error!("could not remark objectives {e}")
         }
         record_perf(&mut perf.remark_objectives, ts);
+    });
+    step(lua, ctx, "production", |ctx| {
         let ts = Utc::now();
         if let Err(e) = ctx.db.run_factory_production(ts) {
             error!("could not run factory production {e}")
@@ -3989,34 +4295,43 @@ fn run_slow_timed_events(
             error!("could not check scenery buildings {e}")
         }
         record_perf(&mut perf.slow_timed, ts);
+    });
+    step(lua, ctx, "carrier repairs", |ctx| {
         let ts = Utc::now();
         match ctx.db.check_carrier_repairs(ts) {
             Ok(completed) => {
                 for (oid, name) in completed {
                     if let Ok(obj) = ctx.db.objective(&oid) {
                         let owner = obj.owner();
-                        let msg = format_compact!("{} has been fully repaired and is operational", name);
+                        let msg =
+                            format_compact!("{} has been fully repaired and is operational", name);
                         ctx.db.ephemeral.msgs().panel_to_side(15, false, owner, msg);
                     }
                 }
             }
-            Err(e) => error!("could not check carrier repairs {e}")
+            Err(e) => error!("could not check carrier repairs {e}"),
         }
         record_perf(&mut perf.slow_timed, ts);
+    });
+    step(lua, ctx, "carrier capture", |ctx| {
         let ts = Utc::now();
         match ctx.db.check_carrier_group_capture(lua, &ctx.idx, ts) {
             Ok(captures) => {
                 for (oid, old_owner, new_owner) in captures {
                     ctx.event_scheduler.owned_cache_dirty = true;
                     if let Ok(obj) = ctx.db.objective(&oid) {
-                        let msg_old = format_compact!("{} has been captured by the enemy!", obj.name());
-                        let msg_new = format_compact!("You have captured {} with its aircraft! Carrier at 50% health", obj.name());
+                        let msg_old =
+                            format_compact!("{} has been captured by the enemy!", obj.name());
+                        let msg_new = format_compact!(
+                            "You have captured {} with its aircraft! Carrier at 50% health",
+                            obj.name()
+                        );
                         ctx.db.ephemeral.msgs().panel_to_side(20, true, old_owner, msg_old);
                         ctx.db.ephemeral.msgs().panel_to_side(20, true, new_owner, msg_new);
                     }
                 }
             }
-            Err(e) => error!("could not check carrier captures {e}")
+            Err(e) => error!("could not check carrier captures {e}"),
         }
         // Auto-repair damaged carriers near naval bases
         match ctx.db.check_carrier_auto_repair(ts) {
@@ -4025,81 +4340,85 @@ fn run_slow_timed_events(
                     ctx.db.ephemeral.msgs().panel_to_side(15, false, side, msg);
                 }
             }
-            Err(e) => error!("could not check carrier auto repair {e}")
+            Err(e) => error!("could not check carrier auto repair {e}"),
         }
         record_perf(&mut perf.slow_timed, ts);
+    });
+    step(lua, ctx, "frontline", |ctx| {
         let ts = Utc::now();
         update_frontline(ctx, ts, false);
         record_perf(&mut perf.frontline, ts);
-        let ts = Utc::now();
-        ctx.db.tick_tasks(ts);
-        ctx.db.ephemeral.update_map_layer(&ctx.db.persisted, ts);
-        update_jtac_contacts(ctx, lua);
-        record_perf(&mut perf.update_jtac_contacts, ts);
-        let now = Utc::now();
-        if let Some(snap) = ctx.db.maybe_snapshot() {
-            ctx.do_bg_task(bg::Task::SaveState(path.clone(), snap));
-        }
-        record_perf(&mut perf.snapshot, now);
-        award_periodic_points(ctx, start_ts);
-        tick_smart_commander(lua, ctx, start_ts);
-        record_perf(&mut perf.slow_timed, start_ts);
+    });
+    let ts = Utc::now();
+    step(lua, ctx, "tasks", |ctx| ctx.db.tick_tasks(ts));
+    step(lua, ctx, "map layer", |ctx| {
+        ctx.db.ephemeral.update_map_layer(&ctx.db.persisted, ts)
+    });
+    step(lua, ctx, "jtac contacts", |ctx| update_jtac_contacts(ctx, lua));
+    record_perf(&mut perf.update_jtac_contacts, ts);
+    step(lua, ctx, "periodic points", |ctx| award_periodic_points(ctx, start_ts));
+    step(lua, ctx, "commander", |ctx| tick_smart_commander(lua, ctx, start_ts));
+    record_perf(&mut perf.slow_timed, start_ts);
 
-        // Tick campaign events — active event processing (expiry, effects, escalation).
-        // New event spawning is now handled by tick_smart_commander above.
-        if let Some(events_cfg) = ctx.db.ephemeral.cfg.campaign_events.as_ref() {
-            if events_cfg.enabled {
-                let events_cfg = events_cfg.clone();
-                match ctx.event_scheduler.tick(&ctx.db, &events_cfg, start_ts) {
-                    Ok((messages, effects)) => {
-                        for msg in messages {
-                            ctx.db.ephemeral.msgs().panel_to_all(15, false, msg);
-                        }
-                        // Enqueue effects; drain_event_effects applies EFFECTS_PER_TICK per tick.
-                        ctx.event_scheduler.pending_effects.extend(effects);
+    // Tick campaign events — active event processing (expiry, effects, escalation).
+    // New event spawning is now handled by tick_smart_commander above.
+    let events_cfg = ctx
+        .db
+        .ephemeral
+        .cfg
+        .campaign_events
+        .as_ref()
+        .filter(|c| c.enabled)
+        .cloned();
+    if let Some(events_cfg) = events_cfg {
+        step(lua, ctx, "campaign events", |ctx| {
+            match ctx.event_scheduler.tick(&ctx.db, &events_cfg, start_ts) {
+                Ok((messages, effects)) => {
+                    for msg in messages {
+                        ctx.db.ephemeral.msgs().panel_to_all(15, false, msg);
                     }
-                    Err(e) => error!("error ticking campaign events: {e:?}"),
+                    // Enqueue effects; drain_event_effects applies EFFECTS_PER_TICK per tick.
+                    ctx.event_scheduler.pending_effects.extend(effects);
                 }
-                drain_event_effects(lua, ctx);
-                // Retry deferred move orders for newly-spawned groups (1 per tick max).
-                flush_pending_moves(lua, ctx);
-                // Reactive CAP: spawn intercepts wherever enemy aircraft are detected
-                check_air_threats(ctx, start_ts, false);
-                // Same pass for helicopters, which CAP deliberately ignores --
-                // otherwise a night where only helo pilots show up gets no AI
-                // response at all, on either side.
-                check_air_threats(ctx, start_ts, true);
-                // Kill any CAP that air-started instead of taxiing out.
-                enforce_cap_ground_start(lua, ctx, start_ts);
-                // Remove flights that have finished flying home.
-                flush_cap_rtb(lua, ctx, start_ts);
-                // AI helo missions: poll in-flight troop-insertion / resource-delivery
-                // helos, apply the payoff and despawn the ones that have landed.
-                if let Err(e) = ctx.db.tick_helo_missions(lua, start_ts) {
-                    error!("error ticking helo missions {e:?}");
-                }
-                // Dynamic CAP retargeting: redirect active CAP groups toward enemy aircraft.
-                // Isolated in its own panic boundary -- a panic in here must not
-                // take down the rest of this tick (positions, logistics, stats
-                // publishing) along with it; the outer run_timed_events catch_unwind
-                // would otherwise unwind straight through all of that too.
-                if let Err(e) =
-                    catch_unwind(AssertUnwindSafe(|| retarget_cap_groups(lua, ctx, start_ts)))
-                {
-                    error!("retarget_cap_groups panicked: {}", panic_msg(&e))
-                }
-                // Check SF HVT capture missions (proximity + timeout)
-
+                Err(e) => error!("error ticking campaign events: {e:?}"),
             }
-        }
-        remove_junk_periodic(lua, ctx, start_ts);
-        // Publish weather to dashboard every 5 minutes
-        if (start_ts - ctx.last_weather_publish).num_seconds() >= 300 {
-            ctx.last_weather_publish = start_ts;
+        });
+        step(lua, ctx, "event effects", |ctx| drain_event_effects(lua, ctx));
+        // Retry deferred move orders for newly-spawned groups (1 per tick max).
+        step(lua, ctx, "pending moves", |ctx| flush_pending_moves(lua, ctx));
+        // Reactive CAP: spawn intercepts wherever enemy aircraft are detected
+        step(lua, ctx, "air threats", |ctx| check_air_threats(ctx, start_ts, false));
+        // Same pass for helicopters, which CAP deliberately ignores --
+        // otherwise a night where only helo pilots show up gets no AI
+        // response at all, on either side.
+        step(lua, ctx, "helo threats", |ctx| check_air_threats(ctx, start_ts, true));
+        // Kill any CAP that air-started instead of taxiing out.
+        step(lua, ctx, "cap ground start", |ctx| {
+            enforce_cap_ground_start(lua, ctx, start_ts)
+        });
+        // Remove flights that have finished flying home.
+        step(lua, ctx, "cap rtb", |ctx| flush_cap_rtb(lua, ctx, start_ts));
+        // AI helo missions: poll in-flight troop-insertion / resource-delivery
+        // helos, apply the payoff and despawn the ones that have landed.
+        step(lua, ctx, "helo missions", |ctx| {
+            if let Err(e) = ctx.db.tick_helo_missions(lua, start_ts) {
+                error!("error ticking helo missions {e:?}");
+            }
+        });
+        // Dynamic CAP retargeting: redirect active CAP groups toward enemy aircraft.
+        step(lua, ctx, "retarget_cap_groups", |ctx| {
+            retarget_cap_groups(lua, ctx, start_ts)
+        });
+    }
+    step(lua, ctx, "junk removal", |ctx| remove_junk_periodic(lua, ctx, start_ts));
+    // Publish weather to dashboard every 5 minutes
+    if (start_ts - ctx.last_weather_publish).num_seconds() >= 300 {
+        ctx.last_weather_publish = start_ts;
+        step(lua, ctx, "weather publish", |ctx| {
             if let Err(e) = atis::publish_weather(lua, ctx) {
                 error!("failed to publish weather: {e:?}");
             }
-        }
+        });
     }
     Ok(AdminResult::Continue)
 }
@@ -4111,91 +4430,117 @@ fn run_timed_events(
 ) -> Result<AdminResult> {
     let ts = Utc::now();
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
-    let net = Net::singleton(lua)?;
-    force_players_to_spectators(ctx, &net, ts);
-    match ctx.db.update_unit_positions_incremental(lua, ts, ctx.last_unit_position) {
-        Err(e) => error!("could not update unit positions {e}"),
-        Ok((i, dead)) => {
-            ctx.last_unit_position = i;
-            for id in dead {
-                if let Err(e) = unit_killed(lua, ctx, id.clone(), ts) {
-                    error!("unit killed failed {:?} {:?}", id, e)
+    step(lua, ctx, "force to spectators", |ctx| match Net::singleton(lua) {
+        Ok(net) => force_players_to_spectators(ctx, &net, ts),
+        Err(e) => error!("no net singleton {e:?}"),
+    });
+    step(lua, ctx, "unit positions", |ctx| {
+        match ctx.db.update_unit_positions_incremental(lua, ts, ctx.last_unit_position) {
+            Err(e) => error!("could not update unit positions {e}"),
+            Ok((i, dead)) => {
+                ctx.last_unit_position = i;
+                for id in dead {
+                    if let Err(e) = unit_killed(lua, ctx, id.clone(), ts) {
+                        error!("unit killed failed {:?} {:?}", id, e)
+                    }
                 }
             }
         }
-    }
-    record_perf(&mut perf.unit_positions, ts);
-    let ts = Utc::now();
-    match ctx.db.update_player_positions_incremental(lua, ts, ctx.last_player_position) {
-        Err(e) => error!("could not update player positions {e}"),
-        Ok((i, dead)) => {
-            ctx.last_player_position = i;
-            for id in dead {
-                if let Err(e) = unit_killed(lua, ctx, id.clone(), ts) {
-                    error!("unit killed failed {:?} {:?}", id, e)
+        record_perf(&mut perf.unit_positions, ts);
+    });
+    step(lua, ctx, "player positions", |ctx| {
+        let ts = Utc::now();
+        match ctx.db.update_player_positions_incremental(lua, ts, ctx.last_player_position) {
+            Err(e) => error!("could not update player positions {e}"),
+            Ok((i, dead)) => {
+                ctx.last_player_position = i;
+                for id in dead {
+                    if let Err(e) = unit_killed(lua, ctx, id.clone(), ts) {
+                        error!("unit killed failed {:?} {:?}", id, e)
+                    }
                 }
             }
         }
-    }
-    record_perf(&mut perf.player_positions, ts);
+        record_perf(&mut perf.player_positions, ts);
+    });
 
-    announce_takeoff_holds(lua, ctx, ts);
+    step(lua, ctx, "takeoff holds", |ctx| announce_takeoff_holds(lua, ctx, ts));
 
-    match run_slow_timed_events(lua, ctx, perf, path, ts) {
-        Ok(AdminResult::Continue) => (),
-        Ok(AdminResult::Shutdown) => return Ok(AdminResult::Shutdown),
-        Err(e) => error!("error running slow timed events {:?}", e),
+    // Its subsystems are guarded one by one inside; this catches the rest.
+    match step(lua, ctx, "slow timed events", |ctx| {
+        run_slow_timed_events(lua, ctx, perf, path, ts)
+    }) {
+        Some(Ok(AdminResult::Continue)) | None => (),
+        Some(Ok(AdminResult::Shutdown)) => return Ok(AdminResult::Shutdown),
+        Some(Err(e)) => error!("error running slow timed events {:?}", e),
     }
     if let Some(slot) = ctx.menu_init_queue.shift_remove_index(0) {
-        if let Err(e) = menu::init_for_slot(ctx, lua, &slot) {
-            error!("could not init menus for slot {:?} {:?}", slot, e)
+        step(lua, ctx, "menu init", |ctx| {
+            if let Err(e) = menu::init_for_slot(ctx, lua, &slot) {
+                error!("could not init menus for slot {:?} {:?}", slot, e)
+            }
+        });
+    }
+    step(lua, ctx, "spawn queue", |ctx| {
+        let now = Utc::now();
+        match SpawnCtx::new(lua) {
+            Err(e) => error!("could not build a spawn ctx {e:?}"),
+            Ok(spctx) => {
+                if let Err(e) = ctx.db.ephemeral.process_spawn_queue(
+                    perf,
+                    &ctx.db.persisted,
+                    ts,
+                    &ctx.idx,
+                    &spctx,
+                ) {
+                    error!("error processing spawn queue {:?}", e)
+                }
+            }
         }
-    }
-    let now = Utc::now();
-    let spctx = SpawnCtx::new(lua)?;
-    if let Err(e) = ctx.db.ephemeral.process_spawn_queue(
-        perf,
-        &ctx.db.persisted,
-        ts,
-        &ctx.idx,
-        &spctx,
-    ) {
-        error!("error processing spawn queue {:?}", e)
-    }
-    record_perf(&mut perf.spawn_queue, now);
-    if let Err(e) = ctx.db.tick_csar(lua) {
-        error!("csar tick failed: {:?}", e)
-    }
-    let now = Utc::now();
-    let has_captures = match advise_captured(ctx, lua, ts) {
-        Ok(captures) => captures,
-        Err(e) => {
-            error!("error advise captured {:?}", e);
-            false
+        record_perf(&mut perf.spawn_queue, now);
+    });
+    step(lua, ctx, "csar", |ctx| {
+        if let Err(e) = ctx.db.tick_csar(lua) {
+            error!("csar tick failed: {:?}", e)
         }
-    };
+    });
+    let now = Utc::now();
+    let has_captures = step(lua, ctx, "advise captured", |ctx| {
+        match advise_captured(ctx, lua, ts) {
+            Ok(captures) => captures,
+            Err(e) => {
+                error!("error advise captured {:?}", e);
+                false
+            }
+        }
+    })
+    .unwrap_or(false);
     record_perf(&mut perf.advise_captured, now);
 
     // Update frontline when objectives are captured
     if has_captures {
-        update_frontline(ctx, ts, true);
+        step(lua, ctx, "frontline", |ctx| update_frontline(ctx, ts, true));
     }
     let now = Utc::now();
-    if let Err(e) = advise_captureable(ctx) {
-        error!("error advise capturable {:?}", e)
-    }
+    step(lua, ctx, "advise capturable", |ctx| {
+        if let Err(e) = advise_captureable(ctx) {
+            error!("error advise capturable {:?}", e)
+        }
+    });
     record_perf(&mut perf.advise_capturable, now);
     let now = Utc::now();
-    match ctx.jtac.update_target_positions(lua, now, &mut ctx.db) {
-        Err(e) => error!("error updating jtac target positions {:?}", e),
-        Ok(dead) => {
-            for id in dead {
-                if let Err(e) = unit_killed(lua, ctx, id.clone(), now) {
-                    error!("unit killed failed {:?} {:?}", id, e)
+    step(lua, ctx, "jtac target positions", |ctx| {
+        match ctx.jtac.update_target_positions(lua, now, &mut ctx.db) {
+            Err(e) => error!("error updating jtac target positions {:?}", e),
+            Ok(dead) => {
+                for id in dead {
+                    if let Err(e) = unit_killed(lua, ctx, id.clone(), now) {
+                        error!("unit killed failed {:?} {:?}", id, e)
+                    }
                 }
             }
         }
-    }
+    });
     record_perf(&mut perf.jtac_target_positions, now);
     let now = Utc::now();
     let max_rate = ctx.db.ephemeral.cfg.max_msgs_per_second;
@@ -4243,28 +4588,37 @@ fn run_timed_events(
     // tiny and the map ran minutes behind. `max_rate` is still read above for
     // the [MSGQ] report.
     record_perf(&mut perf.process_messages, now);
-    if let Err(e) = ctx.db.logistics_step(lua, perf, ts) {
-        error!("error running logistics events {e:?}")
-    }
-    match run_admin_commands(ctx, lua) {
-        Err(e) => error!("failed to run admin commands {e:?}"),
-        Ok(AdminResult::Continue) => (),
-        Ok(AdminResult::Shutdown) => return Ok(AdminResult::Shutdown),
-    }
-    if let Err(e) = run_action_commands(ctx, perf, lua) {
-        error!("failed to run action commands {e:?}")
-    }
-    if let Err(e) = run_jtac_commands(ctx, lua) {
-        error!("failed to run jtac commands {e:?}")
-    }
-    for (id, slot) in std::mem::take(&mut ctx.weather_requests) {
-        if let Err(e) = atis::send_full_weather(lua, slot) {
-            error!("full weather report failed for {:?}: {:?}", id, e);
+    step(lua, ctx, "logistics", |ctx| {
+        if let Err(e) = ctx.db.logistics_step(lua, perf, ts) {
+            error!("error running logistics events {e:?}")
         }
+    });
+    match step(lua, ctx, "admin commands", |ctx| run_admin_commands(ctx, lua)) {
+        Some(Err(e)) => error!("failed to run admin commands {e:?}"),
+        Some(Ok(AdminResult::Continue)) | None => (),
+        Some(Ok(AdminResult::Shutdown)) => return Ok(AdminResult::Shutdown),
     }
+    step(lua, ctx, "action commands", |ctx| {
+        if let Err(e) = run_action_commands(ctx, perf, lua) {
+            error!("failed to run action commands {e:?}")
+        }
+    });
+    step(lua, ctx, "jtac commands", |ctx| {
+        if let Err(e) = run_jtac_commands(ctx, lua) {
+            error!("failed to run jtac commands {e:?}")
+        }
+    });
+    step(lua, ctx, "weather requests", |ctx| {
+        for (id, slot) in std::mem::take(&mut ctx.weather_requests) {
+            if let Err(e) = atis::send_full_weather(lua, slot) {
+                error!("full weather report failed for {:?}: {:?}", id, e);
+            }
+        }
+    });
     ctx.load_state.step();
     record_perf(&mut perf.timed_events, ts);
     ctx.log_perf(now);
+    ctx.check_bg_health(now);
     Ok(AdminResult::Continue)
 }
 
@@ -4381,6 +4735,48 @@ fn install_panic_hook() {
     });
 }
 
+/// One attempt at ending the DCS process after a shutdown. Returns true if
+/// the timer should call again (the attempt failed).
+///
+/// Every step is best effort. These used to be `?`s: one failure (a missing
+/// singleton, the event handler already gone) returned an error out of the
+/// timer callback, which DCS takes as "unschedule" -- so the tick loop was
+/// gone, the background thread already shut down, and `exitProcess` never
+/// called: a server that looked up but saved nothing and never restarted.
+fn try_exit_dcs(lua: MizLua, ctx: &mut Context) -> bool {
+    const GIVE_UP_AFTER: u32 = 10;
+    let attempt = ctx.exit_attempts.map(|n| n.saturating_add(1)).unwrap_or(1);
+    ctx.exit_attempts = Some(attempt);
+    if let Some(id) = ctx.event_handler_id.take() {
+        if let Err(e) = World::singleton(lua).and_then(|w| w.remove_event_handler(id)) {
+            error!("shutdown: could not remove the event handler {e:?}")
+        }
+    }
+    match Net::singleton(lua).and_then(|net| {
+        net.dostring_in(
+            DcsLuaEnvironment::Server,
+            "DCS.setUserCallbacks({}); DCS.exitProcess()".into(),
+        )
+    }) {
+        Ok(_) => {
+            println!("removing timer event");
+            false
+        }
+        Err(e) if attempt < GIVE_UP_AFTER => {
+            error!("shutdown: DCS.exitProcess failed (attempt {attempt}), retrying {e:?}");
+            true
+        }
+        Err(e) => {
+            // The state is saved (or deliberately reset) and the background
+            // thread has been shut down; a process that won't exit is worse
+            // than one that exits abruptly -- the bot restarts it either way.
+            error!("shutdown: DCS.exitProcess failed {attempt} times, exiting the process {e:?}");
+            bg::fallback_log(b"bflib: DCS.exitProcess kept failing, calling process::exit\n");
+            std::process::exit(0)
+        }
+    }
+}
+
 fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<()> {
     ctx.last_slow_timed_events = Utc::now();
     start_msgq_drain(lua)?;
@@ -4389,22 +4785,26 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
         let path = path.clone();
         move |lua, _, now| {
             let ctx = unsafe { Context::get_mut() };
-            match catch_unwind(AssertUnwindSafe(|| run_timed_events(ctx, lua, &path))) {
+            if ctx.exit_attempts.is_some() {
+                // already shutting down and the last exit call failed; don't
+                // run the campaign any further, just try to exit again
+                return Ok(try_exit_dcs(lua, ctx).then_some(now + 1.));
+            }
+            let res = {
+                let _defer = DeferEvents::begin();
+                let res = catch_unwind(AssertUnwindSafe(|| run_timed_events(ctx, lua, &path)));
+                if let Err(e) = catch_unwind(AssertUnwindSafe(|| drain_deferred_events(lua, ctx))) {
+                    error!("handling deferred events panicked: {}", panic_msg(&e))
+                }
+                res
+            };
+            match res {
                 Ok(Ok(AdminResult::Continue)) => (),
                 Ok(Err(e)) => error!("failed to run timed events {:?}", e),
                 Ok(Ok(AdminResult::Shutdown)) => {
                     println!("initiating DCS shutdown");
-                    if let Some(id) = ctx.event_handler_id.take() {
-                        World::singleton(lua)?
-                            .remove_event_handler(id)
-                            .context("removing event handler")?
-                    }
-                    Net::singleton(lua)?.dostring_in(
-                        DcsLuaEnvironment::Server,
-                        "DCS.setUserCallbacks({}); DCS.exitProcess()".into(),
-                    )?;
-                    println!("removing timer event");
-                    return Ok(None);
+                    ctx.exit_attempts = Some(0);
+                    return Ok(try_exit_dcs(lua, ctx).then_some(now + 1.));
                 }
                 // The hook has already logged the location and backtrace;
                 // this says which tick died, so the two can be paired up.
@@ -4450,7 +4850,34 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
     // NewRound signal unconditionally on every restart (crash recovery,
     // bot-triggered restart) made bfdb close and reopen the round even when
     // resuming, not just on real campaign resets.
-    let fresh = !path.exists();
+    //
+    // A missing save file is NOT, on its own, a new round. The save used to be
+    // renamed away before its replacement was moved in, and a hard kill in
+    // between left no live save -- and the next start wiped the campaign.
+    // bg::save no longer has that window, but a save can still go missing
+    // (an old build, a botched copy), and starting over is the one outcome
+    // that can't be undone. So unless an admin reset left its marker, resume
+    // from the newest readable backup instead (Db::load falls back to the
+    // backups when the live file can't be opened), and say so loudly. If none
+    // of them can be read the mission refuses to start rather than silently
+    // beginning a new round.
+    let live_save = path.exists();
+    let recover = !live_save && {
+        let backups = bg::backup_saves(&path);
+        if backups.is_empty() {
+            false
+        } else {
+            error!(
+                "THE SAVE FILE {path:?} IS MISSING, but {} backup save file(s) exist: resuming \
+                 the campaign from the newest readable one instead of starting a new round. To \
+                 really start over use the admin reset, or create an empty {:?}.",
+                backups.len(),
+                bg::reset_marker_path(&path)
+            );
+            true
+        }
+    };
+    let fresh = !live_save && !recover;
     ctx.do_bg_task(Task::CfgLoaded {
         sortie: ctx.sortie.clone(),
         cfg: Arc::clone(&cfg),
@@ -4494,8 +4921,16 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
         stop: ctx.shutdown.map(|a| a.when),
         cfg: Box::new((*ctx.db.ephemeral.cfg).clone()),
     }));
+    ctx.db_loaded = true;
     info!("spawning units");
-    ctx.respawn_groups(lua, &miz).context("setting up the mission after load")?;
+    {
+        // every group spawned here fires Birth from inside addGroup; see
+        // DeferEvents
+        let _defer = DeferEvents::begin();
+        let res = ctx.respawn_groups(lua, &miz);
+        drain_deferred_events(lua, ctx);
+        res.context("setting up the mission after load")?;
+    }
 
     // Publish all objectives as stats (for bfdb JSONL ingestion after saved state load)
     {

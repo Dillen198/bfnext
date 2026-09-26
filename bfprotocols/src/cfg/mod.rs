@@ -3518,6 +3518,12 @@ pub struct Cfg {
     /// Because DCS. Reject names that don't match this regex
     #[serde(default)]
     pub name_filter: Option<NameFilter>,
+    /// Refuse a second connection from an IP address that already has a
+    /// player connected (anti multi-accounting). Turn it off to let players
+    /// behind one NAT -- a household, a squadron LAN party -- join together.
+    /// Default true (the long-standing behaviour).
+    #[serde(default = "default_true")]
+    pub one_player_per_ip: bool,
     /// The maximum number of messages, including markup, we will push to dcs
     /// per second.
     ///

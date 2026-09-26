@@ -90,8 +90,31 @@ pub(crate) fn dispatch_event(lua: dcso3::MizLua, event_type: &str, message: &str
             if let Ok(tbl) = lua.inner().create_table() {
                 let _ = tbl.set("type", event_type);
                 let _ = tbl.set("message", message);
-                let _ = func.call::<_, ()>(tbl);
+                if let Err(e) = func.call::<_, ()>(tbl) {
+                    log_hook_error(event_type, &e);
+                }
             }
         }
+    }
+}
+
+/// Report a failing `vector_strike.on_event` hook -- the error used to be
+/// discarded, so a broken mission-side script failed silently forever. At
+/// most one line a minute, with a count of what was suppressed in between, so
+/// a hook that throws on every event can't flood the log.
+fn log_hook_error(event_type: &str, e: &mlua::Error) {
+    use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+    static LAST: AtomicI64 = AtomicI64::new(0);
+    static SUPPRESSED: AtomicU64 = AtomicU64::new(0);
+    let now = chrono::Utc::now().timestamp();
+    if now.saturating_sub(LAST.load(Ordering::Relaxed)) >= 60 {
+        LAST.store(now, Ordering::Relaxed);
+        let n = SUPPRESSED.swap(0, Ordering::Relaxed);
+        log::error!(
+            "vector_strike.on_event failed for a {event_type:?} event ({n} more failures \
+             suppressed since the last report): {e}"
+        );
+    } else {
+        SUPPRESSED.fetch_add(1, Ordering::Relaxed);
     }
 }

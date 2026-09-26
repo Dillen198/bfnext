@@ -2268,6 +2268,7 @@ impl Default for Cfg {
             deploy_supply_cost: 3,
             repair_crate: default_repair_crate(),
             name_filter: Some("^[a-zA-Z0-9<>|= ]+$".try_into().unwrap()),
+            one_player_per_ip: true,
             shutdown: Some(10),
             rules: Rules {
                 actions: Rule::AlwaysAllowed,
