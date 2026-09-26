@@ -63,5 +63,5 @@ zstd = { version = "0.13" }
 
 [workspace]
 resolver = "2"
-members = ["dcso3", "bflib", "bfdb", "bfprotocols", "yats", "bfcockpit/installer"]
+members = ["dcso3", "bflib", "bfrange", "bfdb", "bfprotocols", "yats", "bfcockpit/installer"]
 exclude = ["bftools"]

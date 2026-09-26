@@ -32,6 +32,7 @@ use std::{
 };
 
 pub mod airbase;
+pub mod atmosphere;
 pub mod attribute;
 pub mod coalition;
 pub mod controller;

@@ -60,3 +60,8 @@ nvml-wrapper = "0.10"
 # the TTS engine (Piper or Windows SAPI) produces.
 libloading = "0.8"
 hound = "3"
+# Training range (src/range): result cards are SVG strings rasterised to PNG
+# for Discord embeds (resvg, pure Rust, system fonts), and the per-result
+# debrief tracks are stored zstd-compressed.
+resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+zstd = { workspace = true }
