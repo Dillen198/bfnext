@@ -1,23 +1,25 @@
 import { lazy, Suspense, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Server, Activity, Config, Terminal, Download, Shield } from '@icons'
+import { Server, Activity, Config, Terminal, Download, Shield, FolderCog } from '@icons'
 import { mgr, inTauri } from './tauri'
-import { Dot, Pill } from './ui'
+import { Dot, Pill, Btn } from './ui'
 import logo from './logo.png'
 import { OK, AMBER, RED, MONO, DIM, needsSetup } from './style'
 import Overview from './Overview'
 import Setup from './Setup'
 import Settings from './Settings'
 import Logs from './Logs'
+import BotConfig from './BotConfig'
 
 // The dashboard's own OPS page, unchanged, over the local transport.
 const OpsPage = lazy(() => import('../pages/OpsPage'))
 
-type Tab = 'overview' | 'ops' | 'setup' | 'settings' | 'logs'
+type Tab = 'overview' | 'ops' | 'botconfig' | 'setup' | 'settings' | 'logs'
 
 const TABS: { key: Tab; label: string; icon: typeof Server }[] = [
   { key: 'overview', label: 'OVERVIEW', icon: Activity },
   { key: 'ops', label: 'SERVER OPS', icon: Server },
+  { key: 'botconfig', label: 'BOT CONFIG', icon: FolderCog },
   { key: 'setup', label: 'SETUP', icon: Shield },
   { key: 'settings', label: 'SETTINGS', icon: Config },
   { key: 'logs', label: 'LOGS', icon: Terminal },
@@ -32,6 +34,14 @@ export default function ManagerApp() {
   })
   const [tab, setTab] = useState<Tab | null>(null)
   const current: Tab = tab ?? (needsSetup(state) ? 'setup' : 'overview')
+  // BOT CONFIG's editor holds unsaved text only while mounted: leaving the tab
+  // asks first
+  const [cfgDirty, setCfgDirty] = useState(false)
+  const [pendingTab, setPendingTab] = useState<Tab | null>(null)
+  const go = (t: Tab) => {
+    if (current === 'botconfig' && t !== 'botconfig' && cfgDirty) setPendingTab(t)
+    else setTab(t)
+  }
 
   const svc = state?.service
   const svcState = !svc?.installed ? 'bad' : svc.state === 'running' ? 'ok' : 'warn'
@@ -55,7 +65,7 @@ export default function ManagerApp() {
           {TABS.map(t => {
             const active = current === t.key
             return (
-              <button key={t.key} onClick={() => setTab(t.key)} style={{
+              <button key={t.key} onClick={() => go(t.key)} style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 3, cursor: 'pointer',
                 background: active ? 'rgba(106,171,31,0.12)' : 'none', border: `1px solid ${active ? 'rgba(106,171,31,0.35)' : 'transparent'}`,
                 color: active ? 'var(--accent-bright, var(--accent))' : 'var(--text-muted)', fontSize: '0.68rem',
@@ -94,11 +104,19 @@ export default function ManagerApp() {
             Not running as administrator -- installing or controlling the service will fail. Right-click → Run as administrator.
           </div>
         )}
+        {pendingTab && (
+          <div className="flex items-center gap-2" style={{ padding: '6px 16px', fontSize: '0.68rem', color: AMBER, borderBottom: '1px solid var(--border)' }}>
+            BOT CONFIG has unsaved changes.
+            <Btn danger onClick={() => { setCfgDirty(false); setTab(pendingTab); setPendingTab(null) }}>Discard and leave</Btn>
+            <Btn onClick={() => setPendingTab(null)}>Stay</Btn>
+          </div>
+        )}
         <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
           {current === 'overview' && <Overview state={state} onSetup={() => setTab('setup')} />}
           {current === 'setup' && state && <Setup state={state} onDone={() => setTab('overview')} />}
           {current === 'settings' && state && <Settings state={state} />}
           {current === 'logs' && <Logs />}
+          {current === 'botconfig' && <BotConfig onDirtyChange={setCfgDirty} />}
           {current === 'ops' && (
             state?.ops_error ? (
               <div className="p-6" style={{ fontSize: '0.74rem', lineHeight: 1.6 }}>

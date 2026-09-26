@@ -168,6 +168,81 @@ export interface BotDirCheck {
   plugin_installed: boolean
 }
 
+// ── BOT CONFIG (botcfg.rs) ──────────────────────────────────────────────────
+
+/** Error prefixes the Rust side uses (a command error is just a string). */
+export const CONFLICT = 'CONFLICT:'
+export const MANUAL = 'MANUAL:'
+
+export interface BotConfigFile {
+  /** '/'-separated, relative to <bot>\config */
+  rel: string
+  size: number
+  modified: string | null
+  label: string
+}
+
+export interface BotConfigList {
+  dir: string
+  files: BotConfigFile[]
+}
+
+export interface BotConfigText {
+  rel: string
+  path: string
+  text: string
+  /** of the bytes on disk -- write_bot_config refuses if the file no longer matches */
+  sha256: string
+}
+
+export interface ConfigDiag {
+  line: number | null
+  column: number | null
+  message: string
+}
+
+export interface ConfigValidation {
+  ok: boolean
+  errors: ConfigDiag[]
+  warnings: ConfigDiag[]
+}
+
+export interface ConfigWritten {
+  sha256: string
+  backup: string | null
+}
+
+export interface ConfigChange {
+  line: number
+  before: string[]
+  after: string[]
+}
+
+export interface ConfigCheckAction {
+  kind: 'generate_secret' | 'public_key' | 'set'
+  label: string
+  rel: string
+  path: string[]
+  value: string | null
+}
+
+export interface ConfigCheck {
+  id: string
+  level: 'ok' | 'warn' | 'info'
+  title: string
+  message: string
+  fix: string | null
+  /** secret values arrive masked */
+  current: string | null
+  action: ConfigCheckAction | null
+}
+
+export interface PublicKeyInfo {
+  key: string
+  key_id: string
+  path: string
+}
+
 // ── commands ─────────────────────────────────────────────────────────────────
 
 export const mgr = {
@@ -189,7 +264,19 @@ export const mgr = {
   checkUpdate:      () => invoke<CheckResult>('check_update'),
   installUpdate:    () => invoke<string>('install_update'),
   readLog:          (name: 'agent' | 'bot', lines: number) => invoke<string[]>('read_log', { name, lines }),
-  openPath:         (which: 'data' | 'logs' | 'backups' | 'bot') => invoke<void>('open_path', { which }),
+  openPath:         (which: 'data' | 'logs' | 'backups' | 'bot' | 'bot-config') => invoke<void>('open_path', { which }),
+  listBotConfigs:   () => invoke<BotConfigList>('list_bot_configs'),
+  readBotConfig:    (rel: string) => invoke<BotConfigText>('read_bot_config', { rel }),
+  validateBotConfig: (rel: string, text: string) => invoke<ConfigValidation>('validate_bot_config', { rel, text }),
+  writeBotConfig:   (rel: string, text: string, expectedSha: string) =>
+                      invoke<ConfigWritten>('write_bot_config', { rel, text, expectedSha }),
+  configChecks:     () => invoke<ConfigCheck[]>('config_checks'),
+  generateSecret:   () => invoke<string>('generate_secret'),
+  readPublicKey:    (path: string | null) => invoke<PublicKeyInfo>('read_public_key', { path }),
+  previewConfigValue: (rel: string, path: string[], value: string) =>
+                      invoke<{ change: ConfigChange; sha256: string }>('preview_config_value', { rel, path, value }),
+  setConfigValue:   (rel: string, path: string[], value: string, expectedSha: string) =>
+                      invoke<{ written: ConfigWritten; change: ConfigChange }>('set_config_value', { rel, path, value, expectedSha }),
 }
 
 // ── the api.ts transport: the OPS page's requests, answered locally ──────────
