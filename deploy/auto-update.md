@@ -40,12 +40,20 @@ The server box looks after itself:
 2. **BIOS/UEFI:** set *Restore on AC power loss* to *Power On*, so a power cut
    also ends with the box booting. Windows can't check this setting.
 3. **Bot WebService.** The OPS page reaches the plugin through DCSServerBot's
-   WebService (the one the RestAPI plugin uses). bfdb already calls it with
-   `bfdb.dcsserverbot_url` + `bfdb.dcsserverbot_api_key`, and the plugin
-   requires that same key. No key means no OPS page: the page stays disabled
-   rather than run exposed.
+   WebService (the one the RestAPI plugin uses), over plain HTTP. Bind it to
+   loopback -- `config\services\webservice.yaml`: `DEFAULT: listen: 127.0.0.1` --
+   since bfdb and Fowl Engine Manager both call it from this box. The OPS
+   routes want their own key, `ops_api.api_key`; without one they fall back to
+   `bfdb.dcsserverbot_api_key` and the bot log says so on every start. (bfdb
+   still sends `bfdb.dcsserverbot_api_key` on its OPS calls, so a different
+   `ops_api.api_key` locks the dashboard OPS page out until bfdb has its own
+   `--ops-api-key`; Fowl Engine Manager is unaffected.) No key at all means
+   no OPS page: it stays disabled rather than run exposed. The page's config
+   editor can't change keys that name a program, a path, a URL or an update
+   source; edit those in `fowlengine.yaml` on the box.
 4. **fowlengine.yaml:** add the `autoupdate:`, `issues:` and `ops_api:` blocks
-   (see `fowlengine.sample.yaml`). Start with `autoupdate.enabled: false`,
+   (see `fowlengine.sample.yaml`), including `autoupdate.public_key` (see
+   "Signing releases" below). Start with `autoupdate.enabled: false`,
    open the OPS page, press **Check now**, and look at what it would stage.
    Then switch it on.
 5. **Claude's read access (optional but recommended):** start bfdb with
@@ -68,7 +76,40 @@ git push                                   # the release tag points at a pushed 
 
 It builds `bflib.dll`, `bfrange.dll` (when it is a workspace member at that
 commit), `bfdb.exe` (dashboard + site embedded) and `bftools.exe`, then writes
-`manifest.json` (a sha256 for every file) and publishes the tag `engine-<date>-<sha>`.
+`manifest.json` (a sha256 for every file), signs it into `manifest.json.sig`
+and publishes the tag `engine-<date>-<sha>`.
+
+### Signing releases
+
+Servers stage **nothing** that isn't signed. `manifest.json` lists every
+file's sha256, so its minisign signature covers the whole release; the bot
+checks it against `autoupdate.public_key` before it downloads anything else.
+The key is a `tauri signer` (minisign) key, the same kind Fowl Engine Manager
+uses, but a **separate** one -- a leaked manager key must not be able to ship
+an engine, and the other way round.
+
+One-time, on the PC you publish from (user action):
+
+```powershell
+cd bfmanager; npm ci --ignore-scripts
+npx tauri signer generate -w "$env:USERPROFILE\.tauri\fowl-engine.key"   # give it a password
+```
+
+- Keep `fowl-engine.key` (and a backup of it) private. Put its password in
+  `$env:FOWL_ENGINE_SIGNING_PASSWORD` before running `publish-release.ps1`
+  (it is handed to the signer in the environment, never on a command line).
+- Paste the contents of `fowl-engine.key.pub` (or just its `RW...` line) into
+  every server's `fowlengine.yaml` as `autoupdate.public_key`, and restart the
+  bot. The OPS page shows the pinned key's id under the update settings.
+- `publish-release.ps1 -SigningKey <path>` for a key somewhere else. Without a
+  key it refuses to publish (a `-DryRun` just warns).
+- For the **Engine release** GitHub Action, the key and password become
+  secrets on a protected environment (see the notes on `release.yml` in the
+  ops security review).
+
+Rotating the key: generate a new one, publish with it, and update
+`public_key` on every server at the same time -- a server only trusts the key
+it has pinned.
 The GitHub Action **Engine release** runs the same script on a Windows runner.
 It is manual-dispatch only, and **beta** is the safer channel for it: `Cargo.lock`
 is gitignored, so CI resolves dependencies fresh.
@@ -78,8 +119,11 @@ is gitignored, so CI resolves dependencies fresh.
 1. **Check** every `check_minutes`. Drafts, other tags, pre-releases (unless
    on the `beta` channel), and anything marked bad are all skipped. A server
    never "updates" to an older release.
-2. **Fetch + verify** into `<staging>\_downloads\<tag>\`. A sha256 mismatch
-   aborts the whole release.
+2. **Fetch + verify** into `<staging>\_downloads\<tag>\`. No `public_key`, no
+   `manifest.json.sig` or a signature that doesn't verify, and nothing is
+   fetched; a sha256 mismatch aborts the whole release. A server on an agent
+   node downloads its DLL itself, and the bot reads it back and checks its
+   sha256 against the signed manifest before it becomes the `.pending` file.
 3. **Stage** the same way a Discord drag-and-drop does: `<name>.pending` plus a sidecar with
    `source: autoupdate`. `bflib.dll` goes to each campaign server's own BFBinaries staging
    dir, `bfdb.exe` / `bftools.exe` to the global one. A **manual upload waiting
@@ -98,11 +142,16 @@ is gitignored, so CI resolves dependencies fresh.
      is newer than the swap and the server has run for `probation_minutes`.
      **Rolled back** if DCS goes down unexpectedly during probation, or if the
      mission never loads it within `load_timeout_minutes` of running time.
+     "Unexpectedly" = straight from running to down; a scheduled restart or an
+     admin's shutdown passes through *Shutting down* (the bot samples every
+     second) and never counts as a crash. A forced shutdown that skips it does.
      (bfrange writes no sidecar yet, so a range DLL is judged on "stayed up".)
    - **bfdb:** passes after `probation_minutes` of answering `/api/health`.
      **Rolled back** if it exits, or never answers within `bfdb_unhealthy_minutes`.
 6. **Rollback:**
    - **DLL:** the pre-swap backup is staged back and DCS is restarted onto it.
+     The build it replaces is kept as `<dll>.failed-<ts>`, never as a
+     `.backup-*`, so a second rollback can't bring the bad build back.
    - **bfdb:** the previous exe *and* the DB snapshot taken just before the
      swap are restored; the failed ones are kept as `bfdb.exe.failed-*` /
      `bfdb.failed-*`. Nothing written since the swap is lost: the JSONL cursor
@@ -175,7 +224,8 @@ addresses, UCIDs, Discord webhook URLs and bearer tokens.
 
 - **The OPS page says the bot has no OPS API:** update the plugin, and check
   that `bfdb.dcsserverbot_url` includes the RestAPI `prefix`.
-- **The plugin itself is broken after a `bot_plugin` update:** the previous plugin is in
+- **The plugin itself is broken after a `bot_plugin` update** (`autoupdate.bot_plugin`
+  is set in `fowlengine.yaml` only; the OPS page can't switch it on): the previous plugin is in
   `<DCSServerBot>\_fowl_backups\plugin-<ts>.zip`. Unzip it over the bot folder and restart the service.
 - **Manual bfdb rollback:** stop the service, copy `bfdb.exe.backup-<ts>` over
   `bfdb.exe` and `_backups\db-<ts>-<tag>` over `bfdb`, then start the service.

@@ -99,11 +99,9 @@ DEFAULT:
   # ---------------------------------------------
   # The base URL to your bfweb or custom Fowl Engine web dashboard.
   dashboard_url: "https://bfweb.your-domain.com"
-  
-  # A highly secure, secret string used to generate auto-login tokens.
-  # Ensure this matches the secret used in your web backend to verify the HMAC tokens!
-  dashboard_secret: "REPLACE_WITH_A_LONG_SECURE_RANDOM_STRING_HERE"
-  
+  # (dashboard_secret is gone: the dashboard logs in with Discord only, and
+  # nothing ever accepted the "auto-login" tokens it used to sign.)
+
   # ---------------------------------------------
   # Fowl Engine DB (bfdb) Integration
   # ---------------------------------------------
@@ -130,6 +128,12 @@ DEFAULT:
   # otherwise silent.
   ops_channel: 123456789012345678
 
+  # (Optional) Which DCSServerBot role group may stage engine binaries by
+  # dropping them into Discord (upload.py). A staged binary runs on this box
+  # at the next restart, so it defaults to the full "Admin" group, not
+  # "DCS Admin". Every staged file is posted to ops_channel with its sha256.
+  # binary_upload_role: Admin
+
   # ---------------------------------------------
   # bfdb + netidx process management  (replaces bfsystem.ps1)
   # ---------------------------------------------
@@ -145,8 +149,12 @@ DEFAULT:
     # everything below (db, gci.json, staging, ...) lives under home:
     home: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1"
     staging_dir: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\_staging"
-    listen_address: "0.0.0.0:8880"
-    site_address: "0.0.0.0:8766"
+    # Loopback by default: Caddy / the tunnel on this box publishes the
+    # dashboard and site. Only a setup that reaches bfdb from ANOTHER PC
+    # (a reverse proxy elsewhere on the LAN) needs 0.0.0.0 or a LAN address
+    # here -- then firewall the ports to that PC.
+    listen_address: "127.0.0.1:8880"
+    site_address: "127.0.0.1:8766"
     netidx_base: "/local/fowl/campaign"          # blank -> run bfdb offline, no resolver
     sortie: ""                                   # leave blank: bfdb asks the resolver where the engine publishes. NOT a display name -- that is `label`.
     netidx_resolver_config: "E:\\Github\\bfnext-vector\\netidx-resolver.json"
@@ -172,6 +180,13 @@ DEFAULT:
     health_failures: 3                           # failed checks before a relaunch
     hung_relaunch_secs: 600                      # if the process is alive but not answering
     restart_cooldown: 120                        # min seconds between relaunch attempts
+    # Stopping bfdb: Ctrl-Break first (bfdb flushes its DB and exits), then
+    # POST <shutdown_path> on its loopback listener, and only if both are
+    # ignored for stop_timeout_secs each, a hard kill.
+    stop_timeout_secs: 15
+    shutdown_path: "/api/admin/shutdown"
+    # news_llm_key is handed to bfdb in its environment (BFDB_NEWS_LLM_KEY),
+    # never on its command line.
 
     # -------------------------------------------------------------------
     # MULTIPLE DCS SERVERS ON ONE MACHINE
@@ -328,7 +343,8 @@ DEFAULT:
   # Automatic engine updates  (autoupdate.py -- see deploy/auto-update.md)
   # ---------------------------------------------
   # Looks for new `engine-*` releases (published by deploy/publish-release.ps1
-  # or the "Engine release" GitHub Action), verifies every file's sha256 and
+  # or the "Engine release" GitHub Action), checks the release's signed
+  # manifest against `public_key`, verifies every file's sha256 and
   # stages it exactly like a Discord drag-and-drop upload. Every swapped-in
   # engine -- automatic OR hand-uploaded -- then goes on probation and is
   # rolled back by itself if DCS crashes on it, the mission never loads it, or
@@ -337,6 +353,12 @@ DEFAULT:
   # OPS page, which then overrides this block.
   autoupdate:
     enabled: false                 # (OPS) check for + stage new releases
+    # REQUIRED: the ENGINE release signing key's public half (the "RW..."
+    # line of %USERPROFILE%\.tauri\fowl-engine.key.pub, or the whole .pub
+    # file's contents). Every release's manifest.json.sig must verify against
+    # it; without it nothing is ever staged. See deploy/auto-update.md,
+    # "Signing releases". Not the Fowl Engine Manager key -- a separate one.
+    public_key: ""
     source: github                 # github | folder
     repo: "Dillen198/bfnext"
     token: ""                      # optional: a private repo, or to lift the 60/h API limit
@@ -358,8 +380,9 @@ DEFAULT:
     bfdb_unhealthy_minutes: 15     # new bfdb never answered /api/health in this long -> roll back
     rollback_on_crash: true        # (OPS)
     db_snapshots_keep: 3           # bfdb DB copies taken before each bfdb update
-    bot_plugin: false              # (OPS) also update THIS plugin from fowlengine-bot.zip
-                                   # (refused when the plugin is a git checkout / symlink)
+    bot_plugin: false              # also update THIS plugin from fowlengine-bot.zip
+                                   # (refused when the plugin is a git checkout / symlink;
+                                   # YAML only -- the OPS page can't turn it on)
 
   # ---------------------------------------------
   # Log analyzer + persistent log archive  (loganalyzer.py)
@@ -393,13 +416,22 @@ DEFAULT:
   # OPS API  (opsapi.py -- the dashboard's OPS page, reached through bfdb)
   # ---------------------------------------------
   # Routes are added to DCSServerBot's WebService at
-  # <path of bfdb.dcsserverbot_url>/fowlengine/ops/* and require the same
-  # X-API-Key (bfdb.dcsserverbot_api_key). No key -> no OPS page.
+  # <path of bfdb.dcsserverbot_url>/fowlengine/ops/* and require X-API-Key =
+  # ops_api.api_key. They are plain HTTP: keep the WebService on loopback
+  # (config/services/webservice.yaml -> DEFAULT: listen: 127.0.0.1), which is
+  # where bfdb and Fowl Engine Manager call it from.
+  # Without api_key the RestAPI key (bfdb.dcsserverbot_api_key) is still
+  # accepted, with a deprecation warning in the bot log. NOTE: bfdb sends
+  # bfdb.dcsserverbot_api_key on its OPS calls today, so until bfdb gets its
+  # own --ops-api-key a DIFFERENT api_key here locks the dashboard's OPS page
+  # out (Fowl Engine Manager, which reads this file, keeps working).
+  # The OPS page's config editor can't change keys that name a program, a
+  # path, a URL or an update source -- edit those here on the box.
   ops_api:
     enabled: true
     service_name: DCSServerBot     # the Windows service install-service.ps1 created
     # prefix: "/stats"             # override when bfdb.dcsserverbot_url's path differs
-    # api_key: ""                  # override the key (then give bfdb the same one)
+    # api_key: ""                  # its own long random value (see the NOTE above)
 
   # ---------------------------------------------
   # Training range site

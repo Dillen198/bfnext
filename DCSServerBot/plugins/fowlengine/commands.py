@@ -67,6 +67,18 @@ WEAK_CLEAR_HEALTH = 35
 OWNER_CONFIRM_POLLS = 2
 ACHIEVEMENT_THRESHOLDS = [(15, "God of War"), (10, "Unstoppable"), (5, "Ace")]
 
+# Every post whose text carries something a player or an outside system chose
+# (pilot and objective names, GCI transcripts, release notes, exception text)
+# goes out with mentions disabled: DCSServerBot sets no client-wide default,
+# so a pilot named "@everyone" would otherwise ping the whole guild.
+NO_PINGS = discord.AllowedMentions.none()
+
+# Fowl Engine Manager drops this file into DCSServerBot's folder (the bot's
+# working directory) to ask for a clean shutdown before it would otherwise
+# kill the process -- so cogs unload, bfdb is stopped gracefully and state is
+# saved. Checked every second by status_watch.
+SHUTDOWN_REQUEST_FILE = "fowl-shutdown.request"
+
 # ── Per-coalition briefing channels ──────────────────────────────
 # Two channels per DCS server, one per coalition, each holding a single embed
 # that is edited in place from bfdb's GET /api/situation. Read access is gated
@@ -463,6 +475,8 @@ class FowlEngine(Plugin):
         # admin has actually installed them -- every icon has a unicode
         # stand-in, so embeds render correctly either way.
         self.icons = IconSet(bot, self.log)
+        # for status_watch: a shutdown request older than this is stale
+        self._loaded_at = time.time()
 
     # ── per-server config sections ──────────────────────────────────────────
 
@@ -599,6 +613,7 @@ class FowlEngine(Plugin):
         utils.safe_start(self.update_range_status)
         utils.safe_start(self.poll_range_results)
         utils.safe_start(self.autoupdate_loop)
+        utils.safe_start(self.status_watch)
         self._warn_shared_channels()
 
     # Channels that must not be shared between DCS servers: each carries a
@@ -696,6 +711,7 @@ class FowlEngine(Plugin):
         await utils.safe_cancel(self.update_range_status)
         await utils.safe_cancel(self.poll_range_results)
         await utils.safe_cancel(self.autoupdate_loop)
+        await utils.safe_cancel(self.status_watch)
         if self.opsapi:
             try:
                 self.opsapi.unregister()
@@ -755,6 +771,40 @@ class FowlEngine(Plugin):
     async def before_autoupdate_loop(self):
         await self.bot.wait_until_ready()
 
+    @tasks.loop(seconds=1.0)
+    async def status_watch(self):
+        """Once a second, two cheap checks: the auto-updater's view of every
+        server's status (so a scheduled restart's brief SHUTTING_DOWN isn't
+        missed and mistaken for a crash), and Fowl Engine Manager's request
+        for a clean shutdown."""
+        if self.updater:
+            try:
+                self.updater.sample_status()
+            except Exception as ex:
+                self.log.debug(f"FowlEngine: status sample failed: {ex}")
+        try:
+            st = os.stat(SHUTDOWN_REQUEST_FILE)
+        except OSError:
+            return
+        # Only a request made while this bot was running counts: one left
+        # behind by a crash must not shut the next start straight down.
+        if st.st_mtime < self._loaded_at - 5:
+            try:
+                os.remove(SHUTDOWN_REQUEST_FILE)
+            except OSError:
+                pass
+            return
+        try:
+            os.remove(SHUTDOWN_REQUEST_FILE)
+        except OSError:
+            pass
+        self.log.warning("FowlEngine: Fowl Engine Manager asked for a clean shutdown -- shutting the bot down")
+        await self.bot.node.shutdown()
+
+    @status_watch.before_loop
+    async def before_status_watch(self):
+        await self.bot.wait_until_ready()
+
     # ── Discord message hook: engine-binary drag-and-drop upload ─────────────
 
     @commands.Cog.listener()
@@ -778,8 +828,12 @@ class FowlEngine(Plugin):
         await self._notify_ops(cfg, message)
 
     def save_state(self):
+        # tmp + os.replace: the bot can be stopped at any moment (a restart
+        # from Fowl Engine Manager, a crash), and a half-written state file
+        # would lose every tracked message id -- a channel full of duplicates.
+        tmp = self.state_file + '.tmp'
         try:
-            with open(self.state_file, 'w') as f:
+            with open(tmp, 'w') as f:
                 json.dump({
                     'status_msg_ids': self.status_msg_ids,
                     'perf_msg_ids': self.perf_msg_ids,
@@ -790,6 +844,7 @@ class FowlEngine(Plugin):
                     'range_status_msg_ids': self.range_status_msg_ids,
                     'range_feed_cursors': self.range_feed_cursors,
                 }, f)
+            os.replace(tmp, self.state_file)
         except Exception as ex:
             self.log.error(f"Failed to save Fowl Engine state: {ex}")
 
@@ -1336,7 +1391,7 @@ class FowlEngine(Plugin):
                                 continue
                             emoji = "🔴" if side == "red" else "🔵"
                             try:
-                                await channel.send(f"{emoji} {text}")
+                                await channel.send(f"{emoji} {text}", allowed_mentions=NO_PINGS)
                             except discord.HTTPException as ex:
                                 self.log.error(f"FowlEngine: GCI transcript post failed: {ex}")
             except asyncio.CancelledError:
@@ -1446,7 +1501,7 @@ class FowlEngine(Plugin):
         if not channel:
             return
         try:
-            await channel.send(message)
+            await channel.send(message, allowed_mentions=NO_PINGS)
         except discord.HTTPException as ex:
             self.log.error(f"FowlEngine: failed to send ops notice: {ex}")
 
@@ -1878,7 +1933,8 @@ class FowlEngine(Plugin):
                     state["pending_count"] = 0
                     if owner == "Neutral":
                         fmt = messages.get('neutral', "🏳️ **[NEUTRAL]** {message}")
-                        await faction_channels["Neutral"].send(fmt.format(message=f"{name} has gone neutral."))
+                        await faction_channels["Neutral"].send(fmt.format(message=f"{name} has gone neutral."),
+                                                                  allowed_mentions=NO_PINGS)
                     # Non-neutral ownership changes are announced by
                     # _poll_capture_events instead, which has pilot attribution
                     # this owner-diff can't provide.
@@ -1901,13 +1957,16 @@ class FowlEngine(Plugin):
                 # each posted only to the thread it's relevant to.
                 if owner in ("Blue", "Red"):
                     defend_fmt = messages.get('ready_to_capture', "⏳ **[READY TO CAPTURE]** {message}")
-                    await faction_channels[owner].send(defend_fmt.format(message=f"{name} is ready to be captured -- defend it!"))
+                    await faction_channels[owner].send(defend_fmt.format(message=f"{name} is ready to be captured -- defend it!"),
+                                                      allowed_mentions=NO_PINGS)
                     attacker = "Red" if owner == "Blue" else "Blue"
                     attack_fmt = messages.get('capture_opportunity', "🎯 **[OPPORTUNITY]** {message}")
-                    await faction_channels[attacker].send(attack_fmt.format(message=f"{name} ({owner}) is weak and ready to be captured!"))
+                    await faction_channels[attacker].send(attack_fmt.format(message=f"{name} ({owner}) is weak and ready to be captured!"),
+                                                         allowed_mentions=NO_PINGS)
                 else:
                     fmt = messages.get('ready_to_capture', "⏳ **[READY TO CAPTURE]** {message}")
-                    await faction_channels["Neutral"].send(fmt.format(message=f"{name} ({owner}) is ready to be captured."))
+                    await faction_channels["Neutral"].send(fmt.format(message=f"{name} ({owner}) is ready to be captured."),
+                                                          allowed_mentions=NO_PINGS)
             elif was_weak and health >= WEAK_CLEAR_HEALTH:
                 state["weak"] = False
 
@@ -1949,7 +2008,7 @@ class FowlEngine(Plugin):
             # loser as something to retake -- so it goes to both threads
             # rather than only the capturing side's.
             for channel in {faction_channels["Blue"], faction_channels["Red"]}:
-                await channel.send(fmt.format(message=message))
+                await channel.send(fmt.format(message=message), allowed_mentions=NO_PINGS)
 
     async def _fetch_pilot_names(self, session, api_url):
         try:
@@ -2017,7 +2076,8 @@ class FowlEngine(Plugin):
                         names = await self._fetch_pilot_names(session, api_url)
                     pname = names.get(killer_ucid, killer_ucid[:8])
                     fmt = messages.get('achievement', "🎖️ **[ACHIEVEMENT]** {message}")
-                    await channel.send(fmt.format(message=f"{pname} achieved {label} ({count} air kills without dying)!"))
+                    await channel.send(fmt.format(message=f"{pname} achieved {label} ({count} air kills without dying)!"),
+                                       allowed_mentions=NO_PINGS)
                     break  # only announce the highest newly-crossed threshold per kill
 
     async def _engine_log_relay(self, server: Server):
@@ -2509,23 +2569,13 @@ class FowlEngine(Plugin):
     async def fe_dashboard(self, interaction: discord.Interaction):
         config = self.get_config() or {}
         dashboard_url = config.get("dashboard_url", "https://bfweb.your-domain.com")
-        dashboard_secret = config.get("dashboard_secret", None)
-        
         embed = self._vs_embed("Dashboard", color=discord.Color.blue(), url=dashboard_url)
         embed.description = "Access your pilot profile, live map, and stats."
-        
+        # Login is Discord OAuth on the dashboard itself. (There used to be an
+        # HMAC "auto-login" link here, signed with `dashboard_secret`, that
+        # nothing on the bfdb side ever accepted.)
         embed.add_field(name="Standard Login", value=f"[Login with Discord]({dashboard_url}/login)", inline=False)
-        
-        if dashboard_secret:
-            import hmac, hashlib, base64, time, json
-            payload = {"id": str(interaction.user.id), "exp": int(time.time()) + 3600}
-            payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
-            signature = hmac.new(dashboard_secret.encode(), payload_b64.encode(), hashlib.sha256).digest()
-            sig_b64 = base64.urlsafe_b64encode(signature).decode().rstrip('=')
-            token = f"{payload_b64}.{sig_b64}"
-            auto_login_url = f"{dashboard_url}/auth?token={token}"
-            embed.add_field(name="Auto-Login (Expires in 1 hr)", value=f"[Click here for secure auto-login]({auto_login_url})\n*Do not share this link!*", inline=False)
-            
+
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @command(description='Ban a pilot from the campaign (by UCID).')
@@ -2551,7 +2601,8 @@ class FowlEngine(Plugin):
                 "/api/admin/ban", {"ucid": ucid, "name": name, "reason": reason, "until": until},
             )
             if status == 200:
-                await interaction.followup.send(f"🔨 Banned **{name}** (`{ucid}`)" + (f" until {until}" if until else " indefinitely") + (f": {reason}" if reason else "."))
+                await interaction.followup.send(f"🔨 Banned **{name}** (`{ucid}`)" + (f" until {until}" if until else " indefinitely") + (f": {reason}" if reason else "."),
+                                               allowed_mentions=NO_PINGS)
             else:
                 await interaction.followup.send(f"❌ Failed to ban: HTTP {status}")
         except Exception as ex:
@@ -3663,7 +3714,7 @@ class FowlEngine(Plugin):
         for channel, post, summary in plan:
             if summary:
                 try:
-                    await channel.send(summary)
+                    await channel.send(summary, allowed_mentions=NO_PINGS)
                 except discord.HTTPException as ex:
                     self.log.error(f"FowlEngine: range catch-up line to {channel.id} failed: {ex}")
             for item in post:

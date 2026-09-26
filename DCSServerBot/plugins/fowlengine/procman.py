@@ -16,7 +16,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
+import signal
 import socket
 import subprocess
 import time
@@ -34,6 +36,22 @@ __all__ = [
 BFDB_HEALTH_CHECK_SECS = 30
 
 NETIDX_RESOLVER_PORT = 4564
+
+# bfdb's own listeners. Loopback by default: the dashboard/site are published
+# through Caddy / a tunnel on the same box, and a LAN/Internet-facing bfdb is
+# something to opt into (bfdb.listen_address / site_address), not a default.
+DEFAULT_LISTEN_ADDRESS = "127.0.0.1:8880"
+DEFAULT_SITE_ADDRESS = "127.0.0.1:8766"
+
+# How bfdb is stopped: Ctrl-Break to its process group (bfdb flushes sled and
+# exits), then the loopback-only admin shutdown endpoint, then -- only if both
+# were ignored -- a hard kill. A hard kill mid-write is what tears sled pages.
+BFDB_STOP_TIMEOUT_SECS = 15.0
+BFDB_SHUTDOWN_PATH = "/api/admin/shutdown"
+
+# Any `--something-key/-secret/-password/-token` flag's value is a secret and
+# never goes into a log line (the bot log is archived and shown on the OPS page).
+_SECRET_FLAG_RE = re.compile(r"^--[a-z0-9-]*(key|secret|password|token)$", re.IGNORECASE)
 
 # gci.yaml (snake_case) -> gci.json (camelCase, matches bfdb/src/gci.rs GciConfig).
 # `enabled` is consumed by procman itself and never written to the file.
@@ -268,7 +286,18 @@ class Procman:
 
         self._bfdb: Optional[subprocess.Popen] = None
         self._resolver: Optional[subprocess.Popen] = None
-        self._lock = asyncio.Lock()
+        # One lock around every stop -> swap -> start sequence (restart, bfdb
+        # rollback, stats rebuild, fresh DB). Taken separately by stop() and
+        # start(), two triggers (an OPS restart, a BFBinaries nudge per DCS
+        # server, the updater's apply, the health supervisor) could interleave
+        # and start a bfdb between another one's stop and swap.
+        self._op_lock = asyncio.Lock()
+        # A restart already waiting on _op_lock: a second request while one is
+        # queued would only restart bfdb twice in a row, so it is folded in.
+        self._restart_queued = False
+        # The admin password of the last start(), for the graceful-shutdown
+        # request when stop() is called without one (bot shutdown).
+        self._admin_password: Optional[str] = None
 
         # health-supervision state (mirrors the old commands.py fields)
         self._fail_count = 0
@@ -343,7 +372,7 @@ class Procman:
     @property
     def api_url(self) -> str:
         # health checks always go to the loopback listener, not a public origin
-        addr = self.cfg.get("listen_address", "0.0.0.0:8880")
+        addr = self.cfg.get("listen_address") or DEFAULT_LISTEN_ADDRESS
         port = addr.rsplit(":", 1)[-1]
         return f"http://127.0.0.1:{port}"
 
@@ -638,7 +667,9 @@ class Procman:
         p = self._pending_path(name, staging_dir)
         if not os.path.exists(p):
             return None
-        info = {"path": p, "size": os.path.getsize(p), "sha256": sha256_of(p)}
+        # cached per (path, size, mtime): the OPS page polls this every few
+        # seconds and a staged bfdb.exe is tens of MB
+        info = {"path": p, "size": os.path.getsize(p), "sha256": sha256_cached(p)}
         side = p + ".json"
         if os.path.exists(side):
             try:
@@ -677,14 +708,18 @@ class Procman:
                 pass
 
     def apply_staged(self, name: str, live_path: str, keep: int = 5,
-                     staging_dir: Optional[str] = None) -> Optional[str]:
+                     staging_dir: Optional[str] = None, fire_hooks: bool = True) -> Optional[str]:
         """Swap staging/<name>.pending over live_path after a timestamped backup.
         Returns a human-readable note if a swap happened, else None. Never raises
         -- on failure the live file is left untouched (or restored).
 
         For bfdb.exe (only ever called with bfdb stopped) the database is
         snapshotted first and the new exe goes on probation -- see
-        supervise_tick()."""
+        supervise_tick().
+
+        Blocking (a DB copy can take a while): async callers run it in an
+        executor with fire_hooks=False and call _fire_swap_hook() back on the
+        event loop, so the updater's state is only ever touched from there."""
         pending = self._pending_path(name, staging_dir)
         if not os.path.exists(pending):
             return None
@@ -735,12 +770,21 @@ class Procman:
                 "exits": 0,
             }
             self._save_probation()
-            if self.on_swapped:
-                try:
-                    self.on_swapped({**sidecar, "sha256": sha256_of(live_path)})
-                except Exception as ex:  # noqa: BLE001
-                    self.log.debug(f"FowlEngine/procman: on_swapped hook failed: {ex}")
+            self._swap_hook_payload = {**sidecar, "sha256": sha256_of(live_path)}
+            if fire_hooks:
+                self._fire_swap_hook()
         return note
+
+    _swap_hook_payload: Optional[dict] = None
+
+    def _fire_swap_hook(self) -> None:
+        payload, self._swap_hook_payload = self._swap_hook_payload, None
+        if payload is None or not self.on_swapped:
+            return
+        try:
+            self.on_swapped(payload)
+        except Exception as ex:  # noqa: BLE001
+            self.log.debug(f"FowlEngine/procman: on_swapped hook failed: {ex}")
 
     # ---- DB snapshots + bfdb probation ------------------------------------
 
@@ -843,10 +887,12 @@ class Procman:
             self.probation = None
             self._save_probation()
             return f"⛔ bfdb rollback wanted ({why}) but there is no bfdb.exe backup to restore."
-        async with self._lock:
-            await self._terminate(self._bfdb, "bfdb")
-            self._bfdb = None
-        self._kill_orphan_bfdb()
+        async with self._op_lock:
+            return await self._rollback_bfdb_locked(admin_password, why, p, backup)
+
+    async def _rollback_bfdb_locked(self, admin_password: str, why: str, p: dict, backup: str) -> str:
+        await self._stop_bfdb(admin_password)
+        await self._stop_orphans(admin_password)
         await asyncio.sleep(3.0)
         tag = _now_tag()
         notes = []
@@ -857,7 +903,7 @@ class Procman:
             shutil.copy2(backup, self.exe)
             notes.append(f"exe ← `{os.path.basename(backup)}`")
         except OSError as ex:
-            await self.start(admin_password)
+            await self._start_unlocked(admin_password)
             return f"⛔ bfdb rollback failed while restoring the exe ({ex}); restarted what was there."
         snap = p.get("db_snapshot")
         if snap and os.path.isdir(snap):
@@ -879,7 +925,7 @@ class Procman:
                 self.on_rollback(rel, why)
             except Exception as ex:  # noqa: BLE001
                 self.log.debug(f"FowlEngine/procman: on_rollback hook failed: {ex}")
-        await self.start(admin_password)
+        await self._start_unlocked(admin_password)
         msg = (f"⏪ **bfdb rolled back** -- {why}. " + "; ".join(notes)
                + (f". Release {rel} is marked bad." if rel else "."))
         self.log.error(f"FowlEngine/procman: {msg}")
@@ -921,8 +967,8 @@ class Procman:
         c = self.cfg
         args: list[str] = [
             "--db", os.path.join(self.home, "bfdb"),
-            "--listen-address", c.get("listen_address", "0.0.0.0:8880"),
-            "--site-address", c.get("site_address", "0.0.0.0:8766"),
+            "--listen-address", c.get("listen_address") or DEFAULT_LISTEN_ADDRESS,
+            "--site-address", c.get("site_address") or DEFAULT_SITE_ADDRESS,
             "--admin-username", c.get("admin_username", "admin"),
             "--admin-password", admin_password,
         ]
@@ -932,9 +978,10 @@ class Procman:
             "--intel-dir": self._resolved("intel_dir"),
             "--log-file": self._resolved("log_file"),
             # The war diary's writer. Omit all three and bfdb still files a
-            # dispatch every day, from its own template bank.
+            # dispatch every day, from its own template bank. The key goes in
+            # through the environment (_bfdb_env), not the command line, where
+            # any local process could read it.
             "--news-llm-url": (c.get("news_llm_url") or None),
-            "--news-llm-key": (c.get("news_llm_key") or None),
             "--news-llm-model": (c.get("news_llm_model") or None),
         }
         if instances_file:
@@ -976,6 +1023,17 @@ class Procman:
             ]
         return args
 
+    def _bfdb_env(self) -> dict:
+        """bfdb's environment: the bot's, plus the secrets bfdb can read from
+        the environment instead of its command line. Only BFDB_NEWS_LLM_KEY so
+        far (bfdb/src/news_llm.rs); the other secrets still go as flags until
+        bfdb reads them from the environment too."""
+        env = dict(os.environ)
+        key = self.cfg.get("news_llm_key")
+        if key:
+            env["BFDB_NEWS_LLM_KEY"] = str(key)
+        return env
+
     # ---- lifecycle -----------------------------------------------------
 
     def is_running(self) -> bool:
@@ -984,6 +1042,10 @@ class Procman:
     async def process_info(self) -> dict:
         """bfdb + resolver state for the Ops page."""
         running = self.is_running()
+        # hashing a 50 MB exe must not stall the bot's event loop (the first
+        # call per file; sha256_cached remembers it after that)
+        exe_sha, pending = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: (sha256_cached(self.exe) if self.exe else None, self.pending_info("bfdb.exe")))
         return {
             "managed": self.enabled,
             "exe": self.exe,
@@ -1000,18 +1062,26 @@ class Procman:
             "resolver_owned": self._resolver is not None and self._resolver.poll() is None,
             "last_swap": self._last_swap_note,
             "probation": self.probation,
-            "exe_sha256": sha256_cached(self.exe) if self.exe else None,
-            "pending": self.pending_info("bfdb.exe"),
+            "exe_sha256": exe_sha,
+            "pending": pending,
         }
 
     def _redact(self, args: list[str]) -> str:
-        secret_flags = {
-            "--admin-password", "--discord-client-secret", "--dcsserverbot-api-key",
-        }
         out, redact_next = [], False
         for a in args:
-            out.append("***" if redact_next else a)
-            redact_next = a in secret_flags
+            if redact_next:
+                out.append("***")
+                redact_next = False
+                continue
+            flag, eq, _val = a.partition("=")
+            if _SECRET_FLAG_RE.match(flag):
+                if eq:
+                    out.append(f"{flag}=***")  # --flag=value spelling
+                else:
+                    out.append(a)
+                    redact_next = True
+                continue
+            out.append(a)
         return " ".join(out)
 
     async def _start_resolver(self) -> None:
@@ -1078,102 +1148,251 @@ class Procman:
             "after 5s -- check procman-netidx.log and %APPDATA%\\netidx\\client.json for the bot's account"
         )
 
-    def _kill_orphan_bfdb(self) -> None:
-        """Best-effort: kill any bfdb.exe we're not tracking (orphans from a
-        bot process that was force-killed). No-op on non-Windows / if none."""
+    def _orphan_bfdb_procs(self) -> list:
+        """bfdb.exe processes running THIS box's configured exe that we are not
+        tracking (left by a bot process that was force-killed). Matched by
+        exe path, never by name: another bfdb (a test copy, a second stack, a
+        range PC's tools) is none of our business."""
         our_pid = self._bfdb.pid if (self._bfdb and self._bfdb.poll() is None) else None
+        want = os.path.normcase(os.path.realpath(self.exe)) if self.exe else None
+        if not want:
+            return []
         try:
             import psutil
-            for p in psutil.process_iter(["name", "pid"]):
-                if (p.info.get("name") or "").lower() in ("bfdb.exe", "bfdb") and p.pid != our_pid:
-                    self.log.warning(f"FowlEngine/procman: killing orphan bfdb.exe (pid {p.pid})")
-                    p.kill()
-            return
-        except Exception:
-            pass
-        if os.name == "nt" and our_pid is None:
+        except Exception:  # noqa: BLE001
+            self.log.warning("FowlEngine/procman: psutil is unavailable -- not looking for orphan bfdb.exe "
+                             "processes (a stale one may hold bfdb's port)")
+            return []
+        out = []
+        for p in psutil.process_iter(["name", "pid", "exe"]):
             try:
-                subprocess.run(["taskkill", "/F", "/IM", "bfdb.exe"],
-                               capture_output=True, timeout=10)
-            except Exception:
-                pass
+                if (p.info.get("name") or "").lower() not in ("bfdb.exe", "bfdb") or p.pid == our_pid:
+                    continue
+                exe = p.info.get("exe")
+                if exe and os.path.normcase(os.path.realpath(exe)) == want:
+                    out.append(p)
+            except Exception:  # noqa: BLE001 - gone / access denied: not ours to judge
+                continue
+        return out
+
+    def _kill_orphan_bfdb(self) -> None:
+        """Last resort: hard-kill any orphan of our bfdb.exe (see
+        _orphan_bfdb_procs) so the new one can bind its port."""
+        for p in self._orphan_bfdb_procs():
+            try:
+                self.log.warning(f"FowlEngine/procman: killing orphan bfdb.exe (pid {p.pid})")
+                p.kill()
+            except Exception as ex:  # noqa: BLE001
+                self.log.warning(f"FowlEngine/procman: could not kill orphan bfdb.exe (pid {p.pid}): {ex}")
+
+    async def _stop_orphans(self, admin_password: Optional[str]) -> None:
+        """An orphan still owns the DB: ask it to shut down cleanly over the
+        loopback endpoint (it isn't in our console group, so no Ctrl-Break)
+        before killing it."""
+        orphans = await asyncio.get_running_loop().run_in_executor(None, self._orphan_bfdb_procs)
+        if not orphans:
+            return
+        self.log.warning(f"FowlEngine/procman: {len(orphans)} orphan bfdb.exe running "
+                         f"({', '.join(str(p.pid) for p in orphans)}) -- asking it to shut down")
+        if await self._request_shutdown(admin_password):
+            deadline = time.monotonic() + self._stop_timeout
+            while time.monotonic() < deadline:
+                if not any(p.is_running() for p in orphans):
+                    return
+                await asyncio.sleep(0.5)
+        self._kill_orphan_bfdb()
+
+    @property
+    def _stop_timeout(self) -> float:
+        try:
+            return max(1.0, float(self.cfg.get("stop_timeout_secs", BFDB_STOP_TIMEOUT_SECS)))
+        except (TypeError, ValueError):
+            return BFDB_STOP_TIMEOUT_SECS
+
+    async def _request_shutdown(self, admin_password: Optional[str]) -> bool:
+        """POST bfdb's loopback-only admin shutdown endpoint (`bfdb.shutdown_path`),
+        logged in the same way as every other admin call the plugin makes.
+        True if bfdb accepted it."""
+        username = self.cfg.get("admin_username", "admin")
+        password = admin_password or self._admin_password
+        path = str(self.cfg.get("shutdown_path") or BFDB_SHUTDOWN_PATH)
+        if not password:
+            return False
+        url = self.api_url
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(f"{url}/api/auth/local-login",
+                                  json={"username": username, "password": password}, timeout=5) as r:
+                    if r.status != 200:
+                        return False
+                    m = re.search(r"session=([0-9a-fA-F-]+)", r.headers.get("set-cookie", ""))
+                    if not m:
+                        return False
+                async with s.post(f"{url}{path}", headers={"Cookie": f"session={m.group(1)}"},
+                                  timeout=5) as r:
+                    if r.status in (200, 202, 204):
+                        return True
+                    self.log.info(f"FowlEngine/procman: {path} answered HTTP {r.status}")
+                    return False
+        except Exception as ex:  # noqa: BLE001 - unreachable / already gone
+            self.log.debug(f"FowlEngine/procman: shutdown request failed: {ex}")
+            return False
+
+    async def _wait_exit(self, proc: subprocess.Popen, secs: float) -> bool:
+        deadline = time.monotonic() + secs
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                return True
+            await asyncio.sleep(0.25)
+        return proc.poll() is not None
+
+    async def _stop_bfdb(self, admin_password: Optional[str] = None) -> None:
+        """Stop our bfdb child without tearing its sled DB: Ctrl-Break (bfdb
+        flushes and exits), then the admin shutdown endpoint, then kill."""
+        proc, self._bfdb = self._bfdb, None
+        if proc is None or proc.poll() is not None:
+            return
+        self.log.info(f"FowlEngine/procman: stopping bfdb (pid {proc.pid})")
+        timeout = self._stop_timeout
+        if os.name == "nt" and hasattr(signal, "CTRL_BREAK_EVENT"):
+            try:
+                # bfdb runs in its own process group (see _start_unlocked), so
+                # this reaches bfdb alone, never the bot.
+                proc.send_signal(signal.CTRL_BREAK_EVENT)
+                if await self._wait_exit(proc, timeout):
+                    return
+                self.log.warning(f"FowlEngine/procman: bfdb ignored Ctrl-Break for {timeout:.0f}s")
+            except OSError as ex:
+                # no console shared with bfdb (e.g. a console-less service)
+                self.log.info(f"FowlEngine/procman: Ctrl-Break to bfdb failed ({ex})")
+        elif os.name != "nt":
+            proc.terminate()  # SIGTERM: graceful on POSIX
+            if await self._wait_exit(proc, timeout):
+                return
+        if await self._request_shutdown(admin_password):
+            if await self._wait_exit(proc, timeout):
+                return
+        self.log.warning("FowlEngine/procman: bfdb did not shut down cleanly -- killing it "
+                         "(its DB may need a check on the next start)")
+        proc.kill()
+        await self._wait_exit(proc, 5.0)
 
     async def start(self, admin_password: str) -> None:
         """(Re)start the sidecar stack: apply staged bfdb.exe, render gci.json,
         start the resolver if needed, then start bfdb."""
-        async with self._lock:
-            if not self.enabled:
-                self.log.debug("FowlEngine/procman: bfdb.manage is false -- not starting anything")
-                return
-            os.makedirs(self.staging_dir, exist_ok=True)
-            # A fresh box has no bfdb.exe yet: the first one arrives staged
-            # (auto-update or a Discord upload), so apply before giving up.
-            note = self.apply_staged("bfdb.exe", self.exe) if self.exe else None
-            if not self.exe or not os.path.exists(self.exe):
-                self.log.error(f"FowlEngine/procman: bfdb exe not found at {self.exe!r} and none is staged "
-                               f"-- enable autoupdate or drop a bfdb.exe into the admin channel")
-                return
-            if note:
-                await self._safe_notify(f"🧩 bfdb: {note}")
+        async with self._op_lock:
+            await self._start_unlocked(admin_password)
 
-            # Multi-instance renders instances.json (and one gci.<id>.json per
-            # instance); single-server keeps the flat gci.json.
-            instances_file = self._render_instances()
-            gci_ok = False if instances_file else self._render_gci()
-            await self._start_resolver()
+    async def _start_unlocked(self, admin_password: str) -> None:
+        if not self.enabled:
+            self.log.debug("FowlEngine/procman: bfdb.manage is false -- not starting anything")
+            return
+        self._admin_password = admin_password or self._admin_password
+        loop = asyncio.get_running_loop()
+        os.makedirs(self.staging_dir, exist_ok=True)
+        # A fresh box has no bfdb.exe yet: the first one arrives staged
+        # (auto-update or a Discord upload), so apply before giving up. In an
+        # executor: the swap snapshots the whole DB first.
+        note = await loop.run_in_executor(
+            None, lambda: self.apply_staged("bfdb.exe", self.exe, fire_hooks=False)) if self.exe else None
+        self._fire_swap_hook()
+        if not self.exe or not os.path.exists(self.exe):
+            self.log.error(f"FowlEngine/procman: bfdb exe not found at {self.exe!r} and none is staged "
+                           f"-- enable autoupdate or drop a bfdb.exe into the admin channel")
+            return
+        if note:
+            await self._safe_notify(f"🧩 bfdb: {note}")
 
-            # kill any orphan bfdb.exe (e.g. left by a previous bot process that
-            # was killed without cleanup) so the new one can bind its port
-            self._kill_orphan_bfdb()
+        # Multi-instance renders instances.json (and one gci.<id>.json per
+        # instance); single-server keeps the flat gci.json.
+        instances_file = self._render_instances()
+        gci_ok = False if instances_file else self._render_gci()
+        await self._start_resolver()
 
-            args = self._build_args(admin_password, gci_ok, instances_file)
-            self.log.info(f"FowlEngine/procman: launching {os.path.basename(self.exe)} {self._redact(args)}")
-            # capture anything bfdb prints before its own --log-file logger is up
-            # (missing-DLL loader errors, panics, "address in use", ...)
-            boot_log = os.path.join(self.home, "procman-bfdb-boot.log") if self.home else None
+        # stop any orphan bfdb.exe (e.g. left by a previous bot process that
+        # was killed without cleanup) so the new one can bind its port
+        await self._stop_orphans(admin_password)
+
+        args = self._build_args(admin_password, gci_ok, instances_file)
+        self.log.info(f"FowlEngine/procman: launching {os.path.basename(self.exe)} {self._redact(args)}")
+        # capture anything bfdb prints before its own --log-file logger is up
+        # (missing-DLL loader errors, panics, "address in use", ...)
+        boot_log = os.path.join(self.home, "procman-bfdb-boot.log") if self.home else None
+        # Its own process group, so _stop_bfdb can Ctrl-Break bfdb alone.
+        flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
+        try:
+            out = open(boot_log, "wb", buffering=0) if boot_log else subprocess.DEVNULL
+            self._bfdb = subprocess.Popen([self.exe, *args], cwd=self.home or None,
+                                          stdout=out, stderr=out, creationflags=flags,
+                                          env=self._bfdb_env())
+        except OSError as ex:
+            self.log.error(f"FowlEngine/procman: failed to launch bfdb: {ex}")
+            self._bfdb = None
+            return
+        self._fail_count = 0
+        self._first_fail = None
+        self._last_restart = time.time()
+        self.started_at = time.time()
+
+        # give it a beat; if it died instantly, surface why now
+        await asyncio.sleep(2.0)
+        if self._bfdb.poll() is not None:
+            self.last_exit_code = self._bfdb.returncode
+            tail = ""
             try:
-                out = open(boot_log, "wb", buffering=0) if boot_log else subprocess.DEVNULL
-                self._bfdb = subprocess.Popen([self.exe, *args], cwd=self.home or None,
-                                              stdout=out, stderr=out)
-            except OSError as ex:
-                self.log.error(f"FowlEngine/procman: failed to launch bfdb: {ex}")
-                self._bfdb = None
-                return
-            self._fail_count = 0
-            self._first_fail = None
-            self._last_restart = time.time()
-            self.started_at = time.time()
-
-            # give it a beat; if it died instantly, surface why now
-            await asyncio.sleep(2.0)
-            if self._bfdb.poll() is not None:
-                self.last_exit_code = self._bfdb.returncode
-                tail = ""
-                try:
-                    with open(boot_log, "rb") as fh:
-                        tail = fh.read()[-1200:].decode("utf-8", "replace")
-                except OSError:
-                    pass
-                self.log.error(
-                    f"FowlEngine/procman: bfdb.exe exited immediately (code {self._bfdb.returncode}). "
-                    f"Common causes: missing lua.dll/opus.dll next to bfdb.exe, port 8880 already in use, "
-                    f"bad --config path. Boot output:\n{tail}\n"
-                    f"Also check {os.path.join(self.home, 'Logs', 'bfdb.log')}"
-                )
+                with open(boot_log, "rb") as fh:
+                    tail = fh.read()[-1200:].decode("utf-8", "replace")
+            except OSError:
+                pass
+            self.log.error(
+                f"FowlEngine/procman: bfdb.exe exited immediately (code {self._bfdb.returncode}). "
+                f"Common causes: missing lua.dll/opus.dll next to bfdb.exe, port 8880 already in use, "
+                f"bad --config path. Boot output:\n{tail}\n"
+                f"Also check {os.path.join(self.home, 'Logs', 'bfdb.log')}"
+            )
 
     async def stop(self, *, stop_resolver: Optional[bool] = None) -> None:
-        async with self._lock:
-            await self._terminate(self._bfdb, "bfdb")
-            self._bfdb = None
-            if stop_resolver is None:
-                stop_resolver = bool(self.cfg.get("own_resolver"))
-            if stop_resolver:
-                await self._terminate(self._resolver, "netidx resolver")
-                self._resolver = None
+        async with self._op_lock:
+            await self._stop_unlocked(stop_resolver=stop_resolver)
+
+    async def _stop_unlocked(self, *, stop_resolver: Optional[bool] = None) -> None:
+        await self._stop_bfdb()
+        if stop_resolver is None:
+            stop_resolver = bool(self.cfg.get("own_resolver"))
+        if stop_resolver:
+            await self._terminate(self._resolver, "netidx resolver")
+            self._resolver = None
 
     async def restart(self, admin_password: str) -> None:
-        await self.stop()
-        await self.start(admin_password)
+        """Stop, swap in anything staged, start -- as one step under the
+        operation lock. A restart asked for while another is already waiting
+        its turn is folded into that one."""
+        if self._restart_queued:
+            self.log.info("FowlEngine/procman: a bfdb restart is already queued -- not stacking another")
+            return
+        self._restart_queued = True
+        try:
+            await self._op_lock.acquire()
+        except BaseException:
+            self._restart_queued = False
+            raise
+        try:
+            self._restart_queued = False
+            await self._stop_unlocked()
+            await self._start_unlocked(admin_password)
+        finally:
+            self._op_lock.release()
+
+    async def restart_if_pending(self, admin_password: str) -> bool:
+        """Restart only if a bfdb.exe is still staged once it is our turn --
+        several DCS servers starting at once each nudge bfdb for the same file,
+        and only the first of them should cycle it."""
+        async with self._op_lock:
+            if not self.pending_info("bfdb.exe"):
+                return False
+            await self._stop_unlocked()
+            await self._start_unlocked(admin_password)
+            return True
 
     async def rebuild_stats(self, admin_password: str) -> str:
         """Stop bfdb, run a one-shot `bfdb.exe --rebuild-stats` (wipes every
@@ -1192,38 +1411,37 @@ class Procman:
             args += ["--stats-jsonl", jsonl]
         if stats_dir:
             args += ["--stats-dir", stats_dir]
-        async with self._lock:
-            await self._terminate(self._bfdb, "bfdb")
-            self._bfdb = None
-        self._kill_orphan_bfdb()
-        await asyncio.sleep(3.0)  # let sled release its file lock / settle
+        async with self._op_lock:
+            await self._stop_bfdb(admin_password)
+            await self._stop_orphans(admin_password)
+            await asyncio.sleep(3.0)  # let sled release its file lock / settle
 
-        # Snapshot the DB before we touch it, so a bad rebuild is fully
-        # reversible: stop bfdb, restore this folder over `bfdb`, start bfdb.
-        backup_note = ""
-        if os.path.isdir(db_path):
-            backup = f"{db_path}.rebuild-bak-{_now_tag()}"
+            # Snapshot the DB before we touch it, so a bad rebuild is fully
+            # reversible: stop bfdb, restore this folder over `bfdb`, start bfdb.
+            backup_note = ""
+            if os.path.isdir(db_path):
+                backup = f"{db_path}.rebuild-bak-{_now_tag()}"
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, lambda: shutil.copytree(db_path, backup))
+                    backup_note = f" (DB backed up to `{os.path.basename(backup)}`)"
+                    self.log.warning(f"FowlEngine/procman: DB snapshot -> {backup}")
+                except Exception as ex:  # noqa: BLE001
+                    await self._start_unlocked(admin_password)
+                    return f"❌ could not snapshot the DB before rebuild ({ex}); aborted, bfdb restarted unchanged."
+
+            self.log.warning(f"FowlEngine/procman: running one-shot {self._redact(args)}")
             try:
-                await asyncio.get_running_loop().run_in_executor(
-                    None, lambda: shutil.copytree(db_path, backup))
-                backup_note = f" (DB backed up to `{os.path.basename(backup)}`)"
-                self.log.warning(f"FowlEngine/procman: DB snapshot -> {backup}")
+                proc = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    lambda: subprocess.run(args, cwd=self.home or None,
+                                           capture_output=True, text=True, timeout=120),
+                )
             except Exception as ex:  # noqa: BLE001
-                await self.start(admin_password)
-                return f"❌ could not snapshot the DB before rebuild ({ex}); aborted, bfdb restarted unchanged."
-
-        self.log.warning(f"FowlEngine/procman: running one-shot {self._redact(args)}")
-        try:
-            proc = await asyncio.get_running_loop().run_in_executor(
-                None,
-                lambda: subprocess.run(args, cwd=self.home or None,
-                                       capture_output=True, text=True, timeout=120),
-            )
-        except Exception as ex:  # noqa: BLE001
-            await self.start(admin_password)
-            return f"❌ rebuild one-shot failed to run ({ex}); bfdb restarted with existing data."
-        out = ((proc.stdout or "") + (proc.stderr or "")).strip()
-        await self.start(admin_password)
+                await self._start_unlocked(admin_password)
+                return f"❌ rebuild one-shot failed to run ({ex}); bfdb restarted with existing data."
+            out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+            await self._start_unlocked(admin_password)
         if proc.returncode != 0:
             return (f"❌ `--rebuild-stats` exited {proc.returncode}: {out[:400]}\n"
                     f"bfdb restarted with existing data{backup_note}.")
@@ -1243,19 +1461,18 @@ class Procman:
         db_path = os.path.join(self.home, "bfdb")
         if not os.path.isdir(db_path):
             return f"❌ no bfdb DB folder at `{db_path}` -- nothing to move."
-        async with self._lock:
-            await self._terminate(self._bfdb, "bfdb")
-            self._bfdb = None
-        self._kill_orphan_bfdb()
-        await asyncio.sleep(3.0)
-        archived = f"{db_path}.corrupt-{_now_tag()}"
-        try:
-            os.rename(db_path, archived)
-        except OSError as ex:
-            await self.start(admin_password)
-            return f"❌ could not move the DB folder ({ex}); bfdb restarted on the old one."
-        self.log.warning(f"FowlEngine/procman: moved DB {db_path} -> {archived}, starting fresh")
-        await self.start(admin_password)
+        async with self._op_lock:
+            await self._stop_bfdb(admin_password)
+            await self._stop_orphans(admin_password)
+            await asyncio.sleep(3.0)
+            archived = f"{db_path}.corrupt-{_now_tag()}"
+            try:
+                os.rename(db_path, archived)
+            except OSError as ex:
+                await self._start_unlocked(admin_password)
+                return f"❌ could not move the DB folder ({ex}); bfdb restarted on the old one."
+            self.log.warning(f"FowlEngine/procman: moved DB {db_path} -> {archived}, starting fresh")
+            await self._start_unlocked(admin_password)
         return (f"✅ old DB moved to `{os.path.basename(archived)}`, bfdb started on a fresh one.\n"
                 f"It's re-ingesting `stats.jsonl` from the top now — pilot stats, Discord links and one "
                 f"clean round rebuild over the next several minutes (watch the engine-log embed).\n"
@@ -1263,6 +1480,8 @@ class Procman:
                 f"The old folder is kept in case you need to pull anything from it.")
 
     async def _terminate(self, proc: Optional[subprocess.Popen], label: str) -> None:
+        """Plain terminate-then-kill, for the netidx resolver (it keeps no
+        state). bfdb goes through _stop_bfdb instead."""
         if proc is None or proc.poll() is not None:
             return
         self.log.info(f"FowlEngine/procman: stopping {label} (pid {proc.pid})")
@@ -1296,6 +1515,10 @@ class Procman:
     async def supervise_tick(self, admin_password: str) -> None:
         """Call every BFDB_HEALTH_CHECK_SECS from the cog's @tasks.loop."""
         if not self.enabled:
+            return
+        if self._op_lock.locked():
+            # a restart / rollback / rebuild is under way: bfdb being down
+            # right now is that, not a crash to relaunch from
             return
         if self._bfdb is not None and self._bfdb.poll() is not None:
             self.last_exit_code = self._bfdb.returncode

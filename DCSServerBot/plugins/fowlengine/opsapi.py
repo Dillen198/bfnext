@@ -6,11 +6,18 @@ plugin also lives on) under
 
     <restapi prefix>/fowlengine/ops/...
 
-and every one needs the same X-API-Key bfdb already sends to the RestAPI
-(`bfdb.dcsserverbot_api_key` in fowlengine.yaml). bfdb exposes them to a
-logged-in dashboard admin as /api/admin/ops/..., so the browser never sees the
-key and nothing here is reachable without both a Discord admin login and the
-bot's key.
+and every one needs an X-API-Key: `ops_api.api_key` in fowlengine.yaml -- its
+own key, because these routes restart processes and rewrite the bot's config,
+which the RestAPI key (`bfdb.dcsserverbot_api_key`, read-mostly stats) should
+not be able to do. Without it the old shared key is still accepted, with a
+loud deprecation warning. bfdb exposes the routes to a logged-in dashboard
+admin as /api/admin/ops/..., so the browser never sees the key. Keep the
+WebService on 127.0.0.1 (services/webservice.yaml `listen:`): bfdb and Fowl
+Engine Manager both call it from this box, and the routes are plain HTTP.
+
+POST config can't change anything that names a program, a path, a URL or an
+update source (see protected_changes): those are edited on the box itself, so
+a dashboard login can't be turned into running a command or leaking a secret.
 
 Why here and not in bfdb: the bot owns the processes (DCS, bfdb, the netidx
 resolver) and the files (staging dirs, fowlengine.yaml), and it keeps running
@@ -59,7 +66,7 @@ except Exception:  # noqa: BLE001 - imported outside the bot (unit tests)
     Request = Any  # type: ignore[misc,assignment]
 
 __all__ = ["OpsApi", "mask_secrets", "unmask_secrets", "SECRET_MASK", "is_secret_key",
-           "tail_lines", "validate_plugin_yaml"]
+           "tail_lines", "validate_plugin_yaml", "protected_changes", "is_protected_key"]
 
 SECRET_MASK = "__SECRET__"
 _SECRET_HINTS = ("password", "secret", "api_key", "apikey", "token", "webhook", "llm_key")
@@ -93,11 +100,21 @@ def mask_secrets(node: Any) -> int:
     return n
 
 
+def _is_endpoint_key(key: Any) -> bool:
+    k = str(key).lower()
+    return "url" in k or "uri" in k or k.endswith("host")
+
+
 def unmask_secrets(new: Any, old: Any, path: str = "") -> None:
     """Put the real values back wherever the edited document still carries the
     mask. Raises ValueError if a masked value has no counterpart in the old
-    document (the key was renamed/moved -- type the secret in again)."""
+    document (the key was renamed/moved -- type the secret in again), or if a
+    URL/host next to it changed: a saved secret only ever goes back to the
+    endpoint it was saved for, so pointing news_llm_url somewhere else can't
+    quietly send it the old news_llm_key."""
     if isinstance(new, dict):
+        moved = [str(k) for k in new.keys() if _is_endpoint_key(k)
+                 and (not isinstance(old, dict) or new.get(k) != old.get(k))]
         for k in list(new.keys()):
             v = new[k]
             here = f"{path}.{k}" if path else str(k)
@@ -106,6 +123,9 @@ def unmask_secrets(new: Any, old: Any, path: str = "") -> None:
                 if not isinstance(old_v, str) or old_v == SECRET_MASK:
                     raise ValueError(f"{here} still says {SECRET_MASK} but there is no saved value "
                                      f"for it -- type the real value in")
+                if moved:
+                    raise ValueError(f"{', '.join(moved)} changed next to {here}, so its saved value is not "
+                                     f"carried over -- type {here} in again")
                 new[k] = old_v
             else:
                 unmask_secrets(v, old_v, here)
@@ -113,6 +133,62 @@ def unmask_secrets(new: Any, old: Any, path: str = "") -> None:
         for i, item in enumerate(new):
             old_i = old[i] if isinstance(old, list) and i < len(old) else None
             unmask_secrets(item, old_i, f"{path}[{i}]")
+
+
+# Keys an HTTP config edit may not add, change or remove, wherever they sit
+# (DEFAULT, a per-server section, a bfdb.instances entry): anything that names
+# a program to run, a file or folder, a network endpoint, or where engine
+# updates come from and how they are trusted. With one of those, a dashboard
+# admin login would be a way to run a command as the bot (netidx_resolver_cmd,
+# bfdb.exe), to feed it a build (autoupdate.source/folder/repo/public_key,
+# bot_plugin) or to send a saved secret elsewhere (*_url). They are edited on
+# the box. Everything else -- tuning, channels, messages, toggles, secrets
+# themselves -- stays editable.
+_PROTECTED_EXACT = {
+    "exe", "cmd", "command", "home", "folder", "source", "repo", "url", "uri", "public_key",
+    "bot_plugin", "token", "files", "tag_prefix", "config", "prefix", "bftools", "path",
+    "listen", "shutdown_path",
+}
+_PROTECTED_SUFFIXES = (
+    "_exe", "_cmd", "_command", "_path", "_dir", "_url", "_uri", "_config", "_jsonl", "_file",
+    "_folder", "_address", "_origins", "_model", "_host",
+)
+
+
+def is_protected_key(key: Any) -> bool:
+    k = str(key).lower()
+    return k in _PROTECTED_EXACT or k.endswith(_PROTECTED_SUFFIXES)
+
+
+def protected_changes(new: Any, old: Any, path: str = "", under: bool = False) -> list[str]:
+    """Paths of protected keys (is_protected_key) whose value differs between
+    two documents -- added, removed or changed, at any depth. `under` = an
+    ancestor key is protected, so everything below it counts (a list like
+    cors_origins, a mapping like netidx_resolver_cmd's)."""
+    out: list[str] = []
+    if isinstance(new, dict) or isinstance(old, dict):
+        n = new if isinstance(new, dict) else {}
+        o = old if isinstance(old, dict) else {}
+        if not isinstance(new, dict) or not isinstance(old, dict):
+            if under and new != old:
+                return [path or "(document)"]
+        for k in list(n.keys()) + [k for k in o.keys() if k not in n]:
+            here = f"{path}.{k}" if path else str(k)
+            prot = under or is_protected_key(k)
+            out += protected_changes(n.get(k), o.get(k), here, prot)
+        return out
+    if isinstance(new, list) and isinstance(old, list) and not under:
+        for i in range(max(len(new), len(old))):
+            out += protected_changes(new[i] if i < len(new) else None,
+                                     old[i] if i < len(old) else None, f"{path}[{i}]", False)
+        return out
+    if under and new != old:
+        return [path]
+    if not under and isinstance(new, list) != isinstance(old, list):
+        # a list replaced wholesale by a scalar (or back): look inside the list side
+        return protected_changes(new if isinstance(new, list) else [], old if isinstance(old, list) else [],
+                                 path, False)
+    return out
 
 
 def validate_plugin_yaml(doc: Any) -> list[str]:
@@ -340,11 +416,24 @@ class OpsApi:
     def _cfg(self) -> dict:
         return self.cog.get_config() or {}
 
+    _warned_shared_key = False
+
     def _api_key(self) -> Optional[str]:
         cfg = self._cfg()
         ops = cfg.get("ops_api") or {}
-        key = ops.get("api_key") or (cfg.get("bfdb") or {}).get("dcsserverbot_api_key")
-        return str(key) if key else None
+        if ops.get("api_key"):
+            return str(ops["api_key"])
+        key = (cfg.get("bfdb") or {}).get("dcsserverbot_api_key")
+        if not key:
+            return None
+        if not OpsApi._warned_shared_key:
+            OpsApi._warned_shared_key = True
+            self.log.warning(
+                "FowlEngine/ops: DEPRECATED -- the OPS API is accepting the RestAPI key "
+                "(bfdb.dcsserverbot_api_key) because ops_api.api_key is not set. Anything holding "
+                "the RestAPI key can then restart processes and rewrite fowlengine.yaml. Set "
+                "ops_api.api_key to its own long random value (see fowlengine.sample.yaml).")
+        return str(key)
 
     def _prefix(self) -> str:
         cfg = self._cfg()
@@ -575,8 +664,11 @@ class OpsApi:
             from .procman import sha256_cached
             p = upd.bftools_path()
             if p:
-                bftools = {"path": p, "sha256": sha256_cached(p) if os.path.exists(p) else None,
-                           "pending": pm.pending_info("bftools.exe") if pm else None}
+                # hashing is off the event loop: a first hash of a big file
+                # would otherwise stall every Discord and web handler
+                bftools = await asyncio.get_running_loop().run_in_executor(None, lambda: {
+                    "path": p, "sha256": sha256_cached(p) if os.path.exists(p) else None,
+                    "pending": pm.pending_info("bftools.exe") if pm else None})
         try:
             import importlib
             bot_version = getattr(importlib.import_module("version"), "__version__", None)
@@ -679,7 +771,7 @@ class OpsApi:
             server = self._server(body.get("server"))
             if server is None:
                 return self._err(404, f"no server named {body.get('server')!r}")
-            row = self._server_row(server)
+            row = await asyncio.get_running_loop().run_in_executor(None, self._server_row, server)
             if not row.get("pending") and not row.get("remote"):
                 return self._err(409, f"nothing is staged for {server.name}")
             if server.status in (Status.RUNNING, Status.PAUSED):
@@ -821,6 +913,11 @@ class OpsApi:
         problems = validate_plugin_yaml(new_doc)
         if problems:
             return self._err(400, "; ".join(problems))
+        locked = protected_changes(new_doc, old_doc)
+        if locked:
+            shown = ", ".join(locked[:8]) + (f" (+{len(locked) - 8} more)" if len(locked) > 8 else "")
+            return self._err(403, f"these settings name a program, a path, a URL or an update source and can "
+                                  f"only be changed in fowlengine.yaml on the server itself: {shown}")
         buf = io.StringIO()
         y.dump(new_doc, buf)
         out = buf.getvalue()

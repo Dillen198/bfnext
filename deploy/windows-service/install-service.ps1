@@ -9,9 +9,10 @@ param(
     [string]$ServiceName = "DCSServerBot",
     [string]$BotDir      = "E:\Github\DCSServerBot",
     [string]$Account     = ".\ATPAdmin",
-    [string]$Password    = $(Read-Host -AsSecureString "Password for $Account" |
-                            ForEach-Object { [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($_)) }),
+    # A SecureString: prompted for when omitted. A plain -Password "..." on
+    # the command line is deliberately not accepted (it would sit in the
+    # console history and in the process list).
+    [securestring]$Password = $(Read-Host -AsSecureString "Password for $Account"),
     # Wait for the network before starting (Discord + the netidx resolver need
     # it); a plain auto-start can race the NIC on boot.
     [switch]$NoDelayedStart
@@ -41,7 +42,18 @@ if (Get-Service $ServiceName -ErrorAction SilentlyContinue) {
 }
 
 nssm set $ServiceName AppDirectory     $BotDir
-nssm set $ServiceName ObjectName       $Account $Password
+# The service account. Not `nssm set ObjectName <account> <password>`: that
+# puts the password on nssm's command line, readable by every local process
+# while it runs. WMI's Win32_Service.Change takes it in-process instead.
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password)
+try {
+    $svc = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'"
+    $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{
+        StartName = $Account; StartPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+    if ($r.ReturnValue -ne 0) { throw "setting the service account failed (Win32_Service.Change returned $($r.ReturnValue); 22 = unknown account, 15 = logon failure)" }
+} finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+}
 nssm set $ServiceName Start            $(if ($NoDelayedStart) { "SERVICE_AUTO_START" } else { "SERVICE_DELAYED_AUTO_START" })
 nssm set $ServiceName AppExit Default  Restart
 nssm set $ServiceName AppRestartDelay  15000

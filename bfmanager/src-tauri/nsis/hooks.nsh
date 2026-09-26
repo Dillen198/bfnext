@@ -22,6 +22,12 @@
   DetailPrint "Updating the FowlEngine service (if installed)..."
   nsExec::Exec `"$INSTDIR\FowlEngineManager.exe" --migrate-service`
   Pop $0
+  ; %ProgramData%\FowlEngine is Administrators + SYSTEM only (the desktop
+  ; user gets logs\): manager.json says what the LocalSystem service runs.
+  ; Done here as well as at service start, so a fresh install is never open.
+  DetailPrint "Securing the Fowl Engine data folder..."
+  nsExec::Exec `"$INSTDIR\FowlEngineManager.exe" --secure-data-dir`
+  Pop $0
   ; Only if the app's setup has already created it -- a first install leaves
   ; that to the setup wizard.
   DetailPrint "Starting the FowlEngine service (if installed)..."
