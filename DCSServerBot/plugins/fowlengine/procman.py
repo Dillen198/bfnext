@@ -949,8 +949,12 @@ class Procman:
                 self._save_probation()
                 await self._safe_notify(f"✅ bfdb {p.get('tag') or '(manual upload)'} passed probation.")
             return False
-        if not self.is_running():
-            # died on the new build: that's the clearest signal there is
+        if self._bfdb is not None and self._bfdb.poll() is not None:
+            # died on the new build: that's the clearest signal there is.
+            # Only a process that exited on its own counts -- `_bfdb` is None
+            # after one of our own stops, and reading that as a crash rolled
+            # the live box back (exe AND database) when two DCS servers each
+            # asked for a bfdb cycle a few seconds apart.
             p["exits"] = p.get("exits", 0) + 1
             self._save_probation()
             why = f"the new bfdb.exe exited (code {self.last_exit_code})"
@@ -1530,6 +1534,10 @@ class Procman:
         if self._bfdb is not None and self._bfdb.poll() is not None:
             self.last_exit_code = self._bfdb.returncode
         healthy = await self.health_ok()
+        if self._op_lock.locked():
+            # a restart began while the health check was in flight: whatever
+            # it saw is that restart, not the new build failing
+            return
         if await self._probation_tick(healthy, admin_password):
             return
         if healthy:

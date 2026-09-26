@@ -2472,13 +2472,14 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             spawned = Some((gid, template.clone()));
                             break;
                         }
-                        Err(e) => warn!(
-                            "SpawnCap: {} template '{}' not found -- add a {} group named '{}' to your mission file. ({e:?})",
+                        Err(e) if warn_missing_template_once(template.as_str()) => warn!(
+                            "SpawnCap: {} template '{}' not found -- add a {} group named '{}' to your mission file,                              or drop it from the roster. Trying the next one; not repeating this warning. ({e:?})",
                             if rotary { "helo patrol" } else { "CAP" },
                             template,
                             if rotary { "helicopter-section" } else { "plane-section" },
                             template
                         ),
+                        Err(e) => debug!("SpawnCap: template '{}' still missing ({e:?})", template),
                     }
                 }
                 match spawned {
@@ -2725,9 +2726,10 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
 /// The side's roster (`cap_templates_red`/`_blue`, or the helo pair) filtered
 /// to the entries this incursion qualifies for -- `min_threat` at or below
 /// `threat` -- shuffled by weight, so the same airfield does not answer every
-/// push with the same jets. If the filter leaves nothing (every entry wants a
-/// bigger fight than actually showed up) the unfiltered roster is used:
-/// something scrambling beats nothing.
+/// push with the same jets. The rest of the roster follows, lowest
+/// `min_threat` first, as a last resort: something scrambling beats nothing,
+/// and a single qualifying template missing from the .miz (as RCAPMIG29 was
+/// on the live Modern mission) used to cancel every low-threat scramble.
 ///
 /// Returning the whole ordered list rather than one pick is what lets the
 /// caller fall through to the next candidate when a group is missing from the
@@ -2751,9 +2753,9 @@ fn cap_template_candidates(
     };
     let mut pool: Vec<&bfprotocols::cfg::CapTemplateCfg> =
         roster.iter().filter(|t| t.min_threat <= threat).collect();
-    if pool.is_empty() {
-        pool = roster.iter().collect();
-    }
+    let mut rest: Vec<&bfprotocols::cfg::CapTemplateCfg> =
+        roster.iter().filter(|t| t.min_threat > threat).collect();
+    rest.sort_by(|a, b| a.min_threat.cmp(&b.min_threat).then(b.weight.cmp(&a.weight)));
     // Weighted sampling without replacement: repeatedly draw from the total
     // remaining weight. The order matters beyond the first pick, because the
     // caller walks it as a fallback chain.
@@ -2773,7 +2775,18 @@ fn cap_template_candidates(
         }
         out.push(dcso3::String::from(pool.remove(chosen).template.as_str()));
     }
+    out.extend(rest.into_iter().map(|t| dcso3::String::from(t.template.as_str())));
     out
+}
+
+/// Warn about a missing CAP/helo template once per mission load, then quietly.
+/// Every scramble walks the same roster, so a template missing from the .miz
+/// used to put the same WARN in the log a dozen times an hour.
+fn warn_missing_template_once(template: &str) -> bool {
+    use std::{collections::HashSet, sync::Mutex};
+    static WARNED: Mutex<Option<HashSet<std::string::String>>> = Mutex::new(None);
+    let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+    warned.get_or_insert_with(HashSet::new).insert(template.to_owned())
 }
 
 /// Build the on-station task for one flight of a reactive air response.

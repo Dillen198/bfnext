@@ -508,9 +508,32 @@ def test_bfdb_probation_exit_triggers_rollback(world):
         pm.probation = None
         return "rolled"
     pm.rollback_bfdb = fake_rb
-    pm.is_running = lambda: False
+
+    class _Exited:
+        returncode = 3
+
+        def poll(self):
+            return 3
+    pm._bfdb = _Exited()
     assert asyncio.run(pm._probation_tick(False, "pw"))
     assert called and "exited" in called[0]
+
+
+def test_bfdb_probation_ignores_our_own_stop(world):
+    # procman's own stop leaves _bfdb None; that is a restart in progress, not
+    # the new build crashing -- it used to roll the live box back.
+    pm = world.cog.procman
+    pm.probation = {"tag": "engine-y", "swapped_at": time.time(), "healthy_at": None, "exits": 0,
+                    "backup": None, "db_snapshot": None}
+    called = []
+
+    async def fake_rb(pw, why):
+        called.append(why)
+        return "rolled"
+    pm.rollback_bfdb = fake_rb
+    pm._bfdb = None
+    assert not asyncio.run(pm._probation_tick(False, "pw"))
+    assert not called and pm.probation is not None
 
 
 # ---- log analyzer -------------------------------------------------------------------

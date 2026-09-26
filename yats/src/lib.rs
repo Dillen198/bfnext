@@ -254,6 +254,16 @@ impl<K, V> Tree<K, V> {
             .transpose()?)
     }
 
+    /// Delete a key without decoding its old value. `remove` hands the old
+    /// value back, so it fails on a row written by an older build in a layout
+    /// this one can no longer read -- exactly the rows that most need deleting.
+    pub fn delete(&self, key: &K) -> Result<bool>
+    where
+        K: KV,
+    {
+        Ok(self.inner.remove(serialize(key)?)?.is_some())
+    }
+
     /// Compare and swap. Capable of unique creation, conditional
     /// modification, or deletion. If old is None, this will only set
     /// the value if it doesn't exist yet. If new is None, will delete

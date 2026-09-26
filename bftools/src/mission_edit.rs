@@ -2369,7 +2369,11 @@ fn apply_live_weather(
         preset.unwrap_or("none"),
     );
 
-    apply_live_obscurants(&weather, lat, lon, visibility_m).context("applying live fog/dust state")?;
+    // Its dust fetch happens after the rest is written, so a failure here
+    // must not undo the build: the template's fog/dust simply stays.
+    if let Err(e) = apply_live_obscurants(&weather, lat, lon, visibility_m) {
+        warn!("live fog/dust unavailable, keeping the template's: {e:#}");
+    }
     Ok(())
 }
 
@@ -3007,7 +3011,15 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
             .metar_station
             .as_deref()
             .ok_or_else(|| anyhow!("--live-weather requires --metar-station"))?;
-        apply_live_weather(&base.mission, key, station).context("applying live weather")?;
+        // Best effort. A weather service timing out (open-meteo did, on the
+        // live 2008 server) used to fail the whole build, and the bot then
+        // loaded the previous .miz -- one built before the current config's
+        // templates existed, so the mission refused to start. The METAR and
+        // every forecast are fetched before anything is written, so a failure
+        // here leaves the template's own weather intact.
+        if let Err(e) = apply_live_weather(&base.mission, key, station) {
+            warn!("live weather unavailable, keeping the template's weather: {e:#}");
+        }
     }
     let s = serialize_to_lua("mission", Value::Table((&*base.mission).clone()))?;
     fs::write(&base.miz.files["mission"], &s)

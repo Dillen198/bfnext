@@ -604,6 +604,18 @@ pub(crate) struct Session {
     pub(crate) cfg: Cfg,
 }
 
+/// A session as stored in `session_v2`. The engine `Cfg` goes in as JSON:
+/// everywhere else here it is positional bincode, so every field the engine
+/// config gained made every older session record unreadable -- 68 of them on
+/// the live box, re-reported by four readers every minute. JSON takes added
+/// fields (serde defaults) and ignores removed ones.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SessionRec {
+    stop_time: Option<DateTime<Utc>>,
+    end: Option<SessionEnd>,
+    cfg_json: std::string::String,
+}
+
 pub(crate) type Scenario = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -865,7 +877,10 @@ pub(crate) struct StatsDbInner {
     pilots: Pilots,
     seq: Tree<(Scenario, RoundId), DateTime<Utc>>,
     round: Tree<(Scenario, RoundId), Round>,
+    /// Pre-`session_v2` records (bincode `Cfg`). Moved over at startup where
+    /// they still decode; the rest are ignored -- see `migrate_legacy_sessions`.
     session: Tree<(RoundId, DateTime<Utc>), Session>,
+    session_v2: Tree<(RoundId, DateTime<Utc>), SessionRec>,
     kills: Tree<(EnId, RoundId, KillId), Dead>,
     shared_kills: Tree<KillId, SmallVec<[EnId; 2]>>,
     /// Content key for a kill -- (round, victim, death time in millis). Guards
@@ -1233,6 +1248,7 @@ impl StatsDb {
             seq: Tree::open(&db, "seq")?,
             round: Tree::open(&db, "round")?,
             session: Tree::open(&db, "session")?,
+            session_v2: Tree::open(&db, "session_v2")?,
             kills: Tree::open(&db, "kills")?,
             shared_kills: Tree::open(&db, "shared_kills")?,
             kill_seen: Tree::open(&db, "kill_seen")?,
@@ -1274,6 +1290,7 @@ impl StatsDb {
         }));
         t.check_schema_version()?;
         t.migrate_legacy_cursors()?;
+        t.migrate_legacy_sessions()?;
         t.seed_wiki_if_empty()?;
         t.seed_wiki_images_if_empty()?;
         t.close_stale_open_rounds()?;
@@ -1334,6 +1351,36 @@ impl StatsDb {
                 self.0.meta.insert(&key, &SCHEMA_VERSION)?;
             }
             Some(_) => debug!("stats database schema version {SCHEMA_VERSION}"),
+        }
+        Ok(())
+    }
+
+    /// Move legacy session records into `session_v2`. A record written by a
+    /// build whose `Cfg` had a different layout can't be decoded by any build
+    /// since; it is left where it is, reported once here, and never read again
+    /// (it only ever fed the perf history).
+    fn migrate_legacy_sessions(&self) -> Result<()> {
+        let keys: Vec<(RoundId, DateTime<Utc>)> =
+            self.session.iter().keys_only().filter_map(|k| k.ok()).collect();
+        let (mut moved, mut unreadable) = (0usize, 0usize);
+        for k in keys {
+            match self.session.get(&k) {
+                Ok(Some(s)) => {
+                    self.put_engine_session(&k, &s)?;
+                    moved += 1;
+                }
+                Ok(None) => (),
+                Err(_) => unreadable += 1,
+            }
+        }
+        if moved > 0 {
+            info!("moved {moved} session record(s) to session_v2 (engine config stored as JSON)");
+        }
+        if unreadable > 0 {
+            info!(
+                "{unreadable} session record(s) written by older builds can't be read by this one; \
+                 ignoring them (only their perf history is lost)"
+            );
         }
         Ok(())
     }
@@ -2667,10 +2714,34 @@ impl StatsDb {
     /// older session than the newest. Sessions are few (one per mission
     /// start), so read the keys -- never the values, which may not decode --
     /// and sort them properly. The on-disk format is unchanged.
+    fn get_engine_session(&self, k: &(RoundId, DateTime<Utc>)) -> Result<Option<Session>> {
+        match self.session_v2.get(k)? {
+            None => Ok(None),
+            Some(r) => Ok(Some(Session {
+                stop_time: r.stop_time,
+                end: r.end,
+                cfg: serde_json::from_str(&r.cfg_json)
+                    .context("decoding a session's engine config")?,
+            })),
+        }
+    }
+
+    fn put_engine_session(&self, k: &(RoundId, DateTime<Utc>), s: &Session) -> Result<()> {
+        let rec = SessionRec {
+            stop_time: s.stop_time,
+            end: s.end.clone(),
+            cfg_json: serde_json::to_string(&s.cfg).context("encoding a session's engine config")?,
+        };
+        self.session_v2.insert(k, &rec)?;
+        // a migrated legacy copy would otherwise linger in the old tree
+        self.session.delete(k)?;
+        Ok(())
+    }
+
     fn session_keys_by_time(&self, round: Option<RoundId>) -> Result<Vec<(RoundId, DateTime<Utc>)>> {
         let iter = match round {
-            Some(r) => self.session.scan_prefix(&r)?,
-            None => self.session.iter(),
+            Some(r) => self.session_v2.scan_prefix(&r)?,
+            None => self.session_v2.iter(),
         };
         let mut keys: Vec<(RoundId, DateTime<Utc>)> = iter.keys_only().filter_map(|k| k.ok()).collect();
         keys.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
@@ -2683,7 +2754,7 @@ impl StatsDb {
         // `session_keys_by_time`.
         let keys = self.session_keys_by_time(None).ok()?;
         for k in keys.iter().rev() {
-            match self.session.get(k) {
+            match self.get_engine_session(k) {
                 Ok(None) => continue,
                 Ok(Some(s)) => {
                     if skipped > 0 {
@@ -2716,7 +2787,7 @@ impl StatsDb {
         // order -- see `session_keys_by_time`); the first readable session
         // with an end is the answer.
         for k in self.session_keys_by_time(None)?.iter().rev() {
-            let session = match self.session.get(k) {
+            let session = match self.get_engine_session(k) {
                 Ok(Some(session)) => session,
                 Ok(None) => continue,
                 Err(e) => {
@@ -3408,7 +3479,7 @@ impl StatsDb {
         // Oldest first by real start time, so "the last `limit`" really are
         // the newest (key order is not time order).
         for k in self.session_keys_by_time(None)? {
-            let s = match self.session.get(&k) {
+            let s = match self.get_engine_session(&k) {
                 Ok(Some(v)) => v,
                 Ok(None) => continue,
                 Err(e) => {
@@ -3437,7 +3508,7 @@ impl StatsDb {
 
     pub(crate) fn active_session_stop(&self, round: RoundId) -> Option<DateTime<Utc>> {
         let newest = self.session_keys_by_time(Some(round)).ok()?.pop()?;
-        self.session.get(&newest).ok().flatten().and_then(|s| s.stop_time)
+        self.get_engine_session(&newest).ok().flatten().and_then(|s| s.stop_time)
     }
 
     /// `latest_rounds` restricted to one DCS server instance. Two instances can
@@ -3817,7 +3888,7 @@ impl StatsDb {
         match stat {
             Stat::NewRound { .. } | Stat::RoundEnd { .. } => unreachable!(),
             Stat::SessionStart { stop, cfg } => {
-                self.session.insert(
+                self.put_engine_session(
                     &(ctx.round, time),
                     &Session {
                         cfg: (*cfg).clone(),
@@ -3857,7 +3928,7 @@ impl StatsDb {
                 // key, which can be an older one (see session_keys_by_time).
                 let newest = self.session_keys_by_time(Some(ctx.round))?.pop();
                 let current = match newest {
-                    Some(k) => self.session.get(&k)?.map(|s| (k, s)),
+                    Some(k) => self.get_engine_session(&k)?.map(|s| (k, s)),
                     None => None,
                 };
                 match current {
@@ -3869,7 +3940,7 @@ impl StatsDb {
                             frame,
                             time,
                         });
-                        self.session.insert(&k, &session)?;
+                        self.put_engine_session(&k, &session)?;
                     }
                 }
             }
@@ -4505,6 +4576,7 @@ impl StatsDb {
     /// /api/admin/banned, which both read the latest session's Cfg).
     pub(crate) fn clear_stale_sessions(&self) -> Result<()> {
         self.session.clear()?;
+        self.session_v2.clear()?;
         Ok(())
     }
 
@@ -4557,7 +4629,15 @@ impl StatsDb {
                 }
             };
         }
-        purge_prefixed!(self.session);
+        purge_prefixed!(self.session_v2);
+        // legacy rows may not decode, so they go by key alone
+        for round in rounds.iter() {
+            let keys: Vec<_> =
+                self.session.scan_prefix(round)?.keys_only().filter_map(|k| k.ok()).collect();
+            for k in keys {
+                self.session.delete(&k)?;
+            }
+        }
         purge_prefixed!(self.kill_seen);
         purge_prefixed!(self.sortie_seen);
         purge_prefixed!(self.deploy_seen);
@@ -4726,6 +4806,7 @@ impl StatsDb {
         self.seq.clear()?;
         self.round.clear()?;
         self.session.clear()?;
+        self.session_v2.clear()?;
         // Combat trees
         self.kills.clear()?;
         self.shared_kills.clear()?;
@@ -4799,6 +4880,7 @@ impl StatsDb {
         self.seq.clear()?;
         self.round.clear()?;
         self.session.clear()?;
+        self.session_v2.clear()?;
         self.kills.clear()?;
         self.shared_kills.clear()?;
         self.kill_seen.clear()?;
@@ -5102,7 +5184,7 @@ impl StatsDb {
         // ── remaining (RoundId, …)-keyed trees: re-key, newest fork wins
         //    on collision (rows come back RoundId-ascending, so the highest
         //    fork id is written last) ───────────────────────────────────
-        moved += rekey_round_first(&self.session, canonical, fork_ids)?;
+        moved += rekey_round_first(&self.session_v2, canonical, fork_ids)?;
         moved += rekey_round_first(&self.deploy_seen, canonical, fork_ids)?;
         moved += rekey_round_first(&self.units, canonical, fork_ids)?;
         moved += rekey_round_first(&self.groups, canonical, fork_ids)?;
@@ -5145,7 +5227,7 @@ impl StatsDb {
         for r in self.pilots.aggregates.iter() { ids.insert(r?.0 .2); }
         for r in self.pilots.sortie.iter() { ids.insert(r?.0 .1); }
         for r in self.pilots.round_info.iter() { ids.insert(r?.0 .1); }
-        for r in self.session.iter() { ids.insert(r?.0 .0); }
+        for k in self.session_v2.iter().keys_only() { ids.insert(k?.0); }
         for r in self.kills.iter() { ids.insert(r?.0 .1); }
         for r in self.kill_seen.iter() { ids.insert(r?.0 .0); }
         for r in self.sortie_seen.iter() { ids.insert(r?.0 .0); }
