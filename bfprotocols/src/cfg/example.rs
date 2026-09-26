@@ -2459,6 +2459,7 @@ impl Default for Cfg {
             supply_auto_convoy_delay_secs: 300,
             objective_start_points: FxHashMap::default(),
             dismount: FxHashMap::default(),
+            dismount_ttl_secs: None,
             last_stand: None,
             under_attack: None,
             counter_battery: None,

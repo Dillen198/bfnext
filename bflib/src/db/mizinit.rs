@@ -55,6 +55,11 @@ use log::{debug, error, info, warn};
 use smallvec::SmallVec;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Tags marking a group as owned by in-memory scheduler state that does not
+/// survive a restart. `respawn_after_load` drops every group carrying one of
+/// these instead of respawning it with nothing left to manage it.
+const SESSION_SCOPED_TAGS: &[UnitTag] = &[UnitTag::CAP];
+
 impl Db {
     /// objectives are just trigger zones named according to type codes
     /// the first caracter is the type of the zone
@@ -337,15 +342,36 @@ impl Db {
         if doomed.is_empty() {
             return Ok(());
         }
+        let (mut blue, mut red) = (0usize, 0usize);
         for gid in &doomed {
+            match self.persisted.groups.get(gid).map(|g| g.side) {
+                Some(Side::Blue) => blue += 1,
+                Some(Side::Red) => red += 1,
+                Some(Side::Neutral) | None => (),
+            }
             if let Err(e) = self.delete_group(gid) {
                 warn!("[CRATE] could not drop carried-over crate {gid}: {e:?}");
             }
         }
         info!(
-            "[CRATE] dropped {} crate(s) left over from the previous session",
+            "[CRATE] dropped {} crate(s) left over from the previous session (blue {blue}, red {red})",
             doomed.len()
         );
+        // Tell the crews, or a staged pile that simply isn't there any more
+        // looks like the engine ate it. Held back a few minutes: nobody is
+        // connected yet while the mission is still loading.
+        for (side, n) in [(Side::Blue, blue), (Side::Red, red)] {
+            if n > 0 {
+                self.ephemeral.queue_restart_notice(
+                    chrono::Duration::minutes(5),
+                    side,
+                    format_compact!(
+                        "{n} staged crate(s) were cleared by the server restart -- \
+                         unfinished deliveries have to be flown again"
+                    ),
+                );
+            }
+        }
         self.ephemeral.dirty();
         Ok(())
     }
@@ -1825,21 +1851,27 @@ impl Db {
         // able to retask, land or despawn it: it respawns at its field and
         // sits there, alive and weapons-free, for the rest of the campaign.
         // Clear them out before anything is queued to spawn.
-        let stale_cap: SmallVec<[GroupId; 8]> = self
+        //
+        // Any other group owned by that non-persisted scheduler has the same
+        // problem (a commander event's ambush force, for one: its despawn is
+        // keyed by an event id the restart forgets). Tag such a group with a
+        // tag listed in SESSION_SCOPED_TAGS and it is dropped here too.
+        let session_scoped: BitFlags<UnitTag> = SESSION_SCOPED_TAGS.iter().copied().collect();
+        let stale: SmallVec<[GroupId; 8]> = self
             .persisted
             .groups
             .into_iter()
-            .filter(|(_, g)| g.tags.contains(UnitTag::CAP))
+            .filter(|(_, g)| g.tags.0.intersects(session_scoped))
             .map(|(gid, _)| *gid)
             .collect();
-        if !stale_cap.is_empty() {
+        if !stale.is_empty() {
             info!(
-                "respawn_after_load: dropping {} orphaned CAP flight(s) from the save",
-                stale_cap.len()
+                "respawn_after_load: dropping {} orphaned session-scoped group(s) (CAP / event) from the save",
+                stale.len()
             );
-            for gid in stale_cap {
+            for gid in stale {
                 if let Err(e) = self.delete_group(&gid) {
-                    error!("respawn_after_load: could not drop stale CAP group {gid:?}: {e:?}");
+                    error!("respawn_after_load: could not drop stale session-scoped group {gid:?}: {e:?}");
                 }
             }
         }
@@ -1906,6 +1938,13 @@ impl Db {
                 self.ephemeral.push_spawn(*gid);
             }
             for gid in &self.persisted.troops {
+                self.ephemeral.push_spawn(*gid);
+            }
+            // Dismounts were never respawned: they came back in the db, kept
+            // counting toward capture and the dismount cap, and did not exist
+            // in DCS -- invisible, unkillable squads that could still take a
+            // base. They are real campaign units; bring them back like troops.
+            for gid in &self.persisted.dismounts {
                 self.ephemeral.push_spawn(*gid);
             }
             let actions: SmallVec<[GroupId; 16]> =

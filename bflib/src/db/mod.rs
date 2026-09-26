@@ -362,6 +362,15 @@ impl Db {
         GroupId::setseq(max(db.persisted.gid, GroupId::seq()));
         UnitId::setseq(max(db.persisted.uid, UnitId::seq()));
         db.ephemeral.set_cfg(miz, idx, cfg, to_bg)?;
+        // Restore the capture/last-stand timers that have to outlive a
+        // restart (see Persisted::last_stand_state).
+        db.ephemeral.last_stand_state = db.persisted.last_stand_state;
+        db.ephemeral.last_owner_change = db
+            .persisted
+            .last_owner_change
+            .into_iter()
+            .map(|(oid, ts)| (*oid, *ts))
+            .collect();
         for (side, budget) in db.ephemeral.cfg.objective_start_points.clone() {
             if budget > 0 {
                 db.seed_objective_points(side, budget, true);
@@ -375,6 +384,24 @@ impl Db {
             self.persisted.oid = ObjectiveId::seq();
             self.persisted.gid = GroupId::seq();
             self.persisted.uid = UnitId::seq();
+            self.persisted.last_stand_state = self.ephemeral.last_stand_state;
+            // Only the entries still inside the capture cooldown matter; the
+            // rest would just grow the save by one line per base ever flipped.
+            let cooldown = self
+                .ephemeral
+                .cfg
+                .campaign_events
+                .as_ref()
+                .map(|c| c.capture_cooldown_secs as i64)
+                .unwrap_or(120);
+            let now = chrono::Utc::now();
+            self.persisted.last_owner_change = self
+                .ephemeral
+                .last_owner_change
+                .iter()
+                .filter(|(_, ts)| (now - **ts).num_seconds() < cooldown)
+                .map(|(oid, ts)| (*oid, *ts))
+                .collect();
             Some(self.persisted.clone())
         } else {
             None
@@ -462,11 +489,15 @@ impl Db {
                 } => (ewr, group.side),
                 _ => return None,
             };
+            // `get`, not `units[u]`: the chunkmap's Index panics on a missing
+            // key, and this iterator is drained inside the timed-event tick --
+            // one stale unit id in a deployed EWR group took the whole tick
+            // down with it.
             let p = centroid3d(
                 group
                     .units
                     .into_iter()
-                    .map(|u| self.persisted.units[u].position.p.0),
+                    .filter_map(|u| self.persisted.units.get(u).map(|u| u.position.p.0)),
             );
             Some(RadarDonor {
                 pos: Position3 { p: dcso3::LuaVec3(p), ..Default::default() },
@@ -628,7 +659,7 @@ impl Db {
                 }
             })
             .chain(self.instanced_players().filter_map(|(_, p, inst)| {
-                let slot = p.current_slot.as_ref().unwrap().0;
+                let slot = p.current_slot.as_ref()?.0;
                 let pos = inst.position.p.0;
                 let id = JtId::Slot(slot);
                 match self.ephemeral.cfg.airborne_jtacs.get(&inst.typ) {

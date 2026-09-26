@@ -4744,7 +4744,7 @@ impl Db {
             Some(s) => s.clone(),
         };
         if spec.max_concurrent > 0
-            && self.persisted.dismounts.len() as u32 >= spec.max_concurrent
+            && self.dismount_count(side) as u32 >= spec.max_concurrent
         {
             return Ok(());
         }

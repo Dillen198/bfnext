@@ -311,7 +311,24 @@ pub struct Ephemeral {
     /// Used by spawn_group to build synthetic Lua tables for DCS when there is no .miz template.
     pub(super) synthetic_templates: FxHashMap<String, SyntheticGroupSpec>,
     /// Mercy timer state: (arm_time, losing_side). Set when a side drops to trigger_count primary objectives.
+    /// Mirrored into `Persisted::last_stand_state` on snapshot and restored on load.
     pub(crate) last_stand_state: Option<(DateTime<Utc>, Side)>,
+    /// Seconds left on the last-stand / victory-reset countdowns at their
+    /// previous check, so each is announced on threshold crossings rather
+    /// than every tick (see objective::countdown_announce_due).
+    pub(super) last_stand_countdown_last: Option<i64>,
+    pub(super) victory_countdown_last: Option<i64>,
+    /// DCS airbase coalition changes decided on paths with no Lua handle (a
+    /// base dropping to Neutral). Applied by the next process_spawn_queue.
+    pending_airbase_coalition: Vec<(ObjectiveId, Side)>,
+    /// Consecutive failed spawn / despawn attempts per group, so a transient
+    /// DCS failure is retried a few times instead of the group being dropped
+    /// from the queue on the first error (see process_spawn_queue).
+    spawn_failures: FxHashMap<GroupId, u8>,
+    despawn_failures: FxHashMap<GroupId, u8>,
+    /// Side announcements held back until players have had time to join
+    /// after a mission load; see `queue_restart_notice`.
+    restart_notices: Vec<(DateTime<Utc>, Side, CompactString)>,
     /// Last time an under-attack notification was sent per objective (for cooldown).
     pub(crate) last_under_attack_notif: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// How many repair crates are stacked on each carrier's in-progress
@@ -416,6 +433,12 @@ impl Default for Ephemeral {
             gci_tasks: Vec::new(),
             synthetic_templates: FxHashMap::default(),
             last_stand_state: None,
+            last_stand_countdown_last: None,
+            victory_countdown_last: None,
+            pending_airbase_coalition: Vec::new(),
+            spawn_failures: FxHashMap::default(),
+            despawn_failures: FxHashMap::default(),
+            restart_notices: Vec::new(),
             last_under_attack_notif: FxHashMap::default(),
             carrier_repair_crates: FxHashMap::default(),
             intel_db: IntelDatabase::default(),
@@ -852,52 +875,148 @@ impl Ephemeral {
         for gid in delayed {
             self.push_spawn(gid)
         }
+        // Both ride this pass because it is the per-tick hook that has a Lua
+        // handle and runs whether or not anything is queued.
+        self.apply_airbase_coalitions(spctx.lua());
+        self.flush_restart_notices(now);
+        // A failed spawn or despawn used to be popped and dropped by the `?`:
+        // the spawn left a group in the db that never existed in DCS (a ghost
+        // that still counted toward health and capture), the despawn left a
+        // live DCS group the db no longer tracked. Both are retried a few
+        // times from the back of their queue first, then given up on loudly.
+        const MAX_ATTEMPTS: u8 = 3;
+        let st = Utc::now();
         let dlen = self.despawnq.len();
-        let slen = self.spawnq.len();
-        if dlen > 0 {
-            for _ in 0..max(1, dlen >> 4) {
-                if let Some((gid, despawn)) = self.despawnq.pop_front() {
-                    // Always clean up gid tracking (delete_group may have already
-                    // removed the group from persisted, but object_id_by_gid still
-                    // needs cleanup)
-                    if let Some(id) = self.object_id_by_gid.remove(&gid) {
-                        self.gid_by_object_id.remove(&id);
-                    }
-                    if let Some(group) = persisted.groups.get(&gid) {
-                        for uid in &group.units {
-                            self.units_able_to_move.swap_remove(uid);
-                            self.units_potentially_close_to_enemies.remove(uid);
-                            if let Some(id) = self.object_id_by_uid.remove(uid) {
-                                self.uid_by_object_id.remove(&id);
-                            }
+        for _ in 0..if dlen > 0 { max(1, dlen >> 4) } else { 0 } {
+            if let Some((gid, despawn)) = self.despawnq.pop_front() {
+                // Always clean up gid tracking (delete_group may have already
+                // removed the group from persisted, but object_id_by_gid still
+                // needs cleanup)
+                if let Some(id) = self.object_id_by_gid.remove(&gid) {
+                    self.gid_by_object_id.remove(&id);
+                }
+                if let Some(group) = persisted.groups.get(&gid) {
+                    for uid in &group.units {
+                        self.units_able_to_move.swap_remove(uid);
+                        self.units_potentially_close_to_enemies.remove(uid);
+                        if let Some(id) = self.object_id_by_uid.remove(uid) {
+                            self.uid_by_object_id.remove(&id);
                         }
                     }
-                    spctx.despawn(perf, despawn)?;
+                }
+                match spctx.despawn(perf, despawn.clone()) {
+                    Ok(()) => {
+                        self.despawn_failures.remove(&gid);
+                    }
+                    Err(e) => {
+                        let n = self.despawn_failures.entry(gid).or_default();
+                        *n = n.saturating_add(1);
+                        if *n < MAX_ATTEMPTS {
+                            warn!("despawn of {gid} failed (attempt {n}), retrying: {e:?}");
+                            self.despawnq.push_back((gid, despawn));
+                        } else {
+                            error!("despawn of {gid} failed {n} times, giving up: {e:?}");
+                            self.despawn_failures.remove(&gid);
+                        }
+                    }
                 }
             }
-        } else if slen > 0 {
-            // `slen >> 4` is a queue-depth budget, and on its own it is a
-            // frame-time hazard: a mass spawn makes it ten groups, and one
-            // `Coalition.addGroup` measured 534ms at the 99.9th on the live
-            // server -- ten of those in a single DCS frame is a multi-second
-            // freeze for everyone on the server. DCS's cost per group is not
-            // something bflib can lower, but how many of them land in one
-            // frame is. Stop at a frame's worth and take the rest next tick;
-            // at 1Hz a deep queue still drains in seconds. Always at least
-            // one, so the queue cannot stall however slow a single spawn is.
-            const SPAWN_BUDGET: chrono::Duration = chrono::Duration::milliseconds(15);
-            let st = Utc::now();
-            for i in 0..max(1, slen >> 4) {
-                if i > 0 && Utc::now() - st > SPAWN_BUDGET {
-                    break;
+        }
+        // Spawns get their own budget on every tick. This used to be an
+        // `else` of the despawn branch, so a steady trickle of despawns (unit
+        // culling, convoys arriving) could hold every queued spawn back for as
+        // long as it kept coming.
+        //
+        // `slen >> 4` is a queue-depth budget, and on its own it is a
+        // frame-time hazard: a mass spawn makes it ten groups, and one
+        // `Coalition.addGroup` measured 534ms at the 99.9th on the live
+        // server -- ten of those in a single DCS frame is a multi-second
+        // freeze for everyone on the server. DCS's cost per group is not
+        // something bflib can lower, but how many of them land in one
+        // frame is. Stop at a frame's worth and take the rest next tick;
+        // at 1Hz a deep queue still drains in seconds. Always at least
+        // one, so the queue cannot stall however slow a single spawn is.
+        const SPAWN_BUDGET: chrono::Duration = chrono::Duration::milliseconds(15);
+        let slen = self.spawnq.len();
+        for i in 0..if slen > 0 { max(1, slen >> 4) } else { 0 } {
+            if i > 0 && Utc::now() - st > SPAWN_BUDGET {
+                break;
+            }
+            let Some(gid) = self.spawnq.pop_front() else { break };
+            // Deleted while it sat in the queue: nothing to spawn.
+            let Some(group) = persisted.groups.get(&gid) else {
+                self.spawn_failures.remove(&gid);
+                continue;
+            };
+            match self.spawn_group(perf, persisted, idx, spctx, group, vec![]) {
+                Ok(_) => {
+                    self.spawn_failures.remove(&gid);
                 }
-                if let Some(gid) = self.spawnq.pop_front() {
-                    let group = maybe!(persisted.groups, gid, "group")?;
-                    self.spawn_group(perf, persisted, idx, spctx, group, vec![])?;
+                Err(e) => {
+                    let n = self.spawn_failures.entry(gid).or_default();
+                    *n = n.saturating_add(1);
+                    if *n < MAX_ATTEMPTS {
+                        warn!("spawn of {gid} failed (attempt {n}), retrying: {e:?}");
+                        self.spawnq.push_back(gid);
+                    } else {
+                        error!(
+                            "spawn of {gid} ({}) failed {n} times, giving up -- it stays in \
+                             the db unspawned until something queues it again: {e:?}",
+                            group.name
+                        );
+                        self.spawn_failures.remove(&gid);
+                    }
                 }
             }
         }
         Ok(())
+    }
+
+    /// Hand an objective's DCS airfield to `side` on the next spawn-queue
+    /// pass. For paths that change ownership without a Lua handle; see
+    /// `Db::finish_neutralisation`.
+    pub(super) fn queue_airbase_coalition(&mut self, oid: ObjectiveId, side: Side) {
+        self.pending_airbase_coalition.retain(|(o, _)| *o != oid);
+        self.pending_airbase_coalition.push((oid, side));
+    }
+
+    fn apply_airbase_coalitions(&mut self, lua: MizLua) {
+        for (oid, side) in mem::take(&mut self.pending_airbase_coalition) {
+            // Not every objective has an airfield (zone-only FOBs, command
+            // centers); that is normal, not an error.
+            let Some(abid) = self.airbase_by_oid.get(&oid) else { continue };
+            if let Err(e) = Airbase::get_instance(lua, abid)
+                .context("getting airbase")
+                .and_then(|ab| ab.set_coalition(side).context("setting coalition"))
+            {
+                error!("could not hand the airfield at {oid} to {side:?}: {e:?}");
+            }
+        }
+    }
+
+    /// Announce `msg` to `side` once, `delay` after now. For news decided
+    /// during a mission load, when nobody is connected yet to see a panel.
+    pub(super) fn queue_restart_notice(
+        &mut self,
+        delay: chrono::Duration,
+        side: Side,
+        msg: CompactString,
+    ) {
+        self.restart_notices.push((Utc::now() + delay, side, msg));
+    }
+
+    /// Deliver the restart notices that have come due.
+    pub(super) fn flush_restart_notices(&mut self, now: DateTime<Utc>) {
+        if self.restart_notices.is_empty() {
+            return;
+        }
+        let (due, rest): (Vec<_>, Vec<_>) = mem::take(&mut self.restart_notices)
+            .into_iter()
+            .partition(|(at, _, _)| *at <= now);
+        self.restart_notices = rest;
+        for (_, side, msg) in due {
+            self.msgs.panel_to_side(30, false, side, msg);
+        }
     }
 
     pub fn take_pad_template(&mut self, side: Side, name: &String) -> Option<String> {

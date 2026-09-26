@@ -130,6 +130,22 @@ pub struct Persisted {
     /// requests drawn on the F10 map. See `crate::db::tasks`.
     #[serde(default)]
     pub tasks: MapS<TaskId, Task>,
+    /// When each dismount squad was spawned, for `dismount_ttl_secs`. A
+    /// squad missing an entry (older save) starts its clock on the first
+    /// check. See `Db::expire_dismounts`.
+    #[serde(default)]
+    pub dismount_spawned: MapS<GroupId, DateTime<Utc>>,
+    /// Mirror of `Ephemeral::last_stand_state`, written on snapshot and read
+    /// back on load. The live value is ephemeral so readers outside the db
+    /// module keep working; persisting it is what stops a scheduled restart
+    /// from quietly cancelling a losing side's last-stand countdown.
+    #[serde(default)]
+    pub last_stand_state: Option<(DateTime<Utc>, Side)>,
+    /// Mirror of `Ephemeral::last_owner_change` (same arrangement as
+    /// `last_stand_state`), so the post-capture cooldown survives a restart
+    /// instead of a restart re-opening every freshly flipped base at once.
+    #[serde(default)]
+    pub last_owner_change: MapS<ObjectiveId, DateTime<Utc>>,
 }
 
 /// Backward compatibility: saves written before the per-ship rework stored
