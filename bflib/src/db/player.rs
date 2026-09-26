@@ -753,7 +753,13 @@ impl Db {
         frac: f32,
         msg: &str,
     ) {
-        if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+        // The objective's share only goes back while the refunding player's
+        // side still holds it -- otherwise a -delete or troop return would pay
+        // into the fund of whoever captured the base since.
+        let side = self.persisted.players.get(ucid).map(|p| p.side);
+        if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid)
+            && Some(obj.owner) == side
+        {
             let cost = (cost as f32 * (1. - frac)).round() as i32;
             obj.points += cost;
         }

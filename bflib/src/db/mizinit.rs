@@ -58,7 +58,7 @@ use tokio::sync::mpsc::UnboundedSender;
 /// Tags marking a group as owned by in-memory scheduler state that does not
 /// survive a restart. `respawn_after_load` drops every group carrying one of
 /// these instead of respawning it with nothing left to manage it.
-const SESSION_SCOPED_TAGS: &[UnitTag] = &[UnitTag::CAP];
+const SESSION_SCOPED_TAGS: &[UnitTag] = &[UnitTag::CAP, UnitTag::EventSpawn];
 
 impl Db {
     /// objectives are just trigger zones named according to type codes
@@ -2066,7 +2066,10 @@ impl Db {
                 && let Some((_, lives)) = player.lives.get_mut_cow(&lt)
             {
                 *lives += 1;
-                if *lives >= self.ephemeral.cfg.default_lives[&lt].0 {
+                // A life type dropped from the config since the save has no
+                // cap to count up to -- treat the entry as full.
+                let full = self.ephemeral.cfg.default_lives.get(&lt).map_or(true, |(n, _)| *lives >= *n);
+                if full {
                     player.lives.remove_cow(&lt);
                 }
                 self.ephemeral.stat(Stat::Life {

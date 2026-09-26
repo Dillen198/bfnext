@@ -4758,8 +4758,11 @@ impl Db {
                         }
                     }
 
-                    use crate::db::logistics::sync_obj_to_warehouse;
+                    use crate::db::logistics::{mark_pushed, sync_obj_to_warehouse};
+                    // A raw push carries every unsynced model change with it;
+                    // mark_pushed stops the next reconcile applying them twice.
                     sync_obj_to_warehouse(&obj_mut, &wh)?;
+                    mark_pushed(obj_mut);
                     let src = objective_mut!(self, crate_data.origin)?;
                     for (liq_type, n) in &taken {
                         if let Some(inv) = src.warehouse.liquids.get_mut_cow(liq_type) {
@@ -4767,6 +4770,7 @@ impl Db {
                         }
                     }
                     sync_obj_to_warehouse(src, &src_wh)?;
+                    mark_pushed(src);
                     if let Err(e) = self.update_supply_status() {
                         error!("[FUEL_TRANSFER] updating supply status: {e:?}");
                     }
@@ -4876,8 +4880,11 @@ impl Db {
                         }
                     }
 
-                    use crate::db::logistics::sync_obj_to_warehouse;
+                    use crate::db::logistics::{mark_pushed, sync_obj_to_warehouse};
+                    // A raw push carries every unsynced model change with it;
+                    // mark_pushed stops the next reconcile applying them twice.
                     sync_obj_to_warehouse(&obj_mut, &wh)?;
+                    mark_pushed(obj_mut);
                     let src = objective_mut!(self, crate_data.origin)?;
                     for (name, n) in &taken {
                         if let Some(inv) = src.warehouse.equipment.get_mut_cow(name) {
@@ -4885,6 +4892,7 @@ impl Db {
                         }
                     }
                     sync_obj_to_warehouse(src, &src_wh)?;
+                    mark_pushed(src);
                     if let Err(e) = self.update_supply_status() {
                         error!("[WEAPONS_TRANSFER] updating supply status: {e:?}");
                     }

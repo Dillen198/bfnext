@@ -1034,32 +1034,11 @@ fn run_jtac_command(
             Ok(c) => c,
             Err(_) => error!("invalid laser code {s}, expected a code like 1688"),
         };
-        // The JTAC takes its code one digit position at a time -- that is how
-        // the F10 menu picks it (thousands, hundreds, tens, ones) -- so a whole
-        // code, which is what players actually type, used to be rejected as
-        // "mixed scales". Apply the upper three positions quietly and send the
-        // last through the menu path, which announces the finished code.
-        let (quiet, last): (SmallVec<[u16; 3]>, u16) = if s.len() == 4 {
-            if !valid_laser_code(code) {
-                error!(
-                    "invalid laser code {code}: codes run 1111-1788 (first digit 1, second 1-7, third and fourth 1-8)"
-                )
-            }
-            (
-                smallvec![code / 1000 * 1000, code / 100 % 10 * 100, code / 10 % 10 * 10],
-                code % 10,
-            )
-        } else if valid_code_part(code) {
-            (smallvec![], code)
-        } else {
-            error!("invalid laser code {s}, expected a code 1111-1788 like 1688")
-        };
-        for part in quiet {
-            ctx.jtac.set_code_part(&mut ctx.db, lua, &jtid, part)?;
-        }
+        // A whole code (1688) or one digit at its place (600, 80, 8);
+        // jtac_set_code validates it and answers the requester if it's bad.
         let arg = ArgTriple {
             fst: jtid,
-            snd: last,
+            snd: code,
             trd: ucid,
         };
         menu::jtac::jtac_set_code(lua, arg)?
@@ -1095,22 +1074,6 @@ fn run_jtac_command(
         error!("invalid jtac command {cmd}")
     }
     Ok(())
-}
-
-/// A valid NATO laser code: first digit 1, second 1-7, third and fourth 1-8
-/// (1111-1788).
-fn valid_laser_code(code: u16) -> bool {
-    let (d1, d2, d3, d4) = (code / 1000, code / 100 % 10, code / 10 % 10, code % 10);
-    code <= 9999 && d1 == 1 && (1..=7).contains(&d2) && (1..=8).contains(&d3) && (1..=8).contains(&d4)
-}
-
-/// One digit position of a code, as the F10 menu sends it (1000, 100-700,
-/// 10-80, 1-8). Anything else would leave the JTAC on an invalid code.
-fn valid_code_part(part: u16) -> bool {
-    part == 1000
-        || (part % 100 == 0 && (1..=7).contains(&(part / 100)))
-        || (part % 10 == 0 && (1..=8).contains(&(part / 10)))
-        || (1..=8).contains(&part)
 }
 
 pub(super) fn run_jtac_commands(ctx: &mut Context, lua: MizLua) -> Result<()> {
@@ -1244,26 +1207,6 @@ pub(super) fn process(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn laser_codes() {
-        assert!(valid_laser_code(1688));
-        assert!(valid_laser_code(1111));
-        assert!(valid_laser_code(1788));
-        assert!(!valid_laser_code(1789));
-        assert!(!valid_laser_code(1811));
-        assert!(!valid_laser_code(2111));
-        assert!(!valid_laser_code(1601));
-        assert!(!valid_laser_code(688));
-        assert!(valid_code_part(1000));
-        assert!(valid_code_part(700));
-        assert!(!valid_code_part(800));
-        assert!(valid_code_part(80));
-        assert!(!valid_code_part(90));
-        assert!(valid_code_part(8));
-        assert!(!valid_code_part(0));
-        assert!(!valid_code_part(1688));
-    }
 
     #[test]
     fn only_command_shaped_chat_gets_help() {

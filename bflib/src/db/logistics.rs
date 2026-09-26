@@ -1131,7 +1131,7 @@ pub(super) fn sync_obj_to_warehouse(obj: &Objective, warehouse: &warehouse::Ware
 /// After a raw `sync_obj_to_warehouse`, the model and DCS agree on every
 /// entry: record that, so the next reconcile doesn't apply the changes that
 /// push already carried a second time.
-fn mark_pushed(obj: &mut Objective) {
+pub(crate) fn mark_pushed(obj: &mut Objective) {
     for (name, inv) in obj.warehouse.equipment.iter_mut_cow() {
         if is_model_only_item(name.as_str()) {
             continue;

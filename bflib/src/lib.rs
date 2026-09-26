@@ -1049,8 +1049,11 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         if let Event::Birth(b) = &ev {
             // Don't touch Context (or Perf) here at all -- the tick that
             // caused this birth is holding them. See DeferEvents.
-            let oid = b.initiator.object_id()?;
-            DEFERRED_BIRTHS.with(|q| q.borrow_mut().push(oid));
+            // No initiator means the object is already gone -- nothing to map.
+            if let Some(initiator) = &b.initiator {
+                let oid = initiator.object_id()?;
+                DEFERRED_BIRTHS.with(|q| q.borrow_mut().push(oid));
+            }
             return Ok(());
         }
     }
