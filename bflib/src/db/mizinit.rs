@@ -2039,17 +2039,32 @@ impl Db {
         queue_check_close_enemies().context("queuing unit pos checks")?;
         self.cull_or_respawn_objectives(spctx.lua(), landcache, Utc::now())
             .context("initial cull or respawn")?;
-        // return lives to pilots who were airborne on the last restart
+        // return lives to pilots who were airborne on the last restart --
+        // only the life their takeoff actually took (see `FlightCharge`; a
+        // save from before that record existed falls back to the airborne
+        // life type). Points are not refunded: what was fired can't be told
+        // from what was still aboard.
         let airborne_players = self
             .persisted
             .players
             .into_iter()
-            .filter_map(|(ucid, p)| p.airborne.and_then(|lt| Some((ucid.clone(), lt))))
+            .filter(|(_, p)| p.airborne.is_some() || p.flight.is_some())
+            .map(|(ucid, p)| {
+                let lt = match &p.flight {
+                    Some(f) => f.life,
+                    None => p.airborne,
+                };
+                (ucid.clone(), lt)
+            })
             .collect::<Vec<_>>();
         for (ucid, lt) in airborne_players {
             let player = &mut self.persisted.players[&ucid];
             player.airborne = None;
-            if let Some((_, lives)) = player.lives.get_mut_cow(&lt) {
+            player.flight = None;
+            self.ephemeral.dirty();
+            if let Some(lt) = lt
+                && let Some((_, lives)) = player.lives.get_mut_cow(&lt)
+            {
                 *lives += 1;
                 if *lives >= self.ephemeral.cfg.default_lives[&lt].0 {
                     player.lives.remove_cow(&lt);

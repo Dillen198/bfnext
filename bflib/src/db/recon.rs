@@ -49,6 +49,18 @@ pub struct ReconSession {
     /// Highest dwell fraction at which contacts have already been revealed
     /// (drives the progressive 25/50/75/100% reveals).
     pub last_reveal_frac: f32,
+    /// Points actually charged when the pass started, so a refund is based
+    /// on what was paid rather than whatever the config says now.
+    pub charged: u32,
+}
+
+/// What an unfinished pass hands back: the share of `charged` for the part of
+/// the picture not yet revealed. A progressive pass that has already put
+/// contacts on the map has delivered that much of what was paid for, so
+/// cancelling it -- or dying on the way out -- used to be a free look.
+fn recon_refund(charged: u32, revealed_frac: f32) -> u32 {
+    let unrevealed = 1.0 - revealed_frac.clamp(0.0, 1.0);
+    ((charged as f32 * unrevealed).round() as u32).min(charged)
 }
 
 impl Db {
@@ -264,6 +276,7 @@ impl Db {
                 accumulated_secs: 0.0,
                 last_tick: now,
                 last_reveal_frac: 0.0,
+                charged: cfg.cost,
             },
         );
         format_compact!(
@@ -273,20 +286,26 @@ impl Db {
         )
     }
 
-    /// Cancel an in-progress pass (player command). Refunds the point cost.
+    /// Cancel an in-progress pass (player command). Refunds the share of the
+    /// point cost for whatever hasn't been revealed yet (see `recon_refund`).
     pub fn recon_cancel(&mut self, ucid: &Ucid, now: DateTime<Utc>) -> CompactString {
         match self.ephemeral.recon_sessions.remove(ucid) {
             None => "No recon pass in progress".into(),
-            Some(_) => {
+            Some(s) => {
+                let refund = recon_refund(s.charged, s.last_reveal_frac);
+                if refund > 0 {
+                    self.adjust_points(ucid, refund as i32, "recon pass cancelled");
+                }
                 if let Some(cfg) = self.player_recon_cfg() {
-                    if cfg.cost > 0 {
-                        self.adjust_points(ucid, cfg.cost as i32, "recon pass cancelled");
-                    }
                     self.ephemeral
                         .recon_cooldown
                         .insert(*ucid, now + chrono::Duration::seconds(cfg.cooldown_secs as i64));
                 }
-                "Recon pass cancelled".into()
+                if s.charged > 0 {
+                    format_compact!("Recon pass cancelled -- {refund} of {} points refunded", s.charged)
+                } else {
+                    "Recon pass cancelled".into()
+                }
             }
         }
     }
@@ -452,10 +471,16 @@ impl Db {
         Ok(())
     }
 
+    /// End a pass the aircraft could no longer fly -- out of range, too high,
+    /// airframe switched, or the pilot left the aircraft, which includes being
+    /// shot down. Every case refunds the same way as a cancel: the unrevealed
+    /// share only. (Proportional rather than nothing on death, so losing the
+    /// aircraft before the first reveal still returns the whole cost.)
     fn recon_abort(&mut self, ucid: &Ucid, now: DateTime<Utc>, cfg: &PlayerReconCfg, msg: &str) {
-        if self.ephemeral.recon_sessions.remove(ucid).is_some() {
-            if cfg.cost > 0 {
-                self.adjust_points(ucid, cfg.cost as i32, "recon pass aborted");
+        if let Some(s) = self.ephemeral.recon_sessions.remove(ucid) {
+            let refund = recon_refund(s.charged, s.last_reveal_frac);
+            if refund > 0 {
+                self.adjust_points(ucid, refund as i32, "recon pass aborted");
             }
             self.ephemeral
                 .recon_cooldown
@@ -463,5 +488,22 @@ impl Db {
             self.ephemeral
                 .panel_to_player(&self.persisted, 10, ucid, msg.to_string());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recon_refund;
+
+    #[test]
+    fn recon_refund_is_the_unrevealed_share() {
+        assert_eq!(recon_refund(100, 0.0), 100);
+        assert_eq!(recon_refund(100, 0.25), 75);
+        assert_eq!(recon_refund(100, 0.75), 25);
+        assert_eq!(recon_refund(100, 1.0), 0);
+        // out-of-range fractions can't pay out more than was charged
+        assert_eq!(recon_refund(100, -1.0), 100);
+        assert_eq!(recon_refund(100, 2.0), 0);
+        assert_eq!(recon_refund(0, 0.5), 0);
     }
 }
