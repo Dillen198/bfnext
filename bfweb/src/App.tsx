@@ -95,7 +95,8 @@ export default function App() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/cockpit" element={<CockpitPage />} />
-              <Route path="/inteltest" element={<IntelTestPage />} />
+              {/* A development harness, not a product page: dev builds only. */}
+              {import.meta.env.DEV && <Route path="/inteltest" element={<IntelTestPage />} />}
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
                 <Route path="map" element={<ScopePage />} />
