@@ -23,7 +23,7 @@ on:
         options: [beta, stable]
         default: beta
       notes:
-        description: Release notes (default: the commit subject)
+        description: "Release notes (default: the commit subject)"
         default: ""
       bot_plugin:
         description: Also ship the DCSServerBot plugin (fowlengine-bot.zip)
