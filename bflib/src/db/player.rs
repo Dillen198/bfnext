@@ -107,10 +107,146 @@ pub struct InstancedPlayer {
     pub landed_at_objective: Option<ObjectiveId>,
     pub stopped_at_objective: bool,
     pub moved: Option<DateTime<Utc>>,
-    pub cost_fraction: f32,
     /// Earliest time this player is cleared to get airborne (slot-entry time +
     /// `cfg.takeoff_delay_secs`). `None` when the delay is disabled.
     pub takeoff_ok_at: Option<DateTime<Utc>>,
+}
+
+/// One points debit split between a player and an objective's fund, kept so
+/// that a later refund hands back what was actually paid -- to whoever paid
+/// it -- and never more. This is the start of a charge ledger: anything that
+/// charges through `charge_for_item` and may refund later can hold one of
+/// these and settle it with `Db::refund_charge`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PointsCharge {
+    /// The side that paid. An objective that has since changed hands does not
+    /// get the fund's share back -- that would be a gift to the captors.
+    pub side: Side,
+    /// The objective whose fund covered whatever the player's points didn't.
+    pub oid: ObjectiveId,
+    pub cost: u32,
+    /// Fraction of `cost` the player paid; the objective paid the rest.
+    pub frac: f32,
+}
+
+impl PointsCharge {
+    /// Split a refund of `amount` -- capped at what was charged -- into the
+    /// (player, objective) shares, in the proportion they paid.
+    pub fn refund_split(&self, amount: u32) -> (i32, i32) {
+        let amount = amount.min(self.cost);
+        let player = ((amount as f32 * self.frac.clamp(0., 1.)).round() as u32).min(amount);
+        (player as i32, (amount - player) as i32)
+    }
+}
+
+/// What the current flight actually cost the pilot: the life `takeoff` took
+/// (if any) and the points it charged (if any). Landing at a friendly
+/// objective, or a restart while airborne, hands back exactly this record and
+/// clears it. Before it existed both simply assumed a life and the flight's
+/// full cost had been taken, so a takeoff from anywhere that isn't a friendly
+/// objective (or an air start) followed by a landing at one minted a free life
+/// and a refund of points that were never charged.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FlightCharge {
+    #[serde(default)]
+    pub life: Option<LifeType>,
+    #[serde(default)]
+    pub points: Option<PointsCharge>,
+}
+
+/// Split `cost` into the (player, objective) shares actually paid. The
+/// player's positive balance goes first, the objective's positive fund covers
+/// what it can of the rest, and anything left over is the player's debt. The
+/// fund is never driven below zero: a negative fund used to shut every player
+/// without the points to cover it out of that base's slots.
+fn split_charge(player_balance: i32, obj_balance: i32, cost: u32) -> (u32, u32) {
+    let player_first = (player_balance.max(0) as u32).min(cost);
+    let obj = (obj_balance.max(0) as u32).min(cost - player_first);
+    (cost - obj, obj)
+}
+
+/// Team kills older than this many `tk_window` periods are forgotten. By then
+/// the halving decay has taken their point penalty below 1/256 of a fresh
+/// one; before this they were kept, and each still added lives, forever.
+const TK_MEMORY_WINDOWS: i64 = 8;
+
+/// How many whole `window`-hour periods ago a team kill at `ts` was, or
+/// `None` once it has been forgotten. A window of 0 means past team kills are
+/// forgotten immediately (it used to divide by zero).
+fn tk_windows(now: DateTime<Utc>, ts: DateTime<Utc>, window: i64) -> Option<i64> {
+    if window <= 0 {
+        return None;
+    }
+    let windows = (now - ts).num_hours().max(0) / window;
+    (windows < TK_MEMORY_WINDOWS).then_some(windows)
+}
+
+/// `points` halved once per elapsed window. `checked_shr` because a plain
+/// shift by 32 or more is masked in release builds and wraps back round to
+/// the full penalty.
+fn tk_decayed(points: u32, windows: i64) -> u32 {
+    u32::try_from(windows)
+        .ok()
+        .and_then(|w| points.checked_shr(w))
+        .unwrap_or(0)
+}
+
+/// The extra points an AI team kill costs on top of `points`, from the
+/// shooter's remembered AI team kills.
+fn ai_tk_penalty(
+    history: impl IntoIterator<Item = DateTime<Utc>>,
+    now: DateTime<Utc>,
+    window: i64,
+    points: u32,
+) -> u32 {
+    history
+        .into_iter()
+        .filter_map(|ts| tk_windows(now, ts, window))
+        .fold(0u32, |acc, w| acc.saturating_add(tk_decayed(points, w)))
+}
+
+/// Total (points, lives) a player team kill costs, including `points` and
+/// the one life for this kill itself, from the shooter's remembered player
+/// team kills.
+fn player_tk_penalty(
+    history: impl IntoIterator<Item = DateTime<Utc>>,
+    now: DateTime<Utc>,
+    window: i64,
+    points: u32,
+) -> (u32, f32) {
+    history
+        .into_iter()
+        .filter_map(|ts| tk_windows(now, ts, window))
+        .fold((points, 1.), |(pp, pl), windows| {
+            let pp = pp.saturating_add(tk_decayed(points, windows));
+            let pl = pl + (1. / (max(1, windows * 2) as f32));
+            (pp, pl)
+        })
+}
+
+impl Player {
+    /// Forget team kills that no longer count towards the penalty, so the
+    /// history doesn't grow for the life of the campaign.
+    fn prune_team_kills(&mut self, now: DateTime<Utc>, window: i64) {
+        let stale_ai: SmallVec<[DateTime<Utc>; 8]> = self
+            .ai_team_kills
+            .into_iter()
+            .filter(|ts| tk_windows(now, **ts, window).is_none())
+            .copied()
+            .collect();
+        for ts in &stale_ai {
+            self.ai_team_kills.remove_cow(ts);
+        }
+        let stale_player: SmallVec<[DateTime<Utc>; 8]> = self
+            .player_team_kills
+            .into_iter()
+            .filter(|(ts, _)| tk_windows(now, **ts, window).is_none())
+            .map(|(ts, _)| *ts)
+            .collect();
+        for ts in &stale_player {
+            self.player_team_kills.remove_cow(ts);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +271,11 @@ pub struct Player {
     /// Total career kills
     #[serde(default)]
     pub total_kills: u32,
+    /// The charge record for the flight in progress, see `FlightCharge`.
+    /// Always `Some` from takeoff until the flight ends; `None` on a save
+    /// written before it existed.
+    #[serde(default)]
+    pub flight: Option<FlightCharge>,
     #[serde(skip)]
     pub current_slot: Option<(SlotId, Option<InstancedPlayer>)>,
     #[serde(skip)]
@@ -149,6 +290,10 @@ impl Db {
     pub fn player_deslot(&mut self, ucid: &Ucid) {
         if let Some(player) = self.persisted.players.get_mut_cow(ucid) {
             player.airborne = None;
+            // Leaving the slot ends the flight: a pilot who deslots in the
+            // air has lost the aircraft, and one on the ground was already
+            // settled by `land`. Nothing left to refund either way.
+            player.flight = None;
             player.provisional_points = 0;
             if let Some((slot, _)) = player.current_slot.take() {
                 let _ = self
@@ -516,49 +661,56 @@ impl Db {
             None => bail!("no life type for vehicle {:?}", sifo.typ),
             Some(typ) => *typ,
         };
-        let (_, player_lives) = player.lives.get_or_insert_cow(life_type, || {
-            (time, self.ephemeral.cfg.default_lives[&life_type].0)
-        });
         if let Some((_, Some(inst))) = &mut player.current_slot {
             inst.landed_at_objective = None;
         }
-        let obj_balance = owned_objective.as_ref().map(|(_, o)| o.points).unwrap_or(0);
-        let res = if strict && cost as i32 > max(0, player.points) + obj_balance {
+        // A negative fund is just an empty one (see `split_charge`).
+        let obj_balance = owned_objective.as_ref().map(|(_, o)| max(0, o.points)).unwrap_or(0);
+        if strict && cost as i32 > max(0, player.points) + obj_balance {
             return Ok(TakeoffRes::OutOfPoints);
-        } else if !self.ephemeral.cfg.limited_lives {
-            player.airborne = Some(life_type);
-            player.kill_streak = 0; // reset streak on new sortie
-            self.ephemeral.dirty();
-            Ok(TakeoffRes::NoLifeTaken)
-        } else if owned_objective.is_some() {
+        }
+        let took_life = if !self.ephemeral.cfg.limited_lives || owned_objective.is_none() {
+            false
+        } else {
+            let (_, player_lives) = player.lives.get_or_insert_cow(life_type, || {
+                (time, self.ephemeral.cfg.default_lives[&life_type].0)
+            });
             // paranoia
             if *player_lives == 0 {
                 return Ok(TakeoffRes::OutOfLives);
-            } else {
-                player.airborne = Some(life_type);
-                player.kill_streak = 0; // reset streak on new sortie
-                *player_lives -= 1;
-                self.ephemeral.stat(Stat::Life {
-                    id: ucid,
-                    lives: player.lives.clone(),
-                });
             }
-            self.ephemeral.dirty();
+            *player_lives -= 1;
+            self.ephemeral.stat(Stat::Life {
+                id: ucid,
+                lives: player.lives.clone(),
+            });
+            true
+        };
+        player.airborne = Some(life_type);
+        player.kill_streak = 0; // reset streak on new sortie
+        // Record what this takeoff took so the landing hands back exactly
+        // that. A takeoff that took nothing (from a road, an enemy field, a
+        // stop at a neutral base) keeps whatever an earlier leg of the same
+        // flight took -- that life is still owed back when the aircraft
+        // comes home.
+        let flight = player.flight.get_or_insert_with(FlightCharge::default);
+        if took_life {
+            flight.life = Some(life_type);
+        }
+        let side = player.side;
+        self.ephemeral.dirty();
+        let res = if took_life {
             Ok(TakeoffRes::TookLife(life_type))
         } else {
-            player.airborne = Some(life_type);
-            player.kill_streak = 0;
-            self.ephemeral.dirty();
             Ok(TakeoffRes::NoLifeTaken)
         };
         if cost > 0
             && let Some(oid) = owned_objective.map(|(id, _)| *id)
         {
             let frac = self.charge_for_item(&ucid, oid, cost, cost_msg.as_str());
-            let player = &mut self.persisted.players[&ucid];
-            match &mut player.current_slot {
-                Some((_, Some(inst))) => inst.cost_fraction = frac,
-                _ => (),
+            if let Some(player) = self.persisted.players.get_mut_cow(&ucid) {
+                player.flight.get_or_insert_with(FlightCharge::default).points =
+                    Some(PointsCharge { side, oid, cost, frac });
             }
         };
         // One sortie per slot session, not per takeoff. A pilot who lands to
@@ -580,17 +732,10 @@ impl Db {
                 let (adj, frac) = match self.persisted.objectives.get_mut_cow(&oid) {
                     None => (-(cost as i32), 1.),
                     Some(obj) => {
-                        if player_balance <= 0 {
-                            obj.points -= cost as i32;
-                            (0, 0.)
-                        } else if player_balance < cost as i32 {
-                            let frac = player_balance as f32 / cost as f32;
-                            let cost = cost as i32 - player_balance;
-                            obj.points -= cost;
-                            (-player_balance, frac)
-                        } else {
-                            (-(cost as i32), 1.)
-                        }
+                        let (player_pays, obj_pays) = split_charge(player_balance, obj.points, cost);
+                        obj.points -= obj_pays as i32;
+                        let frac = if cost == 0 { 1. } else { player_pays as f32 / cost as f32 };
+                        (-(player_pays as i32), frac)
                     }
                 };
                 self.adjust_points(&ucid, adj, msg);
@@ -614,6 +759,22 @@ impl Db {
         }
         let cost = (cost as f32 * frac).round() as i32;
         self.adjust_points(ucid, cost, msg);
+    }
+
+    /// Settle a recorded charge: hand back up to `amount` (never more than
+    /// was charged) to the player and the objective fund in the proportion
+    /// they paid. The fund's share is dropped if that objective is no longer
+    /// held by the side that paid.
+    pub fn refund_charge(&mut self, ucid: &Ucid, charge: &PointsCharge, amount: u32, msg: &str) {
+        let (to_player, to_obj) = charge.refund_split(amount);
+        if to_obj > 0
+            && let Some(obj) = self.persisted.objectives.get_mut_cow(&charge.oid)
+            && obj.owner == charge.side
+        {
+            obj.points += to_obj;
+            self.ephemeral.dirty();
+        }
+        self.adjust_points(ucid, to_player, msg);
     }
 
     pub fn land(&mut self, slot: SlotId, position: Vector2, unit: &Unit) -> Option<LifeType> {
@@ -646,11 +807,6 @@ impl Db {
             Some(player) => player,
             None => return None,
         };
-        let life_type = self.ephemeral.cfg.life_types[&sifo.typ];
-        let (_, player_lives) = match player.lives.get_mut_cow(&life_type) {
-            Some(l) => l,
-            None => return None,
-        };
         let owned_objective = self.persisted.objectives.into_iter().find_map(|(oid, o)| {
             if o.owner == player.side && o.zone.contains(position) {
                 Some(*oid)
@@ -662,25 +818,38 @@ impl Db {
         // the airframe and may rearm and launch again on the same sortie.
         // `player_deslot` emits `Stat::Land` once the slot session really ends.
         if let Some(oid) = owned_objective {
-            *player_lives += 1;
             player.airborne = None;
-            if *player_lives >= self.ephemeral.cfg.default_lives[&life_type].0 {
-                player.lives.remove_cow(&life_type);
+            // Hand back exactly what this flight's takeoff took, and nothing
+            // it didn't -- see `FlightCharge`.
+            let flight = player.flight.take();
+            let mut returned = None;
+            if let Some(life_type) = flight.as_ref().and_then(|f| f.life)
+                && let Some((_, player_lives)) = player.lives.get_mut_cow(&life_type)
+            {
+                *player_lives = player_lives.saturating_add(1);
+                if *player_lives >= self.ephemeral.cfg.default_lives[&life_type].0 {
+                    player.lives.remove_cow(&life_type);
+                }
+                returned = Some(life_type);
             }
-            let mut frac = 1.;
             if let Some((_, Some(inst))) = &mut player.current_slot {
                 inst.position.p.x = position.x;
                 inst.position.p.z = position.y;
                 inst.landed_at_objective = Some(oid);
-                frac = inst.cost_fraction;
             }
             let lives = player.lives.clone();
             if let Some(points) = self.ephemeral.cfg.points.as_ref() {
                 let is_provisional = points.provisional;
                 let provisional_points = player.provisional_points;
                 player.provisional_points = 0;
-                if cost > 0 {
-                    self.refund_points(&ucid, oid, cost, frac, cost_msg.as_str());
+                // The refund is what is still on the aircraft (so expended
+                // stores stay paid for), capped at what was actually charged
+                // and returned to whoever paid it -- the fund charged at
+                // departure, not the one landed at.
+                if cost > 0
+                    && let Some(charge) = flight.as_ref().and_then(|f| f.points)
+                {
+                    self.refund_charge(&ucid, &charge, cost, cost_msg.as_str());
                 }
                 if is_provisional && provisional_points > 0 {
                     self.adjust_points(
@@ -691,11 +860,12 @@ impl Db {
                 }
             }
             self.ephemeral.dirty();
-            if !self.ephemeral.cfg.limited_lives {
-                None
-            } else {
-                self.ephemeral.stat(Stat::Life { id: ucid, lives });
-                Some(life_type)
+            match returned {
+                Some(life_type) if self.ephemeral.cfg.limited_lives => {
+                    self.ephemeral.stat(Stat::Life { id: ucid, lives });
+                    Some(life_type)
+                }
+                Some(_) | None => None,
             }
         } else {
             None
@@ -792,14 +962,26 @@ impl Db {
             player.jtac_or_spectators = true;
             return SlotAuth::Yes(None);
         }
-        if slot_side != player.side {
+        // With sides unlocked, taking the other side's slot IS a side switch,
+        // so it spends one exactly as `-switch` does. It used to flip
+        // `player.side` for free, which made `side_switches` meaningless and
+        // never told bfdb. The side is flipped first because the slot checks
+        // below are made against it, and put back if the slot is refused so a
+        // rejected slot doesn't cost a switch.
+        let switched_from = if slot_side != player.side {
             if self.ephemeral.cfg.lock_sides {
                 return SlotAuth::ObjectiveNotOwned(player.side);
-            } else {
-                player.side = slot_side;
             }
-        }
-        match slot {
+            if let Some(0) = player.side_switches {
+                return SlotAuth::ObjectiveNotOwned(player.side);
+            }
+            let from = player.side;
+            player.side = slot_side;
+            Some(from)
+        } else {
+            None
+        };
+        let auth = match slot {
             SlotId::Spectator => unreachable!(),
             SlotId::Instructor(_, _) => {
                 if self.ephemeral.cfg.admins.contains_key(ucid) {
@@ -825,10 +1007,27 @@ impl Db {
                 } else {
                     player.changing_slots = true;
                     player.jtac_or_spectators = false;
-                    return SlotAuth::Yes(None);
+                    SlotAuth::Yes(None)
                 }
             }
+        };
+        if let Some(from) = switched_from
+            && let Some(player) = self.persisted.players.get_mut_cow(ucid)
+        {
+            if matches!(auth, SlotAuth::Yes(_)) {
+                if let Some(n) = &mut player.side_switches {
+                    *n = n.saturating_sub(1);
+                }
+                // A flight record from the old side must not be settled
+                // against the new side's bases.
+                player.flight = None;
+                self.ephemeral.stat(Stat::Sideswitch { id: *ucid, side: slot_side });
+                self.ephemeral.dirty();
+            } else {
+                player.side = from;
+            }
         }
+        auth
     }
 
     pub fn try_occupy_slot_deferred(
@@ -922,7 +1121,11 @@ impl Db {
         }
         if let Some(points) = self.ephemeral.cfg.points.as_ref() {
             let cost = *points.airframe_cost.get(&sifo.typ).unwrap_or(&0) as i32;
-            let balance = player.points + objective.points;
+            // The same pot `takeoff` lets pay for the flight. Neither side of
+            // it counts below zero: a fund left negative by an older save (or
+            // a pilot's own debt) used to be netted against the other and
+            // lock out players who could in fact cover the airframe.
+            let balance = max(0, player.points) + max(0, objective.points);
             if cost > 0 && balance < cost {
                 return SlotAuth::NoPoints {
                     cost: cost as u32,
@@ -1018,6 +1221,7 @@ impl Db {
                         player_team_kills: MapS::new(),
                         kill_streak: 0,
                         total_kills: 0,
+                        flight: None,
                     },
                 );
                 self.ephemeral.stat(Stat::Register {
@@ -1035,6 +1239,7 @@ impl Db {
     pub fn force_sideswitch_player(&mut self, ucid: &Ucid, side: Side) -> Result<()> {
         let player = maybe_mut!(self.persisted.players, ucid, "no such player")?;
         player.side = side;
+        player.flight = None;
         self.ephemeral.stat(Stat::Sideswitch { id: *ucid, side });
         self.ephemeral.dirty();
         Ok(())
@@ -1058,6 +1263,8 @@ impl Db {
                         None => (),
                     }
                     player.side = side;
+                    // see try_occupy_slot
+                    player.flight = None;
                     self.ephemeral.stat(Stat::Sideswitch { id: *ucid, side });
                     self.ephemeral.dirty();
                     Ok(())
@@ -1232,7 +1439,9 @@ impl Db {
                     drawn.push(format_compact!("{typ} x{count} (had {whcnt})"));
                     wh.remove_item(typ.clone(), count)?;
                     if let Some(inv) = obj.warehouse.equipment.get_mut_cow(&typ) {
-                        inv.stored = whcnt - count;
+                        // DCS can report fewer in stock than the loadout
+                        // carries; u32 subtraction would wrap to ~4 billion.
+                        inv.stored = whcnt.saturating_sub(count);
                     }
                 }
                 // Debit the fuel it launches with, so landing it somewhere else
@@ -1327,7 +1536,6 @@ impl Db {
                 landed_at_objective,
                 stopped_at_objective: true,
                 moved: None,
-                cost_fraction: 1.,
                 takeoff_ok_at,
             }),
         ));
@@ -1484,14 +1692,11 @@ impl Db {
             .map(|p| p.tk_window as i64)
             .unwrap_or(0);
         let now = Utc::now();
+        player.prune_team_kills(now, window);
         match victim_info.as_ref() {
             None => {
-                let penalty: u32 = player
-                    .ai_team_kills
-                    .into_iter()
-                    .map(|ts| total_points >> ((now - *ts).num_hours() / window))
-                    .sum();
-                let total_points = total_points + penalty;
+                let penalty = ai_tk_penalty(player.ai_team_kills.into_iter().copied(), now, window, total_points);
+                let total_points = total_points.saturating_add(penalty);
                 player.points -= total_points as i32;
                 player.ai_team_kills.insert_cow(now);
                 let tp = player.points;
@@ -1527,15 +1732,12 @@ impl Db {
                 life_type: Some(life_type),
                 ..
             }) => {
-                let (penalty_points, penalty_lives): (u32, f32) = player
-                    .player_team_kills
-                    .into_iter()
-                    .fold((total_points, 1.), |(pp, pl), (ts, _)| {
-                        let windows = (now - *ts).num_hours() / window;
-                        let pp = pp + (total_points >> windows);
-                        let pl = pl + (1. / (max(1, windows * 2) as f32));
-                        (pp, pl)
-                    });
+                let (penalty_points, penalty_lives) = player_tk_penalty(
+                    player.player_team_kills.into_iter().map(|(ts, _)| *ts),
+                    now,
+                    window,
+                    total_points,
+                );
                 let deplane_possible = penalty_lives > 1.5;
                 let mut penalty_lives = penalty_lives.round() as u32;
                 let mut lost: SmallVec<[(LifeType, u8); 5]> = smallvec![];
@@ -1791,5 +1993,92 @@ impl Db {
                 self.ephemeral.dirty();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn charge(cost: u32, frac: f32) -> PointsCharge {
+        PointsCharge {
+            side: Side::Blue,
+            oid: ObjectiveId::from(1),
+            cost,
+            frac,
+        }
+    }
+
+    #[test]
+    fn split_charge_never_drives_the_fund_negative() {
+        // player covers it all
+        assert_eq!(split_charge(500, 100, 200), (200, 0));
+        // player covers part, fund the rest
+        assert_eq!(split_charge(50, 1000, 200), (50, 150));
+        // player broke, fund covers it
+        assert_eq!(split_charge(-40, 1000, 200), (0, 200));
+        // fund short: it empties, the player owes the remainder
+        assert_eq!(split_charge(0, 120, 200), (80, 120));
+        // negative fund counts as empty, not as a debt the player inherits
+        assert_eq!(split_charge(0, -500, 200), (200, 0));
+        assert_eq!(split_charge(10, 0, 0), (0, 0));
+    }
+
+    #[test]
+    fn refund_split_is_capped_at_the_charge() {
+        // full refund of a fully player-paid flight
+        assert_eq!(charge(200, 1.).refund_split(200), (200, 0));
+        // landing with more aboard than was charged refunds only the charge
+        assert_eq!(charge(100, 1.).refund_split(400), (100, 0));
+        // split in the proportion paid, and the shares add up
+        assert_eq!(charge(200, 0.25).refund_split(200), (50, 150));
+        let (p, o) = charge(333, 0.5).refund_split(101);
+        assert_eq!(p + o, 101);
+        // expended stores stay paid for
+        assert_eq!(charge(200, 0.5).refund_split(80), (40, 40));
+        // nothing charged, nothing back
+        assert_eq!(charge(0, 1.).refund_split(500), (0, 0));
+    }
+
+    #[test]
+    fn tk_decay_halves_per_window_and_never_wraps() {
+        assert_eq!(tk_decayed(100, 0), 100);
+        assert_eq!(tk_decayed(100, 1), 50);
+        assert_eq!(tk_decayed(100, 3), 12);
+        // a plain `>>` masks the shift to 0 in release and gives 100 back
+        assert_eq!(tk_decayed(100, 32), 0);
+        assert_eq!(tk_decayed(100, 64), 0);
+        assert_eq!(tk_decayed(u32::MAX, 1_000_000), 0);
+        assert_eq!(tk_decayed(100, -1), 0);
+    }
+
+    #[test]
+    fn tk_windows_forgets_old_kills_and_survives_a_zero_window() {
+        let now = Utc::now();
+        let h = |n: i64| now - Duration::hours(n);
+        assert_eq!(tk_windows(now, h(0), 24), Some(0));
+        assert_eq!(tk_windows(now, h(23), 24), Some(0));
+        assert_eq!(tk_windows(now, h(24), 24), Some(1));
+        assert_eq!(tk_windows(now, h(24 * 8 - 1), 24), Some(7));
+        assert_eq!(tk_windows(now, h(24 * 8), 24), None);
+        // a kill stamped in the future (clock step) counts as fresh
+        assert_eq!(tk_windows(now, now + Duration::hours(5), 24), Some(0));
+        // window 0 used to divide by zero
+        assert_eq!(tk_windows(now, h(0), 0), None);
+    }
+
+    #[test]
+    fn tk_penalties_only_count_remembered_kills() {
+        let now = Utc::now();
+        let h = |n: i64| now - Duration::hours(n);
+        assert_eq!(ai_tk_penalty([], now, 24, 100), 0);
+        assert_eq!(ai_tk_penalty([h(1), h(25), h(24 * 40)], now, 24, 100), 150);
+        assert_eq!(ai_tk_penalty([h(1)], now, 0, 100), 0);
+        let (pts, lives) = player_tk_penalty([h(1), h(49), h(24 * 40)], now, 24, 100);
+        assert_eq!(pts, 100 + 100 + 25);
+        assert!((lives - (1. + 1. + 0.25)).abs() < 1e-6);
+        let (pts, lives) = player_tk_penalty([h(1)], now, 0, 100);
+        assert_eq!(pts, 100);
+        assert!((lives - 1.).abs() < 1e-6);
     }
 }
