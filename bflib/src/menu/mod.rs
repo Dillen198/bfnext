@@ -37,7 +37,7 @@ use dcso3::{
     MizLua, String,
 };
 
-use log::{debug, error};
+use log::{debug, error, warn};
 use mlua::{prelude::*, Value};
 use std::sync::Arc;
 
@@ -388,21 +388,32 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             let miz_gid = si.miz_gid;
             let si_side = si.side;
             let si_typ = si.typ.clone();
-            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["GCI/EWR".into()]))?;
-            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Cargo".into()]))?;
-            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["C-130 Cargo".into()]))?;
-            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["CSAR".into()]))?;
-            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Troops".into()]))?;
-            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Actions".into()]))?;
-            mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec!["Recon".into()]))?;
+            for name in ["GCI/EWR", "Cargo", "C-130 Cargo", "CSAR", "Troops", "Actions", "Recon"] {
+                if let Err(e) = mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec![name.into()])) {
+                    warn!("slot {slot:?}: could not remove the old {name} menu: {e:?}");
+                }
+            }
             // Every top-level menu below costs one slot at the group's F10
             // root -- see ROOT_MENU_BUDGET.
             let mut root_menus = 0u32;
-            ewr::add_ewr_menu_for_group(&mc, miz_gid)?;
-            root_menus += 1;
+            // Each menu is built independently. They used to be chained with
+            // `?`, so one failing builder (a bad cargo config, say) silently
+            // skipped every menu after it -- Actions, Objectives and Info
+            // included. Now a failure is logged, the rest still get built, and
+            // the error goes back to `process_init_queue`, which retries the
+            // slot on a later tick (every builder removes its own old menu
+            // first, so a rebuild is safe).
+            let mut failed: Vec<&'static str> = vec![];
+            let mut built = |name: &'static str, res: Result<()>| match res {
+                Ok(()) => root_menus += 1,
+                Err(e) => {
+                    error!("slot {slot:?}: could not build the {name} menu: {e:?}");
+                    failed.push(name);
+                }
+            };
+            built("GCI/EWR", ewr::add_ewr_menu_for_group(&mc, miz_gid));
             if ctx.db.recon_capable(&si_typ) {
-                recon::add_recon_menu_for_group(&mc, miz_gid)?;
-                root_menus += 1;
+                built("Recon", recon::add_recon_menu_for_group(&mc, miz_gid));
             }
             let cap = CarryCap::from_typ(&cfg, si_typ.as_str());
 
@@ -416,44 +427,83 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
                 .unwrap_or(false);
 
             if is_c130 && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?;
-                root_menus += 1;
+                built("C-130 Cargo", cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
             } else if is_helo_dynamic && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                cargo::add_helo_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?;
-                root_menus += 1;
+                built("Cargo", cargo::add_helo_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
             } else if cap.crates && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                cargo::add_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid)?;
-                root_menus += 1;
+                built("Cargo", cargo::add_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
             }
             if ctx.db.ephemeral.cfg.csar.as_ref().map(|c| c.enabled).unwrap_or(false)
                 && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid)
             {
-                cargo::add_csar_menu_for_group(&mc, miz_gid)?;
-                root_menus += 1;
+                built("CSAR", cargo::add_csar_menu_for_group(&mc, miz_gid));
             }
             if cap.troops && ctx.db.ephemeral.cfg.rules.troops.check(&ucid) {
-                troop::add_troops_menu_for_group(&cfg, &mc, &si_side, miz_gid)?;
-                root_menus += 1;
+                built("Troops", troop::add_troops_menu_for_group(&cfg, &mc, &si_side, miz_gid));
             }
             if ctx.db.ephemeral.cfg.rules.jtac.check(&ucid) {
-                jtac::init_jtac_menu_for_slot(ctx, lua, slot)?;
-                root_menus += 1;
+                built("JTAC", jtac::init_jtac_menu_for_slot(ctx, lua, slot));
             }
             if ctx.db.ephemeral.cfg.rules.actions.check(&ucid) {
-                action::init_action_menu_for_slot(ctx, lua, slot, &ucid)?;
-                root_menus += 1;
+                built("Actions", action::init_action_menu_for_slot(ctx, lua, slot, &ucid));
             }
-            objectives::init_objectives_menu_for_slot(ctx, lua, slot)?;
-            root_menus += 1;
-            info::init_info_menu_for_slot(ctx, lua, slot)?;
-            root_menus += 1;
+            built("Objectives", objectives::init_objectives_menu_for_slot(ctx, lua, slot));
+            built("Info", info::init_info_menu_for_slot(ctx, lua, slot));
             if root_menus > ROOT_MENU_BUDGET {
                 error!(
                     "slot {slot:?}: {root_menus} top-level F10 menus but DCS shows only \
                      {ROOT_MENU_BUDGET} -- the last one(s) are being dropped silently"
                 );
             }
-            Ok(())
+            if failed.is_empty() {
+                Ok(())
+            } else {
+                bail!("menus failed to build: {}", failed.join(", "))
+            }
         }
+    }
+}
+
+/// Slots whose F10 menus are built per 1 Hz tick. It used to be one, so after
+/// a restart (or a mass slot-in at mission start) the last player in a queue
+/// of 30 waited half a minute for any menu at all. Building a slot's menus is
+/// a few dozen Lua calls, so a handful per tick stays well inside the frame.
+const MENU_INITS_PER_TICK: usize = 4;
+
+/// How many times a slot whose menus did not all build is retried, one tick
+/// apart, before we give up and leave it with what it has.
+const MENU_INIT_RETRIES: u8 = 3;
+
+/// Drain up to `MENU_INITS_PER_TICK` slots from `ctx.menu_init_queue`. A slot
+/// whose menus only partly built goes back on the END of the queue (so it
+/// can't starve the others) and is retried on a later tick.
+pub(super) fn process_init_queue(ctx: &mut Context, lua: MizLua) {
+    let mut retry: Vec<SlotId> = vec![];
+    for _ in 0..MENU_INITS_PER_TICK {
+        let Some(slot) = ctx.menu_init_queue.shift_remove_index(0) else {
+            break;
+        };
+        match init_for_slot(ctx, lua, &slot) {
+            Ok(()) => {
+                ctx.menu_init_retries.remove(&slot);
+            }
+            Err(e) => {
+                let tries = ctx.menu_init_retries.entry(slot.clone()).or_default();
+                *tries = tries.saturating_add(1);
+                if *tries <= MENU_INIT_RETRIES {
+                    warn!("menus for slot {slot:?} incomplete (attempt {tries}), will retry: {e:?}");
+                    retry.push(slot);
+                } else {
+                    error!("giving up on menus for slot {slot:?} after {tries} attempts: {e:?}");
+                    ctx.menu_init_retries.remove(&slot);
+                }
+            }
+        }
+    }
+    // Re-queued after the loop, so a failing slot is not retried within the
+    // same tick. A slot re-queued meanwhile by a fresh birth is already there,
+    // and `insert` leaves it where it is.
+    for slot in retry {
+        ctx.menu_init_queue.insert(slot);
     }
 }

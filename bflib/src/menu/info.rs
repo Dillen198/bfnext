@@ -128,9 +128,11 @@ fn build_support(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactStr
             let near = obj_name(db, &loc.oid);
             let br = brg_rng_str(from, loc.pos);
             let tgt = if j.target().is_some() { " [lasing]" } else { "" };
+            // Display, not Debug: this is the id `-jtac <id> ...` takes, and
+            // Debug printed it as `Group(123)`.
             let _ = write!(
                 report,
-                "  {:?} code {} near {near}{br}{tgt}\n",
+                "  JTAC {} code {} near {near}{br}{tgt}\n",
                 j.gid(),
                 j.code()
             );
@@ -347,36 +349,51 @@ const HELP_GETTING_STARTED: &str = "\
 === Getting Started ===
 Slot into any aircraft to join the fight for Blue or Red.
 
-Your F10 radio menu is the main toolkit:
+Your F10 radio menu is the main toolkit (what you get depends on the airframe):
  - Cargo / C-130 Cargo: deliver crates -- repairs, fuel/weapons resupply, deployable defenses
  - Troops: load and deploy ground troops
- - Actions: call in AI support, artillery fires, and special missions
- - JTAC: request 9-lines and target info from ground controllers
- - Objectives: base status, nearest-base detail, capture/threat lists
- - Info: My Status, Situation Report, Support & Radios, Convoys, Weather, Help
- - EWR: early warning radar contact reports
+ - CSAR: rescue downed pilots
+ - Recon: recon passes (recon-capable aircraft only)
+ - Actions: call in AI support, artillery fires, the tasking board, AI helo missions
+ - JTAC: 9-lines, status, smoke and lasing from ground controllers
+ - Objectives: base status (friendly / enemy / neutral), nearest base,
+   capture advisor, threat lists
+ - Info: My Status, Situation briefing, Support & Radios, Convoys,
+   Navaids Directory, Weather, Help
+ - GCI/EWR: controller picture and air contact reports
 
 You earn points for kills, captures, repairs, and deployments -- spend them
 on deployables and actions. Check your total with -balance in chat, and
-your remaining lives for this round with -lives.";
+your remaining lives for this round with -lives. -brief in chat gives you
+the situation briefing at any time.";
 
 const HELP_CHAT_COMMANDS: &str = "\
 === Chat Commands ===
 Type these directly in the DCS chat window (F10 default key, or your bound key).
- -switch <color>   side switch to blue/red (spectators only, limited per round)
+ -switch blue|red  change side (from spectators; the server may limit or lock it)
  -lives            your remaining lives this round
  -time             time until next server restart
  -weather          full weather report for your slot (winds/temp aloft)
  -balance          your points balance
  -status           campaign status: side, points, kill streak, objectives, convoys
+ -brief            the situation briefing (full report: Info > Situation)
+ -gci              your live GCI voice settings; -gci on|off, callouts|quiet,
+                   metric|imperial, braa|bulls|clock, auto
  -transfer <amt> <player>            send points to another player
  -transfer <amt> objective:<name>    donate points to fund an objective's logistics
  -delete <groupid> delete a group you deployed, partial refund
  -action <name> <args>   run a commander action; \"-action help\" lists them
- -jtac <id> status       request a 9-line from that JTAC
+ -jtac help              list the JTAC commands. <id> is the JTAC number
+                         shown in Info > Support & Radios:
+ -jtac <id> status       target, laser code and position report
  -jtac <id> shift        manually shift the JTAC to its next target
  -jtac <id> autoshift    toggle automatic target shifting
  -jtac <id> smoke        have the JTAC smoke the current target
+ -jtac <id> pointer      toggle the IR pointer
+ -jtac <id> focus [<mark text>|clear]   lase near your latest (or the named) map mark
+ -jtac <id> code <code>  change the laser code
+ -jtac <id> arty <group id|all> <n>     fire n rounds from nearby artillery
+ -jtac <id> bomber [mission]            call a bomber on the JTAC's target
  -bind <token>           bind your account to the web dashboard
  -help                   show this list in chat";
 
@@ -405,11 +422,18 @@ so honestly instead of just saying \"delivered\".";
 
 const HELP_OBJECTIVES: &str = "\
 === Objectives & Capturing ===
-Each base's F10 map label shows Health, Logistics(Logi), Supply, and Fuel,
-plus a live \"Repairing: X% (ETA ...)\" line while it's actively healing.
+Under each base on the F10 map is a row of four hexes: Health, Logistics
+(Logi), Supply and Fuel. Green = above 66%, amber = 34-66%, red = 33% or
+less. A gold outline on the supply hex means unlimited supply; a gold
+owner ring means unlimited aircraft.
+The label itself carries the name plus anything happening there: who can
+capture it, capture / consolidation progress, and a live
+\"Repairing: X% (ETA ...)\" line while it's healing.
 The inner ring on the map marker turns white once a base is capturable.
 Objectives > Base Detail gives the full card for any friendly base, incl.
-LL/MGRS, bearing/range from you, repair state, and capture requirements.
+exact numbers, LL/MGRS, bearing/range from you, navaids, repair state, and
+capture requirements. Objectives > Capture Advisor does the same for an
+enemy or neutral base, as far as your side can see it.
 
 HOW TO CAPTURE A BASE:
 1. Reduce it to capturable: Health at or below 20% AND zero infantry
@@ -453,9 +477,11 @@ Special SAM sites work differently: they're always eligible once fully
 destroyed (Health 0), and capture there is INSTANT once your troops are in
 the zone -- no timer.
 
-F10 map icons: aircraft = Airbase, tent = FOB, \"H\" = FARP,
-hexagon = Logistics Hub, factory silhouette = Factory, star = Command
-Center, anchor = Naval Base, diamond = SAM site.";
+F10 map icons: tent = FOB, \"H\" = FARP, hexagon = Logistics Hub, factory
+silhouette = Factory, star = Command Center, anchor = Naval Base, ship hull
+= Carrier Group, boxed missile = SAM site. Airbases carry no icon of ours --
+DCS already draws the airfield. SAM sites and carrier groups are drawn for
+their owner only; the enemy has to find them.";
 
 const HELP_CARRIER_GROUPS: &str = "\
 === Carrier Groups ===
@@ -479,13 +505,16 @@ damage its escorts take -- sink the supply ship first.";
 
 const HELP_COMBAT_JTAC: &str = "\
 === Combat & JTAC ===
-JTAC ground controllers: use the JTAC menu or chat commands to request a
-9-line (status), have the target smoked (smoke), or shift to the next
-target manually or automatically (shift / autoshift). Info > Support &
-Radios lists every active JTAC with its laser code and rough location.
+JTAC ground controllers: the JTAC menu gives a 9-line, a status report,
+smoke on the target, and target shifting (manual or automatic). The same
+from chat: -jtac <id> status / smoke / shift / autoshift, plus focus (lase
+near your map mark), code (change the laser code) and arty (fire nearby
+artillery) -- see Chat Commands. Info > Support & Radios lists every active
+JTAC with its id, laser code and rough location.
 
-EWR: check the EWR menu for early warning radar contact reports on
-approaching enemy aircraft.
+GCI/EWR: check the GCI/EWR menu for controller calls and radar contact
+reports on approaching enemy aircraft; -gci in chat sets up the live voice
+controller.
 
 Artillery: if your side has active batteries, \"Request Fires\" appears
 automatically in your Actions menu -- no separate setup needed.";

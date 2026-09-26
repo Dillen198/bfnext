@@ -465,6 +465,11 @@ pub struct FireOverlay {
 
 const FIRE_MARK_TTL: i64 = 300; // seconds
 
+/// How long a "X captured by Y" pin stays on the map. Long enough for anyone
+/// who slots in during the next half hour to see what just changed hands; the
+/// objective's own colour carries the ownership after that.
+const CAPTURE_MARK_TTL: i64 = 1800; // seconds
+
 impl FireOverlay {
     /// Draw a new fire mission overlay.
     ///
@@ -555,6 +560,9 @@ struct CsarMarks {
     /// Hexagon that ripens green -> amber -> red as the timer runs down, so
     /// a rescue flight reads "how long have I got" without opening the pin.
     urgency_hex: MarkId,
+    /// Level the ring and hex were last coloured for, so the recolour (three
+    /// markup messages) is only sent when the level actually changes.
+    urgency: Option<UrgencyLevel>,
 }
 
 impl CsarMarks {
@@ -598,12 +606,19 @@ impl CsarMarks {
         let label_text = label_text.into();
         let label = msgs.mark_to_side(side, pos, true, label_text.clone());
 
-        Self { search_ring, label, label_text, urgency_hex }
+        Self { search_ring, label, label_text, urgency_hex, urgency: None }
     }
 
     /// Change the ring border color as the capture timer runs down:
     /// white â†’ yellow â†’ red.
-    fn set_urgency(&self, level: UrgencyLevel, msgs: &mut MsgQ) {
+    ///
+    /// Called every map-layer pass; it used to resend all three colours each
+    /// time whether or not anything had changed.
+    fn set_urgency(&mut self, level: UrgencyLevel, msgs: &mut MsgQ) {
+        if self.urgency == Some(level) {
+            return;
+        }
+        self.urgency = Some(level);
         let (border, fill) = match level {
             UrgencyLevel::Low => (Color::white(0.8), Color::white(0.03)),
             UrgencyLevel::Medium => (Color::yellow(0.9), Color::yellow(0.04)),
@@ -644,7 +659,7 @@ impl CsarMarks {
 
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UrgencyLevel {
     Low,
     Medium,
@@ -1155,6 +1170,34 @@ impl MapLayer {
 
 
 
+    /// "X captured by Y" pin at a freshly captured objective.
+    ///
+    /// It used to be a bare read-only `mark_to_all` whose id was thrown away,
+    /// so the pins were never deleted: a long round piled one up per capture,
+    /// stacked on the same bases as they changed hands back and forth, until
+    /// the mission restarted. Now it lives as long as the news does.
+    ///
+    /// `owner_only` is `markup::owner_only_kind` for the objective: a captured
+    /// carrier or SAM site is pinned for the capturing side alone, since
+    /// dropping it for everyone would show a third party the position its
+    /// markup hides.
+    pub fn on_objective_captured(
+        &mut self,
+        pos: Vector2,
+        captor: Side,
+        owner_only: bool,
+        text: &str,
+        now: DateTime<Utc>,
+        msgs: &mut MsgQ,
+    ) {
+        let pin = if owner_only {
+            msgs.mark_to_side(captor, pos, true, text)
+        } else {
+            msgs.mark_to_all(pos, true, text)
+        };
+        self.timed_marks.push(TimedMark::one(pin, CAPTURE_MARK_TTL, now));
+    }
+
     fn expire_timed_marks(&mut self, now: DateTime<Utc>, msgs: &mut MsgQ) {
         let mut i = 0;
         while i < self.timed_marks.len() {
@@ -1430,8 +1473,11 @@ impl MapLayer {
 
             let (label, urgency) = if capture_secs > 0 {
                 let remaining_secs = (capture_secs - elapsed_secs).max(0);
-                let remaining_mins = remaining_secs / 60;
-                let remaining_s = remaining_secs % 60;
+                // Whole minutes, rounded up. The pin can't be re-texted in
+                // place, and a M:SS countdown changed its text on every pass,
+                // so each downed pilot cost a pin delete + re-drop every map
+                // update (see `update_label`). Minute steps: once a minute.
+                let remaining_mins = (remaining_secs + 59) / 60;
                 let frac = elapsed_secs as f64 / capture_secs as f64;
                 let urgency = if frac >= 0.66 {
                     UrgencyLevel::High
@@ -1441,10 +1487,9 @@ impl MapLayer {
                     UrgencyLevel::Low
                 };
                 let lbl = format_compact!(
-                    "CSAR\n{}\nCapture in {}:{:02}",
+                    "CSAR\n{}\nCapture in ~{}m",
                     name,
-                    remaining_mins,
-                    remaining_s
+                    remaining_mins
                 );
                 (lbl, urgency)
             } else {
@@ -1464,10 +1509,9 @@ impl MapLayer {
                 marks.set_urgency(urgency, msgs);
                 marks.update_label(pos, group.side, label, msgs);
             } else {
-                let marks = CsarMarks::new(pos, group.side, label, msgs);
-                self.csar_marks.insert(*gid, marks);
-                let marks = self.csar_marks.get(gid).unwrap();
+                let mut marks = CsarMarks::new(pos, group.side, label, msgs);
                 marks.set_urgency(urgency, msgs);
+                self.csar_marks.insert(*gid, marks);
             }
         }
 
