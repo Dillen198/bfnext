@@ -978,9 +978,10 @@ class Procman:
             "--intel-dir": self._resolved("intel_dir"),
             "--log-file": self._resolved("log_file"),
             # The war diary's writer. Omit all three and bfdb still files a
-            # dispatch every day, from its own template bank.
+            # dispatch every day, from its own template bank. The key goes in
+            # through the environment (_bfdb_env), not the command line, where
+            # any local process could read it.
             "--news-llm-url": (c.get("news_llm_url") or None),
-            "--news-llm-key": (c.get("news_llm_key") or None),
             "--news-llm-model": (c.get("news_llm_model") or None),
         }
         if instances_file:
@@ -1021,6 +1022,17 @@ class Procman:
                 "--discord-admin-role-id", str(c.get("discord_admin_role_id", "")),
             ]
         return args
+
+    def _bfdb_env(self) -> dict:
+        """bfdb's environment: the bot's, plus the secrets bfdb can read from
+        the environment instead of its command line. Only BFDB_NEWS_LLM_KEY so
+        far (bfdb/src/news_llm.rs); the other secrets still go as flags until
+        bfdb reads them from the environment too."""
+        env = dict(os.environ)
+        key = self.cfg.get("news_llm_key")
+        if key:
+            env["BFDB_NEWS_LLM_KEY"] = str(key)
+        return env
 
     # ---- lifecycle -----------------------------------------------------
 
@@ -1311,7 +1323,8 @@ class Procman:
         try:
             out = open(boot_log, "wb", buffering=0) if boot_log else subprocess.DEVNULL
             self._bfdb = subprocess.Popen([self.exe, *args], cwd=self.home or None,
-                                          stdout=out, stderr=out, creationflags=flags)
+                                          stdout=out, stderr=out, creationflags=flags,
+                                          env=self._bfdb_env())
         except OSError as ex:
             self.log.error(f"FowlEngine/procman: failed to launch bfdb: {ex}")
             self._bfdb = None

@@ -53,4 +53,6 @@ class FowlEngineEventListener(EventListener["FowlEngine"]):
                 else:
                     fmt = messages.get('alert', "🚨 **[ALERT]** {message}")
                     
-                await channel.send(fmt.format(message=message))
+                # the message carries player names: never let one ping anyone
+                import discord
+                await channel.send(fmt.format(message=message), allowed_mentions=discord.AllowedMentions.none())

@@ -57,12 +57,14 @@ if PKG.exists():
     shutil.rmtree(PKG)
 PKG.mkdir()
 (PKG / "__init__.py").write_text("")
-for name in ("autoupdate.py", "opsapi.py", "loganalyzer.py", "procman.py", "upload.py", "rangefeed.py"):
+for name in ("autoupdate.py", "opsapi.py", "loganalyzer.py", "procman.py", "upload.py", "rangefeed.py",
+             "minisign.py"):
     shutil.copy(PLUGIN / name, PKG / name)
 sys.path.insert(0, str(HERE))
 
 from fe import autoupdate as au  # noqa: E402
 from fe import loganalyzer as la  # noqa: E402
+from fe import minisign as ms  # noqa: E402
 from fe import opsapi as oa  # noqa: E402
 from fe import procman as pmmod  # noqa: E402
 
@@ -71,6 +73,49 @@ log = logging.getLogger("test")
 
 def sha(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
+
+
+# ---- a throwaway minisign release key (pure-Python Ed25519 signing) --------------
+
+
+def _compress(pt) -> bytes:
+    zinv = pow(pt[2], ms._P - 2, ms._P)
+    x, y = pt[0] * zinv % ms._P, pt[1] * zinv % ms._P
+    return (y | ((x & 1) << 255)).to_bytes(32, "little")
+
+
+def _ed_sign(seed: bytes, msg: bytes) -> tuple[bytes, bytes]:
+    """(public key, signature) -- RFC 8032 signing, test-only."""
+    h = hashlib.sha512(seed).digest()
+    a = int.from_bytes(h[:32], "little")
+    a &= (1 << 254) - 8
+    a |= 1 << 254
+    pub = _compress(ms._mul(a, ms._G))
+    r = int.from_bytes(hashlib.sha512(h[32:] + msg).digest(), "little") % ms._L
+    big_r = _compress(ms._mul(r, ms._G))
+    k = int.from_bytes(hashlib.sha512(big_r + pub + msg).digest(), "little") % ms._L
+    return pub, big_r + ((r + k * a) % ms._L).to_bytes(32, "little")
+
+
+def make_key(seed: bytes = b"\x07" * 32, key_id: bytes = b"TESTKEY1"):
+    import base64
+    pub, _ = _ed_sign(seed, b"")
+    text = ("untrusted comment: minisign public key: TEST\n"
+            + base64.b64encode(b"Ed" + key_id + pub).decode() + "\n")
+
+    def sign(data: bytes, tauri_wrap: bool = True, prehash: bool = True) -> str:
+        msg = hashlib.blake2b(data, digest_size=64).digest() if prehash else data
+        _, sig = _ed_sign(seed, msg)
+        comment = "timestamp:0\tfile:manifest.json"
+        _, gsig = _ed_sign(seed, sig + comment.encode())
+        body = ("untrusted comment: signature from tauri secret key\n"
+                + base64.b64encode((b"ED" if prehash else b"Ed") + key_id + sig).decode() + "\n"
+                + f"trusted comment: {comment}\n" + base64.b64encode(gsig).decode() + "\n")
+        return base64.b64encode(body.encode()).decode() if tauri_wrap else body
+    return text, sign
+
+
+TEST_PUB, release_sign = make_key()
 
 
 # ---- fakes ------------------------------------------------------------------
@@ -206,7 +251,7 @@ def world(tmp_path):
         "bfdb": {"manage": True, "exe": str(exe), "home": str(home),
                  "staging_dir": str(home / "_staging"),
                  "dcsserverbot_url": "http://127.0.0.1:9876/stats", "dcsserverbot_api_key": "KEY123"},
-        "autoupdate": {"enabled": True, "source": "folder", "folder": str(rel),
+        "autoupdate": {"enabled": True, "source": "folder", "folder": str(rel), "public_key": TEST_PUB,
                        "files": ["bflib.dll", "bfdb.exe"], "apply": "when_idle", "idle_minutes": 0},
         "issues": {"scan_seconds": 15},
     }
@@ -215,7 +260,7 @@ def world(tmp_path):
     return types.SimpleNamespace(tmp=tmp_path, cog=cog, servers=servers, home=home, exe=exe, rel=rel, cfg=cfg)
 
 
-def publish(rel: Path, tag: str, files: dict, built: str, channel="stable"):
+def publish(rel: Path, tag: str, files: dict, built: str, channel="stable", sign=release_sign):
     d = rel / tag
     d.mkdir(parents=True)
     man = {"schema": 1, "tag": tag, "git": tag[-6:], "built": built, "channel": channel,
@@ -223,7 +268,10 @@ def publish(rel: Path, tag: str, files: dict, built: str, channel="stable"):
     for name, data in files.items():
         (d / name).write_bytes(data)
         man["files"][name] = {"sha256": sha(data), "size": len(data), "git": tag[-6:]}
-    (d / "manifest.json").write_text(json.dumps(man))
+    raw = json.dumps(man).encode()
+    (d / "manifest.json").write_bytes(raw)
+    if sign:
+        (d / "manifest.json.sig").write_text(sign(raw))
     return man
 
 
@@ -436,8 +484,10 @@ def test_bfdb_swap_snapshots_db_and_rolls_back(world):
     async def fake_term(proc, label):
         return None
     pm.start = fake_start
+    pm._start_unlocked = fake_start
     pm._terminate = fake_term
     pm._kill_orphan_bfdb = lambda: None
+    pm._orphan_bfdb_procs = lambda: []
     msg = asyncio.run(pm.rollback_bfdb("pw", "test"))
     assert "rolled back" in msg
     assert world.exe.read_bytes() == b"bfdb-v1"
@@ -742,11 +792,15 @@ def test_github_source(world):
                 {"tag_name": "engine-gh-2", "draft": True, "assets": []},
                 {"tag_name": "engine-gh-1", "prerelease": False, "html_url": "x", "body": "notes",
                  "assets": [{"name": "manifest.json", "browser_download_url": f"{u}/dl/manifest.json"},
+                            {"name": "manifest.json.sig", "browser_download_url": f"{u}/dl/manifest.json.sig"},
                             {"name": "bflib.dll", "browser_download_url": f"{u}/dl/bflib.dll"}]}])
+
+        raw = json.dumps(man).encode()
 
         async def dl(req):
             name = req.match_info["name"]
-            return web.Response(body=json.dumps(man).encode() if name == "manifest.json" else dll)
+            body = {"manifest.json": raw, "manifest.json.sig": release_sign(raw).encode()}.get(name, dll)
+            return web.Response(body=body)
 
         app.router.add_get("/repos/me/bf/releases", releases)
         app.router.add_get("/dl/{name}", dl)
@@ -780,6 +834,7 @@ def test_fresh_box_applies_staged_bfdb(world):
     Path(pm.staging_dir, "bfdb.exe.pending.json").write_text(json.dumps({"source": "autoupdate", "tag": "engine-1"}))
     pm._start_resolver = lambda: asyncio.sleep(0)
     pm._kill_orphan_bfdb = lambda: None
+    pm._orphan_bfdb_procs = lambda: []
     asyncio.run(pm.start("pw"))          # launching the fake exe fails; that's fine here
     assert world.exe.read_bytes() == b"bfdb-first"
     assert pm.probation and pm.probation["tag"] == "engine-1" and pm.probation["backup"] is None
@@ -800,3 +855,273 @@ def test_dcs_texture_lines_are_not_crashes():
         "2026-09-26 10:22:33.001 ALERT   EDCORE (Main): # C0000005 ACCESS_VIOLATION at 00007ff6 00:00000000",
     ]
     assert [e.level for e in la.parse_entries("dcs:vs1", real)] == ["CRASH", "CRASH"]
+
+
+# ---- release signing ----------------------------------------------------------------
+
+
+MANAGER = BOT.parent / "bfmanager" / "src-tauri"
+
+
+@pytest.mark.parametrize("pure", [True, False])
+def test_minisign_verifies_a_real_tauri_signature(pure):
+    """bfmanager's fixture was signed with the real key by `tauri signer sign`
+    -- the same tool publish-release.ps1 signs engine manifests with."""
+    if not pure:
+        pytest.importorskip("cryptography")
+    data = (MANAGER / "tests" / "fixture.bin").read_bytes()
+    sig = (MANAGER / "tests" / "fixture.bin.sig").read_text()
+    pub = (MANAGER / "updater.pub").read_text()
+    assert "fixture.bin" in ms.verify(data, sig, pub, pure=pure)
+    with pytest.raises(ms.SignatureError):
+        ms.verify(data + b"x", sig, pub, pure=pure)
+    with pytest.raises(ms.SignatureError):
+        ms.verify(data, sig, TEST_PUB, pure=pure)   # wrong key
+
+
+def test_minisign_formats_and_trusted_comment():
+    raw = b'{"tag": "x"}'
+    for wrap in (True, False):
+        for prehash in (True, False):
+            assert ms.verify(raw, release_sign(raw, wrap, prehash), TEST_PUB, pure=True)
+    # the bare RW... line works as the key too
+    bare = TEST_PUB.strip().splitlines()[-1]
+    assert ms.verify(raw, release_sign(raw), bare)
+    # a swapped trusted comment is caught by the global signature
+    import base64
+    body = base64.b64decode(release_sign(raw)).decode().replace("file:manifest.json", "file:evil")
+    with pytest.raises(ms.SignatureError):
+        ms.verify(raw, body, TEST_PUB, pure=True)
+
+
+def test_unsigned_or_forged_release_is_refused(world):
+    st1 = world.servers[0].instance.locals["extensions"]["BFBinaries"]["staging_dir"]
+    upd = au.Updater(world.cog, log, str(world.tmp / "config" / "upd.json"))
+    # no signature at all
+    publish(world.rel, "engine-u-000001", {"bflib.dll": b"evil"}, "2026-09-26T10:00:00Z", sign=None)
+    res = asyncio.run(upd.check())
+    assert not res["ok"] and "unsigned" in res["error"], res
+    assert not Path(st1, "bflib.dll.pending").exists()
+    # signed by somebody else's key
+    shutil.rmtree(world.rel)
+    _, other = make_key(seed=b"\x09" * 32)
+    publish(world.rel, "engine-u-000002", {"bflib.dll": b"evil"}, "2026-09-26T11:00:00Z", sign=other)
+    res = asyncio.run(upd.check())
+    assert not res["ok"] and "signature check failed" in res["error"], res
+    # a genuine signature over a manifest edited afterwards
+    shutil.rmtree(world.rel)
+    publish(world.rel, "engine-u-000003", {"bflib.dll": b"good"}, "2026-09-26T12:00:00Z")
+    mpath = world.rel / "engine-u-000003" / "manifest.json"
+    doc = json.loads(mpath.read_text())
+    doc["files"]["bflib.dll"]["sha256"] = sha(b"evil")
+    mpath.write_text(json.dumps(doc))
+    (world.rel / "engine-u-000003" / "bflib.dll").write_bytes(b"evil")
+    res = asyncio.run(upd.check())
+    assert not res["ok"] and "signature check failed" in res["error"], res
+    assert not Path(st1, "bflib.dll.pending").exists()
+    # and no pinned key: nothing is even looked at
+    world.cfg["autoupdate"]["public_key"] = ""
+    upd.reload_config()
+    res = asyncio.run(upd.check())
+    assert not res["ok"] and "public_key is not set" in res["error"]
+
+
+def test_bot_plugin_is_not_a_runtime_key(world):
+    upd = au.Updater(world.cog, log, str(world.tmp / "config" / "upd.json"))
+    with pytest.raises(ValueError):
+        upd.set_overrides({"bot_plugin": True})
+    # a stale override from an older version is ignored
+    assert au.UpdateConfig.from_dicts({}, {"bot_plugin": True}).bot_plugin is False
+
+
+def test_remote_node_staging_verifies_the_download(world):
+    class RemoteNode:
+        name = "RANGE"
+        is_remote = True
+
+        def __init__(self, payload):
+            self.files, self.payload = {}, payload
+
+        async def create_directory(self, path):
+            pass
+
+        async def write_file(self, path, url, overwrite=False):
+            self.files[path] = self.payload
+            return UploadStatus.OK
+
+        async def read_file(self, path):
+            return self.files[path]
+
+        async def remove_file(self, path):
+            self.files.pop(path, None)
+
+        async def rename_file(self, old, new, force=False):
+            self.files[new] = self.files.pop(old)
+
+    upd = au.Updater(world.cog, log, str(world.tmp / "config" / "upd.json"))
+    s = world.servers[0]
+    good = b"engine"
+    latest = {"tag": "engine-r-1", "urls": {"bflib.dll": "http://x/bflib.dll"}}
+    meta = {"sha256": sha(good)}
+    for payload, ok in ((b"tampered", False), (good, True)):
+        node = RemoteNode(payload)
+        s.node = node
+        t = au.DllTarget(server=s, name=s.name, dll_name="bflib.dll", dll_path="x", staging_dir="C:/st",
+                         remote=True, home=None)
+        upd.state.pop("remote_staged", None)
+        assert asyncio.run(upd._stage_remote(t, "bflib.dll", meta, latest, [s.name])) is ok
+        pend = os.path.join("C:/st", "bflib.dll.pending")
+        assert (pend in node.files) is ok
+        assert not any(k.endswith(".part") for k in node.files)
+
+
+# ---- probation vs a scheduled restart ----------------------------------------------
+
+
+def test_scheduled_restart_is_not_a_crash(world):
+    upd = au.Updater(world.cog, log, str(world.tmp / "config" / "upd.json"))
+    s1 = world.servers[0]
+    upd.state["probation"] = {s1.name: {"server": s1.name, "dll": "bflib.dll", "live": "x", "backup": None,
+                                        "tag": "engine-ok", "swapped_at": time.time(), "sidecar": None,
+                                        "running_secs": 0.0, "loaded_at": None, "crashes": 0}}
+    rolled = []
+
+    async def fake_rollback(server, why):
+        rolled.append(why)
+        return "rolled"
+    upd.rollback_dll = fake_rollback
+    # RUNNING -> SHUTTING_DOWN for a second or two -> SHUTDOWN, all between two 30 s ticks
+    for st in (Status.RUNNING, Status.SHUTTING_DOWN, Status.SHUTDOWN):
+        s1.status = st
+        upd.sample_status()
+    upd._last_status = {s1.name: "RUNNING"}
+    asyncio.run(upd._probation_phase(30))
+    assert rolled == []
+    # a real crash: straight from RUNNING to SHUTDOWN
+    upd._orderly.clear()
+    for st in (Status.RUNNING, Status.SHUTDOWN):
+        s1.status = st
+        upd.sample_status()
+    asyncio.run(upd._probation_phase(30))
+    assert rolled and "crashed" in rolled[0]
+
+
+# ---- rollback never restores the bad build -------------------------------------------
+
+
+def test_newest_backup_skips_failed_and_identical(tmp_path):
+    live = tmp_path / "bflib.dll"
+    live.write_bytes(b"bad")
+    (tmp_path / "bflib.dll.backup-20260101-000000").write_bytes(b"good")
+    (tmp_path / "bflib.dll.backup-20260102-000000").write_bytes(b"bad")     # == live
+    (tmp_path / "bflib.dll.failed-20260103-000000").write_bytes(b"worse")
+    assert au.Updater._newest_backup(str(live)).endswith("backup-20260101-000000")
+
+
+# ---- ops API: protected keys, secrets next to a changed URL --------------------------
+
+
+def test_protected_changes():
+    old = {"DEFAULT": {"bfdb": {"exe": "a.exe", "health_failures": 3, "netidx_resolver_cmd": ["netidx"],
+                                "instances": [{"id": "vs1", "stats_jsonl": "a"}]},
+                       "autoupdate": {"source": "github", "channel": "stable"},
+                       "status_channel": 1}}
+    import copy
+    new = copy.deepcopy(old)
+    new["DEFAULT"]["bfdb"]["health_failures"] = 5
+    new["DEFAULT"]["status_channel"] = 2
+    new["DEFAULT"]["autoupdate"]["channel"] = "beta"
+    assert oa.protected_changes(new, old) == []
+    new["DEFAULT"]["bfdb"]["netidx_resolver_cmd"] = ["powershell", "-c", "calc"]
+    new["DEFAULT"]["autoupdate"]["folder"] = "\\\\evil\\share"
+    new["DEFAULT"]["bfdb"]["instances"][0]["stats_jsonl"] = "b"
+    new["DEFAULT"]["bfdb"]["instances"].append({"id": "vs2", "engine_config": "c"})
+    new["DEFAULT"]["gci"] = {"piper_exe": "x.exe"}
+    got = set(oa.protected_changes(new, old))
+    assert got == {"DEFAULT.bfdb.netidx_resolver_cmd", "DEFAULT.autoupdate.folder",
+                   "DEFAULT.bfdb.instances[0].stats_jsonl", "DEFAULT.bfdb.instances[1].engine_config",
+                   "DEFAULT.gci.piper_exe"}, got
+    # removing one counts too
+    del new["DEFAULT"]["bfdb"]["exe"]
+    assert "DEFAULT.bfdb.exe" in oa.protected_changes(new, old)
+
+
+def test_masked_secret_not_carried_to_a_new_url():
+    old = {"bfdb": {"news_llm_url": "https://api.openai.com/v1", "news_llm_key": "sk-real"}}
+    new = {"bfdb": {"news_llm_url": "https://api.openai.com/v1", "news_llm_key": oa.SECRET_MASK}}
+    oa.unmask_secrets(new, old)
+    assert new["bfdb"]["news_llm_key"] == "sk-real"
+    new = {"bfdb": {"news_llm_url": "https://evil.example", "news_llm_key": oa.SECRET_MASK}}
+    with pytest.raises(ValueError):
+        oa.unmask_secrets(new, old)
+
+
+def test_config_post_refuses_protected_edit(world):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    cfgfile = Path(world.cog.node.config_dir, "plugins", "fowlengine.yaml")
+    cfgfile.parent.mkdir(parents=True, exist_ok=True)
+    cfgfile.write_text("DEFAULT:\n  ops_api:\n    api_key: OPSKEY\n  bfdb:\n    manage: true\n    exe: x.exe\n"
+                       "    home: h\n    dcsserverbot_api_key: RESTKEY\n")
+    world.cfg["ops_api"] = {"api_key": "OPSKEY"}
+    api = oa.OpsApi(world.cog)
+    app = FastAPI()
+    api.mount(app)
+    c = TestClient(app)
+    base = "/stats/fowlengine/ops"
+    # the RestAPI key is no longer enough once ops_api.api_key is set
+    assert c.get(f"{base}/config", headers={"X-API-Key": "RESTKEY"}).status_code == 403
+    H = {"X-API-Key": "OPSKEY"}
+    g = c.get(f"{base}/config", headers=H).json()
+    evil = g["yaml"].replace("exe: x.exe", "exe: x.exe\n    netidx_resolver_cmd: [powershell, -c, calc]")
+    r = c.post(f"{base}/config", headers=H, json={"yaml": evil, "base_mtime": g["mtime"]})
+    assert r.status_code == 403 and "netidx_resolver_cmd" in r.json()["error"]
+    assert "powershell" not in cfgfile.read_text()
+
+
+# ---- procman: redaction, restart folding, loopback defaults ---------------------------
+
+
+def test_redact_hides_every_secret_flag(world):
+    pm = world.cog.procman
+    line = pm._redact(["--db", "x", "--admin-password", "p1", "--news-llm-key", "sk-1", "--discord-client-secret",
+                       "s", "--log-read-token", "t", "--some-api-key=k2", "--listen-address", "127.0.0.1:8880"])
+    words = line.split()
+    for secret in ("p1", "sk-1", "s", "t", "--some-api-key=k2"):
+        assert secret not in words, line
+    assert "--some-api-key=***" in words and "127.0.0.1:8880" in words
+    # the LLM key goes through the environment, not the command line
+    world.cfg["bfdb"]["news_llm_key"] = "sk-env"
+    pm.reload_config(world.cfg)
+    assert "sk-env" not in " ".join(pm._build_args("pw", False))
+    assert pm._bfdb_env()["BFDB_NEWS_LLM_KEY"] == "sk-env"
+    assert pm.api_url == "http://127.0.0.1:8880"
+    assert "127.0.0.1:8880" in pm._build_args("pw", False)
+
+
+def test_concurrent_restarts_are_serialised_and_folded(world):
+    pm = world.cog.procman
+    events = []
+
+    async def fake_stop(**kw):
+        events.append("stop")
+        await asyncio.sleep(0.01)
+
+    async def fake_start(pw):
+        events.append("start")
+        await asyncio.sleep(0.01)
+    pm._stop_unlocked = fake_stop
+    pm._start_unlocked = fake_start
+
+    async def main():
+        await asyncio.gather(*(pm.restart("pw") for _ in range(5)))
+    asyncio.run(main())
+    # never interleaved, and the 3 requests that queued behind a running one became one
+    assert events == ["stop", "start", "stop", "start"], events
+
+
+def test_archive_source_cannot_escape():
+    for bad in ("..", ".", "...", "../..", "..\\x"):
+        assert ".." != la.LogAnalyzer._safe(bad) and la.LogAnalyzer._safe(bad) not in (".", "..")
+    assert la.LogAnalyzer._safe("engine_vs1") == "engine_vs1"

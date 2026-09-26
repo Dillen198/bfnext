@@ -473,7 +473,13 @@ class LogAnalyzer:
 
     @staticmethod
     def _safe(source: str) -> str:
-        return re.sub(r"[^A-Za-z0-9._-]+", "_", source).strip("_")[:80] or "log"
+        s = re.sub(r"[^A-Za-z0-9._-]+", "_", source or "").strip("_")[:80]
+        # Separators are already gone, but "." / ".." (or any all-dots name,
+        # which Windows trims to nothing) would still step out of the archive
+        # root -- archive_read takes `source` straight from an HTTP query.
+        if not s.strip("."):
+            return "log"
+        return s
 
     def _archive(self, source: str, lines: list[str]) -> None:
         """Append raw lines to <archive>/<source>/<UTC date>.log. Everything the

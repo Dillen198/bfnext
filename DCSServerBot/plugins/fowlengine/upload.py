@@ -25,7 +25,10 @@ restart, so a DLL can never land on the other engine's server.
 
 Built on DCSServerBot's native upload primitives (core.utils.discord.
 NodeUploadHandler.is_valid + node.write_file), same as the mission/modmanager
-plugins, so it respects the DCS Admin role gate and is audited.
+plugins. Only the "Admin" role group may stage (a binary is code that runs on
+the box; `binary_upload_role` changes the group), every staged file is
+announced in the ops channel with its full sha256, and it lands as .part and
+is renamed into place, so a restart never swaps in a half-written file.
 """
 from __future__ import annotations
 
@@ -202,10 +205,25 @@ async def _stage_one(node, staging_dir: str, name: str, att, notes: str, author,
         except OSError as ex:
             return None, f"cannot create `{staging_dir}`: {ex}"
     pending = os.path.join(staging_dir, f"{name}.pending")
-    rc = await node.write_file(pending, att.url, overwrite=True)
+    # Download to .part and rename it into place: write_file writes in
+    # place, and a DCS start (BFBinaries) or a bfdb restart that caught a
+    # half-written .pending would swap a truncated binary in.
+    part = pending + ".part"
+    where = f" on node {getattr(node, 'name', '?')}" if remote else ""
+    rc = await node.write_file(part, att.url, overwrite=True)
     if rc != UploadStatus.OK:
-        where = f" on node {getattr(node, 'name', '?')}" if remote else ""
         return None, f"write failed{where}: {getattr(rc, 'name', rc)}"
+    try:
+        if remote:
+            try:
+                await node.remove_file(pending)
+            except Exception:  # noqa: BLE001 - nothing staged there yet
+                pass
+            await node.rename_file(part, pending)
+        else:
+            os.replace(part, pending)
+    except Exception as ex:  # noqa: BLE001
+        return None, f"could not move the download into place{where}: {ex}"
     if remote:
         import hashlib
         try:
@@ -245,7 +263,14 @@ async def handle_bfbinary_upload(cog, message) -> bool:
     from core.utils.discord import ServerUploadHandler
 
     bot = cog.bot
-    roles = bot.roles["DCS Admin"]
+    # A staged binary runs as the bot/DCS account on the next restart, so the
+    # bar is the bot's full "Admin" role, not "DCS Admin" (who runs servers but
+    # shouldn't be able to ship code). `binary_upload_role` in fowlengine.yaml
+    # names another DCSServerBot role group if a box needs it.
+    role_group = str((cog.get_config() or {}).get("binary_upload_role") or "Admin")
+    roles = (getattr(bot, "roles", None) or {}).get(role_group)
+    if not roles:
+        return False
     if not ServerUploadHandler.is_valid(message, patterns=BFBINARY_PATTERNS, roles=roles):
         return False
 
@@ -265,6 +290,7 @@ async def handle_bfbinary_upload(cog, message) -> bool:
     local_node = getattr(cog, "node", None)
     lines: list[str] = []
     warnings: list[str] = []
+    audit: list[str] = []
     staged_any = False
 
     for att in message.attachments:
@@ -291,6 +317,7 @@ async def handle_bfbinary_upload(cog, message) -> bool:
             staged_any = True
             lines.append(f"• `{name}` — {sidecar['size'] / 1024 / 1024:.1f} MB, "
                          f"`sha256:{(sidecar['sha256'] or '')[:12]}` → bfdb (applies on its next restart)")
+            audit.append(f"`{name}` → bfdb, sha256 `{sidecar['sha256'] or '?'}`")
             await bot.audit(f'staged engine binary "{name}"', server=scoped, user=message.author)
             continue
 
@@ -317,6 +344,7 @@ async def handle_bfbinary_upload(cog, message) -> bool:
             lines.append(f"• `{name}` — {sidecar['size'] / 1024 / 1024:.1f} MB, "
                          f"`sha256:{(sidecar['sha256'] or '')[:12]}` → **{', '.join(names)}**{when}"
                          f"\n   `{staging_dir}`{on_node}")
+            audit.append(f"`{name}` → {', '.join(names)}, sha256 `{sidecar['sha256'] or '?'}`")
             if len(group) > 1:
                 warnings.append(
                     f"⚠️ {', '.join(names)} share one staging dir, so whichever restarts first "
@@ -338,6 +366,15 @@ async def handle_bfbinary_upload(cog, message) -> bool:
     out += warnings
     out.append("Use `/feops stage_apply` to swap it in now, or `/feops stage_cancel` to discard.")
     await message.channel.send("\n".join(out)[:1990])
+    # An audit line in the ops channel with the FULL sha256, so any staged
+    # binary can be traced back to who dropped it and matched to a build.
+    notify = getattr(cog, "notify_ops", None)
+    if notify and audit:
+        try:
+            await notify(f"📥 **{message.author}** (`{getattr(message.author, 'id', '?')}`) staged an engine "
+                         f"binary from Discord:\n" + "\n".join(audit))
+        except Exception:  # noqa: BLE001 - the audit notice is best-effort
+            pass
     return True
 
 

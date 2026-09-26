@@ -46,9 +46,6 @@ DEFAULT:
 
   # URL to your existing bfweb instance
   dashboard_url: "https://bfweb.your-domain.com"
-  
-  # Secret key to sign one-time auto-login tokens
-  dashboard_secret: "YOUR_SUPER_SECRET_KEY"
 
   # The base URL to your bfdb REST API
   api_url: "http://localhost:8765"
@@ -87,7 +84,7 @@ swap) is configured in `nodes.yaml`, not here.
 ## Slash Commands
 
 ### Player
-- `/fe_dashboard` - your secure web-dashboard login link (Discord OAuth + 1-hour HMAC auto-login).
+- `/fe_dashboard` - your web-dashboard login link (Discord OAuth).
 - `/fe_objective <name>` - owner / health / priority for one objective (substring match).
 - `/fe_gci` - current GCI (AWACS) frequencies, callsigns and usage.
 - `/fe_briefing <server>` - your own coalition's live situation report, privately. Side comes from your in-game registration; there is no way to ask for the other one.
@@ -103,7 +100,7 @@ live on the web dashboard now -- `/fe_dashboard` points there.
 - `/feops stage_status | stage_cancel <which> | stage_apply <server> <which>` - manage staged engine binaries.
 - `/feops briefing_lock <server> [confirm]` - show, then apply, the channel overwrites that lock each briefing channel to its coalition role. Dry-run unless `confirm: True`.
 - `/feops icons_install` / `icons_status` / `icons_uninstall` - manage the custom emoji set.
-- **Upload:** drop `bflib.dll` / `bfdb.exe` into the admin channel (DCS Admin only) to stage it.
+- **Upload:** drop `bflib.dll` / `bfdb.exe` into the admin channel (the bot's `Admin` role only; `binary_upload_role` changes it) to stage it. Each staged file is posted to `ops_channel` with its sha256.
 
 ## Architecture & Integration
 
