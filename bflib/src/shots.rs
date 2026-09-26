@@ -154,11 +154,13 @@ impl ShotDb {
         // resolve it to a unit we actually know about. Anything else -- ground,
         // ship, structure, a weapon masquerading as a unit, an errored
         // category lookup -- bails before get_target() is ever called.
-        let category = ok!(e.initiator.get_category());
+        // (a shooter already gone when the event arrives can't be attributed)
+        let initiator = some!(e.initiator.as_ref());
+        let category = ok!(initiator.get_category());
         if category != UnitCategory::Airplane && category != UnitCategory::Helicopter {
             return Ok(());
         }
-        let initiator_oid = ok!(e.initiator.object_id());
+        let initiator_oid = ok!(initiator.object_id());
         let initiator_uid = some!(db.ephemeral.get_uid_by_object_id(&initiator_oid)).clone();
         let initiator_unit = ok!(db.unit(&initiator_uid));
         // Second line of defence for the crash the comment above describes.
@@ -182,8 +184,8 @@ impl ShotDb {
         if self.dead.contains_key(&target_oid) || self.recently_dead.contains_key(&target_oid) {
             return Ok(());
         }
-        let shooter = some!(who(db, e.initiator.object_id()?));
-        let shooter_typ = e.initiator.get_type_name().ok().map(|s| dcso3::String::from(s.as_str()));
+        let shooter = some!(who(db, initiator.object_id()?));
+        let shooter_typ = initiator.get_type_name().ok().map(|s| dcso3::String::from(s.as_str()));
         let target_typ = target.get_type_name()?;
         let target = some!(who(db, target_oid.clone()));
         self.by_target.entry(target_oid).or_default().push(Shot {

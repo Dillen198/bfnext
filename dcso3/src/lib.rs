@@ -153,8 +153,11 @@ macro_rules! atomic_id {
                 fn update_max(n: i64) {
                     const O: std::sync::atomic::Ordering = std::sync::atomic::Ordering::Relaxed;
                     let _: Result<_, _> = [<MAX_ $name:upper _ID>].fetch_update(O, O, |cur| {
+                        // saturating: a corrupt/hostile id of i64::MAX must
+                        // not wrap the sequence to i64::MIN and start
+                        // handing out ids that collide with existing ones
                         if n >= cur {
-                            Some(n.wrapping_add(1))
+                            Some(n.saturating_add(1))
                         } else {
                             None
                         }
@@ -409,6 +412,33 @@ pub fn wrap_f<'lua, L: LuaEnv<'lua>, R: Default, F: FnOnce(L) -> Result<R>>(
     }
 }
 
+/// Like `wrap_f`, but for callbacks where the `Default` answer is the
+/// dangerous one. The auth hooks (try connect / try change slot) read an
+/// empty return as "no objection", so an error or panic in the handler
+/// used to let the player through. Here any failure produces `deny()`
+/// instead, so the hook fails closed.
+pub fn wrap_f_deny<'lua, L, R, D, F>(name: &str, lua: L, deny: D, f: F) -> LuaResult<R>
+where
+    L: LuaEnv<'lua>,
+    D: FnOnce() -> LuaResult<R>,
+    F: FnOnce(L) -> Result<R>,
+{
+    match panic::catch_unwind(AssertUnwindSafe(|| f(lua))) {
+        Ok(Ok(r)) => Ok(r),
+        Ok(Err(e)) => {
+            error!("{name}: {e:?}, denying");
+            deny()
+        }
+        Err(e) => {
+            match e.downcast_ref::<anyhow::Error>() {
+                Some(e) => error!("{name} panicked {e:?}, denying {}", Backtrace::capture()),
+                None => error!("{name} panicked {e:?}, denying {}", Backtrace::capture()),
+            }
+            deny()
+        }
+    }
+}
+
 pub fn wrap<'lua, R: Default>(name: &str, res: Result<R>) -> LuaResult<R> {
     match res {
         Ok(r) => Ok(r),
@@ -555,6 +585,67 @@ macro_rules! simple_enum {
         impl<'lua> IntoLua<'lua> for $name {
             fn into_lua(self, _lua: &'lua Lua) -> LuaResult<Value<'lua>> {
                 Ok(Value::Integer(self as i64))
+            }
+        }
+    };
+}
+
+/// `simple_enum!` plus an `Unknown(n)` catch-all, for ids DCS extends in
+/// updates (countries, categories, liquid types). The plain form fails the
+/// whole decode on an id it doesn't know, which took down every read that
+/// touched e.g. a new country or unit category. `Unknown` must stay the LAST
+/// variant: some of these are persisted with positional bincode (bfdb), and
+/// appending a variant keeps every existing variant index unchanged.
+///
+/// A data-carrying variant rules out `#[repr]` discriminants and `as` casts,
+/// so the numeric id is `id()`, and ordering is implemented on it to keep
+/// the same order the discriminant-based derive gave.
+#[macro_export]
+macro_rules! simple_enum_unknown {
+    ($name:ident, $repr:ident, [$($case:ident => $num:literal),+]) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+        #[allow(non_camel_case_types)]
+        pub enum $name {
+            $($case),+,
+            /// An id this build doesn't know about yet.
+            Unknown($repr)
+        }
+
+        impl $name {
+            /// The numeric id DCS uses for this value.
+            pub fn id(self) -> $repr {
+                match self {
+                    $(Self::$case => $num),+,
+                    Self::Unknown(n) => n,
+                }
+            }
+        }
+
+        impl PartialOrd for $name {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        impl Ord for $name {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                let key = |v: &Self| (v.id(), matches!(v, Self::Unknown(_)));
+                key(self).cmp(&key(other))
+            }
+        }
+
+        impl<'lua> FromLua<'lua> for $name {
+            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+                Ok(match $repr::from_lua(value, lua)? {
+                    $($num => Self::$case),+,
+                    n => Self::Unknown(n)
+                })
+            }
+        }
+
+        impl<'lua> IntoLua<'lua> for $name {
+            fn into_lua(self, _lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+                Ok(Value::Integer(self.id() as i64))
             }
         }
     };
@@ -733,29 +824,57 @@ where
     T: IntoLua<'lua> + FromLua<'lua> + Clone,
 {
     fn deep_clone(&self, lua: &'lua Lua) -> Result<Self> {
-        let v = match self.clone().into_lua(lua)? {
-            Value::Boolean(b) => Value::Boolean(b),
-            Value::Error(e) => Value::Error(e),
-            Value::Function(f) => Value::Function(f),
-            Value::Integer(i) => Value::Integer(i),
-            Value::LightUserData(d) => Value::LightUserData(d),
-            Value::Nil => Value::Nil,
-            Value::Number(n) => Value::Number(n),
-            Value::String(s) => Value::String(lua.create_string(s)?),
-            Value::Table(t) => {
-                let new = lua.create_table()?;
-                new.set_metatable(t.get_metatable());
-                for r in t.pairs::<Value, Value>() {
-                    let (k, v) = r?;
-                    new.set(k.deep_clone(lua)?, v.deep_clone(lua)?)?
-                }
-                Value::Table(new)
-            }
-            Value::Thread(t) => Value::Thread(t),
-            Value::UserData(d) => Value::UserData(d),
-        };
+        let mut seen = FxHashMap::default();
+        let v = deep_clone_value(lua, self.clone().into_lua(lua)?, &mut seen, 0)?;
         Ok(T::from_lua(v, lua)?)
     }
+}
+
+/// Nesting deeper than this is treated as runaway input rather than data;
+/// real DCS tables (mission, routes, tasks) are a few dozen levels at most.
+const DEEP_CLONE_MAX_DEPTH: usize = 200;
+
+/// The recursion behind `DeepClone`. `seen` maps each source table already
+/// copied to its copy, so a table reachable twice (or through a cycle) is
+/// cloned once and the copy keeps the same shape. Without it a cyclic table
+/// recursed until the stack overflowed, which takes DCS down with it.
+fn deep_clone_value<'lua>(
+    lua: &'lua Lua,
+    v: Value<'lua>,
+    seen: &mut FxHashMap<usize, mlua::Table<'lua>>,
+    depth: usize,
+) -> Result<Value<'lua>> {
+    Ok(match v {
+        Value::String(s) => Value::String(lua.create_string(s)?),
+        Value::Table(t) => {
+            let addr = t.to_pointer() as usize;
+            if let Some(new) = seen.get(&addr) {
+                return Ok(Value::Table(new.clone()));
+            }
+            if depth >= DEEP_CLONE_MAX_DEPTH {
+                bail!("deep_clone: table nesting exceeds {DEEP_CLONE_MAX_DEPTH}")
+            }
+            let new = lua.create_table()?;
+            new.set_metatable(t.get_metatable());
+            seen.insert(addr, new.clone());
+            for r in t.pairs::<Value, Value>() {
+                let (k, v) = r?;
+                let k = deep_clone_value(lua, k, seen, depth + 1)?;
+                let v = deep_clone_value(lua, v, seen, depth + 1)?;
+                new.set(k, v)?
+            }
+            Value::Table(new)
+        }
+        v @ (Value::Boolean(_)
+        | Value::Error(_)
+        | Value::Function(_)
+        | Value::Integer(_)
+        | Value::LightUserData(_)
+        | Value::Nil
+        | Value::Number(_)
+        | Value::Thread(_)
+        | Value::UserData(_)) => v,
+    })
 }
 
 pub fn is_hooks_env(lua: &Lua) -> bool {
@@ -1133,7 +1252,14 @@ impl<'lua> FromLua<'lua> for String {
             Value::Boolean(b) => Ok(Self(format_compact!("{b}"))),
             Value::Integer(n) => Ok(Self(format_compact!("{n}"))),
             Value::Number(n) => Ok(Self(format_compact!("{n}"))),
-            v => Ok(Self(CompactString::from(v.to_string()?))),
+            // nil and tables used to be stringified ("nil", "table: 0x..."),
+            // which leaked into logs, stats and chat as fake names. A value
+            // that may legitimately be absent must be read as Option<String>.
+            v => Err(LuaError::FromLuaConversionError {
+                from: v.type_name(),
+                to: "String",
+                message: None,
+            }),
         }
     }
 }
@@ -1156,8 +1282,12 @@ impl From<CompactString> for String {
     }
 }
 
+/// Mission time in seconds (timer.getTime/getAbsTime, event times). f64
+/// because that is what Lua holds: an f32 only resolves ~0.06 s once a
+/// server has been up ~6 days, and abs time starts at the mission's clock
+/// time so it is large from the first frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct Time(pub f32);
+pub struct Time(pub f64);
 
 impl<'lua> IntoLua<'lua> for Time {
     fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
@@ -1167,28 +1297,28 @@ impl<'lua> IntoLua<'lua> for Time {
 
 impl<'lua> FromLua<'lua> for Time {
     fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
-        Ok(Self(f32::from_lua(value, lua)?))
+        Ok(Self(f64::from_lua(value, lua)?))
     }
 }
 
-impl Add<f32> for Time {
+impl Add<f64> for Time {
     type Output = Self;
 
-    fn add(self, rhs: f32) -> Self::Output {
+    fn add(self, rhs: f64) -> Self::Output {
         Time(self.0 + rhs)
     }
 }
 
-impl AddAssign<f32> for Time {
-    fn add_assign(&mut self, rhs: f32) {
+impl AddAssign<f64> for Time {
+    fn add_assign(&mut self, rhs: f64) {
         self.0 += rhs
     }
 }
 
 impl Sub for Time {
-    type Output = f32;
+    type Output = f64;
 
-    fn sub(self, rhs: Self) -> f32 {
+    fn sub(self, rhs: Self) -> f64 {
         self.0 - rhs.0
     }
 }

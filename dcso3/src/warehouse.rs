@@ -13,14 +13,14 @@ FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::as_tbl;
 use crate::{
-    airbase::Airbase, cvt_err, lua_err, simple_enum, wrapped_table, LuaEnv, MizLua, String,
+    airbase::Airbase, lua_err, simple_enum_unknown, wrapped_table, LuaEnv, MizLua, String,
 };
 use anyhow::Result;
 use mlua::{prelude::*, Value};
 use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
-simple_enum!(LiquidType, u8, [
+simple_enum_unknown!(LiquidType, u8, [
     JetFuel => 0,
     Avgas => 1,
     MW50 => 2,
@@ -33,13 +33,18 @@ impl LiquidType {
 
 wrapped_table!(ItemInventory, None);
 
+// Inventory counts are decoded as f64 and clamped by `count_to_u32` for the
+// same reason as get_item_count: one unlimited/negative/huge entry decoded
+// straight into u32 used to abort the whole get_inventory walk.
 impl<'lua> ItemInventory<'lua> {
     pub fn item(&self, name: &str) -> Result<u32> {
-        Ok(self.t.raw_get(name)?)
+        Ok(count_to_u32(self.t.raw_get(name)?))
     }
 
     pub fn for_each<F: FnMut(String, u32) -> Result<()>>(&self, mut f: F) -> Result<()> {
-        Ok(self.t.for_each(|k, v| f(k, v).map_err(lua_err))?)
+        Ok(self
+            .t
+            .for_each(|k, v: f64| f(k, count_to_u32(v)).map_err(lua_err))?)
     }
 }
 
@@ -47,11 +52,13 @@ wrapped_table!(LiquidInventory, None);
 
 impl<'lua> LiquidInventory<'lua> {
     pub fn item(&self, name: LiquidType) -> Result<u32> {
-        Ok(self.t.raw_get(name)?)
+        Ok(count_to_u32(self.t.raw_get(name)?))
     }
 
     pub fn for_each<F: FnMut(LiquidType, u32) -> Result<()>>(&self, mut f: F) -> Result<()> {
-        Ok(self.t.for_each(|k, v| f(k, v).map_err(lua_err))?)
+        Ok(self
+            .t
+            .for_each(|k, v: f64| f(k, count_to_u32(v)).map_err(lua_err))?)
     }
 }
 

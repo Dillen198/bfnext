@@ -822,7 +822,7 @@ fn finish_pass(
     };
     let points = lso::grade_points(&grade);
     let g0 = samples.last().map(|s| (s.lat, s.lon)).unwrap_or((0., 0.));
-    let abs = dcso3::timer::Timer::singleton(lua).and_then(|t| t.get_abs_time()).map(|t| t.0 as f64).unwrap_or(0.);
+    let abs = dcso3::timer::Timer::singleton(lua).and_then(|t| t.get_abs_time()).map(|t| t.0).unwrap_or(0.);
     let night = clock.is_night(g0.0, g0.1, abs);
     let case = if night { 3 } else { Carriers::window(&c.cfg, _now / 60.).1 };
     let description = lso::describe(&details);

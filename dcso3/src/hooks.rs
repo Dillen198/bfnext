@@ -15,10 +15,13 @@ extern crate nalgebra as na;
 use crate::{
     coalition::Side,
     net::{PlayerId, SlotId, Ucid},
-    wrap_f, HooksLua, LuaEnv, String,
+    wrap_f, wrap_f_deny, HooksLua, LuaEnv, String,
 };
 use anyhow::Result;
 use mlua::prelude::*;
+
+/// Rejection reason sent when the connect hook itself failed.
+const LOGIN_SERVER_ERROR: &str = "server error, try again";
 
 #[derive(Debug)]
 pub struct UserHooks<'lua> {
@@ -285,9 +288,20 @@ impl<'lua> UserHooks<'lua> {
     where
         F: Fn(HooksLua, String, String, Ucid, PlayerId) -> Result<Option<String>> + 'static,
     {
+        // Arguments are decoded inside the deny wrapper rather than by
+        // create_function: a malformed argument (e.g. a bad ucid) would
+        // otherwise raise a Lua error, which DCS treats as "no objection".
         self.on_player_try_connect = Some(self.lua.create_function(
-            move |lua, (addr, name, ucid, id): (String, String, Ucid, PlayerId)| {
-                wrap_f("on_player_try_connect", HooksLua(lua), |lua| {
+            move |lua, args: LuaMultiValue| {
+                let deny = || {
+                    let mut rval = LuaMultiValue::new();
+                    rval.push_front(LOGIN_SERVER_ERROR.into_lua(lua)?);
+                    rval.push_front(LuaValue::Boolean(false));
+                    Ok(rval)
+                };
+                wrap_f_deny("on_player_try_connect", HooksLua(lua), deny, |lua| {
+                    let (addr, name, ucid, id): (String, String, Ucid, PlayerId) =
+                        mlua::FromLuaMulti::from_lua_multi(args, lua.inner())?;
                     let mut rval = LuaMultiValue::new();
                     match f(lua, addr, name, ucid, id) {
                         Err(e) => return Err(e),
@@ -324,11 +338,20 @@ impl<'lua> UserHooks<'lua> {
     where
         F: Fn(HooksLua, PlayerId, Side, SlotId) -> Result<Option<bool>> + 'static,
     {
+        // fails closed like on_player_try_connect: an error, a panic, or
+        // an undecodable side/slot answers false (deny) instead of nil
         self.on_player_try_change_slot = Some(self.lua.create_function(
-            move |lua, (id, side, slot): (PlayerId, Side, SlotId)| {
-                wrap_f("on_player_try_change_slot", HooksLua(lua), |lua| {
-                    f(lua, id, side, slot)
-                })
+            move |lua, args: LuaMultiValue| {
+                wrap_f_deny(
+                    "on_player_try_change_slot",
+                    HooksLua(lua),
+                    || Ok(Some(false)),
+                    |lua| {
+                        let (id, side, slot): (PlayerId, Side, SlotId) =
+                            mlua::FromLuaMulti::from_lua_multi(args, lua.inner())?;
+                        f(lua, id, side, slot)
+                    },
+                )
             },
         )?);
         Ok(self)

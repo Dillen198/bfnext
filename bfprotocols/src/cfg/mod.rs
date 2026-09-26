@@ -21,6 +21,7 @@ use dcso3::{coalition::Side, controller::{AltType, TacanBand}, country::Country,
 use enumflags2::{bitflags, BitFlags};
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use indexmap::IndexMap;
+use log::warn;
 use netidx::path::Path as NetIdxPath;
 use regex::Regex;
 use serde_derive::{Deserialize, Serialize};
@@ -4107,6 +4108,115 @@ fn default_commander_action_reserve() -> i64 {
     300
 }
 
+/// Replace `path` with `data` so that a crash or power cut leaves either the
+/// old file or the new one, never a truncated mix: write a sibling temp
+/// file, fsync it, then rename it over the target. The temp file is removed
+/// if any step fails. (A rename without the fsync could still surface an
+/// empty file after a hard kill, which is what corrupted save files before.)
+fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
+    use std::io::Write;
+    // append rather than set_extension: config names contain dots
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    let res = (|| -> Result<()> {
+        let mut fd = File::create(&tmp).with_context(|| format_compact!("creating {:?}", tmp))?;
+        fd.write_all(data).with_context(|| format_compact!("writing {:?}", tmp))?;
+        fd.sync_all().with_context(|| format_compact!("syncing {:?}", tmp))?;
+        drop(fd);
+        fs::rename(&tmp, path)
+            .with_context(|| format_compact!("moving {:?} into place", tmp))?;
+        Ok(())
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    res
+}
+
+/// Collect the object keys present in `raw` (the config as written) that
+/// have no counterpart in `known` (the parsed config serialized back), i.e.
+/// keys serde ignored. Only descends where both sides have the same shape;
+/// map-valued settings serialize every key they parsed, so they never
+/// report false positives.
+fn unknown_keys(
+    raw: &serde_json::Value,
+    known: &serde_json::Value,
+    path: &mut std::string::String,
+    out: &mut Vec<std::string::String>,
+) {
+    use serde_json::Value as J;
+    match (raw, known) {
+        (J::Object(r), J::Object(k)) => {
+            for (key, rv) in r {
+                let len = path.len();
+                if !path.is_empty() {
+                    path.push('.');
+                }
+                path.push_str(key);
+                match k.get(key) {
+                    None => out.push(path.clone()),
+                    Some(kv) => unknown_keys(rv, kv, path, out),
+                }
+                path.truncate(len);
+            }
+        }
+        (J::Array(r), J::Array(k)) if r.len() == k.len() => {
+            for (i, (rv, kv)) in r.iter().zip(k).enumerate() {
+                let len = path.len();
+                path.push_str(&format_compact!("[{i}]"));
+                unknown_keys(rv, kv, path, out);
+                path.truncate(len);
+            }
+        }
+        _ => (),
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+
+    #[test]
+    fn unknown_keys_reports_only_ignored_keys() {
+        let raw = serde_json::json!({
+            "a": 1, "typo": 2,
+            "nested": {"b": 1, "bogus": true},
+            "list": [{"c": 1, "extra": 0}]
+        });
+        let known = serde_json::json!({
+            "a": 1, "nested": {"b": 1}, "list": [{"c": 1}], "unset": null
+        });
+        let mut out = vec![];
+        unknown_keys(&raw, &known, &mut std::string::String::new(), &mut out);
+        out.sort();
+        assert_eq!(out, vec!["list[0].extra", "nested.bogus", "typo"]);
+    }
+
+    #[test]
+    fn default_cfg_is_valid_and_has_no_unknown_keys() {
+        let cfg = Cfg::default();
+        cfg.validate().unwrap();
+        let v = serde_json::to_value(&cfg).unwrap();
+        let back: Cfg = serde_json::from_value(v.clone()).unwrap();
+        let mut out = vec![];
+        unknown_keys(&v, &serde_json::to_value(&back).unwrap(), &mut Default::default(), &mut out);
+        assert!(out.is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn write_atomic_replaces_and_cleans_up() {
+        let dir = std::env::temp_dir().join(format!("bfcfg-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("x_CFG");
+        write_atomic(&p, b"one").unwrap();
+        write_atomic(&p, b"two").unwrap();
+        assert_eq!(fs::read(&p).unwrap(), b"two");
+        assert!(!dir.join("x_CFG.tmp").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
 impl Cfg {
     fn path(miz_state_path: &Path) -> PathBuf {
         let mut path = PathBuf::from(miz_state_path);
@@ -4129,10 +4239,10 @@ impl Cfg {
                 Ok(f) => break f,
                 Err(e) => match e.kind() {
                     io::ErrorKind::NotFound => {
-                        let file = File::create(&path)
-                            .map_err(|e| anyhow!("could not create default config {}", e))?;
-                        serde_json::to_writer_pretty(file, &Cfg::default())
-                            .map_err(|e| anyhow!("could not write default config {}", e))?;
+                        let default = serde_json::to_string_pretty(&Cfg::default())
+                            .map_err(|e| anyhow!("could not encode default config {}", e))?;
+                        write_atomic(&path, default.as_bytes())
+                            .map_err(|e| anyhow!("could not write default config {:?}", e))?;
                     }
                     e => {
                         return Err(anyhow!("error opening config file {:?}", e));
@@ -4140,8 +4250,27 @@ impl Cfg {
                 },
             }
         };
-        let mut cfg: Self = serde_json::from_reader(file)
+        let text = io::read_to_string(file)
+            .map_err(|e| anyhow!("failed to read cfg file {:?}, {:?}", path, e))?;
+        let mut cfg: Self = serde_json::from_str(&text)
             .map_err(|e| anyhow!("failed to decode cfg file {:?}, {:?}", path, e))?;
+        // Unknown keys are silently dropped by serde (deny_unknown_fields is
+        // off so old configs keep loading), which hid typos like
+        // "tk_windw": the setting just quietly ran at its default. Say so.
+        // Done before the deprecated-field migration so the comparison sees
+        // the deprecated keys still in place.
+        match serde_json::from_str::<serde_json::Value>(&text)
+            .and_then(|raw| Ok((raw, serde_json::to_value(&cfg)?)))
+        {
+            Ok((raw, known)) => {
+                let mut unknown = vec![];
+                unknown_keys(&raw, &known, &mut std::string::String::new(), &mut unknown);
+                for key in unknown {
+                    warn!("cfg {:?}: unknown key {key} is ignored (typo, or removed setting?)", path)
+                }
+            }
+            Err(e) => warn!("cfg {:?}: could not check for unknown keys {e:?}", path),
+        }
         for (_, actions) in &mut cfg.actions {
             actions.sort_by(|name0, _, name1, _| name0.cmp(name1));
         }
@@ -4160,7 +4289,56 @@ impl Cfg {
             }
         }
         if has_deprecated {
-            fs::write(path, serde_json::to_string_pretty(&cfg)?)?
+            // the operator's only copy of their config: never leave it
+            // half-written if we die mid-write
+            write_atomic(&path, serde_json::to_string_pretty(&cfg)?.as_bytes())?
+        }
+        cfg.validate().with_context(|| format_compact!("invalid cfg {:?}", path))?;
+        Ok(cfg)
+    }
+
+    /// Sanity checks on values that would crash or silently disable a core
+    /// system. Hard errors only for values that are never meaningful (a
+    /// divisor of zero, a message budget of zero); merely odd values are
+    /// logged as warnings so an existing server still starts.
+    pub fn validate(&self) -> Result<()> {
+        let cfg = self;
+        if let Some(points) = &cfg.points {
+            // player.rs divides the team-kill age by it: 0 panics on the first TK
+            if points.tk_window == 0 {
+                bail!("points.tk_window must be at least 1 (hours)")
+            }
+        }
+        // the message queue drains at this rate; 0 means no chat, no F10
+        // markup and no panels ever go out
+        if cfg.max_msgs_per_second == 0 {
+            bail!("max_msgs_per_second must be at least 1")
+        }
+        if let Some(wh) = &cfg.warehouse {
+            // the logistics tick period in minutes; 0 runs the whole
+            // warehouse sync every frame
+            if wh.tick == 0 {
+                bail!("warehouse.tick must be at least 1 (minutes)")
+            }
+            if wh.ticks_per_delivery == 0 {
+                warn!("warehouse.ticks_per_delivery is 0: every tick is a delivery")
+            }
+        }
+        if cfg.slow_timed_events_freq == 0 {
+            warn!("slow_timed_events_freq is 0: slow timed events run every frame")
+        }
+        if let Some(sc) = &cfg.smart_commander {
+            for (name, cost) in [
+                ("barrage_cost", sc.barrage_cost),
+                ("ambush_cost", sc.ambush_cost),
+                ("cap_cost", sc.cap_cost),
+                ("action_reserve", sc.action_reserve),
+                ("treasury_income_amount", sc.treasury_income_amount),
+            ] {
+                if cost < 0 {
+                    warn!("smart_commander.{name} is negative ({cost}): it pays the side instead")
+                }
+            }
         }
         // A reactive air response with no templates to spawn is a config that
         // looks enabled and does nothing: every scramble picks from an empty
@@ -4193,21 +4371,12 @@ impl Cfg {
                 }
             }
         }
-        Ok(cfg)
+        Ok(())
     }
 
     pub fn save(&self, miz_state_path: &Path) -> Result<()> {
-        let mut path = Self::path(miz_state_path);
-        path.set_extension("bak");
-        let fd = File::options()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&path)
-            .with_context(|| format_compact!("opening {:?}", path))?;
-        serde_json::to_writer_pretty(fd, self).context("serializing cfg")?;
-        fs::rename(&path, Self::path(miz_state_path)).context("moving new file into place")?;
-        Ok(())
+        let s = serde_json::to_string_pretty(self).context("serializing cfg")?;
+        write_atomic(&Self::path(miz_state_path), s.as_bytes())
     }
 
     pub fn check_vehicle_has_threat_distance(&self, vehicle: &Vehicle) -> Result<()> {
