@@ -247,9 +247,6 @@ pub struct Ephemeral {
     pub(super) units_able_to_move: IndexSet<UnitId, FxBuildHasher>,
     pub(super) groups_with_move_missions: FxHashMap<GroupId, Vector2>,
     pub(super) units_potentially_close_to_enemies: FxHashSet<UnitId>,
-    /// Recent weapon-launch events: (shooter_pos, attacking_side, timestamp).
-    /// Used to keep enemy objectives awake while weapons are inbound.
-    pub(crate) recent_shots: Vec<(Vector2, Side, DateTime<Utc>)>,
     /// Objectives that have been targeted by artillery/missile strikes, keyed by
     /// ObjectiveId. Entries expire after ARTY_WAKE_SECS seconds and cause the
     /// objective's units to be (re)spawned so they are present to absorb fire.
@@ -387,7 +384,6 @@ impl Default for Ephemeral {
             units_able_to_move: IndexSet::default(),
             groups_with_move_missions: FxHashMap::default(),
             units_potentially_close_to_enemies: FxHashSet::default(),
-            recent_shots: Vec::new(),
             artillery_targeted: FxHashMap::default(),
             production_by_side: FxHashMap::default(),
             actions_taken: FxHashMap::default(),

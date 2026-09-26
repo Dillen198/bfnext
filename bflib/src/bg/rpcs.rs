@@ -5,7 +5,11 @@ use bfprotocols::db::group::GroupId;
 use chrono::prelude::*;
 use crossbeam::queue::SegQueue;
 use dcso3::{coalition::Side, net::{PlayerId, Ucid}, Vector2};
-use futures::{channel::mpsc, stream::StreamExt};
+use futures::{
+    channel::mpsc,
+    select_biased,
+    stream::{FuturesUnordered, StreamExt},
+};
 use netidx::{
     chars::Chars,
     path::Path,
@@ -17,7 +21,7 @@ use netidx_protocols::{
     rpc_err,
 };
 use regex::Regex;
-use std::{str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc, time::Duration};
 use tokio::{sync::oneshot, task};
 
 pub struct Rpcs {
@@ -113,13 +117,39 @@ fn parse_server_info(s: &str) -> Result<AdminCommand> {
     Ok(AdminCommand::SetServerInfo { restart_at, weather })
 }
 
+/// The longest an RPC waits for the mission to answer it. Admin commands are
+/// run from the once-a-second tick, so a healthy mission answers in about a
+/// second; a paused or wedged one never does, and the caller should hear so
+/// rather than wait forever.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
+
+async fn reply_one(mut c: RpcCall, ch: oneshot::Receiver<Value>) {
+    match tokio::time::timeout(REPLY_TIMEOUT, ch).await {
+        Ok(Ok(v)) => c.reply.send(v),
+        Ok(Err(_)) => c.reply.send(Value::Error("call failed".into())),
+        Err(_) => c
+            .reply
+            .send(Value::Error("timed out waiting for the mission to answer".into())),
+    }
+}
+
+/// Deliver RPC replies as they become ready. This used to await them one at a
+/// time, in arrival order, so a single slow command (a big query, or anything
+/// queued while the mission was busy) held every reply behind it -- and with
+/// no timeout a call the mission never answered held them all forever.
 async fn wait_task(mut ch: mpsc::Receiver<(RpcCall, oneshot::Receiver<Value>)>) {
-    while let Some((mut c, ch)) = ch.next().await {
-        match ch.await {
-            Err(_) => c.reply.send(Value::Error("call failed".into())),
-            Ok(v) => c.reply.send(v),
+    let mut pending = FuturesUnordered::new();
+    loop {
+        select_biased! {
+            call = ch.next() => match call {
+                Some((c, rx)) => pending.push(reply_one(c, rx)),
+                None => break,
+            },
+            () = pending.select_next_some() => (),
+            complete => break,
         }
     }
+    while pending.next().await.is_some() {}
 }
 
 impl Rpcs {

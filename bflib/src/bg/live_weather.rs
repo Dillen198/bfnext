@@ -33,15 +33,25 @@ pub(super) struct LiveWeatherRequest {
 }
 
 pub(super) fn apply(req: &LiveWeatherRequest) -> Result<()> {
-    let lua = Box::leak(Box::new(Lua::new()));
-    let mission: Table = read_table_from_miz(lua, &req.miz_path, "mission")
+    // This used to Box::leak the Lua state -- a whole interpreter plus the
+    // parsed mission table, per restart -- because `serialize_to_lua` takes a
+    // `Value<'static>`. The state only has to outlive that one synchronous
+    // call, so keep it on the stack and narrow the lifetime just for the call.
+    let lua = Lua::new();
+    let mission: Table = read_table_from_miz(&lua, &req.miz_path, "mission")
         .context("reading mission table from miz")?;
     if req.cfg.sync_time {
         apply_live_time(&mission).context("applying live time")?;
     }
     apply_live_weather(&mission, &req.cfg).context("applying live weather")?;
-    let s = serialize_to_lua("mission", Value::Table(mission))
-        .context("serializing updated mission table")?;
+    // SAFETY: the value is consumed (and dropped) inside `serialize_to_lua`,
+    // which returns an owned String; `lua` is still alive at that point and
+    // is only dropped at the end of this function. Nothing borrowed from the
+    // state escapes. Drop this once miz_pack's serializer is generic over the
+    // Lua lifetime.
+    let mission: Value<'static> =
+        unsafe { std::mem::transmute::<Value<'_>, Value<'static>>(Value::Table(mission)) };
+    let s = serialize_to_lua("mission", mission).context("serializing updated mission table")?;
     rewrite_entry_in_miz(&req.miz_path, "mission", &s)
         .context("writing updated mission back into miz")?;
     Ok(())
