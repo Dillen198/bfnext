@@ -612,8 +612,10 @@ fn deliver_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
                         msg,
                     );
                 }
+                // Rescuing your own ejected pilot gets the life back, not a
+                // reward on top (see tick_csar).
                 if rescue_reward > 0 {
-                    if let Some(ucid) = &rescuer_ucid {
+                    if let Some(ucid) = rescuer_ucid.as_ref().filter(|u| **u != pilot.ucid) {
                         ctx.db.adjust_points(
                             ucid,
                             rescue_reward as i32,

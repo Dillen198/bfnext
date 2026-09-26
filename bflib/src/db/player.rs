@@ -1448,6 +1448,7 @@ impl Db {
                         }
                     }
                 }
+                self.return_troops_on_deslot(&slot);
                 self.player_deslot(&ucid)
             }
         }
@@ -1466,6 +1467,9 @@ impl Db {
             }
         }
         self.ephemeral.stat(Stat::Disconnect { id: *ucid });
+        if let Some(slot) = self.persisted.players.get(ucid).and_then(|p| p.current_slot.as_ref().map(|(s, _)| s.clone())) {
+            self.return_troops_on_deslot(&slot);
+        }
         self.player_deslot(ucid);
     }
 
