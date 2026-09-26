@@ -147,9 +147,20 @@ fn extract_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     match ctx.db.extract_troops(lua, &ctx.jtac, &slot) {
         Ok((tr, _extracted_gid)) => {
             let player = player_name(&ctx.db, &slot);
-
-
-            let msg = format_compact!("{player} extracted {} troops from the field", tr.name);
+            // Casualties now ride along with the squad, so say so -- it will
+            // be dropped (and refunded) at this strength, not topped back up.
+            let strength = ctx
+                .db
+                .list_cargo(&slot)
+                .and_then(|c| c.troops.last())
+                .and_then(|it| it.strength);
+            let msg = match strength {
+                Some((alive, total)) => format_compact!(
+                    "{player} extracted {} troops from the field ({alive} of {total} left)",
+                    tr.name
+                ),
+                None => format_compact!("{player} extracted {} troops from the field", tr.name),
+            };
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg)
         }
         Err(e) => ctx
@@ -229,6 +240,7 @@ fn disembark_ground_vehicle(lua: MizLua, arg: ArgTuple<GroupId, bfprotocols::db:
 fn list_ground_vehicle_passengers(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, _slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
+    ctx.db.prune_ground_vehicle_passengers();
     let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
     if cfg.ground_vehicle_cargo.is_empty() {
         ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, format_compact!("No ground vehicle cargo configured"));

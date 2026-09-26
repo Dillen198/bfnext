@@ -18,7 +18,7 @@ use super::{Db, ephemeral::DeployableIndex, group::{SpawnedGroup, SpawnedUnit}, 
 use anyhow::Context as _;
 use crate::{
     db::group::DeployKind,
-    group, maybe, objective,
+    group, maybe, objective, objective_mut,
     spawnctx::{SpawnCtx, SpawnLoc},
     unit, unit_mut,
 };
@@ -73,6 +73,9 @@ pub enum Unpakistan {
     UnpackedFarp(String),
     Repaired(String),
     RepairedBase(String, u8),
+    /// A repair kit dropped on a fully repaired base that is still
+    /// consolidating: it bought consolidation progress instead of logi.
+    Consolidated(String),
     TransferedSupplies(String, String),
 }
 
@@ -92,6 +95,10 @@ impl fmt::Display for Unpakistan {
             ),
             Self::Repaired(unit) => write!(f, "repaired a {unit}"),
             Self::RepairedBase(base, logi) => write!(f, "repaired logistics at {base} to %{logi}"),
+            Self::Consolidated(base) => write!(
+                f,
+                "delivered a logistics repair kit to {base}, speeding up its consolidation"
+            ),
             Self::TransferedSupplies(from, to) => {
                 write!(f, "transfered supplies from {from} to {to}")
             }
@@ -107,6 +114,48 @@ pub struct InternalTroop {
     pub troop: Troop,
     #[serde(default)]
     pub jtac: Option<bfprotocols::cfg::JtacState>,
+    /// `(alive, total)` soldiers when the squad was extracted from the field,
+    /// or `None` for a full-strength squad (fresh off a base). Extraction used
+    /// to forget casualties entirely: a squad shot down to one man could be
+    /// picked up and dropped again at full strength, or returned for its full
+    /// price. Carried through so a re-drop spawns only the survivors and a
+    /// return refunds only what is left of it.
+    #[serde(default)]
+    pub strength: Option<(u16, u16)>,
+}
+
+impl InternalTroop {
+    /// Fraction of the squad still alive, 1.0 for a full-strength squad.
+    pub fn survival_fraction(&self) -> f32 {
+        survival_fraction(self.strength)
+    }
+
+    /// Points to hand back when this squad is returned to a base: nothing for
+    /// a squad nobody paid for (admin / API spawns have no origin), otherwise
+    /// the troop cost scaled down by its casualties. The split between player
+    /// and objective is done by `refund_points` with `cost_fraction`, so each
+    /// side only gets back the share it actually paid.
+    pub fn refund_cost(&self) -> u32 {
+        match self.origin {
+            None => 0,
+            Some(_) => (self.troop.cost as f32 * self.survival_fraction()).round() as u32,
+        }
+    }
+}
+
+fn survival_fraction(strength: Option<(u16, u16)>) -> f32 {
+    match strength {
+        Some((alive, total)) if total > 0 => alive.min(total) as f32 / total as f32,
+        _ => 1.,
+    }
+}
+
+/// `(alive, total)` for a squad group, or `None` when nobody is missing.
+fn squad_strength(units: impl Iterator<Item = bool>) -> Option<(u16, u16)> {
+    let (alive, total) = units.fold((0u16, 0u16), |(a, t), dead| {
+        (a.saturating_add(!dead as u16), t.saturating_add(1))
+    });
+    if alive < total { Some((alive, total)) } else { None }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,6 +219,11 @@ pub enum C130CargoState {
     /// Crate spawned near aircraft, waiting to be loaded
     Spawned,
     /// Crate loaded into aircraft (DCS native cargo)
+    ///
+    /// Never assigned: whether a crate is in a cargo bay is tracked by
+    /// `C130Cargo::aboard` instead, since DCS keeps loaded crates alive and a
+    /// crate can be loaded from any state. Kept only because the state
+    /// machine and orphan cleanup still match on it.
     Loaded,
     /// Crate in the air (after airdrop)
     Airborne,
@@ -267,6 +321,18 @@ pub struct C130Cargo {
     /// objective can still take damage later, so it is a delay, not a stop,
     /// and moving the crate clears it for an immediate retry.
     pub retry_after: Option<DateTime<Utc>>,
+    /// `(tracked crates, persisted crates)` when this crate last failed to
+    /// unpack for want of siblings. Only a crate arriving, leaving, landing or
+    /// moving can complete the set, so while nothing has changed the per-tick
+    /// auto-unpack retry skips the full crate scan instead of redoing it for
+    /// every waiting crate every tick.
+    #[serde(default)]
+    pub waiting_on: Option<(usize, usize)>,
+    /// What the crate's spawner actually paid for it, as `charge_for_item`'s
+    /// player fraction -- only set for vehicle cargo, which is charged when it
+    /// is spawned rather than when it deploys. `None` means it was free.
+    #[serde(default)]
+    pub charged: Option<f32>,
 }
 
 impl C130Cargo {
@@ -303,6 +369,8 @@ impl C130Cargo {
             notified_missing: false,
             missing_marker: None,
             retry_after: None,
+            waiting_on: None,
+            charged: None,
         }
     }
 
@@ -339,6 +407,8 @@ impl C130Cargo {
             notified_missing: false,
             missing_marker: None,
             retry_after: None,
+            waiting_on: None,
+            charged: None,
         }
     }
 }
@@ -856,6 +926,78 @@ impl Db {
         }
     }
 
+    /// The base-stuffing rule shared by every unpack path: returns the name
+    /// and distance of the friendly objective that forbids unpacking at
+    /// `centroid`, or `None` if it is clear. `origins` are the objectives the
+    /// crates came from (they also count for logistics deployables).
+    fn unpack_too_close(
+        &self,
+        side: Side,
+        centroid: Vector2,
+        logistics: bool,
+        origins: &[ObjectiveId],
+    ) -> Option<(String, f64)> {
+        let excl_dist = self.ephemeral.cfg.logistics_exclusion as f64;
+        let excl_dist_sq = excl_dist.powi(2);
+        self.persisted.objectives.into_iter().find_map(|(oid, obj)| {
+            let check = if logistics {
+                origins.contains(oid) || obj.owner == side
+            } else {
+                // Block unpacking inside friendly objectives (prevent base-stuffing).
+                // Enemy objectives are always allowed — players need to build there to capture.
+                obj.owner == side
+            };
+            if check && (logistics || obj.owner == side) {
+                let dist_sq = na::distance_squared(&obj.zone.pos().into(), &centroid.into());
+                if dist_sq <= excl_dist_sq || obj.zone.scale(1.1).contains(centroid.into()) {
+                    let dist = dist_sq.sqrt();
+                    return Some((obj.name.clone().into(), dist));
+                }
+            }
+            None
+        })
+    }
+
+    /// Points and deploy-limit gate shared by every unpack path. Fails if the
+    /// player plus `origin` can't afford `spec`, or the limit is reached with
+    /// `DenyCrate`; with `DeleteOldest` it makes room first. Returns `origin`,
+    /// the objective that will be charged.
+    fn enforce_deploy_limits(
+        &mut self,
+        side: Side,
+        spec: &Deployable,
+        dep: &str,
+        origin: ObjectiveId,
+        ucid: &Ucid,
+    ) -> Result<ObjectiveId> {
+        if let Some(player) = self.persisted.players.get(ucid)
+            && let Some(obj) = self.persisted.objectives.get(&origin)
+        {
+            let player_points = max(0, player.points);
+            if spec.cost as i32 > player_points + obj.points {
+                bail!(
+                    "there are {} available points, this deployable costs {} points to unpack",
+                    player_points,
+                    spec.cost
+                )
+            }
+        }
+        let (n, oldest) = self.number_deployed(side, dep)?;
+        if n >= spec.limit as usize {
+            match spec.limit_enforce {
+                LimitEnforceTyp::DenyCrate => {
+                    bail!("the max number of {:?} are already deployed", dep)
+                }
+                LimitEnforceTyp::DeleteOldest => match oldest {
+                    Some(Oldest::Group(gid)) => self.delete_group(&gid)?,
+                    Some(Oldest::Objective(oid)) => self.delete_objective(&oid)?,
+                    None => (),
+                },
+            }
+        }
+        Ok(origin)
+    }
+
     pub fn unpakistan(&mut self, lua: MizLua, idx: &MizIndex, slot: &SlotId) -> Result<Unpakistan> {
         #[derive(Clone)]
         struct Cifo {
@@ -1063,30 +1205,8 @@ impl Db {
             logistics: bool,
             iter: F,
         ) -> Option<(String, f64)> {
-            let excl_dist = db.ephemeral.cfg.logistics_exclusion as f64;
-            let excl_dist_sq = excl_dist.powi(2);
-            db.persisted.objectives.into_iter().find_map(|(oid, obj)| {
-                let _is_enemy = obj.owner != side && obj.owner != Side::Neutral;
-                let mut check = false;
-                if logistics {
-                    for cr in iter() {
-                        check |= oid == &cr.origin;
-                    }
-                    check |= obj.owner == side;
-                } else {
-                    // Block unpacking inside friendly objectives (prevent base-stuffing).
-                    // Enemy objectives are always allowed — players need to build there to capture.
-                    check = obj.owner == side;
-                }
-                if check && (logistics || obj.owner == side) {
-                    let dist_sq = na::distance_squared(&obj.zone.pos().into(), &centroid.into());
-                    if dist_sq <= excl_dist_sq || obj.zone.scale(1.1).contains(centroid.into()) {
-                        let dist = dist_sq.sqrt();
-                        return Some((obj.name.clone().into(), dist));
-                    }
-                }
-                None
-            })
+            let origins: SmallVec<[ObjectiveId; 8]> = iter().map(|cr| cr.origin).collect();
+            db.unpack_too_close(side, centroid, logistics, &origins)
         }
         fn close_enough_to_repair<'a, I: Iterator<Item = &'a Cifo>, F: Fn() -> I>(
             db: &Db,
@@ -1148,41 +1268,6 @@ impl Db {
             };
             Ok(spawnloc)
         }
-        fn enforce_deploy_limits(
-            db: &mut Db,
-            side: Side,
-            spec: &Deployable,
-            dep: &String,
-            origin: ObjectiveId,
-            ucid: &Ucid,
-        ) -> Result<ObjectiveId> {
-            if let Some(player) = db.persisted.players.get(ucid)
-                && let Some(obj) = db.persisted.objectives.get(&origin)
-            {
-                let player_points = max(0, player.points);
-                if spec.cost as i32 > player_points + obj.points {
-                    bail!(
-                        "there are {} available points, this deployable costs {} points to unpack",
-                        player_points,
-                        spec.cost
-                    )
-                }
-            }
-            let (n, oldest) = db.number_deployed(side, &**dep)?;
-            if n >= spec.limit as usize {
-                match spec.limit_enforce {
-                    LimitEnforceTyp::DenyCrate => {
-                        bail!("the max number of {:?} are already deployed", dep)
-                    }
-                    LimitEnforceTyp::DeleteOldest => match oldest {
-                        Some(Oldest::Group(gid)) => db.delete_group(&gid)?,
-                        Some(Oldest::Objective(oid)) => db.delete_objective(&oid)?,
-                        None => (),
-                    },
-                }
-            }
-            Ok(origin)
-        }
         let st = SlotStats::get(self, lua, slot)?;
         if st.in_air {
             bail!("you must land to unpack crates")
@@ -1210,9 +1295,20 @@ impl Db {
                 // A repair kit landed at a base that is still consolidating
                 // counts even if its logi is already topped out -- the point is
                 // the sortie, not the logi delta.
-                self.bump_consolidation(oid, "logistics repair kit delivered")?;
+                let advanced = self.bump_consolidation(oid, "logistics repair kit delivered")?;
                 let obj = objective!(self, oid)?;
                 if obj.logi == 100 {
+                    if advanced {
+                        // The kit was spent on consolidation, so it's used up.
+                        // Leaving it on the ground let one kit be unpacked
+                        // over and over, each press buying another bump,
+                        // until the whole hold was done.
+                        let name = obj.name.clone();
+                        let gid = *base_repairs.keys().next()
+                            .ok_or_else(|| anyhow!("no base repair crates found"))?;
+                        self.delete_group(&gid)?;
+                        return Ok(Unpakistan::Consolidated(name));
+                    }
                     reasons.push("objective logistics are completely repaired".into());
                 } else {
                     self.repair_one_logi_step(st.side, Utc::now(), oid)?;
@@ -1320,7 +1416,7 @@ impl Db {
                     };
                     let can_deploy = origins.iter().fold(Err(anyhow!("")), |res, oid| match res {
                         Ok(oid) => Ok(oid),
-                        Err(_) => enforce_deploy_limits(self, st.side, &spec, &dep, *oid, &st.ucid),
+                        Err(_) => self.enforce_deploy_limits(st.side, &spec, &dep, *oid, &st.ucid),
                     });
                     match can_deploy {
                         Err(e) => reasons.push(format_compact!("{e}")),
@@ -1664,6 +1760,7 @@ impl Db {
             cost_fraction,
             troop: troop_cfg.clone(),
             jtac: None,
+            strength: None,
         });
         Trigger::singleton(lua)?
             .action()?
@@ -1758,6 +1855,7 @@ impl Db {
             None,
         ) {
             Ok(gid) => {
+                self.apply_troop_strength(gid, it.strength);
                 self.ephemeral.stat(Stat::DeployTroop {
                     gid,
                     troop: it.troop.name.clone(),
@@ -1801,26 +1899,96 @@ impl Db {
         Trigger::singleton(lua)?
             .action()?
             .set_unit_internal_cargo(unit_name, cargo.weight())?;
-        match it.origin {
-            None => self.adjust_points(&it.player, it.troop.cost as i32, "for troop return"),
-            Some(oid) => {
-                self.refund_points(
-                    &it.player,
-                    oid,
-                    it.troop.cost,
-                    it.cost_fraction,
-                    "for troop return",
-                );
+        self.refund_troop(&it, "for troop return");
+        Ok(it.troop)
+    }
+
+    /// Hand back what a returned squad is still worth: see
+    /// `InternalTroop::refund_cost`. A squad nobody paid for (admin / API
+    /// spawn, no origin) used to refund its full price to whoever it was
+    /// credited to, which made extract-and-return a points faucet.
+    fn refund_troop(&mut self, it: &InternalTroop, why: &str) {
+        let cost = it.refund_cost();
+        if let Some(oid) = it.origin
+            && cost > 0
+        {
+            self.refund_points(&it.player, oid, cost, it.cost_fraction, why);
+        }
+    }
+
+    /// Re-apply an extracted squad's casualties to the group it was just
+    /// re-spawned as: everyone past the survivors is marked dead before the
+    /// spawn queue runs, so only the survivors are put back in the field.
+    fn apply_troop_strength(&mut self, gid: GroupId, strength: Option<(u16, u16)>) {
+        let Some((alive, _)) = strength else { return };
+        let units: SmallVec<[bfprotocols::db::group::UnitId; 16]> = match self.persisted.groups.get(&gid) {
+            Some(g) => g.units.into_iter().copied().collect(),
+            None => return,
+        };
+        // Never zero: a squad with nobody left can't have been extracted.
+        let alive = (alive as usize).max(1);
+        for uid in units.iter().skip(alive) {
+            if let Some(unit) = self.persisted.units.get_mut_cow(uid) {
+                unit.dead = true;
             }
         }
-        Ok(it.troop)
+        self.ephemeral.dirty();
+    }
+
+    /// A crew that leaves its slot or the server while parked at friendly
+    /// logistics hands its squads back to the base, refunded as if they had
+    /// used Troops > Return. Previously the squads -- already paid for --
+    /// simply vanished with the airframe. Troops lost with a crew that dies
+    /// are not covered: that path deslots before this runs.
+    pub fn return_troops_on_deslot(&mut self, slot: &SlotId) {
+        let Some(ucid) = self.ephemeral.player_in_slot(slot).copied() else { return };
+        let Some(player) = self.persisted.players.get(&ucid) else { return };
+        let side = player.side;
+        let Some(oid) = player
+            .current_slot
+            .as_ref()
+            .and_then(|(_, inst)| inst.as_ref())
+            .filter(|inst| !inst.in_air)
+            .and_then(|inst| inst.landed_at_objective)
+        else {
+            return;
+        };
+        // Same bar as a manual return (`point_near_logistics`): the base can
+        // have changed hands or been bombed flat while the crew sat there.
+        let at_friendly_logi = self
+            .persisted
+            .objectives
+            .get(&oid)
+            .map(|o| o.owner == side && o.logi() > 0 && !o.captureable())
+            .unwrap_or(false);
+        if !at_friendly_logi {
+            return;
+        }
+        let troops = match self.ephemeral.cargo.get_mut(slot) {
+            Some(c) if !c.troops.is_empty() => std::mem::take(&mut c.troops),
+            _ => return,
+        };
+        for it in &troops {
+            self.refund_troop(it, "for troops returned to base");
+        }
+        info!("returned {} squad(s) carried by {ucid} to base on deslot", troops.len());
     }
 
     pub fn extract_troops(&mut self, lua: MizLua, jtacs: &crate::jtac::Jtacs, slot: &SlotId) -> Result<(Troop, GroupId)> {
         let (cargo_capacity, side, unit_name) = self.unit_cargo_cfg(slot)?;
         let pos = self.ephemeral.slot_instance_pos(lua, slot)?;
         let point = Vector2::new(pos.p.x, pos.p.z);
-        let (gid, it) = {
+        // Squads currently holding a just-captured base. Lifting one out ends
+        // the hold as if it had been wiped out, which completed consolidation
+        // on the spot, so they stay put until the capture is settled.
+        let holding: FxHashMap<GroupId, String> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .flat_map(|(_, obj)| obj.capture_hold.iter().map(move |gid| (*gid, obj.name.clone())))
+            .collect();
+        let mut held_at: Option<String> = None;
+        let found = {
             let max_dist = (self.ephemeral.cfg.crate_load_distance as f64).powi(2);
             self.persisted
                 .troops
@@ -1846,6 +2014,16 @@ impl Db {
                                     na::distance_squared(&u.pos.into(), &point.into()) <= max_dist
                                 });
                             if in_range {
+                                if let Some(name) = holding.get(&gid) {
+                                    held_at = Some(name.clone());
+                                    return None;
+                                }
+                                let strength = squad_strength(
+                                    g.units
+                                        .into_iter()
+                                        .filter_map(|uid| self.persisted.units.get(uid))
+                                        .map(|u| u.dead),
+                                );
                                 return Some((
                                     gid,
                                     InternalTroop {
@@ -1854,6 +2032,7 @@ impl Db {
                                         cost_fraction: *cost_fraction,
                                         troop: spec.clone(),
                                         jtac: jtacs.get(&crate::jtac::JtId::Group(gid)).ok().map(|j| j.state()),
+                                        strength,
                                     },
                                 ));
                             }
@@ -1861,7 +2040,13 @@ impl Db {
                     }
                     None
                 })
-                .ok_or_else(|| anyhow!("no troops in range"))?
+        };
+        let (gid, it) = match (found, held_at) {
+            (Some(found), _) => found,
+            (None, Some(name)) => bail!(
+                "those troops are holding {name} while it consolidates -- they can't be extracted until the capture is settled"
+            ),
+            (None, None) => bail!("no troops in range"),
         };
         let cargo = self.ephemeral.cargo.entry(slot.clone()).or_default();
         if cargo_capacity.troop_slots as usize <= cargo.num_troops()
@@ -1879,6 +2064,19 @@ impl Db {
     }
 
     // ===== Ground Vehicle Troop Transport =====
+
+    /// Drop passenger manifests whose carrier no longer exists (group deleted
+    /// -- despawned, reclaimed, limit-culled) or is dead. Nothing removed
+    /// those entries when the carrier went away without a kill event, so they
+    /// leaked and still showed up as boardable / dismountable. Done lazily
+    /// here rather than in `delete_group` so the group code stays unaware of
+    /// this ephemeral side table.
+    pub(crate) fn prune_ground_vehicle_passengers(&mut self) {
+        let units = &self.persisted.units;
+        self.ephemeral.ground_vehicle_passengers.retain(|uid, _| {
+            units.get(uid).map(|u| !u.dead).unwrap_or(false)
+        });
+    }
 
     /// Find a friendly ground vehicle with GroundVehicleCargo config within board radius.
     /// Returns (UnitId, vehicle_name, cfg) if found.
@@ -1932,6 +2130,7 @@ impl Db {
         }
         let side = self.ephemeral.get_slot_info(slot)
             .ok_or_else(|| anyhow!("no slot info for {slot:?}"))?.side;
+        self.prune_ground_vehicle_passengers();
         let (vehicle_uid, vehicle_name, gv_cfg) = self
             .nearby_boardable_vehicle(lua, slot)?
             .ok_or_else(|| anyhow!("no boardable vehicle within range"))?;
@@ -1981,6 +2180,7 @@ impl Db {
     ) -> Result<(Troop, GroupId)> {
         let side = self.ephemeral.get_slot_info(slot)
             .ok_or_else(|| anyhow!("no slot info for {slot:?}"))?.side;
+        self.prune_ground_vehicle_passengers();
 
         if vehicle_uid.inner() == 0 {
             // Find nearest friendly vehicle with troops
@@ -2062,6 +2262,7 @@ impl Db {
                 return Err(e);
             }
         };
+        self.apply_troop_strength(gid, it.strength);
         let troop_cfg = it.troop.clone();
         self.ephemeral.stat(bfprotocols::stats::Stat::DeployTroop {
             gid,
@@ -2118,11 +2319,12 @@ impl Db {
                     Ok(s) => s,
                     Err(e) => { log::error!("spawn ctx error for dismount: {e}"); continue; }
                 };
-                if let Err(e) = self.add_and_queue_group(
+                match self.add_and_queue_group(
                     &spctx, idx, side, spawnpos,
                     &*it.troop.template, dk, BitFlags::empty(), None,
                 ) {
-                    log::error!("failed to spawn survivor dismount: {e}");
+                    Ok(gid) => self.apply_troop_strength(gid, it.strength),
+                    Err(e) => log::error!("failed to spawn survivor dismount: {e}"),
                 }
             }
         }
@@ -2501,8 +2703,11 @@ impl Db {
                     );
                     self.ephemeral.panel_to_player(&self.persisted, 15, &pilot.ucid, msg);
                 }
+                // No reward for flying your own ejected pilot home: getting the
+                // life back is the payoff, and paying for it made ejecting next
+                // to a friendly helo slot a points farm.
                 if rescue_reward > 0 {
-                    if let Some(ucid) = &ucid_rescuer {
+                    if let Some(ucid) = ucid_rescuer.as_ref().filter(|u| **u != pilot.ucid) {
                         self.adjust_points(
                             ucid,
                             rescue_reward as i32,
@@ -2524,6 +2729,10 @@ impl Db {
             self.persisted.downed_pilots.into_iter().copied().collect();
         let act = Trigger::singleton(lua)?.action()?;
         let land = Land::singleton(lua)?;
+        // Live unit positions per enemy side, gathered at most once per tick.
+        // The capture check used to walk every group and unit of the enemy
+        // side through the persisted maps once per downed pilot, every second.
+        let mut enemy_positions: SmallVec<[(Side, Vec<Vector2>); 2]> = smallvec![];
 
         for gid in pilot_gids {
             // Get pilot centroid position
@@ -2634,21 +2843,30 @@ impl Db {
                     Side::Red => Side::Blue,
                     Side::Neutral => Side::Neutral,
                 };
-                let captured = self
-                    .persisted
-                    .groups_by_side
-                    .get(&enemy_side)
-                    .into_iter()
-                    .flat_map(|s| s.into_iter())
-                    .filter_map(|gid2| self.persisted.groups.get(gid2))
-                    .flat_map(|g| g.units.into_iter())
-                    .filter_map(|uid| self.persisted.units.get(uid))
-                    .filter(|u| !u.dead)
-                    .any(|u| {
-                        let dx = pilot_pos.x - u.pos.x;
-                        let dy = pilot_pos.y - u.pos.y;
-                        dx * dx + dy * dy <= cap_r2
-                    });
+                let i = match enemy_positions.iter().position(|(s, _)| *s == enemy_side) {
+                    Some(i) => i,
+                    None => {
+                        let positions = self
+                            .persisted
+                            .groups_by_side
+                            .get(&enemy_side)
+                            .into_iter()
+                            .flat_map(|s| s.into_iter())
+                            .filter_map(|gid2| self.persisted.groups.get(gid2))
+                            .flat_map(|g| g.units.into_iter())
+                            .filter_map(|uid| self.persisted.units.get(uid))
+                            .filter(|u| !u.dead)
+                            .map(|u| u.pos)
+                            .collect();
+                        enemy_positions.push((enemy_side, positions));
+                        enemy_positions.len() - 1
+                    }
+                };
+                let captured = enemy_positions[i].1.iter().any(|p| {
+                    let dx = pilot_pos.x - p.x;
+                    let dy = pilot_pos.y - p.y;
+                    dx * dx + dy * dy <= cap_r2
+                });
                 if captured {
                     if let Some(DeployKind::DownedPilot { ucid, life_type, .. }) =
                         self.persisted.groups.get(&gid).map(|g| g.origin.clone())
@@ -3334,6 +3552,18 @@ impl Db {
             }
         }
 
+        // Vehicles are paid for here, at spawn, so a DenyCrate limit has to be
+        // checked here too -- refusing at deploy time would strand a vehicle
+        // the player already paid for. (DeleteOldest is applied at deploy.)
+        if let Some(dep_name) = vehicle_cfg.path.last()
+            && matches!(vehicle_cfg.limit_enforce, LimitEnforceTyp::DenyCrate)
+        {
+            let (n, _) = self.number_deployed(side, dep_name.as_str())?;
+            if n >= vehicle_cfg.limit as usize {
+                bail!("the max number of {} are already deployed", dep_name)
+            }
+        }
+
         // Get player position and direction (same method as regular cargo system)
         let unit = self.ephemeral.slot_instance_unit(lua, slot)?;
         let pos = unit.get_position()?;
@@ -3440,7 +3670,7 @@ impl Db {
             template: vehicle_cfg.template.clone(),
         };
 
-        let c130_cargo = C130Cargo::new_vehicle(
+        let mut c130_cargo = C130Cargo::new_vehicle(
             group_name.clone(),
             group_id,
             crate_type,
@@ -3453,19 +3683,20 @@ impl Db {
             vehicle_cfg.clone(),
         );
 
-        self.ephemeral.c130_crates.insert(group_name.clone(), c130_cargo);
-        debug!("[C130_CARGO] Vehicle tracking added: name='{}', group_id={:?}, total_tracked={}",
-            group_name, group_id, self.ephemeral.c130_crates.len());
-
-        // Charge points if enabled
+        // Charge points if enabled, and remember the split so the deployed
+        // group records what was really paid (a reclaim refunds from it).
         if self.ephemeral.cfg.points.is_some() && vehicle_cfg.cost > 0 {
-            self.charge_for_item(
+            c130_cargo.charged = Some(self.charge_for_item(
                 &ucid,
                 origin,
                 vehicle_cfg.cost,
                 &format_compact!("for {} vehicle", vehicle_cfg.name),
-            );
+            ));
         }
+
+        self.ephemeral.c130_crates.insert(group_name.clone(), c130_cargo);
+        debug!("[C130_CARGO] Vehicle tracking added: name='{}', group_id={:?}, total_tracked={}",
+            group_name, group_id, self.ephemeral.c130_crates.len());
 
         Ok(String::from(format!(
             "Spawned {} vehicle cargo. Use DCS cargo menu (F8 -> Ground Crew -> Cargo) to load it.",
@@ -3781,6 +4012,13 @@ impl Db {
     /// Track physical crate state changes and implement auto-unpack
     pub fn update_c130_crates(&mut self, lua: MizLua, idx: &MizIndex) -> Result<()> {
         let mut to_unpack = Vec::new();
+        // Landed crates re-trying an unpack that failed for want of siblings;
+        // filtered after the scan below (see `C130Cargo::waiting_on`).
+        let mut retries: Vec<String> = Vec::new();
+        // Whether any crate landed, moved, or went in or out of a cargo bay
+        // this tick -- any of which can complete a waiting set.
+        let mut any_changed = false;
+        let crate_counts = (self.ephemeral.c130_crates.len(), self.persisted.crates.len());
         let mut groups_to_mark = Vec::new();
         let (have_cargo_api, aboard, aircraft) = self.crates_aboard_aircraft(lua);
 
@@ -3817,6 +4055,7 @@ impl Db {
                 crate_name, crate_data.state, in_air, speed, pos.p.x, pos.p.z);
 
             let new_pos = Vector2::new(pos.p.x, pos.p.z);
+            let before = (crate_data.state, crate_data.aboard);
             // A crate that is aboard is going wherever the aircraft goes. It
             // is not "slingload delivered" and it has not "landed", so keep
             // the state machine (and auto-unpack with it) off it entirely --
@@ -3868,9 +4107,11 @@ impl Db {
                 }
 
                 groups_to_mark.push(crate_data.group_id);
+                any_changed = true;
             }
 
             if crate_data.aboard {
+                any_changed |= (crate_data.state, crate_data.aboard) != before;
                 continue;
             }
 
@@ -3923,9 +4164,30 @@ impl Db {
                         .map(|t| Utc::now() < t)
                         .unwrap_or(false);
                     if crate_data.auto_unpack && !backing_off {
-                        to_unpack.push(crate_name.clone());
+                        retries.push(crate_name.clone());
                     }
                 }
+            }
+            any_changed |= (crate_data.state, crate_data.aboard) != before;
+        }
+
+        // Something moved: every waiting crate gets a fresh look. Otherwise a
+        // crate that already failed against exactly this set of crates would
+        // only fail again, so skip its scan.
+        if any_changed {
+            for c in self.ephemeral.c130_crates.values_mut() {
+                c.waiting_on = None;
+            }
+        }
+        for name in retries {
+            let waiting = self
+                .ephemeral
+                .c130_crates
+                .get(&name)
+                .map(|c| c.waiting_on == Some(crate_counts))
+                .unwrap_or(false);
+            if !waiting {
+                to_unpack.push(name);
             }
         }
 
@@ -3982,6 +4244,76 @@ impl Db {
         Ok(())
     }
 
+    /// A physical crate that can't be used where it is (too close to a
+    /// friendly base, over a deploy limit, unaffordable, or a supply crate
+    /// dropped back on the base it came from). Puts the reason on the crate's
+    /// map marker and backs off the per-tick auto-unpack retry the same way
+    /// `retry_after` does for a fully repaired base: another crate landing
+    /// won't change the answer, and moving the crate clears the backoff.
+    /// Returns the reason for the caller to pass back to the player.
+    fn c130_crate_blocked(
+        &mut self,
+        crate_name: &str,
+        crate_data: &C130Cargo,
+        why: std::string::String,
+    ) -> String {
+        info!("[C130_CARGO] crate '{crate_name}' left on the ground: {why}");
+        let marker = self
+            .ephemeral
+            .c130_crates
+            .get(crate_name)
+            .and_then(|c| c.missing_marker);
+        match marker {
+            Some(id) => self.ephemeral.msgs().set_markup_text(id, why.clone().into()),
+            None => {
+                let id = self.ephemeral.msgs().mark_to_side(
+                    crate_data.side,
+                    crate_data.last_pos,
+                    true,
+                    why.clone(),
+                );
+                if let Some(c) = self.ephemeral.c130_crates.get_mut(crate_name) {
+                    c.missing_marker = Some(id);
+                }
+            }
+        }
+        if let Some(c) = self.ephemeral.c130_crates.get_mut(crate_name) {
+            c.retry_after = Some(Utc::now() + chrono::Duration::seconds(60));
+        }
+        String::from(why)
+    }
+
+    /// The warehouse a base-supply crate delivering to `to` draws its contents
+    /// from: its origin base, synced from DCS so the debit lands on live
+    /// stock. Refuses, with the reason for the player, a delivery back to the
+    /// origin itself, or from an origin that has since fallen or has no
+    /// warehouse to draw on.
+    fn supply_crate_source<'lua>(
+        &mut self,
+        lua: MizLua<'lua>,
+        crate_data: &C130Cargo,
+        to: ObjectiveId,
+    ) -> std::result::Result<dcso3::warehouse::Warehouse<'lua>, std::string::String> {
+        let origin = crate_data.origin;
+        let Some(src) = self.persisted.objectives.get(&origin) else {
+            return Err("the base these supplies came from no longer exists".into());
+        };
+        let src_name = src.name.clone();
+        if origin == to {
+            return Err(format!(
+                "supplies can't be delivered back to {src_name}, the base they were loaded at -- fly them to another friendly base"
+            ));
+        }
+        if src.owner != crate_data.side {
+            return Err(format!(
+                "{src_name}, where these supplies were loaded, has fallen -- there is nothing left to deliver"
+            ));
+        }
+        self.sync_warehouse_to_objective(lua, origin)
+            .map(|(_, w)| w)
+            .map_err(|e| format!("{src_name} has no warehouse to draw these supplies from ({e})"))
+    }
+
     /// Unpack a physical crate (spawns deployable if enough crates are present)
     fn unpack_c130_crate(&mut self, lua: MizLua, idx: &MizIndex, crate_data: &C130Cargo, crate_name: &str) -> Result<String> {
         match &crate_data.crate_type {
@@ -4006,7 +4338,7 @@ impl Db {
                 let mut nearby_crates: FxHashMap<String, Vec<String>> = FxHashMap::default();
                 let crate_pos = crate_data.last_pos;
 
-                info!("[C130_CARGO] Searching for nearby crates for deployable '{}' from crate '{}' at pos ({:.2}, {:.2})",
+                debug!("[C130_CARGO] Searching for nearby crates for deployable '{}' from crate '{}' at pos ({:.2}, {:.2})",
                     deployable_name, crate_name, crate_pos.x, crate_pos.y);
 
                 for (other_name, other_data) in &self.ephemeral.c130_crates {
@@ -4033,7 +4365,7 @@ impl Db {
                                 if other_dep_name == &deployable_name {
                                     // Check distance
                                     let dist = na::distance(&crate_pos.into(), &other_data.last_pos.into());
-                                    info!("[C130_CARGO]   - Found potential crate '{}' for same deployable, distance={:.2}m",
+                                    debug!("[C130_CARGO]   - Found potential crate '{}' for same deployable, distance={:.2}m",
                                         other_name, dist);
                                     if dist < 500.0 {
                                         nearby_crates
@@ -4042,7 +4374,7 @@ impl Db {
                                             .push(other_name.clone());
                                     }
                                 } else {
-                                    info!("[C130_CARGO]   - Skipping crate '{}' (different deployable: '{}')",
+                                    debug!("[C130_CARGO]   - Skipping crate '{}' (different deployable: '{}')",
                                         other_name, other_dep_name);
                                 }
                             }
@@ -4085,7 +4417,7 @@ impl Db {
                         .map(|u| u.pos);
                     let Some(unit_pos) = unit_pos else { continue };
                     let dist = na::distance(&crate_pos.into(), &unit_pos.into());
-                    info!("[C130_CARGO]   - Found potential legacy crate '{}' for same deployable, distance={:.2}m",
+                    debug!("[C130_CARGO]   - Found potential legacy crate '{}' for same deployable, distance={:.2}m",
                         group.name, dist);
                     if dist < 500.0 {
                         nearby_crates
@@ -4095,7 +4427,7 @@ impl Db {
                     }
                 }
 
-                info!("[C130_CARGO] Found {} nearby crate types for '{}'", nearby_crates.len(), deployable_name);
+                debug!("[C130_CARGO] Found {} nearby crate types for '{}'", nearby_crates.len(), deployable_name);
 
                 // Check if we have enough of each required crate type
                 let mut have_all_required = true;
@@ -4121,8 +4453,109 @@ impl Db {
                             }
                         }
                     }
+                    // Only another crate arriving, landing or moving can
+                    // change this answer -- see `C130Cargo::waiting_on`.
+                    let counts = (self.ephemeral.c130_crates.len(), self.persisted.crates.len());
+                    if let Some(c) = self.ephemeral.c130_crates.get_mut(crate_name) {
+                        c.waiting_on = Some(counts);
+                    }
                     return Ok(String::from(format!("Crate landed, need more crates for {}", deployable_name)));
                 }
+
+                // Only support Group deployables for C-130 airdrops
+                let template = match &deployable.kind {
+                    DeployableKind::Group { template } => template.clone(),
+                    DeployableKind::Objective(_) => {
+                        bail!("C-130 airdrops don't support objective deployables")
+                    }
+                };
+
+                // Consume EXACTLY `required` crates of each type for
+                // this deployment. The trigger crate is sorted to the
+                // front so it is always part of the consumed set --
+                // previously it could be appended on top of an already
+                // full `required` list, deleting one crate too many and
+                // throwing off the count for the remaining crates in a
+                // multi-unit drop. Picked before spawning so the gates
+                // below know which bases the set came from.
+                let mut crates_to_delete: Vec<String> = Vec::new();
+                for req in &deployable.crates {
+                    if let Some(crate_names) = nearby_crates.get(&req.name) {
+                        debug!("[C130_CARGO] Crate type '{}': need {}, found {} nearby: {:?}",
+                              req.name, req.required, crate_names.len(), crate_names);
+                        let mut ordered: Vec<&String> = crate_names.iter().collect();
+                        ordered.sort_by_key(|cn| cn.as_str() != crate_name);
+                        for cn in ordered.into_iter().take(req.required as usize) {
+                            crates_to_delete.push(cn.clone());
+                        }
+                    }
+                }
+
+                // Tally consumed crates by origin objective so
+                // each supplying base pays its supply share.
+                let mut crates_by_origin: FxHashMap<ObjectiveId, usize> =
+                    FxHashMap::default();
+                for cn in &crates_to_delete {
+                    if let Some(c) = self.ephemeral.c130_crates.get(cn) {
+                        *crates_by_origin.entry(c.origin).or_default() += 1;
+                    } else if let Some(origin) = self
+                        .persisted
+                        .groups_by_name
+                        .get(cn)
+                        .and_then(|gid| self.persisted.groups.get(gid))
+                        .and_then(|g| match &g.origin {
+                            DeployKind::Crate { origin, .. } => Some(*origin),
+                            _ => None,
+                        })
+                    {
+                        *crates_by_origin.entry(origin).or_default() += 1;
+                    }
+                }
+                let mut origins: SmallVec<[ObjectiveId; 4]> =
+                    crates_by_origin.keys().copied().collect();
+                origins.sort();
+                if origins.is_empty() {
+                    origins.push(crate_data.origin);
+                }
+
+                // The same gates as the F10 unpack (`unpakistan`): no
+                // base-stuffing, the deploy limit, and the price. This path
+                // used to skip all three and record the group as fully paid,
+                // so dynamic cargo deployed anything, anywhere, without limit,
+                // for free -- and `-delete` then paid out half its price.
+                // The crate's spawner pays, as the auto-unpack has no one else.
+                if let Some((obj_name, dist)) =
+                    self.unpack_too_close(crate_data.side, crate_pos, false, &origins)
+                {
+                    let needed = (self.ephemeral.cfg.logistics_exclusion as f64 - dist).max(50.0);
+                    return Ok(self.c130_crate_blocked(
+                        crate_name,
+                        crate_data,
+                        format!(
+                            "can't unpack {deployable_name} here — too close to friendly objective '{obj_name}', move {needed:.0}m away"
+                        ),
+                    ));
+                }
+                let from_obj = origins.iter().fold(Err(anyhow!("")), |res, oid| match res {
+                    Ok(oid) => Ok(oid),
+                    Err(_) => self.enforce_deploy_limits(
+                        crate_data.side,
+                        &deployable,
+                        &deployable_name,
+                        *oid,
+                        &crate_data.player,
+                    ),
+                });
+                let from_obj = match from_obj {
+                    Ok(oid) => oid,
+                    Err(e) => {
+                        return Ok(self.c130_crate_blocked(
+                            crate_name,
+                            crate_data,
+                            format!("can't unpack {deployable_name}: {e}"),
+                        ));
+                    }
+                };
 
                 // We have enough! Spawn the deployable.
                 // Space successive deployments at the same LZ apart -- otherwise
@@ -4160,130 +4593,92 @@ impl Db {
                     group_heading: 0.,
                 };
 
-                // Only support Group deployables for C-130 airdrops
-                match &deployable.kind {
-                    DeployableKind::Group { template } => {
-                        let template = template.clone();
-                        let dk = DeployKind::Deployed {
-                            player: crate_data.player,
-                            moved_by: None,
-                            spec: deployable.clone(),
-                            cost_fraction: 1.0,
-                            origin: Some(crate_data.origin),
-                            jtac: None,
-                        };
+                let dk = DeployKind::Deployed {
+                    player: crate_data.player,
+                    moved_by: None,
+                    spec: deployable.clone(),
+                    cost_fraction: 1.0,
+                    origin: Some(from_obj),
+                    jtac: None,
+                };
 
-                        match self.add_and_queue_group(
-                            &SpawnCtx::new(lua)?,
-                            idx,
-                            crate_data.side,
-                            spawnpos,
-                            &template,
-                            dk,
-                            BitFlags::empty(),
-                            None,
-                        ) {
-                            Ok(gid) => {
-                                // Record the deploy for stats/the pilot deploy log -- this was
-                                // previously untracked, so deploys done via the physical C-130/
-                                // helo cargo system (as opposed to the older instant-deploy
-                                // paths) never counted toward a pilot's Deploys stat.
-                                self.ephemeral.stat(Stat::DeployGroup {
-                                    by: crate_data.player,
-                                    gid,
-                                    deployable: deployable_name.clone(),
-                                    aircraft: Some(crate_data.aircraft.clone()),
-                                    method: Some(String::from(if crate_data.auto_unpack {
-                                        "AirDrop"
-                                    } else {
-                                        "ManualUnpack"
-                                    })),
-                                });
-                                // Consume EXACTLY `required` crates of each type for
-                                // this deployment. The trigger crate is sorted to the
-                                // front so it is always part of the consumed set --
-                                // previously it could be appended on top of an already
-                                // full `required` list, deleting one crate too many and
-                                // throwing off the count for the remaining crates in a
-                                // multi-unit drop.
-                                let mut crates_to_delete: Vec<String> = Vec::new();
-                                for req in &deployable.crates {
-                                    if let Some(crate_names) = nearby_crates.get(&req.name) {
-                                        info!("[C130_CARGO] Crate type '{}': need {}, found {} nearby: {:?}",
-                                              req.name, req.required, crate_names.len(), crate_names);
-                                        let mut ordered: Vec<&String> = crate_names.iter().collect();
-                                        ordered.sort_by_key(|cn| cn.as_str() != crate_name);
-                                        for cn in ordered.into_iter().take(req.required as usize) {
-                                            crates_to_delete.push(cn.clone());
-                                        }
-                                    }
+                match self.add_and_queue_group(
+                    &SpawnCtx::new(lua)?,
+                    idx,
+                    crate_data.side,
+                    spawnpos,
+                    &template,
+                    dk,
+                    BitFlags::empty(),
+                    None,
+                ) {
+                    Ok(gid) => {
+                        // Record the deploy for stats/the pilot deploy log -- this was
+                        // previously untracked, so deploys done via the physical C-130/
+                        // helo cargo system (as opposed to the older instant-deploy
+                        // paths) never counted toward a pilot's Deploys stat.
+                        self.ephemeral.stat(Stat::DeployGroup {
+                            by: crate_data.player,
+                            gid,
+                            deployable: deployable_name.clone(),
+                            aircraft: Some(crate_data.aircraft.clone()),
+                            method: Some(String::from(if crate_data.auto_unpack {
+                                "AirDrop"
+                            } else {
+                                "ManualUnpack"
+                            })),
+                        });
+                        let frac = self.charge_for_item(
+                            &crate_data.player,
+                            from_obj,
+                            deployable.cost,
+                            &format_compact!("for {deployable_name} unpack"),
+                        );
+                        if let DeployKind::Deployed { cost_fraction, .. } =
+                            &mut self.persisted.groups[&gid].origin
+                        {
+                            *cost_fraction = frac;
+                        }
+
+                        info!("[C130_CARGO] Deleting {} crates for deployment: {:?}", crates_to_delete.len(), crates_to_delete);
+
+                        for cn in &crates_to_delete {
+                            if let Some(crate_to_delete) = self.ephemeral.c130_crates.remove(cn) {
+                                info!("[C130_CARGO] Removing crate '{}' (group_id={:?}) from tracking and despawning",
+                                      cn, crate_to_delete.group_id);
+                                if let Some(id) = crate_to_delete.missing_marker {
+                                    self.ephemeral.msgs().delete_mark(id);
                                 }
-
-                                info!("[C130_CARGO] Deleting {} crates for deployment: {:?}", crates_to_delete.len(), crates_to_delete);
-
-                                // Tally consumed crates by origin objective so
-                                // each supplying base pays its supply share.
-                                let mut crates_by_origin: FxHashMap<ObjectiveId, usize> =
-                                    FxHashMap::default();
-                                for cn in &crates_to_delete {
-                                    if let Some(c) = self.ephemeral.c130_crates.get(cn) {
-                                        *crates_by_origin.entry(c.origin).or_default() += 1;
-                                    } else if let Some(origin) = self
-                                        .persisted
-                                        .groups_by_name
-                                        .get(cn)
-                                        .and_then(|gid| self.persisted.groups.get(gid))
-                                        .and_then(|g| match &g.origin {
-                                            DeployKind::Crate { origin, .. } => Some(*origin),
-                                            _ => None,
-                                        })
-                                    {
-                                        *crates_by_origin.entry(origin).or_default() += 1;
-                                    }
+                                if let Err(e) = self.delete_group(&crate_to_delete.group_id) {
+                                    error!("[C130_CARGO] Failed to delete crate group '{}' (group_id={:?}): {:?}",
+                                           cn, crate_to_delete.group_id, e);
                                 }
-
-                                for cn in &crates_to_delete {
-                                    if let Some(crate_to_delete) = self.ephemeral.c130_crates.remove(cn) {
-                                        info!("[C130_CARGO] Removing crate '{}' (group_id={:?}) from tracking and despawning",
-                                              cn, crate_to_delete.group_id);
-                                        if let Some(id) = crate_to_delete.missing_marker {
-                                            self.ephemeral.msgs().delete_mark(id);
-                                        }
-                                        if let Err(e) = self.delete_group(&crate_to_delete.group_id) {
-                                            error!("[C130_CARGO] Failed to delete crate group '{}' (group_id={:?}): {:?}",
-                                                   cn, crate_to_delete.group_id, e);
-                                        }
-                                    } else if let Some(gid) =
-                                        self.persisted.groups_by_name.get(cn).copied()
-                                    {
-                                        // Legacy F10-menu crate folded into this set by the
-                                        // scan above -- despawn it the normal way.
-                                        info!("[C130_CARGO] Removing legacy crate '{}' (group_id={:?}) and despawning",
-                                              cn, gid);
-                                        if let Err(e) = self.delete_group(&gid) {
-                                            error!("[C130_CARGO] Failed to delete legacy crate group '{}' (group_id={:?}): {:?}",
-                                                   cn, gid, e);
-                                        }
-                                    } else {
-                                        debug!("[C130_CARGO] Crate '{}' already removed from tracking (likely processed by earlier crate in batch)", cn);
-                                    }
+                            } else if let Some(gid) =
+                                self.persisted.groups_by_name.get(cn).copied()
+                            {
+                                // Legacy F10-menu crate folded into this set by the
+                                // scan above -- despawn it the normal way.
+                                info!("[C130_CARGO] Removing legacy crate '{}' (group_id={:?}) and despawning",
+                                      cn, gid);
+                                if let Err(e) = self.delete_group(&gid) {
+                                    error!("[C130_CARGO] Failed to delete legacy crate group '{}' (group_id={:?}): {:?}",
+                                           cn, gid, e);
                                 }
-
-                                if let Err(e) = self.consume_deploy_supply(crates_by_origin) {
-                                    error!("[C130_CARGO] failed to charge deploy supply: {e:?}");
-                                }
-
-                                info!("[C130_CARGO] Deployed {} using {} crates", deployable_name, crates_to_delete.len());
-                                Ok(String::from(format!("Airdropped {} deployed", deployable_name)))
-                            }
-                            Err(e) => {
-                                error!("[C130_CARGO] Failed to spawn group '{}' from crate: {:?}", template, e);
-                                Err(anyhow!("Failed to spawn deployable: {:?}", e))
+                            } else {
+                                debug!("[C130_CARGO] Crate '{}' already removed from tracking (likely processed by earlier crate in batch)", cn);
                             }
                         }
+
+                        if let Err(e) = self.consume_deploy_supply(crates_by_origin) {
+                            error!("[C130_CARGO] failed to charge deploy supply: {e:?}");
+                        }
+
+                        info!("[C130_CARGO] Deployed {} using {} crates", deployable_name, crates_to_delete.len());
+                        Ok(String::from(format!("Airdropped {} deployed", deployable_name)))
                     }
-                    DeployableKind::Objective(_) => {
-                        Err(anyhow!("C-130 airdrops don't support objective deployables"))
+                    Err(e) => {
+                        error!("[C130_CARGO] Failed to spawn group '{}' from crate: {:?}", template, e);
+                        Err(anyhow!("Failed to spawn deployable: {:?}", e))
                     }
                 }
             }
@@ -4314,23 +4709,36 @@ impl Db {
                         .ok_or_else(|| anyhow!("Warehouse not configured"))?
                         .supply_transfer_size;
 
-                    let source_warehouse = self.persisted.objectives.get(&crate_data.origin)
-                        .map(|obj| obj.warehouse.clone());
+                    // The fuel comes out of the base the crate was loaded at,
+                    // like the F10 transfer (`transfer_supplies`). It used to
+                    // be conjured at the destination -- including when the
+                    // destination WAS the origin -- so a crate shuttled
+                    // around its own base minted fuel.
+                    let src_wh = match self.supply_crate_source(lua, crate_data, oid) {
+                        Ok(w) => w,
+                        Err(why) => return Ok(self.c130_crate_blocked(crate_name, crate_data, why)),
+                    };
+                    let source_warehouse = objective!(self, crate_data.origin)?.warehouse.clone();
 
                     let (obj_mut, wh) = self.sync_warehouse_to_objective(lua, oid)
                         .context("syncing warehouse for fuel transfer")?;
 
                     let mut added_items = Vec::new();
+                    let mut taken: SmallVec<[(dcso3::warehouse::LiquidType, u32); 4]> = smallvec![];
 
-                    // ONLY add liquids (fuel)
+                    // ONLY add liquids (fuel), never more than the source holds
                     for (liq_type, inv) in obj_mut.warehouse.liquids.iter_mut_cow() {
+                        let src_stored = source_warehouse.liquids.get(liq_type).map(|s| s.stored).unwrap_or(0);
                         if inv.capacity == 0 {
-                            if let Some(ref src_wh) = source_warehouse {
-                                if let Some(source_inv) = src_wh.liquids.get(liq_type) {
-                                    if source_inv.capacity > 0 {
+                            if let Some(source_inv) = source_warehouse.liquids.get(liq_type) {
+                                if source_inv.capacity > 0 {
+                                    let amount = ((source_inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32)
+                                        .max(1)
+                                        .min(src_stored);
+                                    if amount > 0 {
                                         inv.capacity = source_inv.capacity;
-                                        let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
                                         inv.stored = amount;
+                                        taken.push((*liq_type, amount));
                                         added_items.push(format!("{:?}: +{}", liq_type, amount));
                                         info!("[FUEL_TRANSFER] Initialized {:?} with capacity {}, added {}", liq_type, inv.capacity, amount);
                                     }
@@ -4339,10 +4747,11 @@ impl Db {
                         } else if inv.capacity > inv.stored {
                             let available_space = inv.capacity - inv.stored;
                             let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
-                            let to_add = amount.min(available_space);
+                            let to_add = amount.min(available_space).min(src_stored);
 
                             if to_add > 0 {
                                 inv.stored += to_add;
+                                taken.push((*liq_type, to_add));
                                 added_items.push(format!("{:?}: +{}", liq_type, to_add));
                                 info!("[FUEL_TRANSFER] Added {:?} x{} to {:?}", liq_type, to_add, oid);
                             }
@@ -4351,9 +4760,21 @@ impl Db {
 
                     use crate::db::logistics::sync_obj_to_warehouse;
                     sync_obj_to_warehouse(&obj_mut, &wh)?;
+                    let src = objective_mut!(self, crate_data.origin)?;
+                    for (liq_type, n) in &taken {
+                        if let Some(inv) = src.warehouse.liquids.get_mut_cow(liq_type) {
+                            inv.stored = inv.stored.saturating_sub(*n);
+                        }
+                    }
+                    sync_obj_to_warehouse(src, &src_wh)?;
+                    if let Err(e) = self.update_supply_status() {
+                        error!("[FUEL_TRANSFER] updating supply status: {e:?}");
+                    }
                     self.ephemeral.stat(Stat::SupplyTransfer { from: crate_data.origin, to: oid, by: crate_data.player });
                     self.ephemeral.dirty();
-                    self.ephemeral.c130_crates.remove(crate_name);
+                    if let Some(id) = self.ephemeral.c130_crates.remove(crate_name).and_then(|c| c.missing_marker) {
+                        self.ephemeral.msgs().delete_mark(id);
+                    }
                     self.delete_group(&crate_data.group_id)?;
 
                     let obj_name = self.persisted.objectives.get(&oid)
@@ -4361,7 +4782,7 @@ impl Db {
                         .unwrap_or_else(|| String::from("Unknown"));
 
                     let msg = if added_items.is_empty() {
-                        String::from(format!("Fuel transfer crate delivered to {} (tanks full)", obj_name))
+                        String::from(format!("Fuel transfer crate delivered to {} (tanks full, or its source had none to spare)", obj_name))
                     } else {
                         String::from(format!("Fuel transfer crate delivered to {}", obj_name))
                     };
@@ -4401,15 +4822,21 @@ impl Db {
                         (whcfg.supply_transfer_size, whcfg.exempt_airframes.clone())
                     };
 
-                    let source_warehouse = self.persisted.objectives.get(&crate_data.origin)
-                        .map(|obj| obj.warehouse.clone());
+                    // Drawn from the origin base, same as the fuel crate above.
+                    let src_wh = match self.supply_crate_source(lua, crate_data, oid) {
+                        Ok(w) => w,
+                        Err(why) => return Ok(self.c130_crate_blocked(crate_name, crate_data, why)),
+                    };
+                    let source_warehouse = objective!(self, crate_data.origin)?.warehouse.clone();
 
                     let (obj_mut, wh) = self.sync_warehouse_to_objective(lua, oid)
                         .context("syncing warehouse for weapons transfer")?;
 
                     let mut added_items = Vec::new();
+                    let mut taken: Vec<(String, u32)> = Vec::new();
 
-                    // ONLY add equipment (non-exempt items, no airframes)
+                    // ONLY add equipment (non-exempt items, no airframes),
+                    // never more than the source holds
                     for (name, inv) in obj_mut.warehouse.equipment.iter_mut_cow() {
                         let is_airframe = !name.starts_with("weapons.")
                             && !name.starts_with("vehicles.")
@@ -4419,13 +4846,17 @@ impl Db {
                             continue;
                         }
 
+                        let src_stored = source_warehouse.equipment.get(name).map(|s| s.stored).unwrap_or(0);
                         if inv.capacity == 0 {
-                            if let Some(ref src_wh) = source_warehouse {
-                                if let Some(source_inv) = src_wh.equipment.get(name) {
-                                    if source_inv.capacity > 0 {
+                            if let Some(source_inv) = source_warehouse.equipment.get(name) {
+                                if source_inv.capacity > 0 {
+                                    let amount = ((source_inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32)
+                                        .max(1)
+                                        .min(src_stored);
+                                    if amount > 0 {
                                         inv.capacity = source_inv.capacity;
-                                        let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
                                         inv.stored = amount;
+                                        taken.push((name.clone(), amount));
                                         added_items.push(format!("{}: +{}", name, amount));
                                         info!("[WEAPONS_TRANSFER] Initialized {} with capacity {}, added {}", name, inv.capacity, amount);
                                     }
@@ -4434,10 +4865,11 @@ impl Db {
                         } else if inv.capacity > inv.stored {
                             let available_space = inv.capacity - inv.stored;
                             let amount = ((inv.capacity as f32 * (transfer_amount as f32 / 100.0)) as u32).max(1);
-                            let to_add = amount.min(available_space);
+                            let to_add = amount.min(available_space).min(src_stored);
 
                             if to_add > 0 {
                                 inv.stored += to_add;
+                                taken.push((name.clone(), to_add));
                                 added_items.push(format!("{}: +{}", name, to_add));
                                 info!("[WEAPONS_TRANSFER] Added {} x{} to {:?}", name, to_add, oid);
                             }
@@ -4446,9 +4878,21 @@ impl Db {
 
                     use crate::db::logistics::sync_obj_to_warehouse;
                     sync_obj_to_warehouse(&obj_mut, &wh)?;
+                    let src = objective_mut!(self, crate_data.origin)?;
+                    for (name, n) in &taken {
+                        if let Some(inv) = src.warehouse.equipment.get_mut_cow(name) {
+                            inv.stored = inv.stored.saturating_sub(*n);
+                        }
+                    }
+                    sync_obj_to_warehouse(src, &src_wh)?;
+                    if let Err(e) = self.update_supply_status() {
+                        error!("[WEAPONS_TRANSFER] updating supply status: {e:?}");
+                    }
                     self.ephemeral.stat(Stat::SupplyTransfer { from: crate_data.origin, to: oid, by: crate_data.player });
                     self.ephemeral.dirty();
-                    self.ephemeral.c130_crates.remove(crate_name);
+                    if let Some(id) = self.ephemeral.c130_crates.remove(crate_name).and_then(|c| c.missing_marker) {
+                        self.ephemeral.msgs().delete_mark(id);
+                    }
                     self.delete_group(&crate_data.group_id)?;
 
                     let obj_name = self.persisted.objectives.get(&oid)
@@ -4456,7 +4900,7 @@ impl Db {
                         .unwrap_or_else(|| String::from("Unknown"));
 
                     let msg = if added_items.is_empty() {
-                        String::from(format!("Weapons transfer crate delivered to {} (warehouse full)", obj_name))
+                        String::from(format!("Weapons transfer crate delivered to {} (warehouse full, or its source had none to spare)", obj_name))
                     } else {
                         String::from(format!("Weapons transfer crate delivered to {}", obj_name))
                     };
@@ -4675,11 +5119,29 @@ impl Db {
                     deprecated_logistics: None,
                 };
 
+                // The DenyCrate limit was checked when the vehicle was bought;
+                // DeleteOldest makes room here, now that it actually deploys.
+                if let Some(dep_name) = vehicle_cfg.path.last()
+                    && matches!(vehicle_cfg.limit_enforce, LimitEnforceTyp::DeleteOldest)
+                {
+                    let (n, oldest) = self.number_deployed(crate_data.side, dep_name.as_str())?;
+                    if n >= vehicle_cfg.limit as usize {
+                        match oldest {
+                            Some(Oldest::Group(gid)) => self.delete_group(&gid)?,
+                            Some(Oldest::Objective(oid)) => self.delete_objective(&oid)?,
+                            None => (),
+                        }
+                    }
+                }
+
                 let dk = DeployKind::Deployed {
                     player: crate_data.player,
                     moved_by: None,
                     spec: synthetic_deployable,
-                    cost_fraction: 1.0,
+                    // The player's share of what was really paid at spawn -- a
+                    // reclaim splits its refund by this, so a vehicle the
+                    // player got free pays nothing back to the player.
+                    cost_fraction: crate_data.charged.unwrap_or(0.),
                     origin: Some(crate_data.origin),
                     jtac: None,
                 };
@@ -4773,5 +5235,26 @@ impl Db {
             None,
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn squad_strength_counts_casualties() {
+        assert_eq!(squad_strength([false, false, false].into_iter()), None);
+        assert_eq!(squad_strength([false, true, true, false].into_iter()), Some((2, 4)));
+        assert_eq!(squad_strength(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn survival_fraction_scales_with_survivors() {
+        assert_eq!(survival_fraction(None), 1.);
+        assert_eq!(survival_fraction(Some((1, 4))), 0.25);
+        // a bogus total never divides by zero or exceeds full strength
+        assert_eq!(survival_fraction(Some((3, 0))), 1.);
+        assert_eq!(survival_fraction(Some((5, 4))), 1.);
     }
 }
