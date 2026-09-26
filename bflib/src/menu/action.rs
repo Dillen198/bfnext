@@ -4,7 +4,7 @@ use crate::{
     db::{
         actions::{
             ActionArgs, ActionCmd, AddTaskArgs, TaskAt, WithObj, WithPos, WithPosAndGroup,
-            WithTask,
+            WithTask, move_cost, waypoint_accepts,
         },
         group::DeployKind,
         tasks::TaskId,
@@ -733,14 +733,20 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     struct Mk {
         id: MarkId,
         pos: Vector3,
+        /// The mark's text, or "Mark N" for a blank one.
+        name: String,
+        /// `name` plus bearing/range from the player, for menu entries.
+        label: String,
     }
     // Collect this player's own F10 map marks. Named marks (<=24 chars) are keyed
     // by text; a text that appears more than once is dropped as ambiguous. Blank
     // marks (the common case -- players usually don't type anything) are each
     // given a synthetic "Mark N" label so they stay usable instead of colliding
     // on the empty string and vanishing.
-    let mut named: FxHashMap<String, (Mk, usize)> = FxHashMap::default();
-    let mut blank: Vec<Mk> = Vec::new();
+    let mut named: FxHashMap<String, (MarkId, Vector3, usize)> = FxHashMap::default();
+    let mut blank: Vec<(MarkId, Vector3)> = Vec::new();
+    // Where the player is now -- the marks' initiator is their own unit.
+    let mut me: Option<Vector3> = None;
     for mk in world.get_mark_panels()? {
         let mk = mk?;
         let Some(unit) = mk.initiator.as_ref() else { continue };
@@ -749,34 +755,69 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
         if ucid != arg.fst {
             continue;
         }
+        if me.is_none() {
+            me = unit.get_point().ok().map(|p| p.0);
+        }
         let text = mk.text.trim();
         if text.is_empty() {
-            blank.push(Mk { id: mk.id, pos: mk.pos.0 });
+            blank.push((mk.id, mk.pos.0));
         } else if text.len() <= 24 {
             let e = named
                 .entry(String::from(text))
-                .or_insert_with(|| (Mk { id: mk.id, pos: mk.pos.0 }, 0));
-            e.1 += 1;
+                .or_insert_with(|| (mk.id, mk.pos.0, 0));
+            e.2 += 1;
         }
     }
-    let mut marks: FxHashMap<String, Mk> = FxHashMap::default();
-    for (text, (mk, n)) in named {
-        if n == 1 {
-            marks.insert(text, mk);
-        }
-    }
-    for (i, mk) in blank.into_iter().enumerate() {
-        marks.insert(String::from(format_compact!("Mark {}", i + 1)), mk);
-    }
+    // Blank marks used to be numbered and then listed in hash order, so
+    // "Mark 1" was whichever dot the hash put first and the numbers shuffled
+    // between menu opens. Order everything nearest first (named marks break
+    // ties alphabetically, blanks keep the order DCS reports them in), number
+    // the blanks in that order, and put bearing/range from the player in every
+    // entry so one dot can be told from another without the F10 map.
+    let dist = |pos: &Vector3| {
+        me.map(|me| ((pos.x - me.x).powi(2) + (pos.z - me.z).powi(2)).sqrt())
+            .unwrap_or(0.)
+    };
+    let mut ordered: Vec<(Option<String>, MarkId, Vector3)> = named
+        .into_iter()
+        .filter(|(_, (_, _, n))| *n == 1)
+        .map(|(text, (id, pos, _))| (Some(text), id, pos))
+        .collect();
+    ordered.sort_by(|a, b| a.0.cmp(&b.0));
+    ordered.extend(blank.into_iter().map(|(id, pos)| (None, id, pos)));
+    ordered.sort_by(|a, b| dist(&a.2).total_cmp(&dist(&b.2)));
+    let mut n_blank = 0;
+    let marks: Vec<Mk> = ordered
+        .into_iter()
+        .map(|(text, id, pos)| {
+            let name = text.unwrap_or_else(|| {
+                n_blank += 1;
+                String::from(format_compact!("Mark {n_blank}"))
+            });
+            let label = match me {
+                None => name.clone(),
+                Some(me) => {
+                    // DCS map x is north, z is east. True bearing, "045/12km".
+                    let brg = (pos.z - me.z).atan2(pos.x - me.x).to_degrees().rem_euclid(360.);
+                    String::from(format_compact!(
+                        "{name} {:03}/{:.0}km",
+                        (brg.round() as u32) % 360,
+                        dist(&pos) / 1000.
+                    ))
+                }
+            };
+            Mk { id, pos, name, label }
+        })
+        .collect();
     // Mark lists page like every other list in this menu -- a player who has
     // dropped a dozen marks would otherwise get a menu level DCS silently
     // truncates.
     let add_pos = |root: GroupSubMenu, name: String| -> Result<()> {
         let mut p = Pager::new(arg.snd, root);
-        for (text, mk) in &marks {
+        for mk in &marks {
             p.command(
                 &mc,
-                text.clone(),
+                mk.label.clone(),
                 run_pos_action,
                 ArgQuad {
                     fst: arg.fst,
@@ -792,19 +833,28 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     // kilometre travelled, not the flat number in the menu title. It carries
     // (troop step, deployable step, cost per step) so each destination can be
     // priced against the group that would make the trip.
+    //
+    // `waypoint` is the action kind for the aircraft/carrier waypoint and RTB
+    // entries (None for Move). Each lists only the groups that order can
+    // actually be given to -- every action group and every carrier used to
+    // be listed under every entry, and picking a mismatched one just failed.
     let add_pos_group = |root: GroupSubMenu,
                          name: String,
-                         action: bool,
+                         waypoint: Option<&ActionKind>,
                          price: Option<(u32, u32, u32)>|
      -> Result<()> {
-        // Collect carrier group IDs if we're processing actions (e.g., CarrierWaypoint)
-        // by checking objectives_by_group to see which groups belong to carrier objectives
+        let action = waypoint.is_some();
+        let carrier = matches!(waypoint, Some(ActionKind::CarrierWaypoint));
+        // Collect our own carrier group IDs for CarrierWaypoint by checking
+        // objectives_by_group to see which groups belong to carrier objectives
         let mut carrier_group_ids: Vec<DbGid> = Vec::new();
-        if action {
+        if carrier {
             info!("[ACTION_MENU] Collecting carrier groups for action '{}'. Total carrier objectives: {}",
                   name, ctx.db.persisted.carrier_groups.len());
             for (gid, oid) in ctx.db.persisted.objectives_by_group.into_iter() {
-                if ctx.db.persisted.carrier_groups.contains(oid) {
+                if ctx.db.persisted.carrier_groups.contains(oid)
+                    && ctx.db.objective(oid).map(|o| o.owner == player.side).unwrap_or(false)
+                {
                     carrier_group_ids.push(*gid);
                     info!("[ACTION_MENU] Added carrier group {:?} from objective {:?} for action '{}'", gid, oid, name);
                 }
@@ -812,8 +862,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             info!("[ACTION_MENU] Found {} carrier groups total for action '{}'", carrier_group_ids.len(), name);
         }
 
-        let iter: Box<dyn Iterator<Item = &DbGid>> = if action {
-            Box::new(ctx.db.persisted.actions.into_iter().chain(carrier_group_ids.iter()))
+        let iter: Box<dyn Iterator<Item = &DbGid>> = if carrier {
+            Box::new(carrier_group_ids.iter())
+        } else if action {
+            Box::new(ctx.db.persisted.actions.into_iter())
         } else {
             Box::new(
                 ctx.db
@@ -841,13 +893,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 _ => false,
             };
             let key = match &group.origin {
-                DeployKind::Action { name, .. } => {
-                    if action {
-                        Some(name.clone())
-                    } else {
-                        None
-                    }
-                }
+                DeployKind::Action { name, spec, .. } => match waypoint {
+                    Some(wp) if waypoint_accepts(wp, &spec.kind) => Some(name.clone()),
+                    _ => None,
+                },
                 DeployKind::Deployed { spec, .. } => {
                     if !action {
                         Some(spec.path.last().unwrap().clone())
@@ -916,17 +965,18 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 let from = ctx.db.group_center(&gid).ok()?;
                 Some((from, step.max(1), unit_cost))
             });
-            for (text, mk) in &marks {
+            for mk in &marks {
                 let text = match quote {
-                    None => text.clone(),
+                    None => mk.label.clone(),
                     Some((from, step, unit_cost)) => {
                         let to = Vector2::new(mk.pos.x, mk.pos.z);
                         let dist = (to - from).norm();
                         // Same arithmetic the charge itself uses, so the number
                         // on the menu is the number that leaves your account.
-                        let cost = (dist / (step as f64)) as u32 * unit_cost;
+                        let cost = move_cost(dist, step, unit_cost);
                         String::from(format_compact!(
-                            "{text} {:.0}km ({cost} pts)",
+                            "{} {:.0}km ({cost} pts)",
+                            mk.name,
                             dist / 1000.
                         ))
                     }
@@ -996,10 +1046,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 TaskTarget::Position => {
                     let tr = p.submenu(&mc, typ.name.clone())?;
                     let mut tp = Pager::new(arg.snd, tr);
-                    for (text, mk) in &marks {
+                    for mk in &marks {
                         tp.command(
                             &mc,
-                            text.clone(),
+                            mk.label.clone(),
                             run_add_task,
                             ArgPent {
                                 fst: arg.fst,
@@ -1125,7 +1175,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             | ActionKind::DroneWaypoint
             | ActionKind::CarrierWaypoint => {
                 let root = p.submenu(&mc, title)?;
-                add_pos_group(root.clone(), name.clone(), true, None)?
+                add_pos_group(root.clone(), name.clone(), Some(&action.kind), None)?
             }
             ActionKind::Move(cfg) => {
                 // The flat "(N pts)" title lies for a move -- N buys one step of
@@ -1140,7 +1190,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                 add_pos_group(
                     root.clone(),
                     name.clone(),
-                    false,
+                    None,
                     Some((cfg.troop, cfg.deployable, action.cost)),
                 )?
             }
@@ -1187,10 +1237,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
         if side_has_artillery(ctx, player.side) {
             let arty_root = p.submenu(&mc, String::from("Request Fires"))?;
             let mut ap = Pager::new(arg.snd, arty_root);
-            for (text, mk) in &marks {
+            for mk in &marks {
                 ap.command(
                     &mc,
-                    text.clone(),
+                    mk.label.clone(),
                     run_global_artillery,
                     ArgQuad {
                         fst: arg.fst,

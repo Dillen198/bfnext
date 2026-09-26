@@ -183,6 +183,11 @@ pub enum UnitTag {
     /// Appended at the end deliberately: `UnitTags` serializes as a bitmask,
     /// so a new trailing variant costs an unused bit and changes no layout.
     ColdStart,
+    /// Spawned by a campaign event (e.g. a convoy ambush). The event
+    /// that owns it lives in the non-persisted half of the scheduler, so a
+    /// group carrying this tag is dropped when a save is loaded rather than
+    /// respawned as an orphan. Trailing for the same reason as `ColdStart`.
+    EventSpawn,
 }
 
 #[derive(
@@ -1865,12 +1870,18 @@ pub struct ArtilleryCfg {
     /// Maximum number of groups that will fire simultaneously. Default: 3.
     #[serde(default = "default_arty_group_count")]
     pub max_groups: usize,
+    /// Seconds a battery must wait after firing a player-requested mission
+    /// before it can be tasked again. Batteries still reloading are skipped
+    /// and the next one in range fires instead. Default: 60.
+    #[serde(default = "default_arty_cooldown")]
+    pub cooldown_secs: u32,
 }
 
 fn default_arty_max() -> f64 { 30_000.0 }
 fn default_arty_min() -> f64 { 4_000.0 }
 fn default_arty_radius() -> f64 { 200.0 }
 fn default_arty_group_count() -> usize { 3 }
+fn default_arty_cooldown() -> u32 { 60 }
 
 impl Default for ArtilleryCfg {
     fn default() -> Self {
@@ -1880,6 +1891,7 @@ impl Default for ArtilleryCfg {
             default_min_range_m: default_arty_min(),
             radius_m: default_arty_radius(),
             max_groups: default_arty_group_count(),
+            cooldown_secs: default_arty_cooldown(),
         }
     }
 }
@@ -1943,6 +1955,11 @@ pub struct Action {
     pub kind: ActionKind,
     pub cost: u32,
     pub penalty: Option<u32>,
+    /// For actions that put an AI group on the map: how many of this
+    /// action's groups a side may have up at once (a slot frees when one
+    /// dies, lands or is removed). For actions without a group of their own
+    /// (nuke, waypoints, carrier orders, fires, tasks): how many times a side
+    /// may use it per server session.
     pub limit: Option<u32>,
     /// defines where this action is allowed to run
     #[serde(default)]
@@ -2728,7 +2745,7 @@ pub struct CampaignEventsCfg {
     /// Probability (0.0-1.0) of spawning an event per check
     #[serde(default = "default_event_probability")]
     pub event_probability: f64,
-    /// Maximum number of concurrent active events
+    /// Maximum number of concurrent active events per side
     #[serde(default = "default_max_events")]
     pub max_concurrent_events: u32,
     /// Points awarded for successful VIP extraction

@@ -147,6 +147,15 @@ impl CampaignEvent {
         }
     }
 
+    /// The side that owns the event -- the one whose units act.
+    pub fn side(&self) -> Side {
+        match self {
+            Self::Barrage { side, .. } | Self::MissileStrike { side, .. } => *side,
+            Self::ConvoyAmbush { ambush_side, .. } => *ambush_side,
+            Self::EnemyCap { cap_side, .. } | Self::CommanderCap { cap_side, .. } => *cap_side,
+        }
+    }
+
     pub fn description(&self) -> CompactString {
         match self {
 
@@ -628,26 +637,40 @@ impl EventScheduler {
 
     // -- D: Convoy ambush --
 
+    /// Set an ambush for `ambush_side` on one of the ENEMY's convoys. Returns
+    /// false, creating nothing, when there is no enemy convoy or no friendly
+    /// objective to draw the ambush force from -- the caller only pays for
+    /// an event that was actually created.
+    ///
+    /// The convoy used to be drawn from every active convoy on the map, so
+    /// the side that paid for the ambush could end up with it set by -- and
+    /// against -- the other team.
     pub(crate) fn spawn_convoy_ambush(
         &mut self,
         db: &Db,
         cfg: &CampaignEventsCfg,
         now: DateTime<Utc>,
+        ambush_side: Side,
         all_owned: &[(ObjectiveId, Side, Vector2, dcso3::String, u8)],
         _messages: &mut Vec<CompactString>,
         _effects: &mut Vec<EventEffect>,
-    ) {
+    ) -> bool {
         let mut rng = rand::thread_rng();
 
-        let convoys: Vec<_> = db.ephemeral.active_convoys.values().collect();
-        if convoys.is_empty() { return; }
-
-        let convoy = &convoys[rng.r#gen_range(0..convoys.len())];
-        let ambush_side = match convoy.side {
+        let target_side = match ambush_side {
             Side::Red => Side::Blue,
             Side::Blue => Side::Red,
-            Side::Neutral => return,
+            Side::Neutral => return false,
         };
+        let convoys: Vec<_> = db
+            .ephemeral
+            .active_convoys
+            .values()
+            .filter(|c| c.side == target_side)
+            .collect();
+        if convoys.is_empty() { return false; }
+
+        let convoy = &convoys[rng.r#gen_range(0..convoys.len())];
 
         // Find a friendly objective on the ambush side to pull the template from
         let source_objective = all_owned.iter()
@@ -661,7 +684,7 @@ impl EventScheduler {
 
         let source_objective = match source_objective {
             Some(o) => o,
-            None => return,
+            None => return false,
         };
 
         // Spawn point: near the convoy's last known position with small random offset
@@ -689,11 +712,13 @@ impl EventScheduler {
         self.total_events_spawned += 1;
         info!("Spawned convoy ambush by {:?} near convoy {:?}", ambush_side, convoy.id);
         self.active_events.push(event);
+        true
     }
 
     /// Spawn a commander-dispatched CAP flight for `cap_side` orbiting its best
     /// defended objective.  Picks the most threatened owned objective that isn't
-    /// already covered by an active CAP.
+    /// already covered by an active CAP. Returns false, creating nothing, when
+    /// every friendly airbase already has a CAP over it.
     pub(crate) fn spawn_commander_cap(
         &mut self,
         db: &Db,
@@ -701,7 +726,7 @@ impl EventScheduler {
         now: DateTime<Utc>,
         cap_side: Side,
         _messages: &mut Vec<CompactString>,
-    ) {
+    ) -> bool {
         // Find the most threatened owned objective without existing CAP coverage.
         let active_cap_objs: Vec<ObjectiveId> = self
             .active_events
@@ -751,7 +776,7 @@ impl EventScheduler {
 
         let (objective, obj) = match best {
             Some(pair) => pair,
-            None => return,
+            None => return false,
         };
 
         let _obj_pos = obj.pos();
@@ -769,6 +794,7 @@ impl EventScheduler {
         self.total_events_spawned += 1;
         info!("[Commander] Dispatched {:?} CAP over {}", cap_side, obj_name);
         self.active_events.push(event);
+        true
     }
 
     // -------------------------------------------------------------------------
