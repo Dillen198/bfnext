@@ -16,7 +16,11 @@ for more details.
 
 use super::{brg_rng, player_world_pos, slot_for_group, ArgQuad, ArgTriple, ArgTuple, Pager};
 use crate::{
-    db::{objective::Objective, Db},
+    db::{
+        markup::{objective_visible_to, public_stat_bucket},
+        objective::Objective,
+        Db,
+    },
     Context,
 };
 use anyhow::{Context as ErrContext, Result};
@@ -39,6 +43,7 @@ const PAGE_SIZE: usize = 10;
 /// Which paged status report a menu command drives.
 const RPT_FRIENDLY: u8 = 0;
 const RPT_ENEMY: u8 = 1;
+const RPT_NEUTRAL: u8 = 2;
 
 /// What a paged status report command does to the page cursor.
 const PG_FIRST: u8 = 0;
@@ -54,6 +59,7 @@ const PG_PREV: u8 = 2;
 pub(crate) struct StatusPages {
     friendly: usize,
     enemy: usize,
+    neutral: usize,
 }
 
 /// Advance/rewind/reset a cursor, wrapping at the ends and tolerating a page
@@ -131,7 +137,7 @@ fn from_pos(ctx: &Context, lua: MizLua, gid: &GroupId) -> Option<Vector2> {
     player_world_pos(ctx, &slot)
 }
 
-fn flags(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
+fn flags(db: &Db, oid: &ObjectiveId, obj: &Objective, viewer: Side) -> CompactString {
     let mut s = CompactString::from("");
     if obj.threatened() {
         s.push_str(" [THREAT]");
@@ -152,14 +158,36 @@ fn flags(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
     if db.capture_in_progress(oid) {
         s.push_str(" [BEING TAKEN]");
     }
-    if obj.priority() {
+    if shows_priority(obj, viewer) {
         s.push_str(" [PRIORITY]");
     }
     s
 }
 
+/// The commander's-priority marker is one side-less flag per objective, set
+/// from the admin dashboard. Shown to both coalitions it told the enemy which
+/// base the other side's command cares about most, so only the owner sees it.
+fn shows_priority(obj: &Objective, viewer: Side) -> bool {
+    obj.priority() && obj.owner() == viewer
+}
+
+/// The objectives a status report for `want`-held bases lists to `viewer`,
+/// with the owner-only kinds the viewer can't see on the map filtered out.
+fn report_objectives<'a>(db: &'a Db, viewer: Side, want: Side) -> Vec<(&'a ObjectiveId, &'a Objective)> {
+    db.objectives()
+        .filter(|(_, o)| o.owner() == want && objective_visible_to(o, viewer))
+        .collect()
+}
+
 /// One line for the paged side reports. `full` adds supply/fuel (friendly only).
-fn objective_line(db: &Db, oid: &ObjectiveId, obj: &Objective, from: Option<Vector2>, full: bool) -> CompactString {
+fn objective_line(
+    db: &Db,
+    oid: &ObjectiveId,
+    obj: &Objective,
+    viewer: Side,
+    from: Option<Vector2>,
+    full: bool,
+) -> CompactString {
     let br = match from {
         Some(p) => {
             let (b, r) = brg_rng(p, obj.pos());
@@ -183,7 +211,7 @@ fn objective_line(db: &Db, oid: &ObjectiveId, obj: &Objective, from: Option<Vect
         fmt_kind(obj.kind()),
         obj.health(),
         obj.logi(),
-        flags(db, oid, obj),
+        flags(db, oid, obj, viewer),
     )
 }
 
@@ -195,7 +223,7 @@ fn build_side_report(
     page: usize,
     full: bool,
 ) -> CompactString {
-    let mut objectives: Vec<_> = db.objectives().filter(|(_, o)| o.owner() == want).collect();
+    let mut objectives = report_objectives(db, viewer, want);
     match from {
         Some(p) => objectives.sort_by(|(_, a), (_, b)| {
             brg_rng(p, a.pos()).1.total_cmp(&brg_rng(p, b.pos()).1)
@@ -213,7 +241,7 @@ fn build_side_report(
     let sort = if from.is_some() { "by range" } else { "by name" };
     let mut report = format_compact!("=== {heading} Objectives ({sort}) pg {}/{} ===\n", page + 1, total_pages);
     for &(oid, obj) in &slice {
-        report.push_str(&objective_line(db, oid, obj, from, full));
+        report.push_str(&objective_line(db, oid, obj, viewer, from, full));
     }
     if slice.is_empty() {
         report.push_str("(none)\n");
@@ -268,10 +296,12 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
         return CompactString::from("FROZEN while the capture timer is running");
     }
     let cfg = &db.ephemeral.cfg;
+    // Only ever read by the attacker (the advisor stops at "you already own
+    // this"), so no exact supply figure -- the F10 supply hex is all the map
+    // gives them, and this must not say more.
     if obj.supply() < cfg.repair_supply_cost {
         return format_compact!(
-            "STARVED -- supply {}% is below the {}% a repair pulse costs; cannot heal until resupplied",
-            obj.supply(),
+            "STARVED -- supply is below the {}% a repair pulse costs; cannot heal until resupplied",
             cfg.repair_supply_cost
         );
     }
@@ -292,7 +322,11 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
     )
 }
 
-fn capture_state(frac: f64, consolidation: u32, obj: &Objective) -> CompactString {
+/// `friendly` is whether the reader owns the objective. `obj.infantry()` is
+/// the percentage of the garrison's infantry still alive, not a head count;
+/// the enemy only gets it once health is at or under 20%, which is when the
+/// F10 label starts printing it for everyone.
+fn capture_state(frac: f64, consolidation: u32, obj: &Objective, friendly: bool) -> CompactString {
     if obj.in_capture_hold() {
         if obj.capture_hold_stalled() {
             return CompactString::from(
@@ -334,13 +368,25 @@ fn capture_state(frac: f64, consolidation: u32, obj: &Objective) -> CompactStrin
         CompactString::from("")
     };
     match (obj.health() > 20, obj.infantry() > 0) {
-        (true, true) => format_compact!(
-            "not eligible -- need health <=20% (now {}%) and 0 infantry (now {}){frac_note}",
+        (true, true) if friendly => format_compact!(
+            "not eligible -- need health <=20% (now {}%) and every infantry defender dead \
+             (now {}% of them alive){frac_note}",
             obj.health(),
             obj.infantry()
         ),
-        (true, false) => format_compact!("not eligible -- need health <=20% (now {}%){frac_note}", obj.health()),
-        (false, true) => format_compact!("not eligible -- clear {} infantry defender(s){frac_note}", obj.infantry()),
+        (true, false) if friendly => {
+            format_compact!("not eligible -- need health <=20% (now {}%){frac_note}", obj.health())
+        }
+        // Same words whether or not infantry is left, so the enemy can't read
+        // the garrison's infantry state off which sentence they got.
+        (true, _) => format_compact!(
+            "not eligible -- need health <=20% (now {}%) and no infantry defenders left{frac_note}",
+            obj.health()
+        ),
+        (false, true) => format_compact!(
+            "not eligible -- clear the infantry defenders ({}% still alive){frac_note}",
+            obj.infantry()
+        ),
         (false, false) => CompactString::from("eligible NOW"),
     }
 }
@@ -351,6 +397,11 @@ fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side
         Ok(o) => o,
         Err(_) => return CompactString::from("that objective no longer exists"),
     };
+    // The menu was built earlier; a carrier or SAM site that has since
+    // changed hands is no longer this player's to see.
+    if !objective_visible_to(obj, viewer) {
+        return CompactString::from("that objective is no longer visible to your side");
+    }
     let friendly = obj.owner() == viewer;
     let mut s = format_compact!("========= {} =========\n", obj.name());
     let _ = write!(
@@ -362,7 +413,7 @@ fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side
             Side::Red => "RED",
             Side::Neutral => "NEUTRAL",
         },
-        if obj.priority() { " - COMMANDER PRIORITY" } else { "" }
+        if shows_priority(obj, viewer) { " - COMMANDER PRIORITY" } else { "" }
     );
     if let Some((ll, mgrs)) = fmt_position(lua, obj.pos()) {
         let _ = write!(s, "LL:   {ll}\nMGRS: {mgrs}\n");
@@ -383,7 +434,7 @@ fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side
             obj.aircraft(),
             if obj.unlimited_supply() { "  (UNLIMITED)" } else { "" }
         );
-        let _ = write!(s, "Infantry defenders: {}\n", obj.infantry());
+        let _ = write!(s, "Infantry defenders: {}% alive\n", obj.infantry());
         let _ = write!(s, "Repair: {}\n", repair_state(db, oid, obj));
         if obj.logistics_detached() {
             let _ = write!(s, "NOTE: logistics detached -- no automatic resupply\n");
@@ -401,16 +452,19 @@ fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side
         .map(|c| c.capture_min_unit_pct_destroyed)
         .unwrap_or(0.0);
     let consolidation = db.ephemeral.cfg.capture_consolidation_secs;
-    let _ = write!(s, "Capture: {}\n", capture_state(frac, consolidation, obj));
+    let _ = write!(s, "Capture: {}\n", capture_state(frac, consolidation, obj, friendly));
     if obj.threatened() {
         let _ = write!(s, "THREAT: enemy units within sight of the base\n");
     }
-    match db.persisted.navaids.get(oid) {
-        Some(navs) if !navs.is_empty() => {
-            let _ = write!(s, "Navaids:\n{}\n", crate::navaids::summarize(navs));
-        }
-        _ => {
-            let _ = write!(s, "Navaids: none assigned\n");
+    // Own bases only: an enemy FARP's TACAN is a homing beacon for a strike.
+    if friendly {
+        match db.persisted.navaids.get(oid) {
+            Some(navs) if !navs.is_empty() => {
+                let _ = write!(s, "Navaids:\n{}\n", crate::navaids::summarize(navs));
+            }
+            _ => {
+                let _ = write!(s, "Navaids: none assigned\n");
+            }
         }
     }
     s
@@ -424,23 +478,29 @@ fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side
 /// `fth` says whether to jump to the first page or step the cursor.
 fn status_page(lua: MizLua, arg: ArgQuad<GroupId, Side, u8, u8>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
-    let enemy = arg.trd == RPT_ENEMY;
-    let want = if enemy { arg.snd.opposite() } else { arg.snd };
-    let pages = ctx
-        .db
-        .objectives()
-        .filter(|(_, o)| o.owner() == want)
-        .count()
+    let want = match arg.trd {
+        RPT_ENEMY => arg.snd.opposite(),
+        RPT_NEUTRAL => Side::Neutral,
+        _ => arg.snd,
+    };
+    let pages = report_objectives(&ctx.db, arg.snd, want)
+        .len()
         .div_ceil(PAGE_SIZE)
         .max(1);
     let page = {
         let cursor = ctx.objective_pages.entry(arg.fst).or_default();
-        let slot = if enemy { &mut cursor.enemy } else { &mut cursor.friendly };
+        let slot = match arg.trd {
+            RPT_ENEMY => &mut cursor.enemy,
+            RPT_NEUTRAL => &mut cursor.neutral,
+            _ => &mut cursor.friendly,
+        };
         *slot = step_page(*slot, pages, arg.fth);
         *slot
     };
     let from = from_pos(ctx, lua, &arg.fst);
-    let report = build_side_report(&ctx.db, arg.snd, want, from, page, !enemy);
+    // Supply / fuel / aircraft numbers only for our own bases.
+    let full = want == arg.snd;
+    let report = build_side_report(&ctx.db, arg.snd, want, from, page, full);
     ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
     Ok(())
 }
@@ -453,7 +513,7 @@ fn nearest_base(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
             let nearest = ctx
                 .db
                 .objectives()
-                .filter(|(_, o)| o.owner() != Side::Neutral)
+                .filter(|(_, o)| o.owner() != Side::Neutral && objective_visible_to(o, arg.snd))
                 .min_by(|(_, a), (_, b)| brg_rng(p, a.pos()).1.total_cmp(&brg_rng(p, b.pos()).1))
                 .map(|(oid, _)| *oid);
             match nearest {
@@ -471,6 +531,9 @@ fn contested(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
     let from = from_pos(ctx, lua, &arg.fst);
     let mut lines: Vec<(f64, CompactString)> = vec![];
     for (oid, obj) in ctx.db.objectives() {
+        if !objective_visible_to(obj, arg.snd) {
+            continue;
+        }
         let being_taken = ctx.db.capture_in_progress(oid);
         if !obj.captureable() && !being_taken {
             continue;
@@ -561,6 +624,9 @@ fn build_capture_advisor_card(
         Ok(o) => o,
         Err(_) => return CompactString::from("that objective no longer exists"),
     };
+    if !objective_visible_to(obj, viewer) {
+        return CompactString::from("that objective is no longer visible to your side");
+    }
     let diag = match db.capture_diagnosis(oid, viewer) {
         Ok(d) => d,
         Err(_) => return CompactString::from("could not read capture status"),
@@ -575,15 +641,20 @@ fn build_capture_advisor_card(
         let _ = write!(s, "From you: {b:03}\u{b0} / {r:.1} nm\n");
     }
     let _ = write!(s, "Zone radius: {:.0} m\n", obj.radius());
+    // This card is read by the attacker, so it says no more about the base's
+    // stocks and garrison than the F10 map does: supply as its status-hex
+    // bucket, infantry (a % still alive) only once the label shows it too.
     let _ = write!(
         s,
-        "Health {}%   Logi {}%   Supply {}%   Infantry {}\n",
+        "Health {}%   Logi {}%   Supply {}",
         obj.health(),
         obj.logi(),
-        obj.supply(),
-        obj.infantry()
+        public_stat_bucket(obj.supply()),
     );
-    let _ = write!(s, "----------------------------------\n");
+    if obj.health() <= 20 {
+        let _ = write!(s, "   Infantry {}% alive", obj.infantry());
+    }
+    let _ = write!(s, "\n----------------------------------\n");
 
     if diag.owner == viewer {
         let _ = write!(s, "You already own this objective.\n");
@@ -688,7 +759,7 @@ fn capture_advisor_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Re
     let pick = {
         let mut best: Option<(u8, f64, ObjectiveId)> = None;
         for (oid, obj) in ctx.db.objectives() {
-            if obj.owner() == side {
+            if obj.owner() == side || !objective_visible_to(obj, side) {
                 continue;
             }
             let hot = obj.captureable() || ctx.db.capture_in_progress(oid);
@@ -782,7 +853,7 @@ fn helo_troop_insertion_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) 
     let pick = {
         let mut best: Option<(u8, f64, ObjectiveId)> = None;
         for (oid, obj) in ctx.db.objectives() {
-            if obj.owner() == side {
+            if obj.owner() == side || !objective_visible_to(obj, side) {
                 continue;
             }
             let rank = if obj.captureable() { 0u8 } else { 1u8 };
@@ -877,13 +948,14 @@ fn add_status_report(
 /// to sort first alphabetically across the whole map.
 fn helo_picks(
     ctx: &Context,
+    side: Side,
     from: Option<Vector2>,
     keep: impl Fn(&ObjectiveId, &Objective) -> bool,
 ) -> Vec<(ObjectiveId, CompactString)> {
     let mut v: Vec<(f64, ObjectiveId, CompactString)> = ctx
         .db
         .objectives()
-        .filter(|(oid, o)| keep(oid, o))
+        .filter(|(oid, o)| objective_visible_to(o, side) && keep(oid, o))
         .map(|(oid, o)| {
             let rng = from.map(|p| brg_rng(p, o.pos()).1).unwrap_or(0.0);
             let cap = if o.captureable() { " [CAP]" } else { "" };
@@ -923,7 +995,7 @@ pub(super) fn add_helo_mission_menu(
     )?;
     // The short list of objectives troops can actually take right now. Absent
     // from the menu when nothing is capturable.
-    let capturable = helo_picks(ctx, from, |oid, o| {
+    let capturable = helo_picks(ctx, side, from, |oid, o| {
         o.owner() != side && (o.captureable() || ctx.db.capture_in_progress(oid))
     });
     add_base_list(
@@ -936,7 +1008,7 @@ pub(super) fn add_helo_mission_menu(
         |oid| ArgTriple { fst: gid, snd: oid, trd: HELO_TROOPS },
     )?;
     // Everything else that isn't ours, for softening a base up ahead of time.
-    let any_target = helo_picks(ctx, from, |_, o| o.owner() != side);
+    let any_target = helo_picks(ctx, side, from, |_, o| o.owner() != side);
     add_base_list(
         mc,
         gid,
@@ -953,7 +1025,7 @@ pub(super) fn add_helo_mission_menu(
         helo_resource_delivery_nearest,
         ArgTriple { fst: gid, snd: side, trd: 0u8 },
     )?;
-    let friendly = helo_picks(ctx, from, |_, o| o.owner() == side);
+    let friendly = helo_picks(ctx, side, from, |_, o| o.owner() == side);
     add_base_list(
         mc,
         gid,
@@ -1056,7 +1128,7 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
     let mut takeable: Vec<(ObjectiveId, CompactString)> = ctx
         .db
         .objectives()
-        .filter(|(_, o)| o.owner() != side)
+        .filter(|(_, o)| o.owner() != side && objective_visible_to(o, side))
         .map(|(oid, o)| (*oid, CompactString::from(o.name())))
         .collect();
     takeable.sort_by(|a, b| a.1.cmp(&b.1));
@@ -1065,7 +1137,7 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
     // The rebuilt menu starts at page 1 of every report.
     ctx.objective_pages.remove(&miz_gid);
     let root = mc.add_submenu_for_group(miz_gid, "Objectives".into(), None)?;
-    // Eight entries today against DCS's cap of ten -- paged so the next report
+    // Nine entries today against DCS's cap of ten -- paged so the next report
     // added here lands on a "More >>" page instead of silently vanishing.
     let mut p = Pager::new(miz_gid, root);
 
@@ -1087,6 +1159,10 @@ pub(super) fn init_objectives_menu_for_slot(ctx: &mut Context, lua: MizLua, slot
     add_status_report(&mc, miz_gid, &page, "Friendly Status", side, RPT_FRIENDLY)?;
     let page = p.page(&mc)?;
     add_status_report(&mc, miz_gid, &page, "Enemy Status", side, RPT_ENEMY)?;
+    // Neutral bases showed up in neither report above, which left the easiest
+    // captures on the map out of every status list.
+    let page = p.page(&mc)?;
+    add_status_report(&mc, miz_gid, &page, "Neutral Status", side, RPT_NEUTRAL)?;
 
     let page = p.page(&mc)?;
     add_base_list(&mc, miz_gid, &page, "Base Detail", friendly, detail_by_oid, |oid| {

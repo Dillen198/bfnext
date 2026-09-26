@@ -968,7 +968,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     let add_enemy_objective = |root: GroupSubMenu, name: String| -> Result<()> {
         let mut p = Pager::new(arg.snd, root);
         for (oid, obj) in ctx.db.objectives() {
-            if obj.owner != player.side && obj.owner != Side::Neutral {
+            if obj.owner != player.side
+                && obj.owner != Side::Neutral
+                && crate::db::markup::objective_visible_to(obj, player.side)
+            {
                 p.command(
                     &mc,
                     obj.name.clone(),
@@ -1018,7 +1021,9 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
                         .objectives()
                         .filter(|(_, obj)| {
                             if capture {
-                                obj.owner != player.side && obj.owner != Side::Neutral
+                                obj.owner != player.side
+                                    && obj.owner != Side::Neutral
+                                    && crate::db::markup::objective_visible_to(obj, player.side)
                             } else {
                                 obj.owner == player.side
                             }

@@ -2829,10 +2829,15 @@ impl Db {
                 ));
             }
             if obj.infantry > 0 {
-                obj_blockers.push(format_compact!(
-                    "clear the infantry defenders ({} left)",
-                    obj.infantry
-                ));
+                // `infantry` is the % of the garrison's infantry still alive,
+                // not a head count. This is read by the attacker, so it only
+                // gets the figure once health <= 20%, when the F10 label
+                // starts showing it to everyone.
+                obj_blockers.push(if obj.health <= 20 {
+                    format_compact!("clear the infantry defenders ({}% still alive)", obj.infantry)
+                } else {
+                    format_compact!("clear the infantry defenders")
+                });
             }
             if !unit_threshold_met {
                 obj_blockers.push(format_compact!(

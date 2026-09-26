@@ -339,6 +339,8 @@ struct Context {
     captureable: FxHashMap<ObjectiveId, usize>,
     shots_out: ShotDb,
     menu_init_queue: IndexSet<SlotId, FxBuildHasher>,
+    /// Failed menu-build attempts per slot, see `menu::process_init_queue`.
+    menu_init_retries: FxHashMap<SlotId, u8>,
     last_frame: Option<DateTime<Utc>>,
     last_slow_timed_events: DateTime<Utc>,
     /// Fingerprint of the objective set (id+owner+kind) at the last navaid
@@ -1525,12 +1527,13 @@ fn advise_captured(ctx: &mut Context, lua: MizLua, ts: DateTime<Utc>) -> Result<
     for (side, oid) in ctx.db.check_capture(lua, ts)? {
         has_captures = true;
         ctx.event_scheduler.owned_cache_dirty = true;
-        let (name, pos) = {
+        let (name, pos, owner_only) = {
             let obj = ctx.db.objective(&oid)?;
-            (obj.name().to_owned(), obj.pos())
+            (obj.name().to_owned(), obj.pos(), crate::db::markup::owner_only_kind(obj.kind()))
         };
         let mark_text = format_compact!("{} captured by {:?}", name, side);
-        ctx.db.ephemeral.msgs().mark_to_all(pos, true, mark_text.clone());
+        let (map_layer, msgs) = ctx.db.ephemeral.map_layer_and_msgs();
+        map_layer.on_objective_captured(pos, side, owner_only, &mark_text, ts, msgs);
         crate::api::dispatch_event(lua, "alert", &mark_text);
         ctx.captureable.remove(&oid);
     }
@@ -4146,11 +4149,7 @@ fn run_timed_events(
         Ok(AdminResult::Shutdown) => return Ok(AdminResult::Shutdown),
         Err(e) => error!("error running slow timed events {:?}", e),
     }
-    if let Some(slot) = ctx.menu_init_queue.shift_remove_index(0) {
-        if let Err(e) = menu::init_for_slot(ctx, lua, &slot) {
-            error!("could not init menus for slot {:?} {:?}", slot, e)
-        }
-    }
+    menu::process_init_queue(ctx, lua);
     let now = Utc::now();
     let spctx = SpawnCtx::new(lua)?;
     if let Err(e) = ctx.db.ephemeral.process_spawn_queue(

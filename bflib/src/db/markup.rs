@@ -357,9 +357,6 @@ pub(super) struct ObjectiveMarkup {
     /// (percent complete, seconds remaining)
     repair_pct: Option<(u8, i64)>,
     name: String,
-    /// Cached navaid summary (see `crate::navaids`), so the label only rebuilds
-    /// when it actually changes.
-    navaid: CompactString,
     owner_ring: MarkId,
     capturable_ring: MarkId,
     threatened_ring: MarkId,
@@ -585,6 +582,47 @@ fn text_color(side: Side, a: f32) -> Color {
     crate::mapcolor::side_color(side, a)
 }
 
+/// Kinds whose F10 markup is drawn to their owner only (see the reasoning in
+/// `ObjectiveMarkup::new`): a carrier group moves, and a special SAM site is
+/// meant to be found by flying into it.
+pub fn owner_only_kind(kind: &ObjectiveKind) -> bool {
+    matches!(kind, ObjectiveKind::CarrierGroup { .. }) || kind.is_special_sam_site()
+}
+
+/// Whether `viewer` may be told that `obj` exists at all.
+///
+/// THE fog-of-war rule for objectives. The F10 map hides owner-only kinds
+/// from everyone else, so every menu list, report card and briefing that
+/// names objectives must filter through this too -- otherwise the radio menu
+/// hands the enemy the position (and the state) of exactly the carrier or SAM
+/// site the map is keeping from them. A neutral-held one is hidden from both
+/// coalitions, same as its markup.
+pub fn objective_visible_to(obj: &Objective, viewer: Side) -> bool {
+    !owner_only_kind(&obj.kind) || obj.owner == viewer
+}
+
+/// The reading of a 0-100 stat that the F10 status hexes already give every
+/// player, as a word. For reports about an objective the reader does not own:
+/// they may know what the map shows them, and no more.
+pub fn public_stat_bucket(v: u8) -> &'static str {
+    match Bucket::of(v) {
+        Bucket::Good => "high",
+        Bucket::Warn => "medium",
+        Bucket::Bad => "low",
+    }
+}
+
+/// `public_stat_bucket` for a field typed as a percentage: the top of the
+/// hex's bucket, so a bar drawn from it lands in the same colour band the F10
+/// map shows without narrowing it down any further.
+pub fn public_stat_pct(v: u8) -> u8 {
+    match Bucket::of(v) {
+        Bucket::Good => 100,
+        Bucket::Warn => 66,
+        Bucket::Bad => 33,
+    }
+}
+
 /// Opacity of an objective's map label. `new()` used to draw at 1.0 while
 /// `update()` recoloured to 0.75 when the objective changed hands, so a base
 /// became permanently dimmer after its first capture -- exactly the front-line
@@ -609,7 +647,6 @@ fn fmt_eta(secs: i64) -> CompactString {
 fn objective_label(
     name: &str,
     obj: &Objective,
-    navaid: &str,
     capture_pct: Option<u8>,
     repair_pct: Option<(u8, i64)>,
     hold_pct: Option<(u8, i64)>,
@@ -671,13 +708,11 @@ fn objective_label(
     if let Some((pct, remaining)) = repair_pct {
         let _ = write!(s, "\nRepairing: {pct}% (ETA {})", fmt_eta(remaining));
     }
-    // Carriers publish a navaid per ship (TACAN / ICLS / Link-4 / ACLS), which
-    // is several lines of dense text on every carrier marker -- players get all
-    // of that from the carrier ATIS / kneeboard, and it's a big contributor to
-    // F10-map clutter and lag. Keep it off the map label.
-    if !navaid.is_empty() && !matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
-        let _ = write!(s, "\n{navaid}");
-    }
+    // No navaids on the label. It is drawn to BOTH coalitions, so a FARP or
+    // FOB TACAN printed here was a homing beacon for the enemy's strike
+    // package. The owner reads them from Info > Navaids Directory and the
+    // Base Detail card instead. (Carrier navaids were already kept off for
+    // clutter; the carrier ATIS / kneeboard carries them.)
     s
 }
 
@@ -707,7 +742,6 @@ impl ObjectiveMarkup {
             capture_pct: _,
             repair_pct: _,
             name: _,
-            navaid: _,
             pos: _,
             owner_ring,
             capturable_ring,
@@ -773,17 +807,6 @@ impl ObjectiveMarkup {
             );
         }
         let hold_changed = obj.in_capture_hold() != self.capture_hold;
-        // Carrier navaids are deliberately kept off the F10 label (see
-        // objective_label) -- don't spend the summarize() every redraw either.
-        let navaid = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
-            CompactString::default()
-        } else {
-            persisted
-                .navaids
-                .get(&obj.id)
-                .map(|navs| crate::navaids::summarize(navs))
-                .unwrap_or_default()
-        };
         if self.health != obj.health
             || self.logi != obj.logi
             || self.supply != obj.supply
@@ -791,7 +814,6 @@ impl ObjectiveMarkup {
             || self.capture_pct != capture_pct
             || self.repair_pct != repair_pct
             || self.hold_pct != hold_pct
-            || self.navaid != navaid
             || hold_changed
             || capturable_changed
         {
@@ -815,10 +837,9 @@ impl ObjectiveMarkup {
             self.capture_pct = capture_pct;
             self.repair_pct = repair_pct;
             self.hold_pct = hold_pct;
-            self.navaid = navaid;
             msgq.set_markup_text(
                 self.label,
-                objective_label(&self.name, obj, &self.navaid, capture_pct, repair_pct, hold_pct)
+                objective_label(&self.name, obj, capture_pct, repair_pct, hold_pct)
                     .into(),
             );
         }
@@ -871,9 +892,10 @@ impl ObjectiveMarkup {
         //   * A special SAM site is meant to be found by flying into it (or by
         //     ELINT). It used to be hidden from *both* sides, which meant its
         //     own coalition could not see the SAM protecting them either.
-        let draw_spec = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. })
-            || obj.kind.is_special_sam_site()
-        {
+        //
+        // `owner_only_kind` / `objective_visible_to` hold this rule, and the
+        // menus and briefings filter through them so they can't disagree.
+        let draw_spec = if owner_only_kind(&obj.kind) {
             SideFilter::from(obj.owner)
         } else {
             SideFilter::All
@@ -890,15 +912,6 @@ impl ObjectiveMarkup {
         t.capture_pct = capture_pct;
         t.repair_pct = repair_pct;
         t.hold_pct = hold_pct;
-        t.navaid = if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
-            CompactString::default()
-        } else {
-            persisted
-                .navaids
-                .get(&obj.id)
-                .map(|navs| crate::navaids::summarize(navs))
-                .unwrap_or_default()
-        };
         t.name = match obj.kind {
             ObjectiveKind::SpecialSamSite => format_compact!("{}", obj.name).into(),
             _ => format_compact!("{} {}", obj.name, obj.kind.name()).into(),
@@ -1032,7 +1045,7 @@ impl ObjectiveMarkup {
                 fill_color: crate::mapcolor::text_plate(),
                 font_size: 10,
                 read_only: true,
-                text: objective_label(&t.name, obj, &t.navaid, capture_pct, repair_pct, hold_pct)
+                text: objective_label(&t.name, obj, capture_pct, repair_pct, hold_pct)
                     .into(),
             },
         );
@@ -1121,5 +1134,38 @@ impl ObjectiveMarkup {
             }
         }
         t
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_carriers_and_sam_sites_are_owner_only() {
+        assert!(owner_only_kind(&ObjectiveKind::SpecialSamSite));
+        assert!(!owner_only_kind(&ObjectiveKind::Airbase));
+        assert!(!owner_only_kind(&ObjectiveKind::Fob));
+        assert!(!owner_only_kind(&ObjectiveKind::Logistics));
+        assert!(!owner_only_kind(&ObjectiveKind::NavalBase));
+        assert!(!owner_only_kind(&ObjectiveKind::CommandCenter));
+    }
+
+    #[test]
+    fn public_stats_match_the_hex_buckets() {
+        for (v, word, pct) in [
+            (0, "low", 33),
+            (33, "low", 33),
+            (34, "medium", 66),
+            (66, "medium", 66),
+            (67, "high", 100),
+            (100, "high", 100),
+        ] {
+            assert_eq!(public_stat_bucket(v), word, "{v}");
+            assert_eq!(public_stat_pct(v), pct, "{v}");
+            // The reported figure must land in the same bucket as the truth,
+            // or the dashboard bar would contradict the F10 hex.
+            assert_eq!(Bucket::of(public_stat_pct(v)), Bucket::of(v), "{v}");
+        }
     }
 }

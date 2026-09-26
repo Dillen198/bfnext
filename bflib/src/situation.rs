@@ -39,7 +39,11 @@ for more details.
 //! automatically instead of drifting into a plausible lie.
 
 use crate::{
-    db::{objective::Objective, Db},
+    db::{
+        markup::{objective_visible_to, public_stat_pct},
+        objective::Objective,
+        Db,
+    },
     ewr::ContactClass,
     menu::brg_rng,
     Context,
@@ -173,7 +177,7 @@ pub(crate) fn build(ctx: &Context, lua: MizLua, side: Side, opts: Opts) -> Situa
 
     let map = if opts.include_map {
         db.objectives()
-            .filter(|(_, o)| !o.kind().is_special_sam_site())
+            .filter(|(_, o)| !o.kind().is_special_sam_site() && objective_visible_to(o, side))
             .map(|(_, o)| {
                 // A carrier group's position is withheld the same way
                 // /api/objectives withholds it -- mobile and sensitive.
@@ -192,7 +196,8 @@ pub(crate) fn build(ctx: &Context, lua: MizLua, side: Side, opts: Opts) -> Situa
                     fuel: friendly.then(|| o.fuel()),
                     threatened: o.threatened(),
                     captureable: o.captureable(),
-                    priority: o.priority(),
+                    // The owner's marker; see `menu::objectives::shows_priority`.
+                    priority: friendly && o.priority(),
                     primary: is_primary(o.kind()),
                     unlimited_supply: o.unlimited_supply(),
                     unlimited_aircraft: o.unlimited_aircraft(),
@@ -324,6 +329,11 @@ where
             // Our own secret SAM sites aren't a tasking surface.
             continue;
         }
+        // Nor is anything the F10 map hides from us: listing an enemy carrier
+        // or SAM site here hands over the position the map is withholding.
+        if !objective_visible_to(obj, side) {
+            continue;
+        }
         let friendly = obj.owner() == side;
         let hostile = obj.owner() == side.opposite();
         let neutral = !friendly && !hostile;
@@ -348,7 +358,7 @@ where
             .map(|d| d.one_liner().to_string())
             .unwrap_or_else(|| String::from("no capture assessment available"));
         let risk = hotspot_risk(obj, being_taken, friendly);
-        let repair = repair_outlook(db, oid, obj);
+        let repair = repair_outlook(db, oid, obj, friendly);
 
         hotspots.push(Hotspot {
             objective: obj.name().to_string(),
@@ -358,7 +368,9 @@ where
             lon,
             health: obj.health(),
             logi: obj.logi(),
-            supply: obj.supply(),
+            // Exact for our own bases; for anyone else's, no finer than the
+            // F10 supply hex everybody can already see.
+            supply: if friendly { obj.supply() } else { public_stat_pct(obj.supply()) },
             threatened: obj.threatened(),
             capture_progress: in_progress,
             captureable: obj.captureable(),
@@ -389,7 +401,7 @@ where
                     TaskKind::Defend,
                     Urgency::Critical,
                     format!(
-                        "wide open -- health {}%, {} infantry left. Any enemy troops that reach the zone take it. {status}",
+                        "wide open -- health {}%, infantry {}% alive. Any enemy troops that reach the zone take it. {status}",
                         obj.health(),
                         obj.infantry()
                     ),
@@ -458,7 +470,9 @@ where
             tasking.push(Task {
                 id: format!("strike-{name}"),
                 kind: TaskKind::Strike,
-                urgency: if obj.priority() { Urgency::High } else { Urgency::Routine },
+                // Not `obj.priority()`: that is the owner's marker, and letting
+                // it raise OUR strike urgency would leak which base they rate.
+                urgency: Urgency::Routine,
                 title: format!("STRIKE {name}"),
                 detail: format!(
                     "already softened to {}% -- {} more and it is takeable. {repair}",
@@ -514,7 +528,9 @@ fn hotspot_risk(obj: &Objective, being_taken: bool, friendly: bool) -> Urgency {
 
 /// Mirrors the gating in `Db::maybe_do_repairs` the same way the F10 capture
 /// advisor does, so a briefing can't promise a repair the engine won't run.
-fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
+/// `friendly` is whether the report's side owns `obj`; only then does it get
+/// the exact supply figure.
+fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective, friendly: bool) -> CompactString {
     if obj.health() >= 100 {
         return CompactString::from("at full strength");
     }
@@ -532,11 +548,18 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
     }
     let cfg = &db.ephemeral.cfg;
     if obj.supply() < cfg.repair_supply_cost {
-        return format_compact!(
-            "repair STARVED -- supply {}% under the {}% a pulse costs",
-            obj.supply(),
-            cfg.repair_supply_cost
-        );
+        return if friendly {
+            format_compact!(
+                "repair STARVED -- supply {}% under the {}% a pulse costs",
+                obj.supply(),
+                cfg.repair_supply_cost
+            )
+        } else {
+            format_compact!(
+                "repair STARVED -- supply under the {}% a pulse costs",
+                cfg.repair_supply_cost
+            )
+        };
     }
     if obj.logi() == 0 && !obj.kind().is_special_sam_site() {
         return CompactString::from("logistics destroyed (logi 0%) -- cannot self-repair");
@@ -618,7 +641,7 @@ where
                 .to_string(),
                 age_s: (now - c.detected_at).num_seconds().max(0) as u32,
                 count: c.unit_count,
-                near: nearest_objective_name(db, c.pos),
+                near: nearest_objective_name(db, side, c.pos),
             };
             (area, c.pos)
         })
@@ -631,9 +654,11 @@ where
     out
 }
 
-fn nearest_objective_name(db: &Db, pos: Vector2) -> Option<String> {
+/// Only objectives `side` can see: naming an enemy carrier as the nearest
+/// landmark to a threat would say where the carrier is.
+fn nearest_objective_name(db: &Db, side: Side, pos: Vector2) -> Option<String> {
     db.objectives()
-        .filter(|(_, o)| !o.kind().is_special_sam_site())
+        .filter(|(_, o)| !o.kind().is_special_sam_site() && objective_visible_to(o, side))
         .map(|(_, o)| {
             let d = (o.pos().x - pos.x).powi(2) + (o.pos().y - pos.y).powi(2);
             (o.name().to_string(), d)
@@ -1067,7 +1092,11 @@ where
     let cutoff = now - chrono::Duration::hours(1);
     let mut out: Vec<SituationEvent> = db
         .objectives()
-        .filter(|(_, o)| !o.kind().is_special_sam_site() && o.last_change() >= cutoff)
+        .filter(|(_, o)| {
+            !o.kind().is_special_sam_site()
+                && objective_visible_to(o, side)
+                && o.last_change() >= cutoff
+        })
         .filter(|(_, o)| o.owner() == Side::Neutral || o.health() < 100 || o.threatened())
         .map(|(_, o)| {
             let (lat, lon) = to_ll(o.pos());
