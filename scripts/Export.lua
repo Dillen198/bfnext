@@ -78,6 +78,20 @@ do
   end
 end
 
+-- Shared secret bfdb expects in every packet when it runs with
+-- --export-secret (needed once bfdb listens beyond loopback, e.g. a DCS
+-- server on another PC). Scripts/bf_export_secret.lua returning the string;
+-- missing -> no secret sent, which a loopback-only bfdb accepts.
+local BF_SECRET = nil
+do
+  local ok, secret = pcall(function()
+    return dofile(lfs.writedir() .. "Scripts/bf_export_secret.lua")
+  end)
+  if ok and type(secret) == "string" and secret:match("^[%w%-_%.]+$") then
+    BF_SECRET = secret
+  end
+end
+
 local bf_socket = nil
 
 -- ═══════════════════════════════════════════════════════════════════════
@@ -411,6 +425,7 @@ function doExport()
       bull = isLast and bull or nil,  -- only send bullseye in final batch
       n    = total,
       u    = batch,
+      k    = BF_SECRET,
     })
     bf_send(msg)
     seq = seq + 1
@@ -419,7 +434,7 @@ function doExport()
 
   -- If no units at all, still send a heartbeat (with bullseye) so bfdb stays live
   if total == 0 then
-    bf_send(jsonVal({ t = mtime, seq = 0, last = true, n = 0, u = {}, bull = bull }))
+    bf_send(jsonVal({ t = mtime, seq = 0, last = true, n = 0, u = {}, bull = bull, k = BF_SECRET }))
   end
 end
 

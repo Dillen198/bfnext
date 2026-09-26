@@ -751,6 +751,9 @@ pub(crate) struct InstanceState {
     /// loop notices it on its next tick, wipes the derived trees and re-ingests
     /// its `stats.jsonl` from the top.
     jsonl_reset: AtomicBool,
+    /// The newest stat ingested for this instance: (its timestamp, when bfdb
+    /// read it). `None` until the first one arrives this run.
+    pub(crate) last_stat: StdMutex<Option<(DateTime<Utc>, DateTime<Utc>)>>,
 }
 
 impl InstanceState {
@@ -775,6 +778,7 @@ impl InstanceState {
             engine_log_history: StdMutex::new(VecDeque::new()),
             engine_error_history: StdMutex::new(VecDeque::new()),
             jsonl_reset: AtomicBool::new(false),
+            last_stat: StdMutex::new(None),
             health_cache: tokio::sync::Mutex::new(None),
             cfg,
         }
@@ -964,7 +968,21 @@ pub(crate) struct StatsDbInner {
     // Most recently harvested DCS version per instance. Not derivable from
     // `unit_db`'s key order -- "2.9.3.100" sorts after "2.9.29.27468".
     unit_db_latest: Tree<std::string::String, std::string::String>,
+    /// Database-wide bookkeeping. Holds `schema_version` (see
+    /// `SCHEMA_VERSION`): the hook a future layout change migrates from.
+    meta: Tree<std::string::String, u32>,
 }
+
+/// The layout of every typed tree in this database, as of this build.
+///
+/// yats stores values as positional bincode, so a changed field layout in any
+/// persisted type makes every existing row unreadable. Nothing wraps those
+/// values in a version tag (and nothing should start to -- that would itself
+/// be the breaking change). Instead the whole database carries one number in
+/// the `meta` tree. Bump this when a migration is added, and make the
+/// migration run when the stored number is lower; see bfdb/README.md.
+pub(crate) const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION_KEY: &str = "schema_version";
 
 // Kept deliberately large: the dashboard's Engine Log viewer only shows a
 // tail, but `GET /api/logs/engine` (the token-gated plain-text endpoint used
@@ -1252,7 +1270,9 @@ impl StatsDb {
             legacy_replay_cursor: Tree::open(&db, "replay_cursor")?,
             unit_db: Tree::open(&db, "unit_db")?,
             unit_db_latest: Tree::open(&db, "unit_db_latest")?,
+            meta: Tree::open(&db, "meta")?,
         }));
+        t.check_schema_version()?;
         t.migrate_legacy_cursors()?;
         t.seed_wiki_if_empty()?;
         t.seed_wiki_images_if_empty()?;
@@ -1293,6 +1313,31 @@ impl StatsDb {
     /// bfdb would see an empty cursor and re-ingest the entire stats history
     /// from the top -- exactly the round-fragmentation/duplicate-kill problem
     /// the cursors were added to fix.
+    /// Record the schema version on first run, and refuse to run against a
+    /// database written by a *newer* build -- its rows would be misread, not
+    /// merely unreadable. Older-than-current is where future migrations hook
+    /// in; there are none yet.
+    fn check_schema_version(&self) -> Result<()> {
+        let key = SCHEMA_VERSION_KEY.to_string();
+        match self.0.meta.get(&key)? {
+            None => {
+                info!("stats database schema version {SCHEMA_VERSION} (first recorded)");
+                self.0.meta.insert(&key, &SCHEMA_VERSION)?;
+            }
+            Some(v) if v > SCHEMA_VERSION => bail!(
+                "this stats database has schema version {v}, but this bfdb only understands up \
+                 to {SCHEMA_VERSION} -- it was written by a newer bfdb; run that one (or restore \
+                 a backup taken before the upgrade)"
+            ),
+            Some(v) if v < SCHEMA_VERSION => {
+                // No migrations exist yet; a future one goes here, then:
+                self.0.meta.insert(&key, &SCHEMA_VERSION)?;
+            }
+            Some(_) => debug!("stats database schema version {SCHEMA_VERSION}"),
+        }
+        Ok(())
+    }
+
     fn migrate_legacy_cursors(&self) -> Result<()> {
         let default = self.0.instances.default_id().to_string();
         if let Some(pos) = self.0.legacy_jsonl_cursor.get(&0u8)? {
@@ -2612,11 +2657,35 @@ impl StatsDb {
     /// before a schema change was deserialized, failed, and logged, on every
     /// startup, from two places. Reading backwards makes those records cost
     /// nothing and say nothing, because nothing needs them.
+    /// Every `session` key, oldest first by the session's start time --
+    /// optionally only one round's.
+    ///
+    /// The key is `(RoundId, DateTime<Utc>)`, and yats stores the DateTime as
+    /// an RFC3339 string behind a u64 length prefix. Its fractional seconds
+    /// vary in length, so the byte order sled keeps is "shorter strings first",
+    /// not time order: `.iter().rev()` / `.next_back()` could hand back an
+    /// older session than the newest. Sessions are few (one per mission
+    /// start), so read the keys -- never the values, which may not decode --
+    /// and sort them properly. The on-disk format is unchanged.
+    fn session_keys_by_time(&self, round: Option<RoundId>) -> Result<Vec<(RoundId, DateTime<Utc>)>> {
+        let iter = match round {
+            Some(r) => self.session.scan_prefix(&r)?,
+            None => self.session.iter(),
+        };
+        let mut keys: Vec<(RoundId, DateTime<Utc>)> = iter.keys_only().filter_map(|k| k.ok()).collect();
+        keys.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+        Ok(keys)
+    }
+
     pub(crate) fn latest_session_cfg(&self, who: &str) -> Option<Cfg> {
         let mut skipped = 0u64;
-        for r in self.session.iter().rev() {
-            match r {
-                Ok((_, s)) => {
+        // Newest by the timestamp in the key, not by key order -- see
+        // `session_keys_by_time`.
+        let keys = self.session_keys_by_time(None).ok()?;
+        for k in keys.iter().rev() {
+            match self.session.get(k) {
+                Ok(None) => continue,
+                Ok(Some(s)) => {
                     if skipped > 0 {
                         log::warn!(
                             "{who}: skipped {skipped} unreadable session record(s) before \
@@ -2643,9 +2712,13 @@ impl StatsDb {
         let mut latest: Option<SessionEnd> = None;
         let mut skipped = 0u64;
         let mut first_err: Option<std::string::String> = None;
-        for r in self.session.iter() {
-            let session = match r {
-                Ok((_, session)) => session,
+        // Newest first by the timestamp in the key (key order is not time
+        // order -- see `session_keys_by_time`); the first readable session
+        // with an end is the answer.
+        for k in self.session_keys_by_time(None)?.iter().rev() {
+            let session = match self.session.get(k) {
+                Ok(Some(session)) => session,
+                Ok(None) => continue,
                 Err(e) => {
                     // Old records fail in runs, not singly -- one schema change
                     // makes every session written before it undecodable, and
@@ -2660,6 +2733,7 @@ impl StatsDb {
             };
             if let Some(end) = session.end {
                 latest = Some(end);
+                break;
             }
         }
         if let Some(first) = first_err {
@@ -2878,6 +2952,12 @@ impl StatsDb {
             if Some(rid) == active {
                 return Ok(Some(ri.side.1));
             }
+            // Only this instance's rounds count. Two servers run two separate
+            // wars: a pilot who flies Red on one must not be handed Red's
+            // intel on the other just because that was their latest side.
+            if &self.round_instance_of(rid) != inst {
+                continue;
+            }
             if best.map_or(true, |(t, _)| ri.side.0 > t) {
                 best = Some(ri.side);
             }
@@ -2896,9 +2976,15 @@ impl StatsDb {
         let active = self.active_round_id(inst)?;
         // ucid -> (is it the active round's registration?, when, side)
         let mut best: HashMap<Ucid, (bool, DateTime<Utc>, Side)> = HashMap::new();
+        // Resolved once per round rather than per row.
+        let mut mine: HashMap<RoundId, bool> = HashMap::new();
         for r in self.pilots.round_info.iter() {
             let ((ucid, rid), ri) = r?;
             if !matches!(ri.side.1, Side::Blue | Side::Red) {
+                continue;
+            }
+            // Same per-instance rule as pilot_current_side.
+            if !*mine.entry(rid).or_insert_with(|| &self.round_instance_of(rid) == inst) {
                 continue;
             }
             let is_active = active.is_some() && Some(rid) == active;
@@ -2967,8 +3053,12 @@ impl StatsDb {
         Ok(None)
     }
 
-    pub(crate) fn intel_count_side(&self, round: RoundId, side: Side) -> Result<usize> {
-        Ok(self.intel_list(round, Some(side))?.len())
+    /// `(captures for side, of those uploaded by uploader)` this round -- the
+    /// two upload quotas, from one pass.
+    pub(crate) fn intel_counts(&self, round: RoundId, side: Side, uploader: &str) -> Result<(usize, usize)> {
+        let caps = self.intel_list(round, Some(side))?;
+        let mine = caps.iter().filter(|(_, c)| c.uploaded_by == uploader).count();
+        Ok((caps.len(), mine))
     }
 
     pub(crate) fn intel_put(&self, id: Uuid, cap: IntelCapture) -> Result<()> {
@@ -3315,9 +3405,12 @@ impl StatsDb {
         let mut ends: Vec<SessionEnd> = Vec::new();
         let mut skipped = 0u64;
         let mut first_err: Option<std::string::String> = None;
-        for r in self.session.iter() {
-            let (_, s) = match r {
-                Ok(v) => v,
+        // Oldest first by real start time, so "the last `limit`" really are
+        // the newest (key order is not time order).
+        for k in self.session_keys_by_time(None)? {
+            let s = match self.session.get(&k) {
+                Ok(Some(v)) => v,
+                Ok(None) => continue,
                 Err(e) => {
                     skipped += 1;
                     if first_err.is_none() {
@@ -3343,12 +3436,8 @@ impl StatsDb {
     }
 
     pub(crate) fn active_session_stop(&self, round: RoundId) -> Option<DateTime<Utc>> {
-        self.session
-            .scan_prefix(&round)
-            .ok()?
-            .next_back()
-            .and_then(|r| r.ok())
-            .and_then(|(_, s)| s.stop_time)
+        let newest = self.session_keys_by_time(Some(round)).ok()?.pop()?;
+        self.session.get(&newest).ok().flatten().and_then(|s| s.stop_time)
     }
 
     /// `latest_rounds` restricted to one DCS server instance. Two instances can
@@ -3615,6 +3704,11 @@ impl StatsDb {
         time: DateTime<Utc>,
         stat: Stat,
     ) -> Result<()> {
+        // For /api/health and /api/metrics: how far behind the engine the
+        // stats picture is. The stat's own time, plus when we read it.
+        if let Ok(mut g) = inst.last_stat.lock() {
+            *g = Some((time, Utc::now()));
+        }
         if let Some(ctx) = &ctx.0 {
             if time <= ctx.seq {
                 return Ok(());
@@ -3759,12 +3853,14 @@ impl StatsDb {
                 perf,
                 frame,
             } => {
-                match self
-                    .session
-                    .scan_prefix(&ctx.round)?
-                    .next_back()
-                    .transpose()?
-                {
+                // The round's newest session by start time -- not the last
+                // key, which can be an older one (see session_keys_by_time).
+                let newest = self.session_keys_by_time(Some(ctx.round))?.pop();
+                let current = match newest {
+                    Some(k) => self.session.get(&k)?.map(|s| (k, s)),
+                    None => None,
+                };
+                match current {
                     None => bail!("no session for {} is in progress", &ctx.sortie),
                     Some((k, mut session)) => {
                         session.end = Some(SessionEnd {
@@ -4292,7 +4388,81 @@ impl StatsDb {
         Ok(out)
     }
 
+    /// Drop expired auth sessions and OAuth login states. Both used to be
+    /// removed only when that exact id was looked up again, so every abandoned
+    /// login and every session nobody came back to stayed on disk forever.
+    /// Rows that no longer decode are dropped too: nothing can ever read them.
+    pub(crate) fn sweep_auth(&self) -> Result<(usize, usize)> {
+        let now = Utc::now();
+        let mut dead_sessions = Vec::new();
+        for k in self.auth_sessions.iter().keys_only() {
+            let Ok(k) = k else { continue };
+            match self.auth_sessions.get(&k) {
+                Ok(Some(s)) if s.expires > now => (),
+                Ok(None) => (),
+                _ => dead_sessions.push(k),
+            }
+        }
+        let mut dead_states = Vec::new();
+        for k in self.auth_states.iter().keys_only() {
+            let Ok(k) = k else { continue };
+            match self.auth_states.get(&k) {
+                Ok(Some(s)) if s.expires > now => (),
+                Ok(None) => (),
+                _ => dead_states.push(k),
+            }
+        }
+        for k in &dead_sessions {
+            self.auth_sessions.remove(k)?;
+        }
+        for k in &dead_states {
+            self.auth_states.remove(k)?;
+        }
+        Ok((dead_sessions.len(), dead_states.len()))
+    }
+
+    /// End sessions: every session (`discord_id == None`) or every session of
+    /// one Discord user / local account. Returns how many were removed.
+    pub(crate) fn revoke_sessions(&self, discord_id: Option<&str>) -> Result<usize> {
+        let mut dead = Vec::new();
+        for r in self.auth_sessions.iter() {
+            let Ok((id, s)) = r else { continue };
+            if discord_id.map_or(true, |d| s.discord_id == d) {
+                dead.push(id);
+            }
+        }
+        for id in &dead {
+            self.auth_sessions.remove(id)?;
+        }
+        Ok(dead.len())
+    }
+
+    /// How many OAuth login states are outstanding -- the per-IP limit on
+    /// `/api/auth/login` keeps one client from filling the tree, this keeps
+    /// all of them together from doing so.
+    pub(crate) fn oauth_state_count(&self) -> usize {
+        self.auth_states.len()
+    }
+
     // ── Trail point methods ──────────────────────────────────────────
+
+    /// Delete trail points older than `cutoff` (unix seconds). The API only
+    /// serves the last half hour, but nothing ever removed a point, so the tree
+    /// grew by one row per unit every ten seconds for the life of the DB.
+    /// Keys only: the key carries the timestamp.
+    pub(crate) fn prune_trail_points(&self, cutoff: i64) -> Result<usize> {
+        let old: Vec<(RoundId, std::string::String, i64)> = self
+            .trail_points
+            .iter()
+            .keys_only()
+            .filter_map(|k| k.ok())
+            .filter(|(_, _, ts)| *ts < cutoff)
+            .collect();
+        for k in &old {
+            self.trail_points.remove(k)?;
+        }
+        Ok(old.len())
+    }
 
     pub(crate) fn append_trail_point(
         &self,
@@ -5141,6 +5311,23 @@ where
         moved += 1;
     }
     Ok(moved)
+}
+
+#[cfg(test)]
+impl StatsDb {
+    /// A single default instance with no engine, no ingestion source -- what
+    /// the unit tests below need. (They referred to this before it existed,
+    /// which kept the whole test build from compiling.)
+    fn new_offline<P: AsRef<Path>>(
+        path: P,
+        include: Option<Regex>,
+        exclude: Option<Regex>,
+    ) -> Result<Self> {
+        let cfg: InstanceCfg = serde_json::from_value(serde_json::json!({
+            "id": crate::instance::DEFAULT_INSTANCE,
+        }))?;
+        Self::new(&HashMap::new(), path, Registry::single(cfg), include, exclude)
+    }
 }
 
 #[cfg(test)]
