@@ -9,6 +9,9 @@ fn main() {
         bfmanager_lib::agent::run_console();
     } else if args.iter().any(|a| a == "--migrate-service") {
         bfmanager_lib::migrate_service();
+    } else if args.iter().any(|a| a == "--secure-data-dir") {
+        // the installer: lock %ProgramData%\FowlEngine down before first use
+        bfmanager_lib::agent::restrict_data_dir(false);
     } else {
         bfmanager_lib::run();
     }

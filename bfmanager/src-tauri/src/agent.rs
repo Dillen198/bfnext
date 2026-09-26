@@ -40,6 +40,16 @@ use std::time::{Duration, Instant, SystemTime};
 
 const TICK: Duration = Duration::from_secs(2);
 const BOT_LOG_ROTATE_BYTES: u64 = 20 * 1024 * 1024;
+/// Dropped into the bot folder (DCSServerBot's working directory) to ask the
+/// FowlEngine plugin for a clean shutdown -- cogs unload, bfdb is stopped
+/// without tearing its DB, state files are written -- before the bot's
+/// processes are killed. Must match SHUTDOWN_REQUEST_FILE in the plugin's
+/// commands.py.
+const SHUTDOWN_REQUEST_FILE: &str = "fowl-shutdown.request";
+/// How long a clean shutdown may take before the bot is killed anyway: the
+/// plugin gives bfdb up to 15 s for Ctrl-Break and 15 s more for its
+/// shutdown endpoint.
+const GRACEFUL_STOP: Duration = Duration::from_secs(45);
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct BotState {
@@ -250,6 +260,8 @@ impl Agent {
                 Err(e) => log::error!("plugin sync failed (starting the bot anyway): {e:#}"),
             }
         }
+        // a shutdown request the last run never picked up must not stop this one
+        let _ = std::fs::remove_file(dir.join(SHUTDOWN_REQUEST_FILE));
         let log_path = config::logs_dir().join("bot-console.log");
         Self::rotate_bot_log(&log_path);
         let out = File::options().create(true).append(true).open(&log_path);
@@ -374,32 +386,81 @@ impl Agent {
         self.backoff = (self.backoff * 3).min(Duration::from_secs(300));
     }
 
-    /// Kill the bot -- cmd.exe and its direct children (python), never the
-    /// grandchildren (DCS, bfdb, netidx), so the game keeps running.
-    fn stop_bot(&mut self, why: &str) {
-        let Some(mut child) = self.child.take() else { return };
-        let pid = child.id();
-        log::info!("stopping DCSServerBot (pid {pid}): {why}");
-        // Walk down through the bot's own processes -- cmd.exe, the venv's
-        // python.exe launcher, the real interpreter it starts, their conhost --
-        // and stop there: DCS, bfdb and netidx (children of the interpreter)
-        // are other programs and keep running.
-        let mut sys = sysinfo::System::new();
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    /// The bot's own processes under `pid` -- cmd.exe, the venv's python.exe
+    /// launcher, the real interpreter it starts, their conhost -- and not
+    /// below them: DCS, bfdb and netidx (children of the interpreter) are
+    /// other programs and keep running. Parents before children.
+    fn bot_parts(sys: &sysinfo::System, pid: u32) -> Vec<sysinfo::Pid> {
         let is_bot_part = |n: &str| {
             let n = n.to_lowercase();
             n == "cmd.exe" || n == "conhost.exe" || n.starts_with("python") || n.starts_with("py.exe")
         };
         let mut frontier = vec![sysinfo::Pid::from_u32(pid)];
-        let mut doomed = Vec::new();
+        let mut parts = Vec::new();
         while let Some(parent) = frontier.pop() {
             for (cpid, p) in sys.processes() {
-                if p.parent() == Some(parent) && is_bot_part(&p.name().to_string_lossy()) && !doomed.contains(cpid) {
-                    doomed.push(*cpid);
+                if p.parent() == Some(parent) && is_bot_part(&p.name().to_string_lossy()) && !parts.contains(cpid) {
+                    parts.push(*cpid);
                     frontier.push(*cpid);
                 }
             }
         }
+        parts
+    }
+
+    /// Ask the running bot to shut itself down (the FowlEngine plugin watches
+    /// for SHUTDOWN_REQUEST_FILE) and wait for its Python to exit. True if it
+    /// did within GRACEFUL_STOP. A plugin too old to watch just times out.
+    fn request_clean_stop(&self, pid: u32) -> bool {
+        let Some(dir) = self.bot_dir() else { return false };
+        let request = dir.join(SHUTDOWN_REQUEST_FILE);
+        if let Err(e) = std::fs::write(&request, now()) {
+            log::warn!("could not ask DCSServerBot to shut down cleanly ({}): {e}", request.display());
+            return false;
+        }
+        let t = Instant::now();
+        let mut sys = sysinfo::System::new();
+        let done = loop {
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+            let python_left = Self::bot_parts(&sys, pid).iter().any(|p| {
+                sys.process(*p).map(|p| p.name().to_string_lossy().to_lowercase().starts_with("py")).unwrap_or(false)
+            });
+            if !python_left {
+                break true;
+            }
+            if t.elapsed() >= GRACEFUL_STOP {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        };
+        let _ = std::fs::remove_file(&request);
+        if done {
+            log::info!("DCSServerBot shut down cleanly in {}s", t.elapsed().as_secs());
+        } else {
+            log::warn!("DCSServerBot did not shut down within {}s -- killing it", GRACEFUL_STOP.as_secs());
+        }
+        done
+    }
+
+    /// Stop the bot: a clean shutdown first, then kill what is left of
+    /// cmd.exe and its bot processes -- never the grandchildren (DCS, bfdb,
+    /// netidx), so the game keeps running.
+    fn stop_bot(&mut self, why: &str) {
+        let Some(mut child) = self.child.take() else { return };
+        let pid = child.id();
+        log::info!("stopping DCSServerBot (pid {pid}): {why}");
+        // Killing Python mid-write is how bfdb's sled DB and the plugin's
+        // state files got torn: give it the chance to stop on its own first
+        // (not when it is sitting on run.cmd's "press any key" -- no Python
+        // is left to ask then).
+        if !why.contains("key press") {
+            self.status.bot.last_exit = Some(format!("stopping: {why}"));
+            self.write_status();
+            self.request_clean_stop(pid);
+        }
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        let doomed = Self::bot_parts(&sys, pid);
         // deepest first, so a launcher doesn't respawn / reap mid-way
         for cpid in doomed.iter().rev() {
             if let Some(p) = sys.process(*cpid) {
@@ -745,35 +806,67 @@ fn init_logging() {
     }
 }
 
-/// Lock down %ProgramData%\FowlEngine: it holds the GitHub token and is what
-/// the service acts on, so only admins, SYSTEM and the service's own account.
-fn restrict_data_dir() {
+/// Lock down %ProgramData%\FowlEngine. manager.json says what the LocalSystem
+/// service runs (bot_command, via cmd.exe) and holds the GitHub token, and
+/// updates\ holds the installer the service launches -- so the folder is
+/// Administrators + SYSTEM only (+ the service's own account when it isn't
+/// LocalSystem, `grant_self`). The desktop user the bot runs as gets Modify
+/// on logs\ alone, where it writes bot-console.log. The GUI runs elevated, so
+/// it keeps full access. Called at every service start and by the installer
+/// (`--secure-data-dir`), so a fresh install is locked before it is used.
+pub fn restrict_data_dir(grant_self: bool) {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        let _ = config::ensure_dirs();
+        let icacls = |args: &[String]| {
+            let ok = Command::new("icacls").args(args).creation_flags(0x0800_0000)
+                .stdout(Stdio::null()).stderr(Stdio::null()).status()
+                .map(|s| s.success()).unwrap_or(false);
+            if !ok {
+                log::warn!("icacls {} failed", args.join(" "));
+            }
+        };
         let dir = config::data_dir();
         let user = std::env::var("USERNAME").unwrap_or_default();
+        let desktop_user = ManagerConfig::load().desktop_user.as_deref().map(desktop::account_name)
+            .filter(|u| !u.is_empty()).map(String::from);
         let mut args = vec![
             dir.display().to_string(),
             "/inheritance:r".into(),
             "/grant:r".into(), "*S-1-5-32-544:(OI)(CI)F".into(), // Administrators
             "/grant:r".into(), "*S-1-5-18:(OI)(CI)F".into(),     // SYSTEM
         ];
-        if !user.is_empty() && !user.ends_with('$') {
+        if grant_self && !user.is_empty() && !user.ends_with('$') {
             args.push("/grant:r".into());
             args.push(format!("{user}:(OI)(CI)F"));
         }
-        // the desktop user the bot runs as writes bot-console.log
-        if let Some(u) = ManagerConfig::load().desktop_user.as_deref().map(desktop::account_name).filter(|u| !u.is_empty()) {
-            args.push("/grant:r".into());
-            args.push(format!("{u}:(OI)(CI)M"));
+        // Older versions gave the desktop user Modify on the whole folder
+        // (inherited by manager.json and updates\): take that back.
+        if let Some(u) = &desktop_user {
+            if !(grant_self && u.eq_ignore_ascii_case(&user)) {
+                args.push("/remove:g".into());
+                args.push(u.clone());
+            }
         }
-        use std::os::windows::process::CommandExt;
-        let _ = Command::new("icacls").args(&args).creation_flags(0x0800_0000)
-            .stdout(Stdio::null()).stderr(Stdio::null()).status();
+        icacls(&args);
+        // the desktop user the bot runs as writes bot-console.log -- only there
+        if let Some(u) = &desktop_user {
+            icacls(&[config::logs_dir().display().to_string(), "/grant:r".into(), format!("{u}:(OI)(CI)M")]);
+        }
     }
+    #[cfg(not(windows))]
+    let _ = grant_self;
 }
 
 pub fn run_loop(stop: Arc<AtomicBool>) {
+    run_loop_until(stop, &|| {});
+}
+
+/// The service loop; `on_stopping` runs once the stop is seen, before the bot
+/// is shut down (the service reports StopPending there -- a clean bot
+/// shutdown can take the better part of a minute).
+fn run_loop_until(stop: Arc<AtomicBool>, on_stopping: &dyn Fn()) {
     let mut agent = Agent::new();
     log::info!("Fowl Engine Manager {} service loop starting (pid {})", agent.status.version, std::process::id());
     while !stop.load(Ordering::SeqCst) {
@@ -783,6 +876,7 @@ pub fn run_loop(stop: Arc<AtomicBool>) {
             std::thread::sleep(Duration::from_millis(200));
         }
     }
+    on_stopping();
     agent.shutdown();
     log::info!("service loop stopped");
 }
@@ -814,7 +908,7 @@ mod service {
 
     fn service_main(_args: Vec<std::ffi::OsString>) {
         init_logging();
-        restrict_data_dir();
+        restrict_data_dir(true);
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
         let handler = move |ctl| match ctl {
@@ -844,7 +938,11 @@ mod service {
             });
         };
         set(ServiceState::Running, ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN, Duration::default());
-        run_loop(stop);
+        // StopPending with a generous hint: the bot gets GRACEFUL_STOP to shut
+        // down cleanly, and the SCM must not give up on us meanwhile.
+        run_loop_until(stop, &|| {
+            set(ServiceState::StopPending, ServiceControlAccept::empty(), GRACEFUL_STOP + Duration::from_secs(15))
+        });
         set(ServiceState::Stopped, ServiceControlAccept::empty(), Duration::default());
     }
 }

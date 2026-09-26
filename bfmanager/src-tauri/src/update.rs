@@ -182,24 +182,41 @@ pub fn download(cfg: &ManagerConfig, rel: &Release) -> Result<PathBuf> {
     let safe: String = rel.setup_name.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect();
     let path = updates_dir().join(safe);
     std::fs::write(&path, &data)?;
+    // the signature goes next to it: launch_installer checks the file on disk
+    // once more right before running it
+    std::fs::write(sig_path(&path), &sig)?;
     log::info!("downloaded + verified {} ({} bytes, sha256 {})", path.display(), data.len(),
                hex::encode(Sha256::digest(&data)));
     prune(&path);
     Ok(path)
 }
 
+fn sig_path(installer: &Path) -> PathBuf {
+    let mut p = installer.as_os_str().to_owned();
+    p.push(".sig");
+    PathBuf::from(p)
+}
+
 fn prune(keep: &Path) {
     let Ok(rd) = std::fs::read_dir(updates_dir()) else { return };
+    let keep_sig = sig_path(keep);
     for e in rd.flatten() {
-        if e.path() != keep {
+        if e.path() != keep && e.path() != keep_sig {
             let _ = std::fs::remove_file(e.path());
         }
     }
 }
 
 /// Start the installer detached (it outlives this process: its first act is
-/// to stop the service we may be running in).
+/// to stop the service we may be running in). The file is verified against
+/// its signature AGAIN here, immediately before it runs elevated: it sat on
+/// disk since the download, and what runs must be what was verified.
 pub fn launch_installer(path: &Path, silent: bool) -> Result<()> {
+    let data = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let sig = std::fs::read_to_string(sig_path(path)).context("the installer's .sig is missing")?;
+    verify_signature(&data, &sig, UPDATER_PUBKEY)
+        .context("the downloaded installer changed on disk since it was verified -- refusing to run it")?;
+    drop(data);
     let mut cmd = std::process::Command::new(path);
     if silent {
         cmd.args(["/S", "/UPDATE"]);
@@ -270,6 +287,23 @@ mod sig_tests {
         let mut bad = data.to_vec();
         bad[0] ^= 1;
         assert!(verify_signature(&bad, sig, UPDATER_PUBKEY).is_err(), "tampered file must fail");
+    }
+
+    /// An installer swapped on disk after its download was verified is never run.
+    #[test]
+    fn launch_reverifies_the_file_on_disk() {
+        let dir = std::env::temp_dir().join(format!("fowl-upd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("setup.exe");
+        let mut bad = include_bytes!("../tests/fixture.bin").to_vec();
+        bad[0] ^= 1;
+        std::fs::write(&exe, &bad).unwrap();
+        std::fs::write(sig_path(&exe), include_str!("../tests/fixture.bin.sig")).unwrap();
+        let err = launch_installer(&exe, true).unwrap_err();
+        assert!(format!("{err:#}").contains("changed on disk"), "{err:#}");
+        std::fs::remove_file(sig_path(&exe)).unwrap();
+        assert!(launch_installer(&exe, true).is_err(), "no .sig, no launch");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
