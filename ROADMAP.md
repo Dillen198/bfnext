@@ -13,7 +13,7 @@ This document tracks potential features, improvements, and technical debt for th
 #### 1. Public Lua API for External Tools
 
 - **Priority**: High
-- **Status**: In Progress (`bfprotocols/src/api.rs` started)
+- **Status**: Mostly done. `bflib/src/api.rs` registers a `vector_strike` Lua global with 10 functions: `get_objectives`, `get_objective`, `get_players`, `get_player`, `get_groups`, `get_campaign_state`, `spawn_deployable`, `spawn_troop`, `move_group` and `add_points`, plus an `on_event` callback hook. `bfprotocols/src/api.rs` holds the shared types, and the netidx RPCs in `bflib/src/bg/rpcs.rs` feed bfdb and the bot. **Still open:** AI orders beyond `move_group` (missions, tasking) and triggering actions (tanker, AWACS, CAP, etc.) from the API.
 - **Description**: Enable external tools (Discord bots, web interfaces) to interact with the campaign
 
 **Capabilities needed**:
@@ -83,7 +83,7 @@ pub struct TriggerAction {
 #### 2. Enhanced Ground AI
 
 - **Priority**: Medium
-- **Status**: Not Started
+- **Status**: Partial. Ground routes are checked for interdiction (`route_interdicted` in `bflib/src/db/logistics.rs`), ground convoys despawn on delivery, and the AI commander (`bflib/src/commander.rs`) spends points on barrages, convoy ambushes and similar actions. Players can pay to move ground units, and AI helo missions use a terrain-aware route planner (`plan_helo_route`). **Still open:** coordinated AI ground offensives, A* ground pathfinding with threat avoidance, formations, defensive positioning, and retreat/reinforcement logic.
 - **Description**: Improve ground unit behavior and logistics
 
 **Features**:
@@ -196,7 +196,7 @@ fn spawn_convoy(db: &mut Db, from: ObjectiveId, to: ObjectiveId) -> Result<()> {
 #### 3. Naval Warfare System
 
 - **Priority**: Medium
-- **Status**: Partial (carrier groups exist in `bfprotocols/src/cfg/mod.rs:CarrierCfg`)
+- **Status**: Partial. Carrier groups exist (`CarrierCfg`) and can be moved with a `CarrierWaypoint` action. Carriers and amphibious flat-tops get auto-generated TACAN, ICLS, ACLS and Link-4 (`bflib/src/navaids.rs`), and sea logistics routes exist (`spawn_sea_logistics_route`). **Still open:** amphibious operations, shore bombardment, anti-ship missions with proper tracking, and an investigation of the carrier aircraft spawn issue.
 - **Description**: Expand naval operations
 
 **Features**:
@@ -314,7 +314,13 @@ fn tick_naval_logistics(db: &mut Db) -> Result<()> {
 #### 4. Client-Side Plugin/UI
 
 - **Priority**: Medium
-- **Status**: Not Started
+- **Status**: In progress. The pieces so far:
+  - `bfcockpit/`: a client-side DCS hook plus a Win32 installer.
+  - A fog-of-war tactical map fed by `/ws/tacmap` (`bfprotocols/src/tacmap.rs`).
+  - Two bfweb pages, `CockpitPage` and `KneeboardTab`.
+  - The web dashboard, which already covers the territory map, logistics, points and briefing.
+
+  The F10 menu has not been replaced yet.
 - **Description**: Dedicated UI beyond F10 radio menus
 
 **Features**:
@@ -418,7 +424,9 @@ let api = warp::path("api")
 #### 5. Weather & Time Effects
 
 - **Priority**: Low
-- **Status**: Not Started
+- **Status**: Mostly done. `LiveWeatherConfig` pulls real-world METAR from CheckWX into the mission (`bflib/src/bg/live_weather.rs`). `TimeOfDayEffectsCfg` sets the night kill bonus (`bflib/src/db/player.rs`). `WeatherEffectsCfg` sets the convoy speed multipliers for rain, storm and snow (`bflib/src/db/logistics.rs`). **Gaps:**
+  - Three `WeatherEffectsCfg` fields are parsed but never read by bflib, so today they are config-only: `min_visibility_fixed_wing`, `no_helo_in_thunderstorm` and `ewr_weather_range_multiplier`.
+  - Seasonal campaign progression has not been started.
 - **Description**: Environmental effects on gameplay
 
 **Features**:
@@ -561,7 +569,12 @@ fn calculate_kill_points(base_points: i32, time: &MissionTime, cfg: &TimeOfDayEf
 #### 6. Mission Planning Tools
 
 - **Priority**: Low
-- **Status**: Not Started
+- **Status**: Partial. What exists:
+  - A per-coalition auto briefing and sitrep (`bflib/src/situation.rs`), with a server-wide comms plan.
+  - The F10 tasking board with CAP/CAS/CAPTURE/SUPPLY tasks (`bflib/src/db/tasks.rs`).
+  - The bfweb `BriefingPage`.
+
+  **Still open:** strike package assembly, multi-flight coordination, waypoint sharing and time-on-target coordination.
 - **Description**: Coordinated mission support
 
 **Features**:
@@ -730,7 +743,14 @@ fn share_waypoints_to_player(
 #### 7. Advanced Logistics
 
 - **Priority**: Medium
-- **Status**: Partial
+- **Status**: Mostly done. What exists:
+  - Supply interdiction: interdicted ground routes, plus points for convoy kills (`convoy_interdiction_points`).
+  - The materiel war economy, storage depth and front-line supply routing.
+  - Supply-transfer crates for fuel.
+  - AI helo resource delivery.
+  - Air and sea logistics routes.
+
+  **Still open:** ammunition types affecting availability. **Also not implemented:** the fuel pipeline system described below. No pipeline code exists in bflib or bfprotocols.
 - **Description**: Deeper supply chain mechanics
 
 **Features**:
@@ -908,7 +928,7 @@ pub fn request_emergency_resupply(
 #### 8. Dynamic Campaign Events
 
 - **Priority**: Low
-- **Status**: Not Started
+- **Status**: Partial. `bflib/src/db/events.rs` runs these events: artillery barrages, convoy ambushes, reactive enemy CAP and helo patrols. `CampaignEventsCfg` already contains `vip_reward_points` and `evacuation_reward_per_civilian`. **Still open:** VIP extraction and civilian evacuation are config-only, because nothing in bflib reads those fields. Time-limited high-value targets and counter-offensive events have not been started.
 - **Description**: Random/scheduled events that affect gameplay
 
 **Features**:
@@ -1084,39 +1104,12 @@ fn on_troops_loaded(db: &mut Db, player: &Player, troops: &[TroopId]) -> Result<
 
 | Feature | Status | Priority | Location | Notes |
 |---------|--------|----------|----------|-------|
-| Default JTAC laser codes | Missing | High | `bfprotocols/src/cfg/mod.rs` | Add `default_laser_code: u16` to JtacCfg per side |
-| JTAC settings persistence | Broken | High | `bflib/src/db/cargo.rs` | Save JtacState on troop load/unload |
-| Carrier aircraft spawning | Buggy | High | `bflib/src/spawnctx.rs` | Spawn position/timing issues, see Naval section |
-| Troop carrier system | Incomplete | Medium | `bflib/src/menu/troop.rs` | Load/unload mechanics need completion |
-| Points message spam | Cosmetic | Low | `bflib/src/db/player.rs` | Skip message when `points_change == 0` |
-| C-130 internal crates blocking | Design Issue | Medium | `bflib/src/db/cargo.rs` | Internal crates block additional crate spawns |
-
-**Fix for points message spam** (`bflib/src/db/player.rs`):
-```rust
-// Find the points award function and add:
-if points_change != 0 {
-    msg!(db, player.ucid, "Points: {} ({:+})", new_total, points_change);
-}
-// Remove the else branch or unconditional message
-```
-
-**Fix for default JTAC laser codes** (`bfprotocols/src/cfg/mod.rs`):
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JtacCfg {
-    // ... existing fields ...
-
-    /// Default laser code for this side's JTACs (1111-1788)
-    #[serde(default = "default_laser_code")]
-    pub default_laser_code: u16,
-}
-
-fn default_laser_code() -> u16 {
-    1688  // Common default
-}
-
-// Then in jtac.rs, use cfg.default_laser_code when spawning JTAC
-```
+| Default JTAC laser codes | Done | - | `bfprotocols/src/cfg/mod.rs`, `bflib/src/jtac.rs` | `default_laser_code` (serde default 1688), applied when a JTAC spawns |
+| JTAC settings persistence | Done | - | `bflib/src/db/cargo.rs` | `InternalTroop.jtac` carries the `JtacState` through troop load/unload |
+| Carrier aircraft spawning | Buggy (unverified) | High | `bflib/src/spawnctx.rs` | Spawn position/timing issues, see Naval section; still needs an in-game repro |
+| Troop carrier system | Done | - | `bflib/src/db/cargo.rs` | Mechanized infantry: troops ride IFVs/APCs (`GroundVehiclePassengers`) |
+| Points message spam | Done | - | `bflib/src/db/player.rs` | Points message/stat only sent when `amount != 0` |
+| C-130 internal crates blocking | Done | - | `bflib/src/db/cargo.rs` | `spawn_crate` only counts the player's ground crates (`max_crates`) and free space; internally loaded crates no longer block spawning |
 
 ---
 
@@ -1570,8 +1563,8 @@ fn get_unit_position(db: &Db, unit_id: UnitId, time: f64) -> Result<Vector3<f64>
 
 | Improvement | Effort | Impact | Location | Implementation |
 |-------------|--------|--------|----------|----------------|
-| Skip zero-point change messages | Low | Low | `bflib/src/db/player.rs` | Add `if points_change != 0` guard |
-| Add default JTAC laser codes | Low | Medium | `bfprotocols/src/cfg/mod.rs` | Add field with serde default |
+| ~~Skip zero-point change messages~~ (done) | Low | Low | `bflib/src/db/player.rs` | `if amount != 0` guard in place |
+| ~~Add default JTAC laser codes~~ (done) | Low | Medium | `bfprotocols/src/cfg/mod.rs` | `default_laser_code` with serde default |
 | Profiling instrumentation | Low | High | `bflib/src/lib.rs` | Add timing around `slow_timed_events` |
 | Incremental frontline updates | Medium | High | `bflib/src/db/frontline.rs` | Track changed objectives, update locally |
 | Batch message queue processing | Low | Medium | `bflib/src/msgq.rs` | Process N messages per frame instead of 1 |
@@ -1818,10 +1811,10 @@ fn slow_timed_events(db: &mut Db) -> Result<()> {
 
 ### Phase 1: Stability & Polish
 1. Fix carrier aircraft spawning - High impact for naval operations
-2. Add default JTAC laser codes - Quick config fix
-3. Fix JTAC settings persistence - Affects user experience
+2. ~~Add default JTAC laser codes~~ - Done
+3. ~~Fix JTAC settings persistence~~ - Done
 4. Replace critical `unwrap()` calls - Production stability
-5. Skip zero-point messages - Quick cosmetic fix
+5. ~~Skip zero-point messages~~ - Done
 
 ### Phase 2: Performance
 1. Add profiling instrumentation - Needed to measure improvements
@@ -1843,6 +1836,25 @@ fn slow_timed_events(db: &mut Db) -> Result<()> {
 
 ---
 
+## Audit Sept 2026
+
+These new ideas came out of the September 2026 audit. None of them is started.
+
+- **Engine-generated contracts**: the engine posts paid jobs (such as "deliver 4 crates to X" or "kill the SA-11 at Y") from what the campaign needs.
+- **Underdog balancing**: scale income, costs or AI support by team size and territory, so a losing side can still act.
+- **Off-peak protection**: slow down or pause captures when one side has nobody online.
+- **SEAD/assist credit**: share kill and capture credit with players who suppressed the defences or helped with the kill.
+- **Contested consolidation**: enemy presence in the zone pauses or reverses post-capture consolidation progress.
+- **Rookie mode**: new pilots get cheaper sorties, no life loss, and guided first tasks.
+- **Sortie debrief**: a per-sortie summary on landing or slot-out (kills, points, cargo, damage), in game and on the dashboard.
+- **Squadrons**: player groups with a shared roster, stats, a home base and a tag.
+- **Package planner**: build a strike package with roles, a TOT and shared waypoints (see Mission Planning).
+- **VIP/evac events**: wire the existing `CampaignEventsCfg` VIP and evacuation fields to real events.
+- **Amphibious ops**: landing craft or helo assault from the sea to capture coastal objectives.
+- **AI ground offensives**: the commander AI plans multi-group pushes against weak enemy objectives.
+
+---
+
 ## Contributing
 
 When working on items from this roadmap:
@@ -1854,4 +1866,4 @@ When working on items from this roadmap:
 
 ---
 
-*Last updated: 2026-01-19*
+*Last updated: September 2026*
