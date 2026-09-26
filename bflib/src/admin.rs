@@ -29,7 +29,7 @@ use bfprotocols::{
         NavaidEntry, ObjectiveDetails, ObjectiveInfo, PlayerInfo, RadioEntry, ThreatEntry,
         InventoryInfo, SupplyLink, UnitInfo, WarehouseInfo, WarehouseVisibility,
     },
-    cfg::{ActionKind, AwacsCfg, Cfg, DeployableKind, Rule, UnitTag},
+    cfg::{ActionKind, AwacsCfg, Cfg, DeployableKind, LifeType, Rule, UnitTag},
     db::{group::GroupId, objective::ObjectiveId},
     perf::Perf,
     stats::Stat,
@@ -51,14 +51,13 @@ use dcso3::{
     world::World,
 };
 use enumflags2::BitFlags;
-use log::warn;
+use log::{info, warn};
 use mlua::Value;
 use netidx::publisher::Value as NetIdxValue;
 use parking_lot::{Condvar, Mutex};
 use regex::{Regex, RegexBuilder};
 use smallvec::{SmallVec, smallvec};
 use std::{
-    mem,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -75,7 +74,7 @@ impl FromStr for WarehouseKind {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
-        match s {
+        match s.to_ascii_lowercase().as_str() {
             "objective" => Ok(Self::Objective),
             "dcs" => Ok(Self::DCS),
             x => bail!("unknown warehouse kind {x}"),
@@ -172,6 +171,16 @@ pub enum AdminCommand {
         winner: Option<Side>,
     },
     Shutdown,
+    /// Chat + panel message to every connected player.
+    Broadcast {
+        text: String,
+    },
+    /// Set how many lives of one type a player has left.
+    SetLives {
+        player: String,
+        life_type: LifeType,
+        lives: u8,
+    },
     // Query API commands
     QueryObjectives,
     QueryObjective {
@@ -360,7 +369,34 @@ impl AdminCommand {
             "blacklist <rule> <player>: deny <player> access to <rule> (actions|cargo|troops|jtac|ca)",
             "whitelist <rule> <player>: allow <player> access to <rule> (actions|cargo|troops|jtac|ca)",
             "reinit-warehouse <airbase>: reinitialize the warehouse for the given airbase",
+            "addpoints <player> <n>: add <n> points to <player>'s balance (negative to take away)",
+            "broadcast <text>: send <text> to every player as chat and a panel message",
+            "lives <player> <standard|intercept|logistics|attack|recon> <n>: set how many lives of that type <player> has left",
+            "reset and shutdown must be confirmed: repeat the command with confirm on the end within 30s",
         ]
+    }
+}
+
+/// Parse a side the way an admin types it. dcso3's `Side::from_str` only
+/// knows the DCS coalition names ("neutrals"), so `capture X neutral` -- the
+/// form the help text itself advertises -- used to fail.
+fn parse_side(s: &str) -> Result<Side> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "blue" => Ok(Side::Blue),
+        "red" => Ok(Side::Red),
+        "neutral" | "neutrals" => Ok(Side::Neutral),
+        s => bail!("unknown side {s}, expected blue, red or neutral"),
+    }
+}
+
+fn parse_life_type(s: &str) -> Result<LifeType> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "standard" => Ok(LifeType::Standard),
+        "intercept" => Ok(LifeType::Intercept),
+        "logistics" => Ok(LifeType::Logistics),
+        "attack" => Ok(LifeType::Attack),
+        "recon" => Ok(LifeType::Recon),
+        s => bail!("unknown life type {s}, expected standard|intercept|logistics|attack|recon"),
     }
 }
 
@@ -368,7 +404,16 @@ impl FromStr for AdminCommand {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        if s.trim() == "help" {
+        // Command names are matched case-insensitively (a phone keyboard's
+        // "Kick" used to be an unknown command). Only the name is folded:
+        // mark keys, player names and regexes keep the case they were typed in.
+        let s = s.trim();
+        let s = match s.split_once(char::is_whitespace) {
+            None => s.to_ascii_lowercase(),
+            Some((head, rest)) => format!("{} {}", head.to_ascii_lowercase(), rest.trim()),
+        };
+        let s = s.as_str();
+        if s == "help" {
             Ok(Self::Help)
         } else if let Some(s) = s.strip_prefix("reduce ") {
             match s.split_once(" ") {
@@ -402,7 +447,7 @@ impl FromStr for AdminCommand {
                 None => bail!("capture <objective> <blue|red|neutral>"),
                 Some((objective, side)) => Ok(Self::Capture {
                     objective: objective.trim().into(),
-                    side: side.trim().parse::<Side>()?,
+                    side: parse_side(side)?,
                 }),
             }
         } else if let Some(s) = s.strip_prefix("tim ") {
@@ -438,7 +483,7 @@ impl FromStr for AdminCommand {
             match s.split_once(" ") {
                 None => bail!("switch <side> <player>"),
                 Some((side, player)) => {
-                    let side = side.parse::<Side>()?;
+                    let side = parse_side(side)?;
                     Ok(Self::SideSwitch {
                         side,
                         player: player.into(),
@@ -449,7 +494,7 @@ impl FromStr for AdminCommand {
             match s.split_once(" ") {
                 None => bail!("ban <duration|forever> <alias|id|ucid>"),
                 Some((dur, player)) => {
-                    let until = if dur == "forever" {
+                    let until = if dur.eq_ignore_ascii_case("forever") {
                         None
                     } else {
                         let dur = humantime::Duration::from_str(dur)?;
@@ -512,12 +557,33 @@ impl FromStr for AdminCommand {
                 objective: s.into(),
             })
         } else if let Some(s) = s.strip_prefix("reset") {
-            let winner = if s == "" {
-                None
-            } else {
-                Some(Side::from_str(s)?)
-            };
+            // strip_prefix leaves the separating space, so `reset blue` used
+            // to try to parse " blue" as a side and fail.
+            let s = s.trim();
+            let winner = if s.is_empty() { None } else { Some(parse_side(s)?) };
             Ok(Self::Reset { winner })
+        } else if let Some(s) = s.strip_prefix("addpoints ") {
+            // Player names may contain spaces; the amount is the last word.
+            match s.rsplit_once(' ') {
+                None => bail!("addpoints <player> <n>"),
+                Some((player, amount)) => Ok(Self::AddPoints {
+                    player: player.trim().into(),
+                    amount: amount.parse::<i32>()?,
+                    reason: "admin adjustment".into(),
+                }),
+            }
+        } else if let Some(s) = s.strip_prefix("broadcast ") {
+            Ok(Self::Broadcast { text: s.into() })
+        } else if let Some(s) = s.strip_prefix("lives ") {
+            let mut it = s.rsplitn(3, ' ');
+            match (it.next(), it.next(), it.next()) {
+                (Some(n), Some(typ), Some(player)) => Ok(Self::SetLives {
+                    player: player.trim().into(),
+                    life_type: parse_life_type(typ)?,
+                    lives: n.parse::<u8>()?,
+                }),
+                _ => bail!("lives <player> <type> <n>"),
+            }
         } else if let Some(s) = s.strip_prefix("blacklist ") {
             match s.split_once(" ") {
                 None => bail!("blacklist <rule> <player>"),
@@ -542,8 +608,15 @@ impl FromStr for AdminCommand {
     }
 }
 
-fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String) -> Result<()> {
-    let mut to_remove: SmallVec<[MarkId; 8]> = smallvec![];
+/// Spawn at every F10 mark whose text starts with `key`. Returns how many
+/// spawned.
+///
+/// Each mark is handled on its own. It used to be one `?` chain, so a bad
+/// mark part way through left the ones before it spawned but with their marks
+/// still on the map -- and the obvious retry spawned them all a second time.
+/// Now a mark is removed as soon as its spawn succeeds, and only the marks
+/// that failed stay behind (with the reason) to be fixed and retried.
+fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String) -> Result<usize> {
     let act = Trigger::singleton(lua)?.action()?;
     let spctx = SpawnCtx::new(lua)?;
     let key = format_compact!("{} ", key);
@@ -556,6 +629,50 @@ fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String
                 .ucid
         }
     };
+    let mut spawned = 0;
+    let mut errors: SmallVec<[std::string::String; 4]> = smallvec![];
+    for mk in World::singleton(lua)?
+        .get_mark_panels()
+        .context("getting marks")?
+    {
+        let mk = match mk {
+            Ok(mk) => mk,
+            Err(e) => {
+                errors.push(format!("reading a mark: {e:?}"));
+                continue;
+            }
+        };
+        if !mk.text.starts_with(key.as_str()) {
+            continue;
+        }
+        match admin_spawn_one(ctx, lua, &spctx, ucid, key.as_str(), &mk) {
+            Ok(()) => {
+                spawned += 1;
+                if let Err(e) = act.remove_mark(mk.id) {
+                    errors.push(format!("spawned '{}' but could not remove its mark: {e:?}", mk.text));
+                }
+            }
+            Err(e) => errors.push(format!("'{}': {e:?}", mk.text)),
+        }
+    }
+    if !errors.is_empty() {
+        bail!(
+            "spawned {spawned}, {} mark(s) failed and were left on the map: {}",
+            errors.len(),
+            errors.join("; ")
+        )
+    }
+    Ok(spawned)
+}
+
+fn admin_spawn_one(
+    ctx: &mut Context,
+    lua: MizLua,
+    spctx: &SpawnCtx,
+    ucid: Ucid,
+    key: &str,
+    mk: &dcso3::world::MarkPanel,
+) -> Result<()> {
     enum Kind {
         Troop,
         Deployable,
@@ -564,69 +681,100 @@ fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String
         type Err = anyhow::Error;
 
         fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
-            match s {
+            match s.to_ascii_lowercase().as_str() {
                 "troop" => Ok(Kind::Troop),
                 "deployable" => Ok(Kind::Deployable),
                 s => bail!("invalid kind, expected troop or deployable got {s}"),
             }
         }
     }
-    for mk in World::singleton(lua)?
-        .get_mark_panels()
-        .context("getting marks")?
-    {
-        let mk = mk?;
-        if mk.text.starts_with(key.as_str()) {
-            to_remove.push(mk.id);
-            let spec = mk.text.as_str().strip_prefix(key.as_str())
-                .ok_or_else(|| anyhow!("mark text missing expected prefix"))?;
-            let mut iter = spec.splitn(4, " ");
-            let kind = iter
-                .next()
-                .ok_or_else(|| {
-                    anyhow!(
-                        "spawn mark '{}' missing kind expected troop or deployable",
-                        spec
-                    )
-                })?
-                .parse::<Kind>()?;
-            let side = iter
-                .next()
-                .ok_or_else(|| anyhow!("spawn mark {} missing side", spec))?;
-            let side = side.parse::<Side>().with_context(|| {
-                format_compact!("error parsing {} as a side in mark {}", side, spec)
-            })?;
-            let heading = iter
-                .next()
-                .ok_or_else(|| anyhow!("spawn mark {} missing heading", spec))?;
-            let heading = degrees_to_radians(heading.parse::<u32>().with_context(|| {
-                format_compact!("error parsing {} as a heading in mark {}", heading, spec)
-            })? as f64);
-            let name = iter
-                .next()
-                .ok_or_else(|| anyhow!("spawn mark {} missing name of the thing to spawn", spec))?;
-            let pos = Vector2::new(mk.pos.x, mk.pos.z);
-            let loc = SpawnLoc::AtPos {
-                pos,
-                offset_direction: pointing_towards2(heading),
-                group_heading: heading,
+    let spec = mk
+        .text
+        .as_str()
+        .strip_prefix(key)
+        .ok_or_else(|| anyhow!("mark text missing expected prefix"))?;
+    let mut iter = spec.splitn(4, " ");
+    let kind = iter
+        .next()
+        .ok_or_else(|| anyhow!("spawn mark '{}' missing kind expected troop or deployable", spec))?
+        .parse::<Kind>()?;
+    let side = iter
+        .next()
+        .ok_or_else(|| anyhow!("spawn mark {} missing side", spec))?;
+    let side = parse_side(side)
+        .with_context(|| format_compact!("error parsing {} as a side in mark {}", side, spec))?;
+    let heading = iter
+        .next()
+        .ok_or_else(|| anyhow!("spawn mark {} missing heading", spec))?;
+    let heading = degrees_to_radians(heading.parse::<u32>().with_context(|| {
+        format_compact!("error parsing {} as a heading in mark {}", heading, spec)
+    })? as f64);
+    let name = iter
+        .next()
+        .ok_or_else(|| anyhow!("spawn mark {} missing name of the thing to spawn", spec))?;
+    let pos = Vector2::new(mk.pos.x, mk.pos.z);
+    let loc = SpawnLoc::AtPos {
+        pos,
+        offset_direction: pointing_towards2(heading),
+        group_heading: heading,
+    };
+    match kind {
+        Kind::Troop => {
+            let specs = ctx
+                .db
+                .ephemeral
+                .cfg
+                .troops
+                .get(&side)
+                .ok_or_else(|| anyhow!("no troops on {side}"))?;
+            let spec = specs
+                .iter()
+                .find(|tr| tr.name.as_str() == name)
+                .ok_or_else(|| anyhow!("no troop called {name} on {side}"))?
+                .clone();
+            let origin = DeployKind::Troop {
+                player: ucid,
+                moved_by: None,
+                spec: spec.clone(),
+                origin: None,
+                cost_fraction: 1.,
+                jtac: None,
             };
-            match kind {
-                Kind::Troop => {
-                    let specs = ctx
-                        .db
-                        .ephemeral
-                        .cfg
-                        .troops
-                        .get(&side)
-                        .ok_or_else(|| anyhow!("no troops on {side}"))?;
-                    let spec = specs
-                        .iter()
-                        .find(|tr| tr.name.as_str() == name)
-                        .ok_or_else(|| anyhow!("no troop called {name} on {side}"))?
-                        .clone();
-                    let origin = DeployKind::Troop {
-                        player: ucid.clone(),
+            ctx.db
+                .add_and_queue_group(
+                    spctx,
+                    &ctx.idx,
+                    side,
+                    loc,
+                    &spec.template,
+                    origin,
+                    BitFlags::empty(),
+                    None,
+                )
+                .context("adding group")?;
+        }
+        Kind::Deployable => {
+            let specs = ctx
+                .db
+                .ephemeral
+                .cfg
+                .deployables
+                .get(&side)
+                .ok_or_else(|| anyhow!("no deployables on {side}"))?;
+            let spec = specs
+                .iter()
+                .find(|dp| dp.path.ends_with(&[String::from(name)]))
+                .ok_or_else(|| anyhow!("no deployable called {name} on {side}"))?
+                .clone();
+            match &spec.kind {
+                DeployableKind::Objective(parts) => {
+                    ctx.db
+                        .add_farp(lua, spctx, &ctx.idx, side, pos, &spec, parts)
+                        .context("adding farp")?;
+                }
+                DeployableKind::Group { template } => {
+                    let origin = DeployKind::Deployed {
+                        player: ucid,
                         moved_by: None,
                         spec: spec.clone(),
                         origin: None,
@@ -635,65 +783,19 @@ fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String
                     };
                     ctx.db
                         .add_and_queue_group(
-                            &spctx,
+                            spctx,
                             &ctx.idx,
                             side,
                             loc,
-                            &spec.template,
+                            &template,
                             origin,
                             BitFlags::empty(),
                             None,
                         )
                         .context("adding group")?;
                 }
-                Kind::Deployable => {
-                    let specs = ctx
-                        .db
-                        .ephemeral
-                        .cfg
-                        .deployables
-                        .get(&side)
-                        .ok_or_else(|| anyhow!("no deployables on {side}"))?;
-                    let spec = specs
-                        .iter()
-                        .find(|dp| dp.path.ends_with(&[String::from(name)]))
-                        .ok_or_else(|| anyhow!("no deployable called {name} on {side}"))?
-                        .clone();
-                    match &spec.kind {
-                        DeployableKind::Objective(parts) => {
-                            ctx.db
-                                .add_farp(lua, &spctx, &ctx.idx, side, pos, &spec, parts)
-                                .context("adding farp")?;
-                        }
-                        DeployableKind::Group { template } => {
-                            let origin = DeployKind::Deployed {
-                                player: ucid.clone(),
-                                moved_by: None,
-                                spec: spec.clone(),
-                                origin: None,
-                                cost_fraction: 1.,
-                                jtac: None,
-                            };
-                            ctx.db
-                                .add_and_queue_group(
-                                    &spctx,
-                                    &ctx.idx,
-                                    side,
-                                    loc,
-                                    &template,
-                                    origin,
-                                    BitFlags::empty(),
-                                    None,
-                                )
-                                .context("adding group")?;
-                        }
-                    }
-                }
             }
         }
-    }
-    for id in to_remove {
-        act.remove_mark(id).context("removing mark")?;
     }
     Ok(())
 }
@@ -746,6 +848,57 @@ pub(super) fn get_player_ucid<'a>(ctx: &'a Context, key: &str) -> Result<Ucid> {
         bail!("multiple matching candidates {:?}", candidates)
     }
     bail!("no player found for alias, player id, or ucid \"{}\"", key)
+}
+
+/// Resolve a player for a NON-admin command: a connected player id, an exact
+/// name (any of their known aliases, ignoring case), or else a unique name
+/// prefix. Unlike `get_player_ucid` there is no regex, and errors name
+/// players only -- never their ucids.
+pub(super) fn find_player_by_name(ctx: &Context, key: &str) -> Result<Ucid> {
+    let key = key.trim();
+    if key.is_empty() {
+        bail!("no player name given")
+    }
+    if let Ok(id) = key.parse::<PlayerId>() {
+        if let Some(ifo) = ctx.connected.get(&id) {
+            return Ok(ifo.ucid);
+        }
+    }
+    let lkey = key.to_lowercase();
+    let mut exact: SmallVec<[(&Ucid, &String); 4]> = smallvec![];
+    let mut prefix: SmallVec<[(&Ucid, &String); 8]> = smallvec![];
+    for (ucid, player) in ctx.db.persisted.players() {
+        let mut is_exact = false;
+        let mut is_prefix = false;
+        for alt in player.alts.into_iter() {
+            let alt = alt.as_str().to_lowercase();
+            is_exact |= alt == lkey;
+            is_prefix |= alt.starts_with(lkey.as_str());
+        }
+        if is_exact {
+            exact.push((ucid, &player.name));
+        } else if is_prefix {
+            prefix.push((ucid, &player.name));
+        }
+    }
+    let names = |c: &[(&Ucid, &String)]| {
+        c.iter()
+            .take(5)
+            .map(|(_, n)| n.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match (&exact[..], &prefix[..]) {
+        ([(ucid, _)], _) => Ok(**ucid),
+        ([], [(ucid, _)]) => Ok(**ucid),
+        ([], []) => bail!("no player called {key}"),
+        ([], c) | (c, _) => bail!(
+            "{} players match {key} ({}{}), type more of the name",
+            c.len(),
+            names(c),
+            if c.len() > 5 { ", ..." } else { "" }
+        ),
+    }
 }
 
 pub fn get_airbase(db: &Db, name: &str) -> Result<ObjectiveId> {
@@ -972,10 +1125,92 @@ fn add_admin(ctx: &mut Context, player: &String) -> Result<()> {
 
 fn remove_admin(ctx: &mut Context, player: &String) -> Result<()> {
     let ucid = get_player_ucid(ctx, player)?;
+    // There is a single flat admin tier (and the list lives in the same
+    // config file this rewrites), so the one thing guarded here is locking
+    // everybody out: the last admin can't be removed, by themselves or over
+    // RPC -- after that only a hand edit of the config gets an admin back.
     with_mut_cfg(ctx, |cfg| {
+        if !cfg.admins.contains_key(&ucid) {
+            bail!("{player} is not an admin")
+        }
+        if cfg.admins.len() <= 1 {
+            bail!("{player} is the last admin; add another admin first")
+        }
         cfg.admins.remove(&ucid);
         Ok(())
     })
+}
+
+/// Point a player's access `rule` at blacklist/whitelist, and persist it.
+///
+/// This used to `Arc::make_mut` the live config and stop there, so a ban from
+/// cargo or JTACs quietly lapsed at the next restart; `with_mut_cfg` also
+/// writes the config file, like every other admin config change.
+fn set_rule(ctx: &mut Context, rule: &str, player: &String, allow: bool) -> Result<()> {
+    let ucid = get_player_ucid(ctx, player)?;
+    let name = ctx
+        .db
+        .player(&ucid)
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+    let rule = rule.to_ascii_lowercase();
+    with_mut_cfg(ctx, |cfg| {
+        let rules = &mut cfg.rules;
+        let target: &mut Rule = match rule.as_str() {
+            "actions" => &mut rules.actions,
+            "cargo" => &mut rules.cargo,
+            "troops" => &mut rules.troops,
+            "jtac" => &mut rules.jtac,
+            "ca" => &mut rules.ca,
+            _ => bail!("unknown rule {rule}, expected: actions|cargo|troops|jtac|ca"),
+        };
+        if allow {
+            target.whitelist(ucid, name.into())
+        } else {
+            target.blacklist(ucid, name.into())
+        }
+        Ok(())
+    })
+}
+
+fn broadcast(ctx: &mut Context, text: &String) {
+    let msg = format_compact!("ADMIN: {text}");
+    ctx.db.ephemeral.msgs().send(MsgTyp::Chat(None), msg.clone());
+    ctx.db.ephemeral.msgs().panel_to_all(20, false, msg);
+}
+
+/// Set how many lives of `life_type` a player has left. A player's `lives`
+/// map only holds the types they are short of, as (reset clock start,
+/// remaining), so a full count is written as no entry at all.
+fn set_lives(ctx: &mut Context, player: &String, life_type: LifeType, lives: u8) -> Result<u8> {
+    if !ctx.db.ephemeral.cfg.limited_lives {
+        bail!("lives aren't limited on this server")
+    }
+    let max = ctx
+        .db
+        .ephemeral
+        .cfg
+        .default_lives
+        .get(&life_type)
+        .map(|(n, _)| *n)
+        .ok_or_else(|| anyhow!("{life_type} lives aren't configured on this server"))?;
+    let ucid = get_player_ucid(ctx, player)?;
+    let p = ctx
+        .db
+        .player_mut(&ucid)
+        .ok_or_else(|| anyhow!("no such player {player}"))?;
+    let lives = lives.min(max);
+    if lives >= max {
+        p.lives.remove_cow(&life_type);
+    } else {
+        // Keep a running reset clock; a fresh deficit starts one now.
+        let since = p.lives.get(&life_type).map(|(t, _)| *t).unwrap_or_else(Utc::now);
+        p.lives.insert_cow(life_type, (since, lives));
+    }
+    let snapshot = p.lives.clone();
+    ctx.db.ephemeral.dirty();
+    ctx.db.ephemeral.stat(Stat::Life { id: ucid, lives: snapshot });
+    Ok(lives)
 }
 
 fn balance(ctx: &Context, player: &String) -> Result<i32> {
@@ -2655,7 +2890,7 @@ pub(crate) fn api_add_points(ctx: &mut Context, player: &str, amount: i32, reaso
         .player_mut(&ucid)
         .ok_or_else(|| anyhow!("no such player {player}"))?;
 
-    player_data.points += amount;
+    player_data.points = player_data.points.saturating_add(amount);
     ctx.db.ephemeral.dirty();
 
     // Log the points change
@@ -2674,58 +2909,209 @@ pub(super) enum Caller {
     External(oneshot::Sender<NetIdxValue>),
 }
 
-pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<AdminResult> {
-    let mut cmds = mem::take(&mut ctx.admin_commands);
-    while let Some((cmd, ch)) = ctx.external_admin_commands.pop() {
-        cmds.push((Caller::External(ch), cmd));
+/// Admin commands run per event tick. The whole queue used to run in one DCS
+/// frame, so a burst from the dashboard -- or a few mark spawns -- landed as
+/// one long stall; whatever is over the budget waits for the next tick.
+const ADMIN_COMMANDS_PER_TICK: usize = 20;
+
+/// Log target for the admin audit trail, so it can be filtered out of (or
+/// grepped for in) the engine log, which bfdb already tails and archives.
+const AUDIT_TARGET: &str = "bflib::admin_audit";
+
+impl AdminCommand {
+    /// Whether this command goes to the admin audit trail: everything that
+    /// changes the campaign, a player or the config. Reads, and the
+    /// per-player cockpit/dashboard traffic bfdb sends several times a second,
+    /// would only bury the lines that matter.
+    fn audited(&self) -> bool {
+        !matches!(
+            self,
+            Self::Help
+                | Self::Connected
+                | Self::Banned
+                | Self::Search { .. }
+                | Self::Balance { .. }
+                | Self::LogWarehouse { .. }
+                | Self::LogLogistics
+                | Self::Logdesc
+                | Self::QueryObjectives
+                | Self::QueryObjective { .. }
+                | Self::QueryPlayers
+                | Self::QueryPlayer { .. }
+                | Self::QueryGroups { .. }
+                | Self::QueryGroup { .. }
+                | Self::QueryUnits { .. }
+                | Self::QueryWarehouse { .. }
+                | Self::QueryLogistics
+                | Self::QueryCampaignState
+                | Self::QueryPerf
+                | Self::QueryBriefing { .. }
+                | Self::QuerySituation { .. }
+                | Self::QueryTacmap { .. }
+                | Self::QueryGci { .. }
+                | Self::QueryCas { .. }
+                | Self::QueryAtc { .. }
+                | Self::QueryUnitDb
+                | Self::ResolvePlayerId { .. }
+                | Self::EwrToggle { .. }
+                | Self::EwrReport { .. }
+                | Self::EwrSetUnits { .. }
+                | Self::EwrGroundIntel { .. }
+                | Self::CarpSolve { .. }
+                | Self::CarpSolveLatLon { .. }
+                | Self::CockpitSpawnCrate { .. }
+                | Self::CockpitContext { .. }
+                | Self::CockpitMenu { .. }
+                | Self::CockpitMenuInvoke { .. }
+                | Self::SetServerInfo { .. }
+                | Self::SetIntelMarks(_)
+        )
     }
+}
+
+/// What one admin command answered.
+#[derive(Default)]
+struct Replies {
+    /// Sent back to an external (RPC) caller.
+    out: SmallVec<[NetIdxValue; 4]>,
+    /// Any reply was an error.
+    failed: bool,
+    /// The first reply, for the audit line.
+    first: Option<compact_str::CompactString>,
+}
+
+fn send_reply(
+    msgs: &mut crate::msgq::MsgQ,
+    caller: &Caller,
+    rep: &mut Replies,
+    err: bool,
+    msg: compact_str::CompactString,
+) {
+    rep.failed |= err;
+    if rep.first.is_none() {
+        rep.first = Some(msg.clone());
+    }
+    match caller {
+        Caller::Player(id) => msgs.send(MsgTyp::Chat(Some(*id)), msg),
+        Caller::External(_) => rep.out.push(if err {
+            NetIdxValue::Error(msg.to_string().into())
+        } else {
+            NetIdxValue::from(msg.to_string())
+        }),
+    }
+}
+
+fn audit_who(ctx: &Context, caller: &Caller) -> std::string::String {
+    match caller {
+        Caller::Player(id) => match ctx.connected.get(id) {
+            Some(ifo) => format!("{} ({})", ifo.name, ifo.ucid),
+            None => format!("player {id}"),
+        },
+        Caller::External(_) => "rpc".into(),
+    }
+}
+
+pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<AdminResult> {
+    while let Some((cmd, ch)) = ctx.external_admin_commands.pop() {
+        ctx.admin_commands.push((Caller::External(ch), cmd));
+    }
+    let n = ctx.admin_commands.len().min(ADMIN_COMMANDS_PER_TICK);
+    let batch: SmallVec<[(Caller, AdminCommand); ADMIN_COMMANDS_PER_TICK]> =
+        ctx.admin_commands.drain(..n).collect();
+    let mut batch = batch.into_iter();
+    while let Some((caller, cmd)) = batch.next() {
+        let audit = cmd.audited().then(|| (audit_who(ctx, &caller), format!("{cmd:?}")));
+        let ends_session = matches!(cmd, AdminCommand::Reset { .. } | AdminCommand::Shutdown);
+        if let (true, Some((who, what))) = (ends_session, &audit) {
+            // Logged up front as well: once this runs the logger may be gone.
+            info!(target: AUDIT_TARGET, "[ADMIN-AUDIT] {who} is running {what}");
+        }
+        let mut rep = Replies::default();
+        // Per command, so one failure can't abort the batch: a `?` in here
+        // used to drop every command queued behind it, and an RPC caller in
+        // that batch never got an answer at all.
+        let result = match run_admin_command(ctx, lua, &caller, cmd, &mut rep) {
+            Ok(r) => r,
+            Err(e) => {
+                send_reply(ctx.db.ephemeral.msgs(), &caller, &mut rep, true, format_compact!("{e:?}"));
+                AdminResult::Continue
+            }
+        };
+        if let Some((who, what)) = audit {
+            info!(
+                target: AUDIT_TARGET,
+                "[ADMIN-AUDIT] {who} ran {what} -> {}: {}",
+                if rep.failed { "FAILED" } else { "ok" },
+                rep.first.as_deref().unwrap_or("")
+            );
+        }
+        reply_external(caller, rep.out);
+        if let AdminResult::Shutdown = result {
+            // Nothing after a shutdown/reset may run against the state it
+            // just wrote out; tell any RPC callers still waiting.
+            let rest: SmallVec<[(Caller, AdminCommand); 8]> =
+                batch.chain(ctx.admin_commands.drain(..)).collect();
+            for (caller, _) in rest {
+                reply_external(
+                    caller,
+                    smallvec![NetIdxValue::Error("the server is shutting down".into())],
+                );
+            }
+            return Ok(AdminResult::Shutdown);
+        }
+    }
+    Ok(AdminResult::Continue)
+}
+
+fn reply_external(caller: Caller, mut replies: SmallVec<[NetIdxValue; 4]>) {
+    match caller {
+        Caller::Player(_) => (),
+        Caller::External(ch) => {
+            if replies.len() == 1 {
+                if let Some(reply) = replies.pop() {
+                    let _ = ch.send(reply);
+                }
+            } else {
+                let _ = ch.send(NetIdxValue::from(replies));
+            }
+        }
+    }
+}
+
+fn run_admin_command(
+    ctx: &mut Context,
+    lua: MizLua,
+    caller: &Caller,
+    cmd: AdminCommand,
+    rep: &mut Replies,
+) -> Result<AdminResult> {
     let mut result = AdminResult::Continue;
-    for (caller, cmd) in cmds.drain(..) {
-        let mut replies: SmallVec<[NetIdxValue; 4]> = smallvec![];
-        macro_rules! reply_ok {
-            ($($arg:expr),+) => {
-                match caller {
-                    Caller::Player(id) => {
-                        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), format_compact!($($arg),+))
-                    },
-                    Caller::External(_) => {
-                        replies.push(NetIdxValue::from(format!($($arg),+)));
-                    }
+    macro_rules! reply_ok {
+        ($($arg:expr),+) => {
+            send_reply(ctx.db.ephemeral.msgs(), caller, rep, false, format_compact!($($arg),+))
+        }
+    }
+    macro_rules! reply_err {
+        ($($arg:expr),+) => {
+            send_reply(ctx.db.ephemeral.msgs(), caller, rep, true, format_compact!($($arg),+))
+        }
+    }
+    macro_rules! airbase {
+        ($name:expr) => {
+            match get_airbase(&ctx.db, $name) {
+                Ok(oid) => oid,
+                Err(e) => {
+                    reply_err!("{e:?}");
+                    return Ok(result);
                 }
-
             }
-        }
-        macro_rules! reply_err {
-            ($($arg:expr),+) => {
-                match caller {
-                    Caller::Player(id) => {
-                        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), format_compact!($($arg),+))
-                    },
-                    Caller::External(_) => {
-                        replies.push(NetIdxValue::Error(format!($($arg),+).into()));
-                    }
-                }
-
-            }
-        }
-        macro_rules! airbase {
-            ($name:expr) => {
-                match get_airbase(&ctx.db, $name) {
-                    Ok(oid) => oid,
-                    Err(e) => {
-                        reply_err!("{e:?}");
-                        continue;
-                    }
-                }
-            };
-        }
-        match cmd {
+        };
+    }
+    match cmd {
             AdminCommand::Help => (),
             AdminCommand::ReduceInventory { airbase, amount } => {
-                match ctx
-                    .db
-                    .admin_reduce_inventory(lua, airbase!(&airbase), amount)
-                {
+                let oid = airbase!(&airbase);
+                match ctx.db.admin_reduce_inventory(lua, oid, amount) {
                     Err(e) => reply_err!("reduce inventory failed: {:?}", e),
                     Ok(()) => reply_ok!("inventory reduced"),
                 }
@@ -2769,31 +3155,47 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
             AdminCommand::Tim { key, size, alt } => {
                 let mut to_remove: SmallVec<[MarkId; 8]> = smallvec![];
                 let act = Trigger::singleton(lua)?.action()?;
+                // Marks that already went bang are removed even when a later
+                // one fails, or the retry would blow them up twice.
+                let mut failed: Option<anyhow::Error> = None;
                 for mk in World::singleton(lua)?
                     .get_mark_panels()
                     .context("getting marks")?
                 {
-                    let mut mk = mk?;
+                    let mut mk = match mk {
+                        Ok(mk) => mk,
+                        Err(e) => {
+                            failed = Some(e.into());
+                            continue;
+                        }
+                    };
                     if mk.text == key {
-                        to_remove.push(mk.id);
                         if let Some(alt) = alt {
                             mk.pos.y = alt as f64;
                         }
-                        act.explosion(mk.pos, size as f32)
-                            .context("making boom beserker!")?;
+                        match act.explosion(mk.pos, size as f32) {
+                            Ok(()) => to_remove.push(mk.id),
+                            Err(e) => failed = Some(e.context("making boom beserker!")),
+                        }
                     }
                 }
+                let n = to_remove.len();
                 for id in to_remove {
                     ctx.db.ephemeral.msgs().delete_mark(id);
                 }
+                match failed {
+                    None => reply_ok!("{n} explosion(s) at {key}"),
+                    Some(e) => reply_err!("{n} explosion(s) at {key}, then failed: {e:?}"),
+                }
             }
             AdminCommand::Spawn { key } => {
-                let id = match &caller {
+                let id = match caller {
                     Caller::Player(id) => Some(*id),
                     Caller::External(_) => None,
                 };
-                if let Err(e) = admin_spawn(ctx, lua, id, key) {
-                    reply_ok!("could not spawn {:?}", e)
+                match admin_spawn(ctx, lua, id, key) {
+                    Ok(n) => reply_ok!("spawned {n}"),
+                    Err(e) => reply_err!("could not spawn {:?}", e),
                 }
             }
             AdminCommand::SideSwitch { side, player } => {
@@ -2834,17 +3236,18 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 }
             }
             AdminCommand::LogWarehouse { kind, airbase } => {
-                match ctx.db.admin_log_inventory(lua, kind, airbase!(&airbase)) {
-                    Ok(()) => reply_err!("{airbase} inventory logged"),
-                    Err(e) => reply_ok!("could not log {airbase} inventory {:?}", e),
+                let oid = airbase!(&airbase);
+                match ctx.db.admin_log_inventory(lua, kind, oid) {
+                    Ok(()) => reply_ok!("{airbase} inventory logged"),
+                    Err(e) => reply_err!("could not log {airbase} inventory {:?}", e),
                 }
             }
-            AdminCommand::Logdesc => match &caller {
+            AdminCommand::Logdesc => match caller {
                 Caller::External(_) => reply_err!("external clients can't be in a plane"),
-                Caller::Player(id) => match ctx.connected.get(&id) {
+                Caller::Player(id) => match ctx.connected.get(id).map(|ifo| ifo.ucid) {
                     None => reply_err!("no player {id}"),
-                    Some(ifo) => match admin_log_desc(ctx, lua, &ifo.ucid) {
-                        Ok(()) => reply_ok!("{} desc logged", ifo.ucid),
+                    Some(ucid) => match admin_log_desc(ctx, lua, &ucid) {
+                        Ok(()) => reply_ok!("{} desc logged", ucid),
                         Err(e) => reply_err!("could not log admin desc {:?}", e),
                     },
                 },
@@ -2903,14 +3306,14 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
             AdminCommand::QueryObjectives => {
                 let objectives = query_objectives(ctx);
                 match serde_json::to_string(&objectives) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize objectives: {e:?}"),
                 }
             }
             AdminCommand::QueryObjective { name } => {
                 match query_objective_details(ctx, &name) {
                     Ok(details) => match serde_json::to_string(&details) {
-                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
                         Err(e) => reply_err!("failed to serialize objective: {e:?}"),
                     },
                     Err(e) => reply_err!("failed to query objective: {e:?}"),
@@ -2919,14 +3322,14 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
             AdminCommand::QueryPlayers => {
                 let players = query_players(ctx);
                 match serde_json::to_string(&players) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize players: {e:?}"),
                 }
             }
             AdminCommand::QueryPlayer { player } => {
                 match query_player_details(ctx, &player) {
                     Ok(details) => match serde_json::to_string(&details) {
-                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
                         Err(e) => reply_err!("failed to serialize player: {e:?}"),
                     },
                     Err(e) => reply_err!("failed to query player: {e:?}"),
@@ -2935,14 +3338,14 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
             AdminCommand::QueryGroups { side } => {
                 let groups = query_groups(ctx, side);
                 match serde_json::to_string(&groups) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize groups: {e:?}"),
                 }
             }
             AdminCommand::QueryGroup { id } => {
                 match query_group_details(ctx, &id) {
                     Ok(details) => match serde_json::to_string(&details) {
-                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
                         Err(e) => reply_err!("failed to serialize group: {e:?}"),
                     },
                     Err(e) => reply_err!("failed to query group: {e:?}"),
@@ -2951,7 +3354,7 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
             AdminCommand::QueryUnits { group } => {
                 match query_units(ctx, &group) {
                     Ok(units) => match serde_json::to_string(&units) {
-                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
                         Err(e) => reply_err!("failed to serialize units: {e:?}"),
                     },
                     Err(e) => reply_err!("failed to query units: {e:?}"),
@@ -2960,7 +3363,7 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
             AdminCommand::QueryWarehouse { objective, side } => {
                 match query_warehouse(ctx, &objective, side) {
                     Ok(warehouse) => match serde_json::to_string(&warehouse) {
-                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
                         Err(e) => reply_err!("failed to serialize warehouse: {e:?}"),
                     },
                     Err(e) => reply_err!("failed to query warehouse: {e:?}"),
@@ -2969,27 +3372,27 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
             AdminCommand::QueryLogistics => {
                 let logistics = query_logistics(ctx);
                 match serde_json::to_string(&logistics) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize logistics: {e:?}"),
                 }
             }
             AdminCommand::QueryCampaignState => {
                 let state = query_campaign_state(ctx);
                 match serde_json::to_string(&state) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize campaign state: {e:?}"),
                 }
             }
             AdminCommand::QueryPerf => {
                 match serde_json::to_string(&query_perf()) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize perf: {e:?}"),
                 }
             }
             AdminCommand::QueryBriefing { side } => {
                 let briefing = query_briefing(ctx, lua, side);
                 match serde_json::to_string(&briefing) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize briefing: {e:?}"),
                 }
             }
@@ -2997,21 +3400,21 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 // Dashboard path: include the positioned objective layer for the
                 // briefing map, and no bearings (there is no single viewer jet
                 // to measure from).
-                let rep = crate::situation::build(
+                let sit = crate::situation::build(
                     ctx,
                     lua,
                     side,
                     crate::situation::Opts { include_map: true, from: None },
                 );
-                match serde_json::to_string(&rep) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                match serde_json::to_string(&sit) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize situation: {e:?}"),
                 }
             }
             AdminCommand::QueryTacmap { side } => {
                 let picture = query_tacmap(ctx, lua, side);
                 match serde_json::to_string(&picture) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize tacmap: {e:?}"),
                 }
             }
@@ -3023,7 +3426,7 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     )
                 } else {
                     match serde_json::to_string(&*db) {
-                        Ok(json) => replies.push(NetIdxValue::from(json)),
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
                         Err(e) => reply_err!("failed to serialize the unit db: {e:?}"),
                     }
                 }
@@ -3031,21 +3434,21 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
             AdminCommand::QueryAtc { side } => {
                 let picture = crate::atis::query_atc(lua, ctx, side);
                 match serde_json::to_string(&picture) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize atc picture: {e:?}"),
                 }
             }
             AdminCommand::QueryCas { side } => {
                 let picture = query_cas(ctx, lua, side);
                 match serde_json::to_string(&picture) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize cas picture: {e:?}"),
                 }
             }
             AdminCommand::QueryGci { side } => {
                 let picture = query_gci(ctx, lua, side);
                 match serde_json::to_string(&picture) {
-                    Ok(json) => replies.push(NetIdxValue::from(json)),
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize gci picture: {e:?}"),
                 }
             }
@@ -3073,7 +3476,16 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     Ok(()) => {
                         let new_balance = ctx.db.player(&get_player_ucid(ctx, &player).unwrap_or_default())
                             .map_or(0, |p| p.points);
-                        reply_ok!("{{\"success\":true,\"new_balance\":{}}}", new_balance)
+                        match caller {
+                            // The chat `addpoints` command; the RPC form keeps
+                            // its JSON answer.
+                            Caller::Player(_) => {
+                                reply_ok!("{player} {amount:+} points, balance now {new_balance}")
+                            }
+                            Caller::External(_) => {
+                                reply_ok!("{{\"success\":true,\"new_balance\":{}}}", new_balance)
+                            }
+                        }
                     },
                     Err(e) => reply_err!("failed to add points: {e:?}"),
                 }
@@ -3087,50 +3499,14 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     },
                 }
             }
-            AdminCommand::Blacklist { rule, player } => {
-                match get_player_ucid(ctx, &player) {
-                    Err(e) => reply_err!("player not found: {e:?}"),
-                    Ok(ucid) => {
-                        let name = ctx.db.player(&ucid).map(|p| p.name.clone()).unwrap_or_default();
-                        let cfg = Arc::make_mut(&mut ctx.db.ephemeral.cfg);
-                        let rules = &mut cfg.rules;
-                        let target: Option<&mut Rule> = match rule.as_str() {
-                            "actions" => Some(&mut rules.actions),
-                            "cargo" => Some(&mut rules.cargo),
-                            "troops" => Some(&mut rules.troops),
-                            "jtac" => Some(&mut rules.jtac),
-                            "ca" => Some(&mut rules.ca),
-                            _ => None,
-                        };
-                        match target {
-                            None => reply_err!("unknown rule {rule}, expected: actions|cargo|troops|jtac|ca"),
-                            Some(r) => { r.blacklist(ucid, name.into()); reply_ok!("{player} blacklisted from {rule}") }
-                        }
-                    }
-                }
-            }
-            AdminCommand::Whitelist { rule, player } => {
-                match get_player_ucid(ctx, &player) {
-                    Err(e) => reply_err!("player not found: {e:?}"),
-                    Ok(ucid) => {
-                        let name = ctx.db.player(&ucid).map(|p| p.name.clone()).unwrap_or_default();
-                        let cfg = Arc::make_mut(&mut ctx.db.ephemeral.cfg);
-                        let rules = &mut cfg.rules;
-                        let target: Option<&mut Rule> = match rule.as_str() {
-                            "actions" => Some(&mut rules.actions),
-                            "cargo" => Some(&mut rules.cargo),
-                            "troops" => Some(&mut rules.troops),
-                            "jtac" => Some(&mut rules.jtac),
-                            "ca" => Some(&mut rules.ca),
-                            _ => None,
-                        };
-                        match target {
-                            None => reply_err!("unknown rule {rule}, expected: actions|cargo|troops|jtac|ca"),
-                            Some(r) => { r.whitelist(ucid, name.into()); reply_ok!("{player} whitelisted for {rule}") }
-                        }
-                    }
-                }
-            }
+            AdminCommand::Blacklist { rule, player } => match set_rule(ctx, &rule, &player, false) {
+                Ok(()) => reply_ok!("{player} blacklisted from {rule}"),
+                Err(e) => reply_err!("could not blacklist {player} from {rule}: {e:?}"),
+            },
+            AdminCommand::Whitelist { rule, player } => match set_rule(ctx, &rule, &player, true) {
+                Ok(()) => reply_ok!("{player} whitelisted for {rule}"),
+                Err(e) => reply_err!("could not whitelist {player} for {rule}: {e:?}"),
+            },
             AdminCommand::ReinitWarehouse { airbase } => {
                 match get_airbase(&ctx.db, &airbase) {
                     Err(e) => reply_err!("airbase not found: {e:?}"),
@@ -3141,8 +3517,8 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 }
             }
             // Cockpit UI API commands
-            AdminCommand::ResolvePlayerId { id } => match ctx.connected.get(&id) {
-                Some(ifo) => reply_ok!("{}", ifo.ucid),
+            AdminCommand::ResolvePlayerId { id } => match ctx.connected.get(&id).map(|ifo| ifo.ucid) {
+                Some(ucid) => reply_ok!("{}", ucid),
                 None => reply_err!("player {id} is not currently connected"),
             },
             AdminCommand::EwrToggle { ucid } => {
@@ -3178,6 +3554,13 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     },
                     Err(e) => reply_err!("carp solve failed: {:?}", e),
                 }
+            }
+            // The F10 cargo menu is only built for players the cargo rule
+            // allows; the cockpit overlay reaches the same spawn without it.
+            AdminCommand::CockpitSpawnCrate { ucid, .. }
+                if !ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) =>
+            {
+                reply_err!("you are not permitted to spawn cargo on this server")
             }
             AdminCommand::CockpitSpawnCrate { ucid, crate_name, qty, c130 } => {
                 let auto_unpack = if c130 {
@@ -3242,20 +3625,82 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     Err(e) => reply_err!("intel marks: {e:?}"),
                 }
             }
-        }
-        match caller {
-            Caller::Player(_) => (),
-            Caller::External(ch) => {
-                if replies.len() == 1 {
-                    if let Some(reply) = replies.pop() {
-                        let _ = ch.send(reply);
-                    }
-                } else {
-                    let _ = ch.send(NetIdxValue::from(replies));
+            AdminCommand::Broadcast { text } => {
+                broadcast(ctx, &text);
+                reply_ok!("broadcast sent")
+            }
+            AdminCommand::SetLives { player, life_type, lives } => {
+                match set_lives(ctx, &player, life_type, lives) {
+                    Ok(n) => reply_ok!("{player} now has {n} {life_type} lives left"),
+                    Err(e) => reply_err!("could not set {player}'s lives: {e:?}"),
                 }
             }
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admin_parsing_is_case_insensitive_and_takes_neutral() {
+        assert!(matches!(
+            "reset blue".parse::<AdminCommand>(),
+            Ok(AdminCommand::Reset { winner: Some(Side::Blue) })
+        ));
+        assert!(matches!(
+            "RESET Red".parse::<AdminCommand>(),
+            Ok(AdminCommand::Reset { winner: Some(Side::Red) })
+        ));
+        assert!(matches!(
+            "reset".parse::<AdminCommand>(),
+            Ok(AdminCommand::Reset { winner: None })
+        ));
+        assert!(matches!(
+            "Shutdown".parse::<AdminCommand>(),
+            Ok(AdminCommand::Shutdown)
+        ));
+        match "capture Batumi Airfield neutral".parse::<AdminCommand>() {
+            Ok(AdminCommand::Capture { objective, side: Side::Neutral }) => {
+                assert_eq!(objective.as_str(), "Batumi Airfield")
+            }
+            r => panic!("{r:?}"),
+        }
+        assert!(matches!(
+            "capture X NEUTRALS".parse::<AdminCommand>(),
+            Ok(AdminCommand::Capture { side: Side::Neutral, .. })
+        ));
+        // Arguments other than keywords keep their case.
+        match "Kick SomePilot".parse::<AdminCommand>() {
+            Ok(AdminCommand::Kick { player }) => assert_eq!(player.as_str(), "SomePilot"),
+            r => panic!("{r:?}"),
         }
     }
-    ctx.admin_commands = cmds;
-    Ok(result)
+
+    #[test]
+    fn new_admin_commands_parse() {
+        match "addpoints Big Bird 250".parse::<AdminCommand>() {
+            Ok(AdminCommand::AddPoints { player, amount: 250, .. }) => {
+                assert_eq!(player.as_str(), "Big Bird")
+            }
+            r => panic!("{r:?}"),
+        }
+        assert!(matches!(
+            "addpoints x -40".parse::<AdminCommand>(),
+            Ok(AdminCommand::AddPoints { amount: -40, .. })
+        ));
+        match "lives Big Bird Attack 1".parse::<AdminCommand>() {
+            Ok(AdminCommand::SetLives { player, life_type: LifeType::Attack, lives: 1 }) => {
+                assert_eq!(player.as_str(), "Big Bird")
+            }
+            r => panic!("{r:?}"),
+        }
+        match "broadcast Restart in 5, land now".parse::<AdminCommand>() {
+            Ok(AdminCommand::Broadcast { text }) => {
+                assert_eq!(text.as_str(), "Restart in 5, land now")
+            }
+            r => panic!("{r:?}"),
+        }
+    }
 }

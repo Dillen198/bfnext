@@ -353,6 +353,9 @@ struct Context {
     /// hook runs in the hooks state, which has no `atmosphere` or mission
     /// weather to read.
     weather_requests: Vec<(PlayerId, SlotId)>,
+    /// `-brief` requests, answered from the mission Lua state for the same
+    /// reason as `weather_requests`.
+    brief_requests: Vec<PlayerId>,
     jtac_commands: Vec<(PlayerId, JtId, String)>,
     to_background: Option<UnboundedSender<bg::Task>>,
     recently_landed: FxHashMap<DcsOid<ClassUnit>, DateTime<Utc>>,
@@ -4621,6 +4624,7 @@ fn run_timed_events(
             }
         }
     });
+    step(lua, ctx, "brief requests", |ctx| chatcmd::run_brief_requests(ctx, lua));
     ctx.load_state.step();
     record_perf(&mut perf.timed_events, ts);
     ctx.log_perf(now);
