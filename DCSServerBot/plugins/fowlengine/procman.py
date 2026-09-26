@@ -279,6 +279,7 @@ class Procman:
         self._notify = notify
         self.cfg = (config or {}).get("bfdb", {}) or {}
         self.gci_cfg = (config or {}).get("gci", {}) or {}
+        self.ops_key = ((config or {}).get("ops_api") or {}).get("api_key") or None
         # `bfdb.instances:` -- one entry per DCS server this bfdb fronts. Empty
         # (the default) keeps the old single-server shape, where the flat
         # netidx_base/stats_jsonl/... keys above describe the only server.
@@ -331,6 +332,7 @@ class Procman:
         the manager. Takes effect on the next start()/restart()."""
         self.cfg = (config or {}).get("bfdb", {}) or {}
         self.gci_cfg = (config or {}).get("gci", {}) or {}
+        self.ops_key = ((config or {}).get("ops_api") or {}).get("api_key") or None
         self.instances_cfg = list(self.cfg.get("instances") or [])
 
     # ---- config helpers ---------------------------------------------------
@@ -1032,6 +1034,11 @@ class Procman:
         key = self.cfg.get("news_llm_key")
         if key:
             env["BFDB_NEWS_LLM_KEY"] = str(key)
+        # bfdb's OPS proxy calls use this key when set (--ops-api-key /
+        # BFDB_OPS_API_KEY), falling back to dcsserverbot_api_key -- so a
+        # separate ops_api.api_key doesn't lock the dashboard's OPS page out.
+        if self.ops_key:
+            env["BFDB_OPS_API_KEY"] = str(self.ops_key)
         return env
 
     # ---- lifecycle -----------------------------------------------------
