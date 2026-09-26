@@ -23,7 +23,10 @@ use super::{
 use crate::{admin::WarehouseKind, maybe, objective, objective_mut, group, Task};
 use anyhow::{anyhow, bail, Context, Result};
 use bfprotocols::{
-    cfg::{is_model_only_item, ProductionScalingConfig, Vehicle, MATERIEL_ITEM},
+    cfg::{
+        is_model_only_item, ProductionScalingConfig, Vehicle, MATERIEL_ITEM, UNLIMITED_CAPACITY,
+    },
+    db::group::GroupId,
     db::objective::{ObjectiveId, ObjectiveKind},
     perf::{Perf, PerfInner},
     stats::Stat,
@@ -66,8 +69,17 @@ pub enum LogiStage {
     ExecuteTransfers {
         transfers: Vec<Transfer>,
     },
+    // Transports are polled every step, independently of the stage machine
+    // (see `Db::manage_transports`). The pass used to sit in these stages
+    // until every convoy, cargo flight and ship had finished -- up to an hour
+    // and a half -- with production, dispatch and the DCS sync all frozen
+    // behind them. Kept so existing matches on the stage still compile; a
+    // stage left in one just moves on to the sync.
+    #[allow(dead_code)]
     ManageConvoys,
+    #[allow(dead_code)]
     ManageAirRoutes,
+    #[allow(dead_code)]
     ManageSeaRoutes,
     Init,
 }
@@ -78,10 +90,47 @@ impl Default for LogiStage {
     }
 }
 
+/// Which kind of transport a ledger entry / route id belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransportKind {
+    Convoy,
+    Air,
+    Sea,
+    Helo,
+}
+
+/// How a transport's trip ended, which decides where its cargo goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransportEnd {
+    /// Arrived: the destination gets the load.
+    Delivered,
+    /// Destroyed en route: the load is gone.
+    Lost,
+    /// Can never arrive (timed out, destination gone): back to the origin.
+    Returned,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Inventory {
     pub stored: u32,
     pub capacity: u32,
+    /// Net change the campaign model has made to `stored` (production,
+    /// transfers, deliveries, repair draws -- everything that goes through
+    /// the methods below) that the DCS warehouse hasn't been told about yet.
+    ///
+    /// The model and DCS both move stock between syncs: DCS when ground crews
+    /// rearm and refuel, the model when supply arrives. Pushing the model
+    /// wholesale reverted everything DCS had spent since the last read, and
+    /// reading DCS wholesale threw away every delivery since the last push.
+    /// `reconcile_warehouse` applies this delta on top of a fresh DCS read
+    /// instead, so neither side's changes are lost.
+    #[serde(skip)]
+    pub(super) unsynced: i64,
+    /// Whether this entry has been reconciled with its DCS warehouse since
+    /// the last mission load / capture / re-init. Until it has, the model is
+    /// authoritative and gets pushed as-is (the old SyncTo behaviour).
+    #[serde(skip)]
+    pub(super) dcs_known: bool,
 }
 
 impl Inventory {
@@ -95,39 +144,89 @@ impl Inventory {
         }
     }
 
+    fn note_change(&mut self, before: u32) {
+        self.unsynced = self
+            .unsynced
+            .saturating_add(self.stored as i64 - before as i64);
+    }
+
     pub fn reduce(&mut self, percent: f32) -> u32 {
         if self.stored == 0 {
             0
         } else {
-            let taken = max(1, (self.stored as f32 * percent) as u32);
+            let before = self.stored;
+            let taken = min(self.stored, max(1, (self.stored as f32 * percent) as u32));
             self.stored -= taken;
+            self.note_change(before);
             taken
         }
+    }
+
+    /// Add up to `amount`, never past capacity. Returns how much fit.
+    pub fn credit(&mut self, amount: u32) -> u32 {
+        let before = self.stored;
+        let accepted = min(amount, self.capacity.saturating_sub(self.stored));
+        self.stored += accepted;
+        self.note_change(before);
+        accepted
+    }
+
+    /// Take up to `amount`, never below zero. Returns how much was taken.
+    /// This is a raw `stored -= amount` everywhere else in the file's history,
+    /// and release builds have no overflow checks: one load sized bigger than
+    /// the stock left a warehouse holding four billion of something.
+    pub fn debit(&mut self, amount: u32) -> u32 {
+        let before = self.stored;
+        let taken = min(amount, self.stored);
+        self.stored -= taken;
+        self.note_change(before);
+        taken
     }
 }
 
 impl AddAssign<u32> for Inventory {
     fn add_assign(&mut self, rhs: u32) {
-        let qty = self.stored + rhs;
-        if qty > self.capacity {
-            self.stored = self.capacity
-        } else {
-            self.stored = qty
-        }
+        let before = self.stored;
+        self.stored = min(self.stored.saturating_add(rhs), self.capacity);
+        self.note_change(before);
     }
 }
 
 impl SubAssign<u32> for Inventory {
     fn sub_assign(&mut self, rhs: u32) {
-        if rhs > self.stored {
-            self.stored = 0
-        } else {
-            self.stored = self.stored - rhs;
-        }
+        self.debit(rhs);
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The count to write into DCS when the model is authoritative for an entry.
+/// Never above capacity, and never an obviously wrapped value -- a model
+/// entry that underflowed somewhere used to be pushed straight into the DCS
+/// warehouse, handing a base billions of a store.
+fn push_value(inv: &Inventory) -> u32 {
+    if inv.capacity > 0 {
+        min(inv.stored, inv.capacity)
+    } else if inv.stored > UNLIMITED_CAPACITY {
+        0
+    } else {
+        inv.stored
+    }
+}
+
+/// What an entry should hold once the model and the DCS warehouse (which
+/// currently reports `dcs`) are reconciled: DCS's own count with the model's
+/// unsynced changes applied on top, inside [0, capacity]. An entry DCS
+/// hasn't been reconciled with yet is pushed from the model.
+fn reconciled_stock(inv: &Inventory, dcs: u32) -> u32 {
+    if inv.dcs_known {
+        (dcs as i64)
+            .saturating_add(inv.unsynced)
+            .clamp(0, inv.capacity as i64) as u32
+    } else {
+        push_value(inv)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum TransferItem {
     Equipment(String),
     Liquid(LiquidType),
@@ -142,155 +241,151 @@ pub struct Transfer {
 }
 
 impl Transfer {
-    fn execute(&self, db: &mut Persisted, to_bg: &Option<UnboundedSender<Task>>) -> Result<()> {
-        // Get source capacity for initializing destination if needed
-        let src_capacity = match &self.item {
-            TransferItem::Equipment(name) => {
-                db.objectives.get(&self.source)
-                    .and_then(|src| src.warehouse.equipment.get(name))
-                    .map(|inv| inv.capacity)
-            }
-            TransferItem::Liquid(name) => {
-                db.objectives.get(&self.source)
-                    .and_then(|src| src.warehouse.liquids.get(name))
-                    .map(|inv| inv.capacity)
-            }
-        };
-
-        let src = db
-            .objectives
-            .get_mut_cow(&self.source)
-            .ok_or_else(|| anyhow!("no such objective {:?}", self.source))?;
-        match &self.item {
-            TransferItem::Equipment(name) => {
-                let d = &mut src.warehouse.equipment[name].stored;
-                *d -= self.amount;
-                if let Some(to_bg) = to_bg.as_ref() {
-                    let _ = to_bg.send(Task::Stat(Stat::EquipmentInventory {
-                        id: src.id,
-                        item: name.clone(),
-                        amount: *d,
-                    }));
-                }
-            }
-            TransferItem::Liquid(name) => {
-                let d = &mut src.warehouse.liquids[name].stored;
-                *d -= self.amount;
-                if let Some(to_bg) = to_bg.as_ref() {
-                    let _ = to_bg.send(Task::Stat(Stat::LiquidInventory {
-                        id: src.id,
-                        item: *name,
-                        amount: *d,
-                    }));
-                }
-            }
+    fn with_amount(&self, amount: u32) -> Transfer {
+        Transfer {
+            amount,
+            ..self.clone()
         }
-        let dst = db
-            .objectives
-            .get_mut_cow(&self.target)
-            .ok_or_else(|| anyhow!("no such objective {:?}", self.target))?;
-        match &self.item {
-            TransferItem::Equipment(name) => {
-                let inv = dst
-                    .warehouse
-                    .equipment
-                    .get_or_default_cow(name.clone());
-                // If destination has 0 capacity, initialize from source
-                if inv.capacity == 0 {
-                    if let Some(cap) = src_capacity {
-                        inv.capacity = cap;
-                    }
-                }
-                inv.stored += self.amount;
-                if let Some(to_bg) = to_bg.as_ref() {
-                    let _ = to_bg.send(Task::Stat(Stat::EquipmentInventory {
-                        id: dst.id,
-                        item: name.clone(),
-                        amount: inv.stored,
-                    }));
-                }
-            }
-            TransferItem::Liquid(name) => {
-                let inv = dst.warehouse.liquids.get_or_default_cow(*name);
-                // If destination has 0 capacity, initialize from source
-                if inv.capacity == 0 {
-                    if let Some(cap) = src_capacity {
-                        inv.capacity = cap;
-                    }
-                }
-                inv.stored += self.amount;
-                if let Some(to_bg) = to_bg.as_ref() {
-                    let _ = to_bg.send(Task::Stat(Stat::LiquidInventory {
-                        id: dst.id,
-                        item: *name,
-                        amount: inv.stored,
-                    }));
-                }
-            }
-        }
-        Ok(())
     }
 
-    /// Put the cargo back where it came from. Used when a load never
-    /// actually left (spawn failed) or can never arrive (server restarted
-    /// mid-transit, convoy wedged on terrain and timed out). Capped at the
-    /// source's capacity via `AddAssign`, so a refund can't overfill a
-    /// warehouse that was topped up while the load was away.
-    fn refund(&self, db: &mut Persisted, to_bg: &Option<UnboundedSender<Task>>) -> Result<()> {
-        let src = db
+    /// Take up to `amount` of this transfer's item out of `oid`'s warehouse.
+    /// Never wraps: a source holding less than the load gives what it has
+    /// (this was a raw `stored -= amount`). Returns what was actually taken.
+    fn take(
+        &self,
+        db: &mut Persisted,
+        to_bg: &Option<UnboundedSender<Task>>,
+        oid: ObjectiveId,
+        amount: u32,
+    ) -> Result<u32> {
+        let obj = db
             .objectives
-            .get_mut_cow(&self.source)
-            .ok_or_else(|| anyhow!("no such objective {:?}", self.source))?;
+            .get_mut_cow(&oid)
+            .ok_or_else(|| anyhow!("no such objective {:?}", oid))?;
+        let id = obj.id;
         match &self.item {
             TransferItem::Equipment(name) => {
-                let inv = src.warehouse.equipment.get_or_default_cow(name.clone());
-                *inv += self.amount;
-                let stored = inv.stored;
+                let Some(inv) = obj.warehouse.equipment.get_mut_cow(name) else {
+                    return Ok(0);
+                };
+                let taken = inv.debit(amount);
                 if let Some(to_bg) = to_bg.as_ref() {
                     let _ = to_bg.send(Task::Stat(Stat::EquipmentInventory {
-                        id: src.id,
+                        id,
                         item: name.clone(),
-                        amount: stored,
+                        amount: inv.stored,
                     }));
                 }
+                Ok(taken)
             }
             TransferItem::Liquid(name) => {
-                let inv = src.warehouse.liquids.get_or_default_cow(*name);
-                *inv += self.amount;
-                let stored = inv.stored;
+                let Some(inv) = obj.warehouse.liquids.get_mut_cow(name) else {
+                    return Ok(0);
+                };
+                let taken = inv.debit(amount);
                 if let Some(to_bg) = to_bg.as_ref() {
                     let _ = to_bg.send(Task::Stat(Stat::LiquidInventory {
-                        id: src.id,
+                        id,
                         item: *name,
-                        amount: stored,
+                        amount: inv.stored,
                     }));
                 }
+                Ok(taken)
             }
         }
-        Ok(())
+    }
+
+    /// Put up to `amount` of this transfer's item into `oid`'s warehouse,
+    /// through the capacity clamp (the old credit was a raw `stored +=` that
+    /// skipped it). `init_capacity` sizes an entry the objective doesn't
+    /// stock yet. Returns what fit.
+    fn give(
+        &self,
+        db: &mut Persisted,
+        to_bg: &Option<UnboundedSender<Task>>,
+        oid: ObjectiveId,
+        amount: u32,
+        init_capacity: u32,
+    ) -> Result<u32> {
+        let obj = db
+            .objectives
+            .get_mut_cow(&oid)
+            .ok_or_else(|| anyhow!("no such objective {:?}", oid))?;
+        let id = obj.id;
+        match &self.item {
+            TransferItem::Equipment(name) => {
+                let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
+                if inv.capacity == 0 {
+                    inv.capacity = init_capacity;
+                }
+                let accepted = inv.credit(amount);
+                if let Some(to_bg) = to_bg.as_ref() {
+                    let _ = to_bg.send(Task::Stat(Stat::EquipmentInventory {
+                        id,
+                        item: name.clone(),
+                        amount: inv.stored,
+                    }));
+                }
+                Ok(accepted)
+            }
+            TransferItem::Liquid(name) => {
+                let inv = obj.warehouse.liquids.get_or_default_cow(*name);
+                if inv.capacity == 0 {
+                    inv.capacity = init_capacity;
+                }
+                let accepted = inv.credit(amount);
+                if let Some(to_bg) = to_bg.as_ref() {
+                    let _ = to_bg.send(Task::Stat(Stat::LiquidInventory {
+                        id,
+                        item: *name,
+                        amount: inv.stored,
+                    }));
+                }
+                Ok(accepted)
+            }
+        }
     }
 }
 
 /// Cargo that has been debited from a source objective and handed to an
-/// in-flight convoy / air route / sea route, but has not been delivered yet.
+/// in-flight convoy / air route / sea route / helo, but has not been
+/// delivered yet. It exists nowhere else while it is on the road: the
+/// origin has already been debited and the destination is credited only on
+/// arrival. A load that is shot up is simply gone; one that can never arrive
+/// (timed out, destination changed hands, mission restarted) goes back to
+/// the origin.
 ///
 /// The route structs themselves live in ephemeral state, because their DCS
 /// groups die with the mission -- so without this ledger every server
 /// restart silently destroyed whatever happened to be on the road at the
-/// time (the stock was already taken out of the hub, and the only thing
-/// that would ever have put it back was a delivery that can no longer
-/// happen). `reconcile_pending_cargo` refunds anything still outstanding
-/// at load.
+/// time. `reconcile_pending_cargo` refunds anything still outstanding at
+/// load.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingCargo {
     /// Objective the cargo was taken out of.
     pub origin: ObjectiveId,
-    /// Objective it was on its way to (for logging).
+    /// Objective it is on its way to.
     pub destination: ObjectiveId,
-    /// The transfers that will be executed if it arrives.
+    /// The transfers credited to `destination` if it arrives, sized to what
+    /// was actually taken out of `origin`.
     pub transfers: Vec<Transfer>,
     /// When it left. Also drives the in-transit timeout.
     pub departed: DateTime<Utc>,
+    /// Side that owns the load, so a delivery to (or refund into) a base
+    /// that changed hands meanwhile doesn't gift it to the enemy.
+    #[serde(default)]
+    pub side: Option<Side>,
+    /// The transport's group, so a restart can clean it out of the save
+    /// (these groups are never respawned, they just accumulated).
+    #[serde(default)]
+    pub group: Option<GroupId>,
+    /// Set on loads escrowed as "debit at departure, credit on arrival".
+    /// Entries written before that change had ALREADY been credited to the
+    /// destination when they left (the escrow ran the full transfer and the
+    /// arrival ran it again), so refunding one at load would mint it a
+    /// second time; `reconcile_pending_cargo` just drops those.
+    #[serde(default)]
+    pub credit_on_arrival: bool,
 }
 
 // ============================================================================
@@ -424,14 +519,6 @@ impl SupplyConvoy {
             false
         }
     }
-
-    /// Execute all transfers for this convoy
-    pub fn execute_transfers(&self, db: &mut Persisted, to_bg: &Option<UnboundedSender<Task>>) -> Result<()> {
-        for transfer in &self.transfers {
-            transfer.execute(db, to_bg)?;
-        }
-        Ok(())
-    }
 }
 
 /// Unique identifier for air and sea logistics routes
@@ -500,13 +587,6 @@ impl AirLogisticsRoute {
             false
         }
     }
-
-    pub fn execute_transfers(&self, db: &mut Persisted, to_bg: &Option<UnboundedSender<Task>>) -> Result<()> {
-        for transfer in &self.transfers {
-            transfer.execute(db, to_bg)?;
-        }
-        Ok(())
-    }
 }
 
 /// An AI ship transporting supplies from a naval base to a carrier group
@@ -563,13 +643,6 @@ impl SeaLogisticsRoute {
         } else {
             false
         }
-    }
-
-    pub fn execute_transfers(&self, db: &mut Persisted, to_bg: &Option<UnboundedSender<Task>>) -> Result<()> {
-        for transfer in &self.transfers {
-            transfer.execute(db, to_bg)?;
-        }
-        Ok(())
     }
 }
 
@@ -1017,6 +1090,10 @@ fn is_airframe_item(name: &str) -> bool {
         && !name.starts_with("Fortifications.")
 }
 
+/// Push the model into the DCS warehouse as-is. Only for callers that have
+/// just read the warehouse themselves (`Db::sync_warehouse_to_objective`)
+/// and changed the model in between; the logistics tick itself goes through
+/// `reconcile_warehouse`, which doesn't clobber what DCS spent meanwhile.
 pub(super) fn sync_obj_to_warehouse(obj: &Objective, warehouse: &warehouse::Warehouse) -> Result<()> {
     let perf = unsafe { Perf::get_mut() };
     let perf = Arc::make_mut(&mut perf.inner);
@@ -1032,16 +1109,42 @@ pub(super) fn sync_obj_to_warehouse(obj: &Objective, warehouse: &warehouse::Ware
             debug!("[WAREHOUSE_SYNC] pushing obj={} owner={:?} {item}=stored:{}",
                   obj.name, obj.owner, inv.stored);
         }
+        let value = push_value(inv);
+        if value != inv.stored {
+            warn!(
+                "[WAREHOUSE_SYNC] {} {item}: model holds {} against capacity {}, pushing {value}",
+                obj.name, inv.stored, inv.capacity
+            );
+        }
         warehouse
-            .set_item(item.clone(), inv.stored)
+            .set_item(item.clone(), value)
             .context("setting item")?
     }
     for (name, inv) in &obj.warehouse.liquids {
         warehouse
-            .set_liquid_amount(*name, inv.stored)
+            .set_liquid_amount(*name, push_value(inv))
             .context("setting liquid")?
     }
     Ok(())
+}
+
+/// After a raw `sync_obj_to_warehouse`, the model and DCS agree on every
+/// entry: record that, so the next reconcile doesn't apply the changes that
+/// push already carried a second time.
+fn mark_pushed(obj: &mut Objective) {
+    for (name, inv) in obj.warehouse.equipment.iter_mut_cow() {
+        if is_model_only_item(name.as_str()) {
+            continue;
+        }
+        inv.stored = push_value(inv);
+        inv.unsynced = 0;
+        inv.dcs_known = true;
+    }
+    for (_, inv) in obj.warehouse.liquids.iter_mut_cow() {
+        inv.stored = push_value(inv);
+        inv.unsynced = 0;
+        inv.dcs_known = true;
+    }
 }
 
 /// Like sync_obj_to_warehouse but also zeros out items that are in the resource map
@@ -1053,9 +1156,6 @@ pub(super) fn sync_obj_to_warehouse_with_zeroing(
     warehouse: &warehouse::Warehouse,
     resource_map: &warehouse::ResourceMap,
 ) -> Result<()> {
-    let perf = unsafe { Perf::get_mut() };
-    let perf = Arc::make_mut(&mut perf.inner);
-
     // First, zero out all items from the resource map that are NOT in the objective's warehouse
     resource_map.for_each(|name, _| {
         if obj.warehouse.equipment.get(&name).is_none() {
@@ -1063,73 +1163,86 @@ pub(super) fn sync_obj_to_warehouse_with_zeroing(
         }
         Ok(())
     })?;
-
     // Then set the items that ARE in the objective's warehouse
-    for (item, inv) in &obj.warehouse.equipment {
-        if is_model_only_item(item.as_str()) {
-            continue;
-        }
-        perf.logistics_items.insert((item.clone(), obj.id));
-        warehouse
-            .set_item(item.clone(), inv.stored)
-            .context("setting item")?
-    }
-    for (name, inv) in &obj.warehouse.liquids {
-        warehouse
-            .set_liquid_amount(*name, inv.stored)
-            .context("setting liquid")?
-    }
-    Ok(())
+    sync_obj_to_warehouse(obj, warehouse)
 }
 
-/// Like `sync_obj_to_warehouse`, but first zeros every *airframe* entry in the
-/// DCS resource map that the objective's model doesn't carry. Land bases spawn
-/// with whatever aircraft roster the .miz / DCS defaults gave them, which
-/// routinely includes the other coalition's jets; bflib only ever `set_item`s
-/// the airframes it tracks, so those foreign jets stay slottable at a captured
-/// or mis-templated base forever. Weapons/liquids are left to the normal sync
-/// (those are side-neutral and already driven by production). No-op against an
-/// unlimited-aircraft warehouse -- DCS ignores `setItem` there.
-pub(super) fn sync_obj_to_warehouse_zeroing_foreign_airframes(
-    obj: &Objective,
+/// Bring one objective's model and its DCS warehouse into agreement.
+///
+/// Both sides move stock between syncs -- DCS when ground crews rearm,
+/// refuel and hand out airframes, the model when production, transfers and
+/// deliveries land -- so neither can simply overwrite the other. For every
+/// entry this reads DCS fresh, applies the model's unsynced changes on top
+/// (see `Inventory::unsynced`), clamps to capacity, and writes back only the
+/// entries whose DCS count actually has to change. The old SyncFrom/SyncTo
+/// pair instead read everything, then some time later wrote the whole model
+/// back, reverting every rearm made in between (and, while it waited on
+/// transports, that could be an hour and a half of them).
+///
+/// Read-back is never above the objective's own capacity: anything DCS
+/// manufactures on its own between two ticks (a nonzero OperatingLevel_*, a
+/// mission-editor default, a rearm that credited more than it took) used to
+/// be absorbed verbatim, and stock drifted upward forever.
+///
+/// With `zero_foreign_airframes`, an airframe DCS has on the ramp that the
+/// model doesn't carry at all is zeroed -- land bases spawn with whatever
+/// roster the .miz gave them, routinely including the other coalition's
+/// jets. That only looks at what the warehouse actually holds rather than
+/// setting every airframe in the resource map to zero on every sync.
+fn reconcile_warehouse(
+    obj: &mut Objective,
     warehouse: &warehouse::Warehouse,
-    resource_map: &warehouse::ResourceMap,
+    zero_foreign_airframes: bool,
 ) -> Result<()> {
-    resource_map.for_each(|name, _| {
-        if is_airframe_item(name.as_str()) && obj.warehouse.equipment.get(&name).is_none() {
+    let perf = unsafe { Perf::get_mut() };
+    let perf = Arc::make_mut(&mut perf.inner);
+    if zero_foreign_airframes {
+        let mut foreign: SmallVec<[String; 8]> = smallvec![];
+        match warehouse.get_inventory(None).and_then(|i| i.aircraft()) {
+            Ok(aircraft) => aircraft.for_each(|name, n| {
+                if n > 0
+                    && is_airframe_item(name.as_str())
+                    && obj.warehouse.equipment.get(&name).is_none()
+                {
+                    foreign.push(name);
+                }
+                Ok(())
+            })?,
+            Err(e) => debug!("[WAREHOUSE_SYNC] {}: no aircraft inventory: {e:?}", obj.name),
+        }
+        for name in foreign {
             warehouse
                 .set_item(name, 0)
                 .context("zeroing foreign airframe not in objective warehouse")?;
         }
-        Ok(())
-    })?;
-    sync_obj_to_warehouse(obj, warehouse)
-}
-
-fn sync_warehouse_to_obj(obj: &mut Objective, warehouse: &warehouse::Warehouse) -> Result<()> {
-    // Read back, but never above the objective's own capacity.
-    //
-    // Anything DCS manufactures on its own between two logistics ticks --
-    // an airbase warehouse with a nonzero OperatingLevel_*, a mission-editor
-    // default, a rearm that credited more than it took -- lands in this read
-    // and used to be absorbed into the model verbatim. Stock then drifted
-    // upward forever with nothing to stop it, which is how a base ends up
-    // holding more of something than its warehouse is supposed to be able to
-    // hold and never runs short no matter what the supply line is doing.
-    // Capacity is the model's ceiling by definition, so enforce it here.
-    let clamp = |inv: &mut Inventory, dcs: u32| {
-        inv.stored = min(dcs, inv.capacity);
-    };
+    }
     for (name, inv) in obj.warehouse.equipment.iter_mut_cow() {
         // DCS knows nothing about model-only commodities, so asking it for a
         // count would just wipe them on every logistics tick.
         if is_model_only_item(name.as_str()) {
             continue;
         }
-        clamp(inv, warehouse.get_item_count(name.clone())?);
+        perf.logistics_items.insert((name.clone(), obj.id));
+        let dcs = warehouse.get_item_count(name.clone())?;
+        let value = reconciled_stock(inv, dcs);
+        if value != dcs {
+            warehouse.set_item(name.clone(), value).context("setting item")?;
+        }
+        inv.stored = value;
+        inv.unsynced = 0;
+        inv.dcs_known = true;
     }
     for (name, inv) in obj.warehouse.liquids.iter_mut_cow() {
-        clamp(inv, warehouse.get_liquid_amount(*name)?);
+        let dcs = warehouse.get_liquid_amount(*name)?;
+        let value = reconciled_stock(inv, dcs);
+        if value != dcs {
+            warehouse
+                .set_liquid_amount(*name, value)
+                .context("setting liquid")?;
+        }
+        inv.stored = value;
+        inv.unsynced = 0;
+        inv.dcs_known = true;
     }
     Ok(())
 }
@@ -1396,6 +1509,7 @@ impl Db {
                     false,
                     equip.production,
                 ),
+                ..Default::default()
             };
             obj.warehouse.equipment.insert_cow(name.clone(), inv);
         }
@@ -1403,6 +1517,7 @@ impl Db {
             let inv = Inventory {
                 stored: 0,
                 capacity: whcfg.capacity_for(&obj.name, obj.unlimited_supply, false, *qty),
+                ..Default::default()
             };
             obj.warehouse.liquids.insert_cow(*name, inv);
         }
@@ -1526,6 +1641,9 @@ impl Db {
             let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
             inv.capacity = capacity;
             inv.stored = capacity;
+            // a re-init is authoritative: push it, don't merge it with DCS
+            inv.dcs_known = false;
+            inv.unsynced = 0;
         }
 
         // Initialize liquids inventory
@@ -1534,6 +1652,8 @@ impl Db {
             let inv = obj.warehouse.liquids.get_or_default_cow(*name);
             inv.capacity = capacity;
             inv.stored = capacity;
+            inv.dcs_known = false;
+            inv.unsynced = 0;
         }
 
         info!("[WAREHOUSE] Re-initialized warehouse for objective {} with {:?} coalition aircraft",
@@ -1708,10 +1828,18 @@ impl Db {
                                     }
                                     for (n, c) in &aboard {
                                         let cap = whcfg.capacity(true, (*c).max(1));
+                                        // Seed the count from the deck only for a
+                                        // type the model has never tracked here.
+                                        // The deck warehouse is the .miz's static
+                                        // roster, so topping an existing entry up
+                                        // to it handed every carrier its full air
+                                        // wing back on every restart, however
+                                        // many had been lost.
+                                        let fresh = objm.warehouse.equipment.get(n).is_none();
                                         let inv =
                                             objm.warehouse.equipment.get_or_default_cow(n.clone());
                                         inv.capacity = cap;
-                                        if inv.stored < *c {
+                                        if fresh {
                                             inv.stored = *c;
                                         }
                                     }
@@ -1849,11 +1977,14 @@ impl Db {
                             for name in present {
                                 let p = other_prod.equipment.get(&name).map(|e| e.production).unwrap_or(1);
                                 let cap = whcfg.capacity(true, p);
+                                // Capacity only. This used to refill a retained
+                                // jet to capacity whenever it read 0, which on
+                                // every restart minted a fresh squadron of
+                                // whatever the captors had flown to destruction
+                                // since. The captor's one-off allotment is
+                                // handed out at capture (capture_warehouse).
                                 let inv = obj.warehouse.equipment.get_or_default_cow(name);
                                 inv.capacity = cap;
-                                if inv.stored == 0 {
-                                    inv.stored = cap;
-                                }
                             }
                         }
                     }
@@ -1983,19 +2114,123 @@ impl Db {
         out
     }
 
-    /// Hand a load to a route: debit the source warehouses and record the
-    /// cargo in the persisted ledger under `id`. Call this only once the
-    /// transport has actually spawned -- see the dispatch sites, which used
-    /// to debit first and silently destroy the stock whenever the spawn
-    /// turned out to be a no-op (no truck/aircraft template for the side).
+    /// Capacity to give `oid` for an item it doesn't stock yet, when a
+    /// transfer of `amount` from `src` is about to land there: whatever the
+    /// objective would be sized to for that item at init, if its side
+    /// produces it. Only for an item the side doesn't produce does the
+    /// source's capacity stand in -- and never an UNLIMITED one, which used to
+    /// hand a forward FARP a million-unit warehouse for anything trucked in
+    /// from an unlimited rear base.
+    fn init_capacity_for(
+        &self,
+        oid: ObjectiveId,
+        item: &TransferItem,
+        src: ObjectiveId,
+        amount: u32,
+    ) -> u32 {
+        let Some(obj) = self.persisted.objectives.get(&oid) else {
+            return 0;
+        };
+        let src_cap = self
+            .persisted
+            .objectives
+            .get(&src)
+            .map(|o| match item {
+                TransferItem::Equipment(name) => o.get_equipment(name).capacity,
+                TransferItem::Liquid(name) => o.get_liquids(name).capacity,
+            })
+            .unwrap_or(0);
+        let fallback = if src_cap == 0 || src_cap >= UNLIMITED_CAPACITY {
+            amount
+        } else {
+            src_cap
+        };
+        let (Some(whcfg), Some(prod)) = (
+            self.ephemeral.cfg.warehouse.as_ref(),
+            self.ephemeral.production_by_side.get(&obj.owner),
+        ) else {
+            return fallback;
+        };
+        let hub = self.persisted.logistics_hubs.contains(&oid)
+            || self.persisted.carrier_groups.contains(&oid);
+        match item {
+            TransferItem::Equipment(name) => match prod.equipment.get(name) {
+                Some(e) if e.production > 0 => {
+                    let is_airframe = is_airframe_item(name);
+                    let unlimited = if is_airframe {
+                        obj.unlimited_aircraft
+                    } else {
+                        obj.unlimited_supply
+                    };
+                    whcfg.capacity_for_item(&obj.name, is_airframe, unlimited, hub, e.production)
+                }
+                _ => fallback,
+            },
+            TransferItem::Liquid(name) => match prod.liquids.get(name) {
+                Some(qty) if *qty > 0 => {
+                    whcfg.capacity_for(&obj.name, obj.unlimited_supply, hub, *qty)
+                }
+                _ => fallback,
+            },
+        }
+    }
+
+    /// Move a transfer from its source to its target in one step (hub
+    /// distribution without transports, hub balancing, factory output,
+    /// player supply transfers). Takes only what the source actually holds,
+    /// credits through the target's capacity clamp, and puts back whatever
+    /// didn't fit rather than destroying it. Returns what arrived.
+    fn execute_transfer(&mut self, tr: &Transfer) -> Result<u32> {
+        let taken = tr.take(&mut self.persisted, &self.ephemeral.to_bg, tr.source, tr.amount)?;
+        if taken == 0 {
+            return Ok(0);
+        }
+        let cap = self.init_capacity_for(tr.target, &tr.item, tr.source, taken);
+        let accepted = tr.give(&mut self.persisted, &self.ephemeral.to_bg, tr.target, taken, cap)?;
+        if accepted < taken {
+            let back = taken - accepted;
+            let cap = self.init_capacity_for(tr.source, &tr.item, tr.source, back);
+            tr.give(&mut self.persisted, &self.ephemeral.to_bg, tr.source, back, cap)?;
+        }
+        self.ephemeral.dirty();
+        Ok(accepted)
+    }
+
+    /// Hand a load to a transport: debit the origin (and only the origin --
+    /// the destination is credited on arrival) and record the cargo in the
+    /// persisted ledger under `id`. Call this only once the transport has
+    /// actually spawned -- see the dispatch sites, which used to debit first
+    /// and silently destroy the stock whenever the spawn turned out to be a
+    /// no-op (no truck/aircraft template for the side).
+    ///
+    /// This used to run the whole transfer, debit AND credit, at departure,
+    /// and then the arrival ran it again: every delivered load was debited
+    /// twice and credited twice, and a convoy shot to pieces on the road had
+    /// already delivered, so interdicting one achieved nothing.
+    ///
+    /// Returns the load actually taken, which is what will be delivered: a
+    /// transfer is trimmed to what the origin holds, never wrapped past zero.
     fn escrow_cargo(
         &mut self,
         id: &str,
         origin: ObjectiveId,
         destination: ObjectiveId,
+        side: Side,
+        group: GroupId,
         transfers: &[Transfer],
         now: DateTime<Utc>,
-    ) {
+    ) -> Vec<Transfer> {
+        let mut loaded: Vec<Transfer> = Vec::with_capacity(transfers.len());
+        for tr in transfers {
+            match tr.take(&mut self.persisted, &self.ephemeral.to_bg, tr.source, tr.amount) {
+                Ok(0) => (),
+                Ok(n) => loaded.push(tr.with_amount(n)),
+                Err(e) => error!("[LOGI_CARGO] loading cargo for {id}: {e:?}"),
+            }
+        }
+        if loaded.is_empty() {
+            return loaded;
+        }
         let (from, to) = (
             self.persisted
                 .objectives
@@ -2008,66 +2243,264 @@ impl Db {
                 .map(|o| o.name.clone())
                 .unwrap_or_default(),
         );
-        let units: u32 = transfers.iter().map(|t| t.amount).sum();
-        for tr in transfers {
-            if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
-                error!("[LOGI_CARGO] escrowing cargo for {id}: {e:?}");
-            }
-        }
+        let planned: u32 = transfers.iter().map(|t| t.amount).fold(0, u32::saturating_add);
+        let units: u32 = loaded.iter().map(|t| t.amount).fold(0, u32::saturating_add);
         info!(
-            "[LOGI_CARGO] {id} loaded at {from} for {to}: {} item type(s), {units} unit(s) total \
+            "[LOGI_CARGO] {id} loaded at {from} for {to}: {} item type(s), {units} unit(s) total{} \
              (now held in the in-flight ledger, {} load(s) outstanding)",
-            transfers.len(),
+            loaded.len(),
+            if units < planned {
+                format_compact!(", {planned} planned but the origin was short")
+            } else {
+                CompactString::default()
+            },
             self.persisted.pending_cargo.len() + 1
         );
-        debug!("[LOGI_CARGO] {id} manifest: {transfers:?}");
+        debug!("[LOGI_CARGO] {id} manifest: {loaded:?}");
         self.persisted.pending_cargo.insert_cow(
             CompactString::from(id),
             PendingCargo {
                 origin,
                 destination,
-                transfers: transfers.to_vec(),
+                transfers: loaded.clone(),
                 departed: now,
+                side: Some(side),
+                group: Some(group),
+                credit_on_arrival: true,
             },
         );
         self.ephemeral.dirty();
+        loaded
     }
 
-    /// The load arrived (or was destroyed with it): drop the ledger entry so
-    /// a later restart doesn't refund cargo that has already been accounted
-    /// for one way or the other.
-    fn settle_cargo(&mut self, id: &str) {
+    /// Escrow a just-spawned transport's load and point the route record at
+    /// what was actually loaded. A transport whose origin turned out to have
+    /// nothing left for it is stood down rather than sent off empty.
+    fn load_transport(
+        &mut self,
+        kind: TransportKind,
+        id: &str,
+        origin: ObjectiveId,
+        destination: ObjectiveId,
+        transfers: &[Transfer],
+        now: DateTime<Utc>,
+    ) -> bool {
+        let found = match kind {
+            TransportKind::Convoy => self.ephemeral.active_convoys.get(id).map(|c| (c.side, c.group_id)),
+            TransportKind::Air => self.ephemeral.active_air_routes.get(id).map(|r| (r.side, r.group_id)),
+            TransportKind::Sea => self.ephemeral.active_sea_routes.get(id).map(|r| (r.side, r.group_id)),
+            TransportKind::Helo => self
+                .ephemeral
+                .active_helo_missions
+                .get(id)
+                .map(|m| (m.side, m.group_id)),
+        };
+        let Some((side, group)) = found else {
+            return false;
+        };
+        let loaded = self.escrow_cargo(id, origin, destination, side, group, transfers, now);
+        if loaded.is_empty() {
+            warn!("[LOGI_CARGO] {id}: the origin had nothing left to load, standing the transport down");
+            match kind {
+                TransportKind::Convoy => {
+                    self.ephemeral.active_convoys.remove(id);
+                }
+                TransportKind::Air => {
+                    self.ephemeral.active_air_routes.remove(id);
+                }
+                TransportKind::Sea => {
+                    self.ephemeral.active_sea_routes.remove(id);
+                }
+                TransportKind::Helo => {
+                    self.ephemeral.active_helo_missions.remove(id);
+                }
+            }
+            self.drop_transport_group(group);
+            return false;
+        }
+        match kind {
+            TransportKind::Convoy => {
+                if let Some(c) = self.ephemeral.active_convoys.get_mut(id) {
+                    c.transfers = loaded;
+                }
+            }
+            TransportKind::Air => {
+                if let Some(r) = self.ephemeral.active_air_routes.get_mut(id) {
+                    r.transfers = loaded;
+                }
+            }
+            TransportKind::Sea => {
+                if let Some(r) = self.ephemeral.active_sea_routes.get_mut(id) {
+                    r.transfers = loaded;
+                }
+            }
+            TransportKind::Helo => {
+                if let Some(m) = self.ephemeral.active_helo_missions.get_mut(id) {
+                    m.kind = HeloMissionKind::ResourceDelivery { transfers: loaded };
+                }
+            }
+        }
+        true
+    }
+
+    /// Remove a finished transport's group from the campaign (and DCS), if it
+    /// is still there. A transport that ended any way other than a clean
+    /// delivery used to be left in the save forever.
+    fn drop_transport_group(&mut self, gid: GroupId) {
+        if self.persisted.groups.get(&gid).is_some() {
+            if let Err(e) = self.delete_group(&gid) {
+                warn!("failed to remove logistics transport group {gid}: {e:?}");
+            }
+        }
+    }
+
+    /// Put `transfers` back into `origin`, unless it has changed hands since
+    /// the load left (`side` is the load's owner; unknown for pre-ledger
+    /// saves). Capped at capacity like any credit. Returns units returned.
+    fn return_to_origin(
+        &mut self,
+        id: &str,
+        origin: ObjectiveId,
+        side: Option<Side>,
+        transfers: &[Transfer],
+    ) -> u32 {
+        let owned = self
+            .persisted
+            .objectives
+            .get(&origin)
+            .map(|o| side.map_or(true, |s| o.owner == s))
+            .unwrap_or(false);
+        let name = self
+            .persisted
+            .objectives
+            .get(&origin)
+            .map(|o| o.name.clone())
+            .unwrap_or_default();
+        if !owned {
+            let units: u32 = transfers.iter().map(|t| t.amount).fold(0, u32::saturating_add);
+            info!(
+                "[LOGI_CARGO] {id}: origin {name} is no longer ours either, {units} unit(s) lost"
+            );
+            return 0;
+        }
+        let mut returned = 0u32;
+        for tr in transfers {
+            let cap = self.init_capacity_for(origin, &tr.item, origin, tr.amount);
+            match tr.give(&mut self.persisted, &self.ephemeral.to_bg, origin, tr.amount, cap) {
+                Ok(n) => returned = returned.saturating_add(n),
+                Err(e) => error!("[LOGI_CARGO] returning cargo for {id}: {e:?}"),
+            }
+        }
+        self.ephemeral.dirty();
+        returned
+    }
+
+    /// The load arrived: credit the destination and drop the ledger entry.
+    /// A destination that changed hands while the load was on its way doesn't
+    /// get it -- it goes back to the origin. Anything that no longer fits
+    /// (the base was topped up meanwhile) goes back too.
+    fn deliver_cargo(&mut self, id: &str, side: Side) {
+        let key = CompactString::from(id);
+        let Some(p) = self.persisted.pending_cargo.get(&key).cloned() else {
+            warn!("[LOGI_CARGO] {id} arrived with no ledger entry, nothing to deliver");
+            return;
+        };
+        self.persisted.pending_cargo.remove_cow(&key);
+        self.ephemeral.dirty();
+        if !p.credit_on_arrival {
+            // Written by the old escrow, which already credited the
+            // destination when the load left.
+            debug!("[LOGI_CARGO] {id} arrived (pre-change load, already credited at departure)");
+            return;
+        }
+        let dest = self
+            .persisted
+            .objectives
+            .get(&p.destination)
+            .map(|o| (o.owner, o.name.clone()));
+        let dest_name = match dest {
+            Some((owner, name)) if owner == side => name,
+            other => {
+                let name = other.map(|(_, n)| n).unwrap_or_default();
+                let back = self.return_to_origin(id, p.origin, Some(side), &p.transfers);
+                info!(
+                    "[LOGI_CARGO] {id} reached {name} but it has changed hands, {back} unit(s) \
+                     returned to the origin"
+                );
+                return;
+            }
+        };
+        let mut units = 0u32;
+        let mut overflow: Vec<Transfer> = vec![];
+        for tr in &p.transfers {
+            let cap = self.init_capacity_for(p.destination, &tr.item, p.origin, tr.amount);
+            match tr.give(&mut self.persisted, &self.ephemeral.to_bg, p.destination, tr.amount, cap) {
+                Ok(n) => {
+                    units = units.saturating_add(n);
+                    if n < tr.amount {
+                        overflow.push(tr.with_amount(tr.amount - n));
+                    }
+                }
+                Err(e) => error!("[LOGI_CARGO] delivering cargo for {id}: {e:?}"),
+            }
+        }
+        let back = if overflow.is_empty() {
+            0
+        } else {
+            self.return_to_origin(id, p.origin, Some(side), &overflow)
+        };
+        info!(
+            "[LOGI_CARGO] {id} delivered {units} unit(s) to {dest_name} after {} min{}",
+            (Utc::now() - p.departed).num_minutes(),
+            if overflow.is_empty() {
+                CompactString::default()
+            } else {
+                format_compact!(", {back} unit(s) that no longer fit went back to the origin")
+            }
+        );
+    }
+
+    /// The transport was destroyed (or vanished) with the load aboard: the
+    /// cargo is gone. That is what makes cutting a supply line worth doing.
+    fn lose_cargo(&mut self, id: &str) {
         let key = CompactString::from(id);
         if let Some(p) = self.persisted.pending_cargo.get(&key).cloned() {
-            let units: u32 = p.transfers.iter().map(|t| t.amount).sum();
+            let units: u32 = p.transfers.iter().map(|t| t.amount).fold(0, u32::saturating_add);
             info!(
-                "[LOGI_CARGO] {id} settled after {} min ({units} unit(s) no longer outstanding)",
+                "[LOGI_CARGO] {id} lost with its transport after {} min, {units} unit(s) destroyed",
                 (Utc::now() - p.departed).num_minutes()
             );
             self.persisted.pending_cargo.remove_cow(&key);
             self.ephemeral.dirty();
         } else {
-            debug!("[LOGI_CARGO] {id} settled with no ledger entry (pre-ledger load)");
+            debug!("[LOGI_CARGO] {id} lost with no ledger entry");
         }
     }
 
-    /// The load can never arrive (spawn failed, transport wedged and timed
-    /// out, mission reloaded out from under it): put the stock back in the
-    /// origin warehouse and drop the ledger entry.
+    /// The load can never arrive (transport wedged and timed out, mission
+    /// reloaded out from under it): put the stock back in the origin
+    /// warehouse and drop the ledger entry.
     fn refund_cargo(&mut self, id: &str) {
         let key = CompactString::from(id);
         let Some(pending) = self.persisted.pending_cargo.get(&key).cloned() else {
             debug!("[LOGI_CARGO] {id} had nothing to refund");
             return;
         };
-        for tr in &pending.transfers {
-            if let Err(e) = tr.refund(&mut self.persisted, &self.ephemeral.to_bg) {
-                error!("[LOGI_CARGO] refunding cargo for {id}: {e:?}");
-            }
+        self.persisted.pending_cargo.remove_cow(&key);
+        self.ephemeral.dirty();
+        if !pending.credit_on_arrival {
+            // The old escrow credited the destination at departure, so the
+            // destination already holds this load; handing it back to the
+            // origin as well would mint it.
+            info!(
+                "[LOGI_CARGO] {id} dropped from the ledger without a refund (pre-change load, \
+                 the destination was already credited when it left)"
+            );
+            return;
         }
-        let units: u32 = pending.transfers.iter().map(|t| t.amount).sum();
+        let back = self.return_to_origin(id, pending.origin, pending.side, &pending.transfers);
         info!(
-            "[LOGI_CARGO] {id} refunded to {}: {units} unit(s) returned after {} min in transit",
+            "[LOGI_CARGO] {id} refunded to {}: {back} unit(s) returned after {} min in transit",
             self.persisted
                 .objectives
                 .get(&pending.origin)
@@ -2075,31 +2508,139 @@ impl Db {
                 .unwrap_or_default(),
             (Utc::now() - pending.departed).num_minutes()
         );
-        self.persisted.pending_cargo.remove_cow(&key);
-        self.ephemeral.dirty();
     }
 
     /// Called once at mission load. Every ledger entry that survived into a
     /// new mission belongs to a transport that no longer exists, so its
-    /// cargo goes back to the origin warehouse. Without this, each restart
-    /// permanently deleted whatever was in transit -- a steady, invisible
-    /// drain on both coalitions' supply.
+    /// cargo goes back to the origin warehouse and its group comes out of the
+    /// save. Without this, each restart permanently deleted whatever was in
+    /// transit -- a steady, invisible drain on both coalitions' supply.
     pub(super) fn reconcile_pending_cargo(&mut self) {
-        let outstanding: Vec<CompactString> = self
+        let outstanding: Vec<(CompactString, Option<GroupId>)> = self
             .persisted
             .pending_cargo
             .into_iter()
-            .map(|(id, _)| id.clone())
+            .map(|(id, p)| (id.clone(), p.group))
             .collect();
-        if outstanding.is_empty() {
+        if !outstanding.is_empty() {
+            info!(
+                "[WAREHOUSE] refunding {} in-flight cargo load(s) orphaned by the mission restart",
+                outstanding.len()
+            );
+        }
+        for (id, group) in outstanding {
+            if let Some(gid) = group {
+                self.drop_transport_group(gid);
+            }
+            self.refund_cargo(&id);
+        }
+        self.sweep_orphan_transport_groups();
+    }
+
+    /// Transport groups (convoys, cargo flights, supply ships, AI helos) are
+    /// tracked in ephemeral state only, but their group records live in the
+    /// save and are never respawned. Every one that was on the road at a
+    /// restart -- and, before `drop_transport_group`, every one that was
+    /// destroyed -- stayed in the save forever. Only called at load, when no
+    /// transport can legitimately exist yet.
+    fn sweep_orphan_transport_groups(&mut self) {
+        use crate::db::group::DeployKind;
+        let mut templates: SmallVec<[&str; 16]> = smallvec![];
+        if let Some(w) = self.ephemeral.cfg.warehouse.as_ref() {
+            if let Some(c) = w.convoy.as_ref() {
+                templates.extend(c.truck_template.values().map(|t| t.as_str()));
+            }
+            if let Some(a) = w.air_logistics.as_ref() {
+                templates.extend(a.aircraft_template.values().map(|t| t.as_str()));
+            }
+            if let Some(s) = w.sea_logistics.as_ref() {
+                templates.extend(s.ship_template.values().map(|t| t.as_str()));
+            }
+        }
+        if let Some(h) = self.ephemeral.cfg.helo_insertion.as_ref() {
+            templates.extend(h.aircraft_template.values().map(|t| t.as_str()));
+        }
+        if templates.is_empty() {
             return;
         }
+        let orphans: SmallVec<[GroupId; 16]> = self
+            .persisted
+            .groups
+            .into_iter()
+            .filter(|(gid, g)| {
+                matches!(g.origin, DeployKind::Objective { .. })
+                    && self.persisted.objectives_by_group.get(*gid).is_none()
+                    && templates.contains(&g.template_name.as_str())
+            })
+            .map(|(gid, _)| *gid)
+            .collect();
+        drop(templates);
+        if orphans.is_empty() {
+            return;
+        }
+        for gid in &orphans {
+            if let Err(e) = self.delete_group(gid) {
+                warn!("[WAREHOUSE] could not drop orphaned transport group {gid}: {e:?}");
+            }
+        }
         info!(
-            "[WAREHOUSE] refunding {} in-flight cargo load(s) orphaned by the mission restart",
-            outstanding.len()
+            "[WAREHOUSE] dropped {} logistics transport group(s) left in the save by earlier missions",
+            orphans.len()
         );
-        for id in outstanding {
-            self.refund_cargo(&id);
+    }
+
+    /// Objectives with a DCS warehouse, i.e. the ones the sync stages visit.
+    fn warehouse_objectives(&self) -> SmallVec<[ObjectiveId; 128]> {
+        self.persisted
+            .objectives
+            .into_iter()
+            .filter(|(id, obj)| {
+                !obj.kind.is_special_sam_site() && self.ephemeral.airbase_by_oid.contains_key(id)
+            })
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// Objectives without a DCS warehouse (most hubs, factories) are never
+    /// reconciled, so nothing ever put their model back inside capacity --
+    /// a count that had wrapped stayed wrapped for the rest of the campaign.
+    fn clamp_unsynced_warehouses(&mut self) {
+        let offenders: SmallVec<[ObjectiveId; 16]> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(id, obj)| {
+                !self.ephemeral.airbase_by_oid.contains_key(id)
+                    && (obj.warehouse.equipment.into_iter().any(|(_, i)| push_value(i) != i.stored)
+                        || obj.warehouse.liquids.into_iter().any(|(_, i)| push_value(i) != i.stored))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for oid in offenders {
+            let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) else {
+                continue;
+            };
+            for (name, inv) in obj.warehouse.equipment.iter_mut_cow() {
+                let v = push_value(inv);
+                if v != inv.stored {
+                    warn!(
+                        "[WAREHOUSE] {} {name}: held {} against capacity {}, clamped to {v}",
+                        obj.name, inv.stored, inv.capacity
+                    );
+                    inv.stored = v;
+                }
+            }
+            for (name, inv) in obj.warehouse.liquids.iter_mut_cow() {
+                let v = push_value(inv);
+                if v != inv.stored {
+                    warn!(
+                        "[WAREHOUSE] {} {name:?}: held {} against capacity {}, clamped to {v}",
+                        obj.name, inv.stored, inv.capacity
+                    );
+                    inv.stored = v;
+                }
+            }
+            self.ephemeral.dirty();
         }
     }
 
@@ -2113,31 +2654,18 @@ impl Db {
             let freq = Duration::minutes(wcfg.tick as i64);
             let ticks_per_delivery = wcfg.ticks_per_delivery;
             let start_ts = Utc::now();
+            // Every step, whatever stage the pass is in: a transport arriving
+            // mid-pass is credited as unsynced model change and reconciled into
+            // DCS by whichever sync reaches its destination next.
+            self.manage_transports(lua, perf, ts);
             match &mut self.ephemeral.logistics_stage {
                 LogiStage::Init => {
-                    let objectives = self
-                        .persisted
-                        .objectives
-                        .into_iter()
-                        .filter(|(id, obj)| {
-                            !obj.kind.is_special_sam_site()
-                                && self.ephemeral.airbase_by_oid.contains_key(id)
-                        })
-                        .map(|(id, _)| *id)
-                        .collect();
+                    let objectives = self.warehouse_objectives();
                     self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives }
                 }
                 LogiStage::Complete { last_tick } if ts - *last_tick >= freq => {
-                    let objectives = self
-                        .persisted
-                        .objectives
-                        .into_iter()
-                        .filter(|(id, obj)| {
-                            !obj.kind.is_special_sam_site()
-                                && self.ephemeral.airbase_by_oid.contains_key(id)
-                        })
-                        .map(|(id, _)| *id)
-                        .collect();
+                    self.clamp_unsynced_warehouses();
+                    let objectives = self.warehouse_objectives();
                     self.ephemeral.logistics_stage = LogiStage::SyncFromWarehouses { objectives };
                 }
                 LogiStage::Complete { last_tick: _ } => (),
@@ -2218,7 +2746,10 @@ impl Db {
                             record_perf(&mut perf.logistics_deliver, sts);
                             v
                         } else {
-                            self.persisted.logistics_ticks_since_delivery += 1;
+                            self.persisted.logistics_ticks_since_delivery = self
+                                .persisted
+                                .logistics_ticks_since_delivery
+                                .saturating_add(1);
                             let v = match self.deliver_supplies_from_logistics_hubs(lua, ts) {
                                 Ok(v) => v,
                                 Err(e) => {
@@ -2234,559 +2765,36 @@ impl Db {
                 },
                 LogiStage::ExecuteTransfers { transfers } if transfers.is_empty() => {
                     let st = Utc::now();
-
-                    // ── Auto convoy dispatch after supply-critical delay ───────────
-                    let auto_delay_secs = self.ephemeral.cfg.supply_auto_convoy_delay_secs;
-                    let convoy_enabled = self.ephemeral.cfg.warehouse
-                        .as_ref()
-                        .and_then(|w| w.convoy.as_ref())
-                        .map(|c| c.enabled)
-                        .unwrap_or(false);
-                    if auto_delay_secs > 0 && convoy_enabled {
-                        let auto_delay = chrono::Duration::seconds(auto_delay_secs as i64);
-                        let threshold = self.ephemeral.cfg.supply_alert_threshold as u32;
-                        // Collect objectives that have been warned long enough and still need supply
-                        let auto_dispatch: Vec<ObjectiveId> = self.ephemeral.supply_warned.iter()
-                            .filter(|(_, warned_at)| ts - **warned_at >= auto_delay)
-                            .filter_map(|(oid, _)| {
-                                self.persisted.objectives.get(oid).and_then(|obj| {
-                                    let still_low = obj.warehouse.equipment.into_iter().any(|(_, inv)| {
-                                        inv.capacity > 0
-                                            && inv.percent().map(|p| (p as u32) < threshold).unwrap_or(false)
-                                    });
-                                    // Only dispatch if no convoy already heading to this objective
-                                    let already_en_route = self.ephemeral.active_convoys.values()
-                                        .any(|c| c.destination == *oid);
-                                    if still_low && !already_en_route { Some(*oid) } else { None }
-                                })
-                            })
-                            .collect();
-
-                        for dest_oid in auto_dispatch {
-                            // Find the nearest logistics hub that serves this objective
-                            let hub_oid = self.persisted.logistics_hubs.into_iter()
-                                .filter(|lid| {
-                                    let logi = self.persisted.objectives.get(*lid);
-                                    let dest  = self.persisted.objectives.get(&dest_oid);
-                                    match (logi, dest) {
-                                        (Some(l), Some(d)) => {
-                                            l.owner == d.owner
-                                                && l.warehouse.destination.contains(&dest_oid)
-                                        }
-                                        _ => false,
-                                    }
-                                })
-                                .copied()
-                                .next();
-
-                            if let Some(hub) = hub_oid {
-                                let dest_name = self.persisted.objectives.get(&dest_oid)
-                                    .map(|o| o.name.clone())
-                                    .unwrap_or_default();
-                                // Work out what the hub can actually send. This
-                                // used to pass an empty transfer list, so the
-                                // relief convoy drove the length of the map and
-                                // delivered precisely nothing.
-                                let load = self.build_transfers(hub, dest_oid, 1.0);
-                                if load.is_empty() {
-                                    debug!(
-                                        "AUTO-DISPATCH: nothing to send to {} (hub empty or destination full)",
-                                        dest_name
-                                    );
-                                    continue;
-                                }
-                                match self.spawn_supply_convoy(
-                                    lua,
-                                    hub,
-                                    dest_oid,
-                                    ConvoyCargoType::Mixed,
-                                    load.clone(),
-                                    ts,
-                                ) {
-                                    Ok(Some(id)) => {
-                                        self.escrow_cargo(&id, hub, dest_oid, &load, ts);
-                                        self.ephemeral.last_dispatch_to.insert(dest_oid, ts);
-                                        info!(
-                                            "AUTO-DISPATCH: supply convoy → {} ({} item(s))",
-                                            dest_name,
-                                            load.len()
-                                        );
-                                        self.ephemeral.supply_warned.insert(dest_oid, ts);
-                                    }
-                                    Ok(None) => (),
-                                    Err(e) => {
-                                        error!("auto convoy dispatch to {} failed: {e:?}", dest_name);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
+                    self.auto_dispatch_relief(lua, ts);
                     self.balance_logistics_hubs()?;
-
-                    // Chain through management stages: convoys → air routes → sea routes → sync
-                    if !self.ephemeral.active_convoys.is_empty() {
-                        self.ephemeral.logistics_stage = LogiStage::ManageConvoys;
-                    } else if !self.ephemeral.active_air_routes.is_empty() {
-                        self.ephemeral.logistics_stage = LogiStage::ManageAirRoutes;
-                    } else if !self.ephemeral.active_sea_routes.is_empty() {
-                        self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes;
-                    } else {
-                        let objectives = self
-                            .persisted
-                            .objectives
-                            .into_iter()
-                            .map(|(id, _)| *id)
-                            .collect();
-                        self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
-                    }
+                    // Straight on to the sync. Transports are polled on their own
+                    // (manage_transports) instead of holding the pass open until
+                    // the last one arrives.
+                    let objectives = self.warehouse_objectives();
+                    self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
                     record_perf(&mut perf.logistics_transfer, st);
                 }
                 LogiStage::ExecuteTransfers { transfers } => {
                     let st = Utc::now();
-                    while let Some(tr) = transfers.pop() {
-                        if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
+                    let mut batch = mem::take(transfers);
+                    while let Some(tr) = batch.pop() {
+                        if let Err(e) = self.execute_transfer(&tr) {
                             error!("executing transfer {:?} {e:?}", tr)
                         }
                         if Utc::now() - st > Duration::milliseconds(6) {
                             break;
                         }
                     }
+                    // Whatever didn't fit in this step's time slice waits for the
+                    // next one.
+                    if let LogiStage::ExecuteTransfers { transfers } = &mut self.ephemeral.logistics_stage {
+                        transfers.extend(batch);
+                    }
                     record_perf(&mut perf.logistics_transfer, st);
                 }
-                LogiStage::ManageConvoys => {
-                    // Check convoy status and handle deliveries/destruction
-                    let st = Utc::now();
-                    let convoy_cfg = self.ephemeral.cfg.warehouse
-                        .as_ref()
-                        .and_then(|w| w.convoy.as_ref());
-
-                    if let Some(cfg) = convoy_cfg {
-                        let delivery_distance = cfg.delivery_distance;
-                        let max_transit = Duration::minutes(cfg.max_transit_minutes as i64);
-                        let mut completed_convoys = Vec::new();
-                        let mut timed_out: Vec<ConvoyId> = Vec::new();
-                        let mut despawn: Vec<bfprotocols::db::group::GroupId> = Vec::new();
-
-                        for convoy_id in self.ephemeral.active_convoys.keys().cloned().collect::<Vec<_>>() {
-                            if let Some(convoy) = self.ephemeral.active_convoys.get_mut(&convoy_id) {
-                                let convoy_group_id = convoy.group_id;
-                                // A convoy that has been on the road far longer
-                                // than the trip could take is wedged on terrain
-                                // -- DCS ground pathing does this routinely.
-                                // Turn it back rather than leaving it parked
-                                // forever holding cargo that can never arrive.
-                                if max_transit > Duration::zero()
-                                    && ts - convoy.spawn_time > convoy.max_transit(max_transit)
-                                {
-                                    timed_out.push(convoy_id.clone());
-                                    despawn.push(convoy_group_id);
-                                    completed_convoys.push(convoy_id.clone());
-                                    continue;
-                                }
-                                // Check if enough time has passed since last check
-                                if (ts - convoy.last_check).num_seconds() < cfg.check_interval_secs as i64 {
-                                    continue;
-                                }
-                                convoy.last_check = ts;
-
-                                // Get group name for status check
-                                let group_name = match group!(self, &convoy.group_id) {
-                                    Ok(g) => g.name.clone(),
-                                    Err(_) => {
-                                        warn!("Convoy {} group not found in database", convoy.id);
-                                        convoy.state = ConvoyState::Destroyed;
-                                        completed_convoys.push(convoy_id.clone());
-                                        continue;
-                                    }
-                                };
-
-                                // Check convoy status
-                                let status = convoy.check_status(lua, &group_name);
-
-                                match status {
-                                    ConvoyState::InTransit => {
-                                        // Check if convoy reached destination
-                                        let dest_obj = match self.persisted.objectives.get(&convoy.destination) {
-                                            Some(o) => o,
-                                            None => {
-                                                warn!("Convoy {} destination {:?} no longer exists", convoy.id, convoy.destination);
-                                                convoy.state = ConvoyState::Destroyed;
-                                                completed_convoys.push(convoy_id.clone());
-                                                continue;
-                                            }
-                                        };
-
-                                        if convoy.check_delivery(dest_obj.pos(), delivery_distance) {
-                                            // Convoy delivered! Execute transfers
-                                            info!("Convoy {} delivered to {}", convoy.id, dest_obj.name);
-                                            if let Err(e) = convoy.execute_transfers(&mut self.persisted, &self.ephemeral.to_bg) {
-                                                error!("Failed to execute convoy transfers: {:?}", e);
-                                            }
-
-                                            // Despawn the trucks -- same as air/sea routes.
-                                            // Without this they park at the destination
-                                            // forever and every well-supplied base ends
-                                            // up ringed with dead convoys.
-                                            despawn.push(convoy_group_id);
-                                            completed_convoys.push(convoy_id.clone());
-                                        }
-                                    }
-                                    ConvoyState::Destroyed => {
-                                        // Convoy destroyed - supplies lost
-                                        let origin_obj = self.persisted.objectives.get(&convoy.origin);
-                                        let dest_obj = self.persisted.objectives.get(&convoy.destination);
-
-                                        info!(
-                                            "Convoy {} destroyed en route from {} to {}",
-                                            convoy.id,
-                                            origin_obj.map(|o| o.name.as_str()).unwrap_or("Unknown"),
-                                            dest_obj.map(|o| o.name.as_str()).unwrap_or("Unknown")
-                                        );
-
-                                        completed_convoys.push(convoy_id.clone());
-                                    }
-                                    _ => {}
-                                }
-                            }
-
-                            // Stop after processing for too long
-                            if Utc::now() - st > Duration::milliseconds(6) {
-                                break;
-                            }
-                        }
-
-                        // Remove completed convoys. A delivered convoy has
-                        // already moved its cargo and a destroyed one has lost
-                        // it, so both just drop their ledger entry; a timed-out
-                        // one gets its load handed back to the hub.
-                        for convoy_id in completed_convoys {
-                            self.ephemeral.active_convoys.remove(&convoy_id);
-                            if timed_out.contains(&convoy_id) {
-                                warn!("Convoy {convoy_id} timed out in transit, returning its load");
-                                self.refund_cargo(&convoy_id);
-                            } else {
-                                self.settle_cargo(&convoy_id);
-                            }
-                        }
-                        // Despawn delivered convoy groups (mirrors air/sea routes).
-                        for gid in despawn {
-                            if let Err(e) = self.delete_group(&gid) {
-                                warn!("failed to despawn delivered convoy group {gid}: {e:?}");
-                            }
-                        }
-                    }
-
-                    // Transition to next stage: convoys → air routes → sea routes → sync
-                    if self.ephemeral.active_convoys.is_empty() {
-                        if !self.ephemeral.active_air_routes.is_empty() {
-                            self.ephemeral.logistics_stage = LogiStage::ManageAirRoutes;
-                        } else if !self.ephemeral.active_sea_routes.is_empty() {
-                            self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes;
-                        } else {
-                            let objectives = self
-                                .persisted
-                                .objectives
-                                .into_iter()
-                                .map(|(id, _)| *id)
-                                .collect();
-                            self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
-                        }
-                    }
-
-                    record_perf(&mut perf.logistics_convoy, st);
-                }
-                LogiStage::ManageAirRoutes => {
-                    let st = Utc::now();
-                    let (delivery_distance, check_interval_secs, max_transit) = match self
-                        .ephemeral
-                        .cfg
-                        .warehouse
-                        .as_ref()
-                        .and_then(|w| w.air_logistics.as_ref())
-                    {
-                        Some(cfg) => (
-                            cfg.delivery_distance,
-                            cfg.check_interval_secs,
-                            Duration::minutes(cfg.max_transit_minutes as i64),
-                        ),
-                        None => {
-                            // Air logistics disabled/unconfigured — clear and move on
-                            let orphaned: Vec<LogiRouteId> =
-                                self.ephemeral.active_air_routes.keys().cloned().collect();
-                            self.ephemeral.active_air_routes.clear();
-                            for id in orphaned {
-                                self.refund_cargo(&id);
-                            }
-                            let objectives = self
-                                .persisted
-                                .objectives
-                                .into_iter()
-                                .map(|(id, _)| *id)
-                                .collect();
-                            self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
-                            record_perf(&mut perf.logistics_air_routes, st);
-                            return Ok(());
-                        }
-                    };
-
-                    let mut completed = Vec::new();
-                    let mut timed_out: Vec<LogiRouteId> = Vec::new();
-                    let mut despawn: Vec<bfprotocols::db::group::GroupId> = Vec::new();
-                    for route_id in self.ephemeral.active_air_routes.keys().cloned().collect::<Vec<_>>() {
-                        if let Some(route) = self.ephemeral.active_air_routes.get_mut(&route_id) {
-                            let route_group_id: bfprotocols::db::group::GroupId = route.group_id;
-                            // Airborne far longer than the leg can possibly
-                            // take: the flight is stuck holding or orbiting.
-                            // Recall it and give the load back.
-                            if max_transit > Duration::zero()
-                                && ts - route.spawn_time > max_transit
-                            {
-                                timed_out.push(route_id.clone());
-                                despawn.push(route_group_id);
-                                completed.push(route_id.clone());
-                                continue;
-                            }
-                            if (ts - route.last_check).num_seconds() < check_interval_secs as i64 {
-                                continue;
-                            }
-                            route.last_check = ts;
-
-                            let group_name = match group!(self, &route.group_id) {
-                                Ok(g) => g.name.clone(),
-                                Err(_) => {
-                                    warn!("Air route {} group not found in database", route.id);
-                                    route.state = LogiRouteState::Destroyed;
-                                    completed.push(route_id.clone());
-                                    continue;
-                                }
-                            };
-
-                            let status = route.check_status(lua, &group_name);
-                            match status {
-                                LogiRouteState::InTransit => {
-                                    let dest_pos = match self.persisted.objectives.get(&route.destination) {
-                                        Some(o) => o.pos(),
-                                        None => {
-                                            warn!("Air route {} destination no longer exists", route.id);
-                                            route.state = LogiRouteState::Destroyed;
-                                            completed.push(route_id.clone());
-                                            continue;
-                                        }
-                                    };
-                                    if route.check_delivery(dest_pos, delivery_distance) {
-                                        let dest_name = self.persisted.objectives.get(&route.destination)
-                                            .map(|o| o.name.clone()).unwrap_or_default();
-                                        info!("Air route {} delivered to {}", route.id, dest_name);
-                                        if let Err(e) = route.execute_transfers(&mut self.persisted, &self.ephemeral.to_bg) {
-                                            error!("Failed to execute air route transfers: {:?}", e);
-                                        }
-                                        if let Some(to_bg) = &self.ephemeral.to_bg {
-                                            let _ = to_bg.send(Task::Stat(Stat::AirRouteDelivered {
-                                                from: route.origin,
-                                                to: route.destination,
-                                                side: route.side,
-                                            }));
-                                        }
-                                        despawn.push(route_group_id);
-                                        completed.push(route_id.clone());
-                                    }
-                                }
-                                LogiRouteState::Destroyed => {
-                                    info!("Air route {} destroyed en route", route.id);
-                                    if let Some(to_bg) = &self.ephemeral.to_bg {
-                                        let _ = to_bg.send(Task::Stat(Stat::AirRouteDestroyed {
-                                            from: route.origin,
-                                            to: route.destination,
-                                            side: route.side,
-                                        }));
-                                    }
-                                    completed.push(route_id.clone());
-                                }
-                                LogiRouteState::Delivered => {}
-                            }
-                        }
-
-                        if Utc::now() - st > Duration::milliseconds(6) {
-                            break;
-                        }
-                    }
-
-                    for route_id in completed {
-                        self.ephemeral.active_air_routes.remove(&route_id);
-                        if timed_out.contains(&route_id) {
-                            warn!("Air route {route_id} timed out in transit, returning its load");
-                            self.refund_cargo(&route_id);
-                        } else {
-                            self.settle_cargo(&route_id);
-                        }
-                    }
-                    // Despawn the cargo aircraft once it has delivered -- otherwise
-                    // it loiters at the destination forever and they pile up.
-                    for gid in despawn {
-                        if let Err(e) = self.delete_group(&gid) {
-                            warn!("failed to despawn delivered air logistics group {gid}: {e:?}");
-                        }
-                    }
-
-                    if self.ephemeral.active_air_routes.is_empty() {
-                        if !self.ephemeral.active_sea_routes.is_empty() {
-                            self.ephemeral.logistics_stage = LogiStage::ManageSeaRoutes;
-                        } else {
-                            let objectives = self
-                                .persisted
-                                .objectives
-                                .into_iter()
-                                .map(|(id, _)| *id)
-                                .collect();
-                            self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
-                        }
-                    }
-
-                    record_perf(&mut perf.logistics_air_routes, st);
-                }
-                LogiStage::ManageSeaRoutes => {
-                    let st = Utc::now();
-                    let (delivery_distance, check_interval_secs, max_transit) = match self
-                        .ephemeral
-                        .cfg
-                        .warehouse
-                        .as_ref()
-                        .and_then(|w| w.sea_logistics.as_ref())
-                    {
-                        Some(cfg) => (
-                            cfg.delivery_distance,
-                            cfg.check_interval_secs,
-                            Duration::minutes(cfg.max_transit_minutes as i64),
-                        ),
-                        None => {
-                            let orphaned: Vec<LogiRouteId> =
-                                self.ephemeral.active_sea_routes.keys().cloned().collect();
-                            self.ephemeral.active_sea_routes.clear();
-                            for id in orphaned {
-                                self.refund_cargo(&id);
-                            }
-                            let objectives = self
-                                .persisted
-                                .objectives
-                                .into_iter()
-                                .map(|(id, _)| *id)
-                                .collect();
-                            self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
-                            record_perf(&mut perf.logistics_sea_routes, st);
-                            return Ok(());
-                        }
-                    };
-
-                    let mut completed = Vec::new();
-                    let mut timed_out: Vec<LogiRouteId> = Vec::new();
-                    let mut despawn: Vec<bfprotocols::db::group::GroupId> = Vec::new();
-                    for route_id in self.ephemeral.active_sea_routes.keys().cloned().collect::<Vec<_>>() {
-                        if let Some(route) = self.ephemeral.active_sea_routes.get_mut(&route_id) {
-                            let route_group_id: bfprotocols::db::group::GroupId = route.group_id;
-                            if max_transit > Duration::zero()
-                                && ts - route.spawn_time > max_transit
-                            {
-                                timed_out.push(route_id.clone());
-                                despawn.push(route_group_id);
-                                completed.push(route_id.clone());
-                                continue;
-                            }
-                            if (ts - route.last_check).num_seconds() < check_interval_secs as i64 {
-                                continue;
-                            }
-                            route.last_check = ts;
-
-                            let group_name = match group!(self, &route.group_id) {
-                                Ok(g) => g.name.clone(),
-                                Err(_) => {
-                                    warn!("Sea route {} group not found in database", route.id);
-                                    route.state = LogiRouteState::Destroyed;
-                                    completed.push(route_id.clone());
-                                    continue;
-                                }
-                            };
-
-                            let status = route.check_status(lua, &group_name);
-                            match status {
-                                LogiRouteState::InTransit => {
-                                    let dest_pos = match self.persisted.objectives.get(&route.destination) {
-                                        Some(o) => o.pos(),
-                                        None => {
-                                            warn!("Sea route {} destination no longer exists", route.id);
-                                            route.state = LogiRouteState::Destroyed;
-                                            completed.push(route_id.clone());
-                                            continue;
-                                        }
-                                    };
-                                    if route.check_delivery(dest_pos, delivery_distance) {
-                                        let dest_name = self.persisted.objectives.get(&route.destination)
-                                            .map(|o| o.name.clone()).unwrap_or_default();
-                                        info!("Sea route {} delivered to {}", route.id, dest_name);
-                                        if let Err(e) = route.execute_transfers(&mut self.persisted, &self.ephemeral.to_bg) {
-                                            error!("Failed to execute sea route transfers: {:?}", e);
-                                        }
-                                        if let Some(to_bg) = &self.ephemeral.to_bg {
-                                            let _ = to_bg.send(Task::Stat(Stat::SeaRouteDelivered {
-                                                from: route.origin,
-                                                to: route.destination,
-                                                side: route.side,
-                                            }));
-                                        }
-                                        despawn.push(route_group_id);
-                                        completed.push(route_id.clone());
-                                    }
-                                }
-                                LogiRouteState::Destroyed => {
-                                    info!("Sea route {} destroyed en route", route.id);
-                                    if let Some(to_bg) = &self.ephemeral.to_bg {
-                                        let _ = to_bg.send(Task::Stat(Stat::SeaRouteDestroyed {
-                                            from: route.origin,
-                                            to: route.destination,
-                                            side: route.side,
-                                        }));
-                                    }
-                                    completed.push(route_id.clone());
-                                }
-                                LogiRouteState::Delivered => {}
-                            }
-                        }
-
-                        if Utc::now() - st > Duration::milliseconds(6) {
-                            break;
-                        }
-                    }
-
-                    for route_id in completed {
-                        self.ephemeral.active_sea_routes.remove(&route_id);
-                        if timed_out.contains(&route_id) {
-                            warn!("Sea route {route_id} timed out in transit, returning its load");
-                            self.refund_cargo(&route_id);
-                        } else {
-                            self.settle_cargo(&route_id);
-                        }
-                    }
-                    for gid in despawn {
-                        if let Err(e) = self.delete_group(&gid) {
-                            warn!("failed to despawn delivered sea logistics group {gid}: {e:?}");
-                        }
-                    }
-
-                    if self.ephemeral.active_sea_routes.is_empty() {
-                        let objectives = self
-                            .persisted
-                            .objectives
-                            .into_iter()
-                            .filter(|(id, obj)| {
-                                !obj.kind.is_special_sam_site()
-                                    && self.ephemeral.airbase_by_oid.contains_key(id)
-                            })
-                            .map(|(id, _)| *id)
-                            .collect();
-                        self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
-                    }
-
-                    record_perf(&mut perf.logistics_sea_routes, st);
+                LogiStage::ManageConvoys | LogiStage::ManageAirRoutes | LogiStage::ManageSeaRoutes => {
+                    let objectives = self.warehouse_objectives();
+                    self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
                 }
                 LogiStage::SyncToWarehouses { objectives } => match objectives.pop() {
                     None => self.ephemeral.logistics_stage = LogiStage::Complete { last_tick: ts },
@@ -2807,6 +2815,517 @@ impl Db {
             record_perf(&mut perf.logistics, start_ts);
         }
         Ok(())
+    }
+
+    /// Relief for a base that has sat supply-critical past
+    /// `supply_auto_convoy_delay_secs`: a load from its hub, by road, or by
+    /// air if the road is cut. Goes through the same transport caps as the
+    /// scheduled dispatch -- it used to spawn a convoy for every warned base
+    /// regardless of `max_concurrent_convoys`, straight through enemy
+    /// territory, and never considered an airlift.
+    fn auto_dispatch_relief(&mut self, lua: MizLua, ts: DateTime<Utc>) {
+        let auto_delay_secs = self.ephemeral.cfg.supply_auto_convoy_delay_secs;
+        let threshold = self.ephemeral.cfg.supply_alert_threshold as u32;
+        let Some(whcfg) = self.ephemeral.cfg.warehouse.as_ref() else {
+            return;
+        };
+        let convoy_max = whcfg
+            .convoy
+            .as_ref()
+            .filter(|c| c.enabled)
+            .map(|c| c.max_concurrent_convoys as usize);
+        let air_max = whcfg
+            .air_logistics
+            .as_ref()
+            .filter(|a| a.enabled)
+            .map(|a| a.max_concurrent_routes as usize);
+        let (front_line_routing, route_margin) = (whcfg.front_line_routing, whcfg.route_block_margin_m);
+        let Some(convoy_max) = convoy_max else {
+            return;
+        };
+        if auto_delay_secs == 0 {
+            return;
+        }
+        let auto_delay = chrono::Duration::seconds(auto_delay_secs as i64);
+        // Collect objectives that have been warned long enough and still need supply
+        let auto_dispatch: Vec<ObjectiveId> = self
+            .ephemeral
+            .supply_warned
+            .iter()
+            .filter(|(_, warned_at)| ts - **warned_at >= auto_delay)
+            .filter_map(|(oid, _)| {
+                self.persisted.objectives.get(oid).and_then(|obj| {
+                    let still_low = obj.warehouse.equipment.into_iter().any(|(_, inv)| {
+                        inv.capacity > 0
+                            && inv.percent().map(|p| (p as u32) < threshold).unwrap_or(false)
+                    });
+                    // Only dispatch if nothing is already heading to this objective
+                    let already_en_route = self
+                        .ephemeral
+                        .active_convoys
+                        .values()
+                        .any(|c| c.destination == *oid)
+                        || self
+                            .ephemeral
+                            .active_air_routes
+                            .values()
+                            .any(|r| r.destination == *oid);
+                    if still_low && !already_en_route { Some(*oid) } else { None }
+                })
+            })
+            .collect();
+
+        for dest_oid in auto_dispatch {
+            // Find the logistics hub that serves this objective
+            let hub_oid = self
+                .persisted
+                .logistics_hubs
+                .into_iter()
+                .filter(|lid| {
+                    let logi = self.persisted.objectives.get(*lid);
+                    let dest = self.persisted.objectives.get(&dest_oid);
+                    match (logi, dest) {
+                        (Some(l), Some(d)) => {
+                            l.owner == d.owner && l.warehouse.destination.contains(&dest_oid)
+                        }
+                        _ => false,
+                    }
+                })
+                .copied()
+                .next();
+            let Some(hub) = hub_oid else {
+                continue;
+            };
+            let (Some(hub_obj), Some(dest_obj)) = (
+                self.persisted.objectives.get(&hub),
+                self.persisted.objectives.get(&dest_oid),
+            ) else {
+                continue;
+            };
+            let side = dest_obj.owner;
+            let dest_name = dest_obj.name.clone();
+            let road_cut = front_line_routing
+                && route_interdicted(
+                    &self.persisted,
+                    side,
+                    hub_obj.zone.pos(),
+                    dest_obj.zone.pos(),
+                    route_margin,
+                );
+            let convoys_out = self.ephemeral.active_convoys.values().filter(|c| c.side == side).count();
+            let air_out = self.ephemeral.active_air_routes.values().filter(|r| r.side == side).count();
+            let kind = if !road_cut && convoys_out < convoy_max {
+                TransportKind::Convoy
+            } else if road_cut && air_max.is_some_and(|m| air_out < m) {
+                TransportKind::Air
+            } else {
+                debug!(
+                    "AUTO-DISPATCH: no relief for {dest_name} (road cut {road_cut}, convoys \
+                     {convoys_out}/{convoy_max}, air {air_out}/{air_max:?})"
+                );
+                continue;
+            };
+            // Work out what the hub can actually send. This used to pass an
+            // empty transfer list, so the relief convoy drove the length of
+            // the map and delivered precisely nothing.
+            let load = self.build_transfers(hub, dest_oid, 1.0);
+            if load.is_empty() {
+                debug!(
+                    "AUTO-DISPATCH: nothing to send to {} (hub empty or destination full)",
+                    dest_name
+                );
+                continue;
+            }
+            let spawned = match kind {
+                TransportKind::Air => self.spawn_air_logistics_route(
+                    lua,
+                    hub,
+                    dest_oid,
+                    ConvoyCargoType::Mixed,
+                    load.clone(),
+                    ts,
+                ),
+                _ => self.spawn_supply_convoy(
+                    lua,
+                    hub,
+                    dest_oid,
+                    ConvoyCargoType::Mixed,
+                    load.clone(),
+                    ts,
+                ),
+            };
+            match spawned {
+                Ok(Some(id)) => {
+                    if self.load_transport(kind, &id, hub, dest_oid, &load, ts) {
+                        self.ephemeral.last_dispatch_to.insert(dest_oid, ts);
+                        info!(
+                            "AUTO-DISPATCH: supply {} → {} ({} item(s))",
+                            if kind == TransportKind::Air { "flight" } else { "convoy" },
+                            dest_name,
+                            load.len()
+                        );
+                        self.ephemeral.supply_warned.insert(dest_oid, ts);
+                    }
+                }
+                Ok(None) => (),
+                Err(e) => {
+                    error!("auto relief dispatch to {} failed: {e:?}", dest_name);
+                }
+            }
+        }
+    }
+
+    /// Settle a transport that has ended, however it ended, and take its
+    /// group out of the campaign.
+    fn finish_transport(&mut self, id: &str, side: Side, gid: GroupId, end: TransportEnd) {
+        match end {
+            TransportEnd::Delivered => self.deliver_cargo(id, side),
+            TransportEnd::Lost => self.lose_cargo(id),
+            TransportEnd::Returned => self.refund_cargo(id),
+        }
+        self.drop_transport_group(gid);
+    }
+
+    /// Poll every in-flight convoy, cargo flight and supply ship.
+    fn manage_transports(&mut self, lua: MizLua, perf: &mut PerfInner, ts: DateTime<Utc>) {
+        if !self.ephemeral.active_convoys.is_empty() {
+            let st = Utc::now();
+            self.manage_convoys(lua, ts);
+            record_perf(&mut perf.logistics_convoy, st);
+        }
+        if !self.ephemeral.active_air_routes.is_empty() {
+            let st = Utc::now();
+            self.manage_air_routes(lua, ts);
+            record_perf(&mut perf.logistics_air_routes, st);
+        }
+        if !self.ephemeral.active_sea_routes.is_empty() {
+            let st = Utc::now();
+            self.manage_sea_routes(lua, ts);
+            record_perf(&mut perf.logistics_sea_routes, st);
+        }
+    }
+
+    fn manage_convoys(&mut self, lua: MizLua, ts: DateTime<Utc>) {
+        let st = Utc::now();
+        let Some((delivery_distance, check_interval_secs, max_transit)) = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.convoy.as_ref())
+            .map(|c| {
+                (
+                    c.delivery_distance,
+                    c.check_interval_secs,
+                    Duration::minutes(c.max_transit_minutes as i64),
+                )
+            })
+        else {
+            // Convoy config gone (edited out mid-mission): nothing can track
+            // these any more, so bring every load home. This used to have no
+            // branch at all and the stage machine sat in ManageConvoys forever.
+            let orphaned: Vec<(ConvoyId, Side, GroupId)> = self
+                .ephemeral
+                .active_convoys
+                .drain()
+                .map(|(id, c)| (id, c.side, c.group_id))
+                .collect();
+            for (id, side, gid) in orphaned {
+                self.finish_transport(&id, side, gid, TransportEnd::Returned);
+            }
+            return;
+        };
+        let mut finished: Vec<(ConvoyId, Side, GroupId, TransportEnd)> = Vec::new();
+        for convoy_id in self.ephemeral.active_convoys.keys().cloned().collect::<Vec<_>>() {
+            if let Some(convoy) = self.ephemeral.active_convoys.get_mut(&convoy_id) {
+                let (side, gid) = (convoy.side, convoy.group_id);
+                // A convoy that has been on the road far longer than the trip
+                // could take is wedged on terrain -- DCS ground pathing does
+                // this routinely. Turn it back rather than leaving it parked
+                // forever holding cargo that can never arrive.
+                if max_transit > Duration::zero()
+                    && ts - convoy.spawn_time > convoy.max_transit(max_transit)
+                {
+                    warn!("Convoy {convoy_id} timed out in transit, returning its load");
+                    finished.push((convoy_id.clone(), side, gid, TransportEnd::Returned));
+                    continue;
+                }
+                // Check if enough time has passed since last check
+                if (ts - convoy.last_check).num_seconds() < check_interval_secs as i64 {
+                    continue;
+                }
+                convoy.last_check = ts;
+
+                let group_name = match group!(self, &convoy.group_id) {
+                    Ok(g) => g.name.clone(),
+                    Err(_) => {
+                        warn!("Convoy {} group not found in database", convoy.id);
+                        convoy.state = ConvoyState::Destroyed;
+                        finished.push((convoy_id.clone(), side, gid, TransportEnd::Lost));
+                        continue;
+                    }
+                };
+
+                match convoy.check_status(lua, &group_name) {
+                    ConvoyState::InTransit => {
+                        let dest_obj = match self.persisted.objectives.get(&convoy.destination) {
+                            Some(o) => o,
+                            None => {
+                                warn!(
+                                    "Convoy {} destination {:?} no longer exists, returning its load",
+                                    convoy.id, convoy.destination
+                                );
+                                finished.push((convoy_id.clone(), side, gid, TransportEnd::Returned));
+                                continue;
+                            }
+                        };
+                        if convoy.check_delivery(dest_obj.pos(), delivery_distance) {
+                            info!("Convoy {} delivered to {}", convoy.id, dest_obj.name);
+                            // Despawned by finish_transport -- without that they
+                            // park at the destination forever and every
+                            // well-supplied base ends up ringed with dead convoys.
+                            finished.push((convoy_id.clone(), side, gid, TransportEnd::Delivered));
+                        }
+                    }
+                    ConvoyState::Destroyed => {
+                        // Convoy destroyed - supplies lost
+                        let origin_obj = self.persisted.objectives.get(&convoy.origin);
+                        let dest_obj = self.persisted.objectives.get(&convoy.destination);
+                        info!(
+                            "Convoy {} destroyed en route from {} to {}",
+                            convoy.id,
+                            origin_obj.map(|o| o.name.as_str()).unwrap_or("Unknown"),
+                            dest_obj.map(|o| o.name.as_str()).unwrap_or("Unknown")
+                        );
+                        finished.push((convoy_id.clone(), side, gid, TransportEnd::Lost));
+                    }
+                    ConvoyState::Delivered => {}
+                }
+            }
+
+            // Stop after processing for too long
+            if Utc::now() - st > Duration::milliseconds(6) {
+                break;
+            }
+        }
+        for (id, side, gid, end) in finished {
+            self.ephemeral.active_convoys.remove(&id);
+            self.finish_transport(&id, side, gid, end);
+        }
+    }
+
+    fn manage_air_routes(&mut self, lua: MizLua, ts: DateTime<Utc>) {
+        let st = Utc::now();
+        let Some((delivery_distance, check_interval_secs, max_transit)) = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.air_logistics.as_ref())
+            .map(|c| {
+                (
+                    c.delivery_distance,
+                    c.check_interval_secs,
+                    Duration::minutes(c.max_transit_minutes as i64),
+                )
+            })
+        else {
+            // Air logistics disabled/unconfigured -- bring every load home.
+            let orphaned: Vec<(LogiRouteId, Side, GroupId)> = self
+                .ephemeral
+                .active_air_routes
+                .drain()
+                .map(|(id, r)| (id, r.side, r.group_id))
+                .collect();
+            for (id, side, gid) in orphaned {
+                self.finish_transport(&id, side, gid, TransportEnd::Returned);
+            }
+            return;
+        };
+        let mut finished: Vec<(LogiRouteId, Side, GroupId, TransportEnd)> = Vec::new();
+        for route_id in self.ephemeral.active_air_routes.keys().cloned().collect::<Vec<_>>() {
+            if let Some(route) = self.ephemeral.active_air_routes.get_mut(&route_id) {
+                let (side, gid) = (route.side, route.group_id);
+                // Airborne far longer than the leg can possibly take: the
+                // flight is stuck holding or orbiting. Recall it and give the
+                // load back.
+                if max_transit > Duration::zero() && ts - route.spawn_time > max_transit {
+                    warn!("Air route {route_id} timed out in transit, returning its load");
+                    finished.push((route_id.clone(), side, gid, TransportEnd::Returned));
+                    continue;
+                }
+                if (ts - route.last_check).num_seconds() < check_interval_secs as i64 {
+                    continue;
+                }
+                route.last_check = ts;
+
+                let group_name = match group!(self, &route.group_id) {
+                    Ok(g) => g.name.clone(),
+                    Err(_) => {
+                        warn!("Air route {} group not found in database", route.id);
+                        route.state = LogiRouteState::Destroyed;
+                        finished.push((route_id.clone(), side, gid, TransportEnd::Lost));
+                        continue;
+                    }
+                };
+
+                match route.check_status(lua, &group_name) {
+                    LogiRouteState::InTransit => {
+                        let dest_pos = match self.persisted.objectives.get(&route.destination) {
+                            Some(o) => o.pos(),
+                            None => {
+                                warn!("Air route {} destination no longer exists, returning its load", route.id);
+                                finished.push((route_id.clone(), side, gid, TransportEnd::Returned));
+                                continue;
+                            }
+                        };
+                        if route.check_delivery(dest_pos, delivery_distance) {
+                            let dest_name = self
+                                .persisted
+                                .objectives
+                                .get(&route.destination)
+                                .map(|o| o.name.clone())
+                                .unwrap_or_default();
+                            info!("Air route {} delivered to {}", route.id, dest_name);
+                            if let Some(to_bg) = &self.ephemeral.to_bg {
+                                let _ = to_bg.send(Task::Stat(Stat::AirRouteDelivered {
+                                    from: route.origin,
+                                    to: route.destination,
+                                    side: route.side,
+                                }));
+                            }
+                            // Despawned by finish_transport -- otherwise it
+                            // loiters at the destination and they pile up.
+                            finished.push((route_id.clone(), side, gid, TransportEnd::Delivered));
+                        }
+                    }
+                    LogiRouteState::Destroyed => {
+                        info!("Air route {} destroyed en route", route.id);
+                        if let Some(to_bg) = &self.ephemeral.to_bg {
+                            let _ = to_bg.send(Task::Stat(Stat::AirRouteDestroyed {
+                                from: route.origin,
+                                to: route.destination,
+                                side: route.side,
+                            }));
+                        }
+                        finished.push((route_id.clone(), side, gid, TransportEnd::Lost));
+                    }
+                    LogiRouteState::Delivered => {}
+                }
+            }
+
+            if Utc::now() - st > Duration::milliseconds(6) {
+                break;
+            }
+        }
+        for (id, side, gid, end) in finished {
+            self.ephemeral.active_air_routes.remove(&id);
+            self.finish_transport(&id, side, gid, end);
+        }
+    }
+
+    fn manage_sea_routes(&mut self, lua: MizLua, ts: DateTime<Utc>) {
+        let st = Utc::now();
+        let Some((delivery_distance, check_interval_secs, max_transit)) = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.sea_logistics.as_ref())
+            .map(|c| {
+                (
+                    c.delivery_distance,
+                    c.check_interval_secs,
+                    Duration::minutes(c.max_transit_minutes as i64),
+                )
+            })
+        else {
+            let orphaned: Vec<(LogiRouteId, Side, GroupId)> = self
+                .ephemeral
+                .active_sea_routes
+                .drain()
+                .map(|(id, r)| (id, r.side, r.group_id))
+                .collect();
+            for (id, side, gid) in orphaned {
+                self.finish_transport(&id, side, gid, TransportEnd::Returned);
+            }
+            return;
+        };
+        let mut finished: Vec<(LogiRouteId, Side, GroupId, TransportEnd)> = Vec::new();
+        for route_id in self.ephemeral.active_sea_routes.keys().cloned().collect::<Vec<_>>() {
+            if let Some(route) = self.ephemeral.active_sea_routes.get_mut(&route_id) {
+                let (side, gid) = (route.side, route.group_id);
+                if max_transit > Duration::zero() && ts - route.spawn_time > max_transit {
+                    warn!("Sea route {route_id} timed out in transit, returning its load");
+                    finished.push((route_id.clone(), side, gid, TransportEnd::Returned));
+                    continue;
+                }
+                if (ts - route.last_check).num_seconds() < check_interval_secs as i64 {
+                    continue;
+                }
+                route.last_check = ts;
+
+                let group_name = match group!(self, &route.group_id) {
+                    Ok(g) => g.name.clone(),
+                    Err(_) => {
+                        warn!("Sea route {} group not found in database", route.id);
+                        route.state = LogiRouteState::Destroyed;
+                        finished.push((route_id.clone(), side, gid, TransportEnd::Lost));
+                        continue;
+                    }
+                };
+
+                match route.check_status(lua, &group_name) {
+                    LogiRouteState::InTransit => {
+                        let dest_pos = match self.persisted.objectives.get(&route.destination) {
+                            Some(o) => o.pos(),
+                            None => {
+                                warn!("Sea route {} destination no longer exists, returning its load", route.id);
+                                finished.push((route_id.clone(), side, gid, TransportEnd::Returned));
+                                continue;
+                            }
+                        };
+                        if route.check_delivery(dest_pos, delivery_distance) {
+                            let dest_name = self
+                                .persisted
+                                .objectives
+                                .get(&route.destination)
+                                .map(|o| o.name.clone())
+                                .unwrap_or_default();
+                            info!("Sea route {} delivered to {}", route.id, dest_name);
+                            if let Some(to_bg) = &self.ephemeral.to_bg {
+                                let _ = to_bg.send(Task::Stat(Stat::SeaRouteDelivered {
+                                    from: route.origin,
+                                    to: route.destination,
+                                    side: route.side,
+                                }));
+                            }
+                            finished.push((route_id.clone(), side, gid, TransportEnd::Delivered));
+                        }
+                    }
+                    LogiRouteState::Destroyed => {
+                        info!("Sea route {} destroyed en route", route.id);
+                        if let Some(to_bg) = &self.ephemeral.to_bg {
+                            let _ = to_bg.send(Task::Stat(Stat::SeaRouteDestroyed {
+                                from: route.origin,
+                                to: route.destination,
+                                side: route.side,
+                            }));
+                        }
+                        finished.push((route_id.clone(), side, gid, TransportEnd::Lost));
+                    }
+                    LogiRouteState::Delivered => {}
+                }
+            }
+
+            if Utc::now() - st > Duration::milliseconds(6) {
+                break;
+            }
+        }
+        for (id, side, gid, end) in finished {
+            self.ephemeral.active_sea_routes.remove(&id);
+            self.finish_transport(&id, side, gid, end);
+        }
     }
 
     pub(super) fn capture_warehouse(&mut self, lua: MizLua, oid: ObjectiveId) -> Result<()> {
@@ -2858,19 +3377,37 @@ impl Db {
             }
             match production.equipment.get(&name) {
                 Some(equip) => {
+                    // Airframes of a type the captors also fly are the
+                    // previous owner's jets still parked here (this runs
+                    // after the owner flip but before anything touches the
+                    // model, so `stored` is still their count). They get
+                    // the same treatment as any other captured airframe:
+                    // salvage a fraction if captured_airframes is on,
+                    // otherwise they're destroyed with the base.
+                    let salvaged = if is_airframe {
+                        let prev = obj.warehouse.equipment.get(&name).map(|i| i.stored).unwrap_or(0);
+                        match salvage.as_ref() {
+                            Some(sc) if !sc.exclude.contains(name.as_str()) => sc.salvaged(prev),
+                            Some(_) | None => 0,
+                        }
+                    } else {
+                        0
+                    };
                     let inv = obj.warehouse.equipment.get_or_default_cow(name.clone());
                     let unlimited = if is_airframe { obj.unlimited_aircraft } else { obj.unlimited_supply };
                     let capacity = whcfg.capacity_for_item(&obj.name, is_airframe, unlimited, hub, equip.production);
                     inv.capacity = capacity;
-                    // Also (re)stock, not just resize -- this only ran on
-                    // capacity before, so a freshly-captured base never got
-                    // its warehouse actually filled with the new owner's
-                    // stock (airframes included, since they're plain entries
-                    // in this same equipment map) until whatever it already
-                    // had happened to reach the new capacity through normal
-                    // resupply. New owner should start fully stocked, same
-                    // as at mission init.
-                    inv.stored = capacity;
+                    // Also (re)stock consumables, not just resize -- this only
+                    // ran on capacity before, so a freshly-captured base never
+                    // got its magazine filled with the new owner's stock until
+                    // whatever it already had happened to reach the new
+                    // capacity through normal resupply.
+                    //
+                    // NOT airframes: filling every airframe type the captor
+                    // produces to capacity conjured a full air wing at every
+                    // captured field. The captor's own jets arrive through
+                    // normal resupply like anywhere else.
+                    inv.stored = if is_airframe { min(salvaged, capacity) } else { capacity };
                     if name.as_str() == "AJS37" || name.as_str() == "C-130J-30" || name.as_str().starts_with("CH-47F") {
                         info!("[WAREHOUSE_CAPTURE] {:?} obj={} {name}: production={} capacity={capacity}",
                               obj.owner, obj.name, equip.production);
@@ -2901,7 +3438,7 @@ impl Db {
                             //
                             // capacity == the salvaged count on purpose: it is
                             // the model's ceiling, so the read-back clamp in
-                            // sync_warehouse_to_obj can't let DCS inflate it,
+                            // reconcile_warehouse can't let DCS inflate it,
                             // and nothing refills it -- every resupply path
                             // iterates the *source's* production, which by
                             // definition doesn't contain this type. Captured
@@ -2954,6 +3491,17 @@ impl Db {
                     }
                 }
             }
+        }
+        // The model was just rewritten wholesale for the new owner, so it is
+        // authoritative: the next sync pushes it as-is instead of merging it
+        // with what the previous owner's DCS warehouse holds.
+        for (_, inv) in obj.warehouse.equipment.iter_mut_cow() {
+            inv.dcs_known = false;
+            inv.unsynced = 0;
+        }
+        for (_, inv) in obj.warehouse.liquids.iter_mut_cow() {
+            inv.dcs_known = false;
+            inv.unsynced = 0;
         }
         Ok(())
     }
@@ -3340,7 +3888,13 @@ impl Db {
             .get_warehouse()
             .context("getting warehouse")?;
         if let Some(inv) = obj.warehouse.equipment.get_mut_cow(&typ.0) {
-            inv.stored = wh.get_item_count(typ.0).context("getting item")?;
+            // DCS's count plus whatever the model has credited that the next
+            // reconcile hasn't pushed yet -- a bare read here would hide an
+            // arrived delivery until then.
+            let dcs = wh.get_item_count(typ.0).context("getting item")?;
+            inv.stored = (dcs as i64)
+                .saturating_add(inv.unsynced)
+                .clamp(0, u32::MAX as i64) as u32;
             self.ephemeral.dirty();
         }
         Ok(())
@@ -3851,23 +4405,37 @@ impl Db {
         per_item_cap: u32,
     ) -> Result<Vec<Transfer>> {
         let origin_obj = objective!(self, &origin)?;
+        let dest_obj = objective!(self, &destination)?;
         let mut transfers = Vec::new();
+        // Only what the destination has room for (the credit on landing is
+        // capped at capacity, so anything past that would just be thrown
+        // away), and never airframes -- a supply helo doesn't sling jets.
         for (name, inv) in origin_obj.warehouse().equipment() {
-            if inv.stored > 0 {
+            let d = dest_obj.get_equipment(name);
+            let amount = inv
+                .stored
+                .min(per_item_cap)
+                .min(d.capacity.saturating_sub(d.stored));
+            if amount > 0 && !is_airframe_item(name.as_str()) {
                 transfers.push(Transfer {
                     source: origin,
                     target: destination,
-                    amount: inv.stored.min(per_item_cap),
+                    amount,
                     item: TransferItem::Equipment(name.clone()),
                 });
             }
         }
         for (name, inv) in origin_obj.warehouse().liquids() {
-            if inv.stored > 0 {
+            let d = dest_obj.get_liquids(name);
+            let amount = inv
+                .stored
+                .min(per_item_cap)
+                .min(d.capacity.saturating_sub(d.stored));
+            if amount > 0 {
                 transfers.push(Transfer {
                     source: origin,
                     target: destination,
-                    amount: inv.stored.min(per_item_cap),
+                    amount,
                     item: TransferItem::Liquid(*name),
                 });
             }
@@ -4273,7 +4841,11 @@ impl Db {
         let transfers =
             self.build_helo_supply_transfer(origin, destination, cfg.supply_amount_per_item)?;
         if transfers.is_empty() {
-            bail!("{} has no surplus supply on hand to send", origin_obj.name);
+            bail!(
+                "{} has nothing on hand that {} has room for",
+                origin_obj.name,
+                dest_obj.name
+            );
         }
         let available = self.player(&ucid).map(|p| p.points).unwrap_or(0);
         if available < cfg.supply_mission_cost {
@@ -4288,9 +4860,15 @@ impl Db {
             destination,
             ucid.clone(),
             cfg.supply_mission_cost,
-            HeloMissionKind::ResourceDelivery { transfers },
+            HeloMissionKind::ResourceDelivery { transfers: transfers.clone() },
             now,
         )?;
+        // Load it now, like every other transport. The origin used to be
+        // debited only on landing, from whatever it held by then, so a field
+        // that had emptied meanwhile wrapped its count to four billion.
+        if !self.load_transport(TransportKind::Helo, &mission_id, origin, destination, &transfers, now) {
+            bail!("the launch field had nothing left to load");
+        }
         self.adjust_points(&ucid, -cfg.supply_mission_cost, "AI helo resource delivery");
         Ok(mission_id)
     }
@@ -4315,7 +4893,8 @@ impl Db {
         let mut to_deploy_troops: SmallVec<
             [(Vector2, dcso3::String, Side, dcso3::net::Ucid, ObjectiveId, CompactString); 2],
         > = smallvec![];
-        let mut to_transfer: SmallVec<[Vec<Transfer>; 2]> = smallvec![];
+        // Where each supply run's cargo ends up (troop runs carry none).
+        let mut cargo: SmallVec<[(HeloMissionId, Side, TransportEnd); 2]> = smallvec![];
 
         for mission_id in self
             .ephemeral
@@ -4333,11 +4912,16 @@ impl Db {
             mission.last_check = now;
 
             let (player, cost) = (mission.player, mission.cost);
+            let carries = matches!(mission.kind, HeloMissionKind::ResourceDelivery { .. });
+            let side = mission.side;
             let group_name = match group!(self, &mission.group_id) {
                 Ok(g) => g.name.clone(),
                 Err(_) => {
                     warn!("[HELO_MISSION] {} group not found in database", mission_id);
                     refunds.push((player, cost, format_compact!("helo mission lost")));
+                    if carries {
+                        cargo.push((mission_id.clone(), side, TransportEnd::Lost));
+                    }
                     completed.push(mission_id.clone());
                     continue;
                 }
@@ -4347,6 +4931,10 @@ impl Db {
                 None => {
                     warn!("[HELO_MISSION] {} destination no longer exists", mission_id);
                     refunds.push((player, cost, format_compact!("helo mission target lost")));
+                    if carries {
+                        cargo.push((mission_id.clone(), side, TransportEnd::Returned));
+                    }
+                    despawn.push(mission.group_id);
                     completed.push(mission_id.clone());
                     continue;
                 }
@@ -4371,6 +4959,9 @@ impl Db {
                             cost,
                             format_compact!("helo mission to {dest_name} never made it down, recalled"),
                         ));
+                        if carries {
+                            cargo.push((mission_id.clone(), side, TransportEnd::Returned));
+                        }
                         despawn.push(mission.group_id);
                         completed.push(mission_id.clone());
                     }
@@ -4382,6 +4973,9 @@ impl Db {
                         cost,
                         format_compact!("helo mission to {dest_name} lost en route"),
                     ));
+                    if carries {
+                        cargo.push((mission_id.clone(), side, TransportEnd::Lost));
+                    }
                     // The DCS group is gone but the campaign's record of it
                     // was left behind forever.
                     despawn.push(mission.group_id);
@@ -4409,13 +5003,25 @@ impl Db {
                                 CompactString::from(dest_name.as_str()),
                             ));
                         }
-                        HeloMissionKind::ResourceDelivery { transfers } => {
-                            to_transfer.push(transfers.clone());
+                        HeloMissionKind::ResourceDelivery { .. } => {
+                            // deliver_cargo re-checks the owner: a field that
+                            // fell while the helo was inbound doesn't get the
+                            // load, it goes back to the launch field.
+                            let still_ours = self
+                                .persisted
+                                .objectives
+                                .get(&mission.destination)
+                                .is_some_and(|o| o.owner == side);
+                            cargo.push((mission_id.clone(), side, TransportEnd::Delivered));
                             delivered_msgs.push((
                                 player,
-                                format_compact!(
-                                    "your helo delivered its supply run to {dest_name}"
-                                ),
+                                if still_ours {
+                                    format_compact!("your helo delivered its supply run to {dest_name}")
+                                } else {
+                                    format_compact!(
+                                        "your helo landed at {dest_name}, but it is no longer ours -- the supply went back"
+                                    )
+                                },
                             ));
                         }
                     }
@@ -4468,11 +5074,11 @@ impl Db {
                 self.ephemeral.panel_to_player(&self.persisted, 15, &ucid, msg);
             }
         }
-        for transfers in to_transfer {
-            for t in &transfers {
-                if let Err(e) = t.execute(&mut self.persisted, &self.ephemeral.to_bg) {
-                    warn!("helo resource delivery transfer failed: {e:?}");
-                }
+        for (id, side, end) in cargo {
+            match end {
+                TransportEnd::Delivered => self.deliver_cargo(&id, side),
+                TransportEnd::Lost => self.lose_cargo(&id),
+                TransportEnd::Returned => self.refund_cargo(&id),
             }
         }
         Ok(())
@@ -4668,6 +5274,13 @@ impl Db {
         }
         let mut convoys_to_spawn: Vec<RouteSpawnInfo> = Vec::new();
         let mut air_routes_to_spawn: Vec<RouteSpawnInfo> = Vec::new();
+        // What this pass has already promised out of each source's stock.
+        // Every schedule below used to size its loads from the same
+        // untouched snapshot of the hub, so the instant, road and air plans
+        // (and every carrier a naval base serves) could each hand out the
+        // whole releasable amount -- up to several times what the hub held,
+        // which the old raw debit then wrapped round to four billion.
+        let mut committed: FxHashMap<(ObjectiveId, TransferItem), u32> = FxHashMap::default();
 
         // ── Transport budget for this tick ────────────────────────────────
         // `max_concurrent_convoys`, the convoy `spawn_interval_ticks` and the
@@ -4948,7 +5561,10 @@ impl Db {
                             n.demanded = demanded;
                             n.allocated = 0;
                         }
-                        let mut have = releasable(inv);
+                        let key = (lid, $typ(name.clone()));
+                        let avail = releasable(inv)
+                            .saturating_sub(committed.get(&key).copied().unwrap_or(0));
+                        let mut have = avail;
                         let mut total_filled = 0;
                         while have > 0 && total_filled < total_demanded {
                             for n in &mut needed {
@@ -4962,6 +5578,7 @@ impl Db {
                                 have -= amount;
                             }
                         }
+                        *committed.entry(key).or_default() += avail - have;
                         for n in &needed {
                             if n.allocated > 0 {
                                 transfers.push(Transfer {
@@ -5007,7 +5624,10 @@ impl Db {
                         n.demanded = demanded;
                         n.allocated = 0;
                     }
-                    let mut have = releasable(inv);
+                    let key = (lid, TransferItem::Liquid(name.clone()));
+                    let avail = releasable(inv)
+                        .saturating_sub(committed.get(&key).copied().unwrap_or(0));
+                    let mut have = avail;
                     let mut total_filled = 0;
                     while have > 0 && total_filled < total_demanded {
                         for n in &mut needed {
@@ -5021,6 +5641,7 @@ impl Db {
                             have -= amount;
                         }
                     }
+                    *committed.entry(key).or_default() += avail - have;
                     for n in &needed {
                         if n.allocated > 0 {
                             let tr = Transfer {
@@ -5056,7 +5677,10 @@ impl Db {
                         n.demanded = demanded;
                         n.allocated = 0;
                     }
-                    let mut have = releasable(inv);
+                    let key = (lid, TransferItem::Equipment(name.clone()));
+                    let avail = releasable(inv)
+                        .saturating_sub(committed.get(&key).copied().unwrap_or(0));
+                    let mut have = avail;
                     let mut total_filled = 0;
                     while have > 0 && total_filled < total_demanded {
                         for n in &mut needed {
@@ -5070,6 +5694,7 @@ impl Db {
                             have -= amount;
                         }
                     }
+                    *committed.entry(key).or_default() += avail - have;
                     for n in &needed {
                         if n.allocated > 0 {
                             let tr = Transfer {
@@ -5129,7 +5754,10 @@ impl Db {
                         n.demanded = demanded;
                         n.allocated = 0;
                     }
-                    let mut have = releasable(inv);
+                    let key = (lid, TransferItem::Liquid(name.clone()));
+                    let avail = releasable(inv)
+                        .saturating_sub(committed.get(&key).copied().unwrap_or(0));
+                    let mut have = avail;
                     let mut total_filled = 0;
                     while have > 0 && total_filled < total_demanded {
                         for n in &mut needed {
@@ -5141,6 +5769,7 @@ impl Db {
                             have -= amount;
                         }
                     }
+                    *committed.entry(key).or_default() += avail - have;
                     for n in &needed {
                         if n.allocated > 0 {
                             air_transfers_by_dest.entry(*n.oid).or_default().1.push(Transfer {
@@ -5168,7 +5797,10 @@ impl Db {
                         n.demanded = demanded;
                         n.allocated = 0;
                     }
-                    let mut have = releasable(inv);
+                    let key = (lid, TransferItem::Equipment(name.clone()));
+                    let avail = releasable(inv)
+                        .saturating_sub(committed.get(&key).copied().unwrap_or(0));
+                    let mut have = avail;
                     let mut total_filled = 0;
                     while have > 0 && total_filled < total_demanded {
                         for n in &mut needed {
@@ -5180,6 +5812,7 @@ impl Db {
                             have -= amount;
                         }
                     }
+                    *committed.entry(key).or_default() += avail - have;
                     for n in &needed {
                         if n.allocated > 0 {
                             air_transfers_by_dest.entry(*n.oid).or_default().0.push(Transfer {
@@ -5219,7 +5852,22 @@ impl Db {
         // aircraft template configured for that side) silently destroyed the
         // load. On success it goes into the persisted in-flight ledger so a
         // mission restart refunds it instead of deleting it.
+        // The slot budget above is spent per destination, but a destination
+        // can need both a weapons and a fuel convoy -- which used to put up
+        // to twice `max_concurrent_convoys` on the road. Hold the hard cap
+        // here, per transport actually spawned; a load that doesn't get a
+        // slot stays at the hub for the next tick.
         for route_info in convoys_to_spawn {
+            let side = objective!(self, &route_info.origin)?.owner;
+            if self.ephemeral.active_convoys.values().filter(|c| c.side == side).count()
+                >= convoy_max_concurrent
+            {
+                debug!(
+                    "[LOGI_DISPATCH] {:?} convoy to {} held: {side:?} is at its convoy cap",
+                    route_info.cargo_type, route_info.destination
+                );
+                continue;
+            }
             match self.spawn_supply_convoy(
                 lua,
                 route_info.origin,
@@ -5229,16 +5877,18 @@ impl Db {
                 now,
             ) {
                 Ok(Some(id)) => {
-                    self.escrow_cargo(
+                    if self.load_transport(
+                        TransportKind::Convoy,
                         &id,
                         route_info.origin,
                         route_info.destination,
                         &route_info.transfers,
                         now,
-                    );
-                    self.ephemeral
-                        .last_dispatch_to
-                        .insert(route_info.destination, now);
+                    ) {
+                        self.ephemeral
+                            .last_dispatch_to
+                            .insert(route_info.destination, now);
+                    }
                 }
                 Ok(None) => (),
                 Err(e) => error!("Failed to spawn {:?} convoy: {:?}", route_info.cargo_type, e),
@@ -5246,6 +5896,16 @@ impl Db {
         }
 
         for route_info in air_routes_to_spawn {
+            let side = objective!(self, &route_info.origin)?.owner;
+            if self.ephemeral.active_air_routes.values().filter(|r| r.side == side).count()
+                >= air_max_concurrent
+            {
+                debug!(
+                    "[LOGI_DISPATCH] {:?} airlift to {} held: {side:?} is at its air route cap",
+                    route_info.cargo_type, route_info.destination
+                );
+                continue;
+            }
             match self.spawn_air_logistics_route(
                 lua,
                 route_info.origin,
@@ -5255,16 +5915,18 @@ impl Db {
                 now,
             ) {
                 Ok(Some(id)) => {
-                    self.escrow_cargo(
+                    if self.load_transport(
+                        TransportKind::Air,
                         &id,
                         route_info.origin,
                         route_info.destination,
                         &route_info.transfers,
                         now,
-                    );
-                    self.ephemeral
-                        .last_dispatch_to
-                        .insert(route_info.destination, now);
+                    ) {
+                        self.ephemeral
+                            .last_dispatch_to
+                            .insert(route_info.destination, now);
+                    }
                 }
                 Ok(None) => (),
                 Err(e) => error!("Failed to spawn {:?} air route: {:?}", route_info.cargo_type, e),
@@ -5335,15 +5997,23 @@ impl Db {
             }
 
             let mut sea_routes_to_spawn: Vec<RouteSpawnInfo> = Vec::new();
+            // Routes planned this pass, per side. The active count and the
+            // last-spawn time below don't change until the spawns at the end,
+            // so checking them alone let every carrier pair through at once.
+            let mut sea_planned: FxHashMap<Side, usize> = FxHashMap::default();
             for (nb_id, dest_id, side) in naval_pairs {
                 let sea_active_count = self.ephemeral.active_sea_routes.values()
                     .filter(|r| r.side == side)
                     .count();
+                let planned = sea_planned.get(&side).copied().unwrap_or(0);
                 let sea_last_spawn = self.ephemeral.last_sea_route_spawn.get(&side).copied();
                 let sea_spawn_interval = Duration::minutes(
                     tick_minutes as i64 * sea_spawn_interval_ticks as i64,
                 );
-                let can_spawn = sea_active_count < sea_max_concurrent
+                // One dispatch (a weapons + fuel pair) per side per interval,
+                // as the interval intends, and never past the route cap.
+                let can_spawn = planned == 0
+                    && sea_active_count < sea_max_concurrent
                     && sea_last_spawn
                         .map(|t| now - t >= sea_spawn_interval)
                         .unwrap_or(true);
@@ -5372,8 +6042,13 @@ impl Db {
                 let mut equip_transfers: Vec<Transfer> = Vec::new();
                 for (name, inv) in &nb_obj.warehouse.liquids {
                     let dest_inv = dest_obj.get_liquids(name);
-                    if inv.stored > 0 && dest_inv.stored < dest_inv.capacity {
-                        let amount = min(inv.stored, dest_inv.capacity - dest_inv.stored);
+                    let key = (nb_id, TransferItem::Liquid(*name));
+                    let have = inv
+                        .stored
+                        .saturating_sub(committed.get(&key).copied().unwrap_or(0));
+                    if have > 0 && dest_inv.stored < dest_inv.capacity {
+                        let amount = min(have, dest_inv.capacity - dest_inv.stored);
+                        *committed.entry(key).or_default() += amount;
                         fuel_transfers.push(Transfer {
                             source: nb_id,
                             target: dest_id,
@@ -5384,8 +6059,13 @@ impl Db {
                 }
                 for (name, inv) in &nb_obj.warehouse.equipment {
                     let dest_inv = dest_obj.get_equipment(name);
-                    if inv.stored > 0 && dest_inv.stored < dest_inv.capacity {
-                        let amount = min(inv.stored, dest_inv.capacity - dest_inv.stored);
+                    let key = (nb_id, TransferItem::Equipment(name.clone()));
+                    let have = inv
+                        .stored
+                        .saturating_sub(committed.get(&key).copied().unwrap_or(0));
+                    if have > 0 && dest_inv.stored < dest_inv.capacity {
+                        let amount = min(have, dest_inv.capacity - dest_inv.stored);
+                        *committed.entry(key).or_default() += amount;
                         equip_transfers.push(Transfer {
                             source: nb_id,
                             target: dest_id,
@@ -5395,6 +6075,9 @@ impl Db {
                     }
                 }
 
+                let n_routes = usize::from(!equip_transfers.is_empty())
+                    + usize::from(!fuel_transfers.is_empty());
+                *sea_planned.entry(side).or_default() += n_routes;
                 if !equip_transfers.is_empty() {
                     sea_routes_to_spawn.push(RouteSpawnInfo {
                         origin: nb_id,
@@ -5423,16 +6106,18 @@ impl Db {
                     now,
                 ) {
                     Ok(Some(id)) => {
-                        self.escrow_cargo(
+                        if self.load_transport(
+                            TransportKind::Sea,
                             &id,
                             route_info.origin,
                             route_info.destination,
                             &route_info.transfers,
                             now,
-                        );
-                        self.ephemeral
-                            .last_dispatch_to
-                            .insert(route_info.destination, now);
+                        ) {
+                            self.ephemeral
+                                .last_dispatch_to
+                                .insert(route_info.destination, now);
+                        }
                     }
                     Ok(None) => (),
                     Err(e) => {
@@ -5532,7 +6217,7 @@ impl Db {
                 self.persisted.objectives.get(&fid).map(|o| o.name.clone()).unwrap_or_default(),
                 self.persisted.objectives.get(&hub).map(|o| o.name.clone()).unwrap_or_default(),
             );
-            if let Err(e) = tr.execute(&mut self.persisted, &self.ephemeral.to_bg) {
+            if let Err(e) = self.execute_transfer(&tr) {
                 error!("[MATERIEL] moving factory output {fname} -> {hname}: {e:?}");
             } else {
                 info!(
@@ -5565,13 +6250,27 @@ impl Db {
         best.map(|(id, _)| id)
     }
 
+    /// Level stock across a side's hubs. It is an instant move, so it only
+    /// runs between hubs that could plausibly reach each other: not across an
+    /// interdicted route, not out of or into a hub that has been flattened
+    /// (logi 0), and never draining a donor below its reserve. It used to do
+    /// all three, teleporting stock straight through the front every tick.
     fn balance_logistics_hubs(&mut self) -> Result<()> {
         struct Needed<'a> {
             oid: &'a ObjectiveId,
             obj: &'a Objective,
             had: u32,
             have: u32,
+            floor: u32,
         }
+        let (reserve_frac, front_line_routing, route_margin) = match self.ephemeral.cfg.warehouse.as_ref() {
+            Some(w) => (
+                w.hub_reserve_percent.min(100) as f32 / 100.,
+                w.front_line_routing,
+                w.route_block_margin_m,
+            ),
+            None => (0., false, 0.),
+        };
         for side in Side::ALL {
             let mut transfers: Vec<Transfer> = vec![];
             macro_rules! schedule_transfers {
@@ -5582,7 +6281,7 @@ impl Db {
                         .into_iter()
                         .filter_map(|lid| {
                             let obj = &self.persisted.objectives[lid];
-                            if obj.owner != side {
+                            if obj.owner != side || obj.logi == 0 {
                                 None
                             } else {
                                 Some(Needed {
@@ -5590,6 +6289,7 @@ impl Db {
                                     obj,
                                     had: 0,
                                     have: 0,
+                                    floor: 0,
                                 })
                             }
                         })
@@ -5603,31 +6303,46 @@ impl Db {
                             let sum: u32 = needed
                                 .iter_mut()
                                 .map(|n| {
-                                    n.have = n.obj.$get(name).stored;
+                                    let inv = n.obj.$get(name);
+                                    n.have = inv.stored;
                                     n.had = n.have;
+                                    n.floor = (inv.capacity as f32 * reserve_frac) as u32;
                                     n.had
                                 })
-                                .sum();
+                                .fold(0u32, u32::saturating_add);
                             sum / needed.len() as u32
                         };
                         if mean >> 2 == 0 {
                             continue;
                         }
                         needed.sort_by(|n0, n1| n0.had.cmp(&n1.had));
-                        let mut take = needed.len() - 1;
                         for i in 0..needed.len() {
-                            if needed[i].have + 1 >= mean {
+                            if needed[i].have.saturating_add(1) >= mean {
                                 break;
                             }
-                            while needed[i].have + 1 < mean {
-                                while take > i && needed[take].have <= mean {
-                                    take -= 1;
-                                }
-                                if take == i {
+                            // richest donor first, skipping any that are
+                            // down to their floor or cut off from this hub
+                            for take in (i + 1..needed.len()).rev() {
+                                if needed[i].have.saturating_add(1) >= mean {
                                     break;
                                 }
+                                let floor = max(mean, needed[take].floor);
+                                if needed[take].have <= floor {
+                                    continue;
+                                }
+                                if front_line_routing
+                                    && route_interdicted(
+                                        &self.persisted,
+                                        side,
+                                        needed[take].obj.zone.pos(),
+                                        needed[i].obj.zone.pos(),
+                                        route_margin,
+                                    )
+                                {
+                                    continue;
+                                }
                                 let need = mean - needed[i].have;
-                                let available = needed[take].have - mean;
+                                let available = needed[take].have - floor;
                                 let xfer = min(need, available);
                                 needed[i].have += xfer;
                                 needed[take].have -= xfer;
@@ -5645,8 +6360,8 @@ impl Db {
             schedule_transfers!(TransferItem::Equipment, equipment, get_equipment);
             schedule_transfers!(TransferItem::Liquid, liquids, get_liquids);
             for tr in transfers.drain(..) {
-                tr.execute(&mut self.persisted, &self.ephemeral.to_bg)
-                    .with_context(|| format_compact!("executing transfer {:?}", tr))?
+                self.execute_transfer(&tr)
+                    .with_context(|| format_compact!("executing transfer {:?}", tr))?;
             }
             self.ephemeral.dirty();
         }
@@ -5752,7 +6467,7 @@ impl Db {
             .context("getting airbase")?
             .get_warehouse()
             .context("getting warehouse")?;
-        sync_warehouse_to_obj(obj, &warehouse).context("syncing warehouse to objective")?;
+        reconcile_warehouse(obj, &warehouse, false).context("syncing warehouse to objective")?;
         Ok((obj, warehouse))
     }
 
@@ -5771,15 +6486,7 @@ impl Db {
             .context("getting airbase")?
             .get_warehouse()
             .context("getting warehouse")?;
-        match warehouse::Warehouse::get_resource_map(lua) {
-            Ok(map) => sync_obj_to_warehouse_zeroing_foreign_airframes(obj, &warehouse, &map)
-                .context("syncing objective to warehouse")?,
-            Err(e) => {
-                // Fall back to the plain sync rather than skipping it entirely.
-                warn!("no resource map, foreign airframes not zeroed: {e:?}");
-                sync_obj_to_warehouse(obj, &warehouse).context("syncing objective to warehouse")?
-            }
-        }
+        reconcile_warehouse(obj, &warehouse, true).context("syncing objective to warehouse")?;
         Ok((obj, warehouse))
     }
 
@@ -5920,10 +6627,12 @@ impl Db {
 
         debug!("[SUPPLY_TRANSFER] Total transfers queued: {}", transfers.len());
         for tr in transfers {
-            tr.execute(&mut self.persisted, &self.ephemeral.to_bg)?
+            self.execute_transfer(&tr)?;
         }
         sync_obj_to_warehouse(objective!(self, from)?, &from_wh)?;
+        mark_pushed(objective_mut!(self, from)?);
         sync_obj_to_warehouse(objective!(self, to)?, &to_wh)?;
+        mark_pushed(objective_mut!(self, to)?);
         self.update_supply_status()
             .context("updating supply status")?;
         self.ephemeral.dirty();
@@ -5962,6 +6671,7 @@ impl Db {
             }
         }
         sync_obj_to_warehouse(obj, &warehouse).context("syncing from warehouse")?;
+        mark_pushed(obj);
         self.update_supply_status()
             .context("updating supply status")?;
         self.ephemeral.dirty();
@@ -6135,5 +6845,129 @@ impl Db {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inv(stored: u32, capacity: u32) -> Inventory {
+        Inventory {
+            stored,
+            capacity,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn debit_never_wraps() {
+        let mut i = inv(3, 10);
+        assert_eq!(i.debit(5), 3);
+        assert_eq!(i.stored, 0);
+        i -= 7;
+        assert_eq!(i.stored, 0);
+        assert_eq!(i.unsynced, -3);
+        let mut j = inv(0, 10);
+        assert_eq!(j.reduce(0.5), 0);
+        assert_eq!(j.stored, 0);
+    }
+
+    #[test]
+    fn credit_respects_capacity() {
+        let mut i = inv(90, 100);
+        assert_eq!(i.credit(25), 10);
+        assert_eq!(i.stored, 100);
+        assert_eq!(i.unsynced, 10);
+        i += u32::MAX;
+        assert_eq!(i.stored, 100);
+    }
+
+    // Stock is conserved across source + in transit + destination: the load
+    // leaves the source at departure and exists nowhere but the ledger until
+    // it arrives, is lost, or is refunded.
+    #[test]
+    fn escrow_then_deliver_moves_the_load_once() {
+        let (mut src, mut dst) = (inv(100, 100), inv(10, 100));
+        let in_transit = src.debit(60);
+        assert_eq!(src.stored + in_transit + dst.stored, 110);
+        let arrived = dst.credit(in_transit);
+        assert_eq!(arrived, 60);
+        assert_eq!((src.stored, dst.stored), (40, 70));
+        assert_eq!(src.stored + dst.stored, 110);
+    }
+
+    #[test]
+    fn escrow_is_trimmed_to_what_the_source_holds() {
+        let mut src = inv(30, 100);
+        let in_transit = src.debit(50);
+        assert_eq!((in_transit, src.stored), (30, 0));
+    }
+
+    #[test]
+    fn refund_returns_to_the_source_only() {
+        let (mut src, dst) = (inv(100, 100), inv(10, 100));
+        let in_transit = src.debit(40);
+        let back = src.credit(in_transit);
+        assert_eq!(back, 40);
+        assert_eq!((src.stored, dst.stored), (100, 10));
+    }
+
+    #[test]
+    fn a_lost_load_is_gone_and_nothing_else() {
+        let (mut src, dst) = (inv(100, 100), inv(10, 100));
+        let _lost = src.debit(40);
+        assert_eq!((src.stored, dst.stored), (60, 10));
+    }
+
+    #[test]
+    fn overflow_on_arrival_goes_back() {
+        let (mut src, mut dst) = (inv(100, 100), inv(10, 20));
+        let in_transit = src.debit(30);
+        let arrived = dst.credit(in_transit);
+        let back = src.credit(in_transit - arrived);
+        assert_eq!((arrived, back), (10, 20));
+        assert_eq!(src.stored + dst.stored, 110);
+    }
+
+    #[test]
+    fn reconcile_keeps_both_sides_changes() {
+        // Model and DCS agreed on 50. A delivery lands in the model (+20)
+        // while ground crews draw 5 in DCS: both survive the sync.
+        let mut i = inv(50, 100);
+        i.dcs_known = true;
+        i.credit(20);
+        assert_eq!(reconciled_stock(&i, 45), 65);
+        // nothing changed in the model: DCS's own count stands
+        let mut j = inv(50, 100);
+        j.dcs_known = true;
+        assert_eq!(reconciled_stock(&j, 43), 43);
+    }
+
+    #[test]
+    fn reconcile_clamps_to_capacity() {
+        let mut i = inv(90, 100);
+        i.dcs_known = true;
+        i.credit(10);
+        assert_eq!(reconciled_stock(&i, 95), 100);
+        let mut j = inv(10, 100);
+        j.dcs_known = true;
+        j.debit(10);
+        assert_eq!(reconciled_stock(&j, 3), 0);
+        // DCS inflating a count past capacity doesn't get absorbed
+        let mut k = inv(10, 100);
+        k.dcs_known = true;
+        assert_eq!(reconciled_stock(&k, 5000), 100);
+    }
+
+    #[test]
+    fn unknown_entries_push_the_model_but_never_a_wrapped_count() {
+        let i = inv(40, 100);
+        assert_eq!(reconciled_stock(&i, 7), 40);
+        let wrapped = inv(u32::MAX - 2, 100);
+        assert_eq!(reconciled_stock(&wrapped, 7), 100);
+        let wrapped_no_cap = inv(u32::MAX - 2, 0);
+        assert_eq!(push_value(&wrapped_no_cap), 0);
+        assert_eq!(push_value(&inv(12, 0)), 12);
     }
 }
