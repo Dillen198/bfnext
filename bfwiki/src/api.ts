@@ -126,6 +126,13 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
+/** A page slug as a URL path: each `/`-separated segment encoded on its own,
+ *  so the separators survive and nothing else in a slug can break out of the
+ *  path (a `?`, `#` or `..` would otherwise change which URL is requested). */
+function slugPath(slug: string): string {
+  return slug.split('/').map(encodeURIComponent).join('/')
+}
+
 export const api = {
   /** The DCS servers this bfdb fronts. Never instance-scoped itself. */
   instances: async (): Promise<InstanceList> => {
@@ -135,26 +142,20 @@ export const api = {
   },
   auth: {
     me:           () => get<{ user: AuthUser | null }>('/auth/me').then(r => r.user),
-    logout:       () => fetch(`${BASE}/auth/logout`, { credentials: 'include' }),
+    // POST: bfdb no longer ends a session on a GET.
+    logout:       () => fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include' }),
     loginUrl:     () => `${BASE}/auth/login?return_to=${encodeURIComponent(window.location.origin + '/')}`,
-    localEnabled: () => get<{ enabled: boolean }>('/auth/local-enabled').then(r => r.enabled),
-    localLogin: async (username: string, password: string): Promise<void> => {
-      const res = await fetch(`${BASE}/auth/local-login`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      })
-      if (!res.ok) throw new Error(await errorMessage(res))
-    },
+    // No username/password login here: bfdb's local login is a machine
+    // credential for DCSServerBot on the server itself and refuses anyone
+    // else. Discord is the only way a person signs in.
   },
   wiki: {
     list: () => get<WikiPageMeta[]>('/wiki/pages'),
     /** Campaign numbers for the selected instance, for `{{cfg:...}}`. */
     facts: () => get<WikiFacts>('/wiki/facts'),
-    get:  (slug: string) => get<WikiPageFull>(`/wiki/pages/${slug}`),
+    get:  (slug: string) => get<WikiPageFull>(`/wiki/pages/${slugPath(slug)}`),
     save: (slug: string, page: { title: string; section: string; order: number; content: string }) =>
-      post<{ ok: boolean }>(`/wiki/pages/${slug}`, page),
+      post<{ ok: boolean }>(`/wiki/pages/${slugPath(slug)}`, page),
     delete: (slug: string) => post<{ ok: boolean }>('/wiki/delete', { slug }),
     // Returns an absolute-enough URL (prefixed with API_ROOT, which is ''
     // for same-origin dev/embedded mode) so it resolves correctly even when

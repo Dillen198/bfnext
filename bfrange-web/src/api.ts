@@ -32,7 +32,9 @@ import type {
   WeaponsResponse,
 } from './types'
 
-const DEFAULT_API = 'https://api.vectorstrike.org'
+// A dev build talks to a local bfdb unless told otherwise: pointing `npm run
+// dev` at production by default meant every local experiment hit the live API.
+const DEFAULT_API = import.meta.env.DEV ? 'http://localhost:8880' : 'https://api.vectorstrike.org'
 
 export const API_ROOT: string = (import.meta.env.VITE_API_BASE ?? DEFAULT_API).replace(/\/+$/, '')
 export const RANGE_INSTANCE: string | undefined = import.meta.env.VITE_RANGE_INSTANCE || undefined

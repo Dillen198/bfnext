@@ -225,21 +225,25 @@ function Start-VECTOR {
     Write-Host "Starting bfdb..." -ForegroundColor Cyan
 
     Start-Job -Name "DBEngine" -ScriptBlock {
+        # Secrets go to bfdb through its environment, not its command line:
+        # any local process can read another's arguments on Windows. bfdb reads
+        # BFDB_ADMIN_PASSWORD / BFDB_DCSSERVERBOT_API_KEY /
+        # BFDB_DISCORD_CLIENT_SECRET when the matching flag is absent.
+        $env:BFDB_ADMIN_PASSWORD = $using:adminPassword
         $argList = @(
             "--db",             $using:dbPath,
             "--config",         $using:configPath,
             "--stats-jsonl",    $using:statsJsonl,
             "--listen-address", $using:listenAddress,
             "--site-address",   $using:siteAddress,
-            "--admin-username", $using:adminUsername,
-            "--admin-password", $using:adminPassword
+            "--admin-username", $using:adminUsername
         )
         if ($using:srsUrl -ne "") {
             $argList += "--srs-url", $using:srsUrl
         }
         if ($using:dcsServerBotUrl -ne "" -and $using:dcsServerBotApiKey -ne "") {
             $argList += "--dcsserverbot-url", $using:dcsServerBotUrl
-            $argList += "--dcsserverbot-api-key", $using:dcsServerBotApiKey
+            $env:BFDB_DCSSERVERBOT_API_KEY = $using:dcsServerBotApiKey
         }
         if ($using:netidxBase -ne "") {
             $argList += "--base", $using:netidxBase
@@ -261,7 +265,7 @@ function Start-VECTOR {
         }
         if ($using:discordClientId -ne "" -and $using:discordClientSecret -ne "") {
             $argList += "--discord-client-id",     $using:discordClientId
-            $argList += "--discord-client-secret", $using:discordClientSecret
+            $env:BFDB_DISCORD_CLIENT_SECRET = $using:discordClientSecret
             $argList += "--discord-redirect-uri",  $using:discordRedirectUri
             $argList += "--discord-guild-id",      $using:discordGuildId
             $argList += "--discord-admin-role-id", $using:discordAdminRoleId

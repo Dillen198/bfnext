@@ -7,14 +7,39 @@ export type MarkupTool = 'select' | 'pencil' | 'line' | 'rect' | 'circle' | 'x' 
 
 type LL = [number, number]
 
+// Markup colours come from other players (via bfdb), so they are never pasted
+// into HTML: the icon is built as DOM nodes and the colour set as an
+// attribute, and anything that is not a plain hex colour is replaced. bfdb
+// validates the same pattern on the way in; this covers rows stored before it
+// did.
+const SAFE_COLOR = /^#[0-9a-fA-F]{3,8}$/
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
 function xIcon(color: string, size: number): L.DivIcon {
+  const stroke = SAFE_COLOR.test(color) ? color : '#ff3b30'
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  svg.setAttribute('width', String(size))
+  svg.setAttribute('height', String(size))
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('stroke', stroke)
+  svg.setAttribute('stroke-width', '3.5')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('style', 'filter:drop-shadow(0 1px 2px #000a)')
+  for (const [x1, y1, x2, y2] of [[5, 5, 19, 19], [19, 5, 5, 19]]) {
+    const line = document.createElementNS(SVG_NS, 'line')
+    line.setAttribute('x1', String(x1))
+    line.setAttribute('y1', String(y1))
+    line.setAttribute('x2', String(x2))
+    line.setAttribute('y2', String(y2))
+    svg.appendChild(line)
+  }
+  const holder = document.createElement('div')
+  holder.appendChild(svg)
   return L.divIcon({
     className: '',
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
-    html: `<svg width="${size}" height="${size}" viewBox="0 0 24 24" stroke="${color}"
-      stroke-width="3.5" stroke-linecap="round" style="filter:drop-shadow(0 1px 2px #000a)">
-      <line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>`,
+    html: holder,
   })
 }
 

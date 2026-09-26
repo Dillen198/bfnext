@@ -980,13 +980,17 @@ impl Rpcs {
             publisher,
             base.append("resolve-player-id"),
             "Resolve a connected player's local DCS player id (net.get_my_player_id()) to their ucid",
-            |c: RpcCall, id: i64| {
+            |c: RpcCall, id: i64, key: Chars| {
                 let (tx, rx) = oneshot::channel();
-                _q.push((AdminCommand::ResolvePlayerId { id: PlayerId::from(id) }, tx));
+                _q.push((
+                    AdminCommand::ResolvePlayerId { id: PlayerId::from(id), key: key.as_ref().into() },
+                    tx,
+                ));
                 Some((c, rx))
             },
             Some(wait.clone()),
-            id: i64 = Value::Null; "The player's local DCS player id"
+            id: i64 = Value::Null; "The player's local DCS player id",
+            key: Chars = Value::Null; "The key the player's overlay registered with -cockpitkey"
         )?;
         let _q = Arc::clone(&q);
         let ewr_toggle = define_rpc!(

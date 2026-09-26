@@ -583,6 +583,16 @@ fn on_player_try_send_chat(
     let start_ts = Utc::now();
     let ctx = unsafe { Context::get_mut() };
     let perf = &mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_hooks;
+    // The cockpit overlay's key registration: a credential, so it is neither
+    // logged nor shown in chat (Some("") swallows the line for everybody).
+    if let Some(key) = msg.strip_prefix(cockpit::KEY_CMD) {
+        match cockpit::register_key(ctx, id, key.trim()) {
+            Ok(()) => info!("onPlayerTrySendChat id: {id:?} registered a cockpit overlay key"),
+            Err(e) => warn!("onPlayerTrySendChat id: {id:?} cockpit key rejected: {e}"),
+        }
+        record_perf(perf, start_ts);
+        return Ok(Some("".into()));
+    }
     info!("onPlayerTrySendChat id: {:?}, msg: {:?}, all: {:?}", id, msg, all);
     let r = chatcmd::process(ctx, lua, start_ts, id, msg);
     record_perf(perf, start_ts);

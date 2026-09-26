@@ -238,7 +238,7 @@ function LogAnalyzer() {
 
   useEffect(() => {
     setWsStatus('connecting')
-    const cleanup = connectLiveLogs(addLine, s => setWsStatus(s === 'open' ? 'open' : s === 'closed' ? 'closed' : 'error'))
+    const cleanup = connectLiveLogs(addLine, s => setWsStatus(s === 'open' ? 'open' : s === 'closed' ? 'closed' : 'error'), () => setLines([]))
     return cleanup
   }, [addLine])
 
@@ -389,7 +389,7 @@ function EngineLogAnalyzer() {
 
   useEffect(() => {
     setWsStatus('connecting')
-    const cleanup = connectEngineLogs(addLine, s => setWsStatus(s === 'open' ? 'open' : s === 'closed' ? 'closed' : 'error'))
+    const cleanup = connectEngineLogs(addLine, s => setWsStatus(s === 'open' ? 'open' : s === 'closed' ? 'closed' : 'error'), () => setLines([]))
     return cleanup
   }, [addLine])
 
@@ -602,6 +602,8 @@ function GciTranscriptPanel() {
         return next.length > 300 ? next.slice(next.length - 300) : next
       }),
       s => setWsStatus(s),
+      // The socket replays the recent transcript on every (re)connect.
+      () => setCalls([]),
     )
   }, [])
 

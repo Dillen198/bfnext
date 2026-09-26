@@ -72,6 +72,18 @@ campaign engine is loaded with `require("bflib")` from the mission. That is a
 separate, pre-existing server-side requirement and has nothing to do with this
 plugin.)
 
+## How the server knows it is you
+
+Each time the panel loads, the overlay makes up a random key and sends it to
+the campaign server as a chat line (`-cockpitkey ...`) from your own DCS. The
+server swallows that line -- nobody sees it, and it is not logged -- and from
+then on only requests carrying that key act as you. Your player number alone is
+not enough, so nobody else can drive your F10 menu from a browser. The key is
+blanked out of `dcs.log`.
+
+Overlays older than 1.1.0 have no key and are refused; download the current one
+from the dashboard.
+
 ## Using it
 
 Press your normal **Comms / radio-menu key**. That opens the panel.

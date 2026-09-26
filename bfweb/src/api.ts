@@ -72,6 +72,23 @@ export function withInstance(path: string): string {
   return path
 }
 
+// The in-DCS overlay's identity: its player id plus the key it registered with
+// the engine (see bfcockpit.lua). Read once from the page URL.
+const COCKPIT_KEY: string | undefined = (() => {
+  try {
+    return new URLSearchParams(window.location.search).get('ckey') ?? undefined
+  } catch {
+    return undefined
+  }
+})()
+
+/** `playerid=..&ckey=..` for a cockpit call, led by `lead` ('?' or '&'), or
+ *  '' when the page was not opened by the overlay. */
+function cockpitIdent(playerId: string | undefined, lead: '?' | '&'): string {
+  if (!playerId) return ''
+  return `${lead}playerid=${encodeURIComponent(playerId)}&ckey=${encodeURIComponent(COCKPIT_KEY ?? '')}`
+}
+
 function wsUrl(path: string): string {
   const p = withInstance(path)
   if (API_ROOT) {
@@ -604,19 +621,56 @@ export interface LogLine {
   msg:    string
 }
 
+/** Keep an admin WebSocket open: reconnect with exponential backoff and
+ *  jitter whenever it drops (bfdb restart, network blip), until the returned
+ *  cleanup is called. Each of these streams replays its recent history on
+ *  connect, so `onReset` runs on every (re)open to let the caller drop what it
+ *  already has instead of showing it twice. */
+function reconnectingSocket(
+  path: string,
+  onMessage: (data: string) => void,
+  onStatus: (s: 'open' | 'closed' | 'error') => void,
+  onReset?: () => void,
+): () => void {
+  let stopped = false
+  let attempt = 0
+  let ws: WebSocket | null = null
+  let timer: number | null = null
+  const open = () => {
+    if (stopped) return
+    ws = new WebSocket(wsUrl(path))
+    ws.onopen = () => {
+      attempt = 0
+      onReset?.()
+      onStatus('open')
+    }
+    ws.onerror = () => onStatus('error')
+    ws.onclose = () => {
+      onStatus('closed')
+      if (stopped) return
+      const delay = Math.min(60_000, 1000 * 2 ** Math.min(attempt, 6)) + Math.random() * 1000
+      attempt++
+      timer = window.setTimeout(open, delay)
+    }
+    ws.onmessage = (e) => onMessage(e.data as string)
+  }
+  open()
+  return () => {
+    stopped = true
+    if (timer !== null) window.clearTimeout(timer)
+    ws?.close()
+  }
+}
+
 /** Connect to the admin log WebSocket. Returns a cleanup function. Requires admin session. */
 export function connectLiveLogs(
   onLine: (line: LogLine) => void,
   onStatus: (s: 'open' | 'closed' | 'error') => void,
+  onReset?: () => void,
 ): () => void {
-  const ws = new WebSocket(wsUrl('/ws/logs'))
-  ws.onopen  = () => onStatus('open')
-  ws.onclose = () => onStatus('closed')
-  ws.onerror = () => onStatus('error')
-  ws.onmessage = (e) => {
-    try { onLine(JSON.parse(e.data as string) as LogLine) } catch { /* ignore */ }
-  }
-  return () => ws.close()
+  return reconnectingSocket('/ws/logs', (d) => {
+    try { onLine(JSON.parse(d) as LogLine) } catch { /* ignore */ }
+  }, onStatus, onReset)
 }
 
 /** Connect to the live bflib engine log WebSocket (raw text lines from the
@@ -625,13 +679,9 @@ export function connectLiveLogs(
 export function connectEngineLogs(
   onLine: (line: string) => void,
   onStatus: (s: 'open' | 'closed' | 'error') => void,
+  onReset?: () => void,
 ): () => void {
-  const ws = new WebSocket(wsUrl('/ws/engine-logs'))
-  ws.onopen  = () => onStatus('open')
-  ws.onclose = () => onStatus('closed')
-  ws.onerror = () => onStatus('error')
-  ws.onmessage = (e) => onLine(e.data as string)
-  return () => ws.close()
+  return reconnectingSocket('/ws/engine-logs', onLine, onStatus, onReset)
 }
 
 // ── Live GCI transcript (from /ws/gci) ──────────────────────────────────
@@ -646,15 +696,11 @@ export interface GciCall {
 export function connectGciTranscript(
   onCall: (c: GciCall) => void,
   onStatus: (s: 'open' | 'closed' | 'error') => void,
+  onReset?: () => void,
 ): () => void {
-  const ws = new WebSocket(wsUrl('/ws/gci'))
-  ws.onopen  = () => onStatus('open')
-  ws.onclose = () => onStatus('closed')
-  ws.onerror = () => onStatus('error')
-  ws.onmessage = (e) => {
-    try { onCall(JSON.parse(e.data as string) as GciCall) } catch { /* ignore */ }
-  }
-  return () => ws.close()
+  return reconnectingSocket('/ws/gci', (d) => {
+    try { onCall(JSON.parse(d) as GciCall) } catch { /* ignore */ }
+  }, onStatus, onReset)
 }
 
 /** Connect to the live unit WebSocket.
@@ -1486,7 +1532,9 @@ export const api = {
   trails: () => get<TrailPoint[]>('/trails'),
   auth: {
     me:           () => get<{ user: AuthUser | null }>('/auth/me').then(r => r.user),
-    logout:       () => fetch(`${BASE}/auth/logout`, { credentials: 'include' }),
+    // POST: bfdb no longer ends a session on a GET, which any <img> on any
+    // site could fire.
+    logout:       () => fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include' }),
     loginUrl:     () => `${BASE}/auth/login?return_to=${encodeURIComponent(window.location.origin + '/')}`,
     // No local username/password helper on purpose: Discord is the only sign-in
     // a person gets. bfdb's /api/auth/local-login stays, but as a machine
@@ -1559,46 +1607,42 @@ export const api = {
   },
   cockpit: {
     // playerId comes from bfcockpit/Scripts/Hooks/bfcockpit.lua's net.get_my_player_id(),
-    // passed as ?playerid= on the page URL when loaded inside DCS. When
-    // absent (e.g. testing standalone in a browser), these fall back to
+    // passed as ?playerid= on the page URL when loaded inside DCS, together
+    // with ?ckey= -- the key the overlay registered with the engine over chat.
+    // The id alone is guessable; bfdb refuses it without the key. When both
+    // are absent (e.g. testing standalone in a browser), these fall back to
     // the Discord-linked session cookie server-side.
     ewrReport: (friendly: boolean, playerId?: string) =>
-      get<{ report: string }>(`/cockpit/ewr/report?friendly=${friendly}${playerId ? `&playerid=${playerId}` : ''}`),
+      get<{ report: string }>(`/cockpit/ewr/report?friendly=${friendly}${cockpitIdent(playerId, '&')}`),
     ewrToggle: (playerId?: string) =>
-      post<{ state: string }>(`/cockpit/ewr/toggle${playerId ? `?playerid=${playerId}` : ''}`, {}),
+      post<{ state: string }>(`/cockpit/ewr/toggle${cockpitIdent(playerId, '?')}`, {}),
     ewrUnits:  (imperial: boolean, playerId?: string) =>
-      post<{ units: string }>(`/cockpit/ewr/units${playerId ? `?playerid=${playerId}` : ''}`, { imperial }),
+      post<{ units: string }>(`/cockpit/ewr/units${cockpitIdent(playerId, '?')}`, { imperial }),
     ewrIntel:  (playerId?: string) =>
-      get<{ report: string }>(`/cockpit/ewr/intel${playerId ? `?playerid=${playerId}` : ''}`),
+      get<{ report: string }>(`/cockpit/ewr/intel${cockpitIdent(playerId, '?')}`),
     carpSolve: (markKey: string, dropAltAglFt: number, playerId?: string) => {
       const params = new URLSearchParams({ key: markKey, altft: String(dropAltAglFt) })
-      if (playerId) params.set('playerid', playerId)
-      return get<CarpSolution>(`/cockpit/carp/solve?${params.toString()}`)
+      return get<CarpSolution>(`/cockpit/carp/solve?${params.toString()}${cockpitIdent(playerId, '&')}`)
     },
     carpSolveLatLon: (lat: number, lon: number, dropAltAglFt: number, playerId?: string) => {
       const params = new URLSearchParams({ lat: String(lat), lon: String(lon), altft: String(dropAltAglFt) })
-      if (playerId) params.set('playerid', playerId)
-      return get<CarpSolution>(`/cockpit/carp/solve-latlon?${params.toString()}`)
+      return get<CarpSolution>(`/cockpit/carp/solve-latlon?${params.toString()}${cockpitIdent(playerId, '&')}`)
     },
     // Queues qty copies of a crate for the player's current slot -- same
     // logic the F10 "Spawn N Crates" menu items call, just with a free
     // quantity field instead of a fixed menu list of preset amounts.
-    cargoSpawn: (crateName: string, qty: number, c130: boolean, playerId?: string) => {
-      const q = playerId ? `?playerid=${playerId}` : ''
-      return post<{ message: string }>(`/cockpit/cargo/spawn${q}`, { crate_name: crateName, qty, c130 })
-    },
+    cargoSpawn: (crateName: string, qty: number, c130: boolean, playerId?: string) =>
+      post<{ message: string }>(`/cockpit/cargo/spawn${cockpitIdent(playerId, '?')}`, { crate_name: crateName, qty, c130 }),
     /** Who the player is, what they're flying and where. Polled, so the panel
      *  follows them from ramp to target without being told anything. */
     context: (playerId?: string) =>
-      get<CockpitContext>(`/cockpit/context${playerId ? `?playerid=${playerId}` : ''}`),
+      get<CockpitContext>(`/cockpit/context${cockpitIdent(playerId, '?')}`),
     /** The player's whole live F10 menu tree. */
     menu: (playerId?: string) =>
-      get<CockpitMenuItem[]>(`/cockpit/menu${playerId ? `?playerid=${playerId}` : ''}`),
+      get<CockpitMenuItem[]>(`/cockpit/menu${cockpitIdent(playerId, '?')}`),
     /** Click one F10 item -- fires the engine's own handler for it. */
-    menuInvoke: (path: string[], playerId?: string) => {
-      const q = playerId ? `?playerid=${playerId}` : ''
-      return post<{ message: string }>(`/cockpit/menu/invoke${q}`, { path })
-    },
+    menuInvoke: (path: string[], playerId?: string) =>
+      post<{ message: string }>(`/cockpit/menu/invoke${cockpitIdent(playerId, '?')}`, { path }),
     /** The overlay plugin version this server ships, for the in-panel
      *  "your copy is out of date" notice. Unauthenticated -- a player needs it
      *  before anything knows who they are. */

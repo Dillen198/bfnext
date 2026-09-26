@@ -18,4 +18,20 @@ api.vectorstrike.org {
 	# automatically by reverse_proxy — no extra config needed.
 
 	encode gzip
+
+	# Security headers. bfdb sets nosniff / frame / referrer / CSP on its own
+	# responses; HSTS belongs here, where TLS is. (`?` = only if bfdb did not
+	# already set that header.)
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		?X-Content-Type-Options "nosniff"
+		?X-Frame-Options "DENY"
+		?Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# No `log` directive on purpose: an access log here would record the
+	# `?token=` that /api/logs/* and /api/metrics accept. If you add one, add
+	#   format filter { request>uri query { delete token } }
+	# to it.
 }

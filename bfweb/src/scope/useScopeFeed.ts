@@ -95,22 +95,39 @@ export function useScopeFeed(): ScopeFeed {
   // through an f64, and peace-eye keys objects by `number`. Assign our own.
   const idMap = useRef<Map<string, number>>(new Map())
   const nextId = useRef(1)
+  // Frame each id was last present in, so ids of contacts long gone can be
+  // dropped -- the map otherwise grew by every contact ever seen for as long
+  // as the tab stayed open.
+  const lastSeen = useRef<Map<string, number>>(new Map())
+  const frameNo = useRef(0)
 
   useEffect(() => {
     let closed = false
     let cleanup: (() => void) | null = null
+    // Reconnect with exponential backoff and jitter instead of a flat 3 s:
+    // when bfdb restarts, every open tab used to reconnect in lockstep every
+    // three seconds for as long as it was down.
+    let attempt = 0
+    // Set when the server told us why there is no picture (not logged in, no
+    // coalition). It closes the socket after saying so; asking again every
+    // few seconds will not change the answer.
+    let denied = false
     const open = () => {
       if (closed) return
       cleanup = connectTacmap(
         (frame: TacFrame) => {
           setPicture(frame.picture)
           setReason(frame.picture ? null : frame.reason ?? null)
+          denied = !frame.picture && !!frame.reason
+          if (frame.picture) attempt = 0
         },
         (s) => {
           setStatus(s)
           if ((s === 'closed' || s === 'error') && !closed) {
             if (retry.current) window.clearTimeout(retry.current)
-            retry.current = window.setTimeout(open, 3000)
+            const base = denied ? 60_000 : Math.min(60_000, 1000 * 2 ** Math.min(attempt, 6))
+            attempt++
+            retry.current = window.setTimeout(open, base + Math.random() * 1000)
           }
         },
       )
@@ -129,7 +146,21 @@ export function useScopeFeed(): ScopeFeed {
       id = nextId.current++
       idMap.current.set(key, id)
     }
+    lastSeen.current.set(key, frameNo.current)
     return id
+  }
+
+  // Forget ids unseen for ~5 minutes of frames (1 Hz). Long enough that a
+  // contact fading in and out of radar keeps its id.
+  const pruneIds = () => {
+    const cutoff = frameNo.current - 300
+    if (cutoff <= 0 || frameNo.current % 60 !== 0) return
+    for (const [key, seen] of lastSeen.current) {
+      if (seen < cutoff) {
+        lastSeen.current.delete(key)
+        idMap.current.delete(key)
+      }
+    }
   }
 
   return useMemo<ScopeFeed>(() => {
@@ -184,6 +215,8 @@ export function useScopeFeed(): ScopeFeed {
 
     const objects: Record<number, TacviewObject> = {}
     const threatRanges: Record<number, number> = {}
+    frameNo.current++
+    pruneIds()
 
     for (const t of picture.air) {
       const id = remap(`a${t.id}`)
