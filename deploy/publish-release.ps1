@@ -15,6 +15,14 @@
 #
 # Needs: git, cargo (the MSVC toolchain), node/npm (bfdb embeds the dashboard
 # and the site), and gh (GitHub CLI, logged in) unless -Folder is used.
+#
+# Signing: manifest.json (which holds every file's sha256) is signed with the
+# ENGINE release key -- a minisign key made by `tauri signer generate`, default
+# %USERPROFILE%\.tauri\fowl-engine.key, SEPARATE from Fowl Engine Manager's
+# fowl-manager.key -- and published as manifest.json.sig. Servers refuse any
+# release that doesn't verify against the public half pinned in their
+# fowlengine.yaml (autoupdate.public_key). The key's password, if it has one:
+# $env:FOWL_ENGINE_SIGNING_PASSWORD. See deploy/auto-update.md, "Signing releases".
 
 [CmdletBinding()]
 param(
@@ -32,7 +40,8 @@ param(
     [switch]$SkipBuild,
     [switch]$DryRun,
     [string]$TargetDir = (Join-Path $env:LOCALAPPDATA "fowl-release\target"),
-    [string]$OutDir
+    [string]$OutDir,
+    [string]$SigningKey = (Join-Path $env:USERPROFILE ".tauri\fowl-engine.key")
 )
 
 # "Continue", not "Stop": Windows PowerShell 5.1 turns any stderr line from a
@@ -194,6 +203,39 @@ try {
     # UTF-8 without a BOM: a BOM makes some JSON readers choke
     [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding $false))
     Say "manifest written: $manifestPath"
+
+    # ---- sign ----------------------------------------------------------------------
+
+    if (Test-Path $SigningKey) {
+        # `tauri signer` from bfmanager's own dev dependencies: the same tool
+        # (and key format) the manager's releases are signed with.
+        $mgr = Join-Path $repoRoot "bfmanager"
+        if (-not (Test-Path (Join-Path $mgr "node_modules\.bin\tauri.cmd"))) {
+            Push-Location $mgr
+            try { Run "npm ci (bfmanager, for tauri signer)" { npm ci --no-audit --no-fund --ignore-scripts } } finally { Pop-Location }
+        }
+        Remove-Item "$manifestPath.sig" -ErrorAction SilentlyContinue
+        # The password travels in the environment the signer reads, never on
+        # a command line. Unset/blank = a key made without one ("--password="
+        # is then passed so the signer doesn't sit on a hidden prompt).
+        $pwArgs = @()
+        if ("$env:FOWL_ENGINE_SIGNING_PASSWORD") { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $env:FOWL_ENGINE_SIGNING_PASSWORD }
+        else { $pwArgs = @("--password=") }
+        Push-Location $mgr
+        try { Run "sign manifest.json" { npx tauri signer sign --private-key-path "$SigningKey" @pwArgs "$manifestPath" } }
+        finally {
+            Pop-Location
+            Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+        }
+        if (-not (Test-Path "$manifestPath.sig")) { throw "tauri signer wrote no $manifestPath.sig" }
+        if (Test-Path "$SigningKey.pub") {
+            Say ("  signed; servers need autoupdate.public_key = the key in {0}" -f "$SigningKey.pub") "Gray"
+        }
+    } elseif ($DryRun) {
+        Say "no signing key at $SigningKey -- dry run left manifest.json UNSIGNED (servers would refuse it)" "Yellow"
+    } else {
+        throw "no signing key at $SigningKey (pass -SigningKey). Servers refuse unsigned releases -- see deploy/auto-update.md, 'Signing releases'."
+    }
 
     # ---- publish -------------------------------------------------------------------
 
