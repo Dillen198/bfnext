@@ -794,6 +794,7 @@ fn unit_killed(
     if let Err(e) = ctx.jtac.unit_dead(lua, &mut ctx.db, &id) {
         error!("jtac unit dead failed for {:?} {:?}", id, e)
     }
+    menu::jtac::flush_jtac_notices(ctx);
     if let Err(e) = ctx.db.unit_dead(&id, Utc::now()) {
         error!("unit dead failed for {:?} {:?}", id, e);
     }
@@ -1670,7 +1671,6 @@ fn update_jtac_contacts(ctx: &mut Context, lua: MizLua) {
                                         subd.subscribed_objectives.remove(oid);
                                     }
                                 }
-                                expunge = subd.subscribed_objectives.is_empty();
                             }
                             if dead.len() > 0 {
                                 let dead = dead.drain(..);
@@ -1681,6 +1681,13 @@ fn update_jtac_contacts(ctx: &mut Context, lua: MizLua) {
                                         subd.pinned.remove(&jtid);
                                     }
                                 }
+                            }
+                            // Only drop the entry once it holds nothing: it
+                            // also carries the slot's pins, which were lost
+                            // whenever the last expanded location closed.
+                            if let Some(subd) = ctx.subscribed_jtac_menus.get(slot) {
+                                expunge = subd.subscribed_objectives.is_empty()
+                                    && subd.pinned.is_empty();
                             }
                             if expunge {
                                 ctx.subscribed_jtac_menus.remove(slot);
@@ -1728,6 +1735,7 @@ fn update_jtac_contacts(ctx: &mut Context, lua: MizLua) {
             }
         }
     }
+    menu::jtac::flush_jtac_notices(ctx);
 }
 
 fn award_periodic_points(ctx: &mut Context, ts: DateTime<Utc>) {

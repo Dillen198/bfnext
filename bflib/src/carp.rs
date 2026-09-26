@@ -25,9 +25,9 @@ See the field-by-field breakdown in the DCS C-130J User Manual, CNI-MU
 section, "Computed Air Release Point (CARP) Overview" onward.
 */
 
+use crate::atis::{temp_pressure_at, wind_at};
 use anyhow::{anyhow, Result};
-use dcso3::{coord::Coord, land::Land, world::World, LuaEnv, LuaVec2, MizLua, Vector2};
-use mlua::prelude::*;
+use dcso3::{coord::Coord, land::Land, world::World, LuaVec2, MizLua, Vector2};
 use serde_derive::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,28 +50,19 @@ pub struct CarpSolution {
 }
 
 const M_TO_FT: f64 = 3.28084;
-// Standard ISA lapse rate, ~1.98C/1000ft -- DCS doesn't expose a real
-// altitude-temperature profile, so this is an approximation applied on
-// top of the mission's surface temperature. Flagged to the user as such.
-const ISA_LAPSE_C_PER_FT: f64 = 0.00198;
+const MS_TO_KT: f64 = 1.94384;
+/// Surface wind reference height above the PI. getWind at or below the
+/// terrain mesh returns nothing useful, and 10 m is the standard surface-wind
+/// height anyway (the ATIS samples the same).
+const SURFACE_WIND_AGL_M: f64 = 10.0;
 
-fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
-    let globals = lua.inner().globals();
-    let atmosphere: LuaTable = globals.raw_get("atmosphere")?;
-    let pt = lua.inner().create_table()?;
-    pt.set("x", x)?;
-    pt.set("y", y)?;
-    pt.set("z", z)?;
-    let wind: LuaTable = atmosphere.call_function("getWind", pt)?;
-    let wind_x: f64 = wind.get("x")?;
-    let wind_z: f64 = wind.get("z")?;
-    let speed_ms = (wind_x * wind_x + wind_z * wind_z).sqrt();
-    let speed_kt = speed_ms * 1.944;
-    let from_deg = {
-        let deg = (-wind_x).atan2(-wind_z).to_degrees();
-        if deg < 0.0 { deg + 360.0 } else { deg }
-    };
-    Ok((from_deg, speed_kt))
+/// Live DCS wind at a point: (FROM bearing, degrees TRUE; knots). This had
+/// its own copy with the atan2 arguments swapped -- DCS x is north and z is
+/// east -- which reported every wind mirrored about the NE-SW axis (a
+/// westerly came out as a southerly). It now reuses the ATIS reading.
+fn wind_kt(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
+    let (from_deg, speed_ms) = wind_at(lua, x, y, z)?;
+    Ok((from_deg, speed_ms * MS_TO_KT))
 }
 
 // Vector-average of two "wind from" direction/speed pairs, matching the
@@ -90,15 +81,6 @@ fn vector_avg(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     let dir_to = mx.atan2(my).to_degrees();
     let dir_from = (dir_to + 180.0).rem_euclid(360.0);
     (dir_from, spd)
-}
-
-fn surface_temp_c(lua: MizLua) -> Result<f64> {
-    let globals = lua.inner().globals();
-    let env_tbl: LuaTable = globals.raw_get("env")?;
-    let mission: LuaTable = env_tbl.raw_get("mission")?;
-    let wx: LuaTable = mission.raw_get("weather")?;
-    let season: LuaTable = wx.raw_get("season")?;
-    Ok(season.get("temperature").unwrap_or(15.0))
 }
 
 // Approximates DZ ELEV (highest elevation within the drop zone) and
@@ -152,12 +134,17 @@ fn solve_at_world_pos(
     let drop_alt_agl_m = drop_altitude_agl_ft / M_TO_FT;
     let drop_alt_y = pi_elev_m + drop_alt_agl_m;
 
-    let (sfc_dir, sfc_spd) = wind_at(lua, x, 0.0, z)?;
-    let (alt_dir, alt_spd) = wind_at(lua, x, drop_alt_y, z)?;
+    // Surface wind 10 m above the PI, not at y=0 -- that is underground
+    // anywhere above sea level.
+    let (sfc_dir, sfc_spd) = wind_kt(lua, x, pi_elev_m + SURFACE_WIND_AGL_M, z)?;
+    let (alt_dir, alt_spd) = wind_kt(lua, x, drop_alt_y, z)?;
     let (bal_dir, bal_spd) = vector_avg((alt_dir, alt_spd), (sfc_dir, sfc_spd));
 
-    let sfc_temp_c = surface_temp_c(lua)?;
-    let alt_temp_c = sfc_temp_c - drop_altitude_agl_ft * ISA_LAPSE_C_PER_FT;
+    // Both temperatures live from DCS's atmosphere at the PI and at the drop
+    // altitude. They used to be the mission's sea-level season temperature
+    // with an ISA lapse on top -- an estimate, and wrong over high ground.
+    let (sfc_temp_c, _) = temp_pressure_at(lua, x, pi_elev_m, z)?;
+    let (alt_temp_c, _) = temp_pressure_at(lua, x, drop_alt_y, z)?;
 
     Ok(CarpSolution {
         pi_lat: ll.latitude,

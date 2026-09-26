@@ -3887,6 +3887,12 @@ pub struct Cfg {
     /// disabled.
     #[serde(default)]
     pub helo_insertion: Option<HeloInsertionCfg>,
+    /// Magnetic variation for the theatre, degrees, EAST positive (Caucasus
+    /// is about +6.5). Bearings read or spoken to pilots (BRAA, 9-line, BRC,
+    /// ATIS surface wind) and the ATIS active-runway pick are magnetic. Omit
+    /// to use the engine's built-in approximate per-theatre value.
+    #[serde(default)]
+    pub magnetic_variation_deg: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

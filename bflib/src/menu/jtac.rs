@@ -46,13 +46,93 @@ use log::error;
 use smallvec::{SmallVec, smallvec};
 use std::sync::Arc;
 
-fn jtac_nine_line(_: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
+/// The groups that should hear about a JTAC: whoever asked (`requester`),
+/// plus every player on its side who pinned it or has its location expanded
+/// in their JTAC menu. Every JTAC setting change, callout and error used to
+/// be a panel to the whole coalition.
+fn jtac_audience(
+    ctx: &Context,
+    jtid: &JtId,
+    side: Side,
+    oid: ObjectiveId,
+    requester: Option<&Ucid>,
+) -> SmallVec<[GroupId; 8]> {
+    let mut groups: SmallVec<[GroupId; 8]> = smallvec![];
+    let mut add = |slot: &SlotId| {
+        if let Some(ifo) = ctx.db.ephemeral.get_slot_info(slot) {
+            if !groups.contains(&ifo.miz_gid) {
+                groups.push(ifo.miz_gid)
+            }
+        }
+    };
+    if let Some((slot, _)) = requester
+        .and_then(|ucid| ctx.db.player(ucid))
+        .and_then(|p| p.current_slot.as_ref())
+    {
+        add(slot)
+    }
+    for (slot, subd) in &ctx.subscribed_jtac_menus {
+        if !(subd.pinned.contains(jtid) || subd.subscribed_objectives.contains(&oid)) {
+            continue;
+        }
+        let on_side = ctx
+            .db
+            .ephemeral
+            .player_in_slot(slot)
+            .and_then(|ucid| ctx.db.player(ucid))
+            .is_some_and(|p| p.side == side);
+        if on_side {
+            add(slot)
+        }
+    }
+    groups
+}
+
+/// Panel `msg` to a JTAC's audience, see `jtac_audience`.
+fn notify(
+    ctx: &mut Context,
+    jtid: JtId,
+    side: Side,
+    oid: ObjectiveId,
+    requester: Option<&Ucid>,
+    msg: impl Into<String>,
+) {
+    let msg: String = msg.into();
+    for gid in jtac_audience(ctx, &jtid, side, oid, requester) {
+        ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg.clone())
+    }
+}
+
+/// Panel `msg` to the audience of the JTAC `jtid`, whoever that is now.
+fn notify_jtac(ctx: &mut Context, jtid: JtId, requester: &Ucid, msg: impl Into<String>) {
+    match ctx.jtac.get(&jtid) {
+        Ok(jt) => {
+            let (side, oid) = (jt.side(), jt.location().oid);
+            notify(ctx, jtid, side, oid, Some(requester), msg)
+        }
+        // gone in the meantime -- the requester still gets the answer
+        Err(_) => ctx
+            .db
+            .ephemeral
+            .panel_to_player(&ctx.db.persisted, 10, requester, msg),
+    }
+}
+
+/// Deliver the callouts `Jtacs` queued (targets acquired, lost, destroyed)
+/// to the players following each JTAC.
+pub(crate) fn flush_jtac_notices(ctx: &mut Context) {
+    for n in ctx.jtac.take_notices() {
+        notify(ctx, n.jtid, n.side, n.oid, None, n.text)
+    }
+}
+
+fn jtac_nine_line(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = ctx
         .jtac
         .get(&arg.snd)
         .with_context(|| format_compact!("get jtac {}", arg.snd))?;
-    match jtac.nine_line(&ctx.db) {
+    match jtac.nine_line(&ctx.db, lua) {
         Ok(msg) => ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, 15, &arg.fst, msg),
         Err(e) => ctx.db.ephemeral.panel_to_player(
             &ctx.db.persisted,
@@ -73,6 +153,7 @@ pub fn jtac_status(_: MizLua, arg: ArgTuple<Option<Ucid>, JtId>) -> Result<()> {
     let msg = jtac
         .status(&ctx.db, ctx.jtac.location_by_code())
         .context("generate jtac status")?;
+    let side = jtac.side();
     // If a specific player requested status and there's a target, drop a group-visible mark
     if let Some(ucid) = &arg.fst {
         // Extract mark info before any mutable borrow
@@ -83,18 +164,38 @@ pub fn jtac_status(_: MizLua, arg: ArgTuple<Option<Ucid>, JtId>) -> Result<()> {
                 .as_ref()
                 .and_then(|(s, _)| ctx.db.ephemeral.get_slot_info(s))
                 .map(|ifo| ifo.miz_gid)?;
-            use dcso3::Vector2;
             let tgt_pos = Vector2::new(target.pos.x, target.pos.z);
             let mark_text = format_compact!("JTAC {} — {}", arg.snd, target.typ);
             Some((miz_gid, tgt_pos, mark_text))
         });
         if let Some((miz_gid, tgt_pos, mark_text)) = mark_info {
-            ctx.db.ephemeral.msgs().mark_to_group(miz_gid, tgt_pos, true, mark_text);
+            // One status pin per group, replaced on the next click. Each
+            // click used to leave another permanent read-only pin behind.
+            let id = ctx.db.ephemeral.msgs().mark_to_group(miz_gid, tgt_pos, true, mark_text);
+            if let Some(old) = ctx.jtac.replace_status_mark(miz_gid, id) {
+                ctx.db.ephemeral.msgs().delete_mark(old);
+            }
         }
         ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, 10, ucid, msg);
     } else {
-        ctx.db.ephemeral.msgs().panel_to_side(10, false, jtac.side(), msg);
+        ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
     }
+    Ok(())
+}
+
+/// The lone entry of an empty Artillery / ALCM submenu. These used to run
+/// `jtac_status`, so clicking the "nothing here" line dropped a status pin.
+fn jtac_no_fire_support(_: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    ctx.db.ephemeral.panel_to_player(
+        &ctx.db.persisted,
+        10,
+        &arg.fst,
+        format_compact!(
+            "JTAC {}: no friendly artillery or ALCM shooters are in range of it. The menu refreshes when some are.",
+            arg.snd
+        ),
+    );
     Ok(())
 }
 
@@ -122,18 +223,15 @@ fn get_jtac<'a>(jtacs: &'a Jtacs, id: &JtId) -> Result<&'a Jtac> {
         .with_context(|| format_compact!("get jtac {}", id))
 }
 
-fn jtac_msg_auto_shift(db: &mut Db, jtid: JtId, jtac: &Jtac, ucid: &Ucid) {
+fn jtac_msg_auto_shift(db: &Db, jtid: JtId, jtac: &Jtac, ucid: &Ucid) -> String {
     let (near, name) = change_info(jtac, db, ucid);
-    let msg = format_compact!(
+    String::from(format_compact!(
         "AUTO SHIFT NOW {}\nfor jtac {} near {}\nchanged by {}",
         jtac.autoshift(),
         jtid,
         near,
         name
-    );
-    db.ephemeral
-        .msgs()
-        .panel_to_side(10, false, jtac.side(), msg);
+    ))
 }
 
 pub fn jtac_toggle_auto_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
@@ -141,7 +239,8 @@ pub fn jtac_toggle_auto_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.toggle_auto_shift(&mut ctx.db, lua)
         .with_context(|| format_compact!("toggle auto shift {}", arg.snd))?;
-    jtac_msg_auto_shift(&mut ctx.db, arg.snd, jtac, &arg.fst);
+    let msg = jtac_msg_auto_shift(&ctx.db, arg.snd, jtac, &arg.fst);
+    notify_jtac(ctx, arg.snd, &arg.fst, msg);
     Ok(())
 }
 
@@ -158,10 +257,7 @@ pub fn jtac_toggle_ir_pointer(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<
         near,
         name
     );
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_side(10, false, jtac.side(), msg);
+    notify_jtac(ctx, arg.snd, &arg.fst, msg);
     Ok(())
 }
 
@@ -169,46 +265,49 @@ pub fn jtac_smoke_target(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.fst);
-    let msg = match jtac.smoke_target(lua).context("smoking jtac target") {
-        Err(e) => format_compact!("COULD NOT SMOKE TARGET\njtac {}\n{e:?}", arg.snd),
-        Ok(()) => format_compact!(
-            "SMOKE DEPLOYED ON TARGET\njtac {} near {}\nrequested by {}",
-            arg.snd,
-            near,
-            name
+    match jtac.smoke_target(lua).context("smoking jtac target") {
+        // a cooldown or no target is the requester's business alone
+        Err(e) => ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.fst,
+            format_compact!("COULD NOT SMOKE TARGET\njtac {}\n{e:#}", arg.snd),
         ),
-    };
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_side(10, false, jtac.side(), msg);
+        Ok(()) => {
+            let msg = format_compact!(
+                "SMOKE DEPLOYED ON TARGET\njtac {} near {}\nrequested by {}",
+                arg.snd,
+                near,
+                name
+            );
+            notify_jtac(ctx, arg.snd, &arg.fst, msg)
+        }
+    }
     Ok(())
 }
 
-fn jtac_msg_shift(db: &mut Db, jtid: JtId, jtac: &Jtac, ucid: &Ucid) {
+fn jtac_msg_shift(db: &Db, jtid: JtId, jtac: &Jtac, ucid: &Ucid) -> String {
     let (near, name) = change_info(jtac, db, ucid);
     let target = jtac
         .target()
         .as_ref()
         .map(|t| t.typ.clone())
         .unwrap_or("no target".into());
-    let msg = format_compact!(
+    String::from(format_compact!(
         "JTAC SHIFTED NOW TARGETING {}\nauto shift is now disabled\njtac {} near {}\nrequested by {}",
         target,
         jtid,
         near,
         name
-    );
-    db.ephemeral
-        .msgs()
-        .panel_to_side(10, false, jtac.side(), msg);
+    ))
 }
 
 pub fn jtac_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.shift(&mut ctx.db, lua).context("shifting jtac target")?;
-    jtac_msg_shift(&mut ctx.db, arg.snd, jtac, &arg.fst);
+    let msg = jtac_msg_shift(&ctx.db, arg.snd, jtac, &arg.fst);
+    notify_jtac(ctx, arg.snd, &arg.fst, msg);
     Ok(())
 }
 
@@ -218,7 +317,7 @@ pub fn jtac_designate_building(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result
     let side = jtac.side();
     let oid = jtac.location().oid;
     match jtac.designate_building(&mut ctx.db, lua).context("designating building")? {
-        Some(_) => {}
+        Some(msg) => notify(ctx, arg.snd, side, oid, Some(&arg.fst), msg),
         None => {
             // Name the place. The JTAC works the objective nearest to IT, which
             // is not always the base the player is looking at, and "none left
@@ -238,7 +337,7 @@ pub fn jtac_designate_building(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result
             } else {
                 format_compact!("JTAC {}: all {total} logistics buildings at {name} are destroyed", arg.snd)
             };
-            ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
+            ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, 10, &arg.fst, msg);
         }
     }
     Ok(())
@@ -286,7 +385,7 @@ pub fn jtac_set_focus(
             "JTAC {jtid} near {near}: focusing on {name}'s mark, {n} contact(s) within {km:.0} km, lasing the nearest"
         ),
     };
-    ctx.db.ephemeral.msgs().panel_to_side(10, false, jtac.side(), msg);
+    notify_jtac(ctx, jtid, ucid, msg);
     Ok(())
 }
 
@@ -295,11 +394,11 @@ fn jtac_focus_my_mark(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     match latest_player_mark(ctx, lua, &arg.fst)? {
         Some(pos) => jtac_set_focus(lua, &arg.fst, arg.snd, Some(pos)),
         None => {
-            let side = get_jtac(&ctx.jtac, &arg.snd)?.side();
-            ctx.db.ephemeral.msgs().panel_to_side(
+            // the requester's mistake -- this went to the whole coalition
+            ctx.db.ephemeral.panel_to_player(
+                &ctx.db.persisted,
                 10,
-                false,
-                side,
+                &arg.fst,
                 "Place an F10 map mark near the targets first, then use Focus on My Mark",
             );
             Ok(())
@@ -327,10 +426,7 @@ pub fn jtac_artillery_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, u8, Ucid>) 
                 near,
                 name
             );
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_side(10, false, jtac.side(), msg)
+            notify_jtac(ctx, arg.fst, &arg.fth, msg)
         }
         Err(e) => {
             let msg = format!("jtac {} could not start artillery mission {:?}", arg.fst, e);
@@ -358,10 +454,7 @@ pub fn jtac_artillery_fire_all(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -
                 near,
                 name
             );
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_side(10, false, jtac.side(), msg)
+            notify_jtac(ctx, arg.fst, &arg.trd, msg)
         }
         Err(e) => {
             let msg = format!("jtac {} could not start artillery fire all mission {:?}", arg.fst, e);
@@ -428,10 +521,7 @@ fn group_fire(
                 msg.push_str("\nskipped ");
                 msg.push_str(reason);
             }
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_side(10, false, jtac.side(), msg)
+            notify_jtac(ctx, jtid, &ucid, msg)
         }
         Err(e) => {
             let msg = format!("group fire failed: {e:?}");
@@ -467,8 +557,8 @@ pub fn jtac_get_artillery_ammo(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -
 pub fn jtac_artillery_combo_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u8>, Ucid>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let mut params = arg.trd;
-    let num_targets = params.pop().unwrap();
-    let rounds_per_target = params.pop().unwrap();
+    let num_targets = params.pop().ok_or_else(|| anyhow!("missing combo target count"))?;
+    let rounds_per_target = params.pop().ok_or_else(|| anyhow!("missing combo round count"))?;
     match ctx
         .jtac
         .artillery_combo_mission(&ctx.db, lua, &arg.fst, &arg.snd, rounds_per_target, num_targets)
@@ -479,18 +569,13 @@ pub fn jtac_artillery_combo_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u
             let msg = format_compact!(
                 "Artillery Combo Mission: {name} firing {rounds_per_target} rounds per target at {num_targets} targets"
             );
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_side(10, false, jtac.side(), msg);
+            notify_jtac(ctx, arg.fst, &arg.fth, msg);
         }
         Err(e) => {
-            let jtac = get_jtac(&ctx.jtac, &arg.fst).context("getting jtac")?;
             let msg = format_compact!("Artillery Combo Mission failed: {e}");
             ctx.db
                 .ephemeral
-                .msgs()
-                .panel_to_side(10, false, jtac.side(), msg);
+                .panel_to_player(&ctx.db.persisted, 10, &arg.fth, msg);
         }
     }
     Ok(())
@@ -512,10 +597,7 @@ pub fn jtac_alcm_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u8>, Ucid>) 
                 near,
                 name
             );
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_side(10, false, jtac.side(), msg)
+            notify_jtac(ctx, arg.fst, &arg.fth, msg)
         }
         Err(e) => {
             let msg = format!("jtac {} could not start ALCM mission {:?}", arg.fst, e);
@@ -540,10 +622,7 @@ fn jtac_relay_target(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<(
                 near,
                 name
             );
-            ctx.db
-                .ephemeral
-                .msgs()
-                .panel_to_side(10, false, jtac.side(), msg)
+            notify_jtac(ctx, arg.fst, &arg.trd, msg)
         }
         Err(e) => {
             let msg = format!("jtac {} could not relay target {:?}", arg.fst, e);
@@ -567,10 +646,7 @@ fn jtac_clear_filter(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
         near,
         name
     );
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_side(10, false, jtac.side(), msg);
+    notify_jtac(ctx, arg.snd, &arg.fst, msg);
     Ok(())
 }
 
@@ -589,31 +665,38 @@ fn jtac_filter(lua: MizLua, arg: ArgTriple<JtId, u64, Ucid>) -> Result<()> {
         near,
         name
     );
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_side(10, false, jtac.side(), msg);
+    notify_jtac(ctx, arg.fst, &arg.trd, msg);
     Ok(())
 }
 
 pub fn jtac_set_code(lua: MizLua, arg: ArgTriple<JtId, u16, Ucid>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
-    ctx.jtac
-        .set_code_part(&mut ctx.db, lua, &arg.fst, arg.snd)
-        .context("setting jtac laser code")?;
+    if let Err(e) = ctx.jtac.set_code_part(&mut ctx.db, lua, &arg.fst, arg.snd) {
+        // a bad code is the requester's to fix, and should say why
+        ctx.db.ephemeral.panel_to_player(
+            &ctx.db.persisted,
+            10,
+            &arg.trd,
+            format_compact!("JTAC {}: code not changed, {e:#}", arg.fst),
+        );
+        return Ok(());
+    }
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.fst)?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.trd);
-    let msg = format_compact!(
+    let (side, code) = (jtac.side(), jtac.code());
+    let mut msg = format_compact!(
         "JTAC CODE CHANGED TO {}\njtac {} near {}\nchanged by {}",
-        jtac.code(),
+        code,
         arg.fst,
         near,
         name
     );
-    ctx.db
-        .ephemeral
-        .msgs()
-        .panel_to_side(10, false, jtac.side(), msg);
+    let shared = ctx.jtac.code_users(side, code, arg.fst);
+    if !shared.is_empty() {
+        let ids: Vec<std::string::String> = shared.iter().map(|j| j.to_string()).collect();
+        msg.push_str(&format_compact!("\nWARNING: JTAC {} also lase on {code}", ids.join(", ")));
+    }
+    notify_jtac(ctx, arg.fst, &arg.trd, msg);
     Ok(())
 }
 
@@ -960,8 +1043,13 @@ pub(super) fn add_menu_for_jtac(
         .get(&slot)
         .map(|subd| subd.pinned.contains(&jtac.gid()))
         .unwrap_or(false);
+    // The group id rides along with a configured callsign: callsigns come
+    // from the unit spec, so every JTAC of one type shares it, and DCS menus
+    // are addressed by label -- two "Reaper" submenus under one parent
+    // collided. The laser code goes on the end so it can be read off the
+    // menu without opening it.
     let name = if let Some(cs) = jtac.callsign() {
-        format_compact!("{cs}")
+        format_compact!("{cs} {}", jtac.gid())
     } else {
         match jtac.gid() {
         JtId::Group(gid) => match db.group(&gid) {
@@ -970,9 +1058,16 @@ pub(super) fn add_menu_for_jtac(
                 DeployKind::Action { name, .. } => format_compact!("{gid}({name})"),
                 DeployKind::Deployed { player, spec, .. } => match db.player(player) {
                     Some(player) => {
-                        format_compact!("{gid}({} {})", spec.path.last().unwrap(), player.name)
+                        format_compact!(
+                            "{gid}({} {})",
+                            spec.path.last().map(|p| p.as_str()).unwrap_or("deployed"),
+                            player.name
+                        )
                     }
-                    None => format_compact!("{gid}({})", spec.path.last().unwrap()),
+                    None => format_compact!(
+                        "{gid}({})",
+                        spec.path.last().map(|p| p.as_str()).unwrap_or("deployed")
+                    ),
                 },
                 DeployKind::Troop { player, spec, .. } => match db.player(player) {
                     Some(player) => format_compact!("{gid}({} {})", spec.name, player.name),
@@ -1002,26 +1097,16 @@ pub(super) fn add_menu_for_jtac(
         }
         }
     };
+    let name = format_compact!("{name} [{}]", jtac.code());
     let root = mc.add_submenu_for_group(mizgid, name.clone().into(), Some(root))?;
     // DCS only shows 10 entries per menu page, so every entry below claims its
     // slot from the pager first -- that keeps Artillery/ALCM/Bomber reachable
     // however many options this JTAC ends up with.
     let mut p = Pager::new(mizgid, root);
-    let root = p.page(&mc)?;
-    mc.add_command_for_group(
-        mizgid,
-        if !pinned {
-            "Pin".into()
-        } else {
-            "Unpin".into()
-        },
-        Some(root.clone()),
-        toggle_pin_jtac,
-        ArgTuple {
-            fst: slot,
-            snd: jtac.gid(),
-        },
-    )?;
+    // Page one carries what a pilot works a target with -- status, 9-line,
+    // shift, smoke, code, filter, fire support, focus. Code, Filter, Artillery
+    // and ALCM used to sit behind "More >>" while the set-and-forget toggles
+    // and Pin took the first page.
     let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
@@ -1047,20 +1132,9 @@ pub(super) fn add_menu_for_jtac(
     let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
-        "Toggle Auto Shift".into(),
+        "Shift".into(),
         Some(root.clone()),
-        jtac_toggle_auto_shift,
-        ArgTuple {
-            fst: *ucid,
-            snd: jtac.gid(),
-        },
-    )?;
-    let root = p.page(&mc)?;
-    mc.add_command_for_group(
-        mizgid,
-        "Toggle IR Pointer".into(),
-        Some(root.clone()),
-        jtac_toggle_ir_pointer,
+        jtac_shift,
         ArgTuple {
             fst: *ucid,
             snd: jtac.gid(),
@@ -1078,27 +1152,104 @@ pub(super) fn add_menu_for_jtac(
         },
     )?;
     let root = p.page(&mc)?;
-    mc.add_command_for_group(
-        mizgid,
-        "Shift".into(),
-        Some(root.clone()),
-        jtac_shift,
-        ArgTuple {
-            fst: *ucid,
-            snd: jtac.gid(),
-        },
-    )?;
+    let code_root = mc.add_submenu_for_group(mizgid, "Code".into(), Some(root.clone()))?;
+    let thou_root = mc.add_submenu_for_group(mizgid, "Xxxx".into(), Some(code_root.clone()))?;
+    let hund_root = mc.add_submenu_for_group(mizgid, "xXxx".into(), Some(code_root.clone()))?;
+    let tens_root = mc.add_submenu_for_group(mizgid, "xxXx".into(), Some(code_root.clone()))?;
+    let ones_root = mc.add_submenu_for_group(mizgid, "xxxX".into(), Some(code_root.clone()))?;
+    for (scale, root) in [(1000, &thou_root), (100, &hund_root), (10, &tens_root), (1, &ones_root)] {
+        let range = if scale == 1000 { 1..=1 } else if scale == 100 { 1..=7 } else { 1..=8 };
+        for n in range {
+            mc.add_command_for_group(
+                mizgid,
+                format_compact!("{n}").into(),
+                Some(root.clone()),
+                jtac_set_code,
+                ArgTriple {
+                    fst: jtac.gid(),
+                    snd: n * scale,
+                    trd: *ucid,
+                },
+            )?;
+        }
+    }
     let root = p.page(&mc)?;
-    mc.add_command_for_group(
-        mizgid,
-        "Designate Building".into(),
-        Some(root.clone()),
-        jtac_designate_building,
+    let filter_root = mc.add_submenu_for_group(mizgid, "Filter".into(), Some(root.clone()))?;
+    let mut fp = Pager::new(mizgid, filter_root);
+    fp.command(
+        &mc,
+        "Clear".into(),
+        jtac_clear_filter,
         ArgTuple {
             fst: *ucid,
             snd: jtac.gid(),
         },
     )?;
+    for tag in UnitTag::all().iter() {
+        fp.command(
+            &mc,
+            format_compact!("{:?}", tag).into(),
+            jtac_filter,
+            ArgTriple {
+                fst: jtac.gid(),
+                snd: BitFlags::from(tag).bits(),
+                trd: *ucid,
+            },
+        )?;
+    }
+    // Artillery / ALCM submenus are always present (drone JTACs included) so the
+    // option is discoverable; when nothing is in range they show a single
+    // informational line instead of being empty.
+    let root = p.page(&mc)?;
+    if jtac.nearby_artillery().is_empty() {
+        let arty_root =
+            mc.add_submenu_for_group(mizgid, "Artillery".into(), Some(root.clone()))?;
+        mc.add_command_for_group(
+            mizgid,
+            "(no guns in range — deploy artillery nearby)".into(),
+            Some(arty_root.clone()),
+            jtac_no_fire_support,
+            ArgTuple {
+                fst: *ucid,
+                snd: jtac.gid(),
+            },
+        )?;
+    } else {
+        add_artillery_menu_for_jtac(
+            db,
+            lua,
+            mizgid,
+            *ucid,
+            root.clone(),
+            jtac.gid(),
+            jtac.side(),
+            jtac.nearby_artillery(),
+        )?;
+    }
+
+    let root = p.page(&mc)?;
+    if jtac.nearby_alcm().is_empty() {
+        let alcm_root = mc.add_submenu_for_group(mizgid, "ALCM".into(), Some(root.clone()))?;
+        mc.add_command_for_group(
+            mizgid,
+            "(no ALCM shooters in range)".into(),
+            Some(alcm_root.clone()),
+            jtac_no_fire_support,
+            ArgTuple {
+                fst: *ucid,
+                snd: jtac.gid(),
+            },
+        )?;
+    } else {
+        add_alcm_menu_for_jtac(
+            lua,
+            mizgid,
+            *ucid,
+            root.clone(),
+            jtac.gid(),
+            jtac.nearby_alcm(),
+        )?;
+    }
     let root = p.page(&mc)?;
     mc.add_command_for_group(
         mizgid,
@@ -1128,104 +1279,53 @@ pub(super) fn add_menu_for_jtac(
         )?;
     }
     let root = p.page(&mc)?;
-    let filter_root = mc.add_submenu_for_group(mizgid, "Filter".into(), Some(root.clone()))?;
-    let mut fp = Pager::new(mizgid, filter_root);
-    fp.command(
-        &mc,
-        "Clear".into(),
-        jtac_clear_filter,
+    mc.add_command_for_group(
+        mizgid,
+        "Toggle Auto Shift".into(),
+        Some(root.clone()),
+        jtac_toggle_auto_shift,
         ArgTuple {
             fst: *ucid,
             snd: jtac.gid(),
         },
     )?;
-    for tag in UnitTag::all().iter() {
-        fp.command(
-            &mc,
-            format_compact!("{:?}", tag).into(),
-            jtac_filter,
-            ArgTriple {
-                fst: jtac.gid(),
-                snd: BitFlags::from(tag).bits(),
-                trd: *ucid,
-            },
-        )?;
-    }
     let root = p.page(&mc)?;
-    let code_root = mc.add_submenu_for_group(mizgid, "Code".into(), Some(root.clone()))?;
-    let thou_root = mc.add_submenu_for_group(mizgid, "Xxxx".into(), Some(code_root.clone()))?;
-    let hund_root = mc.add_submenu_for_group(mizgid, "xXxx".into(), Some(code_root.clone()))?;
-    let tens_root = mc.add_submenu_for_group(mizgid, "xxXx".into(), Some(code_root.clone()))?;
-    let ones_root = mc.add_submenu_for_group(mizgid, "xxxX".into(), Some(code_root.clone()))?;
-    for (scale, root) in [(1000, &thou_root), (100, &hund_root), (10, &tens_root), (1, &ones_root)] {
-        let range = if scale == 1000 { 1..=1 } else if scale == 100 { 1..=7 } else { 1..=8 };
-        for n in range {
-            mc.add_command_for_group(
-                mizgid,
-                format_compact!("{n}").into(),
-                Some(root.clone()),
-                jtac_set_code,
-                ArgTriple {
-                    fst: jtac.gid(),
-                    snd: n * scale,
-                    trd: *ucid,
-                },
-            )?;
-        }
-    }
-    // Artillery / ALCM submenus are always present (drone JTACs included) so the
-    // option is discoverable; when nothing is in range they show a single
-    // informational line instead of being empty.
+    mc.add_command_for_group(
+        mizgid,
+        "Toggle IR Pointer".into(),
+        Some(root.clone()),
+        jtac_toggle_ir_pointer,
+        ArgTuple {
+            fst: *ucid,
+            snd: jtac.gid(),
+        },
+    )?;
     let root = p.page(&mc)?;
-    if jtac.nearby_artillery().is_empty() {
-        let arty_root =
-            mc.add_submenu_for_group(mizgid, "Artillery".into(), Some(root.clone()))?;
-        mc.add_command_for_group(
-            mizgid,
-            "(no guns in range — deploy artillery nearby)".into(),
-            Some(arty_root.clone()),
-            jtac_status,
-            ArgTuple {
-                fst: Some(*ucid),
-                snd: jtac.gid(),
-            },
-        )?;
-    } else {
-        add_artillery_menu_for_jtac(
-            db,
-            lua,
-            mizgid,
-            *ucid,
-            root.clone(),
-            jtac.gid(),
-            jtac.side(),
-            jtac.nearby_artillery(),
-        )?;
-    }
-
+    mc.add_command_for_group(
+        mizgid,
+        "Designate Building".into(),
+        Some(root.clone()),
+        jtac_designate_building,
+        ArgTuple {
+            fst: *ucid,
+            snd: jtac.gid(),
+        },
+    )?;
     let root = p.page(&mc)?;
-    if jtac.nearby_alcm().is_empty() {
-        let alcm_root = mc.add_submenu_for_group(mizgid, "ALCM".into(), Some(root.clone()))?;
-        mc.add_command_for_group(
-            mizgid,
-            "(no ALCM shooters in range)".into(),
-            Some(alcm_root.clone()),
-            jtac_status,
-            ArgTuple {
-                fst: Some(*ucid),
-                snd: jtac.gid(),
-            },
-        )?;
-    } else {
-        add_alcm_menu_for_jtac(
-            lua,
-            mizgid,
-            *ucid,
-            root.clone(),
-            jtac.gid(),
-            jtac.nearby_alcm(),
-        )?;
-    }
+    mc.add_command_for_group(
+        mizgid,
+        if !pinned {
+            "Pin".into()
+        } else {
+            "Unpin".into()
+        },
+        Some(root.clone()),
+        toggle_pin_jtac,
+        ArgTuple {
+            fst: slot,
+            snd: jtac.gid(),
+        },
+    )?;
 
     // Bomber-mission actions are surfaced in the Actions menu (each expands to a
     // JTAC picker there), not here -- keeps the JTAC menu focused on targeting.

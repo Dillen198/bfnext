@@ -67,6 +67,17 @@ pub(crate) struct WeatherData {
     pub(crate) visibility_m: f64,
     ground_elev_m: f64,
     winds_aloft: Vec<AltitudeWind>,
+    /// Magnetic variation, degrees east positive; 0 until the caller sets it
+    /// from `magnetic_variation_deg` (this module has no cfg to hand).
+    pub(crate) magvar_deg: f64,
+}
+
+impl WeatherData {
+    /// The surface wind's FROM bearing, magnetic -- what runways are
+    /// designated by and what a pilot is read.
+    fn wind_from_mag(&self) -> f64 {
+        true_to_magnetic(self.wind_from_deg, self.magvar_deg)
+    }
 }
 
 impl WeatherData {
@@ -103,7 +114,7 @@ const SURFACE_WIND_AGL_M: f64 = 10.0;
 const AIRDROME_MATCH_M: f64 = 10_000.0;
 
 /// Wind at a world point: (meteorological FROM bearing, true; speed m/s).
-fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
+pub(crate) fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
     let globals = lua.inner().globals();
     let atmosphere: LuaTable = globals.raw_get("atmosphere")?;
     let pt = lua.inner().create_table()?;
@@ -122,8 +133,69 @@ fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
     Ok((wind_from_deg, wind_speed_ms))
 }
 
+// ── magnetic variation ─────────────────────────────────────────────────────
+
+/// Built-in magnetic variation per DCS theatre (`env.mission.theatre`),
+/// degrees, EAST positive. APPROXIMATE -- one figure for the whole map, where
+/// the real variation drifts a degree or two across it. Good enough to stop a
+/// runway pick or a 9-line heading being off by the whole variation; a
+/// campaign that wants better sets `magnetic_variation_deg` in its cfg.
+/// Normandy / The Channel use the WWII-era figure (MOOSE uses the same),
+/// not today's ~-1.
+fn theatre_magvar_deg(theatre: &str) -> Option<f64> {
+    Some(match theatre {
+        "Caucasus" => 6.5,
+        "Syria" => 5.0,
+        "PersianGulf" => 2.0,
+        "Nevada" => 12.0,
+        "MarianaIslands" => -1.0,
+        "SinaiMap" | "Sinai" => 4.5,
+        "Kola" => 15.0,
+        "Afghanistan" => 3.0,
+        "Normandy" | "TheChannel" => -10.0,
+        _ => return None,
+    })
+}
+
+/// The theatre's magnetic variation, degrees, east positive: the cfg's
+/// `magnetic_variation_deg` if set, else the built-in figure for the
+/// mission's theatre, else 0 (true = magnetic) for a theatre we don't know.
+pub(crate) fn magnetic_variation_deg(lua: MizLua, cfg: &bfprotocols::cfg::Cfg) -> f64 {
+    if let Some(v) = cfg.magnetic_variation_deg {
+        return v;
+    }
+    let theatre = (|| -> LuaResult<Option<std::string::String>> {
+        let env: LuaTable = lua.inner().globals().raw_get("env")?;
+        let mission: LuaTable = env.raw_get("mission")?;
+        mission.raw_get("theatre")
+    })()
+    .ok()
+    .flatten()
+    .unwrap_or_default();
+    match theatre_magvar_deg(&theatre) {
+        Some(v) => v,
+        None => {
+            log::debug!("no built-in magnetic variation for theatre {theatre:?}, using 0");
+            0.0
+        }
+    }
+}
+
+/// Magnetic bearing (0-360) for a true bearing, degrees.
+pub(crate) fn true_to_magnetic(true_deg: f64, magvar_deg: f64) -> f64 {
+    (true_deg - magvar_deg).rem_euclid(360.0)
+}
+
+/// Whole degrees 1-360, the way a compass heading is read out.
+fn heading_deg(deg: f64) -> u32 {
+    match (deg.round() as u32) % 360 {
+        0 => 360,
+        d => d,
+    }
+}
+
 /// DCS's own temperature (C) and pressure (Pa) at a world point.
-fn temp_pressure_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
+pub(crate) fn temp_pressure_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
     let atmosphere: LuaTable = lua.inner().globals().raw_get("atmosphere")?;
     let pt = lua.inner().create_table()?;
     pt.set("x", x)?;
@@ -294,6 +366,7 @@ pub(crate) fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<Weath
         visibility_m,
         ground_elev_m,
         winds_aloft,
+        magvar_deg: 0.0,
     })
 }
 
@@ -563,9 +636,15 @@ fn designator_num(name: &str) -> Option<i32> {
 /// (heading_deg, designator, course_aligned). The `course_aligned` flag marks
 /// the end pointing the same way as DCS's own `course` field for that runway
 /// — its "primary" direction, used as the calm-wind tie-break.
+///
+/// Headings are TRUE throughout. A designator names a magnetic heading, so a
+/// named end is placed at `num * 10 + magvar`; they used to be compared as-is
+/// with the true course and the true wind, which on a map with a few degrees
+/// of variation could hand the duty to the wrong end in a crosswind.
 fn runway_ends(
     lua: MizLua,
     airbase_id: &DcsOid<ClassAirbase>,
+    magvar_deg: f64,
 ) -> Option<Vec<(f64, compact_str::CompactString, bool)>> {
     let ab = Airbase::get_instance(lua, airbase_id).ok()?;
     let ab_name = ab
@@ -602,19 +681,20 @@ fn runway_ends(
         let named: Vec<(f64, compact_str::CompactString)> = if parts.len() == 2 {
             parts
                 .iter()
-                .filter_map(|p| part_num(p).map(|n| (n as f64 * 10.0, p.clone())))
+                .filter_map(|p| {
+                    part_num(p).map(|n| ((n as f64 * 10.0 + magvar_deg).rem_euclid(360.0), p.clone()))
+                })
                 .collect()
-        } else if parts.len() == 1 {
-            let n = part_num(&parts[0]).unwrap();
+        } else if let Some(n) = parts.first().and_then(|p| part_num(p)) {
             let recip = ((n + 18 - 1) % 36) + 1;
             vec![
-                (n as f64 * 10.0, parts[0].clone()),
-                (recip as f64 * 10.0, format_compact!("{recip:02}")),
+                ((n as f64 * 10.0 + magvar_deg).rem_euclid(360.0), parts[0].clone()),
+                ((recip as f64 * 10.0 + magvar_deg).rem_euclid(360.0), format_compact!("{recip:02}")),
             ]
         } else {
             [c1, (c1 + 180.0).rem_euclid(360.0)]
                 .into_iter()
-                .map(|h| (h, format_compact!("{:02}", rwy_num_for(h))))
+                .map(|h| (h, format_compact!("{:02}", rwy_num_for(true_to_magnetic(h, magvar_deg)))))
                 .collect()
         };
         for (h, label) in named {
@@ -631,8 +711,10 @@ fn active_runway(
     airbase_id: &DcsOid<ClassAirbase>,
     wind_from_deg: f64,
     wind_speed_kts: f64,
+    magvar_deg: f64,
 ) -> Option<compact_str::CompactString> {
-    let ends = runway_ends(lua, airbase_id)?;
+    // `wind_from_deg` is true, and so are the ends' headings
+    let ends = runway_ends(lua, airbase_id, magvar_deg)?;
     // Wind ≥ 3 kt: land into it. Calm: use the runway's own primary (course-
     // aligned) direction, then the lower-numbered end as a final tie-break.
     // Only truly still air has no direction. This was 3 kt, so a 2 kt
@@ -666,7 +748,8 @@ fn runways_line(
             .map(|name| {
                 let num = designator_num(name);
                 let mut s = name.clone();
-                if num.is_some_and(|n| angle_diff(wx.wind_from_deg, n as f64 * 10.0) <= 90.0) {
+                // designators are magnetic, so is the wind they're held against
+                if num.is_some_and(|n| angle_diff(wx.wind_from_mag(), n as f64 * 10.0) <= 90.0) {
                     s.push('#');
                 }
                 let hdg = num.and_then(|n| {
@@ -685,16 +768,16 @@ fn runways_line(
     }
     // No terrain table: fall back to the mission state's getRunways.
     let Some(ab_id) = airbase_id else { return Default::default() };
-    let Some(ends) = runway_ends(lua, ab_id) else { return Default::default() };
+    let Some(ends) = runway_ends(lua, ab_id, wx.magvar_deg) else { return Default::default() };
     if ends.is_empty() {
         return Default::default();
     }
-    let active = active_runway(lua, ab_id, wx.wind_from_deg, wx.wind_speed_kts);
+    let active = active_runway(lua, ab_id, wx.wind_from_deg, wx.wind_speed_kts, wx.magvar_deg);
     let parts: Vec<std::string::String> = ends
         .iter()
         .map(|(h, l, _)| {
             let mark = if active.as_ref() == Some(l) { "#" } else { "" };
-            format!("{l}{mark} {:03}°", (h.round() as u32) % 360)
+            format!("{l}{mark} {:03}°M", heading_deg(true_to_magnetic(*h, wx.magvar_deg)))
         })
         .collect();
     format_compact!("\nRunways (# = active): {}", parts.join(" | "))
@@ -776,8 +859,9 @@ fn wind_str(wx: &WeatherData) -> compact_str::CompactString {
         return compact_str::CompactString::from("calm");
     }
     format_compact!(
-        "{:03}° @ {kts} kts / {:.0} m/s{}",
-        (wx.wind_from_deg.round() as u32) % 360,
+        "{:03}° ({:03}°M) @ {kts} kts / {:.0} m/s{}",
+        heading_deg(wx.wind_from_deg),
+        heading_deg(wx.wind_from_mag()),
         wx.wind_speed_ms,
         // Dynamic weather: sampled live, so it can differ from the bot's.
         if wx.wind_live { " (live)" } else { "" },
@@ -980,7 +1064,7 @@ fn bot_layout_atis(
                 .iter()
                 .map(|name| {
                     let active = designator_num(name)
-                        .is_some_and(|n| angle_diff(wx.wind_from_deg, n as f64 * 10.0) <= 90.0);
+                        .is_some_and(|n| angle_diff(wx.wind_from_mag(), n as f64 * 10.0) <= 90.0);
                     if active { format!("{name}#") } else { name.clone() }
                 })
                 .collect();
@@ -1003,9 +1087,12 @@ fn bot_layout_atis(
         0 => 360,
         d => d,
     };
+    // True, to agree with the bot's panel, with the magnetic figure a pilot
+    // actually flies alongside it.
     let _ = write!(
         m,
-        "\nSurface Wind: {dir}° @ {kts} kts{}",
+        "\nSurface Wind: {dir}° ({:03}°M) @ {kts} kts{}",
+        heading_deg(wx.wind_from_mag()),
         if wx.wind_live { " (live)" } else { "" }
     );
     m.push_str(&visibility_line(wx.visibility_m));
@@ -1050,12 +1137,15 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
 
     let pos = obj.pos();
     let obj_name = obj.name().to_string();
+    let magvar = magnetic_variation_deg(lua, &ctx.db.ephemeral.cfg);
 
     let msg: compact_str::CompactString = if obj.kind().is_carrier_group() {
-        let wx = fetch_weather(lua, pos.x, pos.y)?;
-        let brc_deg = carrier_brc(&ctx.db, obj.kind());
+        let mut wx = fetch_weather(lua, pos.x, pos.y)?;
+        wx.magvar_deg = magvar;
+        // The ship's heading is true; the BRC a pilot sets is magnetic.
+        let brc_deg = heading_deg(true_to_magnetic(carrier_brc(&ctx.db, obj.kind()) as f64, magvar));
         let mut m = format_compact!(
-            "CARRIER ATIS - {name}\nBRC: {brc:03}°\nRecovery: {case}",
+            "CARRIER ATIS - {name}\nBRC: {brc:03}°M\nRecovery: {case}",
             name = obj_name.to_uppercase(),
             brc = brc_deg,
             case = case_advisory(&wx),
@@ -1071,6 +1161,7 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
         let ad = nearest_airdrome(pos.x, pos.y);
         let (px, pz) = ad.as_ref().map(|a| (a.x, a.z)).unwrap_or((pos.x, pos.y));
         let mut wx = fetch_weather(lua, px, pz)?;
+        wx.magvar_deg = magvar;
         if let Some(a) = ad.as_ref() {
             apply_me_weather(&mut wx, a);
         }
@@ -1105,7 +1196,8 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
 /// context (e.g. the F10 "Weather" item used from the map or a ground slot).
 pub fn send_weather_brief(lua: MizLua, gid: GroupId, pos: Vector2) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
-    let wx = fetch_weather(lua, pos.x, pos.y)?;
+    let mut wx = fetch_weather(lua, pos.x, pos.y)?;
+    wx.magvar_deg = magnetic_variation_deg(lua, &ctx.db.ephemeral.cfg);
     let mut msg = format_compact!(
         "WEATHER (general)\nElevation: {} ft / {} m",
         (wx.ground_elev_m * M_TO_FT) as i64,
@@ -1155,6 +1247,10 @@ pub(crate) fn query_atc(
     use std::string::String as StdString;
 
     let db = &ctx.db;
+    // Everything in this picture is read out to pilots by bfdb's voice ATC,
+    // so its bearings (wind, BRC, runway headings, field bearing) are magnetic.
+    let magvar = magnetic_variation_deg(lua, &db.ephemeral.cfg);
+    let mag = |true_deg: f64| heading_deg(true_to_magnetic(true_deg, magvar)) as u16;
     let coord = dcso3::coord::Coord::singleton(lua).ok();
     let to_ll = |x: f64, z: f64| -> (f64, f64) {
         coord
@@ -1182,9 +1278,10 @@ pub(crate) fn query_atc(
                 .map(|a| (a.x, a.z))
                 .unwrap_or((pos.x, pos.y))
         };
-        let Ok(wx) = fetch_weather(lua, px, pz) else {
+        let Ok(mut wx) = fetch_weather(lua, px, pz) else {
             continue;
         };
+        wx.magvar_deg = magvar;
         let (lat, lon) = to_ll(pos.x, pos.y);
         let (qfe_hpa, qfe_inhg) = (wx.qfe_hpa, wx.qfe_hpa * HPA_TO_INHG);
 
@@ -1199,7 +1296,7 @@ pub(crate) fn query_atc(
                         let course = r.course().unwrap_or(0.0).to_degrees().rem_euclid(360.0);
                         runways.push(AtcRunway {
                             name: r.name().map(|n| n.to_string()).unwrap_or_default(),
-                            heading: course as u16,
+                            heading: mag(course),
                             length_m: r.length().unwrap_or(0.0) as u32,
                             width_m: r.width().unwrap_or(0.0) as u32,
                         });
@@ -1208,7 +1305,9 @@ pub(crate) fn query_atc(
             }
         }
         let active_runway = ab
-            .and_then(|ab_id| active_runway(lua, ab_id, wx.wind_from_deg, wx.wind_speed_kts))
+            .and_then(|ab_id| {
+                active_runway(lua, ab_id, wx.wind_from_deg, wx.wind_speed_kts, magvar)
+            })
             .map(|r| r.to_string());
 
         // Dewpoint from temperature and the cloud base (the standard
@@ -1225,8 +1324,8 @@ pub(crate) fn query_atc(
             kind: StdString::from(if is_carrier { "carrier" } else { "airbase" }),
             runways,
             active_runway,
-            brc: is_carrier.then(|| carrier_brc(db, obj.kind()) as u16),
-            wind_from_deg: wx.wind_from_deg.round() as u16 % 360,
+            brc: is_carrier.then(|| mag(carrier_brc(db, obj.kind()) as f64)),
+            wind_from_deg: mag(wx.wind_from_deg),
             wind_speed_kts: wx.wind_speed_kts as u16,
             qnh_inhg: wx.qnh_inhg,
             qnh_hpa: wx.qnh_hpa,
@@ -1298,7 +1397,7 @@ pub(crate) fn query_atc(
             let d = obj.pos() - fp;
             let rng = d.magnitude();
             if nearest.as_ref().map_or(true, |(r, _, _)| rng < *r) {
-                let brg = ((d.y.atan2(d.x).to_degrees() + 360.0) % 360.0) as u16;
+                let brg = mag(d.y.atan2(d.x).to_degrees());
                 nearest = Some((rng, brg, format_compact!("{oid}").to_string()));
             }
         }
@@ -1339,4 +1438,21 @@ pub fn schedule_atis(lua: MizLua, slot: SlotId) -> Result<()> {
         Ok(None)
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn magnetic_conversion() {
+        // east variation: magnetic reads lower than true
+        assert!((true_to_magnetic(90.0, 6.5) - 83.5).abs() < 1e-9);
+        assert!((true_to_magnetic(3.0, 6.5) - 356.5).abs() < 1e-9);
+        assert!((true_to_magnetic(355.0, -10.0) - 5.0).abs() < 1e-9);
+        assert_eq!(heading_deg(0.2), 360);
+        assert_eq!(heading_deg(359.6), 360);
+        assert_eq!(theatre_magvar_deg("Caucasus"), Some(6.5));
+        assert_eq!(theatre_magvar_deg("NoSuchMap"), None);
+    }
 }

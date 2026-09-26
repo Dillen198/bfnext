@@ -104,7 +104,7 @@ fn fmt_latlon(lat: f64, lon: f64) -> CompactString {
 }
 
 /// LL and MGRS strings for a map position. `None` if the coord library isn't reachable.
-fn fmt_position(lua: MizLua, pos: Vector2) -> Option<(CompactString, CompactString)> {
+pub(crate) fn fmt_position(lua: MizLua, pos: Vector2) -> Option<(CompactString, CompactString)> {
     let coord = Coord::singleton(lua).ok()?;
     let ll = coord
         .lo_to_ll(LuaVec3(Vector3::new(pos.x, 0.0, pos.y)))

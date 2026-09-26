@@ -104,15 +104,19 @@ impl Aspect {
         if diff > 180.0 {
             diff = 360.0 - diff;
         }
-        // Left/right: 2D cross product of contact heading vector × contact-to-player vector.
-        // In DCS: north=+Z, east=+X, Vector2.x=world_x, Vector2.y=world_z.
+        // Left/right: 2D cross product of the contact's heading and the
+        // contact-to-player vector. DCS world x is NORTH and z is EAST
+        // (`azumith2d` is atan2(z, x)), so Vector2.x = north, Vector2.y = east.
+        // This used to take x as east, which made the product a mix of dot and
+        // cross terms and called left/right by quadrant, not by side.
         let hdg_rad = contact_heading.to_radians();
-        let hx = hdg_rad.sin(); // east component of heading
-        let hz = hdg_rad.cos(); // north component of heading
-        let ctp_x = pos.x - cpos.x;
-        let ctp_z = pos.y - cpos.y; // Vector2.y is world Z
-        // cross > 0 → player is to the LEFT of contact's heading
-        let cross = hx * ctp_z - hz * ctp_x;
+        let h_n = hdg_rad.cos();
+        let h_e = hdg_rad.sin();
+        let d_n = pos.x - cpos.x;
+        let d_e = pos.y - cpos.y;
+        // In an (east, north) frame, > 0 = the player is counter-clockwise of
+        // the heading, i.e. on the contact's LEFT.
+        let cross = h_e * d_n - h_n * d_e;
         let left = cross > 0.0;
         match diff as u32 {
             0..=30   => Aspect::Hot,
@@ -155,7 +159,8 @@ pub const STALE_AGE_SECS: i64 = 60;
 /// Age at which a track is dropped from the table entirely.
 pub const DROP_AGE_SECS: i64 = 120;
 
-pub const HEADER: &'static str = "     BRG      RNG      ALT      SPD        HDG      AGE  ASPECT    SRC";
+/// BRG and HDG are magnetic in the text report (see `Ewr::where_chicken`).
+pub const HEADER: &'static str = "   BRG°M      RNG      ALT      SPD      HDG°M      AGE  ASPECT    SRC";
 
 impl fmt::Display for GibBraa {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -201,7 +206,7 @@ impl GibBraa {
             }
             EwrUnits::Imperial => {
                 self.range = self.range / 1852;
-                self.altitude = (self.altitude as f64 * 3.38084) as u32;
+                self.altitude = (self.altitude as f64 * 3.28084) as u32;
                 self.speed = ((((self.speed as f64) * 1.94384) / 100.0).round() * 100.0) as u16;
                 if self.altitude < 1000 {
                     self.altitude = ((self.altitude as f64 / 100.0).round() * 100.0) as u32;
@@ -506,6 +511,9 @@ pub struct Ewr {
     /// Live voice GCI: recent ejections for "chute observed" calls.
     /// `(2D pos, EJECTED PILOT side, time)`.
     ejections: Vec<(Vector2, Side, DateTime<Utc>)>,
+    /// Magnetic variation (degrees, east positive), refreshed each
+    /// `update_tracks`, for the magnetic bearings in the text BRAA report.
+    magvar_deg: f64,
 }
 
 /// Per-SAM-site engagement doctrine state (see Ewr::decide_hot_state).
@@ -556,6 +564,7 @@ impl Ewr {
         ewr_mode: EwrMode,
         ewr_delay: u32,
     ) -> Result<()> {
+        self.magvar_deg = crate::atis::magnetic_variation_deg(lua, &db.ephemeral.cfg);
         let radar_physics = db.ephemeral.cfg.radar_physics.clone();
         let iadn_cfg = db.ephemeral.cfg.iadn.clone();
         let mut rng = rand::thread_rng();
@@ -1679,6 +1688,14 @@ impl Ewr {
             return reports;
         }
         let ownship = EnId::Player(*ucid);
+        // The text report is read by pilots, so bearing and heading are
+        // magnetic (aspect is relative, computed from the true pair first).
+        // The voice GCI path (`gci_contacts`) stays true: bfdb works in true.
+        let magvar = self.magvar_deg;
+        let mag = |true_deg: f64| {
+            let d = crate::atis::true_to_magnetic(true_deg, magvar).round() as u16 % 360;
+            if d == 0 { 360 } else { d }
+        };
         tracks.retain(|tucid, track| {
             let age = (now - track.last).num_seconds();
             let include = (friendly && track.side == side) || (!friendly && track.side != side);
@@ -1692,9 +1709,9 @@ impl Ewr {
                 let aspect = Aspect::compute(bearing, heading, pos, cpos);
                 reports.push(GibBraa {
                     range: range as u32,
-                    heading: heading as u16,
-                    altitude: altitude as u32,
-                    bearing: bearing as u16,
+                    heading: mag(heading),
+                    altitude: altitude.max(0.0) as u32,
+                    bearing: mag(bearing),
                     age: age as u16,
                     speed: speed as u16,
                     aspect,
@@ -2009,5 +2026,47 @@ impl Ewr {
             })
             .map(|(_, t)| Vector2::new(t.pos.p.x, t.pos.p.z))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Vector2 is (north, east). A contact at the origin heading north.
+    fn aspect_of(player: Vector2) -> Aspect {
+        let cpos = Vector2::new(0., 0.);
+        let bearing = radians_to_degrees(azumith2d_to(player, cpos));
+        Aspect::compute(bearing, 0., player, cpos)
+    }
+
+    #[test]
+    fn aspect_sides() {
+        // player due west of a north-bound contact is off its LEFT wing
+        assert_eq!(aspect_of(Vector2::new(0., -10_000.)), Aspect::BeamLeft);
+        assert_eq!(aspect_of(Vector2::new(0., 10_000.)), Aspect::BeamRight);
+        assert_eq!(aspect_of(Vector2::new(10_000., 0.)), Aspect::Hot);
+        assert_eq!(aspect_of(Vector2::new(-10_000., 0.)), Aspect::Cold);
+        assert_eq!(aspect_of(Vector2::new(10_000., -7_000.)), Aspect::FlankLeft);
+        assert_eq!(aspect_of(Vector2::new(10_000., 7_000.)), Aspect::FlankRight);
+    }
+
+    #[test]
+    fn imperial_altitude() {
+        let mut b = GibBraa {
+            bearing: 0,
+            range: 0,
+            altitude: 3048,
+            heading: 0,
+            speed: 0,
+            age: 0,
+            aspect: Aspect::Hot,
+            units: EwrUnits::Metric,
+            stale: false,
+            detected_by: DetectedBy::GROUND,
+            converted: false,
+        };
+        b.convert(EwrUnits::Imperial);
+        assert_eq!(b.altitude, 10_000);
     }
 }
