@@ -6405,14 +6405,14 @@
     "cap_templates_red": [
       { "template": "RCAPMIG29", "weight": 4, "min_threat": 0 },
       { "template": "RCAPJ11A", "weight": 4, "min_threat": 3 },
-      { "template": "RCAPSU33", "weight": 2, "min_threat": 3 },
+      { "template": "RCAPJF17", "weight": 2, "min_threat": 3 },
       { "template": "RCAPMIG31", "weight": 5, "min_threat": 5 }
     ],
     "cap_templates_blue": [
       { "template": "BCAPF18C", "weight": 4, "min_threat": 0 },
       { "template": "BCAPF16C", "weight": 4, "min_threat": 3 },
       { "template": "BCAPF14BU", "weight": 2, "min_threat": 3 },
-      { "template": "BCAPF15C", "weight": 5, "min_threat": 5 }
+      { "template": "BCAPF15E", "weight": 5, "min_threat": 5 }
     ],
     "cap_duration_secs": 600,
     "cap_altitude_m": 8000,

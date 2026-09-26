@@ -41,6 +41,13 @@ pub fn side_color(side: Side, a: f32) -> Color {
     }
 }
 
+/// JTAC laser overlays (bearing line, laser code). Deliberately NOT a side
+/// colour: a JTAC target sits on the enemy's ground, and drawing it in the
+/// lasing side's colour made players read the site underneath as that side's.
+pub fn laser(a: f32) -> Color {
+    Color::new(1., 0.9, 0.2, a)
+}
+
 /// Background plate for map text. Without it the glyph colour is doing all the
 /// work and legibility depends entirely on what terrain happens to be behind
 /// the label; with it, any side colour reads on any map.

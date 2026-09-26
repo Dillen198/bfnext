@@ -34,7 +34,7 @@ use dcso3::{
     object::{DcsObject, DcsOid},
     unit::{ClassUnit, Unit},
 };
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use netidx::utils::Either;
 use serde_derive::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
@@ -348,30 +348,122 @@ impl Db {
         }
     }
 
+    /// The bill for a flight: (label, count, points each) per line -- the
+    /// airframe first, then every priced store on the aircraft -- and whether
+    /// the cost is strictly enforced. `None` when points are off.
+    fn flight_cost_items(
+        &self,
+        sifo: &SlotInfo,
+        unit: &Unit,
+    ) -> Result<Option<(SmallVec<[(CompactString, u32, u32); 8]>, bool)>> {
+        let Some(points) = self.ephemeral.cfg.points.as_ref() else {
+            return Ok(None);
+        };
+        let mut items: SmallVec<[(CompactString, u32, u32); 8]> = smallvec![];
+        let airframe = *points.airframe_cost.get(&sifo.typ).unwrap_or(&0);
+        items.push((format_compact!("{}", sifo.typ), 1, airframe));
+        if !points.weapon_cost.is_empty() {
+            for ammo in unit.get_ammo().context("getting ammo")? {
+                let ammo = ammo.context("unwrapping ammo")?;
+                let typ = ammo.type_name().context("getting ammo type name")?;
+                if let Some(each) = points.weapon_cost.get(&typ) {
+                    let n = ammo.count().context("getting ammo count")?;
+                    // DCS's display name ("AIM-120C AMRAAM") reads better than
+                    // the type key ("AIM_120C") the price list is keyed by.
+                    let label = match ammo.display_name() {
+                        Ok(d) if !d.trim().is_empty() => format_compact!("{}", d.trim()),
+                        _ => format_compact!("{typ}"),
+                    };
+                    items.push((label, n, *each));
+                }
+            }
+        }
+        Ok(Some((items, points.strict)))
+    }
+
     fn compute_flight_cost(&self, sifo: &SlotInfo, unit: &Unit) -> Result<(u32, bool, String)> {
         use std::fmt::Write;
         let mut m = String::from("");
-        match self.ephemeral.cfg.points.as_ref() {
+        match self.flight_cost_items(sifo, unit)? {
             None => Ok((0, false, m)),
-            Some(points) => {
-                let mut cost = *points.airframe_cost.get(&sifo.typ).unwrap_or(&0);
-                write!(m, "{cost} for {}", sifo.typ).unwrap();
-                if !points.weapon_cost.is_empty() {
-                    for ammo in unit.get_ammo().context("getting ammo")? {
-                        let ammo = ammo.context("unwrapping ammo")?;
-                        let typ = ammo.type_name().context("getting ammo type name")?;
-                        info!("ammo of type {typ} loaded");
-                        if let Some(unit_cost) = points.weapon_cost.get(&typ) {
-                            let n = ammo.count().context("getting ammo count")?;
-                            let wcost = n * (*unit_cost);
-                            write!(m, ", {wcost} for {n}x{typ}").unwrap();
-                            cost += wcost;
-                        }
+            Some((items, strict)) => {
+                let mut cost = 0;
+                for (i, (label, n, each)) in items.iter().enumerate() {
+                    let c = n * each;
+                    cost += c;
+                    if i == 0 {
+                        write!(m, "{c} for {label}").unwrap();
+                    } else {
+                        write!(m, ", {c} for {n}x{label}").unwrap();
                     }
                 }
-                Ok((cost, points.strict, m))
+                Ok((cost, strict, m))
             }
         }
+    }
+
+    /// The panel shown when a pilot starts to taxi: an itemised bill, what
+    /// they can pay with, and -- when the cost is enforced and they can't
+    /// cover it -- a plain warning not to take off, because takeoff then
+    /// destroys the aircraft. `fund` is the base they are sitting at and its
+    /// points, which `takeoff` also lets pay for the flight.
+    fn flight_cost_panel(
+        &self,
+        sifo: &SlotInfo,
+        unit: &Unit,
+        balance: i32,
+        fund: Option<(&str, i32)>,
+    ) -> Result<Option<CompactString>> {
+        use std::fmt::Write;
+        let Some((items, strict)) = self.flight_cost_items(sifo, unit)? else {
+            return Ok(None);
+        };
+        let total: u32 = items.iter().map(|(_, n, each)| n * each).sum();
+        if total == 0 {
+            return Ok(None);
+        }
+        let mut m = format_compact!("FLIGHT COST\n");
+        for (i, (label, n, each)) in items.iter().enumerate() {
+            let c = n * each;
+            if i == 0 {
+                let _ = write!(m, "  {label} airframe: {c}\n");
+            } else if c > 0 {
+                let _ = write!(m, "  {n} x {label}: {c}  ({each} each)\n");
+            }
+        }
+        let _ = write!(m, "  TOTAL: {total}\n");
+        let fund_pts = fund.map(|(_, p)| p.max(0)).unwrap_or(0);
+        let available = balance.max(0) + fund_pts;
+        let _ = write!(m, "Your points: {balance}");
+        if let Some((name, p)) = fund {
+            let _ = write!(m, "  |  {name} base fund: {p}");
+        }
+        let total = total as i32;
+        if strict && total > available {
+            let _ = write!(
+                m,
+                "\n\n!! NOT ENOUGH POINTS -- DO NOT TAKE OFF !!\n\
+                 You are {} short. Taking off will DESTROY your aircraft.\n\
+                 Unload weapons at the rearm menu or pick a cheaper airframe.",
+                total - available
+            );
+        } else if total > balance.max(0) {
+            match fund {
+                Some((name, _)) if strict || fund_pts > 0 => {
+                    let _ = write!(
+                        m,
+                        "\n{} of it will come out of the {name} base fund.",
+                        total - balance.max(0)
+                    );
+                }
+                _ => {
+                    let _ = write!(m, "\nThis takes you to {} points.", balance - total);
+                }
+            }
+        } else {
+            let _ = write!(m, "\nAfter takeoff: {} points.", balance - total);
+        }
+        Ok(Some(m))
     }
 
     pub fn takeoff(
@@ -1030,7 +1122,9 @@ impl Db {
                                 });
                             }
                             Err(e) => {
-                                warn!(
+                                // a shot-down player's unit is gone before the
+                                // Dead event arrives; the kill is still recorded
+                                info!(
                                     "updating player positions, skipping invalid unit {ucid:?}, {id:?}, player {e:?}",
                                 );
                                 dead.push(id.clone())
@@ -1045,15 +1139,19 @@ impl Db {
                     .slot_info
                     .get(&slot)
                     .ok_or_else(|| anyhow!("could not find slot {:?}", slot))?;
-                let (cost, strict, cost_msg) = self.compute_flight_cost(sifo, &unit)?;
-                if cost > 0 {
-                    let m = if strict && cost as i32 > balance {
-                        format_compact!(
-                            "Your flight will cost {cost}, and you have {balance}. {cost_msg}"
-                        )
-                    } else {
-                        format_compact!("Your flight will cost {cost}. {cost_msg}")
-                    };
+                // The base the pilot is taxiing out of pays whatever their
+                // own points don't -- `takeoff` counts it, so the warning has
+                // to as well or it cries wolf at every well-funded base.
+                let side = self.persisted.players.get(ucid).map(|p| p.side);
+                let pos = Vector2::new(unit.get_point()?.x, unit.get_point()?.z);
+                let fund = self
+                    .persisted
+                    .objectives
+                    .into_iter()
+                    .find(|(_, o)| Some(o.owner) == side && o.zone.contains(pos))
+                    .map(|(_, o)| (o.name.clone(), o.points));
+                let fund = fund.as_ref().map(|(n, p)| (n.as_str(), *p));
+                if let Some(m) = self.flight_cost_panel(sifo, &unit, balance, fund)? {
                     self.ephemeral.panel_to_player(&self.persisted, 60, ucid, m)
                 }
             }

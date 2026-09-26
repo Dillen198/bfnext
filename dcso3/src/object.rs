@@ -170,6 +170,12 @@ impl<'lua> Object<'lua> {
         Ok(self.t.call_method("inAir", ())?)
     }
 
+    /// Coalition of a CoalitionObject (unit, static, weapon, airbase). Errors
+    /// for a scenery object, which has none.
+    pub fn get_coalition(&self) -> Result<crate::coalition::Side> {
+        Ok(self.t.call_method("getCoalition", ())?)
+    }
+
     pub fn is_exist(&self) -> Result<bool> {
         Ok(self.t.call_method("isExist", ())?)
     }

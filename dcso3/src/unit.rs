@@ -154,12 +154,36 @@ impl<'lua> Unit<'lua> {
         Ok(self.t.call_method("getCallsign", ())?)
     }
 
-    pub fn get_life(&self) -> Result<i32> {
+    /// Current hit points. DCS returns a fraction for a damaged unit (0.4 of
+    /// a hit point is a real value), so this is a float -- reading it as an
+    /// integer truncated a badly damaged but living unit to 0 and called it
+    /// dead.
+    pub fn get_life(&self) -> Result<f64> {
         Ok(self.t.call_method("getLife", ())?)
     }
 
-    pub fn get_life0(&self) -> Result<i32> {
+    pub fn get_life0(&self) -> Result<f64> {
         Ok(self.t.call_method("getLife0", ())?)
+    }
+
+    /// Animation argument `arg` of the unit's 3D model, usually 0..1 (gear,
+    /// tailhook, refuelling probe, flaps). Argument numbers are per model --
+    /// check them in the DCS Model Viewer. Aircraft args replicate to a
+    /// dedicated server; a carrier's arresting-wire args do not.
+    pub fn get_draw_argument_value(&self, arg: i64) -> Result<f64> {
+        Ok(self.t.call_method("getDrawArgumentValue", arg)?)
+    }
+
+    pub fn get_coalition(&self) -> Result<crate::coalition::Side> {
+        Ok(self.t.call_method("getCoalition", ())?)
+    }
+
+    pub fn get_country(&self) -> Result<crate::country::Country> {
+        Ok(self.t.call_method("getCountry", ())?)
+    }
+
+    pub fn has_attribute(&self, attr: &str) -> Result<bool> {
+        Ok(self.t.call_method("hasAttribute", attr)?)
     }
 
     pub fn get_fuel(&self) -> Result<f32> {
@@ -237,7 +261,7 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
-        if t.get_life()? <= 0 {
+        if t.get_life()? < 1. {
             debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
@@ -261,7 +285,7 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
-        if self.get_life()? <= 0 {
+        if self.get_life()? < 1. {
             debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }
@@ -276,7 +300,7 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
             bail!("{} is an invalid unit", id.id)
         }
         // work around DCS bug that results in isExist => true for dead units
-        if self.get_life()? <= 0 {
+        if self.get_life()? < 1. {
             debug!("{} is dead", id.id);
             bail!("{} is dead", id.id)
         }

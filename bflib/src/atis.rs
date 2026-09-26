@@ -1,5 +1,5 @@
 use crate::{db::Db, Context};
-use anyhow::Result;
+use anyhow::{bail, Result};
 use bfprotocols::{
     cfg::UnitTag,
     db::objective::ObjectiveKind,
@@ -12,26 +12,67 @@ use dcso3::{
     net::SlotId,
     object::{DcsObject as _, DcsOid},
     timer::Timer,
+    HooksLua,
     LuaEnv,
     MizLua,
     Vector2,
 };
-use log::error;
+use log::{error, info};
 use mlua::prelude::*;
+use std::{
+    collections::HashMap,
+    fmt::Write as _,
+    sync::{OnceLock, RwLock},
+};
+
+// The ATIS is built to agree, number for number, with DCSServerBot's
+// `-atis` / slot-entry ATIS (plugins/mission/lua/commands.lua getWeatherInfo +
+// getAirbases, rendered by plugins/mission/atis.py), because players get both
+// and any disagreement reads as "the engine ATIS is wrong":
+//
+// - temperature and QFE are DCS's own atmosphere model sampled AT THE FIELD
+//   (atmosphere.getTemperatureAndPressure at the airdrome reference point and
+//   terrain height), not the mission's sea-level season temperature / an ISA
+//   reduction of the mission QNH;
+// - QNH is that QFE plus elevation * 0.12017 hPa/m, the bot's reduction;
+// - the surface wind in static weather is the mission's `atGround` wind
+//   (what DCS's own briefing and the bot's Weather.getGroundWindAtPoint
+//   report), not atmosphere.getWind at some height above the field -- that
+//   blends in the 2000 m layer over high terrain and disagreed by 20-30 deg;
+// - clouds are the mission's layer as authored (base MSL + thickness), or the
+//   preset's METAR text from Config/Effects/clouds.lua;
+// - visibility is the mission visibility, overridden by the live fog distance;
+// - code, position, MGRS, tower frequencies, runway names and runway heading
+//   come from the terrain's airdrome table, which only the hooks lua state can
+//   read, so it is harvested there at mission load (`harvest_airdromes`).
 
 pub(crate) struct WeatherData {
     pub(crate) wind_from_deg: f64,
     pub(crate) wind_speed_kts: f64,
+    wind_speed_ms: f64,
+    /// true when the surface wind was sampled live (dynamic weather); false
+    /// when it is the mission's authored `atGround` wind (static weather).
+    wind_live: bool,
     pub(crate) qnh_inhg: f64,
     pub(crate) qnh_hpa: f64,
+    qfe_hpa: f64,
     pub(crate) temp_c: f64,
+    /// Cloud base, metres MSL, as the mission authors it.
     pub(crate) cloud_base_m: f64,
+    cloud_thickness_m: Option<f64>,
     pub(crate) cloud_density: u8,
     cloud_preset: Option<compact_str::CompactString>,
+    has_cloud_table: bool,
     pub(crate) precip: bool,
     pub(crate) visibility_m: f64,
     ground_elev_m: f64,
     winds_aloft: Vec<AltitudeWind>,
+}
+
+impl WeatherData {
+    fn has_clouds(&self) -> bool {
+        self.cloud_preset.is_some() || self.cloud_density > 0
+    }
 }
 
 pub struct AltitudeWind {
@@ -41,19 +82,27 @@ pub struct AltitudeWind {
     pub temp_c: f64,
 }
 
-// Standard levels reported in a winds-aloft brief.
+// Standard levels reported in a winds-aloft brief, feet MSL.
 const WINDS_ALOFT_LEVELS_FT: [u32; 6] = [3000, 6000, 9000, 12000, 18000, 24000];
 const M_TO_FT: f64 = 3.28084;
-// DCS doesn't expose a real altitude-temperature profile via the Lua API,
-// so aloft temps are the surface temp plus the standard ISA lapse rate
-// (~1.98C/1000ft). Winds aloft come from atmosphere.getWind at each
-// level's world Y, which DCS does model accurately.
-const ISA_LAPSE_C_PER_FT: f64 = 0.00198;
-// Standard meteorological surface-wind reference height. Also keeps the
-// getWind query clear of the terrain mesh, which returns a zero vector for a
-// point sampled at or below ground level.
+const MS_TO_KTS: f64 = 1.94384;
+const HPA_TO_INHG: f64 = 0.0295300586467;
+const HPA_TO_MMHG: f64 = 0.7500637554192;
+const MMHG_TO_HPA: f64 = 1.33322;
+const M_PER_SM: f64 = 1609.344;
+/// DCSServerBot's QFE -> QNH reduction, hPa per metre of field elevation.
+const QFE_TO_QNH_HPA_PER_M: f64 = 0.12017;
+/// Fallback only, when DCS's own temperature at a level can't be read.
+const ISA_LAPSE_C_PER_M: f64 = 0.0065;
+// Only used when the weather is dynamic and there is no authored ground wind:
+// the standard surface-wind reference height, which also keeps the getWind
+// query clear of the terrain mesh (a point at or below ground returns zero).
 const SURFACE_WIND_AGL_M: f64 = 10.0;
+/// How far an objective may sit from the terrain's airdrome reference point
+/// and still be treated as that airdrome.
+const AIRDROME_MATCH_M: f64 = 10_000.0;
 
+/// Wind at a world point: (meteorological FROM bearing, true; speed m/s).
 fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
     let globals = lua.inner().globals();
     let atmosphere: LuaTable = globals.raw_get("atmosphere")?;
@@ -69,48 +118,107 @@ fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
     let wind_x: f64 = wind.get("x")?; // north component
     let wind_z: f64 = wind.get("z")?; // east component
     let wind_speed_ms = (wind_x * wind_x + wind_z * wind_z).sqrt();
-    let wind_speed_kts = wind_speed_ms * 1.944;
     let wind_from_deg = (-wind_z).atan2(-wind_x).to_degrees().rem_euclid(360.0);
-    Ok((wind_from_deg, wind_speed_kts))
+    Ok((wind_from_deg, wind_speed_ms))
+}
+
+/// DCS's own temperature (C) and pressure (Pa) at a world point.
+fn temp_pressure_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
+    let atmosphere: LuaTable = lua.inner().globals().raw_get("atmosphere")?;
+    let pt = lua.inner().create_table()?;
+    pt.set("x", x)?;
+    pt.set("y", y)?;
+    pt.set("z", z)?;
+    let (t, p): (f64, f64) = atmosphere.call_function("getTemperatureAndPressure", pt)?;
+    if !(p > 0.0) {
+        bail!("getTemperatureAndPressure returned no pressure ({p})");
+    }
+    // The mission API documents Kelvin; the gui API returns Celsius. Accept
+    // either rather than report a 296 degree day.
+    let t_c = if t > 150.0 { t - 273.15 } else { t };
+    Ok((t_c, p))
+}
+
+/// Live fog visibility, metres; 0 when there is no fog.
+fn fog_visibility_m(lua: MizLua) -> Option<f64> {
+    let world: LuaTable = lua.inner().globals().raw_get("world").ok()?;
+    let weather: LuaTable = world.raw_get("weather").ok()?;
+    weather
+        .call_function::<_, f64>("getFogVisibilityDistance", ())
+        .ok()
 }
 
 pub(crate) fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<WeatherData> {
     let globals = lua.inner().globals();
 
-    // Ground elevation at this point -- DCS's y coordinate is height above
-    // the map's sea-level datum, not height-above-ground, so querying wind
-    // at a hardcoded y=0.0 asks for wind at sea level. Anywhere the terrain
-    // itself sits above sea level, that point is underground, and
-    // atmosphere.getWind() returns a zero vector there instead of the
-    // configured surface wind. Querying at *exactly* the terrain height hits
-    // the same problem (the point is on/inside the mesh), which is why ATIS
-    // was reporting a dead calm over a 15 kt mission wind -- offset the query
-    // to the 10 m standard surface-wind reference height instead.
+    // Terrain height at the point. For an airfield this is called with the
+    // airdrome reference point, so it is the same field elevation the bot
+    // reports (Terrain.GetHeight at that point).
     let ground_elev_m = dcso3::land::Land::singleton(lua)
         .and_then(|land| land.get_height(dcso3::LuaVec2(dcso3::Vector2::new(pos_x, pos_z))))
         .unwrap_or(0.0);
-    let (wind_from_deg, wind_speed_kts) =
-        wind_at(lua, pos_x, ground_elev_m + SURFACE_WIND_AGL_M, pos_z)?;
 
     let env_tbl: LuaTable = globals.raw_get("env")?;
     let mission: LuaTable = env_tbl.raw_get("mission")?;
     let wx: LuaTable = mission.raw_get("weather")?;
-    let qnh_mmhg: f64 = wx.get("qnh").unwrap_or(760.0);
-    let qnh_inhg = qnh_mmhg / 25.4;
-    let qnh_hpa = qnh_mmhg * 1.33322;
 
-    let season: LuaTable = wx.raw_get("season")?;
-    let temp_c: f64 = season.get("temperature").unwrap_or(15.0);
+    // Surface wind. Static weather (atmosphere_type 0): the authored ground
+    // wind, whose `dir` is the direction the air blows TOWARD, so FROM is
+    // dir + 180 -- exactly what DCS's briefing and the bot show. Dynamic
+    // weather has no meaningful authored value, so sample DCS live.
+    let static_atmo = wx
+        .get::<_, Option<f64>>("atmosphere_type")
+        .ok()
+        .flatten()
+        .unwrap_or(0.0)
+        == 0.0;
+    let authored_ground = if static_atmo {
+        wx.get::<_, LuaTable>("wind")
+            .and_then(|w| w.get::<_, LuaTable>("atGround"))
+            .ok()
+            .and_then(|g| Some((g.get::<_, f64>("dir").ok()?, g.get::<_, f64>("speed").ok()?)))
+    } else {
+        None
+    };
+    let (wind_from_deg, wind_speed_ms, wind_live) = match authored_ground {
+        Some((dir, spd)) => ((dir + 180.0).rem_euclid(360.0), spd.max(0.0), false),
+        None => {
+            let (d, s) = wind_at(lua, pos_x, ground_elev_m + SURFACE_WIND_AGL_M, pos_z)?;
+            (d, s, true)
+        }
+    };
 
-    let clouds: Option<LuaTable> = wx.raw_get("clouds").ok();
+    // Temperature and pressure at the field, from DCS's atmosphere.
+    let qnh_mmhg_miz: f64 = wx.get("qnh").unwrap_or(760.0);
+    let season_temp_c: f64 = wx
+        .get::<_, LuaTable>("season")
+        .and_then(|s| s.get("temperature"))
+        .unwrap_or(15.0);
+    let (temp_c, qfe_hpa) = match temp_pressure_at(lua, pos_x, ground_elev_m, pos_z) {
+        Ok((t_c, p_pa)) => (t_c, p_pa / 100.0),
+        Err(e) => {
+            log::debug!("[ATIS] getTemperatureAndPressure failed, using ISA from the mission: {e:?}");
+            let qnh = qnh_mmhg_miz * MMHG_TO_HPA;
+            (
+                season_temp_c - ISA_LAPSE_C_PER_M * ground_elev_m,
+                qnh * (1.0 - 0.0065 * ground_elev_m / 288.15).powf(5.25588),
+            )
+        }
+    };
+    let qnh_hpa = qfe_hpa + ground_elev_m * QFE_TO_QNH_HPA_PER_M;
+    let qnh_inhg = qnh_hpa * HPA_TO_INHG;
+
+    let clouds: Option<LuaTable> = wx.raw_get::<_, Option<LuaTable>>("clouds").ok().flatten();
+    let has_cloud_table = clouds.is_some();
     let cloud_base_m: f64 = clouds
         .as_ref()
         .and_then(|c| c.get("base").ok())
         .unwrap_or(3000.0);
+    let cloud_thickness_m: Option<f64> = clouds.as_ref().and_then(|c| c.get("thickness").ok());
     let cloud_density: u8 = clouds
         .as_ref()
         .and_then(|c| c.get::<_, f64>("density").ok())
-        .map(|d| d.round() as u8)
+        .map(|d| d.round().clamp(0.0, 10.0) as u8)
         .unwrap_or(0);
     let cloud_preset: Option<compact_str::CompactString> = clouds
         .as_ref()
@@ -124,47 +232,306 @@ pub(crate) fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<Weath
         .unwrap_or(false)
         || cloud_preset.as_deref().is_some_and(|p| p.starts_with("Rainy"));
 
-    // Fog / visibility
-    let fog_enabled: bool = wx.get("enable_fog").unwrap_or(false);
-    let visibility_m: f64 = if fog_enabled {
-        wx.raw_get::<_, LuaTable>("fog")
-            .ok()
-            .and_then(|f| f.get::<_, f64>("visibility").ok())
-            .unwrap_or(10000.0)
-            .min(10000.0)
-    } else {
-        10000.0
-    };
+    // Visibility: the mission's, unless fog is up (the bot does the same).
+    let mut visibility_m: f64 = wx
+        .get::<_, LuaTable>("visibility")
+        .and_then(|v| v.get("distance"))
+        .unwrap_or(80_000.0);
+    match fog_visibility_m(lua) {
+        Some(v) if v > 0.0 => visibility_m = v,
+        Some(_) => (),
+        None => {
+            if wx.get::<_, bool>("enable_fog").unwrap_or(false) {
+                if let Some(v) = wx
+                    .raw_get::<_, LuaTable>("fog")
+                    .ok()
+                    .and_then(|f| f.get::<_, f64>("visibility").ok())
+                    .filter(|v| *v > 0.0)
+                {
+                    visibility_m = visibility_m.min(v);
+                }
+            }
+        }
+    }
 
+    // Winds and temperatures aloft at standard MSL levels, both live from
+    // DCS. Levels at or below the field are skipped.
     let winds_aloft = WINDS_ALOFT_LEVELS_FT
         .iter()
         .filter_map(|&alt_ft| {
-            let y = ground_elev_m + alt_ft as f64 / M_TO_FT;
-            let (dir, spd) = wind_at(lua, pos_x, y, pos_z).ok()?;
+            let y = alt_ft as f64 / M_TO_FT;
+            if y < ground_elev_m + 150.0 {
+                return None;
+            }
+            let (dir, spd_ms) = wind_at(lua, pos_x, y, pos_z).ok()?;
+            let t = temp_pressure_at(lua, pos_x, y, pos_z)
+                .map(|(t, _)| t)
+                .unwrap_or(temp_c - (y - ground_elev_m) * ISA_LAPSE_C_PER_M);
             Some(AltitudeWind {
                 alt_ft,
                 wind_from_deg: dir,
-                wind_speed_kts: spd,
-                temp_c: temp_c - alt_ft as f64 * ISA_LAPSE_C_PER_FT,
+                wind_speed_kts: spd_ms * MS_TO_KTS,
+                temp_c: t,
             })
         })
         .collect();
 
     Ok(WeatherData {
         wind_from_deg,
-        wind_speed_kts,
+        wind_speed_kts: wind_speed_ms * MS_TO_KTS,
+        wind_speed_ms,
+        wind_live,
         qnh_inhg,
         qnh_hpa,
+        qfe_hpa,
         temp_c,
         cloud_base_m,
+        cloud_thickness_m,
         cloud_density,
         cloud_preset,
+        has_cloud_table,
         precip,
         visibility_m,
         ground_elev_m,
         winds_aloft,
     })
 }
+
+// ── terrain airdrome table (harvested in the hooks state) ─────────────────
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Airdrome {
+    pub(crate) name: std::string::String,
+    pub(crate) code: Option<std::string::String>,
+    /// Reference point, DCS world x / z.
+    pub(crate) x: f64,
+    pub(crate) z: f64,
+    pub(crate) alt_m: f64,
+    pub(crate) lat: Option<f64>,
+    pub(crate) lon: Option<f64>,
+    pub(crate) mgrs: Option<std::string::String>,
+    pub(crate) freqs_hz: Vec<f64>,
+    /// Runway-end designators as the terrain names them, e.g. ["23L", "05R"].
+    pub(crate) runways: Vec<std::string::String>,
+    /// True heading of the main runway (Terrain.getRunwayHeading), degrees.
+    pub(crate) rwy_heading_deg: Option<f64>,
+    /// The bot's own figures for this field from DCS's Mission-Editor weather
+    /// model: (temperature C, QFE hPa, wind from deg, wind m/s).
+    pub(crate) me_wx: Option<(f64, f64, f64, f64)>,
+}
+
+static AIRDROMES: RwLock<Vec<Airdrome>> = RwLock::new(Vec::new());
+
+// Mirrors DCSServerBot's dcsbot.getAirbases (and DCS's own AirdromeData.lua).
+const HARVEST_AIRDROMES_LUA: &str = r#"
+local okT, Terrain = pcall(require, 'terrain')
+if not okT or not Terrain then return nil end
+local airdromes = Terrain.GetTerrainConfig('Airdromes')
+if not airdromes then return nil end
+local sim = DCS or Sim
+-- The bot's weather numbers come from DCS's Mission-Editor weather model
+-- (Weather.getTemperatureAndPressureAtPoint / getGroundWindAtPoint), run in
+-- this hooks state against the mission's weather table -- not from the live
+-- mission-state atmosphere. Sample the same model here so the two agree.
+local okW, Weather = pcall(require, 'Weather')
+local cur = sim and sim.getCurrentMission and sim.getCurrentMission()
+local mwx = cur and cur.mission and cur.mission.weather
+local wxok = okW and Weather and mwx and pcall(Weather.initAtmospere, mwx)
+local function addFreq(list, f)
+    if type(f) == 'table' then f = f[1] end
+    if type(f) == 'number' then list[#list + 1] = f end
+end
+local out = {}
+for id, a in pairs(airdromes) do
+    if a.reference_point and a.abandoned ~= true then
+        pcall(function()
+            local r = {}
+            r.code = a.code
+            r.name = a.display_name or (a.names and a.names.en) or tostring(id)
+            r.x = a.reference_point.x
+            r.z = a.reference_point.y
+            r.alt = Terrain.GetHeight(r.x, r.z)
+            if wxok then
+                local pos = { x = r.x, y = r.alt, z = r.z }
+                local okP, t, p = pcall(Weather.getTemperatureAndPressureAtPoint, { position = pos })
+                if okP and type(t) == 'number' and type(p) == 'number' then
+                    r.me_temp = t
+                    r.me_qfe = p / 100
+                end
+                local okG, w = pcall(Weather.getGroundWindAtPoint, { position = pos })
+                if okG and type(w) == 'table' and type(w.v) == 'number' and type(w.a) == 'number' then
+                    r.me_wind_ms = w.v
+                    r.me_wind_from = math.deg(w.a + math.pi) % 360
+                end
+            end
+            local okL, lat, lon = pcall(Terrain.convertMetersToLatLon, r.x, r.z)
+            if okL then r.lat = lat; r.lon = lon end
+            local okM, mgrs = pcall(Terrain.GetMGRScoordinates, r.x, r.z)
+            if okM and type(mgrs) == 'string' then r.mgrs = mgrs end
+            local freqs = {}
+            if a.frequency then
+                for _, f in pairs(a.frequency) do addFreq(freqs, f) end
+            elseif a.radio and sim and sim.getATCradiosData then
+                for _, radioId in pairs(a.radio) do
+                    local fs = sim.getATCradiosData(radioId)
+                    if fs then for _, f in pairs(fs) do addFreq(freqs, f) end end
+                end
+            end
+            r.freqs = freqs
+            local rw = {}
+            if a.runwayName then
+                for _, n in pairs(a.runwayName) do rw[#rw + 1] = tostring(n) end
+            end
+            r.runways = rw
+            if a.roadnet and Terrain.getRunwayHeading then
+                local okH, h = pcall(Terrain.getRunwayHeading, a.roadnet)
+                if okH and type(h) == 'number' then r.heading = h * 180 / math.pi end
+            end
+            out[#out + 1] = r
+        end)
+    end
+end
+return out
+"#;
+
+/// Read the terrain's airdrome table (code, position, MGRS, tower
+/// frequencies, runway names/heading). Only the hooks lua state has
+/// `require('terrain')`, so this runs from onMissionLoadEnd and the result is
+/// shared with the mission state through a static.
+pub fn harvest_airdromes(lua: HooksLua) -> Result<()> {
+    let v: LuaValue = lua
+        .inner()
+        .load(HARVEST_AIRDROMES_LUA)
+        .set_name("bflib_atis_airdromes")
+        .call(())?;
+    let LuaValue::Table(tbl) = v else {
+        bail!("the terrain airdrome table is not available in this lua state")
+    };
+    let mut out: Vec<Airdrome> = vec![];
+    for r in tbl.sequence_values::<LuaTable>() {
+        let Ok(r) = r else { continue };
+        let seq_f64 = |k: &str| -> Vec<f64> {
+            r.get::<_, Option<LuaTable>>(k)
+                .ok()
+                .flatten()
+                .map(|t| t.sequence_values::<f64>().filter_map(|v| v.ok()).collect())
+                .unwrap_or_default()
+        };
+        let freqs_hz = seq_f64("freqs");
+        let runways: Vec<std::string::String> = r
+            .get::<_, Option<LuaTable>>("runways")
+            .ok()
+            .flatten()
+            .map(|t| {
+                t.sequence_values::<std::string::String>()
+                    .filter_map(|v| v.ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (Ok(x), Ok(z)) = (r.get::<_, f64>("x"), r.get::<_, f64>("z")) else {
+            continue;
+        };
+        out.push(Airdrome {
+            name: r.get::<_, Option<std::string::String>>("name").ok().flatten().unwrap_or_default(),
+            code: r
+                .get::<_, Option<std::string::String>>("code")
+                .ok()
+                .flatten()
+                .filter(|c| !c.is_empty()),
+            x,
+            z,
+            alt_m: r.get::<_, f64>("alt").unwrap_or(0.0),
+            lat: r.get::<_, Option<f64>>("lat").ok().flatten(),
+            lon: r.get::<_, Option<f64>>("lon").ok().flatten(),
+            mgrs: r
+                .get::<_, Option<std::string::String>>("mgrs")
+                .ok()
+                .flatten()
+                .filter(|m| !m.is_empty()),
+            freqs_hz,
+            runways,
+            rwy_heading_deg: r
+                .get::<_, Option<f64>>("heading")
+                .ok()
+                .flatten()
+                .map(|h| h.rem_euclid(360.0)),
+            me_wx: (|| {
+                Some((
+                    r.get::<_, Option<f64>>("me_temp").ok()??,
+                    r.get::<_, Option<f64>>("me_qfe").ok()??,
+                    r.get::<_, Option<f64>>("me_wind_from").ok()??,
+                    r.get::<_, Option<f64>>("me_wind_ms").ok()??,
+                ))
+            })(),
+        });
+    }
+    info!(
+        "[ATIS] harvested {} airdromes from the terrain ({} with Mission-Editor weather)",
+        out.len(),
+        out.iter().filter(|a| a.me_wx.is_some()).count()
+    );
+    *AIRDROMES.write().unwrap_or_else(|e| e.into_inner()) = out;
+    Ok(())
+}
+
+/// The terrain airdrome whose reference point is nearest `(x, z)`.
+fn nearest_airdrome(x: f64, z: f64) -> Option<Airdrome> {
+    let ads = AIRDROMES.read().unwrap_or_else(|e| e.into_inner());
+    ads.iter()
+        .map(|a| (((a.x - x).powi(2) + (a.z - z).powi(2)).sqrt(), a))
+        .filter(|(d, _)| *d <= AIRDROME_MATCH_M)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, a)| a.clone())
+}
+
+// ── cloud presets (Config/Effects/clouds.lua) ─────────────────────────────
+
+/// Preset name -> METAR text, parsed out of the DCS install's clouds.lua the
+/// same way the bot does (the part of `readableName` after "METAR:").
+fn cloud_preset_metar(preset: &str) -> Option<std::string::String> {
+    static PRESETS: OnceLock<HashMap<std::string::String, std::string::String>> = OnceLock::new();
+    PRESETS
+        .get_or_init(|| {
+            let mut candidates = vec![];
+            if let Ok(d) = std::env::current_dir() {
+                candidates.push(d.join("Config").join("Effects").join("clouds.lua"));
+            }
+            if let Some(root) = std::env::current_exe()
+                .ok()
+                .and_then(|e| e.parent()?.parent().map(|p| p.to_path_buf()))
+            {
+                candidates.push(root.join("Config").join("Effects").join("clouds.lua"));
+            }
+            let Some(src) = candidates.iter().find_map(|p| std::fs::read_to_string(p).ok()) else {
+                log::warn!("[ATIS] could not read clouds.lua from {candidates:?}; presets shown by name");
+                return HashMap::new();
+            };
+            let mut map = HashMap::new();
+            let mut current: Option<std::string::String> = None;
+            for line in src.lines() {
+                let t = line.trim();
+                if let Some(name) = t.strip_suffix('=').map(str::trim) {
+                    if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                        current = Some(name.to_string());
+                    }
+                } else if t.starts_with("readableName ") || t.starts_with("readableName=") {
+                    if let (Some(name), Some(i)) = (current.as_ref(), t.find("METAR:")) {
+                        let rest = &t[i + "METAR:".len()..];
+                        let end = rest.find(['\'', '"']).unwrap_or(rest.len());
+                        let metar = rest[..end].trim();
+                        if !metar.is_empty() {
+                            map.insert(name.clone(), metar.to_string());
+                        }
+                    }
+                }
+            }
+            map
+        })
+        .get(preset)
+        .cloned()
+}
+
+// ── runways ────────────────────────────────────────────────────────────────
 
 /// Designator number 01-36 for a heading in degrees.
 fn rwy_num_for(heading: f64) -> i32 {
@@ -180,33 +547,38 @@ fn part_num(part: &str) -> Option<i32> {
         .filter(|n| (1..=36).contains(n))
 }
 
-/// Pick the runway end best aligned with the wind, reported with the real DCS
-/// designator (so it can't name a runway the airfield doesn't have). Falls back
-/// to a heading-derived number only when DCS gives no usable name.
-fn active_runway(
+/// Leading (up to two) digits of a designator, as the bot reads it
+/// (`int(runway[:2])`): "23L" -> 23, "5" -> 5.
+fn designator_num(name: &str) -> Option<i32> {
+    let digits: std::string::String = name
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .take(2)
+        .collect();
+    digits.parse().ok().filter(|n| (1..=36).contains(n))
+}
+
+/// Every runway end DCS reports for the airbase (mission-state getRunways):
+/// (heading_deg, designator, course_aligned). The `course_aligned` flag marks
+/// the end pointing the same way as DCS's own `course` field for that runway
+/// — its "primary" direction, used as the calm-wind tie-break.
+fn runway_ends(
     lua: MizLua,
     airbase_id: &DcsOid<ClassAirbase>,
-    wind_from_deg: f64,
-    wind_speed_kts: f64,
-) -> Option<compact_str::CompactString> {
+) -> Option<Vec<(f64, compact_str::CompactString, bool)>> {
     let ab = Airbase::get_instance(lua, airbase_id).ok()?;
     let ab_name = ab
         .as_object()
         .and_then(|o| o.get_name())
         .map(|n| n.to_string())
         .unwrap_or_default();
-    let ab_callsign = ab.get_callsign().map(|c| c.to_string()).unwrap_or_default();
     let runways = ab.get_runways().ok()?;
-    // Each candidate end: (heading_deg, designator, course_aligned). The
-    // `course_aligned` flag marks the end pointing the same way as DCS's own
-    // `course` field for that runway — its "primary" direction, used as the
-    // calm-wind tie-break.
     let mut ends: Vec<(f64, compact_str::CompactString, bool)> = Vec::new();
     for rwy in runways {
         let Ok(rwy) = rwy else { continue };
         let Ok(course) = rwy.course() else { continue };
         let raw_name = rwy.name().ok();
-        let rwy_pos = rwy.position().ok();
         let c1 = course.to_degrees().rem_euclid(360.0);
         let parts: Vec<compact_str::CompactString> = raw_name
             .as_deref()
@@ -218,14 +590,11 @@ fn active_runway(
                     .collect()
             })
             .unwrap_or_default();
-        // debug, not info: this fires once per runway end per airbase on every
-        // ATIS regeneration -- ~46 fields plus the carriers, every 20 seconds.
-        // At info it was 86% of the whole engine log (90k of 104k lines in a
-        // 3.7h session) and rotated the log file every ~65 seconds, which threw
-        // away the history anything else has to be diagnosed from.
+        // debug, not info: this fires once per runway per airbase on every ATIS
+        // regeneration; at info it once made up 86% of the engine log.
         log::debug!(
-            "[ATIS_RWY] {ab_name} (cs {ab_callsign}): runway name={raw_name:?} \
-             course={course:.4}rad ({c1:.0}deg) pos={rwy_pos:?} parsed_parts={parts:?}"
+            "[ATIS_RWY] {ab_name}: runway name={raw_name:?} course={course:.4}rad \
+             ({c1:.0}deg) parsed_parts={parts:?}"
         );
         // Designators (the number) come from DCS's runway name when it has one;
         // each maps to ~num*10 deg. Only fall back to the raw course heading when
@@ -252,9 +621,24 @@ fn active_runway(
             ends.push((h, label, angle_diff(h, c1) <= 90.0));
         }
     }
+    Some(ends)
+}
+
+/// Pick the runway end best aligned with the wind, reported with the real DCS
+/// designator (so it can't name a runway the airfield doesn't have).
+fn active_runway(
+    lua: MizLua,
+    airbase_id: &DcsOid<ClassAirbase>,
+    wind_from_deg: f64,
+    wind_speed_kts: f64,
+) -> Option<compact_str::CompactString> {
+    let ends = runway_ends(lua, airbase_id)?;
     // Wind ≥ 3 kt: land into it. Calm: use the runway's own primary (course-
     // aligned) direction, then the lower-numbered end as a final tie-break.
-    let calm = wind_speed_kts < 3.0;
+    // Only truly still air has no direction. This was 3 kt, so a 2 kt
+    // northerly at Gudauta fell through to the primary end and called 15
+    // active while the bot (and the wind) said 33.
+    let calm = wind_speed_kts < 0.5;
     let best = ends.iter().min_by(|a, b| {
         if calm {
             b.2.cmp(&a.2).then(a.0.total_cmp(&b.0))
@@ -262,12 +646,58 @@ fn active_runway(
             angle_diff(wind_from_deg, a.0).total_cmp(&angle_diff(wind_from_deg, b.0))
         }
     });
-    log::debug!(
-        "[ATIS_RWY] {ab_name}: wind {wind_from_deg:.0}deg/{wind_speed_kts:.0}kt (calm={calm}) \
-         -> active {:?}",
-        best.map(|(_, l, _)| l)
-    );
     best.map(|(_, l, _)| l.clone())
+}
+
+/// "Runways (# = active): 23L# 238° | 05R 058°". With the terrain's runway
+/// names the active marking is the bot's rule: every end whose designator is
+/// within 90° of the wind it lands into. Headings pair the terrain's main
+/// runway heading with the end it points along.
+fn runways_line(
+    lua: MizLua,
+    ad: Option<&Airdrome>,
+    airbase_id: Option<&DcsOid<ClassAirbase>>,
+    wx: &WeatherData,
+) -> compact_str::CompactString {
+    if let Some(ad) = ad.filter(|a| !a.runways.is_empty()) {
+        let parts: Vec<std::string::String> = ad
+            .runways
+            .iter()
+            .map(|name| {
+                let num = designator_num(name);
+                let mut s = name.clone();
+                if num.is_some_and(|n| angle_diff(wx.wind_from_deg, n as f64 * 10.0) <= 90.0) {
+                    s.push('#');
+                }
+                let hdg = num.and_then(|n| {
+                    let h = ad.rwy_heading_deg?;
+                    [h, (h + 180.0).rem_euclid(360.0)]
+                        .into_iter()
+                        .find(|c| angle_diff(*c, n as f64 * 10.0) <= 45.0)
+                });
+                if let Some(h) = hdg {
+                    let _ = write!(s, " {:03}°", (h.round() as u32) % 360);
+                }
+                s
+            })
+            .collect();
+        return format_compact!("\nRunways (# = active): {}", parts.join(" | "));
+    }
+    // No terrain table: fall back to the mission state's getRunways.
+    let Some(ab_id) = airbase_id else { return Default::default() };
+    let Some(ends) = runway_ends(lua, ab_id) else { return Default::default() };
+    if ends.is_empty() {
+        return Default::default();
+    }
+    let active = active_runway(lua, ab_id, wx.wind_from_deg, wx.wind_speed_kts);
+    let parts: Vec<std::string::String> = ends
+        .iter()
+        .map(|(h, l, _)| {
+            let mark = if active.as_ref() == Some(l) { "#" } else { "" };
+            format!("{l}{mark} {:03}°", (h.round() as u32) % 360)
+        })
+        .collect();
+    format_compact!("\nRunways (# = active): {}", parts.join(" | "))
 }
 
 fn angle_diff(a: f64, b: f64) -> f64 {
@@ -275,48 +705,101 @@ fn angle_diff(a: f64, b: f64) -> f64 {
     if diff > 180.0 { 360.0 - diff } else { diff }
 }
 
-/// Cloud layer line: coverage + base AGL. DCS 2.9 preset weather usually
-/// reports density 0 even with a solid overcast, so fall back to the preset
-/// name when we have one.
-fn clouds_line(wx: &WeatherData) -> compact_str::CompactString {
-    let base_agl_m = (wx.cloud_base_m - wx.ground_elev_m).max(0.0);
-    let base_agl_ft = (base_agl_m * M_TO_FT).round() as i64;
-    let base_agl_m = base_agl_m.round() as i64;
-    let cover = match wx.cloud_density {
-        0 => None,
-        1..=2 => Some("FEW"),
-        3..=4 => Some("SCT"),
-        5..=7 => Some("BKN"),
-        _ => Some("OVC"),
-    };
-    match (cover, wx.cloud_preset.as_deref()) {
-        (Some(c), _) => format_compact!("\nClouds: {c} {base_agl_ft}ft / {base_agl_m}m AGL"),
-        (None, Some(p)) => format_compact!("\nClouds: {p} @ {base_agl_ft}ft / {base_agl_m}m AGL"),
-        (None, None) => compact_str::CompactString::from("\nClouds: SKC"),
+// ── formatting ─────────────────────────────────────────────────────────────
+
+/// 13780 -> "13,780"
+fn thousands(n: i64) -> std::string::String {
+    let digits = n.unsigned_abs().to_string();
+    let mut out = std::string::String::with_capacity(digits.len() + digits.len() / 3 + 1);
+    if n < 0 {
+        out.push('-');
     }
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// N32°42'14" / E036°24'49" (truncated seconds, like the bot).
+fn dms(v: f64, pos: char, neg: char, deg_width: usize) -> std::string::String {
+    let h = if v >= 0.0 { pos } else { neg };
+    let a = v.abs();
+    let d = a.trunc();
+    let m = ((a - d) * 60.0).trunc();
+    let s = (((a - d) * 60.0 - m) * 60.0).trunc().min(59.0);
+    format!("{h}{:0w$}°{:02}'{:02}\"", d as u32, m as u32, s as u32, w = deg_width)
+}
+
+/// Cloud line. A preset shows its METAR text; an authored layer shows base
+/// (MSL, as the mission sets it), thickness and density, as the bot does.
+fn clouds_line(wx: &WeatherData) -> compact_str::CompactString {
+    let base_ft = thousands((wx.cloud_base_m * M_TO_FT + 0.5) as i64);
+    if let Some(p) = wx.cloud_preset.as_deref() {
+        return match cloud_preset_metar(p) {
+            Some(metar) => format_compact!("\nClouds: {metar} (base {base_ft} ft MSL)"),
+            None => format_compact!("\nClouds: preset {p}, base {base_ft} ft MSL"),
+        };
+    }
+    if !wx.has_cloud_table {
+        return compact_str::CompactString::from("\nClouds: n/a");
+    }
+    let thick = wx
+        .cloud_thickness_m
+        .map(|t| format!(" | {} ft thick", thousands((t * M_TO_FT + 0.5) as i64)))
+        .unwrap_or_default();
+    format_compact!(
+        "\nClouds: base {base_ft} ft MSL{thick} | density {}/10{}",
+        wx.cloud_density,
+        if wx.cloud_density == 0 { " (clear)" } else { "" },
+    )
 }
 
 fn visibility_line(vis_m: f64) -> compact_str::CompactString {
-    let sm = vis_m / 1609.344;
     if vis_m >= 10000.0 {
-        compact_str::CompactString::from("\nVisibility: 10km+ / 6SM+")
-    } else if vis_m >= 1000.0 {
-        format_compact!("\nVisibility: {:.1}km / {sm:.1}SM", vis_m / 1000.0)
+        compact_str::CompactString::from("\nVisibility: 10 km (+) / 6 SM (+)")
     } else {
-        format_compact!("\nVisibility: {:.0}m / {sm:.1}SM", vis_m)
+        format_compact!(
+            "\nVisibility: {} m / {:.2} SM",
+            thousands(vis_m as i64),
+            vis_m / M_PER_SM
+        )
     }
 }
 
-/// QFE (pressure at field elevation) from QNH via the ISA barometric formula.
-fn qfe(qnh_hpa: f64, elev_m: f64) -> (f64, f64) {
-    let hpa = qnh_hpa * (1.0 - 0.0065 * elev_m / 288.15).powf(5.25588);
-    (hpa, hpa / 33.8639)
+/// "219° @ 19 kts / 10 m/s"; knots truncated like the bot.
+fn wind_str(wx: &WeatherData) -> compact_str::CompactString {
+    let kts = (wx.wind_speed_ms * MS_TO_KTS) as u32;
+    if kts == 0 {
+        return compact_str::CompactString::from("calm");
+    }
+    format_compact!(
+        "{:03}° @ {kts} kts / {:.0} m/s{}",
+        (wx.wind_from_deg.round() as u32) % 360,
+        wx.wind_speed_ms,
+        // Dynamic weather: sampled live, so it can differ from the bot's.
+        if wx.wind_live { " (live)" } else { "" },
+    )
 }
 
-fn case_advisory(cloud_base_m: f64) -> &'static str {
-    if cloud_base_m < 305.0 {
+/// "1022 hPa | 30.19 inHg | 766 mmHg"; hPa truncated like the bot.
+fn pressure_str(hpa: f64) -> compact_str::CompactString {
+    format_compact!(
+        "{} hPa | {:.2} inHg | {:.0} mmHg",
+        hpa as i64,
+        hpa * HPA_TO_INHG,
+        hpa * HPA_TO_MMHG
+    )
+}
+
+fn case_advisory(wx: &WeatherData) -> &'static str {
+    if !wx.has_clouds() {
+        "CASE I"
+    } else if wx.cloud_base_m < 305.0 {
         "CASE III"
-    } else if cloud_base_m < 914.0 {
+    } else if wx.cloud_base_m < 914.0 {
         "CASE II"
     } else {
         "CASE I"
@@ -343,19 +826,44 @@ fn wind_speed_both(kts: f64) -> compact_str::CompactString {
 }
 
 fn format_winds_aloft(winds: &[AltitudeWind]) -> compact_str::CompactString {
-    use std::fmt::Write;
-    let mut s = compact_str::CompactString::from("\nWinds Aloft:");
+    if winds.is_empty() {
+        return Default::default();
+    }
+    let mut s = compact_str::CompactString::from("\nWinds/Temps Aloft (MSL):");
     for w in winds {
         let alt_m = (w.alt_ft as f64 / M_TO_FT).round() as u32;
         let _ = write!(
             s,
             "\n  {alt:>5}ft/{alt_m}m: {wdir:03}°/{wspd} {temp}",
             alt = w.alt_ft,
-            wdir = w.wind_from_deg as u32,
+            wdir = (w.wind_from_deg.round() as u32) % 360,
             wspd = wind_speed_both(w.wind_speed_kts),
             temp = temp_both(w.temp_c),
         );
     }
+    s
+}
+
+/// The shared surface-weather block: temperature, wind, visibility, clouds,
+/// precipitation, QFE and QNH.
+fn surface_block(wx: &WeatherData, with_qfe: bool) -> compact_str::CompactString {
+    let mut s = format_compact!(
+        "\nTemperature: {}{:.1}°C ({}{:.0}°F)\nSurface Wind: {}{}{}",
+        temp_sign(wx.temp_c),
+        wx.temp_c,
+        temp_sign(c_to_f(wx.temp_c)),
+        c_to_f(wx.temp_c),
+        wind_str(wx),
+        visibility_line(wx.visibility_m),
+        clouds_line(wx),
+    );
+    if wx.precip {
+        s.push_str("\nPrecipitation: yes");
+    }
+    if with_qfe {
+        let _ = write!(s, "\nQFE: {}", pressure_str(wx.qfe_hpa));
+    }
+    let _ = write!(s, "\nQNH: {}", pressure_str(wx.qnh_hpa));
     s
 }
 
@@ -398,6 +906,135 @@ pub(crate) fn carrier_brc(db: &Db, kind: &ObjectiveKind) -> u32 {
 
 /// Returns `Ok(true)` if a report was sent, `Ok(false)` if there was no slot
 /// context to build one from (caller can fall back to a general brief).
+/// Swap in the bot's own numbers for a field -- DCS's Mission-Editor weather
+/// model sampled at the airdrome reference point (see HARVEST_AIRDROMES_LUA)
+/// -- and derive QNH the bot's way, so the two ATIS panels players get on
+/// spawn agree to the hPa. The live atmosphere stays the fallback.
+fn apply_me_weather(wx: &mut WeatherData, ad: &Airdrome) {
+    let Some((temp_c, qfe_hpa, wind_from, wind_ms)) = ad.me_wx else { return };
+    wx.temp_c = temp_c;
+    wx.qfe_hpa = qfe_hpa;
+    wx.qnh_hpa = qfe_hpa + ad.alt_m * QFE_TO_QNH_HPA_PER_M;
+    wx.qnh_inhg = wx.qnh_hpa * HPA_TO_INHG;
+    wx.wind_from_deg = wind_from;
+    wx.wind_speed_ms = wind_ms;
+    wx.wind_speed_kts = wind_ms * MS_TO_KTS;
+    wx.wind_live = false;
+    wx.ground_elev_m = ad.alt_m;
+}
+
+/// The airfield ATIS in DCSServerBot's layout, line for line, so the two
+/// panels a player gets on spawn read the same: title, Code, Position
+/// (lat | lon | MGRS), Altitude, Tower Frequencies, Runways (# = active),
+/// Heading, Temperature, Surface Wind, Visibility, Cloud Cover, QFE, QNH.
+fn bot_layout_atis(
+    lua: MizLua,
+    obj_name: &str,
+    ad: Option<&Airdrome>,
+    ab_id: Option<&DcsOid<ClassAirbase>>,
+    wx: &WeatherData,
+    px: f64,
+    pz: f64,
+) -> compact_str::CompactString {
+    const RULE: &str = "\n==============================";
+    let title = format_compact!("ATIS-REPORT FOR {}", obj_name.to_uppercase());
+    let mut m = format_compact!("{title}\n{}", "=".repeat(title.chars().count()));
+    if let Some(code) = ad.and_then(|a| a.code.as_deref()) {
+        let _ = write!(m, "\nCode: {code}");
+    }
+    let ll = ad.and_then(|a| Some((a.lat?, a.lon?))).or_else(|| {
+        dcso3::coord::Coord::singleton(lua)
+            .ok()?
+            .lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(px, wx.ground_elev_m, pz)))
+            .ok()
+            .map(|l| (l.latitude, l.longitude))
+    });
+    if let Some((lat, lon)) = ll {
+        let mgrs = ad.and_then(|a| a.mgrs.clone()).or_else(|| {
+            let g = dcso3::coord::Coord::singleton(lua).ok()?.ll_to_mgrs(lat, lon).ok()?;
+            Some(format!(
+                "{} {} {:05} {:05}",
+                g.utm_zone,
+                g.mgrs_digraph,
+                g.easting as u32 % 100_000,
+                g.northing as u32 % 100_000
+            ))
+        });
+        let _ = write!(m, "\nPosition: {} | {}", dms(lat, 'N', 'S', 2), dms(lon, 'E', 'W', 3));
+        if let Some(mgrs) = mgrs {
+            let _ = write!(m, " | {mgrs}");
+        }
+    }
+    let _ = write!(m, "\nAltitude: {} ft", (wx.ground_elev_m * M_TO_FT) as i64);
+    m.push_str(RULE);
+    if let Some(a) = ad.filter(|a| !a.freqs_hz.is_empty()) {
+        let f: Vec<std::string::String> =
+            a.freqs_hz.iter().map(|hz| format!("{:.3} MHz", hz / 1_000_000.0)).collect();
+        let _ = write!(m, "\nTower Frequencies: {}", f.join(" | "));
+    }
+    match ad.filter(|a| !a.runways.is_empty()) {
+        Some(a) => {
+            // The bot's rule: every end within 90 deg of the wind is active.
+            let parts: Vec<std::string::String> = a
+                .runways
+                .iter()
+                .map(|name| {
+                    let active = designator_num(name)
+                        .is_some_and(|n| angle_diff(wx.wind_from_deg, n as f64 * 10.0) <= 90.0);
+                    if active { format!("{name}#") } else { name.clone() }
+                })
+                .collect();
+            let _ = write!(m, "\nRunways (# = active): {}", parts.join(" | "));
+            if let Some(h) = a.rwy_heading_deg {
+                let _ = write!(
+                    m,
+                    "\nHeading: {}° | {}°",
+                    ((h + 180.0).rem_euclid(360.0)) as u32,
+                    (h as u32) % 360
+                );
+            }
+        }
+        None => m.push_str(&runways_line(lua, None, ab_id, wx)),
+    }
+    m.push_str(RULE);
+    let _ = write!(m, "\nTemperature: {:.2}° C", wx.temp_c);
+    let kts = (wx.wind_speed_ms * MS_TO_KTS) as u32;
+    let dir = match (wx.wind_from_deg.round() as u32) % 360 {
+        0 => 360,
+        d => d,
+    };
+    let _ = write!(
+        m,
+        "\nSurface Wind: {dir}° @ {kts} kts{}",
+        if wx.wind_live { " (live)" } else { "" }
+    );
+    m.push_str(&visibility_line(wx.visibility_m));
+    match wx.cloud_preset.as_deref() {
+        Some(p) => {
+            let _ = write!(
+                m,
+                "\nCloud Cover: {}",
+                cloud_preset_metar(p).unwrap_or_else(|| p.to_string())
+            );
+        }
+        None if wx.has_cloud_table && wx.cloud_density > 0 => {
+            let _ = write!(
+                m,
+                "\nClouds: Base {} ft | Thickness {} ft",
+                thousands((wx.cloud_base_m * M_TO_FT + 0.5) as i64),
+                thousands((wx.cloud_thickness_m.unwrap_or(0.0) * M_TO_FT + 0.5) as i64)
+            );
+        }
+        None => m.push_str("\nClouds: n/a"),
+    }
+    if wx.precip {
+        m.push_str("\nPrecipitation: yes");
+    }
+    let _ = write!(m, "\nQFE: {} hPa | {:.2} inHg", wx.qfe_hpa as i64, wx.qfe_hpa * HPA_TO_INHG);
+    let _ = write!(m, "\nQNH: {} hPa | {:.2} inHg", wx.qnh_hpa as i64, wx.qnh_hpa * HPA_TO_INHG);
+    m
+}
+
 fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
     let ctx = unsafe { Context::get_mut() };
 
@@ -413,81 +1050,52 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
 
     let pos = obj.pos();
     let obj_name = obj.name().to_string();
-    let wx = fetch_weather(lua, pos.x as f64, pos.y as f64)?;
-    // Diagnostic: compare our computed FROM bearing with the .miz authored wind
-    // (which stores the TOWARD direction). computed_from should ~= authored + 180.
-    if let Ok(authored) = lua
-        .inner()
-        .globals()
-        .raw_get::<_, LuaTable>("env")
-        .and_then(|e| e.raw_get::<_, LuaTable>("mission"))
-        .and_then(|m| m.raw_get::<_, LuaTable>("weather"))
-        .and_then(|w| w.raw_get::<_, LuaTable>("wind"))
-        .and_then(|w| w.raw_get::<_, LuaTable>("atGround"))
-    {
-        let a_dir: f64 = authored.get("dir").unwrap_or(-1.0);
-        let a_spd: f64 = authored.get("speed").unwrap_or(-1.0);
-        log::info!(
-            "[ATIS_WIND] {obj_name}: authored atGround dir(TOWARD)={a_dir:.0} speed={a_spd:.1}m/s \
-             -> expected FROM={:.0}; computed FROM={:.0} speed={:.1}kt",
-            (a_dir + 180.0).rem_euclid(360.0),
-            wx.wind_from_deg,
-            wx.wind_speed_kts,
-        );
-    }
-    let aloft_str = if full { format_winds_aloft(&wx.winds_aloft) } else { compact_str::CompactString::default() };
 
-    let mut msg: compact_str::CompactString = if obj.kind().is_carrier_group() {
+    let msg: compact_str::CompactString = if obj.kind().is_carrier_group() {
+        let wx = fetch_weather(lua, pos.x, pos.y)?;
         let brc_deg = carrier_brc(&ctx.db, obj.kind());
-        let case = case_advisory(wx.cloud_base_m);
-        format_compact!(
-            "CARRIER ATIS - {name}\nBRC: {brc:03}°\nWind: {wdir:03}° at {wind} | Deck: {wind}\n\
-             QNH: {inhg:.2} inHg / {hpa:.0} hPa / {mmhg:.0} mmHg\nTemp: {temp}\nRecovery: {case}",
-            name = obj.name(),
+        let mut m = format_compact!(
+            "CARRIER ATIS - {name}\nBRC: {brc:03}°\nRecovery: {case}",
+            name = obj_name.to_uppercase(),
             brc = brc_deg,
-            wdir = wx.wind_from_deg as u32,
-            wind = wind_speed_both(wx.wind_speed_kts),
-            inhg = wx.qnh_inhg,
-            hpa = wx.qnh_hpa,
-            mmhg = wx.qnh_hpa / 1.33322,
-            temp = temp_both(wx.temp_c),
-            case = case,
-        )
+            case = case_advisory(&wx),
+        );
+        m.push_str(&surface_block(&wx, false));
+        if full {
+            m.push_str(&format_winds_aloft(&wx.winds_aloft));
+        }
+        m
     } else if obj.kind().is_airbase() {
-        let rwy_str = ctx
-            .db
-            .ephemeral
-            .get_airbase_by_oid(&oid)
-            .and_then(|ab_id| active_runway(lua, ab_id, wx.wind_from_deg, wx.wind_speed_kts))
-            .map(|r| format_compact!("\nActive RWY: {}", r))
-            .unwrap_or_default();
-        let elev_ft = (wx.ground_elev_m * M_TO_FT).round() as i64;
-        let elev_m = wx.ground_elev_m.round() as i64;
-        let (qfe_hpa, qfe_inhg) = qfe(wx.qnh_hpa, wx.ground_elev_m);
-        format_compact!(
-            "ATIS - {name}\nField elev: {elev_ft}ft / {elev_m}m{rwy}\nWind: {wdir:03}° at {wind}\n\
-             QNH: {inhg:.2} inHg / {hpa:.0} hPa / {mmhg:.0} mmHg\n\
-             QFE: {qfe_inhg:.2} inHg / {qfe_hpa:.0} hPa / {qfe_mmhg:.0} mmHg\n\
-             Temp: {temp}{clouds}{vis}{precip}",
-            name = obj.name(),
-            wdir = wx.wind_from_deg as u32,
-            wind = wind_speed_both(wx.wind_speed_kts),
-            inhg = wx.qnh_inhg,
-            hpa = wx.qnh_hpa,
-            mmhg = wx.qnh_hpa / 1.33322,
-            qfe_hpa = qfe_hpa,
-            qfe_inhg = qfe_inhg,
-            qfe_mmhg = qfe_hpa / 1.33322,
-            temp = temp_both(wx.temp_c),
-            clouds = clouds_line(&wx),
-            vis = visibility_line(wx.visibility_m),
-            precip = if wx.precip { "\nPrecipitation: yes" } else { "" },
-            rwy = rwy_str,
-        )
+        // Weather is taken at the airdrome reference point, the same point the
+        // bot samples, so elevation, temperature and QFE line up with it.
+        let ad = nearest_airdrome(pos.x, pos.y);
+        let (px, pz) = ad.as_ref().map(|a| (a.x, a.z)).unwrap_or((pos.x, pos.y));
+        let mut wx = fetch_weather(lua, px, pz)?;
+        if let Some(a) = ad.as_ref() {
+            apply_me_weather(&mut wx, a);
+        }
+        if log::log_enabled!(log::Level::Debug) {
+            let live = wind_at(lua, px, wx.ground_elev_m + SURFACE_WIND_AGL_M, pz).ok();
+            log::debug!(
+                "[ATIS_WIND] {obj_name} (airdrome {:?}): elev {:.1}m; surface {:.0}/{:.1}kt \
+                 (live={}); getWind @10m AGL {:?}",
+                ad.as_ref().map(|a| (a.name.as_str(), a.alt_m)),
+                wx.ground_elev_m,
+                wx.wind_from_deg,
+                wx.wind_speed_kts,
+                wx.wind_live,
+                live.map(|(d, s)| (d.round(), (s * MS_TO_KTS).round())),
+            );
+        }
+        let ab_id = ctx.db.ephemeral.get_airbase_by_oid(&oid);
+        let mut m = bot_layout_atis(lua, &obj_name, ad.as_ref(), ab_id, &wx, px, pz);
+        if full {
+            m.push_str(&format_winds_aloft(&wx.winds_aloft));
+        }
+        m
     } else {
         return Ok(false);
     };
-    msg.push_str(&aloft_str);
 
     ctx.db.ephemeral.msgs().panel_to_group(30, false, miz_gid, msg);
     Ok(true)
@@ -497,20 +1105,13 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
 /// context (e.g. the F10 "Weather" item used from the map or a ground slot).
 pub fn send_weather_brief(lua: MizLua, gid: GroupId, pos: Vector2) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
-    let wx = fetch_weather(lua, pos.x as f64, pos.y as f64)?;
-    let msg = format_compact!(
-        "WEATHER (general)\nWind: {wdir:03}° at {wind}\n\
-         QNH: {inhg:.2} inHg / {hpa:.0} hPa / {mmhg:.0} mmHg\nTemp: {temp}{clouds}{vis}{precip}",
-        wdir = wx.wind_from_deg as u32,
-        wind = wind_speed_both(wx.wind_speed_kts),
-        inhg = wx.qnh_inhg,
-        hpa = wx.qnh_hpa,
-        mmhg = wx.qnh_hpa / 1.33322,
-        temp = temp_both(wx.temp_c),
-        clouds = clouds_line(&wx),
-        vis = visibility_line(wx.visibility_m),
-        precip = if wx.precip { "\nPrecipitation: yes" } else { "" },
+    let wx = fetch_weather(lua, pos.x, pos.y)?;
+    let mut msg = format_compact!(
+        "WEATHER (general)\nElevation: {} ft / {} m",
+        (wx.ground_elev_m * M_TO_FT) as i64,
+        wx.ground_elev_m.round() as i64
     );
+    msg.push_str(&surface_block(&wx, true));
     ctx.db.ephemeral.msgs().panel_to_group(30, false, gid, msg);
     Ok(())
 }
@@ -573,11 +1174,19 @@ pub(crate) fn query_atc(
             continue;
         }
         let pos = obj.pos();
-        let Ok(wx) = fetch_weather(lua, pos.x, pos.y) else {
+        // Same sample point as the text ATIS: the airdrome reference point.
+        let (px, pz) = if is_carrier {
+            (pos.x, pos.y)
+        } else {
+            nearest_airdrome(pos.x, pos.y)
+                .map(|a| (a.x, a.z))
+                .unwrap_or((pos.x, pos.y))
+        };
+        let Ok(wx) = fetch_weather(lua, px, pz) else {
             continue;
         };
         let (lat, lon) = to_ll(pos.x, pos.y);
-        let (qfe_hpa, qfe_inhg) = qfe(wx.qnh_hpa, wx.ground_elev_m);
+        let (qfe_hpa, qfe_inhg) = (wx.qfe_hpa, wx.qfe_hpa * HPA_TO_INHG);
 
         // Runways, straight from DCS — no per-map table needed.
         let ab = db.ephemeral.get_airbase_by_oid(oid);
@@ -604,7 +1213,8 @@ pub(crate) fn query_atc(
 
         // Dewpoint from temperature and the cloud base (the standard
         // spread/lapse approximation — DCS models no humidity of its own).
-        let dewpoint_c = wx.temp_c - (wx.cloud_base_m.max(0.0) * M_TO_FT / 1000.0) * 4.4 / 2.5;
+        let base_agl_m = (wx.cloud_base_m - wx.ground_elev_m).max(0.0);
+        let dewpoint_c = wx.temp_c - (base_agl_m * M_TO_FT / 1000.0) * 4.4 / 2.5;
 
         airfields.push(AtcAirfield {
             id: format_compact!("{oid}").to_string(),
@@ -616,22 +1226,25 @@ pub(crate) fn query_atc(
             runways,
             active_runway,
             brc: is_carrier.then(|| carrier_brc(db, obj.kind()) as u16),
-            wind_from_deg: wx.wind_from_deg as u16,
+            wind_from_deg: wx.wind_from_deg.round() as u16 % 360,
             wind_speed_kts: wx.wind_speed_kts as u16,
             qnh_inhg: wx.qnh_inhg,
             qnh_hpa: wx.qnh_hpa,
             qfe_inhg,
             qfe_hpa,
-            temp_c: wx.temp_c as i16,
+            temp_c: wx.temp_c.round() as i16,
             dewpoint_c: dewpoint_c as i16,
             visibility_m: wx.visibility_m as u32,
-            cloud_base_ft: (wx.cloud_base_m > 0.0).then(|| (wx.cloud_base_m * M_TO_FT) as i32),
-            cloud_cover: wx.cloud_preset.as_ref().map(|p| p.to_string()),
+            cloud_base_ft: (wx.has_clouds() && wx.cloud_base_m > 0.0)
+                .then(|| (wx.cloud_base_m * M_TO_FT) as i32),
+            cloud_cover: wx.cloud_preset.as_ref().map(|p| {
+                cloud_preset_metar(p).unwrap_or_else(|| p.to_string())
+            }),
             precipitation: wx.precip,
-            recovery_case: is_carrier.then(|| match wx.cloud_base_m * M_TO_FT {
-                b if b >= 3000.0 => 1u8,
-                b if b >= 1000.0 => 2,
-                _ => 3,
+            recovery_case: is_carrier.then(|| match case_advisory(&wx) {
+                "CASE III" => 3u8,
+                "CASE II" => 2,
+                _ => 1,
             }),
             logi: obj.logi(),
             health: obj.health(),

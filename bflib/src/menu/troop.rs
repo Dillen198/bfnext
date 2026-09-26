@@ -77,6 +77,38 @@ fn load_troops(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
     Ok(())
 }
 
+/// What a freshly dropped squad will do about the nearest enemy or neutral
+/// objective, or `None` when there is none close enough to be the point.
+fn capture_hint(
+    db: &crate::db::Db,
+    side: Side,
+    tr: &bfprotocols::cfg::Troop,
+    tgid: &bfprotocols::db::group::GroupId,
+) -> Option<compact_str::CompactString> {
+    let pos = db.group_center(tgid).ok()?;
+    let (dist, _, obj) =
+        crate::db::Db::objective_near_point(&db.persisted.objectives, pos, |o| o.owner != side)?;
+    let name = obj.name();
+    let edge = dist - obj.radius();
+    if edge > 5_000. {
+        return None;
+    }
+    Some(if !tr.can_capture {
+        format_compact!("{} troops can't capture -- bring a squad that can to take {name}", tr.name)
+    } else if !obj.contains(pos) {
+        format_compact!(
+            "these troops are {:.0}m outside {name}'s ring -- they only capture from inside it",
+            edge.max(1.)
+        )
+    } else if obj.captureable() {
+        format_compact!("troops are in {name}'s ring -- keep them alive to capture it")
+    } else {
+        format_compact!(
+            "troops are in {name}'s ring, but it isn't capturable yet -- see Objectives > Capture Advisor"
+        )
+    })
+}
+
 fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
@@ -92,6 +124,13 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
 
             let msg = format_compact!("{player} dropped {} troops into the field", tr.name);
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
+            // Tell the crew straight away whether this drop can take anything.
+            // Players reported landing troops by a CAPTURABLE label and
+            // watching nothing happen -- outside the ring, at their own base,
+            // or with a squad type that can't capture -- with no hint which.
+            if let Some(hint) = capture_hint(&ctx.db, side, &tr, &tgid) {
+                ctx.db.ephemeral.msgs().panel_to_group(15, false, gid, hint);
+            }
         }
         Err(e) => ctx
             .db

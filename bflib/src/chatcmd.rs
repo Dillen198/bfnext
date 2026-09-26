@@ -19,9 +19,10 @@ use bfprotocols::{
 use chrono::{Duration, prelude::*};
 use compact_str::{CompactString, format_compact};
 use dcso3::{
-    HooksLua, LuaEnv, MizLua, String,
+    HooksLua, LuaEnv, MizLua, String, Vector2,
     coalition::Side,
     net::{Net, PlayerId},
+    world::World,
 };
 use fxhash::FxBuildHasher;
 use indexmap::IndexMap;
@@ -228,7 +229,7 @@ fn time_command(ctx: &mut Context, id: PlayerId, now: DateTime<Utc>) {
     }
 }
 
-fn weather_command(ctx: &mut Context, lua: HooksLua, id: PlayerId) {
+fn weather_command(ctx: &mut Context, _lua: HooksLua, id: PlayerId) {
     if let Some(bw) = ctx.bot_weather {
         let cover = if bw.cloud_density > 0.0 { format!("{:.0}/10", bw.cloud_density) } else { "clear".to_string() };
         let msg = format!(
@@ -251,9 +252,7 @@ fn weather_command(ctx: &mut Context, lua: HooksLua, id: PlayerId) {
         );
         return;
     };
-    if let Err(e) = crate::atis::send_full_weather(MizLua(lua.inner()), slot) {
-        error!("full weather report failed for {:?}: {:?}", id, e);
-    }
+    ctx.weather_requests.push((id, slot));
 }
 
 fn balance_command(ctx: &mut Context, id: PlayerId) {
@@ -504,93 +503,99 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
 }
 
 fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHasher>, id: PlayerId) {
+    // Printed as the literal command, because players copy these lines: the
+    // old `JTAC Drone: <key>` form was typed back as `-action "JTAC Drone: 1"`.
+    ctx.db.ephemeral.msgs().send(
+        MsgTyp::Chat(Some(id)),
+        "<key> is the text of an F10 map mark you placed, e.g. -action JTAC Drone M1",
+    );
     for (name, action) in actions {
         let msg = match &action.kind {
             ActionKind::Attackers(_) => Some(format_compact!(
-                "{name}: <key> | Spawn ai attackers. cost {}",
+                "-action {name} <key> | Spawn ai attackers. cost {}",
                 action.cost
             )),
             ActionKind::AttackersWaypoint => Some(format_compact!(
-                "{name}: <group> <key> | Move ai attackers. cost {}",
+                "-action {name} <group> <key> | Move ai attackers. cost {}",
                 action.cost
             )),
             ActionKind::Sead(_) => Some(format_compact!(
-                "{name}: <key> | Spawn ai sead units. cost {}",
+                "-action {name} <key> | Spawn ai sead units. cost {}",
                 action.cost
             )),
             ActionKind::SeadWaypoint => Some(format_compact!(
-                "{name}: <group> <key> | Move ai sead units. cost {}",
+                "-action {name} <group> <key> | Move ai sead units. cost {}",
                 action.cost
             )),
             ActionKind::Move(_) => Some(format_compact!(
-                "{name}: <group> <key> | Move a ground unit. cost {}",
+                "-action {name} <group> <key> | Move a ground unit. cost {}",
                 action.cost
             )),
             ActionKind::Rtb => Some(format_compact!(
-                "{name}: <group> <key> | RTB an air asset manually. cost {}",
+                "-action {name} <group> <key> | RTB an air asset manually. cost {}",
                 action.cost
             )),
             ActionKind::Awacs(_) => Some(format_compact!(
-                "{name}: <key> | Spawn an awacs at key, a mark point. cost {}",
+                "-action {name} <key> | Spawn an awacs at key, a mark point. cost {}",
                 action.cost
             )),
             ActionKind::AwacsWaypoint => Some(format_compact!(
-                "{name}: <group> <key> | Move an awacs to key, a mark point. Group is the awacs group. cost {}",
+                "-action {name} <group> <key> | Move an awacs to key, a mark point. Group is the awacs group. cost {}",
                 action.cost
             )),
             ActionKind::Bomber(_) => None,
             ActionKind::CruiseMissileSpawn(_) => Some(format_compact!(
-                "{name}: <key> | Spawn a cruise missile bomber at key, a mark point. cost {}",
+                "-action {name} <key> | Spawn a cruise missile bomber at key, a mark point. cost {}",
                 action.cost
             )),
             ActionKind::CruiseMissileWaypoint => Some(format_compact!(
-                "{name}: <group> <key> | Move a cruise missile bomber to key, a mark point. Group is the bomber group. cost {}",
+                "-action {name} <group> <key> | Move a cruise missile bomber to key, a mark point. Group is the bomber group. cost {}",
                 action.cost
             )),
             ActionKind::Deployable(d) => Some(format_compact!(
-                "{name}: <key> | Ai deploy a {} at key a mark point. cost {}",
+                "-action {name} <key> | Ai deploy a {} at key a mark point. cost {}",
                 d.name,
                 action.cost
             )),
             ActionKind::Drone(_) => Some(format_compact!(
-                "{name}: <key> | Spawn a drone at key a mark point. cost {}",
+                "-action {name} <key> | Spawn a drone at key a mark point. cost {}",
                 action.cost
             )),
             ActionKind::DroneWaypoint => Some(format_compact!(
-                "{name}: <group> <key> | Move a drone to key, a mark point. Group is the drone group. cost {}",
+                "-action {name} <group> <key> | Move a drone to key, a mark point. Group is the drone group. cost {}",
                 action.cost
             )),
             ActionKind::FighersWaypoint => Some(format_compact!(
-                "{name}: <group> <key> | Move an a figher group to key, a mark point. Group is the fighter group. cost {}",
+                "-action {name} <group> <key> | Move an a figher group to key, a mark point. Group is the fighter group. cost {}",
                 action.cost
             )),
             ActionKind::Fighters(_) => Some(format_compact!(
-                "{name}: <key> | Spawn ai fighters at key, a mark point. cost {}",
+                "-action {name} <key> | Spawn ai fighters at key, a mark point. cost {}",
                 action.cost
             )),
             ActionKind::LogisticsRepair(_) => Some(format_compact!(
-                "{name}: <objective> | Start a logistics repair mission to objective. cost {}",
+                "-action {name} <objective> | Start a logistics repair mission to objective. cost {}",
                 action.cost
             )),
             ActionKind::LogisticsTransfer(_) => Some(format_compact!(
-                "{name}: <from> <to> | Start a logistics transfer mission between from and to. cost {}",
+                "-action {name} <from> <to> | Start a logistics transfer mission between from and to. cost {}",
                 action.cost
             )),
             ActionKind::Nuke(_) => Some(format_compact!(
-                "{name}: <key> | Nuke key, a mark point. cost {}",
+                "-action {name} <key> | Nuke key, a mark point. cost {}",
                 action.cost
             )),
             ActionKind::Paratrooper(d) => Some(format_compact!(
-                "{name}: <key> | Drop {} troops at key, a mark point. cost {}",
+                "-action {name} <key> | Drop {} troops at key, a mark point. cost {}",
                 d.name,
                 action.cost
             )),
             ActionKind::Tanker(_) => Some(format_compact!(
-                "{name}: <key> | Spawn a tanker at key, a mark point. cost {}",
+                "-action {name} <key> | Spawn a tanker at key, a mark point. cost {}",
                 action.cost
             )),
             ActionKind::TankerWaypoint => Some(format_compact!(
-                "{name}: <group> <key> | Move a tanker to key. Group is the tanker group. cost {}",
+                "-action {name} <group> <key> | Move a tanker to key. Group is the tanker group. cost {}",
                 action.cost
             )),
             ActionKind::CarrierWaypoint => None,
@@ -598,15 +603,15 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
             ActionKind::CarrierRespawn => None,
             ActionKind::NavalCruiseMissileStrike(_) => None,
             ActionKind::Artillery(_) => Some(format_compact!(
-                "{name}: <key> | Request artillery fire support at key, a mark point. cost {}",
+                "-action {name} <key> | Request artillery fire support at key, a mark point. cost {}",
                 action.cost
             )),
             ActionKind::Recon(_) => Some(format_compact!(
-                "{name}: <key> | Dispatch a recon flight over key, a mark point. cost {}",
+                "-action {name} <key> | Dispatch a recon flight over key, a mark point. cost {}",
                 action.cost
             )),
             ActionKind::AddTask(c) => Some(format_compact!(
-                "{name}: <type> <key> | Post a task at key, a mark point. types: {}. cost {}",
+                "-action {name} <type> <key> | Post a task at key, a mark point. types: {}. cost {}",
                 c.types
                     .iter()
                     .map(|t| t.name.as_str())
@@ -615,7 +620,7 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
                 action.cost
             )),
             ActionKind::RemoveTask(_) => Some(format_compact!(
-                "{name}: <task id> | Remove a task from the coalition board. cost {}",
+                "-action {name} <task id> | Remove a task from the coalition board. cost {}",
                 action.cost
             )),
         };
@@ -736,6 +741,10 @@ fn jtac_command(ctx: &mut Context, id: PlayerId, s: &str) {
             .ephemeral
             .msgs()
             .send(MsgTyp::Chat(Some(id)), " -jtac <id> smoke");
+        ctx.db.ephemeral.msgs().send(
+            MsgTyp::Chat(Some(id)),
+            " -jtac <id> focus [<mark text>|clear]: lase near your latest (or the named) map mark",
+        );
         ctx.db
             .ephemeral
             .msgs()
@@ -859,6 +868,32 @@ fn run_jtac_command(
                 menu::jtac::call_bomber(lua, arg)?
             }
         }
+    } else if let Some(s) = cmd.strip_prefix("focus") {
+        // `focus` = my latest map mark, `focus clear`, or `focus <key>` = the
+        // side's map mark with that text.
+        let key = s.trim();
+        let pos = if key.eq_ignore_ascii_case("clear") {
+            None
+        } else if key.is_empty() {
+            match menu::jtac::latest_player_mark(ctx, lua, &ucid)? {
+                Some(p) => Some(p),
+                None => error!("place an F10 map mark first, or -jtac {jtid} focus <mark text>"),
+            }
+        } else {
+            let mut found: SmallVec<[Vector2; 2]> = smallvec![];
+            for mk in World::singleton(lua)?.get_mark_panels()? {
+                let mk = mk?;
+                if mk.side.is_match(&side) && mk.text.trim() == key {
+                    found.push(Vector2::new(mk.pos.0.x, mk.pos.0.z));
+                }
+            }
+            match found.len() {
+                1 => Some(found[0]),
+                0 => error!("no map mark with the text {key}"),
+                n => error!("{n} map marks say {key}, make it unique"),
+            }
+        };
+        menu::jtac::jtac_set_focus(lua, &ucid, jtid, pos)?;
     } else if let Some(s) = cmd.strip_prefix("code ") {
         let code = match s.parse::<u16>() {
             Ok(c) => c,

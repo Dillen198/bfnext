@@ -330,6 +330,16 @@ impl<'a> Iterator for ContactsIter<'a> {
     }
 }
 
+/// Furthest a JTAC will lase, whatever its spotting range. A Reaper spots out
+/// to 90 km, and with the priority list ranking SAMs first it used to put
+/// the spot on an SA-10 fifty miles away while tanks sat under it. Contacts
+/// past this are still seen and reported, just never lased. 10 nm.
+const JTAC_MAX_LASE_M: f64 = 18_520.;
+
+/// Radius around a player's focus mark that a focused JTAC lases inside
+/// (~3 miles, the request was "within 2-3 miles of the marker").
+pub const JTAC_FOCUS_RADIUS_M: f64 = 5_000.;
+
 #[derive(Debug, Clone)]
 pub struct Jtac {
     gid: JtId,
@@ -351,6 +361,14 @@ pub struct Jtac {
     air: bool,
     building_target: Option<BuildingTarget>,
     building_idx: usize,
+    /// Player-set point the JTAC should work around (F10 "Focus on My Mark" /
+    /// `-jtac <id> focus`). While set, only contacts within
+    /// `JTAC_FOCUS_RADIUS_M` of it are lased, nearest to it first.
+    focus: Option<Vector2>,
+    /// How many of the (sorted) contacts are lasable: in lase range, and
+    /// inside the focus area if there is one. They are always the first
+    /// `lasable` entries of `contacts`, see `sort_contacts`.
+    lasable: usize,
 }
 
 impl Jtac {
@@ -424,6 +442,8 @@ impl Jtac {
             air,
             building_target: None,
             building_idx: 0,
+            focus: None,
+            lasable: 0,
         }
     }
 
@@ -873,7 +893,10 @@ impl Jtac {
     }
 
     pub fn shift(&mut self, db: &mut Db, lua: MizLua) -> Result<bool> {
-        if self.contacts.is_empty() {
+        // Only cycles the lasable contacts -- the ones out of range or
+        // outside the focus area are sorted after them.
+        let n = self.lasable;
+        if n == 0 {
             return Ok(false);
         }
         let i = match (self.autoshift, &self.target) {
@@ -881,7 +904,7 @@ impl Jtac {
             (None, Some(target)) => match self.contacts.get_index_of(&target.id) {
                 None => 0,
                 Some(i) => {
-                    if i < self.contacts.len() - 1 {
+                    if i + 1 < n {
                         i + 1
                     } else {
                         0
@@ -889,7 +912,7 @@ impl Jtac {
                 }
             },
             (Some(i), _) => {
-                if i < self.contacts.len() - 1 {
+                if i + 1 < n {
                     i + 1
                 } else {
                     0
@@ -915,8 +938,16 @@ impl Jtac {
         Ok(false)
     }
 
+    fn lase_limit_m(&self) -> f64 {
+        self.lase_range_m.min(JTAC_MAX_LASE_M)
+    }
+
+    /// Order the contacts lasable first, then by the priority list, then
+    /// nearest first (to the focus mark if there is one, else to the JTAC).
+    /// The priority list used to be the ONLY key, so a top-priority SAM at
+    /// the edge of a drone's 90 km spotting range beat every closer target.
     fn sort_contacts(&mut self, db: &mut Db, lua: MizLua) -> Result<bool> {
-        let plist = &self.priority;
+        let plist = self.priority.clone();
         let priority = |tags: UnitTags| {
             plist
                 .iter()
@@ -925,20 +956,74 @@ impl Jtac {
                 .map(|(i, _)| i)
                 .unwrap_or(plist.len())
         };
-        self.contacts
-            .sort_by(|_, ct0, _, ct1| priority(ct0.tags).cmp(&priority(ct1.tags)));
-        // Auto-acquire the top-priority contact when in auto mode, OR any time
-        // we have contacts but no target at all (e.g. the manually-shifted
+        let jpos = self.location.pos;
+        let anchor = self.focus.unwrap_or(jpos);
+        let lase2 = self.lase_limit_m().powi(2);
+        let focus2 = JTAC_FOCUS_RADIUS_M.powi(2);
+        let focused = self.focus.is_some();
+        let key = |ct: &Contact| {
+            let p = Vector2::new(ct.pos.x, ct.pos.z);
+            let from_anchor = (p - anchor).norm_squared();
+            let lasable =
+                (p - jpos).norm_squared() <= lase2 && (!focused || from_anchor <= focus2);
+            (!lasable, priority(ct.tags), from_anchor)
+        };
+        self.contacts.sort_by(|_, ct0, _, ct1| {
+            let (l0, p0, d0) = key(ct0);
+            let (l1, p1, d1) = key(ct1);
+            l0.cmp(&l1).then(p0.cmp(&p1)).then(d0.total_cmp(&d1))
+        });
+        self.lasable = self.contacts.values().take_while(|ct| !key(ct).0).count();
+        let mut target_idx = self
+            .target
+            .as_ref()
+            .and_then(|t| self.contacts.get_index_of(&t.id));
+        // The target drove out of range or out of the focus area: drop it and
+        // let auto re-acquire, rather than holding a spot the JTAC can't make.
+        if let Some(ti) = target_idx {
+            if ti >= self.lasable {
+                self.remove_target(db, lua)?;
+                self.autoshift = None;
+                target_idx = None;
+            }
+        }
+        // Auto-acquire the top contact when in auto mode, OR any time we have
+        // lasable contacts but no target at all (e.g. the manually-shifted
         // target just died/left -- don't sit on "no target" while enemies are
         // still in view).
-        if !self.contacts.is_empty() && (self.autoshift.is_none() || self.target.is_none()) {
-            let i = match self.autoshift {
-                Some(i) if i < self.contacts.len() => i,
+        if self.lasable > 0 && (self.autoshift.is_none() || self.target.is_none()) {
+            let i = match (self.autoshift, target_idx) {
+                (Some(i), _) if i < self.lasable => i,
+                // Stay on the current target while it is still as important
+                // as the best one. Distance is now a sort key, so without this
+                // two tanks rolling past each other would swap the spot -- and
+                // redraw the map marks -- every update.
+                (None, Some(ti))
+                    if priority(self.contacts[ti].tags) == priority(self.contacts[0].tags) =>
+                {
+                    ti
+                }
                 _ => 0,
             };
             return self.set_target(db, lua, i).context("setting target");
         }
         Ok(false)
+    }
+
+    /// Point the JTAC at a player's map mark (or clear that with `None`).
+    /// Returns how many contacts it can lase there.
+    pub fn set_focus(&mut self, db: &mut Db, lua: MizLua, focus: Option<Vector2>) -> Result<usize> {
+        self.focus = focus;
+        self.autoshift = None;
+        // the menu entry reads differently with a focus set
+        self.menu_dirty = true;
+        self.remove_target(db, lua)?;
+        self.sort_contacts(db, lua)?;
+        Ok(self.lasable)
+    }
+
+    pub fn focus(&self) -> Option<Vector2> {
+        self.focus
     }
 
     pub fn smoke_target(&mut self, lua: MizLua) -> Result<()> {

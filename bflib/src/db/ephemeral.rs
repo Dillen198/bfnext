@@ -503,6 +503,12 @@ impl Ephemeral {
     /// Logistics-relevant scenery buildings (warehouses, depots, fuel, storage)
     /// still standing at `oid`, sorted by label for stable ordering (used by
     /// JTAC to cycle through them as designatable/callable targets).
+    /// How many logistics buildings the scenery scan found at `oid`, standing
+    /// or not (0 = the map has none there).
+    pub fn scenery_total_at(&self, oid: &ObjectiveId) -> u32 {
+        self.scenery_total_by_objective.get(oid).copied().unwrap_or(0)
+    }
+
     pub fn scenery_at_objective(
         &self,
         oid: ObjectiveId,
@@ -1217,7 +1223,9 @@ impl Ephemeral {
                     (uid, None)
                 }
                 None => {
-                    info!("no uid for object id {:?}", id);
+                    // routine: the Hit/Kill handler already removed it, and the
+                    // Dead / UnitLost / PilotDead events that follow land here
+                    debug!("no uid for object id {:?}", id);
                     return None;
                 }
             },

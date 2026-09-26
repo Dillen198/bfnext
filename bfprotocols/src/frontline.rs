@@ -20,7 +20,7 @@ something. Output points are in the same system.
 
 use dcso3::Vector2;
 use fxhash::{FxHashMap, FxHashSet};
-use log::info;
+use log::debug;
 use serde_derive::{Deserialize, Serialize};
 
 /// Tunable parameters. `Params::default()` is what both callers use.
@@ -161,7 +161,7 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Frontlines {
         .collect();
     let blue_n = objs.iter().filter(|o| o.sign > 0.0).count();
     let red_n = objs.len() - blue_n;
-    info!("Frontline: {} objectives ({} blue / {} red)", objs.len(), blue_n, red_n);
+    debug!("Frontline: {} objectives ({} blue / {} red)", objs.len(), blue_n, red_n);
     if objs.len() < 4 || blue_n == 0 || red_n == 0 {
         return Frontlines::default();
     }
@@ -490,7 +490,7 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Frontlines {
     let mid = to_ll(trace(0.0));
     let blue = to_ll(trace(lvl));
     let red = to_ll(trace(-lvl));
-    info!(
+    debug!(
         "Frontline: σ {:.0} km, {}×{} grid, level ±{:.2} -> {} white / {} blue / {} red line(s)",
         sigma / 1000.0,
         res,

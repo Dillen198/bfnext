@@ -41,8 +41,9 @@ pub struct Stats {
 
 impl std::fmt::Display for Stats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hitrate = (self.hits as f32 / self.calls as f32) * 100.;
-        let diffrate = (self.diffs as f32 / self.hits as f32) * 100.;
+        // max(1): an idle server printed NaN% for 0/0
+        let hitrate = (self.hits as f32 / self.calls.max(1) as f32) * 100.;
+        let diffrate = (self.diffs as f32 / self.hits.max(1) as f32) * 100.;
         write!(
             f,
             "calls: {}, hits: {}({:.02}%), diffs: {}({:.02}%)",

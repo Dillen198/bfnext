@@ -516,6 +516,10 @@ impl Objective {
         self.zone.radius()
     }
 
+    pub fn contains(&self, pos: Vector2) -> bool {
+        self.zone.contains(pos)
+    }
+
     pub fn groups(&self) -> &MapS<Side, Set<GroupId>> {
         &self.groups
     }
@@ -1171,9 +1175,15 @@ impl Db {
             self.ephemeral.msgs().panel_to_all(
                 15,
                 false,
-                format_compact!(
-                    "{name} ({owner:?}) is now capturable -- get troops into the zone."
-                ),
+                match owner {
+                    Side::Neutral => format_compact!(
+                        "{name} is neutral and capturable -- either side, get troops into the zone."
+                    ),
+                    _ => format_compact!(
+                        "{name} ({owner:?}) is undefended -- {:?} can capture it with troops in the zone.",
+                        owner.opposite()
+                    ),
+                },
             );
         }
         self.ephemeral.stat(Stat::ObjectiveHealth {
@@ -2097,7 +2107,7 @@ impl Db {
             obj.capture_hold_ts = None;
             obj.name.clone()
         };
-        warn!(
+        info!(
             "[CAPTURE] {name} neutralised: garrison health reached 0, ownership dropped to Neutral \
              (spawns locked, self-repair off, must be retaken with troops)"
         );

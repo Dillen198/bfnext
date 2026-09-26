@@ -162,50 +162,10 @@ fn anchor_path() -> &'static [(f64, f64)] {
     ]
 }
 
-/// NATO APP-6C hostile (Red side) SAM — diamond frame + missile + launcher arc.
+/// SAM site symbol for both sides — APP-6C friendly rectangle frame + missile.
 ///
-/// Derived from SVG "Military_Symbol_-_Hostile_Unit_..._Air_Defence_-_Missiles".
-/// SVG is 600×600, centre (300,300). Normalised to [-1,1] with:
-///   east   = (svg_x - 300) / 300
-///   north  = -(svg_y - 300) / 300   (SVG y is down, DCS north is up)
-///
-/// Hostile frame: diamond M 7,300 300,7 593,300 300,593 Z  →  ±0.977
-/// Missile body: ICON group (translate(0,100) + inner matrix), bezier nose cap.
-/// Launcher arc: AirDef cubic bezier across the bottom (5-point approximation).
-///
-/// Single connected trace:
-///   diamond → center-spine → missile left side → launcher arc → missile right side → nose
-fn hostile_sam_path() -> &'static [(f64, f64)] {
-    &[
-        // Diamond frame (CW from top)
-        ( 0.977,  0.000), // top
-        ( 0.000,  0.977), // right
-        (-0.977,  0.000), // bottom
-        ( 0.000, -0.977), // left
-        ( 0.977,  0.000), // close — pen continues along centre spine
-        // Centre spine → missile nose tip
-        ( 0.342,  0.000), // nose (ICON group: SVG ~(300,197) after transforms)
-        // Left side of missile body
-        ( 0.155, -0.130), // left shoulder  (~261, 253 after transforms)
-        (-0.341, -0.130), // left body base (~261, 402 after transforms)
-        // Launcher arc — 5-point cubic-bezier approximation (AirDef path, no extra transform)
-        // SVG: M 449,440  C 415,416 360,401 300,401  c -60,0 -115,15 -149,39
-        (-0.468, -0.498), // arc right end  (SVG 449,440)
-        (-0.373, -0.280), // arc right-mid  (t=0.5 of first bezier → SVG ~384,412)
-        (-0.337,  0.000), // arc centre     (SVG 300,401)
-        (-0.373,  0.280), // arc left-mid   (SVG ~216,412)
-        (-0.468,  0.498), // arc left end   (SVG 151,440)
-        // Right side of missile body back up
-        (-0.334,  0.130), // right body base (~339, 400 after transforms)
-        ( 0.155,  0.130), // right shoulder  (~339, 253 after transforms)
-        ( 0.260,  0.065), // right nose curve (bezier approximation)
-        ( 0.342,  0.000), // nose tip — close the missile outline
-    ]
-}
-
-/// NATO APP-6C friendly (Blue side) SAM — rectangle frame + same missile icon.
-///
-/// Friendly ground unit frame is a rectangle spanning the same area as the diamond.
+/// Red used to get the hostile DIAMOND frame; players asked for every diamond
+/// off the map, and the side is already carried by the colour.
 /// Frame corners chosen to match APP-6 proportions (height ≈ width × 0.8).
 ///
 /// Trace: rectangle → top-centre → centre spine → missile + arc (identical to hostile).
@@ -692,7 +652,16 @@ fn objective_label(
             }
         }
     } else if obj.captureable() {
-        let _ = write!(s, "\n>> CAPTURABLE - land troops in the zone");
+        // Say WHO can take it. This label is drawn to both sides in the
+        // owner's colour, and a bare "CAPTURABLE" over a battered Blue base
+        // sent Blue players flying troops (and fuel) to their own base, which
+        // can never capture it. It also sits well off the zone centre, so
+        // point at the ring rather than at "the zone".
+        let _ = match obj.owner {
+            Side::Neutral => write!(s, "\n>> NEUTRAL - either side captures: land troops inside the ring"),
+            Side::Red => write!(s, "\n>> UNDEFENDED - BLUE captures: land troops inside the ring"),
+            Side::Blue => write!(s, "\n>> UNDEFENDED - RED captures: land troops inside the ring"),
+        };
     } else if obj.health <= 20 && obj.infantry > 0 {
         let _ = write!(s, "\nInfantry: {}% — clear all defenders to capture", obj.infantry);
     }
@@ -1072,8 +1041,7 @@ impl ObjectiveMarkup {
         let sym_color = text_color(0.85);
         t.kind_symbol = match obj.kind {
             ObjectiveKind::SpecialSamSite => {
-                let path = if obj.owner == Side::Blue { friendly_sam_path() } else { hostile_sam_path() };
-                KindSymbol::Single(draw_polyline(t.pos, sym_r, path, draw_spec, sym_color, msgq))
+                KindSymbol::Single(draw_polyline(t.pos, sym_r, friendly_sam_path(), draw_spec, sym_color, msgq))
             }
             ObjectiveKind::NavalBase => KindSymbol::Single(
                 draw_polyline(t.pos, sym_r, anchor_path(), draw_spec, sym_color, msgq)

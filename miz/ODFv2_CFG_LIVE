@@ -1,5 +1,5 @@
 {live
-  "netidx_base": "/local/fowl/campaign",
+  "netidx_base": "/local/fowl/modern",
   "admins": {
     "43009af9ad72caf2a3ff31396bed074f": "[.ID] EagleEye",
     "eba008f7ec70d3629065a7ae0ebb8f67": "â„–15 | KillerDog"
@@ -241,7 +241,7 @@
       "Blue": "BHELO_LOGI",
       "Red": "RHELO_LOGI"
     },
-    "altitude_m": 500,
+    "altitude_m": 150,
     "speed_kph": 220,
     "troop_name": "Standard",
     "troop_mission_cost": 0,
@@ -253,7 +253,8 @@
     "max_altitude_m": 3500,
     "waypoint_spacing_m": 2500,
     "lateral_avoidance": false,
-    "refund_on_loss": true
+    "refund_on_loss": true,
+    "cold_start": true
   },
   "logi_from_scenery": {
     "fallback_logi": 100
@@ -5988,7 +5989,7 @@
     "show_unit_class": true,
     "show_confidence_on_map": true
   },
-    "player_recon": {
+  "player_recon": {
     "range_m": 25000,
     "dwell_secs": 120,
     "scan_radius_m": 12000,

@@ -364,8 +364,10 @@ impl Logs {
         if let Some(f) = jsonl {
             use std::io::Write;
             let ts = Utc::now();
-            let line = serde_json::json!({"ts": ts.to_rfc3339(), "stat": stat});
-            if let Err(e) = writeln!(f, "{}", line) {
+            // One write per record: `writeln!` on an unbuffered File issues
+            // several, so bfdb could read a record half-written.
+            let line = format!("{}\n", serde_json::json!({"ts": ts.to_rfc3339(), "stat": stat}));
+            if let Err(e) = f.write_all(line.as_bytes()) {
                 error!("failed to write stat to JSONL: {e:?}");
             }
         }
@@ -696,6 +698,16 @@ struct QuietNetidx<L>(L);
 impl<L: Log> Log for QuietNetidx<L> {
     fn enabled(&self, m: &Metadata) -> bool {
         if m.level() > Level::Error && m.target().starts_with("netidx::subscriber") {
+            return false;
+        }
+        // Routine at INFO, every minute, forever: the resolver write
+        // connection's heartbeat connect/drop (5 lines a minute) and the stats
+        // archive's per-minute "rotating log file". Warnings still get through.
+        if m.level() > Level::Warn
+            && (m.target().starts_with("netidx::resolver_client")
+                || m.target().starts_with("netidx::channel")
+                || m.target().starts_with("netidx_archive::logfile_collection"))
+        {
             return false;
         }
         self.0.enabled(m)

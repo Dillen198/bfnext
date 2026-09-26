@@ -201,7 +201,7 @@ impl ActionArgs {
             let mut found: SmallVec<[(MarkId, Vector2); 4]> = smallvec![];
             for mk in World::singleton(lua)?.get_mark_panels()? {
                 let mk = mk?;
-                if mk.side.is_match(&side) && mk.text.as_str() == key {
+                if mk.side.is_match(&side) && mk.text.as_str().trim() == key.trim() {
                     let pos = Vector2::new(mk.pos.0.x, mk.pos.0.z);
                     found.push((mk.id, pos));
                 }
@@ -222,7 +222,7 @@ impl ActionArgs {
             let mut found: SmallVec<[(MarkId, Vector2); 4]> = smallvec![];
             for mk in World::singleton(lua)?.get_mark_panels()? {
                 let mk = mk?;
-                if mk.side.is_match(&side) && mk.text.as_str() == key {
+                if mk.side.is_match(&side) && mk.text.as_str().trim() == key.trim() {
                     let pos = Vector2::new(mk.pos.0.x, mk.pos.0.z);
                     found.push((mk.id, pos));
                 }
@@ -439,23 +439,48 @@ pub struct ActionCmd {
 
 impl ActionCmd {
     pub fn parse(db: &mut Db, lua: MizLua, side: Side, s: &str) -> Result<Self> {
-        match s.split_once(" ") {
-            None => Err(anyhow!("expected <action> <args>")),
-            Some((name, args)) => {
-                let action = db
-                    .ephemeral
-                    .cfg
-                    .actions
-                    .get(&side)
-                    .and_then(|actions| actions.get(name))
-                    .ok_or_else(|| anyhow!("no such action {name}"))?
-                    .clone();
-                let args = ActionArgs::parse(db, &action.kind, lua, side, args)?;
-                Ok(Self {
-                    name: name.into(),
-                    action,
-                    args,
-                })
+        let (name, action, args) = Self::split_name(db, side, s)?;
+        let args = ActionArgs::parse(db, &action.kind, lua, side, args)?;
+        Ok(Self { name, action, args })
+    }
+
+    /// Find which configured action `s` starts with. Action names contain
+    /// spaces ("JTAC Drone"), so splitting at the first space could never
+    /// match them -- `-action JTAC Drone M1` answered `no such action JTAC`.
+    /// The longest name that prefixes the command wins, case-insensitively,
+    /// and the quotes and `:` players copy out of `-action help`'s
+    /// `JTAC Drone: <key>` line are tolerated.
+    fn split_name<'a>(db: &Db, side: Side, s: &'a str) -> Result<(String, Action, &'a str)> {
+        let s = s.trim().trim_matches('"').trim();
+        let actions = db
+            .ephemeral
+            .cfg
+            .actions
+            .get(&side)
+            .ok_or_else(|| anyhow!("your side has no actions"))?;
+        let found = actions
+            .iter()
+            .filter(|(name, _)| {
+                s.len() >= name.len()
+                    && s.is_char_boundary(name.len())
+                    && s[..name.len()].eq_ignore_ascii_case(name)
+                    && s[name.len()..]
+                        .chars()
+                        .next()
+                        .map_or(true, |c| c.is_whitespace() || c == ':' || c == '"')
+            })
+            .max_by_key(|(name, _)| name.len());
+        match found {
+            None => {
+                let first = s.split_whitespace().next().unwrap_or("");
+                bail!("no such action {first}, -action help lists them")
+            }
+            Some((name, action)) => {
+                let args = s[name.len()..]
+                    .trim_start_matches(|c: char| c.is_whitespace() || c == ':' || c == '"')
+                    .trim_end_matches('"')
+                    .trim();
+                Ok((name.clone(), action.clone(), args))
             }
         }
     }

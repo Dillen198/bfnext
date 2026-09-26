@@ -355,9 +355,28 @@ pub struct SupplyConvoy {
     pub last_pos: Vector2,
     /// When we last checked the convoy status
     pub last_check: DateTime<Utc>,
+    /// Road distance of the planned route (metres) and its speed, so the
+    /// transit timeout can scale with the trip. A flat `max_transit_minutes`
+    /// recalled long road convoys that were still driving (Sept 24: two Red
+    /// convoys on a 19-waypoint route timed out at 90 minutes).
+    #[serde(default)]
+    pub route_m: f64,
+    #[serde(default)]
+    pub speed_mps: f64,
 }
 
 impl SupplyConvoy {
+    /// How long this convoy gets before it counts as wedged: the configured
+    /// limit, or twice the time the planned route takes at convoy speed plus
+    /// 15 minutes, whichever is longer.
+    pub fn max_transit(&self, configured: Duration) -> Duration {
+        if configured <= Duration::zero() || self.speed_mps <= 0. || self.route_m <= 0. {
+            return configured;
+        }
+        let expected = Duration::seconds((self.route_m / self.speed_mps * 2.) as i64 + 15 * 60);
+        max(configured, expected)
+    }
+
     /// Check if convoy is still alive by checking if group exists in DCS
     pub fn check_status(&mut self, lua: MizLua, group_name: &str) -> ConvoyState {
         use dcso3::group::Group;
@@ -597,6 +616,11 @@ pub struct HeloMission {
     pub state: HeloMissionState,
     pub last_pos: Vector2,
     pub last_check: DateTime<Utc>,
+    /// Give up past this: the helo sat down somewhere the poll never counts
+    /// as delivered, or is orbiting. Without it a stuck mission stayed "in
+    /// transit" until the restart, with no troops, no refund and no word.
+    #[serde(default)]
+    pub deadline: Option<DateTime<Utc>>,
 }
 
 impl HeloMission {
@@ -2353,7 +2377,7 @@ impl Db {
                                 // Turn it back rather than leaving it parked
                                 // forever holding cargo that can never arrive.
                                 if max_transit > Duration::zero()
-                                    && ts - convoy.spawn_time > max_transit
+                                    && ts - convoy.spawn_time > convoy.max_transit(max_transit)
                                 {
                                     timed_out.push(convoy_id.clone());
                                     despawn.push(convoy_group_id);
@@ -3514,7 +3538,12 @@ impl Db {
                 }
             }
             Err(e) => {
-                debug!("No road path found for convoy {}, using direct route: {}", convoy_id, e);
+                // Was debug, so the log never said why a convoy crawled
+                // cross-country and timed out.
+                warn!(
+                    "Convoy {} {} -> {}: no road path ({}), driving a straight line cross-country",
+                    convoy_id, origin_name, dest_name, e
+                );
             }
         }
 
@@ -3536,6 +3565,11 @@ impl Db {
             name: None,
             task: Box::new(Task::ComboTask(vec![])),
         });
+
+        let route_m: f64 = route_points
+            .windows(2)
+            .map(|w| (w[1].pos.0 - w[0].pos.0).norm())
+            .sum();
 
         // Spawn the queued group now, with the road route baked in.
         {
@@ -3568,6 +3602,8 @@ impl Db {
             side,
             last_pos: origin_pos,
             last_check: now,
+            route_m,
+            speed_mps,
         };
 
         // Add to tracking
@@ -3847,6 +3883,39 @@ impl Db {
     /// `warehouse.air_logistics.aircraft_template` (fixed-wing cargo planes
     /// between hubs; these missions land at arbitrary objectives in the
     /// open, not just airfields, so they need a real helicopter).
+    /// A spot near `center` at least `HELO_CLEARANCE_M` from every unit and
+    /// static the campaign knows about there, spawned or not -- a field's
+    /// garrison is despawned while it is quiet and comes back the moment it is
+    /// contested, so its absence right now proves nothing. Rings outward from
+    /// the centre, eight bearings each; the centre itself if nothing is near.
+    fn clear_helo_spot(&self, center: Vector2) -> Vector2 {
+        const HELO_CLEARANCE_M: f64 = 45.;
+        const SEARCH_M: f64 = 450.;
+        let near: SmallVec<[Vector2; 64]> = self
+            .persisted
+            .units
+            .into_iter()
+            .map(|(_, u)| u.pos)
+            .filter(|p| (p - center).norm() <= SEARCH_M + HELO_CLEARANCE_M)
+            .collect();
+        let clear = |c: Vector2| near.iter().all(|p| (p - c).norm() >= HELO_CLEARANCE_M);
+        if clear(center) {
+            return center;
+        }
+        let mut r = 60.;
+        while r <= SEARCH_M {
+            for k in 0..8 {
+                let a = k as f64 * std::f64::consts::FRAC_PI_4;
+                let c = center + Vector2::new(a.cos(), a.sin()) * r;
+                if clear(c) {
+                    return c;
+                }
+            }
+            r += 60.;
+        }
+        center
+    }
+
     fn spawn_helo_mission(
         &mut self,
         lua: MizLua,
@@ -3904,6 +3973,20 @@ impl Db {
         let miz = Miz::singleton(lua)?;
         let idx = miz.index()?;
 
+        // Most FOBs have no pad, so the helo starts on open ground at the
+        // field -- and it used to start exactly at the zone centre, which is
+        // where the garrison stands whenever the field is awake (contested).
+        // DCS answered by blowing the helo up a second after it appeared.
+        let launch_pos = self.clear_helo_spot(origin_pos);
+        if launch_pos != origin_pos {
+            info!(
+                "[HELO_MISSION] {} launch spot at {} moved {:.0}m off the zone centre to clear the units there",
+                mission_id,
+                origin_name,
+                (launch_pos - origin_pos).norm()
+            );
+        }
+
         // `DeployKind::Objective { origin }` + the `HotStart` tag is what
         // makes `ephemeral::spawn_group` rewrite waypoint 0 into a real
         // parking start at the resolved origin airbase -- same path reactive
@@ -3915,9 +3998,8 @@ impl Db {
             &spawn_ctx,
             &idx,
             side,
-            SpawnLoc::AtPos {
-                pos: origin_pos,
-                offset_direction: Vector2::new(1., 0.),
+            SpawnLoc::AtPosExact {
+                pos: launch_pos,
                 group_heading: heading,
             },
             &aircraft_template,
@@ -3999,7 +4081,7 @@ impl Db {
             helipad: None,
             typ: PointType::TurningPoint,
             link_unit: None,
-            pos: LuaVec2(origin_pos),
+            pos: LuaVec2(launch_pos),
             alt: departure_alt,
             alt_typ: Some(AltType::BARO),
             time_re_fu_ar: None,
@@ -4053,6 +4135,10 @@ impl Db {
             )?;
         }
 
+        // Startup, the flight at cruise speed with half again for the climbs
+        // and the approach, and the 10 minutes it may sit on the ground.
+        let flight_secs = (dest_pos - origin_pos).norm() / speed_mps.max(1.) * 1.5;
+        let deadline = now + chrono::Duration::seconds(flight_secs as i64 + 20 * 60);
         let mission = HeloMission {
             id: mission_id.clone(),
             group_id,
@@ -4064,8 +4150,9 @@ impl Db {
             cost,
             spawn_time: now,
             state: HeloMissionState::InTransit,
-            last_pos: origin_pos,
+            last_pos: launch_pos,
             last_check: now,
+            deadline: Some(deadline),
         };
         info!(
             "[HELO_MISSION] {} dispatched from {} to {}",
@@ -4226,7 +4313,7 @@ impl Db {
         let mut delivered_msgs: SmallVec<[(dcso3::net::Ucid, CompactString); 2]> = smallvec![];
         #[allow(clippy::type_complexity)]
         let mut to_deploy_troops: SmallVec<
-            [(Vector2, dcso3::String, Side, dcso3::net::Ucid, ObjectiveId); 2],
+            [(Vector2, dcso3::String, Side, dcso3::net::Ucid, ObjectiveId, CompactString); 2],
         > = smallvec![];
         let mut to_transfer: SmallVec<[Vec<Transfer>; 2]> = smallvec![];
 
@@ -4255,8 +4342,8 @@ impl Db {
                     continue;
                 }
             };
-            let (dest_name, dest_pos) = match self.persisted.objectives.get(&mission.destination) {
-                Some(o) => (o.name.clone(), o.pos()),
+            let (dest_name, dest_pos, dest_radius) = match self.persisted.objectives.get(&mission.destination) {
+                Some(o) => (o.name.clone(), o.pos(), o.zone.radius()),
                 None => {
                     warn!("[HELO_MISSION] {} destination no longer exists", mission_id);
                     refunds.push((player, cost, format_compact!("helo mission target lost")));
@@ -4265,8 +4352,29 @@ impl Db {
                 }
             };
 
-            match mission.poll(lua, &group_name, dest_pos, landing_radius) {
-                HeloMissionState::InTransit => {}
+            // The Land waypoint is the zone centre, but the AI puts down on the
+            // nearest clear patch -- at a garrisoned base that is often more
+            // than `landing_radius_m` out, and the helo then sat there, doors
+            // open, never counted as delivered. Down anywhere in the zone counts.
+            let delivery_radius = landing_radius.max(dest_radius);
+            match mission.poll(lua, &group_name, dest_pos, delivery_radius) {
+                HeloMissionState::InTransit => {
+                    if mission.deadline.is_some_and(|d| now > d) {
+                        info!(
+                            "[HELO_MISSION] {} timed out, last seen {:.0}m from {}",
+                            mission_id,
+                            (mission.last_pos - dest_pos).norm(),
+                            dest_name
+                        );
+                        refunds.push((
+                            player,
+                            cost,
+                            format_compact!("helo mission to {dest_name} never made it down, recalled"),
+                        ));
+                        despawn.push(mission.group_id);
+                        completed.push(mission_id.clone());
+                    }
+                }
                 HeloMissionState::Destroyed => {
                     info!("[HELO_MISSION] {} destroyed en route", mission_id);
                     refunds.push((
@@ -4274,24 +4382,31 @@ impl Db {
                         cost,
                         format_compact!("helo mission to {dest_name} lost en route"),
                     ));
+                    // The DCS group is gone but the campaign's record of it
+                    // was left behind forever.
+                    despawn.push(mission.group_id);
                     completed.push(mission_id.clone());
                 }
                 HeloMissionState::Delivered => {
                     info!("[HELO_MISSION] {} landed and delivered", mission_id);
                     match &mission.kind {
                         HeloMissionKind::TroopInsertion => {
+                            // Where the helo actually is, so the squad steps
+                            // out of it -- unless it landed outside the zone,
+                            // where troops can't capture anything.
+                            let at = match self.persisted.objectives.get(&mission.destination) {
+                                Some(o) if o.zone.contains(mission.last_pos) => mission.last_pos,
+                                _ => dest_pos,
+                            };
+                            // The "troops are on the ground" message waits for
+                            // the spawn to actually succeed, below.
                             to_deploy_troops.push((
-                                dest_pos,
+                                at,
                                 cfg.troop_name.clone(),
                                 mission.side,
                                 mission.player,
                                 mission.origin,
-                            ));
-                            delivered_msgs.push((
-                                player,
-                                format_compact!(
-                                    "your helo landed at {dest_name}, troops are on the ground"
-                                ),
+                                CompactString::from(dest_name.as_str()),
                             ));
                         }
                         HeloMissionKind::ResourceDelivery { transfers } => {
@@ -4316,17 +4431,20 @@ impl Db {
         for (ucid, msg) in delivered_msgs {
             self.ephemeral.panel_to_player(&self.persisted, 15, &ucid, msg);
         }
-        if cfg.refund_on_loss {
-            for (ucid, cost, why) in refunds {
-                if cost > 0 {
-                    self.ephemeral.panel_to_player(
-                        &self.persisted,
-                        15,
-                        &ucid,
-                        format_compact!("{why}, refunding {cost} points"),
-                    );
-                    self.adjust_points(&ucid, cost, &why);
-                }
+        // Always say it. The refund used to carry the only message, so a
+        // free troop insertion (cost 0 on the live config) vanished without a
+        // word and players were left thinking nothing had been dispatched.
+        for (ucid, cost, why) in refunds {
+            if cfg.refund_on_loss && cost > 0 {
+                self.ephemeral.panel_to_player(
+                    &self.persisted,
+                    15,
+                    &ucid,
+                    format_compact!("{why}, refunding {cost} points"),
+                );
+                self.adjust_points(&ucid, cost, &why);
+            } else {
+                self.ephemeral.panel_to_player(&self.persisted, 15, &ucid, why);
             }
         }
         for gid in despawn {
@@ -4337,11 +4455,17 @@ impl Db {
         if !to_deploy_troops.is_empty() {
             let miz = dcso3::env::miz::Miz::singleton(lua)?;
             let idx = miz.index()?;
-            for (pos, troop, side, ucid, origin) in to_deploy_troops {
-                if let Err(e) = self.paratroops_to_point(lua, &idx, pos, troop, side, ucid, origin)
-                {
-                    warn!("helo troop insertion failed to deploy: {e:?}");
-                }
+            for (pos, troop, side, ucid, origin, dest_name) in to_deploy_troops {
+                let msg = match self.paratroops_to_point(lua, &idx, pos, troop, side, ucid, origin) {
+                    Ok(_) => format_compact!(
+                        "your helo landed at {dest_name}, troops are on the ground -- keep them alive in the zone to capture it"
+                    ),
+                    Err(e) => {
+                        warn!("[HELO_MISSION] troop insertion at {dest_name} failed to deploy: {e:?}");
+                        format_compact!("your helo landed at {dest_name} but the troops could not be deployed: {e}")
+                    }
+                };
+                self.ephemeral.panel_to_player(&self.persisted, 15, &ucid, msg);
             }
         }
         for transfers in to_transfer {

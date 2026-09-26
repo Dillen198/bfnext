@@ -18,6 +18,14 @@
     return 42002
   which is read in preference to BF_PORT if present.
 
+  DCS ON A DIFFERENT MACHINE FROM BFDB
+  By default positions go to bfdb on this machine (127.0.0.1). When this DCS
+  server runs on another PC on the same network, create
+    %USERPROFILE%\Saved Games\DCS.<instance>\Scripts\bf_export_host.lua
+  containing the bfdb machine's LAN address, e.g.:
+    return "192.168.1.10"
+  and allow that UDP port inbound on the bfdb machine.
+
   Data is sent as newline-terminated JSON, split into 50-unit batches to
   stay within UDP's practical payload limits.
 
@@ -55,6 +63,18 @@ do
   end)
   if ok and type(port) == "number" and port > 0 and port < 65536 then
     BF_PORT = port
+  end
+end
+
+-- Per-instance override: Scripts/bf_export_host.lua returning the address of
+-- the machine bfdb runs on, for a DCS server on a different PC. Missing or
+-- malformed -> BF_HOST above.
+do
+  local ok, host = pcall(function()
+    return dofile(lfs.writedir() .. "Scripts/bf_export_host.lua")
+  end)
+  if ok and type(host) == "string" and host:match("^[%w%.%-:]+$") then
+    BF_HOST = host
   end
 end
 

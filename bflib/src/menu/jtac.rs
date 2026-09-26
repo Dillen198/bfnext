@@ -22,7 +22,7 @@ use crate::{
         actions::{ActionArgs, ActionCmd, WithJtac},
         group::DeployKind,
     },
-    jtac::{JtId, Jtac, Jtacs},
+    jtac::{JTAC_FOCUS_RADIUS_M, JtId, Jtac, Jtacs},
     spawnctx::SpawnCtx,
 };
 use anyhow::{Context as ErrContext, Result, anyhow, bail};
@@ -33,8 +33,10 @@ use bfprotocols::{
 };
 use compact_str::format_compact;
 use dcso3::{
-    MizLua, String,
+    MizLua, String, Vector2,
     coalition::Side,
+    object::DcsObject,
+    world::World,
     env::miz::GroupId,
     mission_commands::{GroupCommandItem, GroupSubMenu, MissionCommands},
     net::{SlotId, Ucid},
@@ -214,18 +216,99 @@ pub fn jtac_designate_building(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result
     let ctx = unsafe { Context::get_mut() };
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     let side = jtac.side();
+    let oid = jtac.location().oid;
     match jtac.designate_building(&mut ctx.db, lua).context("designating building")? {
         Some(_) => {}
         None => {
+            // Name the place. The JTAC works the objective nearest to IT, which
+            // is not always the base the player is looking at, and "none left
+            // standing" read as a lie at a base that had never been hit --
+            // most objectives simply have no logistics building on the map.
+            let name = ctx
+                .db
+                .objective(&oid)
+                .map(|o| o.name())
+                .unwrap_or("this location");
+            let total = ctx.db.ephemeral.scenery_total_at(&oid);
+            let msg = if total == 0 {
+                format_compact!(
+                    "JTAC {}: {name} has no logistics buildings on the map to lase (it is the objective nearest the JTAC)",
+                    arg.snd
+                )
+            } else {
+                format_compact!("JTAC {}: all {total} logistics buildings at {name} are destroyed", arg.snd)
+            };
+            ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
+        }
+    }
+    Ok(())
+}
+
+/// Where the player's most recently placed F10 map mark is, if they have one.
+/// Marks are matched to the player through the unit that placed them, the
+/// same way the Actions menu lists "your" marks.
+pub(crate) fn latest_player_mark(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<Option<Vector2>> {
+    let mut best: Option<(f32, Vector2)> = None;
+    for mk in World::singleton(lua)?.get_mark_panels()? {
+        let mk = mk?;
+        let Some(unit) = mk.initiator.as_ref() else { continue };
+        let id = unit.object_id()?;
+        if ctx.db.player_in_unit(false, &id).as_ref() != Some(ucid) {
+            continue;
+        }
+        if best.map_or(true, |(t, _)| mk.time.0 >= t) {
+            best = Some((mk.time.0, Vector2::new(mk.pos.0.x, mk.pos.0.z)));
+        }
+    }
+    Ok(best.map(|(_, p)| p))
+}
+
+/// Point a JTAC at `pos` (or release it with `None`) and tell the side.
+pub fn jtac_set_focus(
+    lua: MizLua,
+    ucid: &Ucid,
+    jtid: JtId,
+    pos: Option<Vector2>,
+) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let jtac = get_jtac_mut(&mut ctx.jtac, &jtid)?;
+    let n = jtac.set_focus(&mut ctx.db, lua, pos).context("setting jtac focus")?;
+    let (near, name) = change_info(jtac, &ctx.db, ucid);
+    let km = JTAC_FOCUS_RADIUS_M / 1000.;
+    let msg = match pos {
+        None => format_compact!(
+            "JTAC {jtid} near {near}: focus cleared, back to working its whole area\nrequested by {name}"
+        ),
+        Some(_) if n == 0 => format_compact!(
+            "JTAC {jtid} near {near}: focusing on {name}'s mark. Nothing it can lase within {km:.0} km of it yet -- it will pick up the first contact there"
+        ),
+        Some(_) => format_compact!(
+            "JTAC {jtid} near {near}: focusing on {name}'s mark, {n} contact(s) within {km:.0} km, lasing the nearest"
+        ),
+    };
+    ctx.db.ephemeral.msgs().panel_to_side(10, false, jtac.side(), msg);
+    Ok(())
+}
+
+fn jtac_focus_my_mark(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    match latest_player_mark(ctx, lua, &arg.fst)? {
+        Some(pos) => jtac_set_focus(lua, &arg.fst, arg.snd, Some(pos)),
+        None => {
+            let side = get_jtac(&ctx.jtac, &arg.snd)?.side();
             ctx.db.ephemeral.msgs().panel_to_side(
                 10,
                 false,
                 side,
-                "No logistics buildings left standing here",
+                "Place an F10 map mark near the targets first, then use Focus on My Mark",
             );
+            Ok(())
         }
     }
-    Ok(())
+}
+
+fn jtac_clear_focus(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
+    jtac_set_focus(lua, &arg.fst, arg.snd, None)
 }
 
 pub fn jtac_artillery_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, u8, Ucid>) -> Result<()> {
@@ -1016,6 +1099,34 @@ pub(super) fn add_menu_for_jtac(
             snd: jtac.gid(),
         },
     )?;
+    let root = p.page(&mc)?;
+    mc.add_command_for_group(
+        mizgid,
+        if jtac.focus().is_some() {
+            "Focus: Move to My Latest Mark".into()
+        } else {
+            "Focus on My Latest Mark".into()
+        },
+        Some(root.clone()),
+        jtac_focus_my_mark,
+        ArgTuple {
+            fst: *ucid,
+            snd: jtac.gid(),
+        },
+    )?;
+    if jtac.focus().is_some() {
+        let root = p.page(&mc)?;
+        mc.add_command_for_group(
+            mizgid,
+            "Clear Focus".into(),
+            Some(root.clone()),
+            jtac_clear_focus,
+            ArgTuple {
+                fst: *ucid,
+                snd: jtac.gid(),
+            },
+        )?;
+    }
     let root = p.page(&mc)?;
     let filter_root = mc.add_submenu_for_group(mizgid, "Filter".into(), Some(root.clone()))?;
     let mut fp = Pager::new(mizgid, filter_root);

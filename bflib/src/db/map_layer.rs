@@ -662,8 +662,6 @@ pub struct JtacLayerMarks {
     /// old lase-range circle + target circle + floating text panel, which
     /// were a big share of the F10 clutter around an active JTAC.
     info_pin: MarkId,
-    /// Diamond drawn on the lased target.
-    target_shape: MarkId,
     /// The laser code, the one thing a pilot must read without clicking.
     code_label: MarkId,
     /// Kept so the code label can be redrawn when the target moves.
@@ -699,7 +697,7 @@ impl JtacLayerMarks {
             LineSpec {
                 start: v3(jtac_pos.x, jtac_pos.y),
                 end: v3(target_pos.x, target_pos.y),
-                color: Color::violet(0.6),
+                color: crate::mapcolor::laser(0.7),
                 line_type: LineType::DotDash,
                 read_only: true,
             },
@@ -708,27 +706,19 @@ impl JtacLayerMarks {
 
         let info_pin = msgs.mark_to_side(side, target_pos, true, nine_line_text);
 
-        // A diamond ON the target, so the thing being lased is a shape you
-        // can see rather than the bare end of a line, plus the laser code as
-        // the ONE piece of text -- it is what a pilot has to dial in, and
-        // digging it out of a pin mid-run is exactly the wrong moment.
-        let target_shape = ngon(
-            target_pos,
-            700.,
-            4,
-            0.,
-            shape_outline(),
-            Color::violet(0.95),
-            sf,
-            msgs,
-        );
+        // The laser code is the ONE piece of text -- it is what a pilot has to
+        // dial in, and digging it out of a pin mid-run is exactly the wrong
+        // moment. There used to be a filled 700 m violet diamond on the target
+        // as well; players reported it hid the objective underneath and, being
+        // Red's side colour, made a Blue site read as Red. The bearing line
+        // already ends on the target, so the diamond is gone.
         let code_label = MarkId::new();
         msgs.text_to_all(
             sf,
             code_label,
             TextSpec {
                 pos: v3(target_pos.x - 1_600., target_pos.y),
-                color: Color::violet(1.),
+                color: crate::mapcolor::laser(1.),
                 fill_color: crate::mapcolor::text_plate(),
                 font_size: 12,
                 read_only: true,
@@ -738,7 +728,6 @@ impl JtacLayerMarks {
 
         Self {
             bearing_line,
-            target_shape,
             code_label,
             laser_code,
             last_symbol_pos: target_pos,
@@ -777,26 +766,15 @@ impl JtacLayerMarks {
         self.last_symbol_pos = new_target;
         let sf = side_filter(self.side);
         msgs.delete_mark(self.info_pin);
-        msgs.delete_mark(self.target_shape);
         msgs.delete_mark(self.code_label);
         self.info_pin = msgs.mark_to_side(self.side, new_target, true, new_nine_line);
-        self.target_shape = ngon(
-            new_target,
-            700.,
-            4,
-            0.,
-            shape_outline(),
-            Color::violet(0.95),
-            sf,
-            msgs,
-        );
         self.code_label = MarkId::new();
         msgs.text_to_all(
             sf,
             self.code_label,
             TextSpec {
                 pos: v3(new_target.x - 1_600., new_target.y),
-                color: Color::violet(1.),
+                color: crate::mapcolor::laser(1.),
                 fill_color: crate::mapcolor::text_plate(),
                 font_size: 12,
                 read_only: true,
@@ -815,8 +793,12 @@ impl JtacLayerMarks {
     }
 
     pub fn remove(self, msgs: &mut MsgQ) {
+        // All three. This used to delete only the line and the pin, so every
+        // retarget left its target symbol and code label on the map for good
+        // -- the pile of purple diamonds players reported around busy JTACs.
         msgs.delete_mark(self.bearing_line);
         msgs.delete_mark(self.info_pin);
+        msgs.delete_mark(self.code_label);
     }
 }
 
@@ -1044,22 +1026,11 @@ impl MapLayer {
             },
             None,
         );
-        // Strength as a row of diamonds -- one per five units, capped at five
-        // -- so the SCALE of a contact reads at a glance. The exact count is
-        // not thrown away: it moves into a map pin, which stays collapsed to
-        // an icon until somebody clicks it. Shapes to glance at, pin for detail.
-        let pips = (unit_count / 5).clamp(1, 5);
-        let mut ids: Vec<MarkId> = (0..pips)
-            .map(|i| {
-                let c = Vector2::new(
-                    target_pos.x - scan_radius_m * 0.55,
-                    target_pos.y + (i as f64 - (pips as f64 - 1.) / 2.) * 1500.,
-                );
-                ngon(c, 620., 4, 0., shape_outline(), col, sf, msgs)
-            })
-            .collect();
-        ids.push(rect);
-        self.timed_groups.push(TimedGroup::new(ids, 120, now));
+        // The unit count lives in the pin. There used to be a row of filled
+        // side-coloured diamonds here as a strength gauge; players asked for
+        // every diamond off the map (they hid what was under them and read
+        // as a coalition claim), so the scan box and the pin are all there is.
+        self.timed_groups.push(TimedGroup::new(vec![rect], 120, now));
         let pin = msgs.mark_to_side(
             side,
             target_pos,
@@ -1583,7 +1554,6 @@ impl MapLayer {
         for (_, j) in self.jtac_marks.drain() {
             msgs.delete_mark(j.bearing_line);
             msgs.delete_mark(j.info_pin);
-            msgs.delete_mark(j.target_shape);
             msgs.delete_mark(j.code_label);
         }
         for (_, m) in self.supply_critical_marks.drain() {

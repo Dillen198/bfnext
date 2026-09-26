@@ -1484,7 +1484,21 @@ impl<'lua> FromLua<'lua> for Command {
                 bearing: params.raw_get("bearing")?,
             }),
             "DeactivateBeacon" => Ok(Self::DeactivateBeacon),
-            "DeactivateICLS" => Ok(Self::DeactivateACLS),
+            "ActivateICLS" => Ok(Self::ActivateICLS {
+                channel: params.raw_get("channel")?,
+                unit: params.raw_get("unitId")?,
+                name: params.raw_get("name")?,
+            }),
+            "DeactivateICLS" => Ok(Self::DeactivateICLS),
+            "ActivateGCI" => Ok(Self::ActivateGci {
+                unit: params.raw_get("unitId")?,
+                // written as x = longitude, y = latitude (see into_lua)
+                latitude: params.raw_get("y")?,
+                longitude: params.raw_get("x")?,
+                channel: params.raw_get("channel")?,
+                radius: params.raw_get("radius")?,
+            }),
+            "SMOKE_ON_OFF" => Ok(Self::Smoke(params.raw_get("value")?)),
             "EPLRS" => Ok(Self::EPLRS {
                 enable: params.raw_get("value")?,
                 group: params.raw_get("groupId")?,

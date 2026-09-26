@@ -327,6 +327,10 @@ struct Context {
     external_admin_commands: Arc<SegQueue<(AdminCommand, oneshot::Sender<Value>)>>,
     admin_commands: Vec<(admin::Caller, AdminCommand)>,
     action_commands: Vec<(PlayerId, String)>,
+    /// `-weather` requests, answered from the mission Lua state: the chat
+    /// hook runs in the hooks state, which has no `atmosphere` or mission
+    /// weather to read.
+    weather_requests: Vec<(PlayerId, SlotId)>,
     jtac_commands: Vec<(PlayerId, JtId, String)>,
     to_background: Option<UnboundedSender<bg::Task>>,
     recently_landed: FxHashMap<DcsOid<ClassUnit>, DateTime<Utc>>,
@@ -434,7 +438,9 @@ impl Context {
     }
 
     fn log_perf(&mut self, now: DateTime<Utc>) {
-        if now - self.last_perf_log > Duration::seconds(60) {
+        // Every 10 minutes: at 60s the cumulative timing tables were 59-75%
+        // of every engine log line, and they are running totals anyway.
+        if now - self.last_perf_log > Duration::seconds(600) {
             self.last_perf_log = now;
             self.do_bg_task(bg::Task::LogPerf {
                 players: self.connected.len(),
@@ -804,11 +810,16 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         {
             ()
         }
-        // DCS re-fires a batch of unrecognised event ids (dynamic cargo, sim
-        // freeze, human repair start/stop, ...) that translate to Invalid and
-        // that campaign logic doesn't consume -- and it fires several of them
-        // twice per tick. Don't spam the log with them.
-        Event::Invalid => (),
+        // DCS re-fires a batch of event ids (dynamic cargo, sim freeze, human
+        // repair start/stop, ...) that campaign logic doesn't consume -- and it
+        // fires several of them twice per tick. Don't spam the log with them.
+        Event::Invalid
+        | Event::SimulationFreeze
+        | Event::SimulationUnfreeze
+        | Event::HumanAircraftRepairStart
+        | Event::HumanAircraftRepairFinish
+        | Event::GroupChangeOption
+        | Event::MacLmsRestart => (),
         // High-frequency trace (Birth/Hit/Bda alone are ~1500 lines in a two
         // hour session). The events campaign logic actually consumes are
         // matched and logged on their own below where it matters -- keep this
@@ -927,7 +938,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         }
         Event::Hit(e) | Event::Kill(e) => {
             if let Some(target) = e.target.as_ref().and_then(|t| t.as_unit().ok()) {
-                let dead = target.get_life()? < 1;
+                let dead = target.get_life()? < 1.;
                 if let Some(shooter) = e.initiator.and_then(|u| u.as_unit().ok()) {
                     if let Err(e) = ctx.shots_out.hit(
                         &ctx.db,
@@ -1081,7 +1092,10 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 spawn_csar_pilot(lua, ctx, csar_pilot);
             }
         }
-        Event::Takeoff(e) | Event::PostponedTakeoff(e) => {
+        // RunwayTakeoff/RunwayTouch (ids 54/55) are deliberately not handled
+        // here: Takeoff and Land already fire for the same moments, and a
+        // carrier bolter (touch then runway-takeoff) must not end a sortie.
+        Event::Takeoff(e) => {
             if let Ok(unit) = e.initiator.as_unit() {
                 let id = unit.object_id()?;
                 if !ctx.recently_born.contains_key(&id)
@@ -1102,7 +1116,17 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                             }
                             let _ = menu::cargo::list_cargo_for_slot(ctx, &slot);
                         }
-                        Ok(TakeoffRes::OutOfLives | TakeoffRes::OutOfPoints) => {
+                        Ok(r @ (TakeoffRes::OutOfLives | TakeoffRes::OutOfPoints)) => {
+                            // Say why -- the aircraft just vanished before.
+                            if let Some(uid) = slot.as_unit_id() {
+                                let why = match r {
+                                    TakeoffRes::OutOfPoints => {
+                                        "Not enough points to pay for this flight (see the FLIGHT COST panel from taxi) -- aircraft removed."
+                                    }
+                                    _ => "No lives left for this aircraft type -- aircraft removed.",
+                                };
+                                ctx.db.ephemeral.msgs().panel_to_unit(15, true, uid, why);
+                            }
                             if let Err(e) = unit.destroy() {
                                 error!(
                                     "failed to destroy unit that took off without lives or points {e:?}"
@@ -1132,7 +1156,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 }
             }
         }
-        Event::Land(e) | Event::PostponedLand(e) => {
+        Event::Land(e) => {
             if let Ok(unit) = e.initiator.as_unit() {
                 let id = unit.object_id()?;
                 if !ctx.recently_born.contains_key(&id) && ctx.airborne.remove(&id) {
@@ -1477,8 +1501,15 @@ fn advise_captureable(ctx: &mut Context) -> Result<()> {
         let dur = ctx.captureable.entry(*oid).or_default();
         *dur += 1;
         if *dur == 10 {
-            let m =
-                format_compact!("{} is now capturable", ctx.db.objective(oid)?.name());
+            let obj = ctx.db.objective(oid)?;
+            let m = match obj.owner {
+                Side::Neutral => format_compact!("{} (neutral) is now capturable", obj.name()),
+                owner => format_compact!(
+                    "{} ({owner:?}) is now capturable by {:?}",
+                    obj.name(),
+                    owner.opposite()
+                ),
+            };
             ctx.db.ephemeral.msgs().panel_to_all(30, false, m);
         }
     }
@@ -4226,6 +4257,11 @@ fn run_timed_events(
     if let Err(e) = run_jtac_commands(ctx, lua) {
         error!("failed to run jtac commands {e:?}")
     }
+    for (id, slot) in std::mem::take(&mut ctx.weather_requests) {
+        if let Err(e) = atis::send_full_weather(lua, slot) {
+            error!("full weather report failed for {:?}: {:?}", id, e);
+        }
+    }
     ctx.load_state.step();
     record_perf(&mut perf.timed_events, ts);
     ctx.log_perf(now);
@@ -4524,6 +4560,11 @@ fn on_mission_load_end(lua: HooksLua) -> Result<()> {
         if let Err(e) = unitdb::init(lua) {
             warn!("could not harvest the unit db, using config ranges only: {e:?}");
         }
+    }
+    // Terrain airdrome data (code, freqs, runway names) for the ATIS; only
+    // this (hooks) lua state can require('terrain').
+    if let Err(e) = atis::harvest_airdromes(lua) {
+        warn!("could not harvest the terrain airdromes for the ATIS: {e:?}");
     }
     info!("mission loaded");
     Ok(())
