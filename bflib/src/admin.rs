@@ -269,6 +269,8 @@ pub enum AdminCommand {
     // player joins with no manual pairing step.
     ResolvePlayerId {
         id: PlayerId,
+        /// The overlay key registered via `cockpit::KEY_CMD`.
+        key: String,
     },
     EwrToggle {
         ucid: Ucid,
@@ -3141,8 +3143,13 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 }
             }
             // Cockpit UI API commands
-            AdminCommand::ResolvePlayerId { id } => match ctx.connected.get(&id) {
-                Some(ifo) => reply_ok!("{}", ifo.ucid),
+            // The player id alone is guessable; only the overlay running in
+            // that player's own DCS knows the key it registered over chat.
+            AdminCommand::ResolvePlayerId { id, key } => match ctx.connected.get(&id) {
+                Some(ifo) if crate::cockpit::check_key(id, &ifo.ucid, &key) => {
+                    reply_ok!("{}", ifo.ucid)
+                }
+                Some(_) => reply_err!("bad cockpit key for player {id}"),
                 None => reply_err!("player {id} is not currently connected"),
             },
             AdminCommand::EwrToggle { ucid } => {

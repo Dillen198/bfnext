@@ -39,7 +39,7 @@ use dcso3::{
     coalition::Side,
     coord::Coord,
     mission_commands::{invoke_mirrored_menu, mirrored_menu, MirroredMenuItem},
-    net::Ucid,
+    net::{PlayerId, Ucid},
     LuaVec3, MizLua, Vector2, Vector3,
 };
 use serde_derive::Serialize;
@@ -236,4 +236,74 @@ pub(crate) fn menu(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<Vec<Mirror
 pub(crate) fn invoke(ctx: &Context, lua: MizLua, ucid: &Ucid, path: &[String]) -> Result<bool> {
     let group = menu_group(ctx, ucid)?;
     invoke_mirrored_menu(lua, group, path)
+}
+
+// ── Overlay keys ──────────────────────────────────────────────────────────
+//
+// The overlay page used to identify its player by `?playerid=` alone -- the
+// small integer DCS assigns each connection. That is not a secret: anyone who
+// could reach bfdb could walk the ids and click any connected player's F10
+// menu, spawn crates in their name and read their coalition's radar picture.
+//
+// So the overlay now proves it is running inside that player's own DCS. It
+// makes up a random key, hands it to the engine over the one channel only that
+// client can use -- a chat line sent *as* that player, which the engine
+// swallows before anyone sees it (see `KEY_CMD` in lib.rs's
+// onPlayerTrySendChat) -- and then quotes the key on every request.
+// `resolve-player-id` only answers when the key matches the one registered for
+// that player id and ucid.
+
+/// The chat command the overlay registers its key with. Never logged.
+pub(crate) const KEY_CMD: &str = "-cockpitkey ";
+
+/// Registered keys by player id, with the ucid that registered them so a key
+/// cannot outlive its connection: DCS hands a disconnected player's id to the
+/// next person to join.
+static KEYS: std::sync::LazyLock<std::sync::Mutex<fxhash::FxHashMap<PlayerId, (Ucid, String)>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(fxhash::FxHashMap::default()));
+
+fn valid_key(key: &str) -> bool {
+    (16..=128).contains(&key.len()) && key.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// Record the overlay key `id` just sent us. Replaces any earlier one, so a
+/// reloaded overlay simply re-registers.
+pub(crate) fn register_key(ctx: &Context, id: PlayerId, key: &str) -> Result<()> {
+    if !valid_key(key) {
+        return Err(anyhow!("malformed cockpit key"));
+    }
+    let ucid = ctx
+        .connected
+        .get(&id)
+        .map(|ifo| ifo.ucid)
+        .ok_or_else(|| anyhow!("player {id} is not connected"))?;
+    let mut keys = KEYS.lock().unwrap_or_else(|e| e.into_inner());
+    keys.insert(id, (ucid, key.to_string()));
+    Ok(())
+}
+
+/// Whether `key` is the one `id` registered while connected as `ucid`.
+/// Compared in constant time: this is the only thing standing between a
+/// guessed key and someone else's F10 menu.
+pub(crate) fn check_key(id: PlayerId, ucid: &Ucid, key: &str) -> bool {
+    let keys = KEYS.lock().unwrap_or_else(|e| e.into_inner());
+    match keys.get(&id) {
+        Some((owner, want)) if owner == ucid && want.len() == key.len() => {
+            want.bytes().zip(key.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_key;
+
+    #[test]
+    fn key_shape() {
+        assert!(valid_key("abcdefghijklmnop0123456789ABCDEF"));
+        assert!(!valid_key("short"));
+        assert!(!valid_key("has space in it 0123456789"));
+        assert!(!valid_key(&"a".repeat(129)));
+    }
 }

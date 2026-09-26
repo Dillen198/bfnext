@@ -58,7 +58,7 @@
 -- out where they are already looking, and nothing here has to make a network
 -- call of its own. `bfdb` reads this same line out of the file it serves, so
 -- the two can never disagree; keep the format exactly as it is.
-local BFCOCKPIT_VERSION = "1.0.2"
+local BFCOCKPIT_VERSION = "1.1.0"
 
 local net = require('net')
 
@@ -300,10 +300,61 @@ local function mission_name()
     return nil
 end
 
+-- ── Overlay key ──────────────────────────────────────────────────────
+-- The player id DCS gives this connection is a small counter anybody can
+-- guess, so on its own it proves nothing -- with only that, a stranger could
+-- drive your F10 menu from their browser. So the overlay makes up a random key,
+-- tells the campaign engine about it in a chat line sent as you (the server
+-- swallows "-cockpitkey" lines before anyone sees them, and never logs them),
+-- and quotes it on every request. Only a client that can send chat as you can
+-- register a key for you.
+--
+-- Lua 5.1's math.random is not a strong generator, so the seed mixes several
+-- things only this machine knows at this moment; bfdb additionally rate-limits
+-- wrong keys, which is what makes guessing hopeless.
+local KEY_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+local cockpit_key = nil
+
+local function new_key()
+    local addr = tonumber(tostring({}):match("(%x+)$") or "0", 16) or 0
+    local seed = (os.time() * 1000003 + math.floor(os.clock() * 1000000) + addr) % 2147483647
+    math.randomseed(seed)
+    -- Throw away the first few outputs: MSVC's rand() barely moves on them.
+    for _ = 1, 10 do math.random() end
+    local out = {}
+    for i = 1, 40 do
+        -- Re-stir from the clock part-way through, so two keys made in the
+        -- same second still diverge.
+        if i % 10 == 0 then
+            math.randomseed((math.random(1, 2147483646) + math.floor(os.clock() * 1000000)) % 2147483647)
+        end
+        local n = math.random(1, #KEY_CHARS)
+        out[i] = KEY_CHARS:sub(n, n)
+    end
+    return table.concat(out)
+end
+
+-- Tell the engine our key. Sent on every page load: it costs one invisible
+-- chat line, and it means a mission restart, a reconnect or a server hop never
+-- leaves the panel quoting a key the engine has forgotten.
+local function register_key()
+    if not cockpit_key then cockpit_key = new_key() end
+    local ok, err = pcall(function()
+        net.send_chat("-cockpitkey " .. cockpit_key, false)
+    end)
+    if not ok then logmsg("could not register overlay key: " .. tostring(err)) end
+end
+
+-- The URL with the key blanked, for dcs.log and the diagnostic page: a log a
+-- player pastes into Discord must not hand out their key.
+local function redact(url)
+    return (tostring(url):gsub("ckey=[^&]*", "ckey=<hidden>"))
+end
+
 local function build_url(playerId)
     local base = cfg.url
     local sep = string.find(base, "?", 1, true) and "&" or "?"
-    local parts = { base, sep, "playerid=", urlencode(playerId) }
+    local parts = { base, sep, "playerid=", urlencode(playerId), "&ckey=", urlencode(cockpit_key or "") }
 
     local function add(key, value)
         if value == nil then return end
@@ -418,6 +469,10 @@ local load_deadline = nil
 -- If it never does, the local diagnostic page is loaded instead of leaving
 -- the player staring at an empty grey rectangle with no idea why.
 local page_deadline = nil
+-- A page load waiting for the engine to have seen our key: the chat line that
+-- registers it is handled on the server's next frame, and a page that asked
+-- before then would be turned away. { url = ..., at = os.clock() deadline }.
+local pending_load = nil
 local last_url = nil
 local diagnostic_shown = false
 local visible = false
@@ -546,6 +601,7 @@ end
 local function close()
     load_deadline = nil
     page_deadline = nil
+    pending_load = nil
     if not window then return end
     flush_geometry()
     pcall(function() window:close() end)
@@ -560,10 +616,20 @@ local function load_page(reason)
         logmsg("no local player id yet, not loading page (" .. tostring(playerId) .. ")")
         return
     end
+    register_key()
     local url = build_url(playerId)
     last_url = url
-    logmsg("loading " .. url .. " (" .. reason .. ")")
-    local ok, err = pcall(function() webview:cefLoadUrl(url) end)
+    logmsg("loading " .. redact(url) .. " (" .. reason .. ") in a moment, once the key is registered")
+    -- Give the server a moment to handle the key's chat line first.
+    pending_load = { url = url, at = os.clock() + 1.5 }
+end
+
+-- The second half of load_page, run from onSimulationFrame.
+local function finish_load()
+    local p = pending_load
+    pending_load = nil
+    if not p or not webview then return end
+    local ok, err = pcall(function() webview:cefLoadUrl(p.url) end)
     if not ok then
         logmsg("FATAL: cefLoadUrl failed: " .. tostring(err))
         return
@@ -581,7 +647,7 @@ local function show_diagnostic(reason)
     diagnostic_shown = true
     page_deadline = nil
     logmsg("showing local diagnostic page: " .. tostring(reason))
-    local path = write_diagnostic_page(last_url or cfg.url, reason)
+    local path = write_diagnostic_page(redact(last_url or cfg.url), reason)
     if not path then return end
     pcall(function() webview:cefLoadUrl(path) end)
 end
@@ -748,6 +814,9 @@ DCS.setUserCallbacks({
     -- Nothing but a deadline check; this runs every frame, so it stays a
     -- single comparison in the common case.
     onSimulationFrame = function()
+        if pending_load and os.clock() >= pending_load.at then
+            pcall(finish_load)
+        end
         if load_deadline and os.clock() >= load_deadline then
             load_deadline = nil
             logmsg("browserCreated never fired, loading anyway")
@@ -784,6 +853,8 @@ DCS.setUserCallbacks({
     end,
 
     onNetDisconnect = function()
+        -- A fresh key per connection: the next server never sees this one.
+        cockpit_key = nil
         local ok, err = pcall(close)
         if not ok then logmsg("onNetDisconnect errored: " .. tostring(err)) end
     end,
