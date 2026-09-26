@@ -131,6 +131,11 @@ pub enum DeployKind {
         ammo: i32,
         #[serde(default)]
         jtac: Option<bfprotocols::cfg::JtacState>,
+        /// Who paid for this group and how many points. `player` is the
+        /// responsible party and can change hands; refunds go here. None for
+        /// saves that predate it and for groups nobody paid for.
+        #[serde(default)]
+        paid_by: Option<(Ucid, u32)>,
     },
     /// Infantry that bailed out of a destroyed vehicle
     Dismount {

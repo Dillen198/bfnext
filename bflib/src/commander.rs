@@ -502,10 +502,15 @@ pub fn tick_events(
 
         // Enforce the concurrent event cap — except when an objective is actively being
         // captured, in which case we must allow a reinforcement wave through regardless.
-        if scheduler.active_events.len() >= events_cfg.max_concurrent_events as usize
-            && !capture_emergency
-        {
-            break;
+        //
+        // The cap is per side. It used to count both sides' events together
+        // and `break` out of the loop, so whichever side the coin toss put
+        // first could fill the slots and lock the other out entirely -- even
+        // when the second side had an objective being captured, since its
+        // emergency bypass was never reached.
+        let side_events = scheduler.active_events.iter().filter(|e| e.side() == side).count();
+        if side_events >= events_cfg.max_concurrent_events as usize && !capture_emergency {
+            continue;
         }
 
         if !side_should_check(scheduler, side, ts, events_cfg.check_interval_secs, has_emergency) {
@@ -542,13 +547,12 @@ pub fn tick_events(
                 CommanderAction::Ambush => "ambush",
                 CommanderAction::DispatchCap => "dispatch CAP",
             };
-            info!(
-                "[Commander] {:?} spending {} treasury on {} (emergency={})",
-                side, cost, action_label, has_emergency
-            );
-            db.persisted.adjust_treasury(side, -cost);
-
-            match action {
+            // Pay only for an event that was actually created. The treasury
+            // used to be debited up front, and an ambush with no enemy convoy
+            // or a CAP with no free airbase then quietly did nothing with the
+            // money. The check clock was already advanced above, so a failed
+            // pick waits out the normal interval instead of retrying every tick.
+            let created = match action {
                 CommanderAction::Barrage { src_oid, src_side, target_oid, target_pos, target_name } => {
                     scheduler.spawn_barrage_event(
                         events_cfg,
@@ -559,7 +563,8 @@ pub fn tick_events(
                         target_pos,
                         target_name,
                         &mut messages,
-                    )
+                    );
+                    true
                 }
                 CommanderAction::MissileStrike { side, shooter_gids, target_pos, target_name } => {
                     scheduler.spawn_missile_strike_event(
@@ -570,12 +575,14 @@ pub fn tick_events(
                         target_pos,
                         target_name,
                         &mut messages,
-                    )
+                    );
+                    true
                 }
                 CommanderAction::Ambush => scheduler.spawn_convoy_ambush(
                     db,
                     events_cfg,
                     ts,
+                    side,
                     &candidates,
                     &mut messages,
                     &mut effects,
@@ -587,7 +594,19 @@ pub fn tick_events(
                     side,
                     &mut messages,
                 ),
+            };
+            if !created {
+                info!(
+                    "[Commander] {:?} {} found nothing to act on, treasury not charged",
+                    side, action_label
+                );
+                continue;
             }
+            info!(
+                "[Commander] {:?} spending {} treasury on {} (emergency={})",
+                side, cost, action_label, has_emergency
+            );
+            db.persisted.adjust_treasury(side, -cost);
             db.ephemeral.dirty();
             // One event per tick — stop after the first successful spawn.
             break;

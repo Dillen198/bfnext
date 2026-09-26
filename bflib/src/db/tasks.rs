@@ -107,6 +107,15 @@ impl Task {
     }
 }
 
+/// Why a task is coming off the board.
+#[derive(Debug, Clone, Copy)]
+enum TaskEnd {
+    Complete,
+    Expired,
+    /// Its objective is gone or no longer ours; it can't be completed.
+    Void,
+}
+
 fn cardinal(deg: f64) -> &'static str {
     const DIRS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
     let i = (((deg % 360. + 360.) % 360.) / 45.).round() as usize;
@@ -328,40 +337,59 @@ impl Db {
         self.ephemeral
             .gci_tasks
             .retain(|(t, _)| now - *t < chrono::Duration::seconds(180));
-        let mut done: SmallVec<[(TaskId, bool); 4]> = smallvec![];
+        let mut done: SmallVec<[(TaskId, TaskEnd); 4]> = smallvec![];
         for (id, task) in self.persisted.tasks.into_iter() {
-            let complete = match (&task.target, task.oid.as_ref()) {
-                (TaskTarget::Position, _) | (_, None) => false,
-                (TaskTarget::CaptureObjective, Some(oid)) => self
-                    .persisted
-                    .objectives
-                    .get(oid)
-                    .map(|o| o.owner == task.side)
-                    .unwrap_or(false),
-                (TaskTarget::SupplyObjective { threshold }, Some(oid)) => self
-                    .persisted
-                    .objectives
-                    .get(oid)
-                    .map(|o| {
-                        o.owner == task.side && o.supply >= *threshold && o.fuel >= *threshold
-                    })
-                    .unwrap_or(false),
+            // An objective task whose objective has gone (a destroyed FARP) or,
+            // for a supply task, has fallen to the enemy can never complete.
+            // Those used to sit on the board, holding one of the side's
+            // `max_per_side` slots, until their ttl ran out -- forever with
+            // ttl_secs 0.
+            let end = match (&task.target, task.oid.as_ref()) {
+                (TaskTarget::Position, _) | (_, None) => None,
+                (TaskTarget::CaptureObjective, Some(oid)) => {
+                    match self.persisted.objectives.get(oid) {
+                        None => Some(TaskEnd::Void),
+                        Some(o) if o.owner == task.side => Some(TaskEnd::Complete),
+                        Some(_) => None,
+                    }
+                }
+                (TaskTarget::SupplyObjective { threshold }, Some(oid)) => {
+                    match self.persisted.objectives.get(oid) {
+                        None => Some(TaskEnd::Void),
+                        Some(o) if o.owner != task.side => Some(TaskEnd::Void),
+                        Some(o) if o.supply >= *threshold && o.fuel >= *threshold => {
+                            Some(TaskEnd::Complete)
+                        }
+                        Some(_) => None,
+                    }
+                }
             };
-            if complete {
-                done.push((*id, true));
-            } else if task.expires.map(|exp| now >= exp).unwrap_or(false) {
-                done.push((*id, false));
+            match end {
+                Some(end) => done.push((*id, end)),
+                None => {
+                    if task.expires.map(|exp| now >= exp).unwrap_or(false) {
+                        done.push((*id, TaskEnd::Expired));
+                    }
+                }
             }
         }
         if done.is_empty() {
             return;
         }
-        for (id, complete) in done {
+        for (id, end) in done {
             if let Some(task) = self.persisted.tasks.remove_cow(&id) {
-                let msg = if complete {
-                    format_compact!("TASK COMPLETE: {} {}", task.kind, task.location)
-                } else {
-                    format_compact!("TASK EXPIRED: {} {}", task.kind, task.location)
+                let msg = match end {
+                    TaskEnd::Complete => {
+                        format_compact!("TASK COMPLETE: {} {}", task.kind, task.location)
+                    }
+                    TaskEnd::Expired => {
+                        format_compact!("TASK EXPIRED: {} {}", task.kind, task.location)
+                    }
+                    TaskEnd::Void => format_compact!(
+                        "TASK CANCELLED: {} {} -- objective lost",
+                        task.kind,
+                        task.location
+                    ),
                 };
                 self.ephemeral
                     .msgs()

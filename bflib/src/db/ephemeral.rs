@@ -256,6 +256,9 @@ pub struct Ephemeral {
     pub(crate) artillery_targeted: FxHashMap<ObjectiveId, DateTime<Utc>>,
     pub(super) production_by_side: FxHashMap<Side, Arc<Production>>,
     pub(super) actions_taken: FxHashMap<Side, FxHashMap<String, u32>>,
+    /// Battery -> when it last fired a player-requested mission, for the
+    /// per-battery `ArtilleryCfg::cooldown_secs`.
+    pub(super) arty_last_fired: FxHashMap<GroupId, DateTime<Utc>>,
     pub(super) delayspawnq: BTreeMap<DateTime<Utc>, SmallVec<[GroupId; 8]>>,
     pub(super) awacs_stn: u32,
     pub(super) logistics_stage: LogiStage,
@@ -391,6 +394,7 @@ impl Default for Ephemeral {
             artillery_targeted: FxHashMap::default(),
             production_by_side: FxHashMap::default(),
             actions_taken: FxHashMap::default(),
+            arty_last_fired: FxHashMap::default(),
             delayspawnq: BTreeMap::default(),
             awacs_stn: 0o77777,
             spawnq: VecDeque::default(),

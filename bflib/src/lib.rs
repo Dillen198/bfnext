@@ -2095,7 +2095,8 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     },
                     &template,
                     DeployKind::Objective { origin: source_objective },
-                    BitFlags::empty(),
+                    // Marks the group as event-owned so a restart drops it.
+                    BitFlags::from(bfprotocols::cfg::UnitTag::EventSpawn),
                     None,
                 ) {
                     Ok(gid) => {

@@ -6,7 +6,7 @@ use crate::{
     jtac::{aim_and_fire_route, group_facing, JtId, Jtacs},
     objective,
     spawnctx::{SpawnCtx, SpawnLoc},
-    unit,
+    unit_mut,
 };
 use anyhow::{Context, Ok, Result, anyhow, bail};
 use bfprotocols::{
@@ -499,6 +499,101 @@ fn racetrack_dist_and_heading(
     }
 }
 
+/// Cost of the next nuke. The config documents a geometric discount -- each
+/// nuke used divides the price by `cost_scale` again (1000, 250, 62, ... for
+/// a scale of 4) -- but this used to divide by `nukes_used * cost_scale`,
+/// which is linear (1000, 250, 125, 83, ...). Never below 1 point.
+fn nuke_cost(base: u32, cost_scale: u8, nukes_used: u32) -> u32 {
+    let div = (cost_scale as u32)
+        .max(1)
+        .checked_pow(nukes_used)
+        .unwrap_or(u32::MAX);
+    max(1, base / div)
+}
+
+/// What a Move of `dist` meters costs when the action charges `unit_cost`
+/// per `step` meters. Partial steps round UP and every move is at least one
+/// step: rounding down made any hop shorter than one step free, so a group
+/// could be walked anywhere for nothing in a string of short moves. Shared
+/// with the Actions menu so the quoted price is the charged price.
+pub(crate) fn move_cost(dist: f64, step: u32, unit_cost: u32) -> u32 {
+    if unit_cost == 0 {
+        return 0;
+    }
+    let steps = (dist / step.max(1) as f64).ceil().max(1.);
+    // f64 -> u32 saturates, and the product must not wrap in release builds.
+    (steps as u32).saturating_mul(unit_cost)
+}
+
+/// Does starting this action put a new AI group on the map? Those are the
+/// actions whose `limit` is a cap on how many a side has up at once (see
+/// `start_action`).
+fn action_spawns_group(kind: &ActionKind) -> bool {
+    match kind {
+        ActionKind::Tanker(_)
+        | ActionKind::Awacs(_)
+        | ActionKind::Bomber(_)
+        | ActionKind::CruiseMissileSpawn(_)
+        | ActionKind::Fighters(_)
+        | ActionKind::Attackers(_)
+        | ActionKind::Sead(_)
+        | ActionKind::Drone(_)
+        | ActionKind::Recon(_)
+        | ActionKind::Paratrooper(_)
+        | ActionKind::LogisticsRepair(_)
+        | ActionKind::LogisticsTransfer(_) => true,
+        ActionKind::Deployable(d) => d.plane.is_some(),
+        ActionKind::CruiseMissileWaypoint
+        | ActionKind::Nuke(_)
+        | ActionKind::FighersWaypoint
+        | ActionKind::AttackersWaypoint
+        | ActionKind::SeadWaypoint
+        | ActionKind::DroneWaypoint
+        | ActionKind::TankerWaypoint
+        | ActionKind::AwacsWaypoint
+        | ActionKind::Move(_)
+        | ActionKind::Rtb
+        | ActionKind::CarrierWaypoint
+        | ActionKind::CarrierRepair
+        | ActionKind::CarrierRespawn
+        | ActionKind::NavalCruiseMissileStrike(_)
+        | ActionKind::Artillery(_)
+        | ActionKind::AddTask(_)
+        | ActionKind::RemoveTask(_) => false,
+    }
+}
+
+/// Can a waypoint-style action (`waypoint`) be applied to an action group
+/// that was spawned as `group`? The mission builders enforce the same pairing
+/// and refuse anything else; the Actions menu uses this to only list the
+/// groups an entry can actually move.
+pub(crate) fn waypoint_accepts(waypoint: &ActionKind, group: &ActionKind) -> bool {
+    match (waypoint, group) {
+        (ActionKind::AttackersWaypoint, ActionKind::Attackers(_))
+        | (ActionKind::SeadWaypoint, ActionKind::Sead(_))
+        | (ActionKind::AwacsWaypoint, ActionKind::Awacs(_))
+        | (ActionKind::CruiseMissileWaypoint, ActionKind::CruiseMissileSpawn(_))
+        | (ActionKind::FighersWaypoint, ActionKind::Fighters(_))
+        | (ActionKind::TankerWaypoint, ActionKind::Tanker(_))
+        | (ActionKind::DroneWaypoint, ActionKind::Drone(_)) => true,
+        // Everything `ai_rtb_mission` knows how to fly home. A group already
+        // on its way home has kind Rtb and is not listed again.
+        (
+            ActionKind::Rtb,
+            ActionKind::Tanker(_)
+            | ActionKind::Awacs(_)
+            | ActionKind::Bomber(_)
+            | ActionKind::CruiseMissileSpawn(_)
+            | ActionKind::Drone(_)
+            | ActionKind::Recon(_)
+            | ActionKind::Sead(_)
+            | ActionKind::Fighters(_)
+            | ActionKind::Attackers(_),
+        ) => true,
+        _ => false,
+    }
+}
+
 fn group_position(lua: MizLua, name: &str) -> Result<Vector2> {
     let pos = Group::get_by_name(lua, name)
         .context("getting group")?
@@ -522,8 +617,7 @@ impl Db {
     ) -> Result<()> {
         let cost = match &cmd.action.kind {
             ActionKind::Nuke(nc) => {
-                let div = max(1, self.persisted.nukes_used * nc.cost_scale as u32);
-                max(1, cmd.action.cost / div)
+                nuke_cost(cmd.action.cost, nc.cost_scale, self.persisted.nukes_used)
             }
             ActionKind::Paratrooper(p) => {
                 let sq = self
@@ -560,8 +654,7 @@ impl Db {
                         DeployKind::Troop { .. } => a.cfg.troop,
                         _ => bail!("can't move this unit type"),
                     };
-                    let steps = dist / (step as f64);
-                    steps as u32 * cmd.action.cost
+                    move_cost(dist, step, cmd.action.cost)
                 }
                 _ => cmd.action.cost,
             },
@@ -591,15 +684,35 @@ impl Db {
                 }
             }
         }
-        let n = self
-            .ephemeral
-            .actions_taken
-            .entry(side)
-            .or_default()
-            .entry(cmd.name.clone())
-            .or_default();
+        // `limit` caps how many of an action a side may have up at once (that
+        // is how the wiki documents it). For actions that put a group on the
+        // map, count the side's live groups from that action: that survives a
+        // restart and frees a slot the moment a group dies, lands or is
+        // deleted. The old ephemeral counter never went down while the server
+        // was up and reset to zero on every restart, so it was neither a
+        // concurrency cap nor a real budget. Actions with no group of their
+        // own (nuke, waypoints, carrier orders, fires, tasks) have nothing to
+        // count, so for those it remains a per-server-session budget.
         if let Some(limit) = cmd.action.limit {
-            if *n >= limit {
+            let n = if action_spawns_group(&cmd.action.kind) {
+                self.persisted
+                    .actions
+                    .into_iter()
+                    .filter_map(|gid| self.persisted.groups.get(gid))
+                    .filter(|g| {
+                        g.side == side
+                            && matches!(&g.origin, DeployKind::Action { name, .. } if *name == cmd.name)
+                    })
+                    .count() as u32
+            } else {
+                self.ephemeral
+                    .actions_taken
+                    .get(&side)
+                    .and_then(|m| m.get(&cmd.name))
+                    .copied()
+                    .unwrap_or(0)
+            };
+            if n >= limit {
                 bail!("{side} is out of {} actions", cmd.name)
             }
         }
@@ -620,6 +733,7 @@ impl Db {
             }
         }
         let name = cmd.name.clone();
+        let spawns_group = action_spawns_group(&cmd.action.kind);
         let gid = match cmd.args {
             ActionArgs::Awacs(args) => self
                 .awacs(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
@@ -677,15 +791,15 @@ impl Db {
             ActionArgs::SeadWaypoint(args) => {
                 self.move_ai_sead(spctx, side, ucid.clone(), args)?
             }
-            ActionArgs::Rtb(args) => self.rtb(spctx, args).context("rtbing unit")?,
+            ActionArgs::Rtb(args) => self.rtb(spctx, side, args).context("rtbing unit")?,
             ActionArgs::CarrierWaypoint(args) => self
-                .carrier_waypoint(lua, args)
+                .carrier_waypoint(lua, side, args)
                 .context("setting carrier waypoint")?,
             ActionArgs::CarrierRepair(args) => self
-                .carrier_repair(args)
+                .carrier_repair(side, args)
                 .context("repairing carrier")?,
             ActionArgs::CarrierRespawn(args) => self
-                .carrier_respawn(lua, spctx, idx, args)
+                .carrier_respawn(lua, spctx, idx, side, args)
                 .context("respawning carrier")?,
             ActionArgs::NavalCruiseMissileStrike(args) => self
                 .naval_cruise_missile_strike(lua, side, args)
@@ -749,6 +863,19 @@ impl Db {
             }
         };
         if let Some(ucid) = ucid.as_ref() {
+            // Remember who paid for a new group and how much. `player` on the
+            // group is the *responsible party*, which a later waypoint order
+            // can hand to someone else, so it can't say who to refund. Only
+            // for groups this action created -- Rtb and the cruise missile
+            // waypoint return the gid of an existing group.
+            if spawns_group
+                && let Some(gid) = gid.as_ref()
+                && let Some(group) = self.persisted.groups.get_mut_cow(gid)
+                && let DeployKind::Action { paid_by, .. } = &mut group.origin
+            {
+                *paid_by = Some((*ucid, cost));
+                self.ephemeral.dirty();
+            }
             self.ephemeral.stat(Stat::Action {
                 by: *ucid,
                 action: cmd.name.clone(),
@@ -926,7 +1053,48 @@ impl Db {
                 }
             }
         }
-        self.delete_group(&gid)
+        // Everything else is dropped rather than respawned -- a bomber, a
+        // paradrop or deployable delivery, or a logistics run can't pick its
+        // flight back up mid-route. Those used to vanish with the player's
+        // points. If the group still had its delivery ahead of it (destination
+        // not yet reached) the action never did anything, so give the payer
+        // the whole price back. One that already delivered and was only flying
+        // home got what it paid for.
+        let refund = match &group!(self, gid)?.origin {
+            DeployKind::Action {
+                spec,
+                destination: Some(_),
+                paid_by,
+                player,
+                name,
+                ..
+            } if matches!(
+                spec.kind,
+                ActionKind::Bomber(_)
+                    | ActionKind::Paratrooper(_)
+                    | ActionKind::Deployable(_)
+                    | ActionKind::LogisticsRepair(_)
+                    | ActionKind::LogisticsTransfer(_)
+            ) =>
+            {
+                // Saves from before paid_by only know the flat action cost.
+                paid_by
+                    .or_else(|| player.map(|p| (p, spec.cost)))
+                    .map(|(ucid, amount)| (ucid, amount, name.clone()))
+            }
+            _ => None,
+        };
+        self.delete_group(&gid)?;
+        if let Some((ucid, amount, name)) = refund
+            && amount > 0
+        {
+            self.adjust_points(
+                &ucid,
+                amount.min(i32::MAX as u32) as i32,
+                &format!("refund for {name} {gid}, cancelled by a server restart before it delivered"),
+            );
+        }
+        Ok(())
     }
 
     fn drone_mission<'lua>(
@@ -1041,19 +1209,7 @@ impl Db {
             None,
             BitFlags::empty(),
             move |db, gid, spawn_pos| {
-                let now = Utc::now();
-                // Scan + cluster + feed the intel database (no LOS gate for the
-                // AI recon flight -- it is assumed to have a working sensor).
-                db.apply_recon_scan(
-                    target_pos,
-                    scan_radius,
-                    side,
-                    IntelSource::ReconFlight,
-                    None,
-                    true,
-                    now,
-                );
-                db.drone_mission(
+                db.recon_mission(
                     side,
                     ucid_for_report,
                     spawn_pos,
@@ -1065,7 +1221,45 @@ impl Db {
                 )
             },
         )?;
+        // Scan + cluster + feed the intel database (no LOS gate for the AI
+        // recon flight -- it is assumed to have a working sensor). Only once
+        // the flight is actually up: this used to run inside the mission
+        // builder, ahead of a spawn that always failed, so the intel was
+        // handed out and the action then errored before it was charged --
+        // free, unlimited recon.
+        self.apply_recon_scan(
+            target_pos,
+            scan_radius,
+            side,
+            IntelSource::ReconFlight,
+            None,
+            true,
+            Utc::now(),
+        );
         Ok(Some(gid))
+    }
+
+    /// The recon flight orbits its target like a drone. It needs its own
+    /// builder because `drone_mission` only accepts Drone groups -- borrowing
+    /// it made every recon spawn fail "not compatible with the selected
+    /// group".
+    fn recon_mission<'lua>(
+        &mut self,
+        side: Side,
+        ucid: Option<Ucid>,
+        spawn_point: Vector2,
+        args: WithPosAndGroup<()>,
+    ) -> Result<Vec<MissionPoint<'lua>>> {
+        self.ai_loiter_point_mission(
+            side,
+            ucid,
+            args,
+            OrbitPattern::Circle,
+            spawn_point,
+            |k| matches!(k, ActionKind::Recon(_)),
+            || Task::ComboTask(vec![]),
+            || vec![],
+        )
     }
 
     fn ai_fighters_mission<'lua>(
@@ -1588,22 +1782,42 @@ impl Db {
         Ok(None)
     }
 
-    fn rtb(&mut self, spctx: &SpawnCtx, mut args: WithPosAndGroup<()>) -> Result<Option<GroupId>> {
+    fn rtb(
+        &mut self,
+        spctx: &SpawnCtx,
+        side: Side,
+        mut args: WithPosAndGroup<()>,
+    ) -> Result<Option<GroupId>> {
         let gid = args.group;
+        // Nothing else checked the side: `-action <rtb> <gid>` could send the
+        // other team's tanker or AWACS home.
+        if group!(self, gid)?.side != side {
+            bail!("can't rtb the other team's aircraft")
+        }
         let mission = self
-            .ai_rtb_mission(&mut args, || Task::ComboTask(vec![]))
+            .ai_rtb_mission(side, &mut args, || Task::ComboTask(vec![]))
             .context("generate rtb mission")?;
         self.set_ai_mission(spctx, gid, mission)?;
         Ok(Some(gid))
     }
 
-    fn carrier_waypoint(&mut self, lua: MizLua, args: WithPosAndGroup<()>) -> Result<Option<GroupId>> {
+    fn carrier_waypoint(
+        &mut self,
+        lua: MizLua,
+        side: Side,
+        args: WithPosAndGroup<()>,
+    ) -> Result<Option<GroupId>> {
         info!("[CARRIER_WAYPOINT] Received waypoint command for group {:?} to position {:?}", args.group, args.pos);
 
-        // Find carrier objective by group ID
+        // Find carrier objective by group ID. Only our own task forces: this
+        // used to match any carrier holding the gid, so a player could steer
+        // the enemy carrier.
         let mut carrier_info: Option<(ObjectiveId, dcso3::String)> = None;
         for (id, obj) in &self.persisted.objectives {
             if let ObjectiveKind::CarrierGroup { carrier_template: template, .. } = &obj.kind {
+                if obj.owner != side {
+                    continue;
+                }
                 info!("[CARRIER_WAYPOINT] Checking carrier group {} with template {}", obj.name, template);
                 info!("[CARRIER_WAYPOINT] Objective owner: {:?}, all groups: {:?}", obj.owner, obj.groups);
                 if !template.is_empty() {
@@ -1722,24 +1936,95 @@ impl Db {
                     error!("[CARRIER_WAYPOINT] Failed to get group {}: {:?}", template, e);
                 }
             }
+        } else {
+            bail!("{} is not one of your carrier groups", args.group)
         }
         Ok(None)
     }
 
-    fn carrier_repair(&mut self, args: WithObj<()>) -> Result<Option<GroupId>> {
-        // First collect all needed info without borrowing
-        let (nb_id, repair_cost, available) = {
-            let cg = objective!(self, &args.oid)?;
-            match &cg.kind {
-                ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. } => {
-                    let repair_cost = self.ephemeral.cfg.carrier.as_ref().map(|c| c.repair_cost).unwrap_or(5000);
-                    let nb = objective!(self, nb_id)?;
-                    let available = nb.warehouse.equipment.get(MATERIEL_ITEM).map(|inv| inv.stored).unwrap_or(0);
-                    (*nb_id, repair_cost, available)
-                }
-                _ => bail!("Objective is not a carrier group")
-            }
+    /// Checks shared by carrier repair and respawn: the task force and the
+    /// naval base whose materiel pays for the work must both be ours. Neither
+    /// was checked, so a player could spend the enemy's naval stores on the
+    /// enemy's carrier.
+    fn own_carrier_and_base(&self, side: Side, oid: &ObjectiveId) -> Result<ObjectiveId> {
+        let cg = objective!(self, oid)?;
+        let nb_id = match &cg.kind {
+            ObjectiveKind::CarrierGroup { parent_naval_base: Some(nb_id), .. } => *nb_id,
+            _ => bail!("Objective is not a carrier group"),
         };
+        if cg.owner != side {
+            bail!("{} is not one of your carrier groups", cg.name)
+        }
+        let nb = objective!(self, nb_id)?;
+        if nb.owner != side {
+            bail!("{} is not in friendly hands, it can't supply the carrier", nb.name)
+        }
+        Ok(nb_id)
+    }
+
+    /// Respawn the task force's ships that are actually gone. The shared
+    /// `resurrect_carrier_groups` queues a respawn for every group, which
+    /// for a repair re-spawned ships that were still afloat.
+    fn respawn_dead_carrier_groups(&mut self, oid: ObjectiveId) -> Result<()> {
+        let obj = objective!(self, &oid)?;
+        let gids: SmallVec<[GroupId; 4]> = obj
+            .groups
+            .get(&obj.owner)
+            .into_iter()
+            .flat_map(|s| s.into_iter().copied())
+            .collect();
+        for gid in gids {
+            let uids: SmallVec<[_; 16]> = group!(self, gid)?.units.into_iter().copied().collect();
+            let mut any_dead = false;
+            for uid in uids {
+                let unit = unit_mut!(self, uid)?;
+                if unit.dead {
+                    unit.dead = false;
+                    any_dead = true;
+                }
+            }
+            if any_dead {
+                self.ephemeral.push_spawn(gid);
+            }
+        }
+        self.ephemeral.dirty();
+        Ok(())
+    }
+
+    fn carrier_is_damaged(&self, oid: &ObjectiveId) -> Result<bool> {
+        let cg = objective!(self, oid)?;
+        if cg.health < 100 || cg.warehouse.damaged {
+            return Ok(true);
+        }
+        Ok(cg
+            .groups
+            .get(&cg.owner)
+            .into_iter()
+            .flat_map(|s| s.into_iter())
+            .filter_map(|gid| self.persisted.groups.get(gid))
+            .flat_map(|g| g.units.into_iter())
+            .filter_map(|uid| self.persisted.units.get(uid))
+            .any(|u| u.dead))
+    }
+
+    fn carrier_repair(&mut self, side: Side, args: WithObj<()>) -> Result<Option<GroupId>> {
+        let nb_id = self.own_carrier_and_base(side, &args.oid)?;
+        // A repair on a healthy task force spent 5000 materiel and respawned
+        // every ship for nothing. A sunk one is a respawn, which costs more;
+        // letting repair raise it would make the respawn price moot.
+        if objective!(self, &args.oid)?.health == 0 {
+            bail!("the carrier is destroyed, it needs a respawn not a repair")
+        }
+        if !self.carrier_is_damaged(&args.oid)? {
+            bail!("the carrier is not damaged")
+        }
+        let repair_cost = self.ephemeral.cfg.carrier.as_ref().map(|c| c.repair_cost).unwrap_or(5000);
+        let available = objective!(self, nb_id)?
+            .warehouse
+            .equipment
+            .get(MATERIEL_ITEM)
+            .map(|inv| inv.stored)
+            .unwrap_or(0);
 
         if available >= repair_cost {
             // Now mutate
@@ -1752,15 +2037,23 @@ impl Db {
                 cg_mut.warehouse.damaged = false;
                 cg_mut.health = 100;
             }
-            // Actually bring the ships back, not just the health number.
-            self.resurrect_carrier_groups(args.oid)?;
+            // Actually bring the lost ships back, not just the health number.
+            self.respawn_dead_carrier_groups(args.oid)?;
         } else {
             bail!("Not enough supplies at Naval Base to repair carrier (need {}, have {})", repair_cost, available);
         }
         Ok(None)
     }
 
-    fn carrier_respawn(&mut self, _lua: MizLua, _spctx: &SpawnCtx, _idx: &MizIndex, args: WithObj<()>) -> Result<Option<GroupId>> {
+    fn carrier_respawn(
+        &mut self,
+        _lua: MizLua,
+        _spctx: &SpawnCtx,
+        _idx: &MizIndex,
+        side: Side,
+        args: WithObj<()>,
+    ) -> Result<Option<GroupId>> {
+        self.own_carrier_and_base(side, &args.oid)?;
         // First collect all needed info without borrowing
         let (nb_id, respawn_cost, available, health) = {
             let cg = objective!(self, &args.oid)?;
@@ -1792,7 +2085,7 @@ impl Db {
             }
             // Respawn the actual ships -- previously this action only reset
             // the health number and the task force stayed sunk.
-            self.resurrect_carrier_groups(args.oid)?;
+            self.respawn_dead_carrier_groups(args.oid)?;
         } else {
             bail!("Not enough supplies at Naval Base to respawn carrier (need {}, have {})", respawn_cost, available);
         }
@@ -2282,6 +2575,7 @@ impl Db {
 
     fn ai_rtb_mission<'lua>(
         &mut self,
+        side: Side,
         args: &mut WithPosAndGroup<()>,
         task: impl Fn() -> Task<'lua> + 'static,
     ) -> Result<Vec<MissionPoint<'lua>>> {
@@ -2290,8 +2584,10 @@ impl Db {
         let mut min_dist = f64::MAX;
         let rtb_pos = {
             let mut closest_base = None;
+            // Home is a friendly field -- the nearest airbase of any owner
+            // could send the flight to land on the enemy.
             for (_id, obj) in self.objectives() {
-                if obj.is_airbase() {
+                if obj.is_airbase() && obj.owner == side {
                     let obj_pos = obj.zone.pos();
                     let dist = na::distance_squared(&obj_pos.into(), &args.pos.into());
                     if dist < min_dist {
@@ -2319,6 +2615,7 @@ impl Db {
                 origin: _,
                 ammo: _,
                 jtac: _,
+                paid_by: _,
             } => match &spec.kind {
                 ActionKind::Tanker(ai_plane_cfg) => (
                     ai_plane_cfg.altitude,
@@ -2417,6 +2714,13 @@ impl Db {
         args: WithJtac<BomberCfg>,
     ) -> Result<Option<GroupId>> {
         let jt = jtacs.get(&args.jtac)?;
+        // The menu only lists friendly JTACs, but `-action <bomber> <jtac>`
+        // takes any id. An enemy JTAC's target is one of our own units and
+        // its position is exactly what fog of war hides -- the bomber would
+        // fly straight to it and mark it on our map.
+        if jt.side() != side {
+            bail!("{} is not one of your JTACs", args.jtac)
+        }
         let tgt = jt
             .target()
             .as_ref()
@@ -2492,6 +2796,8 @@ impl Db {
             origin: Some(obj.id),
             ammo: 0,
             jtac: None,
+            // Filled in by start_action once the spawn has succeeded.
+            paid_by: None,
         };
         let gid = self
             .add_group(
@@ -2504,17 +2810,30 @@ impl Db {
                 tags | UnitTag::Driveable,
             )
             .context("creating group")?;
-        let mission = gen_mission(self, gid, pos).context("generating mission for new unit")?;
-        self.ephemeral
-            .spawn_group(
-                perf,
-                &self.persisted,
-                idx,
-                spctx,
-                group!(self, gid)?,
-                mission,
-            )
-            .context("spawning group")?;
+        let spawned = gen_mission(self, gid, pos)
+            .context("generating mission for new unit")
+            .and_then(|mission| {
+                self.ephemeral
+                    .spawn_group(
+                        perf,
+                        &self.persisted,
+                        idx,
+                        spctx,
+                        group!(self, gid)?,
+                        mission,
+                    )
+                    .context("spawning group")
+            });
+        // The group is already in the db. If it never made it into DCS it
+        // must not stay there: the caller errors out without charging, and a
+        // leftover would sit in `actions` as a phantom -- counted against the
+        // action's limit and "respawned" on the next restart.
+        if let Err(e) = spawned {
+            if let Err(de) = self.delete_group(&gid) {
+                error!("could not remove unspawned action group {gid:?}: {de:?}");
+            }
+            return Err(e);
+        }
         Ok(gid)
     }
 
@@ -3184,27 +3503,30 @@ impl Db {
         let mut to_deploy: SmallVec<[(Vector2, String, Side, Ucid); 2]> = smallvec![];
         let mut to_paratroop: SmallVec<[(Vector2, String, Side, Ucid, ObjectiveId); 2]> =
             smallvec![];
+        // (payer, points, group name) for flights that made it home after an
+        // RTB order. Applied after the pass, through adjust_points.
+        let mut to_refund: SmallVec<[(Ucid, i32, String); 2]> = smallvec![];
+        // Nothing in this pass may `?` out: it runs over every action group on
+        // the server, and one bad group used to abort it for all of them --
+        // after `destination.take()` had already consumed a delivery, so that
+        // drop was simply lost. A unit that has gone missing just doesn't
+        // count as arrived.
         macro_rules! at_dest {
             ($group:expr, $dest:expr, $radius:expr) => {{
                 let r2 = f64::powi($radius, 2);
-                let mut iter = $group.units.into_iter();
-                loop {
-                    match iter.next() {
-                        None => break false,
-                        Some(uid) => {
-                            let unit = unit!(self, uid)?;
-                            if na::distance_squared(&unit.pos.into(), &$dest.into()) <= r2 {
-                                break true;
-                            }
-                        }
-                    }
-                }
+                $group
+                    .units
+                    .into_iter()
+                    .filter_map(|uid| self.persisted.units.get(uid))
+                    .any(|unit| na::distance_squared(&unit.pos.into(), &$dest.into()) <= r2)
             }};
         }
 
-
         for gid in &self.persisted.actions {
-            let group = group_mut!(self, gid)?;
+            let Some(group) = self.persisted.groups.get_mut_cow(gid) else {
+                error!("advance_actions: action group {gid:?} is missing");
+                continue;
+            };
 
             if let DeployKind::Action {
                 spec,
@@ -3213,6 +3535,7 @@ impl Db {
                 rtb,
                 player,
                 origin,
+                paid_by,
                 ..
             } = &mut group.origin
             {
@@ -3259,25 +3582,16 @@ impl Db {
                         if let Some(target) = *rtb {
                             if at_dest!(group, target, 10_000.) {
                                 to_delete.push(*gid);
-                                match player {
-                                    Some(u) => match self.persisted.players.get_mut_cow(u) {
-                                        Some(p) => {
-                                            p.points += (spec.cost as f64 * 0.25).ceil() as i32;
-                                            self.ephemeral.msgs().panel_to_side(
-                                                5,
-                                                false,
-                                                p.side,
-                                                format_compact!(
-                                                    "{}'s {} has RTB'd. points refunded: {}",
-                                                    p.name,
-                                                    group.name,
-                                                    (spec.cost as f64 * 0.25).ceil() as i32,
-                                                ),
-                                            );
-                                        }
-                                        None => (),
-                                    },
-                                    None => (),
+                                // Back to whoever paid for the flight. `player`
+                                // is the responsible party, which is whoever
+                                // last gave it a waypoint -- the refund used to
+                                // go to them, and straight into their points
+                                // without a stat or a reason.
+                                let refund = (spec.cost as f64 * 0.25).ceil() as i32;
+                                if let Some(ucid) = (*paid_by).map(|(u, _)| u).or(*player)
+                                    && refund > 0
+                                {
+                                    to_refund.push((ucid, refund, group.name.clone()));
                                 }
                             }
                         }
@@ -3306,18 +3620,22 @@ impl Db {
                         if let Some(target) = *destination {
                             if at_dest!(group, target, 800.) {
                                 destination.take();
-                                let ucid = player
-                                    .ok_or_else(|| anyhow!("paratroop missions require a ucid"))?;
-                                let origin = (*origin).ok_or_else(|| {
-                                    anyhow!("objective origin is required for paratroops")
-                                })?;
-                                to_paratroop.push((
-                                    target,
-                                    t.name.clone(),
-                                    group.side,
-                                    ucid,
-                                    origin,
-                                ));
+                                match (*player, *origin) {
+                                    (Some(ucid), Some(origin)) => to_paratroop.push((
+                                        target,
+                                        t.name.clone(),
+                                        group.side,
+                                        ucid,
+                                        origin,
+                                    )),
+                                    // Nothing can deploy these troops. Say so
+                                    // once and let the flight go home, instead
+                                    // of failing the whole pass every tick.
+                                    (ucid, origin) => error!(
+                                        "advance_actions: paratroop group {gid:?} can't drop, \
+                                         needs a ucid ({ucid:?}) and an origin ({origin:?})"
+                                    ),
+                                }
                             }
                         }
                         if destination.is_none() {
@@ -3332,10 +3650,17 @@ impl Db {
                         if let Some(target) = *destination {
                             if at_dest!(group, target, 800.) {
                                 destination.take();
-                                let ucid = player.as_ref().map(|u| u.clone()).ok_or_else(|| {
-                                    anyhow!("deployables missions require a ucid")
-                                })?;
-                                to_deploy.push((target, d.name.clone(), group.side, ucid));
+                                match *player {
+                                    Some(ucid) => to_deploy.push((
+                                        target,
+                                        d.name.clone(),
+                                        group.side,
+                                        ucid,
+                                    )),
+                                    None => error!(
+                                        "advance_actions: deployable group {gid:?} can't deploy without a ucid"
+                                    ),
+                                }
                             }
                         }
                         if destination.is_none() {
@@ -3346,44 +3671,8 @@ impl Db {
                             }
                         }
                     }
-                    ActionKind::Move(_) => {
-                        self.ephemeral.groups_with_move_missions.retain(|gid, dst| {
-                            match self.persisted.groups.get(gid) {
-                                None => false,
-                                Some(group) => {
-                                    let pos = centroid2d(
-                                        group
-                                            .units
-                                            .into_iter()
-                                            .filter_map(|uid| self.persisted.units.get(uid))
-                                            .map(|u| u.pos),
-                                    );
-                                    if (pos - *dst).magnitude() > 100. {
-                                        true
-                                    } else {
-                                        for uid in &group.units {
-                                            match self.persisted.units.get(uid) {
-                                                None => {
-                                                    self.ephemeral
-                                                        .units_able_to_move
-                                                        .swap_remove(uid);
-                                                }
-                                                Some(unit) => {
-                                                    if !unit.tags.contains(UnitTag::Driveable) && !unit.tags.contains(UnitTag::Boat) {
-                                                        self.ephemeral
-                                                            .units_able_to_move
-                                                            .swap_remove(uid);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        false
-                                    }
-                                }
-                            }
-                        });
-                    }
-                    ActionKind::AwacsWaypoint
+                    ActionKind::Move(_)
+                    | ActionKind::AwacsWaypoint
                     | ActionKind::FighersWaypoint
                     | ActionKind::AttackersWaypoint
                     | ActionKind::SeadWaypoint
@@ -3398,16 +3687,66 @@ impl Db {
                     | ActionKind::AddTask(_)
                     | ActionKind::RemoveTask(_)
                     | ActionKind::NavalCruiseMissileStrike(_) => {
-                        bail!("should not be a group")
+                        error!("advance_actions: {gid:?} should not be a group")
                     }
                 }
             }
         }
 
+        // Retire finished Move orders. This used to sit in the loop above,
+        // under an `ActionKind::Move` arm no group ever reaches -- a move
+        // creates no action group -- so it never ran and the map grew by one
+        // entry per move for the life of the server.
+        self.ephemeral.groups_with_move_missions.retain(|gid, dst| {
+            match self.persisted.groups.get(gid) {
+                None => false,
+                Some(group) => {
+                    let pos = centroid2d(
+                        group
+                            .units
+                            .into_iter()
+                            .filter_map(|uid| self.persisted.units.get(uid))
+                            .map(|u| u.pos),
+                    );
+                    if (pos - *dst).magnitude() > 100. {
+                        true
+                    } else {
+                        for uid in &group.units {
+                            match self.persisted.units.get(uid) {
+                                None => {
+                                    self.ephemeral.units_able_to_move.swap_remove(uid);
+                                }
+                                Some(unit) => {
+                                    if !unit.tags.contains(UnitTag::Driveable)
+                                        && !unit.tags.contains(UnitTag::Boat)
+                                    {
+                                        self.ephemeral.units_able_to_move.swap_remove(uid);
+                                    }
+                                }
+                            }
+                        }
+                        false
+                    }
+                }
+            }
+        });
+
         for gid in to_delete {
             if let Err(e) = self.delete_group(&gid) {
                 error!("delete action group failed {e:?}")
             }
+        }
+        for (ucid, amount, name) in to_refund {
+            if let Some(p) = self.persisted.players.get(&ucid) {
+                let (side, pname) = (p.side, p.name.clone());
+                self.ephemeral.msgs().panel_to_side(
+                    5,
+                    false,
+                    side,
+                    format_compact!("{pname}'s {name} has RTB'd. points refunded: {amount}"),
+                );
+            }
+            self.adjust_points(&ucid, amount, &format!("rtb refund for {name}"));
         }
         for (cfg, target, side) in to_bomb {
             if let Err(e) = self.bomb_targets(lua, side, jtacs, &cfg, target) {
@@ -3474,12 +3813,22 @@ impl Db {
 
         let land = Land::singleton(lua)?;
         let alt = land.get_height(LuaVec2(target_pos)).unwrap_or(0.);
+        // Fire missions cost nothing from the global Request Fires menu and
+        // had no limit, so one player could keep every gun on the map firing
+        // without pause. Each battery now needs `cooldown_secs` between
+        // missions; one still reloading is passed over for the next in range.
+        let now = Utc::now();
+        let cooldown = Duration::seconds(cfg.cooldown_secs as i64);
+        self.ephemeral
+            .arty_last_fired
+            .retain(|_, t| now - *t < cooldown);
 
         // Collect groups with alive Artillery/Launcher units within their configured range.
         // Works for ground artillery, missile launchers, and naval units — any unit type
         // listed in cfg.units or tagged Artillery/Launcher uses its configured range.
         let mut candidates: Vec<(GroupId, f64)> = Vec::new();
         let mut too_close = false;
+        let mut reloading = false;
         {
             let group_ids: Vec<GroupId> = self
                 .persisted
@@ -3515,12 +3864,22 @@ impl Db {
                 if min_range > 0.0 && dist < min_range {
                     too_close = true;
                 } else if dist <= max_range {
-                    candidates.push((gid, dist));
+                    if self.ephemeral.arty_last_fired.contains_key(&gid) {
+                        reloading = true;
+                    } else {
+                        candidates.push((gid, dist));
+                    }
                 }
             }
         }
 
         if candidates.is_empty() {
+            if reloading {
+                bail!(
+                    "every battery in range fired within the last {}s, try again shortly",
+                    cfg.cooldown_secs
+                );
+            }
             if too_close {
                 bail!("target is too close for available artillery");
             }
@@ -3569,6 +3928,9 @@ impl Db {
                         "artillery_strike: ordered {:?} group {} to fire at {:?}",
                         side, group_name, target_pos
                     );
+                    if cfg.cooldown_secs > 0 {
+                        self.ephemeral.arty_last_fired.insert(*gid, now);
+                    }
                     fired += 1;
                 }
             }
@@ -3592,7 +3954,7 @@ impl Db {
             cfg.radius_m.max(500.),
             fired,
             side,
-            Utc::now(),
+            now,
         );
 
         // Wake up any culled objective whose zone contains the target position so its
@@ -3600,7 +3962,6 @@ impl Db {
         // objective (owned by the enemy side) that either contains target_pos directly
         // or is closest to it within a generous 3 km fallback radius.
         {
-            let now = Utc::now();
             let fallback_sq = 3000.0_f64.powi(2);
             let mut best: Option<(ObjectiveId, f64)> = None;
             for (oid, obj) in &self.persisted.objectives {
@@ -3627,5 +3988,61 @@ impl Db {
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nuke_cost_is_geometric() {
+        // The NukeCfg doc example: scale 4, base 1000.
+        assert_eq!(nuke_cost(1000, 4, 0), 1000);
+        assert_eq!(nuke_cost(1000, 4, 1), 250);
+        assert_eq!(nuke_cost(1000, 4, 2), 62);
+        assert_eq!(nuke_cost(1000, 4, 3), 15);
+        assert_eq!(nuke_cost(1000, 4, 100), 1);
+        // A scale of 0 or 1 never discounts.
+        assert_eq!(nuke_cost(1000, 0, 5), 1000);
+        assert_eq!(nuke_cost(1000, 1, 5), 1000);
+    }
+
+    #[test]
+    fn move_cost_rounds_up_and_is_never_free() {
+        assert_eq!(move_cost(0., 1000, 10), 10);
+        assert_eq!(move_cost(1., 1000, 10), 10);
+        assert_eq!(move_cost(1000., 1000, 10), 10);
+        assert_eq!(move_cost(1001., 1000, 10), 20);
+        assert_eq!(move_cost(5500., 1000, 10), 60);
+        assert_eq!(move_cost(5500., 1000, 0), 0);
+        assert_eq!(move_cost(5500., 0, 10), 55_000);
+        assert_eq!(move_cost(1e12, 1, u32::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn waypoints_only_accept_their_own_kind() {
+        let plane = AiPlaneCfg {
+            kind: AiPlaneKind::FixedWing,
+            duration: None,
+            template: "T".into(),
+            altitude: 1000.,
+            altitude_typ: AltType::BARO,
+            speed: 100.,
+            freq: None,
+            tacan_channel: None,
+            tacan_band: None,
+            tacan_callsign: None,
+            callsign_id: None,
+            callsign_number: None,
+        };
+        let tanker = ActionKind::Tanker(plane.clone());
+        let fighters = ActionKind::Fighters(plane);
+        assert!(waypoint_accepts(&ActionKind::TankerWaypoint, &tanker));
+        assert!(!waypoint_accepts(&ActionKind::TankerWaypoint, &fighters));
+        assert!(waypoint_accepts(&ActionKind::FighersWaypoint, &fighters));
+        assert!(waypoint_accepts(&ActionKind::Rtb, &tanker));
+        assert!(!waypoint_accepts(&ActionKind::Rtb, &ActionKind::Rtb));
+        assert!(!waypoint_accepts(&ActionKind::CarrierWaypoint, &tanker));
     }
 }
