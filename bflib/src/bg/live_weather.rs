@@ -23,8 +23,10 @@ for more details.
 use anyhow::{Context, Result};
 use bfprotocols::cfg::LiveWeatherConfig;
 use chrono::{Datelike, Timelike, Utc};
-use dcso3::env::miz_pack::{read_table_from_miz, rewrite_entry_in_miz, serialize_to_lua};
-use mlua::{Lua, Table, Value};
+use dcso3::env::miz_pack::{
+    read_table_from_miz, rewrite_entry_in_miz, scratch_lua, serialize_to_lua,
+};
+use mlua::{Table, Value};
 use std::path::PathBuf;
 
 pub(super) struct LiveWeatherRequest {
@@ -33,8 +35,12 @@ pub(super) struct LiveWeatherRequest {
 }
 
 pub(super) fn apply(req: &LiveWeatherRequest) -> Result<()> {
-    let lua = Box::leak(Box::new(Lua::new()));
-    let mission: Table = read_table_from_miz(lua, &req.miz_path, "mission")
+    // Dropped at the end of the call. This used to be leaked, because
+    // serialize_to_lua only took 'static values -- a whole Lua state holding
+    // the entire mission table, lost on every call. scratch_lua also keeps
+    // io/os away from the mission script it evaluates.
+    let lua = scratch_lua()?;
+    let mission: Table = read_table_from_miz(&lua, &req.miz_path, "mission")
         .context("reading mission table from miz")?;
     if req.cfg.sync_time {
         apply_live_time(&mission).context("applying live time")?;

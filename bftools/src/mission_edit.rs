@@ -23,13 +23,13 @@ use dcso3::{
     country::Country,
     env::{
         miz::{self, Group, Miz, Property, Skill, TriggerZoneTyp},
-        miz_pack::serialize_to_lua,
+        miz_pack::{scratch_lua, serialize_to_lua},
     },
     normal2, path, pointing_towards2, value_to_json, DcsTableExt, LuaVec2, Quad2, Sequence, String,
     Vector2,
 };
 use log::{info, warn};
-use mlua::{FromLua, IntoLua, Lua, Table, Value};
+use mlua::{ChunkMode, FromLua, IntoLua, Lua, Table, Value};
 use nalgebra as na;
 use serde_derive::Serialize;
 use std::{
@@ -305,14 +305,19 @@ impl LoadedMiz {
                 continue;
             }
             info!("processing {file_name}");
-            let file_content = fs::read_to_string(file)
+            // Bytes, not a String: a name typed in a non-UTF-8 codepage is a
+            // valid Lua string, and read_to_string refused the whole mission.
+            let file_content = fs::read(file)
                 .with_context(|| format_compact!("error reading file {file:?}"))?;
-            if let Err(e) = lua.load(&file_content).exec() {
+            if let Err(e) = lua.load(&file_content).set_mode(ChunkMode::Text).exec() {
                 // A Lua syntax error here means the .miz itself is malformed,
                 // and the only thing the caller used to get was a line number
                 // in a temp file that Drop deletes on the way out. Quote the
                 // offending line so the mission can actually be fixed.
-                let ctx = lua_error_context(&e.to_string(), &file_content);
+                let ctx = lua_error_context(
+                    &e.to_string(),
+                    &std::string::String::from_utf8_lossy(&file_content),
+                );
                 bail!("loading {file_name} from {path:?} into lua: {e}{ctx}");
             }
             if **file_name == "mission" {
@@ -320,6 +325,8 @@ impl LoadedMiz {
                     .globals()
                     .raw_get("mission")
                     .context("extracting mission")?;
+                compact_mission_arrays(&mission)
+                    .with_context(|| format_compact!("compacting group arrays in {path:?}"))?;
             }
             if **file_name == "warehouses" {
                 warehouses = lua
@@ -367,6 +374,109 @@ fn vehicle(
                 .map(|r| Ok(r?.1)),
         ))
     }
+}
+
+/// Renumber an array-shaped table to 1..n, keeping its elements in key
+/// order. Returns whether anything moved. A table with any key that is not a
+/// positive integer is left alone -- it is not an array.
+fn compact_array(tbl: &Table) -> Result<bool> {
+    let mut entries: Vec<(i64, Value)> = vec![];
+    for pair in tbl.clone().pairs::<Value, Value>() {
+        let (k, v) = pair?;
+        let i = match k {
+            Value::Integer(i) if i >= 1 => i,
+            Value::Number(n) if n >= 1. && n.fract() == 0. && n < i64::MAX as f64 => n as i64,
+            _ => return Ok(false),
+        };
+        entries.push((i, v));
+    }
+    entries.sort_by_key(|(i, _)| *i);
+    if entries.iter().zip(1i64..).all(|((i, _), want)| *i == want) {
+        return Ok(false);
+    }
+    for (i, _) in &entries {
+        tbl.raw_set(*i, Value::Nil)?;
+    }
+    for ((_, v), i) in entries.into_iter().zip(1i64..) {
+        tbl.raw_set(i, v)?;
+    }
+    Ok(true)
+}
+
+/// Close the holes in the mission's group arrays: each coalition's country
+/// list, every country's plane/helicopter/vehicle/ship/static group lists,
+/// every group's unit list, and the trigger zone list.
+///
+/// A hole appears when a script deletes a group without compacting the list.
+/// The engine iterates with pairs() and never notices, but the Mission Editor
+/// walks these by index and dies on the first nil (on any map zoom), so the
+/// mission flies fine and can no longer be edited. Here it did worse than
+/// survive: everything that appends -- a new country, generated slots,
+/// dynSpawnTemplate groups, coverage zones -- goes by the table's length,
+/// which with a hole is any border at all, so an appended element could land
+/// in the gap or, for the zone list, on top of an existing zone.
+///
+/// Waypoint lists are deliberately not touched: tasks refer to waypoints by
+/// index, so renumbering them would silently retarget those tasks. Neither
+/// are id-keyed tables such as `warehouses.airports`, which look like sparse
+/// arrays but are not.
+fn compact_mission_arrays(mission: &Table) -> Result<()> {
+    let mut fixed: Vec<std::string::String> = vec![];
+    let mut compact = |tbl: &Table, what: &dyn Fn() -> std::string::String| -> Result<()> {
+        if compact_array(tbl)? {
+            fixed.push(what());
+        }
+        Ok(())
+    };
+    if let Some(coalitions) = mission.raw_get::<_, Option<Table>>("coalition")? {
+        for pair in coalitions.pairs::<Value, Table>() {
+            let (coa_name, coa) = pair?;
+            let coa_name = match &coa_name {
+                Value::String(s) => s.to_string_lossy().into_owned(),
+                _ => continue,
+            };
+            let Some(countries) = coa.raw_get::<_, Option<Table>>("country")? else {
+                continue;
+            };
+            compact(&countries, &|| format!("coalition.{coa_name}.country"))?;
+            for country in countries.pairs::<Value, Table>() {
+                let (_, country) = country?;
+                let cid = country.raw_get::<_, i64>("id").unwrap_or(-1);
+                for cat in ["plane", "helicopter", "vehicle", "ship", "static"] {
+                    let Some(holder) = country.raw_get::<_, Option<Table>>(cat)? else {
+                        continue;
+                    };
+                    let Some(groups) = holder.raw_get::<_, Option<Table>>("group")? else {
+                        continue;
+                    };
+                    compact(&groups, &|| {
+                        format!("coalition.{coa_name}.country[id={cid}].{cat}.group")
+                    })?;
+                    for group in groups.pairs::<Value, Table>() {
+                        let (_, group) = group?;
+                        if let Some(units) = group.raw_get::<_, Option<Table>>("units")? {
+                            compact(&units, &|| {
+                                let gname = group
+                                    .raw_get::<_, mlua::String>("name")
+                                    .map(|s| s.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
+                                format!("units of {cat} group {gname:?}")
+                            })?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some(triggers) = mission.raw_get::<_, Option<Table>>("triggers")? {
+        if let Some(zones) = triggers.raw_get::<_, Option<Table>>("zones")? {
+            compact(&zones, &|| "triggers.zones".to_string())?;
+        }
+    }
+    for what in &fixed {
+        warn!("closed holes in {what} (the Mission Editor cannot open a mission with gaps there)");
+    }
+    Ok(())
 }
 
 fn increment_key(map: &mut HashMap<String, isize>, key: &str) -> isize {
@@ -1146,12 +1256,21 @@ impl WarehouseTemplate {
             .pairs::<String, Table>()
         {
             let (coa_name, coa) = pair?;
+            // The template FARPs/ships are found by name, so which coalition
+            // they sit under is irrelevant -- and the ME's country dropdown is
+            // per object, so one ending up under neutrals is an easy slip.
+            // Skipping neutrals made such a template vanish, reported only as
+            // "missing warehouse template DEFAULT" with no hint as to why.
             let side = match coa_name.as_str() {
-                "blue" => Side::Blue,
-                "red" => Side::Red,
+                "blue" => Some(Side::Blue),
+                "red" => Some(Side::Red),
+                "neutrals" => None,
                 _ => continue,
             };
-            for country in coa.raw_get::<_, Table>("country")?.pairs::<Value, Table>() {
+            let Some(country_list) = coa.raw_get::<_, Option<Table>>("country")? else {
+                continue;
+            };
+            for country in country_list.pairs::<Value, Table>() {
                 let country = country?.1;
                 for group in vehicle(&country, "static")? {
                     let group = group?;
@@ -1200,6 +1319,16 @@ impl WarehouseTemplate {
                         let group = group?;
                         if group.raw_get::<_, bool>("dynSpawnTemplate").unwrap_or(false) {
                             let orig_id = group.raw_get::<_, i64>("groupId")?;
+                            // A dynSpawnTemplate group is copied into the base
+                            // mission under its own coalition's CJTF country,
+                            // and neutrals have none to put it in.
+                            let Some(side) = side else {
+                                warn!(
+                                    "ignoring dynSpawnTemplate group id={orig_id} in \
+                                     {coa_name}/{category}: move it to blue or red"
+                                );
+                                continue;
+                            };
                             info!(
                                 "found dynSpawnTemplate group id={orig_id} in {coa_name}/{category}"
                             );
@@ -1467,10 +1596,15 @@ impl WarehouseTemplate {
         // unlimitedMunitions = true, blue bases are unlimited; if it's false they
         // draw down. (dynSpawn aircraft links are still patched in below from
         // both inventories.)
+        //
+        // Case-insensitive: DCS writes a warehouse's coalition as "BLUE" /
+        // "RED" / "NEUTRAL". Matching only the lowercase spelling sent every
+        // airbase and FARP to DEFAULT, so the per-coalition templates were
+        // never used at all.
         let inv_for_coalition = |coa: Option<&str>| -> &Table {
             match coa {
-                Some("blue") => &self.blue_inventory,
-                Some("red") => &self.red_inventory,
+                Some(c) if c.eq_ignore_ascii_case("blue") => &self.blue_inventory,
+                Some(c) if c.eq_ignore_ascii_case("red") => &self.red_inventory,
                 _ => &self.default,
             }
         };
@@ -1752,8 +1886,8 @@ impl WarehouseTemplate {
         // every sync) and their linkDynTempl, not from the production rate.
         let navy_for = |coa: Option<&str>| -> Option<&Table> {
             match coa {
-                Some("blue") => self.blue_navy.as_ref(),
-                Some("red") => self.red_navy.as_ref(),
+                Some(c) if c.eq_ignore_ascii_case("blue") => self.blue_navy.as_ref(),
+                Some(c) if c.eq_ignore_ascii_case("red") => self.red_navy.as_ref(),
                 _ => None,
             }
         };
@@ -1780,7 +1914,9 @@ impl WarehouseTemplate {
             ] {
                 wh.raw_set(lvl, 0)?;
             }
-            wh.raw_set("coalition", coa)?;
+            // `coa` is the mission's coalition key ("blue"); a warehouse
+            // entry spells it the way DCS writes it there ("BLUE").
+            wh.raw_set("coalition", coa.to_ascii_uppercase())?;
             if let Some(orig) = &orig {
                 for key in ["speed", "size", "periodicity"] {
                     if let Ok(v) = orig.raw_get::<_, Value>(key) {
@@ -2387,9 +2523,10 @@ fn merge_map_resource_entries(
         Some(p) => p.clone(),
         None => return Ok(()), // options template has no mapResource, nothing to merge
     };
-    let opts_content = fs::read_to_string(&opts_map_path)
+    let opts_content = fs::read(&opts_map_path)
         .with_context(|| format_compact!("reading {opts_map_path:?}"))?;
     lua.load(&opts_content)
+        .set_mode(ChunkMode::Text)
         .exec()
         .context("loading options mapResource into lua")?;
     let opts_map: Table = lua
@@ -2401,8 +2538,9 @@ fn merge_map_resource_entries(
     let base_map: Table = match &base_map_path {
         Some(p) => {
             let content =
-                fs::read_to_string(p).with_context(|| format_compact!("reading {p:?}"))?;
+                fs::read(p).with_context(|| format_compact!("reading {p:?}"))?;
             lua.load(&content)
+                .set_mode(ChunkMode::Text)
                 .exec()
                 .context("loading base mapResource into lua")?;
             lua.globals()
@@ -2466,9 +2604,13 @@ fn merge_dictionary_entries(
         Some(p) => p.clone(),
         None => return Ok(()), // options template has no dictionary, nothing to merge
     };
-    let opts_content = fs::read_to_string(&opts_dict_path)
+    // Bytes, not a String: the dictionary holds the briefing text, the place
+    // a mission is most likely to carry non-ASCII strings, and a stray
+    // non-UTF-8 byte there is still valid Lua.
+    let opts_content = fs::read(&opts_dict_path)
         .with_context(|| format_compact!("reading {opts_dict_path:?}"))?;
     lua.load(&opts_content)
+        .set_mode(ChunkMode::Text)
         .exec()
         .context("loading options dictionary into lua")?;
     let opts_dict: Table = lua
@@ -2480,8 +2622,9 @@ fn merge_dictionary_entries(
     let base_dict: Table = match &base_dict_path {
         Some(p) => {
             let content =
-                fs::read_to_string(p).with_context(|| format_compact!("reading {p:?}"))?;
+                fs::read(p).with_context(|| format_compact!("reading {p:?}"))?;
             lua.load(&content)
+                .set_mode(ChunkMode::Text)
                 .exec()
                 .context("loading base dictionary into lua")?;
             lua.globals()
@@ -2554,9 +2697,10 @@ fn apply_options_overrides(lua: &'static Lua, options_path: &Path, overrides_pat
         .with_context(|| format_compact!("reading {overrides_path:?}"))?;
     let overrides: serde_json::Value = serde_json::from_str(&overrides_json)
         .with_context(|| format_compact!("parsing {overrides_path:?} as json"))?;
-    let content = fs::read_to_string(options_path)
+    let content = fs::read(options_path)
         .with_context(|| format_compact!("reading {options_path:?}"))?;
     lua.load(&content)
+        .set_mode(ChunkMode::Text)
         .exec()
         .context("loading options file into lua")?;
     let options: Table = lua
@@ -2743,7 +2887,9 @@ fn enforce_map_view(
 }
 
 pub fn run(cfg: &MizCmd) -> Result<()> {
-    let lua = Box::leak(Box::new(Lua::new()));
+    // Leaked on purpose (the tables live as long as the process), but with no
+    // io/os: every .miz entry loaded into it is DCS-authored script.
+    let lua = Box::leak(Box::new(scratch_lua()?));
     lua.gc_stop();
     let lua = unsafe {
         LUA = lua;
@@ -3024,7 +3170,9 @@ fn collect_special_sam_sites(mission: &Miz<'static>) -> Result<Vec<FoundSite>> {
 /// list is synthesized as a position/equipment mirror of the placed units
 /// under the default CJTF country, so the site can flip on capture.
 pub fn run_special_sam(cfg: &SpecialSamCmd) -> Result<()> {
-    let lua = Box::leak(Box::new(Lua::new()));
+    // Leaked on purpose (the tables live as long as the process), but with no
+    // io/os: every .miz entry loaded into it is DCS-authored script.
+    let lua = Box::leak(Box::new(scratch_lua()?));
     lua.gc_stop();
     let base = LoadedMiz::new(lua, &cfg.template).context("loading special sam template")?;
     let found = collect_special_sam_sites(&base.mission).context("collecting sam sites")?;
@@ -3093,7 +3241,9 @@ pub fn run_special_sam(cfg: &SpecialSamCmd) -> Result<()> {
 /// init (see ObjGroup::template), so one zone per objective is enough
 /// regardless of which side holds it or if it changes hands later.
 pub fn run_fix_logi_coverage(cfg: &crate::FixLogiCoverageCmd) -> Result<()> {
-    let lua = Box::leak(Box::new(Lua::new()));
+    // Leaked on purpose (the tables live as long as the process), but with no
+    // io/os: every .miz entry loaded into it is DCS-authored script.
+    let lua = Box::leak(Box::new(scratch_lua()?));
     lua.gc_stop();
     let lua = unsafe {
         LUA = lua;
