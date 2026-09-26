@@ -31,22 +31,17 @@ use transaction::TransactionalTree;
 ///
 /// # Example
 /// ```
-/// use serde::{Deserialize, Serialize};
-///
-/// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-/// struct SomeValue(u32);
-///
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// fn main() -> anyhow::Result<()> {
 ///     // Creating a temporary sled database.
-///     // If you want to persist the data use sled::open instead.
-///     let db = sled::Config::new().temporary(true).open().unwrap();
+///     // If you want to persist the data use yats::open instead.
+///     let db = yats::Config::new().temporary(true).open()?;
 ///
 ///     // The id is used by sled to identify which Tree in the database (db) to open.
-///     let tree = typed_sled::Tree::<String, SomeValue>::open(&db, "unique_id")?;
+///     let tree = yats::Tree::<String, u32>::open(&db, "unique_id")?;
 ///
-///     tree.insert(&"some_key".to_owned(), &SomeValue(10))?;
+///     tree.insert(&"some_key".to_owned(), &10)?;
 ///
-///     assert_eq!(tree.get(&"some_key".to_owned())?, Some(SomeValue(10)));
+///     assert_eq!(tree.get(&"some_key".to_owned())?, Some(10));
 ///     Ok(())
 /// }
 /// ```
@@ -158,22 +153,11 @@ impl<K, V> Tree<K, V> {
     /// # Example
     ///
     /// ```
-    /// use serde::{Deserialize, Serialize};
-    ///
-    /// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-    /// struct SomeValue(u32);
-    ///
-    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     // Creating a temporary sled database.
-    ///     // If you want to persist the data use sled::open instead.
-    ///     let db = sled::Config::new().temporary(true).open().unwrap();
-    ///
-    ///     // The id is used by sled to identify which Tree in the database (db) to open.
-    ///     let tree = typed_sled::Tree::<String, SomeValue>::open(&db, "unique_id");
-    ///
-    ///     tree.insert(&"some_key".to_owned(), &SomeValue(10))?;
-    ///
-    ///     assert_eq!(tree.get(&"some_key".to_owned())?, Some(SomeValue(10)));
+    /// fn main() -> anyhow::Result<()> {
+    ///     let db = yats::Config::new().temporary(true).open()?;
+    ///     let tree = yats::Tree::<String, u32>::open(&db, "unique_id")?;
+    ///     tree.insert(&"some_key".to_owned(), &10)?;
+    ///     assert_eq!(tree.get(&"some_key".to_owned())?, Some(10));
     ///     Ok(())
     /// }
     /// ```
@@ -517,12 +501,13 @@ impl<K, V> Tree<K, V> {
     /// Merge operators can be used to implement arbitrary data
     /// structures.
     ///
-    /// # Panics
+    /// Calling `merge` returns an `Unsupported` error if no merge
+    /// operator has been configured.
     ///
-    /// Calling `merge` will panic if no merge operator has been
-    /// configured.
-    ///
-    /// If serialization fails in the merge operator `merge` will panic
+    /// sled gives a merge operator no way to report an error, so a key or
+    /// value that fails to (de)serialize leaves the stored value exactly as it
+    /// was instead of panicking inside sled -- this crate's whole point is that
+    /// a bad record is an error, never a crash.
     pub fn set_merge_operator(&self, merge_operator: impl MergeOperator<K, V> + 'static)
     where
         K: KV,
@@ -530,12 +515,20 @@ impl<K, V> Tree<K, V> {
     {
         self.inner
             .set_merge_operator(move |key: &[u8], old_v: Option<&[u8]>, value: &[u8]| {
-                let key_des = deserialize(key).expect("merge key deserialization failed");
-                let old_v_des =
-                    old_v.map(|v| deserialize(v).expect("merge old value deserialization failed"));
-                let value_des = deserialize(value).expect("merge value deserialization failed");
-                let res = merge_operator(key_des, old_v_des, value_des);
-                res.map(|v| serialize(&v).expect("merge value serialization failed"))
+                let unchanged = || old_v.map(|v| v.to_vec());
+                let Ok(key_des) = deserialize(key) else { return unchanged() };
+                let old_v_des = match old_v.map(|v| deserialize(v)).transpose() {
+                    Ok(v) => v,
+                    Err(_) => return unchanged(),
+                };
+                let Ok(value_des) = deserialize(value) else { return unchanged() };
+                match merge_operator(key_des, old_v_des, value_des) {
+                    None => None,
+                    Some(v) => match serialize(&v) {
+                        Ok(bytes) => Some(bytes),
+                        Err(_) => unchanged(),
+                    },
+                }
             });
     }
 
@@ -551,36 +544,20 @@ impl<K, V> Tree<K, V> {
     where
         K: KV + std::fmt::Debug,
     {
-        match (range.start_bound(), range.end_bound()) {
-            (Bound::Unbounded, Bound::Unbounded) => {
-                Ok(Iter::from_sled(self.inner.range::<&[u8], _>(..)))
-            }
-            (Bound::Unbounded, Bound::Excluded(b)) => {
-                Ok(Iter::from_sled(self.inner.range(..serialize(b)?)))
-            }
-            (Bound::Unbounded, Bound::Included(b)) => {
-                Ok(Iter::from_sled(self.inner.range(..=serialize(b)?)))
-            }
-            // FIX: This is not excluding lower bound.
-            (Bound::Excluded(b), Bound::Unbounded) => {
-                Ok(Iter::from_sled(self.inner.range(serialize(b)?..)))
-            }
-            (Bound::Excluded(b), Bound::Excluded(bb)) => Ok(Iter::from_sled(
-                self.inner.range(serialize(b)?..serialize(bb)?),
-            )),
-            (Bound::Excluded(b), Bound::Included(bb)) => Ok(Iter::from_sled(
-                self.inner.range(serialize(b)?..=serialize(bb)?),
-            )),
-            (Bound::Included(b), Bound::Unbounded) => {
-                Ok(Iter::from_sled(self.inner.range(serialize(b)?..)))
-            }
-            (Bound::Included(b), Bound::Excluded(bb)) => Ok(Iter::from_sled(
-                self.inner.range(serialize(b)?..serialize(bb)?),
-            )),
-            (Bound::Included(b), Bound::Included(bb)) => Ok(Iter::from_sled(
-                self.inner.range(serialize(b)?..=serialize(bb)?),
-            )),
+        // Map each bound onto its serialized form one-for-one. This used to be
+        // a hand-written match that turned an `Excluded` lower bound into an
+        // `Included` one (sled's `a..b` syntax has no excluded-start form), so
+        // `range((Excluded(k), ..))` silently yielded `k` itself. A
+        // `(Bound, Bound)` pair expresses every combination directly.
+        fn ser<K: KV>(b: Bound<&K>) -> Result<Bound<Vec<u8>>> {
+            Ok(match b {
+                Bound::Included(k) => Bound::Included(serialize(k)?),
+                Bound::Excluded(k) => Bound::Excluded(serialize(k)?),
+                Bound::Unbounded => Bound::Unbounded,
+            })
         }
+        let bounds = (ser(range.start_bound())?, ser(range.end_bound())?);
+        Ok(Iter::from_sled(self.inner.range::<Vec<u8>, _>(bounds)))
     }
 
     /// Create an iterator over tuples of keys and values,
@@ -682,9 +659,7 @@ impl<K, V> Tree<K, V> {
 /// # Examples
 ///
 /// ```
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use sled::{Config, IVec};
-///
+/// # fn main() -> anyhow::Result<()> {
 /// fn concatenate_merge(
 ///   _key: String,               // the key being merged
 ///   old_value: Option<Vec<f32>>,  // the previous value, if one existed
@@ -699,28 +674,28 @@ impl<K, V> Tree<K, V> {
 ///   Some(ret)
 /// }
 ///
-/// let db = sled::Config::new()
+/// let db = yats::Config::new()
 ///   .temporary(true).open()?;
 ///
-/// let tree = typed_sled::Tree::<String, Vec<f32>>::open(&db, "unique_id");
+/// let tree = yats::Tree::<String, Vec<f32>>::open(&db, "unique_id")?;
 /// tree.set_merge_operator(concatenate_merge);
 ///
 /// let k = String::from("some_key");
 ///
-/// tree.insert(&k, &vec![0.0]);
-/// tree.merge(&k, &vec![1.0]);
-/// tree.merge(&k, &vec![2.0]);
+/// tree.insert(&k, &vec![0.0])?;
+/// tree.merge(&k, &vec![1.0])?;
+/// tree.merge(&k, &vec![2.0])?;
 /// assert_eq!(tree.get(&k)?, Some(vec![0.0, 1.0, 2.0]));
 ///
 /// // Replace previously merged data. The merge function will not be called.
-/// tree.insert(&k, &vec![3.0]);
+/// tree.insert(&k, &vec![3.0])?;
 /// assert_eq!(tree.get(&k)?, Some(vec![3.0]));
 ///
 /// // Merges on non-present values will cause the merge function to be called
 /// // with `old_value == None`. If the merge function returns something (which it
 /// // does, in this case) a new value will be inserted.
-/// tree.remove(&k);
-/// tree.merge(&k, &vec![4.0]);
+/// tree.remove(&k)?;
+/// tree.merge(&k, &vec![4.0])?;
 /// assert_eq!(tree.get(&k)?, Some(vec![4.0]));
 /// # Ok(()) }
 /// ```
@@ -770,6 +745,17 @@ impl<K, V> Iter<K, V> {
         }
     }
 
+    /// Iterate over the keys alone, never decoding a value. Useful when the
+    /// key is all a caller needs to pick a record (e.g. the newest by a
+    /// timestamp in the key) and old values may no longer decode.
+    pub fn keys_only(self) -> impl DoubleEndedIterator<Item = Result<K>> + Send + Sync
+    where
+        K: KV + Send + Sync,
+    {
+        let inner = self.inner;
+        KeysOnly::<K> { inner, _key: PhantomData }
+    }
+
     pub fn keys(self) -> impl DoubleEndedIterator<Item = Result<K>> + Send + Sync
     where
         K: KV + Send + Sync,
@@ -785,6 +771,31 @@ impl<K, V> Iter<K, V> {
         V: KV + Send + Sync,
     {
         self.map(|r| r.map(|(_k, v)| v))
+    }
+}
+
+struct KeysOnly<K> {
+    inner: sled::Iter,
+    _key: PhantomData<fn() -> K>,
+}
+
+impl<K: KV> Iterator for KeysOnly<K> {
+    type Item = Result<K>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|r| match r {
+            Ok((k, _)) => deserialize(&k),
+            Err(e) => Err(anyhow::Error::from(e)),
+        })
+    }
+}
+
+impl<K: KV> DoubleEndedIterator for KeysOnly<K> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next_back().map(|r| match r {
+            Ok((k, _)) => deserialize(&k),
+            Err(e) => Err(anyhow::Error::from(e)),
+        })
     }
 }
 
@@ -945,7 +956,7 @@ mod tests {
         let config = sled::Config::new().temporary(true);
         let db = config.open().unwrap();
 
-        let tree: Tree<u32, u32> = Tree::open(&db, "test_tree");
+        let tree: Tree<u32, u32> = Tree::open(&db, "test_tree").unwrap();
 
         tree.insert(&1, &2).unwrap();
         tree.insert(&3, &4).unwrap();
@@ -956,9 +967,54 @@ mod tests {
 
         let expect_results = [(6, 2), (10, 2)];
 
-        for (i, result) in tree.range(6..11).unwrap().enumerate() {
-            assert_eq!(result.unwrap(), expect_results[i]);
+        let got: Vec<(u32, u32)> = tree.range(6..11).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(got, expect_results);
+    }
+
+    #[test]
+    fn test_range_excluded_lower_bound() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let tree: Tree<u32, u32> = Tree::open(&db, "test_tree").unwrap();
+        for k in [1u32, 3, 6, 10] {
+            tree.insert(&k, &k).unwrap();
         }
+        let got: Vec<u32> = tree
+            .range((Bound::Excluded(3u32), Bound::Unbounded))
+            .unwrap()
+            .map(|r| r.unwrap().0)
+            .collect();
+        assert_eq!(got, vec![6, 10]);
+        let got: Vec<u32> = tree
+            .range((Bound::Excluded(1u32), Bound::Included(6u32)))
+            .unwrap()
+            .map(|r| r.unwrap().0)
+            .collect();
+        assert_eq!(got, vec![3, 6]);
+    }
+
+    #[test]
+    fn test_keys_only_skips_undecodable_values() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let tree: Tree<u32, u64> = Tree::open(&db, "test_tree").unwrap();
+        tree.insert(&1, &10).unwrap();
+        // a value too short to be a u64 -- what a schema change leaves behind
+        tree.inner.insert(serialize(&2u32).unwrap(), vec![1u8]).unwrap();
+        assert!(tree.iter().any(|r| r.is_err()));
+        let keys: Vec<u32> = tree.iter().keys_only().map(|r| r.unwrap()).collect();
+        assert_eq!(keys, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_merge_operator_bad_value_is_a_noop() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let tree: Tree<u32, u64> = Tree::open(&db, "test_tree").unwrap();
+        tree.set_merge_operator(|_k, old: Option<u64>, v: u64| Some(old.unwrap_or(0) + v));
+        tree.insert(&1, &5).unwrap();
+        tree.merge(&1, &2).unwrap();
+        assert_eq!(tree.get(&1).unwrap(), Some(7));
+        // an undecodable merge operand must not panic, and must not change the value
+        tree.inner.merge(serialize(&1u32).unwrap(), vec![9u8]).unwrap();
+        assert_eq!(tree.get(&1).unwrap(), Some(7));
     }
 
     #[test]
@@ -966,7 +1022,7 @@ mod tests {
         let config = sled::Config::new().temporary(true);
         let db = config.open().unwrap();
 
-        let tree: Tree<u32, u32> = Tree::open(&db, "test_tree");
+        let tree: Tree<u32, u32> = Tree::open(&db, "test_tree").unwrap();
 
         let current = 2;
         tree.insert(&1, &current).unwrap();
