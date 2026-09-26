@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Fowl Engine Manager",
+  "mainBinaryName": "FowlEngineManager",
+  "identifier": "org.vectorstrike.fowlmanager",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5190",
+    "beforeDevCommand": "npm --prefix ../bfweb run dev:manager",
+    "beforeBuildCommand": "npm --prefix ../bfweb run build:manager && node scripts/stage-bot.mjs"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Fowl Engine Manager",
+        "width": 1320,
+        "height": 880,
+        "minWidth": 960,
+        "minHeight": 620,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "Vector Strike",
+    "copyright": "Dillen Weerasinghe",
+    "category": "Utility",
+    "shortDescription": "Installs, runs and updates a Vector Strike (Fowl Engine) DCS server box",
+    "longDescription": "Runs DCSServerBot as a Windows service from boot, keeps the Fowl Engine plugin current, updates itself, and gives the server box a control panel.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "resources/bot/": "bot/"
+    },
+    "createUpdaterArtifacts": false,
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "./nsis/hooks.nsh",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

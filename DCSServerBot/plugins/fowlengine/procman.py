@@ -25,7 +25,10 @@ from typing import Awaitable, Callable, Optional
 
 import aiohttp
 
-__all__ = ["Procman", "BFDB_HEALTH_CHECK_SECS"]
+__all__ = [
+    "Procman", "BFDB_HEALTH_CHECK_SECS", "INSTANCE_KINDS", "instance_kind",
+    "effective_instance_gci", "default_range_jsonl", "sha256_of", "sha256_cached",
+]
 
 # How often the supervising task calls health_ok().
 BFDB_HEALTH_CHECK_SECS = 30
@@ -152,6 +155,52 @@ def _expand(val) -> Optional[str]:
     return os.path.expandvars(val)
 
 
+# What a `bfdb.instances:` entry runs. "campaign" is bflib (the default, and
+# every instance that predates the training range); "range" is bfrange.
+INSTANCE_KINDS = ("campaign", "range")
+
+
+def instance_kind(inst: Optional[dict]) -> str:
+    """The normalised `kind` of one instance entry (YAML or rendered JSON).
+    Missing/blank -> "campaign". An unknown value also reads as "campaign" --
+    _render_instances() is what reports it."""
+    raw = str((inst or {}).get("kind") or "").strip().lower()
+    return raw if raw in INSTANCE_KINDS else "campaign"
+
+
+def effective_instance_gci(global_gci: Optional[dict], inst: Optional[dict]) -> dict:
+    """One instance's effective `gci:` block: its own overrides merged over the
+    shared top-level one.
+
+    `atc:` is merged key by key, so a per-instance block that only overrides
+    the frequencies keeps the shared ATIS settings.
+
+    A `kind: range` instance never inherits `enabled: true` from the shared
+    block: the range has no campaign picture for a controller to call, and a
+    stray AWACS keyed up on the shared frequencies would talk over the
+    campaign's. GCI is on for a range instance only if that instance's own
+    `gci:` says `enabled: true`."""
+    global_gci = dict(global_gci or {})
+    inst = inst or {}
+    inst_gci = inst.get("gci") or {}
+    merged = dict(global_gci)
+    merged.update(inst_gci)
+    if isinstance(global_gci.get("atc"), dict) and isinstance(inst_gci.get("atc"), dict):
+        merged_atc = dict(global_gci["atc"])
+        merged_atc.update(inst_gci["atc"])
+        merged["atc"] = merged_atc
+    if instance_kind(inst) == "range" and "enabled" not in inst_gci:
+        merged["enabled"] = False
+    return merged
+
+
+def default_range_jsonl(stats_jsonl: Optional[str]) -> Optional[str]:
+    """bfrange writes Logs/range.jsonl next to Logs/stats.jsonl."""
+    if not stats_jsonl:
+        return None
+    return os.path.join(os.path.dirname(stats_jsonl), "range.jsonl")
+
+
 def _now_tag() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
@@ -167,6 +216,28 @@ def sha256_of(path: str) -> Optional[str]:
         return h.hexdigest()
     except OSError:
         return None
+
+
+_SHA_CACHE: dict = {}
+
+
+def sha256_cached(path: str) -> Optional[str]:
+    """sha256_of, remembered per (path, size, mtime) -- the Ops page asks for
+    the hash of 50 MB binaries every few seconds."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (os.path.normcase(path), st.st_size, st.st_mtime)
+    hit = _SHA_CACHE.get(key)
+    if hit:
+        return hit
+    val = sha256_of(path)
+    if val:
+        if len(_SHA_CACHE) > 64:
+            _SHA_CACHE.clear()
+        _SHA_CACHE[key] = val
+    return val
 
 
 def _port_listening(host: str, port: int, timeout: float = 1.0) -> bool:
@@ -204,6 +275,27 @@ class Procman:
         self._first_fail: Optional[float] = None
         self._last_restart = 0.0
         self._last_swap_note: Optional[str] = None
+
+        # For the Ops page: when bfdb last came up, how often it has been
+        # relaunched, and how the last one ended.
+        self.started_at: Optional[float] = None
+        self.relaunches = 0
+        self.last_exit_code: Optional[int] = None
+
+        # A freshly swapped bfdb.exe is on probation until it has answered
+        # /api/health for `probation_minutes`. If it dies, or never comes up,
+        # the previous exe and the pre-swap DB snapshot are put back. Persisted
+        # so a bot restart mid-probation keeps watching.
+        self.probation: Optional[dict] = None
+        # Hooks the cog wires to the auto-updater: on_swapped(sidecar) and
+        # on_rollback(tag, why). Both optional.
+        self.on_swapped: Optional[Callable[[dict], None]] = None
+        self.on_rollback: Optional[Callable[[Optional[str], str], None]] = None
+        # probation / snapshot tuning (the cog copies these from autoupdate:)
+        self.probation_minutes = 10.0
+        self.unhealthy_minutes = 15.0
+        self.db_snapshots_keep = 3
+        self._load_probation()
 
     def reload_config(self, config: dict) -> None:
         """Pick up edited YAML (e.g. after a config upload) without recreating
@@ -308,17 +400,18 @@ class Procman:
         removes any file left from a previous run with it enabled)."""
         inst_id = inst.get("id")
         path = self._instance_gci_path(inst_id)
-        merged = dict(self.gci_cfg)
-        inst_gci = inst.get("gci") or {}
-        merged.update(inst_gci)
-        # `atc:` is a nested block -- a per-instance one that only overrides the
-        # frequencies must not wipe out the shared ATIS settings, so merge it
-        # key by key instead of letting update() replace the whole dict.
-        if isinstance(self.gci_cfg.get("atc"), dict) and isinstance(inst_gci.get("atc"), dict):
-            merged_atc = dict(self.gci_cfg["atc"])
-            merged_atc.update(inst_gci["atc"])
-            merged["atc"] = merged_atc
-        # An instance-level `enabled:` wins; otherwise inherit the global one.
+        # Instance overrides merged over the shared block (`atc:` key by key).
+        # An instance-level `enabled:` wins; otherwise inherit the global one
+        # -- except on a `kind: range` instance, which is off unless its own
+        # `gci:` turns it on (see effective_instance_gci).
+        merged = effective_instance_gci(self.gci_cfg, inst)
+        if (instance_kind(inst) == "range" and self.gci_cfg.get("enabled")
+                and "enabled" not in (inst.get("gci") or {})):
+            self.log.info(
+                f"FowlEngine/procman: instance {inst_id} is kind: range -- not inheriting "
+                f"gci.enabled from the shared block (set `gci: {{enabled: true}}` on the "
+                f"instance to run a controller there)"
+            )
         if not merged.get("enabled"):
             if os.path.exists(path):
                 try:
@@ -355,6 +448,92 @@ class Procman:
             self.log.error(f"FowlEngine/procman: failed to write {path}: {ex}")
             return path if os.path.exists(path) else None
 
+    def _validate_instance_kind(self, inst: dict) -> tuple[str, Optional[str]]:
+        """(kind, range_jsonl) for one `bfdb.instances:` entry, logging what an
+        operator would otherwise only find out from bfdb or an empty feed."""
+        inst_id = inst.get("id")
+        raw_kind = str(inst.get("kind") or "").strip().lower()
+        if raw_kind and raw_kind not in INSTANCE_KINDS:
+            self.log.error(
+                f"FowlEngine/procman: instance {inst_id} has kind: {inst.get('kind')!r} -- "
+                f"expected one of {', '.join(INSTANCE_KINDS)}; treating it as a campaign"
+            )
+        kind = instance_kind(inst)
+        range_jsonl = _expand(inst.get("range_jsonl"))
+        stats_jsonl = _expand(inst.get("stats_jsonl"))
+        if kind == "range" and not range_jsonl:
+            derived = default_range_jsonl(stats_jsonl)
+            if derived:
+                self.log.warning(
+                    f"FowlEngine/procman: range instance {inst_id} has no `range_jsonl` -- "
+                    f"using {derived} (next to its stats_jsonl, where bfrange writes it). "
+                    f"Set range_jsonl explicitly to silence this."
+                )
+                range_jsonl = derived
+            else:
+                self.log.error(
+                    f"FowlEngine/procman: range instance {inst_id} has neither `range_jsonl` "
+                    f"nor `stats_jsonl` -- bfdb has nothing to ingest graded results from"
+                )
+        elif kind == "campaign" and range_jsonl:
+            self.log.warning(
+                f"FowlEngine/procman: instance {inst_id} sets range_jsonl but is not "
+                f"kind: range -- passed through, but a campaign engine never writes one"
+            )
+        return kind, range_jsonl
+
+    def _netidx_config_for(self, inst: dict) -> Optional[str]:
+        """The netidx client config bfdb uses for one instance, or None for the
+        shared default. `netidx_config:` names an existing file; `netidx_resolver:
+        <ip>:<port>` has one rendered as <home>/netidx.<id>.json."""
+        explicit = _expand(inst.get("netidx_config"))
+        if explicit:
+            return explicit
+        resolver = str(inst.get("netidx_resolver") or "").strip()
+        if not resolver:
+            return None
+        inst_id = inst.get("id")
+        host, _, port = resolver.rpartition(":")
+        if not host or not port.isdigit():
+            self.log.error(
+                f"FowlEngine/procman: instance {inst_id} has netidx_resolver: {resolver!r} -- "
+                f"expected <LAN ip>:<port>, e.g. 192.168.1.60:4564; using the shared resolver"
+            )
+            return None
+        if host in ("127.0.0.1", "localhost", "0.0.0.0"):
+            self.log.error(
+                f"FowlEngine/procman: instance {inst_id} has netidx_resolver: {resolver!r} -- "
+                f"it must be the other PC's LAN address; using the shared resolver"
+            )
+            return None
+        path = os.path.join(self.home, f"netidx.{inst_id}.json")
+        client = {"base": "/", "addrs": [[resolver, "Anonymous"]], "default_auth": "Anonymous"}
+        try:
+            os.makedirs(self.home, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(client, fh, indent=2)
+            os.replace(tmp, path)
+        except OSError as ex:
+            self.log.error(f"FowlEngine/procman: failed to write {path}: {ex}")
+            return path if os.path.exists(path) else None
+        return path
+
+    def _warn_unreachable_paths(self, inst_id, entry: dict) -> None:
+        """A network path bfdb cannot open is only ever an empty feed on the
+        site; say so where an operator looks."""
+        for key in ("stats_jsonl", "range_jsonl", "tacview_dir"):
+            p = entry.get(key)
+            if not p or not p.startswith(("\\\\", "//")):
+                continue
+            target = p if key == "tacview_dir" else os.path.dirname(p)
+            if not os.path.isdir(target):
+                self.log.error(
+                    f"FowlEngine/procman: instance {inst_id}: {key} {p} is not reachable from "
+                    f"this PC as the bot's account -- check the share on the DCS PC and the "
+                    f"account's saved credentials (cmdkey). See deploy/range.md."
+                )
+
     def _render_instances(self) -> Optional[str]:
         """Write home/instances.json from `bfdb.instances:` and return its path,
         or None in single-server mode (where the flat flags are used instead).
@@ -379,6 +558,7 @@ class Procman:
                 self.log.error("FowlEngine/procman: an entry in bfdb.instances has no `id` -- skipped")
                 continue
             gci_path = self._render_gci_for(inst)
+            kind, range_jsonl = self._validate_instance_kind(inst)
             entry = {
                 "id": inst_id,
                 "label": inst.get("label") or inst_id,
@@ -406,7 +586,20 @@ class Procman:
                 "red_faction": inst.get("red_faction") or None,
                 "blue_adjective": inst.get("blue_adjective") or None,
                 "red_adjective": inst.get("red_adjective") or None,
+                # "campaign" (bflib) or "range" (bfrange). A range instance's
+                # graded results come from range_jsonl (bfrange's
+                # Logs/range.jsonl); its stats_jsonl still carries the
+                # identity events. tacview_dir is where that server's Tacview
+                # recordings land, for the debrief links on the range site.
+                "kind": kind,
+                "range_jsonl": range_jsonl,
+                "tacview_dir": _expand(inst.get("tacview_dir")),
+                # A DCS server on another PC with its own netidx resolver:
+                # bfdb reaches that engine through this client config instead
+                # of the shared one. See deploy/range.md, "Range on a second PC".
+                "netidx_config": self._netidx_config_for(inst),
             }
+            self._warn_unreachable_paths(inst_id, entry)
             entries.append(entry)
         payload = {
             "_generated": (
@@ -433,11 +626,16 @@ class Procman:
 
     # ---- staged binary swap ------------------------------------------------
 
-    def _pending_path(self, name: str) -> str:
-        return os.path.join(self.staging_dir, f"{name}.pending")
+    # `staging_dir=` below: bfdb.exe is staged once, in the global
+    # bfdb.staging_dir (one bfdb per box). An engine DLL is staged per DCS
+    # instance, in that instance's own BFBinaries staging_dir -- callers pass
+    # it; None keeps the global directory (the old behaviour).
 
-    def pending_info(self, name: str) -> Optional[dict]:
-        p = self._pending_path(name)
+    def _pending_path(self, name: str, staging_dir: Optional[str] = None) -> str:
+        return os.path.join(staging_dir or self.staging_dir, f"{name}.pending")
+
+    def pending_info(self, name: str, staging_dir: Optional[str] = None) -> Optional[dict]:
+        p = self._pending_path(name, staging_dir)
         if not os.path.exists(p):
             return None
         info = {"path": p, "size": os.path.getsize(p), "sha256": sha256_of(p)}
@@ -450,9 +648,10 @@ class Procman:
                 pass
         return info
 
-    def cancel_pending(self, name: str) -> bool:
+    def cancel_pending(self, name: str, staging_dir: Optional[str] = None) -> bool:
         removed = False
-        for p in (self._pending_path(name), self._pending_path(name) + ".json"):
+        pending = self._pending_path(name, staging_dir)
+        for p in (pending, pending + ".json"):
             if os.path.exists(p):
                 try:
                     os.remove(p)
@@ -477,15 +676,31 @@ class Procman:
             except OSError:
                 pass
 
-    def apply_staged(self, name: str, live_path: str, keep: int = 5) -> Optional[str]:
+    def apply_staged(self, name: str, live_path: str, keep: int = 5,
+                     staging_dir: Optional[str] = None) -> Optional[str]:
         """Swap staging/<name>.pending over live_path after a timestamped backup.
         Returns a human-readable note if a swap happened, else None. Never raises
-        -- on failure the live file is left untouched (or restored)."""
-        pending = self._pending_path(name)
+        -- on failure the live file is left untouched (or restored).
+
+        For bfdb.exe (only ever called with bfdb stopped) the database is
+        snapshotted first and the new exe goes on probation -- see
+        supervise_tick()."""
+        pending = self._pending_path(name, staging_dir)
         if not os.path.exists(pending):
             return None
+        sidecar = {}
+        try:
+            with open(pending + ".json", "r", encoding="utf-8") as fh:
+                sidecar = json.load(fh) or {}
+        except (OSError, ValueError):
+            pass
         live_path = os.path.expandvars(live_path)
         backup = f"{live_path}.backup-{_now_tag()}"
+        is_bfdb = name == "bfdb.exe" and os.path.normcase(live_path) == os.path.normcase(self.exe)
+        is_rollback = bool(sidecar.get("rollback"))
+        snapshot = None
+        if is_bfdb and not is_rollback:
+            snapshot = self._snapshot_db(sidecar.get("tag"))
         try:
             if os.path.exists(live_path):
                 shutil.copy2(live_path, backup)
@@ -499,12 +714,205 @@ class Procman:
                 except OSError:
                     pass
             return f"⚠️ staged {name} swap FAILED ({ex}) -- kept the previous binary"
-        self.cancel_pending(name)  # clears the sidecar
+        self.cancel_pending(name, staging_dir)  # clears the sidecar
         self._prune_backups(live_path, keep)
         note = f"swapped in staged `{name}` (backup: `{os.path.basename(backup)}`)"
+        if sidecar.get("tag"):
+            note += f" -- release {sidecar['tag']}"
+        if snapshot:
+            note += f", DB snapshot `{os.path.basename(snapshot)}`"
         self.log.warning(f"FowlEngine/procman: {note}")
         self._last_swap_note = note
+        if is_bfdb and not is_rollback:
+            self.probation = {
+                "tag": sidecar.get("tag"),
+                "git": sidecar.get("git"),
+                "source": sidecar.get("source") or "manual",
+                "backup": backup if os.path.exists(backup) else None,
+                "db_snapshot": snapshot,
+                "swapped_at": time.time(),
+                "healthy_at": None,
+                "exits": 0,
+            }
+            self._save_probation()
+            if self.on_swapped:
+                try:
+                    self.on_swapped({**sidecar, "sha256": sha256_of(live_path)})
+                except Exception as ex:  # noqa: BLE001
+                    self.log.debug(f"FowlEngine/procman: on_swapped hook failed: {ex}")
         return note
+
+    # ---- DB snapshots + bfdb probation ------------------------------------
+
+    @property
+    def db_path(self) -> str:
+        return os.path.join(self.home, "bfdb")
+
+    @property
+    def backups_dir(self) -> str:
+        return os.path.join(self.home, "_backups")
+
+    def _snapshot_db(self, tag: Optional[str]) -> Optional[str]:
+        """Copy the (stopped) sled DB aside before a new bfdb.exe touches it.
+        bfdb persists bfprotocols types with positional bincode, so a build
+        whose structs moved can leave a DB the old exe cannot read; this copy
+        is what makes a bfdb rollback a real rollback. Keeps the newest few."""
+        if not os.path.isdir(self.db_path):
+            return None
+        safe_tag = "".join(c if c.isalnum() or c in "-._" else "_" for c in (tag or "manual"))
+        dest = os.path.join(self.backups_dir, f"db-{_now_tag()}-{safe_tag}")
+        try:
+            os.makedirs(self.backups_dir, exist_ok=True)
+            shutil.copytree(self.db_path, dest)
+        except Exception as ex:  # noqa: BLE001
+            self.log.error(f"FowlEngine/procman: DB snapshot before the bfdb.exe swap failed ({ex}) -- "
+                           f"swapping anyway, but a rollback will only restore the exe")
+            shutil.rmtree(dest, ignore_errors=True)
+            return None
+        self.log.warning(f"FowlEngine/procman: DB snapshot -> {dest}")
+        try:
+            snaps = sorted(e.path for e in os.scandir(self.backups_dir)
+                           if e.is_dir() and e.name.startswith("db-"))
+            for stale in snaps[:-self.db_snapshots_keep]:
+                shutil.rmtree(stale, ignore_errors=True)
+        except OSError:
+            pass
+        return dest
+
+    def list_backups(self) -> dict:
+        """For the Ops page: exe backups next to bfdb.exe and the DB snapshots."""
+        out: dict = {"bfdb_exe": [], "db_snapshots": []}
+        exe_dir, exe_base = os.path.dirname(self.exe), os.path.basename(self.exe)
+        try:
+            for f in sorted(os.listdir(exe_dir), reverse=True):
+                if f.startswith(f"{exe_base}.backup-"):
+                    p = os.path.join(exe_dir, f)
+                    out["bfdb_exe"].append({"name": f, "size": os.path.getsize(p),
+                                            "mtime": os.path.getmtime(p)})
+        except OSError:
+            pass
+        try:
+            for e in sorted(os.scandir(self.backups_dir), key=lambda e: e.name, reverse=True):
+                if e.is_dir() and e.name.startswith("db-"):
+                    out["db_snapshots"].append({"name": e.name, "mtime": e.stat().st_mtime})
+        except OSError:
+            pass
+        return out
+
+    @property
+    def _probation_file(self) -> str:
+        return os.path.join(self.staging_dir, "bfdb-probation.json")
+
+    def _load_probation(self) -> None:
+        try:
+            with open(self._probation_file, "r", encoding="utf-8") as fh:
+                doc = json.load(fh)
+            self.probation = doc if isinstance(doc, dict) and doc else None
+        except (OSError, ValueError):
+            self.probation = None
+
+    def _save_probation(self) -> None:
+        try:
+            os.makedirs(self.staging_dir, exist_ok=True)
+            if self.probation:
+                with open(self._probation_file, "w", encoding="utf-8") as fh:
+                    json.dump(self.probation, fh, indent=2)
+            elif os.path.exists(self._probation_file):
+                os.remove(self._probation_file)
+        except OSError as ex:
+            self.log.debug(f"FowlEngine/procman: probation state not saved: {ex}")
+
+    async def rollback_bfdb(self, admin_password: str, why: str) -> str:
+        """Put the previous bfdb.exe back -- and, when this swap took one, the
+        DB snapshot from right before it (the broken build's DB is kept as
+        bfdb.failed-<ts> for a post-mortem). Stats written since the swap are
+        not lost: the JSONL cursor lives in the DB too, so the restored DB
+        re-ingests them from the stats log, and the idempotency guards keep
+        that from double-counting."""
+        p = self.probation or {}
+        backup = p.get("backup")
+        if not backup:
+            exe_dir, base = os.path.dirname(self.exe), os.path.basename(self.exe)
+            try:
+                cands = sorted((f for f in os.listdir(exe_dir) if f.startswith(f"{base}.backup-")),
+                               reverse=True)
+            except OSError:
+                cands = []
+            backup = os.path.join(exe_dir, cands[0]) if cands else None
+        if not backup or not os.path.exists(backup):
+            self.probation = None
+            self._save_probation()
+            return f"⛔ bfdb rollback wanted ({why}) but there is no bfdb.exe backup to restore."
+        async with self._lock:
+            await self._terminate(self._bfdb, "bfdb")
+            self._bfdb = None
+        self._kill_orphan_bfdb()
+        await asyncio.sleep(3.0)
+        tag = _now_tag()
+        notes = []
+        try:
+            failed_exe = f"{self.exe}.failed-{tag}"
+            if os.path.exists(self.exe):
+                os.replace(self.exe, failed_exe)
+            shutil.copy2(backup, self.exe)
+            notes.append(f"exe ← `{os.path.basename(backup)}`")
+        except OSError as ex:
+            await self.start(admin_password)
+            return f"⛔ bfdb rollback failed while restoring the exe ({ex}); restarted what was there."
+        snap = p.get("db_snapshot")
+        if snap and os.path.isdir(snap):
+            try:
+                if os.path.isdir(self.db_path):
+                    os.rename(self.db_path, f"{self.db_path}.failed-{tag}")
+                await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: shutil.copytree(snap, self.db_path))
+                notes.append(f"DB ← `{os.path.basename(snap)}`")
+            except Exception as ex:  # noqa: BLE001
+                notes.append(f"DB restore FAILED ({ex}) -- running the old exe on the current DB")
+        rel = p.get("tag")
+        self.probation = None
+        self._save_probation()
+        # Before start(): the hook pulls this release out of every staging
+        # dir, so start() can't swap the same bad build straight back in.
+        if self.on_rollback:
+            try:
+                self.on_rollback(rel, why)
+            except Exception as ex:  # noqa: BLE001
+                self.log.debug(f"FowlEngine/procman: on_rollback hook failed: {ex}")
+        await self.start(admin_password)
+        msg = (f"⏪ **bfdb rolled back** -- {why}. " + "; ".join(notes)
+               + (f". Release {rel} is marked bad." if rel else "."))
+        self.log.error(f"FowlEngine/procman: {msg}")
+        return msg
+
+    async def _probation_tick(self, healthy: bool, admin_password: str) -> bool:
+        """Returns True if it handled the tick (rolled back), so the normal
+        relaunch logic doesn't also fire."""
+        p = self.probation
+        if not p:
+            return False
+        now = time.time()
+        if healthy:
+            if not p.get("healthy_at"):
+                p["healthy_at"] = now
+                self._save_probation()
+            elif now - p["healthy_at"] >= self.probation_minutes * 60:
+                self.probation = None
+                self._save_probation()
+                await self._safe_notify(f"✅ bfdb {p.get('tag') or '(manual upload)'} passed probation.")
+            return False
+        if not self.is_running():
+            # died on the new build: that's the clearest signal there is
+            p["exits"] = p.get("exits", 0) + 1
+            self._save_probation()
+            why = f"the new bfdb.exe exited (code {self.last_exit_code})"
+            await self._safe_notify(await self.rollback_bfdb(admin_password, why))
+            return True
+        if not p.get("healthy_at") and now - p["swapped_at"] >= self.unhealthy_minutes * 60:
+            why = f"the new bfdb.exe never answered /api/health in {self.unhealthy_minutes:.0f} min"
+            await self._safe_notify(await self.rollback_bfdb(admin_password, why))
+            return True
+        return False
 
     # ---- bfdb arg list ---------------------------------------------------
 
@@ -572,6 +980,29 @@ class Procman:
 
     def is_running(self) -> bool:
         return self._bfdb is not None and self._bfdb.poll() is None
+
+    async def process_info(self) -> dict:
+        """bfdb + resolver state for the Ops page."""
+        running = self.is_running()
+        return {
+            "managed": self.enabled,
+            "exe": self.exe,
+            "home": self.home,
+            "running": running,
+            "pid": self._bfdb.pid if running else None,
+            "healthy": await self.health_ok() if self.enabled else None,
+            "started_at": self.started_at,
+            "uptime_secs": int(time.time() - self.started_at) if (running and self.started_at) else None,
+            "relaunches": self.relaunches,
+            "last_exit_code": self.last_exit_code,
+            "failing_checks": self._fail_count,
+            "resolver_listening": _port_listening("127.0.0.1", NETIDX_RESOLVER_PORT, 0.5),
+            "resolver_owned": self._resolver is not None and self._resolver.poll() is None,
+            "last_swap": self._last_swap_note,
+            "probation": self.probation,
+            "exe_sha256": sha256_cached(self.exe) if self.exe else None,
+            "pending": self.pending_info("bfdb.exe"),
+        }
 
     def _redact(self, args: list[str]) -> str:
         secret_flags = {
@@ -674,12 +1105,14 @@ class Procman:
             if not self.enabled:
                 self.log.debug("FowlEngine/procman: bfdb.manage is false -- not starting anything")
                 return
-            if not self.exe or not os.path.exists(self.exe):
-                self.log.error(f"FowlEngine/procman: bfdb exe not found at {self.exe!r}")
-                return
             os.makedirs(self.staging_dir, exist_ok=True)
-
-            note = self.apply_staged("bfdb.exe", self.exe)
+            # A fresh box has no bfdb.exe yet: the first one arrives staged
+            # (auto-update or a Discord upload), so apply before giving up.
+            note = self.apply_staged("bfdb.exe", self.exe) if self.exe else None
+            if not self.exe or not os.path.exists(self.exe):
+                self.log.error(f"FowlEngine/procman: bfdb exe not found at {self.exe!r} and none is staged "
+                               f"-- enable autoupdate or drop a bfdb.exe into the admin channel")
+                return
             if note:
                 await self._safe_notify(f"🧩 bfdb: {note}")
 
@@ -709,10 +1142,12 @@ class Procman:
             self._fail_count = 0
             self._first_fail = None
             self._last_restart = time.time()
+            self.started_at = time.time()
 
             # give it a beat; if it died instantly, surface why now
             await asyncio.sleep(2.0)
             if self._bfdb.poll() is not None:
+                self.last_exit_code = self._bfdb.returncode
                 tail = ""
                 try:
                     with open(boot_log, "rb") as fh:
@@ -862,7 +1297,12 @@ class Procman:
         """Call every BFDB_HEALTH_CHECK_SECS from the cog's @tasks.loop."""
         if not self.enabled:
             return
-        if await self.health_ok():
+        if self._bfdb is not None and self._bfdb.poll() is not None:
+            self.last_exit_code = self._bfdb.returncode
+        healthy = await self.health_ok()
+        if await self._probation_tick(healthy, admin_password):
+            return
+        if healthy:
             self._fail_count = 0
             self._first_fail = None
             return
@@ -893,6 +1333,7 @@ class Procman:
         self.log.error(f"FowlEngine/procman: bfdb {why} -- relaunching")
         self._fail_count = 0
         self._first_fail = None
+        self.relaunches += 1
         await self.restart(admin_password)
         await self._safe_notify(
             f"⚠️ **bfdb was {why}** at `{self.api_url}` -- the bot relaunched it."

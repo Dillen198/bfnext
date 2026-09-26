@@ -92,6 +92,7 @@ function lockCoalition(items: NavItem[], signedIn: boolean): NavItem[] {
 const ABOUT_NAV = { to: '/about', icon: Info, label: 'ABOUT' }
 const ADMIN_NAV = { to: '/admin', icon: Admin, label: 'ADMIN' }
 const CONFIG_NAV = { to: '/admin/config', icon: Config, label: 'CONFIG' }
+const SERVER_OPS_NAV = { to: '/admin/ops', icon: Server, label: 'OPS' }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -344,7 +345,7 @@ export default function Layout() {
     ],
     [
       ABOUT_NAV,
-      ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV] : []),
+      ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV, SERVER_OPS_NAV] : []),
     ],
   ].filter(g => g.length > 0)
 

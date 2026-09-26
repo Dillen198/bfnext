@@ -37,7 +37,7 @@ Better if you want to keep DCS server load clean. The resolver and bfdb can run 
 
 ### On the machine running the resolver (stats server or DCS server)
 
-**Resolver config** (`netidx-resolver.json`) — use the server's LAN IP or `0.0.0.0` to accept connections from other machines:
+**Resolver config** (`netidx-resolver.json`) — use the machine's LAN IP to accept connections from other machines (`127.0.0.1` for Option A). netidx refuses `0.0.0.0`:
 
 ```json
 {
@@ -46,7 +46,7 @@ Better if you want to keep DCS server load clean. The resolver and bfdb can run 
     "member_servers": [
         {
             "pid_file": "",
-            "addr": "0.0.0.0:4564",
+            "addr": "192.168.1.20:4564",
             "max_connections": 768,
             "hello_timeout": 10,
             "reader_ttl": 60,
@@ -73,7 +73,16 @@ Better if you want to keep DCS server load clean. The resolver and bfdb can run 
 
 ### On the DCS server (if separate from the resolver machine)
 
-Copy the same `client.json` to `%APPDATA%\netidx\client.json` on the DCS server, pointing at the resolver machine's IP. bflib reads this config to know where to publish.
+Copy the same `client.json` to `%APPDATA%\netidx\client.json` on the DCS server, pointing at the resolver machine's IP, and add the LAN it should publish on. bflib reads this config to know where to publish; without `default_bind_config` it publishes on `127.0.0.1`, which a resolver on a LAN address refuses ("addr is a loopback address and the resolver is not"):
+
+```json
+{
+    "addrs": [["192.168.1.20:4564", "Anonymous"]],
+    "base": "/",
+    "default_auth": "Anonymous",
+    "default_bind_config": "192.168.1.0/24"
+}
+```
 
 > **Firewall**: Open port `4564` (TCP) on the resolver machine so other machines can reach it.
 

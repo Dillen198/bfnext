@@ -17,6 +17,12 @@ ANSI_ESCAPE_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 REQUIRED_PATH_KEYS = ('bftools', 'base', 'weapon', 'options')
 
+# F10 map views bftools accepts (see parse_map_view in bftools/src/mission_edit.rs).
+# Checked here so a typo drops the flag with a warning instead of failing the
+# whole rebuild -- a failed bftools means the restart keeps the OLD mission,
+# which is a much worse outcome than one unenforced setting.
+MAP_VIEWS = ('all', 'allies', 'onlyallies', 'myaircraft', 'onlymap')
+
 
 class BFWeatherException(Exception):
     pass
@@ -62,6 +68,12 @@ class BFWeather(Extension):
                 live_time: false                      # optional, default false
                 options_overrides: 'E:\\...\\overrides.json'  # optional -- a path that does not
                 # exist is skipped with a warning rather than failing the build
+                map_view: 'onlyallies'                # optional F10 map view for
+                # players in a slot: all | allies (fog of war) | onlyallies |
+                # myaircraft | onlymap. Unset => whatever the options template
+                # forces. Spectators and observers are locked to map-only by
+                # bftools itself either way; spectator_map_view overrides that,
+                # and no_force_map_view: true turns the whole thing off
                 timeout: 120                          # optional, seconds, default 120
 
     The ICAO is the whole weather configuration: the station's decoded METAR
@@ -116,6 +128,20 @@ class BFWeather(Extension):
             return None
         return path
 
+    def _map_view(self, key: str) -> str | None:
+        """A configured F10 map view, or None if unset/unusable."""
+        raw = self.config.get(key)
+        if raw is None:
+            return None
+        value = str(raw).strip().lower()
+        if value not in MAP_VIEWS:
+            self.log.warning(
+                f"  => {self.name}: {key} {raw!r} is not one of {', '.join(MAP_VIEWS)} "
+                f"-- building without it."
+            )
+            return None
+        return value
+
     def _build_command(self, output: str) -> list[str]:
         cfg = self.config
         cmd = [
@@ -135,6 +161,18 @@ class BFWeather(Extension):
         options_overrides = self._optional_path('options_overrides')
         if options_overrides:
             cmd += ['--options-overrides', options_overrides]
+        # F10 map view. Left alone, bftools still locks spectators and
+        # observers to map-only on its own -- these only exist to set the
+        # in-slot view (and to opt out of the whole thing).
+        if cfg.get('no_force_map_view'):
+            cmd.append('--no-force-map-view')
+        else:
+            map_view = self._map_view('map_view')
+            if map_view:
+                cmd += ['--map-view', map_view]
+            spectator_map_view = self._map_view('spectator_map_view')
+            if spectator_map_view:
+                cmd += ['--spectator-map-view', spectator_map_view]
         if cfg.get('blue_production_template'):
             cmd += ['--blue-production-template', cfg['blue_production_template']]
         if cfg.get('red_production_template'):

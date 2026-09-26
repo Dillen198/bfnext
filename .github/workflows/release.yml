@@ -1,0 +1,70 @@
+# Builds the engine binaries on a Windows runner and publishes an `engine-*`
+# GitHub release, which every server with `autoupdate:` enabled picks up.
+# Same script as a release from a dev PC: deploy/publish-release.ps1.
+#
+# Manual only (Actions tab -> Engine release -> Run workflow, or
+# `gh workflow run release.yml -f ref=vector -f channel=beta`): a release goes
+# out to live servers, so nothing publishes one on a plain push.
+#
+# Note: Cargo.lock is gitignored in this repo, so a CI build resolves the
+# newest semver-compatible dependencies rather than the dev PC's exact set.
+# Prefer the beta channel for CI builds until that's been seen to behave.
+name: Engine release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to build
+        default: vector
+      channel:
+        description: stable goes to every server; beta only to servers on the beta channel
+        type: choice
+        options: [beta, stable]
+        default: beta
+      notes:
+        description: Release notes (default: the commit subject)
+        default: ""
+      bot_plugin:
+        description: Also ship the DCSServerBot plugin (fowlengine-bot.zip)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> ${{ runner.temp }}/fowl-target
+            bftools -> ${{ runner.temp }}/fowl-target-bftools
+
+      - name: Build and publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # through the environment, never pasted into the script text
+          RELEASE_NOTES: ${{ inputs.notes }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_BOT_PLUGIN: ${{ inputs.bot_plugin }}
+        run: |
+          $a = @('-WorkingTree', '-Channel', $env:RELEASE_CHANNEL,
+                 '-Repo', $env:GITHUB_REPOSITORY,
+                 '-TargetDir', (Join-Path $env:RUNNER_TEMP 'fowl-target'))
+          if ($env:RELEASE_NOTES) { $a += @('-Notes', $env:RELEASE_NOTES) }
+          if ($env:RELEASE_BOT_PLUGIN -eq 'true') { $a += '-BotPlugin' }
+          ./deploy/publish-release.ps1 @a

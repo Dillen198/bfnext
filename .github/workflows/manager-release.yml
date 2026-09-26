@@ -1,0 +1,51 @@
+# Builds Fowl Engine Manager on a Windows runner and publishes the signed
+# installer as GitHub release manager-v<version> (bfmanager/release.ps1).
+# Installed copies update themselves from it.
+#
+# Needs the repo secret TAURI_SIGNING_PRIVATE_KEY = the contents of
+# %USERPROFILE%\.tauri\fowl-manager.key from the PC that made the key (the
+# public half is bfmanager/src-tauri/updater.pub). Manual only.
+name: Manager release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to build
+        default: vector
+      channel:
+        type: choice
+        options: [beta, stable]
+        default: beta
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bfmanager/src-tauri
+      - name: Build, sign, publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if (-not $env:SIGNING_KEY) { throw "set the TAURI_SIGNING_PRIVATE_KEY repo secret" }
+          $key = Join-Path $env:RUNNER_TEMP 'fowl-manager.key'
+          Set-Content -Path $key -Value $env:SIGNING_KEY -NoNewline
+          npm --prefix bfweb ci --no-audit --no-fund
+          npm --prefix bfmanager ci --no-audit --no-fund
+          ./bfmanager/release.ps1 -Channel $env:RELEASE_CHANNEL -Repo $env:GITHUB_REPOSITORY -KeyPath $key

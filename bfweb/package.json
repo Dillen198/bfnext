@@ -11,10 +11,13 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dev:manager": "vite -c vite.manager.config.ts",
+    "build:manager": "tsc -b && vite build -c vite.manager.config.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.96.1",
+    "@tauri-apps/api": "^2.11.1",
     "@turf/circle": "^6.5.0",
     "@types/proj4": "^2.5.6",
     "classnames": "^2.5.1",

@@ -22,6 +22,7 @@ const Pilots           = lazy(() => import('./pages/Pilots'))
 const KillFeed         = lazy(() => import('./pages/KillFeed'))
 const AdminPage        = lazy(() => import('./pages/AdminPage'))
 const ConfigEditorPage = lazy(() => import('./pages/ConfigEditorPage'))
+const OpsPage          = lazy(() => import('./pages/OpsPage'))
 const AboutPage        = lazy(() => import('./pages/AboutPage'))
 const CockpitPage      = lazy(() => import('./pages/CockpitPage'))
 const IntelPage        = lazy(() => import('./pages/IntelPage'))
@@ -108,6 +109,7 @@ export default function App() {
               <Route path="intel" element={<RequireCoalition what="recon intel"><IntelPage /></RequireCoalition>} />
               <Route path="admin" element={<AdminPage />} />
               <Route path="admin/config" element={<ConfigEditorPage />} />
+              <Route path="admin/ops" element={<OpsPage />} />
               <Route path="about" element={<AboutPage />} />
               <Route path="pilot/:ucid" element={<PilotPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />

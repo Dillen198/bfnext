@@ -1,5 +1,9 @@
 # Running DCSServerBot as a Windows service (no login, auto-restart)
 
+> **Superseded by [Fowl Engine Manager](../../bfmanager/README.md)**, an installer and app
+> that creates its own boot-time service (`FowlEngine`) and disables this NSSM one when
+> it is set up. These scripts still work if you'd rather not use the app. Don't run both.
+
 Goal: after a Windows reboot or a crash, the whole Vector Strike stack comes
 back **without anyone logging in or RDPing**:
 
@@ -24,45 +28,40 @@ with [NSSM](https://nssm.cc/).
 
 1. Install NSSM (`choco install nssm`, or unzip it and put `nssm.exe` on PATH).
 
-2. Give the service account the **Log on as a service** right:
-   `secpol.msc` -> Local Policies -> User Rights Assignment -> *Log on as a
-   service* -> add `ATPAdmin`. (The stack must run as the account that owns
-   `C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1` and
-   `%APPDATA%\netidx\client.json`.)
-
-3. Make sure the bot has been through its first-run setup once interactively
+2. Make sure the bot has been through its first-run setup once interactively
    (`run.cmd` from a normal shell) so `Server Bot\config\` is fully populated
-   and no console prompt is hit on a clean start.
+   and no console prompt is hit on a clean start. Stop that interactive bot
+   afterwards -- two bots would fight over DCS.
 
-4. Run `install-service.ps1` **from an elevated PowerShell** (edit the paths
-   at the top first). It runs the NSSM commands below and starts the service.
+3. Run `install-service.ps1` **from an elevated PowerShell** (edit the paths
+   at the top first, or pass `-BotDir` / `-Account`). It:
+   - installs the service with **delayed** auto-start (after the network is up),
+   - runs it as the account that owns `Saved Games\DCS.*` and
+     `%APPDATA%\netidx\client.json`, and grants it *Log on as a service*,
+   - restarts it on exit (NSSM) and on failure (Windows service recovery),
+   - sets `AppKillProcessTree 0`: **a bot restart leaves DCS running** (the bot
+     re-attaches; procman replaces an orphaned bfdb.exe),
+   - gives the bot 20 s to shut down cleanly, and rotates `service.log`.
 
-```powershell
-nssm install  DCSServerBot "E:\Github\DCSServerBot\run.cmd"
-nssm set DCSServerBot AppDirectory  "E:\Github\DCSServerBot"
-nssm set DCSServerBot ObjectName    ".\ATPAdmin" "<password>"
-nssm set DCSServerBot Start         SERVICE_AUTO_START
-nssm set DCSServerBot AppExit       Default Restart
-nssm set DCSServerBot AppRestartDelay 15000
-nssm set DCSServerBot AppStdout     "E:\Github\DCSServerBot\service.log"
-nssm set DCSServerBot AppStderr     "E:\Github\DCSServerBot\service.log"
-nssm set DCSServerBot AppRotateFiles 1
-nssm set DCSServerBot AppRotateBytes 10485760
-sc.exe failure DCSServerBot reset= 86400 actions= restart/15000/restart/30000/restart/60000
-nssm start DCSServerBot
-```
+4. Run `check-autostart.ps1` (read-only). It checks the service, restart after
+   a blue screen (Windows' *Automatically restart*), pending Windows Update
+   reboots / active hours, recent unexpected shutdowns, and that bfdb and the
+   netidx resolver answer. Fix anything it flags.
+
+5. BIOS/UEFI: *Restore on AC power loss* -> *Power On*, so a power cut ends
+   with the box booting too (not checkable from Windows).
 
 ## Verify
 
 ```powershell
-Get-Service DCSServerBot                                   # Running
-Invoke-WebRequest http://localhost:8880/api/health         # 200
-Test-NetConnection 127.0.0.1 -Port 4564 -InformationLevel Quiet   # True (netidx)
+.\check-autostart.ps1
 ```
 
-Then `Restart-Computer` and confirm all three still pass with **no interactive
-login**. Kill `python.exe` (the bot) and confirm NSSM brings it back within
-~15 s; `taskkill /IM bfdb.exe /F` and confirm the plugin relaunches bfdb.
+Then `Restart-Computer` and run it again (over SSH / from another PC) with
+**no interactive login**. Kill `python.exe` (the bot) and confirm NSSM brings
+it back within ~15 s *and DCS stays up*; `taskkill /IM bfdb.exe /F` and
+confirm the plugin relaunches bfdb. The dashboard's OPS page shows all of this
+live (service state, boot time, crash history) -- see ../auto-update.md.
 
 ## Uninstall
 

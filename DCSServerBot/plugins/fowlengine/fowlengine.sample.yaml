@@ -233,6 +233,43 @@ DEFAULT:
     #       blue_freq_mhz: 253.0
     #       red_freq_mhz: 254.0
     #
+    #   # The TRAINING RANGE: a DCS server running bfrange.dll instead of
+    #   # bflib.dll (see deploy/range.md). `kind: range` makes bfdb ingest its
+    #   # graded results and leave it out of the campaign's totals, and makes
+    #   # this plugin skip every campaign-only feed/command for it and run the
+    #   # range feeds instead (range_status_channel / range_results_channel /
+    #   # greenie_channel in its per-server section below).
+    #   - id: range
+    #     label: "Vector Strike Training Range"
+    #     kind: range                    # campaign (default) | range
+    #     dcs_server_name: "[VS] Vector Strike | Training Range"
+    #     netidx_base: "/local/fowl/range"   # must match netidx_base in its _RANGE config
+    #     sortie: ""
+    #     # identity events (slot/connect/Discord links), same as a campaign
+    #     stats_jsonl: "C:\Users\ATPAdmin\Saved Games\DCS.range\Logs\stats.jsonl"
+    #     # graded results. Unset -> range.jsonl next to stats_jsonl (procman
+    #     # logs the path it picked); set it anyway so it's explicit.
+    #     range_jsonl: "C:\Users\ATPAdmin\Saved Games\DCS.range\Logs\range.jsonl"
+    #     # Tacview recordings, for the range site's "download Tacview" links.
+    #     # Must match tacviewExportPath of the Tacview extension in nodes.yaml.
+    #     tacview_dir: "C:\Users\ATPAdmin\Saved Games\DCS.range\Tacview"
+    #     export_port: 42004             # = Scripts/bf_export_port.lua on that server
+    #     srs_url: "C:\Users\ATPAdmin\Saved Games\DCS.range\Config\clients-list.json"
+    #     # Only when this DCS server runs on ANOTHER PC (deploy/range.md, "Range
+    #     # on a second PC"): that PC's own netidx resolver, as <LAN ip>:<port>.
+    #     # procman writes <home>/netidx.range.json from it and bfdb reaches this
+    #     # instance's engine through it; every other instance keeps the shared
+    #     # resolver. The paths above then become UNC paths to that PC's shares
+    #     # (\\192.168.1.60\FowlRangeLogs\stats.jsonl ...).
+    #     # netidx_resolver: "192.168.1.60:4564"
+    #     # netidx_config: "C:\fowl\netidx.range.json"   # or name a client.json yourself
+    #     public: true
+    #     # A range instance NEVER inherits `gci.enabled: true` from the shared
+    #     # block below -- GCI stays off unless you set it here. Spelled out
+    #     # anyway so nobody wonders.
+    #     gci:
+    #       enabled: false
+    #
     # Which instance answers a request that names none (the dashboard's initial
     # view). Defaults to the first entry.
     # default_instance: vs1
@@ -273,13 +310,102 @@ DEFAULT:
   # ---------------------------------------------
   # Staged engine binaries  (drag-and-drop, applied on the next DCS restart)
   # ---------------------------------------------
-  # Drop `bflib.dll` or `bfdb.exe` into the bot's admin channel: it's staged
-  # under bfdb.staging_dir and swapped in (after a timestamped backup) on the
-  # next scheduled DCS restart -- bflib.dll by the BFBinaries extension (see
-  # nodes.yaml + extensions/bfbinaries), bfdb.exe by this plugin's procman.
-  # Control with /feops stage_status | stage_cancel | stage_apply, and swap
-  # bfdb by hand with /feops bfdb_restart. The BFBinaries extension needs
-  # bflib_dll_path + staging_dir set in nodes.yaml (NOT here).
+  # Drop `bflib.dll`, `bfrange.dll` or `bfdb.exe` into the bot's admin
+  # channel and it is staged, then swapped in (after a timestamped backup):
+  #   bfdb.exe    -> bfdb.staging_dir, applied by procman on the next bfdb restart
+  #   bflib.dll   -> the staging_dir of EVERY campaign server's BFBinaries
+  #   bfrange.dll -> the staging_dir of every range server's BFBinaries
+  #                  (dll_name: bfrange.dll)
+  # each applied by that server's BFBinaries extension on its own next DCS
+  # restart. Dropped into ONE server's own channel instead, it is staged for
+  # that server only. An instance whose BFBinaries has no staging_dir falls
+  # back to bfdb.staging_dir -- give each its own, or two servers race for one
+  # file. Control with /feops stage_status | stage_cancel | stage_apply, and
+  # swap bfdb by hand with /feops bfdb_restart. BFBinaries is configured in
+  # nodes.yaml (dll_name / dll_path / staging_dir), NOT here.
+
+  # ---------------------------------------------
+  # Automatic engine updates  (autoupdate.py -- see deploy/auto-update.md)
+  # ---------------------------------------------
+  # Looks for new `engine-*` releases (published by deploy/publish-release.ps1
+  # or the "Engine release" GitHub Action), verifies every file's sha256 and
+  # stages it exactly like a Discord drag-and-drop upload. Every swapped-in
+  # engine -- automatic OR hand-uploaded -- then goes on probation and is
+  # rolled back by itself if DCS crashes on it, the mission never loads it, or
+  # (bfdb) it dies / never answers; a rolled-back release is never staged
+  # again. The switches marked (OPS) can also be flipped on the dashboard's
+  # OPS page, which then overrides this block.
+  autoupdate:
+    enabled: false                 # (OPS) check for + stage new releases
+    source: github                 # github | folder
+    repo: "Dillen198/bfnext"
+    token: ""                      # optional: a private repo, or to lift the 60/h API limit
+    # folder: "\\\\buildpc\\fowl-releases"   # source: folder -> a dir of <tag>\manifest.json
+    tag_prefix: "engine-"
+    channel: stable                # (OPS) stable | beta (beta also takes GitHub pre-releases)
+    check_minutes: 15              # (OPS)
+    files: [bflib.dll, bfrange.dll, bfdb.exe, bftools.exe]
+    # When a staged build goes live:
+    #   next_restart  at the next scheduled DCS restart (what a manual upload does)
+    #   when_idle     as soon as that DCS server has had no players for idle_minutes
+    #   immediately   right away -- restarts a populated DCS server!
+    apply: when_idle               # (OPS) engine DLLs (need a full DCS restart)
+    bfdb_apply: when_idle          # (OPS) bfdb.exe (players stay connected; GCI/dashboard blip)
+    idle_minutes: 10               # (OPS)
+    apply_window: ""               # (OPS) e.g. "03:00-08:00" local time; blank = any time
+    probation_minutes: 10          # stable this long after loading = passed
+    load_timeout_minutes: 15       # DLL never loaded by the mission after this long running -> roll back
+    bfdb_unhealthy_minutes: 15     # new bfdb never answered /api/health in this long -> roll back
+    rollback_on_crash: true        # (OPS)
+    db_snapshots_keep: 3           # bfdb DB copies taken before each bfdb update
+    bot_plugin: false              # (OPS) also update THIS plugin from fowlengine-bot.zip
+                                   # (refused when the plugin is a git checkout / symlink)
+
+  # ---------------------------------------------
+  # Log analyzer + persistent log archive  (loganalyzer.py)
+  # ---------------------------------------------
+  # Reads every log (engine bfnext.txt / bfrange.txt, DCS dcs.log script
+  # errors + crashes + crash dumps, bfdb, this bot) as it grows, groups
+  # WARN/ERROR lines into distinct fingerprinted issues (dashboard OPS page,
+  # ops_channel notice per new error, and GET <bfdb>/api/logs/issues?token=...
+  # -- the report Claude reads), and appends everything it reads to a
+  # PERSISTENT archive so no log is lost when DCS/bfdb/the bot restart:
+  #   <bfdb.home>\_logarchive\<source>\<UTC date>.log(.gz)
+  issues:
+    enabled: true
+    scan_seconds: 60
+    min_level: WARN                # WARN | ERROR -- what counts as an issue
+    notify: true                   # post NEW issues to ops_channel...
+    notify_min_level: ERROR        # ...at this level and up (crashes/panics always count)
+    include_dcs_log: true
+    ignore: []                     # regexes; a matching line never becomes an issue
+    extra_files: []                # [{name: srs, path: "C:\\...\\server.log"}]
+    archive: true
+    archive_dir: ""                # default <bfdb.home>\_logarchive
+    archive_days: 90               # 0 = keep forever
+    github:                        # optional: one GitHub issue per new recurring ERROR
+      repo: ""                     # use a PRIVATE repo -- samples can carry player names
+      token: ""                    # fine-grained token with Issues: read/write on that repo
+      min_count: 3
+      labels: [auto-report]
+
+  # ---------------------------------------------
+  # OPS API  (opsapi.py -- the dashboard's OPS page, reached through bfdb)
+  # ---------------------------------------------
+  # Routes are added to DCSServerBot's WebService at
+  # <path of bfdb.dcsserverbot_url>/fowlengine/ops/* and require the same
+  # X-API-Key (bfdb.dcsserverbot_api_key). No key -> no OPS page.
+  ops_api:
+    enabled: true
+    service_name: DCSServerBot     # the Windows service install-service.ps1 created
+    # prefix: "/stats"             # override when bfdb.dcsserverbot_url's path differs
+    # api_key: ""                  # override the key (then give bfdb the same one)
+
+  # ---------------------------------------------
+  # Training range site
+  # ---------------------------------------------
+  # Where /range me, the range status embed and the results feed link to.
+  # range_site_url: "https://range.vectorstrike.org"
 
   # ---------------------------------------------
   # Per-coalition briefing channels
@@ -363,7 +489,10 @@ DEFAULT:
 
 # ===================================================================
 # Per-DCS-server overrides.  These merge over DEFAULT above.
-# The section key must be the DCSServerBot server name (config/servers.yaml).
+# Key each section by the DCSServerBot server name (config/servers.yaml).
+# Stock DCSServerBot keys plugin sections by INSTANCE name (nodes.yaml, e.g.
+# `DCS.vectorstrike_1:`) instead; this plugin accepts either, and an
+# instance-keyed section wins if both exist for one server.
 # ===================================================================
 #
 # With several instances, give EACH server its own channels here and leave
@@ -413,3 +542,35 @@ DEFAULT:
 #     # there, and one shared pair would make the two syncs flip the role.
 #     blue: 200000000000000010
 #     red: 200000000000000011
+#
+# '[VS] Vector Strike | Training Range':
+#   # The kind: range instance above. The plugin skips every campaign feed and
+#   # command for it (Campaign Status, objective alerts, kill streaks,
+#   # briefings, coalition roles, GCI transcript, rank sync, /fe_objective,
+#   # /fe_terminal, /fe_briefing) whatever is set here -- the nulls just keep
+#   # DEFAULT from leaking a campaign channel onto it.
+#   status_channel: null
+#   alerts_channel: null
+#   achievements_channel: null
+#   gci_transcript_channel: null
+#   blue_briefing_channel: null
+#   red_briefing_channel: null
+#   coalition_roles: null
+#   engine_log_channel: null         # works for bfrange too, if you want it
+#   perf_channel: null
+#   server_info_channel: null        # connect string / DCS status, if you want it
+#   # One live embed, edited every 2 min: tankers on station (callsign, type,
+#   # TACAN, freq, altitude), carriers (BRC/FB, wind over deck, recovery
+#   # window, TACAN/ICLS), stations hot/cold, who is flying. /api/range/live.
+#   range_status_channel: 300000000000000001
+#   # Every graded result as bfdb's embed, with the debrief card attached.
+#   # Polled every 15 s; at most 10 posts per poll, the rest of a catch-up
+#   # (e.g. after the bot was down) collapses into one summary line.
+#   range_results_channel: 300000000000000002
+#   # Optional: only these result kinds go to range_results_channel.
+#   # bomb, strafe, trap, aar, missile, engagement, anti_ship, sling,
+#   # landing, troops, gunnery, cas. Omit for all of them.
+#   # range_results_kinds: [bomb, strafe, trap, aar]
+#   # Optional: carrier passes (traps) only, e.g. a #greenie-board channel.
+#   # Gets every trap whatever range_results_kinds says.
+#   greenie_channel: 300000000000000003

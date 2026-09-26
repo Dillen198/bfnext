@@ -989,6 +989,197 @@ export interface BotActionResult {
   status:  string
 }
 
+// ── OPS page (bfdb /api/admin/ops/* → the FowlEngine bot plugin's OPS API) ──
+
+/** A binary waiting in a staging dir (`<name>.pending` + its sidecar). */
+export interface OpsPending {
+  path: string
+  size: number
+  sha256: string | null
+  uploader?: string
+  utc?: string
+  /** "autoupdate" | "rollback" | absent for a Discord drag-and-drop upload */
+  source?: string
+  tag?: string
+  git?: string
+  notes?: string
+  rollback?: boolean
+}
+
+export interface OpsServer {
+  name: string
+  status: string
+  node: string | null
+  remote: boolean
+  kind: string
+  players: number | null
+  restart_time: string | null
+  mission?: string | null
+  map?: string | null
+  dll_name?: string
+  dll_path?: string
+  staging_dir?: string
+  has_bfbinaries?: boolean
+  dll_sha256?: string | null
+  dll_mtime?: number | null
+  pending?: OpsPending | null
+  loaded_build?: { name?: string; version?: string; git?: string; built?: string; seen_at?: number }
+  backups?: string[]
+  error?: string
+}
+
+export interface OpsProbation {
+  server: string | null
+  dll: string
+  tag: string | null
+  source: string
+  loaded: boolean
+  running_secs: number
+  crashes: number
+  passes_in_secs: number | null
+}
+
+export type OpsApplyPolicy = 'next_restart' | 'when_idle' | 'immediately'
+
+export interface OpsUpdateConfig {
+  enabled: boolean
+  source: 'github' | 'folder'
+  repo: string | null
+  folder: string | null
+  has_token: boolean
+  tag_prefix: string
+  channel: 'stable' | 'beta'
+  check_minutes: number
+  files: string[]
+  apply: OpsApplyPolicy
+  bfdb_apply: OpsApplyPolicy
+  idle_minutes: number
+  apply_window: string | null
+  probation_minutes: number
+  load_timeout_minutes: number
+  rollback_on_crash: boolean
+  bot_plugin: boolean
+  paused: boolean
+}
+
+export interface OpsRelease {
+  tag: string
+  git: string | null
+  built: string | null
+  channel: string
+  notes: string
+  html_url?: string
+  files: Record<string, { sha256: string; size: number; git: string | null; built: string | null }>
+}
+
+export interface OpsHistoryEntry { ts: string; event: string; detail: string; tag?: string | null; server?: string }
+
+export interface OpsUpdates {
+  config: OpsUpdateConfig
+  busy: string | null
+  last_check: { ok: boolean; at: string; message?: string; error?: string; latest?: string | null; reason?: string } | null
+  latest: OpsRelease | null
+  installed: Record<string, { tag: string | null; git: string | null; sha256: string | null; at: string; source: string }>
+  bad: string[]
+  probation: OpsProbation[]
+  idle_since: Record<string, string>
+  history: OpsHistoryEntry[]
+}
+
+export interface OpsStatus {
+  generated: string
+  host: {
+    hostname: string
+    os: string
+    python: string
+    boot_time?: string
+    uptime_secs?: number
+    cpu_percent?: number
+    memory?: { total: number; available: number; percent: number }
+    disk?: { path: string; total: number; free: number }
+    service: {
+      name: string
+      installed: boolean
+      state?: string
+      start_type?: string
+      account?: string
+      restart_on_failure?: boolean
+      this_process_is_service: boolean
+    }
+    auto_reboot_on_bsod: boolean | null
+    reboot_pending: boolean
+    unexpected_shutdowns: { date?: string; id?: string; kind?: string; source?: string }[]
+  }
+  bot: { pid: number; plugin_started_at: string; dcsserverbot_version: string | null; node: string | null; cwd: string }
+  bfdb: {
+    managed: boolean
+    exe?: string
+    home?: string
+    running?: boolean
+    pid?: number | null
+    healthy?: boolean | null
+    started_at?: number | null
+    uptime_secs?: number | null
+    relaunches?: number
+    last_exit_code?: number | null
+    failing_checks?: number
+    resolver_listening?: boolean
+    resolver_owned?: boolean
+    last_swap?: string | null
+    probation?: { tag: string | null; source: string; swapped_at: number; healthy_at: number | null; db_snapshot: string | null } | null
+    exe_sha256?: string | null
+    pending?: OpsPending | null
+  }
+  bfdb_build: { version?: string; git?: string; built?: string } | null
+  servers: OpsServer[]
+  bftools: { path: string; sha256: string | null; pending: OpsPending | null } | null
+  updates: OpsUpdates | null
+  issues?: OpsIssuesSummary | null
+  backups: { bfdb_exe: { name: string; size: number; mtime: number }[]; db_snapshots: { name: string; mtime: number }[] } | null
+}
+
+export interface OpsResult { ok: boolean; message?: string; error?: string }
+
+export interface OpsConfigDoc { path: string; yaml: string; mtime: number; masked: number; mask: string; backups: string[] }
+
+export type OpsLogName = 'bot' | 'service' | 'bfdb' | 'bfdb_boot' | 'netidx'
+
+export type OpsIssueStatus = 'new' | 'open' | 'acknowledged' | 'ignored' | 'fixed' | 'regressed' | 'quiet'
+
+/** One distinct problem the bot's log analyzer found (many log lines, one fingerprint). */
+export interface OpsIssue {
+  id: string
+  source: string
+  kind: string
+  level: 'CRASH' | 'PANIC' | 'ERROR' | 'WARN'
+  signature: string
+  first_seen: string
+  last_seen: string
+  count: number
+  status: OpsIssueStatus
+  samples: { at: string; source: string; context: string[]; text: string }[]
+  builds: string[]
+  sources: string[]
+  note?: string
+  github_url?: string
+}
+
+export interface OpsIssuesSummary {
+  enabled: boolean
+  last_scan: string | null
+  open: number
+  new: number
+  errors: number
+  github: boolean
+  sources: { source: string; path: string; exists: boolean }[]
+}
+
+export interface OpsArchiveIndex {
+  root: string | null
+  keep_days: number
+  sources: { source: string; days: { date: string; size: number; compressed: boolean }[] }[]
+}
+
 export interface PerfTimelinePoint {
   time:            string
   frame:           { mean: number; p99: number }
@@ -1025,19 +1216,41 @@ async function errorMessage(res: Response): Promise<string> {
   return `HTTP ${res.status}`
 }
 
+/**
+ * How requests reach the backend. Normally `fetch` against bfdb; Fowl Engine
+ * Manager (the desktop app, src/manager) swaps in its own so the same pages
+ * -- the OPS page -- talk to the local bot over Tauri IPC instead. `path` is
+ * relative to /api, with the instance already applied.
+ */
+export type Transport = (method: 'GET' | 'POST', path: string, body?: unknown) => Promise<Response>
+
+let transport: Transport | null = null
+
+export function setTransport(t: Transport | null): void {
+  transport = t
+}
+
+function send(method: 'GET' | 'POST', path: string, body?: unknown): Promise<Response> {
+  const p = withInstance(path)
+  if (transport) return transport(method, p, body)
+  return fetch(`${BASE}${p}`, method === 'GET'
+    ? { credentials: 'include' }
+    : {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${withInstance(path)}`, { credentials: 'include' })
+  const res = await send('GET', path)
   if (!res.ok) throw new Error(await errorMessage(res))
   return res.json()
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${withInstance(path)}`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  const res = await send('POST', path, body)
   if (!res.ok) throw new Error(await errorMessage(res))
   return res.json()
 }
@@ -1302,6 +1515,47 @@ export const api = {
     cfg:         () => get<Record<string, unknown>>('/admin/cfg'),
     cfgSchema:   () => get<JsonSchema>('/admin/cfg/schema'),
     cfgSave:     (cfg: Record<string, unknown>) => post<{ ok: boolean }>('/admin/cfg', { cfg }),
+  },
+  /** The OPS page: server box, processes, engine updates, bot config. bfdb
+   *  forwards these to the DCSServerBot plugin, which owns all of it. */
+  ops: {
+    status:      () => get<OpsStatus>('/admin/ops/status'),
+    bfdbRestart: () => post<OpsResult>('/admin/ops/bfdb/restart', {}),
+    botRestart:  () => post<OpsResult>('/admin/ops/bot/restart', {}),
+    check:       () => post<OpsResult>('/admin/ops/update/check', {}),
+    settings:    (changes: Partial<OpsUpdateConfig>) => post<OpsResult>('/admin/ops/update/settings', { changes }),
+    resetSettings: () => post<OpsResult>('/admin/ops/update/settings', { reset: true }),
+    apply:       (target: 'bfdb' | 'dll' | 'bftools', server?: string) =>
+                   post<OpsResult>('/admin/ops/update/apply', { target, server }),
+    rollback:    (target: 'bfdb' | 'dll', server?: string) =>
+                   post<OpsResult>('/admin/ops/update/rollback', { target, server }),
+    unmark:      (tag: string) => post<OpsResult>('/admin/ops/update/unmark', { tag }),
+    cancelStaged: (name: string, server?: string) => post<OpsResult>('/admin/ops/stage/cancel', { name, server }),
+    config:      () => get<OpsConfigDoc>('/admin/ops/config'),
+    saveConfig:  (yaml: string, baseMtime: number, restartBfdb: boolean) =>
+                   post<OpsResult & { mtime?: number }>('/admin/ops/config', { yaml, base_mtime: baseMtime, restart_bfdb: restartBfdb }),
+    logs:        (which: OpsLogName, lines = 300) =>
+                   get<{ which: string; path: string | null; lines: string[]; missing?: boolean }>(`/admin/ops/logs?which=${which}&lines=${lines}`),
+    issues:      (closed = false) =>
+                   get<{ summary: OpsIssuesSummary; issues: OpsIssue[] }>(`/admin/ops/issues?closed=${closed ? 1 : 0}`),
+    issuesScan:  () => post<OpsResult>('/admin/ops/issues/scan', {}),
+    issueStatus: (id: string, status: 'open' | 'acknowledged' | 'ignored' | 'fixed', note?: string) =>
+                   post<OpsResult>('/admin/ops/issues/status', { id, status, note }),
+    issuesStatusMany: (ids: string[], status: 'open' | 'acknowledged' | 'ignored' | 'fixed') =>
+                   post<OpsResult>('/admin/ops/issues/status', { ids, status }),
+    issuesClear: (which: 'closed' | 'all') => post<OpsResult>('/admin/ops/issues/clear', { which }),
+    /** Delete these issues outright (they come back as new if they happen again). */
+    issuesForget: (ids: string[]) => post<OpsResult>('/admin/ops/issues/clear', { ids }),
+    /** The Markdown report -- the same text bfdb serves at /api/logs/issues. */
+    issuesReport: async (closed = false): Promise<string> => {
+      const res = await send('GET', `/admin/ops/issues/report?closed=${closed ? 1 : 0}`)
+      if (!res.ok) throw new Error(await errorMessage(res))
+      return res.text()
+    },
+    archive:     () => get<OpsArchiveIndex>('/admin/ops/archive'),
+    archiveRead: (source: string, date: string, lines = 1000, grep = '') =>
+                   get<{ source: string; date: string; lines: string[] }>(
+                     `/admin/ops/archive/read?source=${encodeURIComponent(source)}&date=${date}&lines=${lines}&grep=${encodeURIComponent(grep)}`),
   },
   cockpit: {
     // playerId comes from bfcockpit/Scripts/Hooks/bfcockpit.lua's net.get_my_player_id(),

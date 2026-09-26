@@ -812,3 +812,22 @@ export const Explosion = createIcon('Explosion', <>
     stroke="none"
   />
 </>)
+
+// ── Training range ────────────────────────────────────────────────────────────
+// Glyphs the range site (bfrange-web) needs that the campaign never did.
+
+/** REFUEL -- a drogue basket trailing on its hose, opening toward the
+ *  receiver. The funnel is the part people recognise; the hose says "towed". */
+export const Refuel = createIcon('Refuel', <>
+  <path d="M2.5 3.5c4.5 0 7.5 2.5 9.5 7.5" />
+  <path d="M12 11 21 7.5v12l-9-3.5z" />
+  <path d="M16.5 9.5v8" />
+</>)
+
+/** CALCULATOR -- display window over a key grid; the tall key is enter. */
+export const Calculator = createIcon('Calculator', <>
+  <path d="M4.5 2.5h15v19h-15z" />
+  <path d="M7.5 5.5h9v4h-9z" />
+  <path d="M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01" />
+  <path d="M16 16v2.5" />
+</>)

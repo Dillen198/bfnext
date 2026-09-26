@@ -173,7 +173,13 @@ breakdown. In short:
 | `bfsite` (website) | Dillen Weerasinghe | Proprietary — all rights reserved (see `bfsite/LICENSE`) |
 | `bfwiki` (wiki UI) | Dillen Weerasinghe | Proprietary — all rights reserved (see `bfwiki/LICENSE`) |
 | Live GCI implementation (`bfdb/src/gci/**`, `bfdb/src/gci.rs`) | Dillen Weerasinghe | Proprietary — all rights reserved (see `NOTICE`) |
+| `bfrange` (training range engine + mission builder) | Dillen Weerasinghe | Proprietary — all rights reserved (see `bfrange/LICENSE`) |
+| `bfrange-web` (training range site) | Dillen Weerasinghe | Proprietary — all rights reserved (see `bfrange-web/LICENSE`) |
+| Training range backend (`bfdb/src/range/**`) | Dillen Weerasinghe | Proprietary — all rights reserved (see `NOTICE`) |
+| DCSServerBot `fowlengine` plugin and `bf*` extensions | Dillen Weerasinghe | Proprietary — all rights reserved (see their `LICENSE` files) |
 
-`bfweb`, `bfsite`, `bfwiki`, and the Live GCI implementation files are **not
-open source** and are not licensed for use, modification, or redistribution.
+`bfweb`, `bfsite`, `bfwiki`, `bfrange`, `bfrange-web`, the Live GCI and
+training range backend files, and the DCSServerBot plugin and extensions are
+**not open source** and are not licensed for use, modification, or
+redistribution.
 Permission requests: dillen.weerasinghe98@gmail.com.

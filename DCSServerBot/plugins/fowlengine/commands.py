@@ -9,14 +9,21 @@ import os
 import re
 import time
 import asyncio
+import io
 import subprocess
 from collections import deque
+from copy import deepcopy
 from typing import Optional
+from urllib.parse import quote
 
-from .procman import Procman, BFDB_HEALTH_CHECK_SECS, sha256_of
-from .upload import handle_bfbinary_upload
+from .procman import Procman, BFDB_HEALTH_CHECK_SECS, sha256_of, effective_instance_gci
+from .autoupdate import Updater
+from .opsapi import OpsApi
+from .loganalyzer import LogAnalyzer
+from .upload import handle_bfbinary_upload, engine_binaries, ENGINE_DLLS, is_remote_node
 from .briefing import build_briefing_embed
 from .icons import IconSet
+from . import rangefeed
 
 # NOTE: this plugin previously subclassed Plugin[FowlEngineEventListener] and
 # registered .listener.FowlEngineEventListener for the vs_event/registerDCSServer
@@ -84,6 +91,21 @@ COALITION_SYNC_MINUTES = 5.0
 # Anything beyond that is treated as bad input from bfdb rather than obeyed.
 REVOKE_MIN_PER_TICK = 10
 REVOKE_MAX_FRACTION = 0.25
+
+# ── Training range (bfrange) servers ─────────────────────────────────────────
+# A DCS server whose bfdb instance is `kind: range` runs bfrange.dll instead of
+# bflib.dll: no objectives, no coalitions, no GCI. Every campaign-only loop and
+# command below skips it, and it gets its own two feeds instead -- a live
+# status embed (tankers, carriers, stations, players) and a graded-results
+# feed with the debrief card attached. Pure logic lives in rangefeed.py.
+RANGE_STATUS_MINUTES = 2.0
+RANGE_RESULTS_POLL_SECS = 15.0
+RANGE_HTTP_TIMEOUT = 15
+# Result cards are a few hundred KB; anything near Discord's attachment limit
+# is not a card, so post the image by URL instead.
+RANGE_CARD_MAX_BYTES = 8 * 1024 * 1024
+RANGE_ONLY_MSG = ("**{name}** is a training range server -- this command is for campaign "
+                  "servers. Try `/range status` instead.")
 
 # ── bfdb process supervision ────────────────────────────────────────────────
 # bfdb.exe + the netidx resolver are owned by procman.py as child processes of
@@ -370,6 +392,12 @@ class FowlEngine(Plugin):
         # graveyard of stale briefings behind it.
         self.briefing_msg_ids = {}
         self.faction_thread_ids = {}  # server name -> {"Blue": thread_id, "Red": thread_id}
+        # Training range servers (kind: range). Both persisted: the status
+        # embed is edited in place across bot restarts, and the results feed
+        # resumes from the last result it posted instead of replaying history
+        # (or silently skipping what arrived while the bot was down).
+        self.range_status_msg_ids = {}   # server name -> range status embed
+        self.range_feed_cursors = {}     # server name -> {"id", "ts", "recent"}
         self.state_file = os.path.join(bot.node.config_dir, 'fowlengine_state.json')
         if os.path.exists(self.state_file):
             try:
@@ -395,8 +423,14 @@ class FowlEngine(Plugin):
                     self.tail_msg_ids = state.get('tail_msg_ids', {})
                     self.briefing_msg_ids = state.get('briefing_msg_ids', {})
                     self.faction_thread_ids = state.get('faction_thread_ids', {})
+                    self.range_status_msg_ids = state.get('range_status_msg_ids') or {}
+                    self.range_feed_cursors = state.get('range_feed_cursors') or {}
             except Exception as ex:
                 self.log.error(f"Failed to load Fowl Engine state: {ex}")
+        # rendered instances.json, cached by (path, mtime) -- see _instances_list
+        self._instances_cache = None
+        self._range_fail_counts = {}     # server name -> consecutive feed/status failures
+        self._range_warned = set()       # (server name, reason) already logged once
         self._gci_relay_tasks = {}  # server name -> asyncio.Task (GCI transcript relay)
         # Per-server live state for the engine log relay (not persisted -- rebuilt on connect).
         self._log_relay_tasks = {}   # server name -> asyncio.Task
@@ -418,10 +452,114 @@ class FowlEngine(Plugin):
         # Constructed in cog_load once the config is available.
         self.procman: Procman | None = None
         self._bfdb_admin_password: str | None = None
+        # Automatic engine updates + the probation/rollback watch on every
+        # swapped-in engine (autoupdate.py), and the HTTP API the dashboard's
+        # OPS page reaches through bfdb (opsapi.py). Both built in cog_load.
+        self.updater: Updater | None = None
+        self.opsapi: OpsApi | None = None
+        # Log analyzer: log files -> fingerprinted issues (loganalyzer.py).
+        self.issues: LogAnalyzer | None = None
         # Vector Strike custom emoji. Empty until refresh() runs and until an
         # admin has actually installed them -- every icon has a unicode
         # stand-in, so embeds render correctly either way.
         self.icons = IconSet(bot, self.log)
+
+    # ── per-server config sections ──────────────────────────────────────────
+
+    def get_base_config(self, server: Server, *args, **kwargs):
+        """(default, specific) config for one DCS server.
+
+        Stock DCSServerBot (3.0.x core/plugin.py) finds a plugin's per-server
+        section by INSTANCE name -- `DCS.vectorstrike_1:`, optionally nested
+        under the node name. This plugin's YAML has always keyed them by the
+        DCSServerBot SERVER name instead (the display name used in
+        servers.yaml, which is also what `dcs_server_name` holds), and on a
+        bot that only looks up instance names those sections are silently
+        ignored: every server then falls back to DEFAULT.
+
+        Accept both. An instance-keyed section wins -- stock behaviour,
+        unchanged -- and only when there is none is a section keyed by the
+        server name (top level, or under the node name) used.
+        """
+        base = super().get_base_config(server, *args, **kwargs)
+        try:
+            default, specific = base
+        except (TypeError, ValueError):
+            return base  # a bot version with a different shape: leave it alone
+        if specific:
+            return default, specific
+        name = getattr(server, "name", None)
+        locals_ = self.locals or {}
+        node_name = getattr(getattr(server, "node", None), "name", None)
+        for holder in (locals_.get(node_name) if node_name else None, locals_):
+            if isinstance(holder, dict) and name and isinstance(holder.get(name), dict):
+                return default, deepcopy(holder[name])
+        return default, specific
+
+    # ── instance kind: campaign (bflib) vs training range (bfrange) ────────
+
+    def _instances_list(self) -> list:
+        """The bfdb instance entries: the RENDERED <bfdb.home>/instances.json
+        (what bfdb is actually running with), else the YAML `bfdb.instances`."""
+        cfg = self.get_config() or {}
+        bcfg = cfg.get('bfdb') or {}
+        home = os.path.expandvars(bcfg.get('home') or '')
+        path = os.path.join(home, 'instances.json') if home else None
+        if path and os.path.exists(path):
+            try:
+                mtime = os.path.getmtime(path)
+                cache = self._instances_cache
+                if cache and cache[0] == path and cache[1] == mtime:
+                    return cache[2]
+                with open(path, 'r', encoding='utf-8') as fh:
+                    doc = json.load(fh)
+                entries = doc.get('instances') if isinstance(doc, dict) else doc
+                if isinstance(entries, list):
+                    self._instances_cache = (path, mtime, entries)
+                    return entries
+            except (OSError, ValueError) as ex:
+                self.log.debug(f"FowlEngine: could not read {path}: {ex}")
+        return list(bcfg.get('instances') or [])
+
+    def _instance_entry(self, server) -> dict | None:
+        return rangefeed.find_instance(self._instances_list(), getattr(server, 'name', None))
+
+    def _instance_kind(self, server) -> str:
+        """"range" for a server whose bfdb instance is `kind: range`, else
+        "campaign" (including every server not listed in bfdb.instances)."""
+        return rangefeed.normalize_kind((self._instance_entry(server) or {}).get('kind'))
+
+    def _instance_id(self, server) -> str | None:
+        return (self._instance_entry(server) or {}).get('id') or None
+
+    def _is_range(self, server) -> bool:
+        try:
+            return self._instance_kind(server) == 'range'
+        except Exception as ex:  # a config read must never take a loop down
+            self.log.debug(f"FowlEngine: instance kind lookup failed: {ex}")
+            return False
+
+    def _range_servers(self) -> list:
+        return [s for s in self.bot.servers.values() if self._is_range(s)]
+
+    def _range_params(self, server, **extra) -> dict:
+        """Query params pinning a request to this server's instance: its bfdb
+        instance id when known, and the server name either way."""
+        p = srv_params(getattr(server, 'name', None), **extra)
+        iid = self._instance_id(server)
+        if iid:
+            p['instance'] = iid
+        return p
+
+    def _range_site(self, config: dict | None = None) -> str:
+        cfg = config if config is not None else (self.get_config() or {})
+        return (cfg.get('range_site_url') or rangefeed.RANGE_SITE_URL).rstrip('/')
+
+    def _warn_once(self, server_name: str, reason: str, message: str) -> None:
+        key = (server_name, reason)
+        if key not in self._range_warned:
+            self._range_warned.add(key)
+            self.log.warning(message)
 
     async def cog_load(self) -> None:
         await super().cog_load()
@@ -431,11 +569,22 @@ class FowlEngine(Plugin):
         self._bfdb_admin_password = (cfg.get("bfdb") or {}).get("admin_password") \
             or cfg.get("admin_password", "")
         self.procman = Procman(self.log, cfg, self.notify_ops)
+        # The updater exists even with autoupdate off: it is also what watches
+        # a hand-uploaded engine through probation and rolls it back.
+        self.updater = Updater(self, self.log,
+                               os.path.join(self.bot.node.config_dir, 'fowlengine_update.json'))
+        self.procman.on_swapped = self.updater.on_bfdb_swapped
+        self.procman.on_rollback = self.updater.on_bfdb_rollback
+        self.sync_update_tuning()
+        self.issues = LogAnalyzer(self, self.log,
+                                  os.path.join(self.bot.node.config_dir, 'fowlengine_issues.json'))
         if self.procman.enabled:
             try:
                 await self.procman.start(self._bfdb_admin_password)
             except Exception as ex:
                 self.log.exception(f"FowlEngine: procman failed to start bfdb: {ex}")
+        self.opsapi = OpsApi(self)
+        asyncio.create_task(self.opsapi.register())
 
         utils.safe_start(self.update_status)
         utils.safe_start(self.sync_ranks)
@@ -447,6 +596,9 @@ class FowlEngine(Plugin):
         utils.safe_start(self.supervise_gci_transcript)
         utils.safe_start(self.update_briefings)
         utils.safe_start(self.sync_coalition_roles)
+        utils.safe_start(self.update_range_status)
+        utils.safe_start(self.poll_range_results)
+        utils.safe_start(self.autoupdate_loop)
         self._warn_shared_channels()
 
     # Channels that must not be shared between DCS servers: each carries a
@@ -458,6 +610,7 @@ class FowlEngine(Plugin):
         'status_channel', 'alerts_channel', 'achievements_channel',
         'engine_log_channel', 'perf_channel', 'gci_transcript_channel',
         'server_info_channel', 'blue_briefing_channel', 'red_briefing_channel',
+        'range_status_channel', 'range_results_channel', 'greenie_channel',
     )
 
     def _warn_shared_channels(self) -> None:
@@ -540,6 +693,14 @@ class FowlEngine(Plugin):
         await utils.safe_cancel(self.supervise_gci_transcript)
         await utils.safe_cancel(self.update_briefings)
         await utils.safe_cancel(self.sync_coalition_roles)
+        await utils.safe_cancel(self.update_range_status)
+        await utils.safe_cancel(self.poll_range_results)
+        await utils.safe_cancel(self.autoupdate_loop)
+        if self.opsapi:
+            try:
+                self.opsapi.unregister()
+            except Exception as ex:
+                self.log.debug(f"FowlEngine: OPS API unregister: {ex}")
         for task in self._log_relay_tasks.values():
             task.cancel()
         for task in self._campaign_poll_tasks.values():
@@ -552,6 +713,47 @@ class FowlEngine(Plugin):
             except Exception as ex:
                 self.log.error(f"FowlEngine: procman shutdown error: {ex}")
         await super().cog_unload()
+
+    # ── config reload (OPS page edits) + auto-update wiring ─────────────────
+
+    def reload_plugin_config(self) -> None:
+        """Re-read fowlengine.yaml after an edit (the dashboard OPS page) and
+        push it into everything that caches it. bfdb itself only reads its
+        flags / gci.json at start -- the caller restarts it if asked."""
+        self.locals = self.read_locals()
+        self._config.clear()
+        self._instances_cache = None
+        cfg = self.get_config() or {}
+        self._bfdb_admin_password = (cfg.get("bfdb") or {}).get("admin_password")             or cfg.get("admin_password", "") or self._bfdb_admin_password
+        if self.procman:
+            self.procman.reload_config(cfg)
+        if self.updater:
+            self.updater.reload_config()
+        if self.issues:
+            self.issues.reload_config()
+        self.sync_update_tuning()
+
+    def sync_update_tuning(self) -> None:
+        """procman runs bfdb's probation; its knobs live in `autoupdate:`."""
+        if not (self.procman and self.updater):
+            return
+        c = self.updater.cfg
+        self.procman.probation_minutes = c.probation_minutes
+        self.procman.unhealthy_minutes = c.bfdb_unhealthy_minutes
+        self.procman.db_snapshots_keep = c.db_snapshots_keep
+
+    @tasks.loop(seconds=30.0)
+    async def autoupdate_loop(self):
+        """Release checks, apply policy, the engine probation watch, and the
+        log analyzer's scan (which paces itself by issues.scan_seconds)."""
+        if self.updater:
+            await self.updater.tick()
+        if self.issues:
+            await self.issues.tick()
+
+    @autoupdate_loop.before_loop
+    async def before_autoupdate_loop(self):
+        await self.bot.wait_until_ready()
 
     # ── Discord message hook: engine-binary drag-and-drop upload ─────────────
 
@@ -585,6 +787,8 @@ class FowlEngine(Plugin):
                     'tail_msg_ids': self.tail_msg_ids,
                     'briefing_msg_ids': self.briefing_msg_ids,
                     'faction_thread_ids': self.faction_thread_ids,
+                    'range_status_msg_ids': self.range_status_msg_ids,
+                    'range_feed_cursors': self.range_feed_cursors,
                 }, f)
         except Exception as ex:
             self.log.error(f"Failed to save Fowl Engine state: {ex}")
@@ -600,7 +804,11 @@ class FowlEngine(Plugin):
             config = self.get_config(server)
             if not config or 'status_channel' not in config:
                 continue
-                
+            if self._is_range(server):
+                # "Campaign Status" has nothing to say about a training range
+                # (no rounds, no objectives); it has range_status_channel.
+                continue
+
             try:
                 import aiohttp
                 config = self.get_config(server) or {}
@@ -897,14 +1105,34 @@ class FowlEngine(Plugin):
             return f"⚠️ {(b or {}).get('error', 'unknown')}"
         return f"`{b.get('git', '?')}` · {b.get('built', '?')}"
 
+    def _engine_binaries(self, server) -> dict:
+        """{dll_name, dll_path, staging_dir, ...} for this server's engine DLL
+        (bflib.dll, or bfrange.dll on a range server) -- the same resolution
+        upload.py stages by and the BFBinaries extension swaps by."""
+        return engine_binaries(self, server)
+
     def _bflib_dll_path(self, server) -> str:
-        """Resolve the live bflib.dll path: plugin config first (legacy
-        `bfbinaries:` block or bare key), then the BFBinaries extension."""
-        cfg = self.get_config(server) or {}
-        return os.path.expandvars(
-            (cfg.get("bfbinaries") or {}).get("bflib_dll_path")
-            or cfg.get("bflib_dll_path")
-            or self._bfbinaries_cfg(server).get("bflib_dll_path", ""))
+        """Resolve the live engine DLL path (bfrange.dll on a range server):
+        the BFBinaries extension, then the legacy plugin keys, then
+        <instance home>/Scripts/<dll>."""
+        return self._engine_binaries(server).get("dll_path", "")
+
+    def _staged_for(self, server) -> list[str]:
+        """What is waiting to be swapped in for this server: its own engine
+        DLL (in its own staging dir) and the shared bfdb.exe."""
+        if not self.procman:
+            return []
+        out = []
+        try:
+            # a server on another PC stages on that PC; /feops stage_status asks it
+            b = self._engine_binaries(server) if server and not self._on_remote_node(server) else None
+            if b and self.procman.pending_info(b["dll_name"], b["staging_dir"] or None):
+                out.append(b["dll_name"])
+        except Exception as ex:  # noqa: BLE001
+            self.log.debug(f"FowlEngine: staged-DLL lookup failed: {ex}")
+        if self.procman.pending_info("bfdb.exe"):
+            out.append("bfdb.exe")
+        return out
 
     def _deploy_status_line(self, server=None) -> str:
         """Engine build summary for an embed field: git rev + build time of the
@@ -914,7 +1142,7 @@ class FowlEngine(Plugin):
         lines = [f"**{n}** {self._fmt_build(builds.get(n) or {})}"
                  for n in ("bfdb", "bflib", "bftools")]
         if self.procman and self.procman.enabled:
-            staged = [n for n in ("bflib.dll", "bfdb.exe") if self.procman.pending_info(n)]
+            staged = self._staged_for(srv)
             if staged:
                 lines.append("⏳ staged: " + ", ".join(f"`{s}`" for s in staged)
                              + " — applies next restart")
@@ -993,8 +1221,9 @@ class FowlEngine(Plugin):
             return base
         for inst in ((cfg.get('bfdb') or {}).get('instances') or []):
             if inst.get('dcs_server_name') == server.name:
-                base.update(inst.get('gci') or {})
-                break
+                # Same merge procman renders gci.<id>.json with -- including
+                # "a kind: range instance is off unless it says otherwise".
+                return effective_instance_gci(base, inst)
         return base
 
     def _gci_freq_lines(self, server=None) -> list[str]:
@@ -1038,6 +1267,8 @@ class FowlEngine(Plugin):
             config = self.get_config(server) or {}
             if not config.get('gci_transcript_channel'):
                 continue
+            if self._is_range(server):
+                continue  # no campaign picture, no controller to transcribe
             active.add(server.name)
             existing = self._gci_relay_tasks.get(server.name)
             if existing is None or existing.done():
@@ -1068,9 +1299,14 @@ class FowlEngine(Plugin):
                 f"every GCI call will be posted twice. Clear the webhook(s) "
                 f"({', '.join(dupes)}) to keep the bot relay as the only transcript."
             )
-        channel = self.bot.get_channel(int(config['gci_transcript_channel']))
+        cid = config['gci_transcript_channel']
+        channel = self.bot.get_channel(int(cid))
         if not channel:
-            self.log.error(f"FowlEngine: gci_transcript_channel not found for {server.name}")
+            # The supervisor relaunches this every 15 s: say it once, not forever.
+            self._warn_once(server.name, f"gci_channel:{cid}",
+                            f"FowlEngine: gci_transcript_channel {cid} for {server.name} doesn't exist or the bot "
+                            f"can't see it (wrong id, or no View Channel permission) -- fix the id in fowlengine.yaml "
+                            f"or set it to null. No GCI transcript is posted for this server until then.")
             return
         if not username or not password:
             self.log.error("FowlEngine: gci_transcript_channel needs admin_username/admin_password (/ws/gci is admin-only)")
@@ -1223,6 +1459,8 @@ class FowlEngine(Plugin):
             config = self.get_config(server)
             if not config or 'rank_thresholds' not in config:
                 continue
+            if self._is_range(server):
+                continue  # ranks are earned in the campaign, not on the range
 
             rank_thresholds = config['rank_thresholds']
             if not rank_thresholds:
@@ -1400,6 +1638,11 @@ class FowlEngine(Plugin):
                 continue
             config = self.get_config(server) or {}
             if not config.get('alerts_channel') and not config.get('achievements_channel'):
+                continue
+            if self._is_range(server):
+                # objective alerts and kill streaks are campaign events; the
+                # range's kills are training shots. Not in `active`, so a
+                # poller left over from before the kind changed is cancelled.
                 continue
             active.add(server.name)
             existing = self._campaign_poll_tasks.get(server.name)
@@ -1787,7 +2030,10 @@ class FowlEngine(Plugin):
         channel_id = int(config['engine_log_channel'])
         channel = self.bot.get_channel(channel_id)
         if not channel:
-            self.log.error(f"FowlEngine: engine_log_channel {channel_id} not found for server {server.name}")
+            self._warn_once(server.name, f"engine_log_channel:{channel_id}",
+                            f"FowlEngine: engine_log_channel {channel_id} for {server.name} doesn't exist or the bot "
+                            f"can't see it (wrong id, or no View Channel permission) -- fix the id in fowlengine.yaml "
+                            f"or set it to null.")
             return
         if not username or not password:
             self.log.error(
@@ -1967,6 +2213,8 @@ class FowlEngine(Plugin):
                 channels = self._briefing_channels(config)
                 if not channels:
                     continue
+                if self._is_range(server):
+                    continue  # no coalition situation report on a range
                 api_url = config.get("api_url", "http://localhost:8880")
                 username = config.get("admin_username", "")
                 password = config.get("admin_password", "")
@@ -1989,8 +2237,11 @@ class FowlEngine(Plugin):
                                    side: str, channel_id: int):
         channel = self.bot.get_channel(channel_id)
         if not channel:
-            self.log.error(f"FowlEngine: {side.lower()}_briefing_channel {channel_id} "
-                           f"not found or bot lacks access.")
+            # every 3 minutes forever otherwise
+            self._warn_once(server.name, f"{side.lower()}_briefing_channel:{channel_id}",
+                            f"FowlEngine: {side.lower()}_briefing_channel {channel_id} for {server.name} doesn't "
+                            f"exist or the bot can't see it (wrong id, or no View Channel permission) -- fix the id "
+                            f"in fowlengine.yaml or set it to null.")
             return
         report = await self._fetch_situation(api_url, server.name, side, username, password)
         embed = build_briefing_embed(
@@ -2059,6 +2310,15 @@ class FowlEngine(Plugin):
                 config = self.get_config(server) or {}
                 cr = self._coalition_roles_cfg(config)
                 if not cr:
+                    continue
+                if self._is_range(server):
+                    # The range registers no coalition. Syncing against its
+                    # (empty) roster would only ever revoke -- and a range
+                    # that inherited DEFAULT's coalition_roles would strip
+                    # the campaign's roles.
+                    self._warn_once(server.name, 'coalition_roles',
+                                    f"FowlEngine: {server.name} is a training range -- "
+                                    f"ignoring coalition_roles (set it to null in its section)")
                     continue
                 await self._sync_coalition_roles_for(server, config, cr)
             except Exception as ex:
@@ -2197,6 +2457,9 @@ class FowlEngine(Plugin):
     async def fe_objective(self, interaction: discord.Interaction,
                            server: app_commands.Transform[Server, utils.ServerTransformer(status=[Status.RUNNING, Status.PAUSED])],
                            name: str):
+        if self._is_range(server):
+            await interaction.response.send_message(RANGE_ONLY_MSG.format(name=server.name), ephemeral=True)
+            return
         await interaction.response.defer()
         config = self.get_config(server) or {}
         api_url = config.get("api_url", "http://localhost:8880")
@@ -2329,6 +2592,9 @@ class FowlEngine(Plugin):
     async def fe_terminal(self, interaction: discord.Interaction,
                           server: app_commands.Transform[Server, utils.ServerTransformer(status=[Status.RUNNING, Status.PAUSED])]):
         await interaction.response.defer(ephemeral=True)
+        if self._is_range(server):
+            await interaction.followup.send(RANGE_ONLY_MSG.format(name=server.name))
+            return
         try:
             import aiohttp
             config = self.get_config(server) or {}
@@ -2453,8 +2719,7 @@ class FowlEngine(Plugin):
             # not a single merged blob that belongs to none of them.
             lines = []
             for inst in pm.instances_cfg:
-                merged = dict(pm.gci_cfg)
-                merged.update(inst.get("gci") or {})
+                merged = effective_instance_gci(pm.gci_cfg, inst)
                 iid = inst.get("id", "?")
                 if not merged.get("enabled"):
                     lines.append(f"**{iid}** - GCI off")
@@ -2474,7 +2739,74 @@ class FowlEngine(Plugin):
         body = json.dumps(pm.gci_effective(mask=True), indent=2)
         await interaction.followup.send(f"```json\n{body[:1900]}\n```")
 
-    @feops.command(name="stage_status", description="Show any staged bflib.dll / bfdb.exe waiting to be applied.")
+    def _staged_engine_dlls(self, only=None) -> list:
+        """[(dll name, staging dir, [server names], pending info)] -- one entry
+        per distinct pending engine DLL. Each server's DLL is staged in its own
+        BFBinaries staging dir (see upload.py); a pending file in the global
+        dir that no server reads any more is listed with no servers."""
+        pm = self.procman
+        if not pm:
+            return []
+        seen: dict = {}
+        servers = [only] if only is not None else list(self.bot.servers.values())
+        for server in servers:
+            if self._on_remote_node(server):
+                continue  # see _remote_staged
+            try:
+                b = self._engine_binaries(server)
+            except Exception as ex:  # noqa: BLE001
+                self.log.debug(f"FowlEngine: {server.name}: engine binaries lookup failed: {ex}")
+                continue
+            sdir = b["staging_dir"] or pm.staging_dir
+            key = (b["dll_name"], os.path.normcase(os.path.normpath(sdir)))
+            if key in seen:
+                seen[key][2].append(server.name)
+                continue
+            seen[key] = (b["dll_name"], sdir, [server.name], pm.pending_info(b["dll_name"], sdir))
+        if only is None:
+            for dll in ENGINE_DLLS:
+                key = (dll, os.path.normcase(os.path.normpath(pm.staging_dir)))
+                if key not in seen:
+                    seen[key] = (dll, pm.staging_dir, [], pm.pending_info(dll))
+        return [v for v in seen.values() if v[3]]
+
+    @staticmethod
+    def _on_remote_node(server) -> bool:
+        """The server runs on a DCSServerBot agent node on another PC."""
+        return is_remote_node(getattr(server, "node", None))
+
+    async def _remote_staged(self, only=None) -> list:
+        """[(server, dll name, pending path)] for servers on other PCs, asked
+        through the node API (their staging dirs are not on this disk)."""
+        out = []
+        servers = [only] if only is not None else list(self.bot.servers.values())
+        for server in servers:
+            if not self._on_remote_node(server):
+                continue
+            try:
+                b = self._engine_binaries(server)
+            except Exception as ex:  # noqa: BLE001
+                self.log.debug(f"FowlEngine: {server.name}: engine binaries lookup failed: {ex}")
+                continue
+            if not b["staging_dir"]:
+                continue
+            name = f"{b['dll_name']}.pending"
+            try:
+                _, files = await server.node.list_directory(b["staging_dir"], pattern=name)
+            except Exception as ex:  # noqa: BLE001 - node down / dir missing
+                self.log.debug(f"FowlEngine: {server.name}: cannot list {b['staging_dir']}: {ex}")
+                continue
+            if files:
+                out.append((server, b["dll_name"], os.path.join(b["staging_dir"], name)))
+        return out
+
+    @staticmethod
+    def _fmt_pending(name: str, info: dict, where: str = "") -> str:
+        return (f"• `{name}`{where} — {info['size'] / 1024 / 1024:.1f} MB · "
+                f"`sha256:{(info.get('sha256') or '')[:12]}` · by {info.get('uploader', '?')} "
+                f"at {info.get('utc', '?')}" + (f"\n   notes: {info['notes']}" if info.get('notes') else ""))
+
+    @feops.command(name="stage_status", description="Show any staged bflib.dll / bfrange.dll / bfdb.exe waiting to be applied.")
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')
     async def feops_stage_status(self, interaction: discord.Interaction):
@@ -2483,16 +2815,17 @@ class FowlEngine(Plugin):
         if not pm:
             return
         lines = []
-        for name in ("bflib.dll", "bfdb.exe"):
-            info = pm.pending_info(name)
-            if not info:
-                continue
-            lines.append(
-                f"• `{name}` — {info['size'] / 1024 / 1024:.1f} MB · "
-                f"`sha256:{(info.get('sha256') or '')[:12]}` · by {info.get('uploader', '?')} "
-                f"at {info.get('utc', '?')}" + (f"\n   notes: {info['notes']}" if info.get('notes') else ""))
+        for dll, sdir, names, info in self._staged_engine_dlls():
+            where = f" → {', '.join(names)}" if names else f" in `{sdir}` (no server reads this dir)"
+            lines.append(self._fmt_pending(dll, info, where))
+        for server, dll, path in await self._remote_staged():
+            lines.append(f"• `{dll}` → {server.name} (on node `{server.node.name}`: `{path}`)")
+        info = pm.pending_info("bfdb.exe")
+        if info:
+            lines.append(self._fmt_pending("bfdb.exe", info, " → bfdb"))
         if not lines:
-            await interaction.followup.send("Nothing staged. Drop `bflib.dll` or `bfdb.exe` into the admin channel to stage one.")
+            await interaction.followup.send(
+                "Nothing staged. Drop `bflib.dll`, `bfrange.dll` or `bfdb.exe` into the admin channel to stage one.")
             return
         next_at = ""
         for server in self.bot.servers.values():
@@ -2500,31 +2833,48 @@ class FowlEngine(Plugin):
             if rt:
                 next_at = f"\n\nNext scheduled restart: <t:{int(rt.timestamp())}:R>"
                 break
-        await interaction.followup.send("**Staged engine binaries:**\n" + "\n".join(lines) + next_at)
+        await interaction.followup.send(("**Staged engine binaries:**\n" + "\n".join(lines) + next_at)[:1990])
 
     @feops.command(name="stage_cancel", description="Discard a staged binary.")
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')
     @app_commands.choices(which=[
         app_commands.Choice(name="bflib.dll", value="bflib.dll"),
+        app_commands.Choice(name="bfrange.dll", value="bfrange.dll"),
         app_commands.Choice(name="bfdb.exe", value="bfdb.exe"),
         app_commands.Choice(name="all", value="all"),
     ])
-    async def feops_stage_cancel(self, interaction: discord.Interaction, which: app_commands.Choice[str]):
+    async def feops_stage_cancel(self, interaction: discord.Interaction, which: app_commands.Choice[str],
+                                 server: Optional[app_commands.Transform[Server, utils.ServerTransformer()]] = None):
+        """`server` limits an engine-DLL discard to that server's staging dir;
+        without it the DLL is discarded everywhere it is staged."""
         await interaction.response.defer(ephemeral=True)
         pm = await self._procman_or_warn(interaction)
         if not pm:
             return
-        targets = ["bflib.dll", "bfdb.exe"] if which.value == "all" else [which.value]
-        removed = [t for t in targets if pm.cancel_pending(t)]
+        removed = []
+        dlls = ENGINE_DLLS if which.value == "all" else tuple(d for d in ENGINE_DLLS if d == which.value)
+        for dll, sdir, names, _info in self._staged_engine_dlls(only=server):
+            if dll in dlls and pm.cancel_pending(dll, sdir):
+                removed.append(f"`{dll}` ({', '.join(names) or sdir})")
+        for srv, dll, path in await self._remote_staged(only=server):
+            if dll not in dlls:
+                continue
+            try:
+                await srv.node.remove_file(path)
+                removed.append(f"`{dll}` ({srv.name}, node `{srv.node.name}`)")
+            except Exception as ex:  # noqa: BLE001
+                self.log.warning(f"FowlEngine: could not discard {path} on {srv.node.name}: {ex}")
+        if which.value in ("bfdb.exe", "all") and pm.cancel_pending("bfdb.exe"):
+            removed.append("`bfdb.exe`")
         await interaction.followup.send(
-            f"🗑️ Discarded: {', '.join(f'`{t}`' for t in removed)}" if removed else "Nothing to discard.")
+            f"🗑️ Discarded: {', '.join(removed)}" if removed else "Nothing to discard.")
 
     @feops.command(name="stage_apply", description="Apply a staged binary now instead of waiting for the next restart.")
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')
     @app_commands.choices(which=[
-        app_commands.Choice(name="bflib.dll", value="bflib.dll"),
+        app_commands.Choice(name="engine DLL (bflib.dll / bfrange.dll)", value="dll"),
         app_commands.Choice(name="bfdb.exe", value="bfdb.exe"),
         app_commands.Choice(name="all", value="all"),
     ])
@@ -2535,29 +2885,51 @@ class FowlEngine(Plugin):
         pm = await self._procman_or_warn(interaction)
         if not pm:
             return
-        want = ["bflib.dll", "bfdb.exe"] if which.value == "all" else [which.value]
+        want_dll = which.value in ("dll", "all", "bflib.dll", "bfrange.dll")
+        want_bfdb = which.value in ("bfdb.exe", "all")
         msgs = []
 
-        if "bfdb.exe" in want and pm.pending_info("bfdb.exe"):
+        if want_bfdb and pm.pending_info("bfdb.exe"):
             await pm.restart(self._bfdb_admin_password)  # start() applies the staged exe
             msgs.append("bfdb.exe: swapped and bfdb restarted." if await pm.health_ok()
                         else "bfdb.exe: swapped, bfdb restarting (not answering yet).")
 
-        if "bflib.dll" in want and pm.pending_info("bflib.dll"):
-            live = self._bflib_dll_path(server)
-            if not live:
-                msgs.append("bflib.dll: skipped -- no bflib_dll_path configured (set it on the BFBinaries extension in nodes.yaml).")
+        b = self._engine_binaries(server)
+        dll, sdir = b["dll_name"], (b["staging_dir"] or None)
+        if want_dll and self._on_remote_node(server):
+            # Its staging dir is on that PC. The BFBinaries extension there
+            # swaps the DLL in when DCS starts, so applying it is a start.
+            if not await self._remote_staged(only=server):
+                msgs.append(f"{dll}: nothing staged for **{server.name}** (in `{sdir}` on node "
+                            f"`{server.node.name}`).")
             elif server.status not in (Status.SHUTDOWN, Status.STOPPED):
-                msgs.append(f"bflib.dll: **{server.name}** is `{server.status.name}` -- shut it down first, "
+                msgs.append(f"{dll}: **{server.name}** is `{server.status.name}` -- shut it down first, "
                             f"then it applies automatically on startup (or run this again).")
             else:
-                note = pm.apply_staged("bflib.dll", live)
-                msgs.append(f"bflib.dll: {note}" if note else "bflib.dll: nothing staged.")
+                try:
+                    await server.startup()
+                    msgs.append(f"{dll}: {server.name} started; BFBinaries on node "
+                                f"`{server.node.name}` swaps it in on the way up.")
+                except Exception as ex:
+                    msgs.append(f"⚠️ {server.name} failed to start: {ex}")
+        elif want_dll and pm.pending_info(dll, sdir):
+            live = b["dll_path"]
+            if not live:
+                msgs.append(f"{dll}: skipped -- no live path configured (set `dll_path` on the "
+                            f"BFBinaries extension in nodes.yaml).")
+            elif server.status not in (Status.SHUTDOWN, Status.STOPPED):
+                msgs.append(f"{dll}: **{server.name}** is `{server.status.name}` -- shut it down first, "
+                            f"then it applies automatically on startup (or run this again).")
+            else:
+                note = pm.apply_staged(dll, live, staging_dir=sdir)
+                msgs.append(f"{dll}: {note}" if note else f"{dll}: nothing staged.")
                 try:
                     await server.startup()
                     msgs.append(f"{server.name} started.")
                 except Exception as ex:
                     msgs.append(f"⚠️ {server.name} failed to start: {ex}")
+        elif want_dll:
+            msgs.append(f"{dll}: nothing staged for **{server.name}** (in `{sdir or pm.staging_dir}`).")
 
         await interaction.followup.send("\n".join(msgs) if msgs else "Nothing staged to apply.")
 
@@ -2584,14 +2956,16 @@ class FowlEngine(Plugin):
             else:
                 lines.append(f"**{name}** `v{b.get('version','?')}` `{b.get('git','?')}` "
                              f"built {b.get('built','?')}")
-            if path and os.path.exists(path):
+            if name == "bflib" and path and self._on_remote_node(server):
+                lines.append(f"   ↳ file on node `{server.node.name}`: `{path}` (not checked from here)")
+            elif path and os.path.exists(path):
                 mt = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
                 lines.append(f"   ↳ file `{sha256_of(path)[:10]}` · modified {mt:%Y-%m-%d %H:%M}Z")
             elif path:
                 lines.append(f"   ↳ file missing: `{path}`")
 
         if self.procman and self.procman.enabled:
-            staged = [n for n in ("bflib.dll", "bfdb.exe") if self.procman.pending_info(n)]
+            staged = self._staged_for(server)
             if staged:
                 lines.append("\n⏳ staged (applies next restart): " + ", ".join(f"`{s}`" for s in staged))
 
@@ -2600,6 +2974,144 @@ class FowlEngine(Plugin):
         embed.set_footer(text="'built' = compiled-in timestamp of the running binary · "
                               "'file' = what's on disk right now")
         await interaction.followup.send(embed=embed)
+
+    # ── auto-update ─────────────────────────────────────────────────────────
+
+    async def _updater_or_warn(self, interaction: discord.Interaction):
+        if not self.updater:
+            await interaction.followup.send("❌ The auto-updater is not loaded.")
+            return None
+        return self.updater
+
+    @feops.command(name="update_status", description="Auto-update: latest release, what's installed, probation.")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_update_status(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        upd = await self._updater_or_warn(interaction)
+        if not upd:
+            return
+        st = upd.status()
+        c = st["config"]
+        src = c["repo"] if c["source"] == "github" else c["folder"]
+        lines = [
+            f"**Auto-update** {'✅ on' if c['enabled'] else '⏸️ off'}"
+            + (" (paused)" if c["paused"] else "")
+            + f" · {c['source']} `{src}` · {c['channel']} · every {c['check_minutes']:.0f} min",
+            f"Apply: `{c['apply']}` (bfdb `{c['bfdb_apply']}`), idle ≥ {c['idle_minutes']:.0f} min"
+            + (f", window {c['apply_window']}" if c["apply_window"] else ""),
+        ]
+        last = st.get("last_check") or {}
+        if last:
+            lines.append(f"Last check {last.get('at', '?')}: "
+                         + (last.get("message") or last.get("error") or "?"))
+        latest = st.get("latest") or {}
+        if latest:
+            lines.append(f"Latest release: **{latest.get('tag')}** `{latest.get('git') or '?'}` "
+                         f"built {latest.get('built') or '?'}")
+        for key, v in (st.get("installed") or {}).items():
+            lines.append(f"• installed `{key}`: {v.get('tag') or '(manual upload)'} at {v.get('at')}")
+        for p in st.get("probation") or []:
+            where = p["server"] or "bfdb"
+            lines.append(f"🧪 probation: `{p['dll']}` on {where} -- "
+                         + ("loaded" if p["loaded"] else "waiting to load")
+                         + (f", {p['crashes']} crash(es)" if p["crashes"] else ""))
+        if st.get("bad"):
+            lines.append("⛔ marked bad: " + ", ".join(f"`{t}`" for t in st["bad"]))
+        embed = self._vs_embed("Engine Auto-update", color=discord.Color.blurple())
+        embed.description = "\n".join(lines)[:4000]
+        await interaction.followup.send(embed=embed)
+
+    @feops.command(name="update_check", description="Check for a new engine release now (and stage it).")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_update_check(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        upd = await self._updater_or_warn(interaction)
+        if not upd:
+            return
+        res = await upd.check(reason=f"manual (/feops by {interaction.user})")
+        if res.get("ok"):
+            await interaction.followup.send(f"✅ {res.get('message')}"
+                                            + (f" -- latest `{res['latest']}`" if res.get("latest") else ""))
+        else:
+            await interaction.followup.send(f"❌ check failed: {res.get('error')}")
+
+    @feops.command(name="update_pause", description="Pause or resume automatic engine updates.")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_update_pause(self, interaction: discord.Interaction, paused: bool):
+        await interaction.response.defer(ephemeral=True)
+        upd = await self._updater_or_warn(interaction)
+        if not upd:
+            return
+        upd.set_overrides({"paused": paused})
+        await interaction.followup.send("⏸️ Auto-update paused." if paused else "▶️ Auto-update resumed.")
+
+    @feops.command(name="update_rollback", description="Roll bfdb or a server's engine DLL back to its previous build.")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    @app_commands.choices(which=[
+        app_commands.Choice(name="engine DLL (restarts that DCS server)", value="dll"),
+        app_commands.Choice(name="bfdb.exe (restores the pre-update DB snapshot)", value="bfdb"),
+    ])
+    async def feops_update_rollback(self, interaction: discord.Interaction, which: app_commands.Choice[str],
+                                    server: Optional[app_commands.Transform[Server, utils.ServerTransformer()]] = None,
+                                    confirm: bool = False):
+        await interaction.response.defer(ephemeral=True)
+        upd = await self._updater_or_warn(interaction)
+        if not upd:
+            return
+        if not confirm:
+            await interaction.followup.send("Re-run with `confirm: True`. A DLL rollback restarts that DCS "
+                                            "server; a bfdb rollback restores the DB from right before the "
+                                            "last bfdb update.")
+            return
+        why = f"rolled back by {interaction.user} via /feops"
+        if which.value == "bfdb":
+            pm = await self._procman_or_warn(interaction)
+            if not pm:
+                return
+            await interaction.followup.send(await pm.rollback_bfdb(self._bfdb_admin_password, why))
+            return
+        if server is None:
+            await interaction.followup.send("❌ Pick the `server` whose engine DLL to roll back.")
+            return
+        await interaction.followup.send(await upd.rollback_dll(server, why))
+
+    @feops.command(name="update_unmark", description="Allow a rolled-back release to be offered again.")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_update_unmark(self, interaction: discord.Interaction, tag: str):
+        await interaction.response.defer(ephemeral=True)
+        upd = await self._updater_or_warn(interaction)
+        if not upd:
+            return
+        await interaction.followup.send(f"✅ `{tag}` may be offered again." if upd.unmark_bad(tag)
+                                        else f"`{tag}` is not marked bad.")
+
+    @feops.command(name="issues", description="Log analyzer: open issues, with the full report attached.")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_issues(self, interaction: discord.Interaction, scan_now: bool = False):
+        await interaction.response.defer(ephemeral=True)
+        if not self.issues:
+            await interaction.followup.send("❌ The log analyzer is not loaded.")
+            return
+        if scan_now:
+            await self.issues.scan()
+        rows = self.issues.listing()
+        lines = []
+        for it in rows[:12]:
+            flag = "🔁" if it.get("status") == "regressed" else "🆕" if it.get("status") == "new" else "•"
+            lines.append(f"{flag} `{it['id']}` **{it['level']}** ×{it['count']} `{it['source']}`\n"
+                         f"   {it['signature'][:150]}")
+        embed = self._vs_embed(f"Open issues: {len(rows)}", color=discord.Color.orange())
+        embed.description = ("\n".join(lines) or "No open issues. 🎉")[:4000]
+        embed.set_footer(text="Full report attached -- hand it to Claude, or see the dashboard OPS page.")
+        report = self.issues.report()
+        await interaction.followup.send(
+            embed=embed, file=discord.File(io.BytesIO(report.encode("utf-8")), filename="fowl-issues.md"))
 
     @feops.command(name="rebuild_stats",
                    description="Wipe & re-ingest all stats from the log to undo duplicated/inflated numbers.")
@@ -2885,6 +3397,9 @@ class FowlEngine(Plugin):
         faction's picture even by someone who can see both channels.
         """
         await interaction.response.defer(ephemeral=True)
+        if self._is_range(server):
+            await interaction.followup.send(RANGE_ONLY_MSG.format(name=server.name))
+            return
         config = self.get_config(server) or {}
         api_url = config.get("api_url", "http://localhost:8880")
         username = config.get("admin_username", "")
@@ -2916,6 +3431,378 @@ class FowlEngine(Plugin):
             report, icons=self.icons, embed_factory=self._vs_embed,
             dashboard_url=config.get("dashboard_url") or "",
             instance_label=server.name if len(self.bot.servers) > 1 else "")
+        await interaction.followup.send(embed=embed)
+
+    # ── Training range (bfrange): live status embed + graded-results feed ──
+    #
+    # Per-server config (the range server's own section of fowlengine.yaml):
+    #   range_status_channel   one embed, edited every RANGE_STATUS_MINUTES
+    #   range_results_channel  every graded result, with its debrief card
+    #   range_results_kinds    optional filter, e.g. [trap, bomb, strafe]
+    #   greenie_channel        optional: carrier passes only
+    #   range_site_url         optional, default https://range.vectorstrike.org
+    # All of it is ignored (with one warning) on a server whose bfdb instance
+    # is not `kind: range`.
+
+    def _channel_for(self, config: dict, key: str, server_name: str):
+        cid = config.get(key)
+        if not cid:
+            return None
+        try:
+            cid = int(cid)
+        except (TypeError, ValueError):
+            self._warn_once(server_name, f"bad:{key}",
+                            f"FowlEngine: {server_name}: {key} is not a channel id: {cid!r}")
+            return None
+        channel = self.bot.get_channel(cid)
+        if channel is None:
+            self._warn_once(server_name, f"missing:{key}:{cid}",
+                            f"FowlEngine: {server_name}: {key} {cid} not found or the bot lacks access")
+        return channel
+
+    def _range_misconfigured(self, server, config: dict, keys) -> bool:
+        """True when range feeds are configured on a server that is not a
+        `kind: range` instance (warned about once, then skipped)."""
+        if self._is_range(server):
+            return False
+        set_keys = [k for k in keys if config.get(k)]
+        if set_keys:
+            self._warn_once(server.name, "range-feeds-on-campaign",
+                            f"FowlEngine: {server.name} sets {', '.join(set_keys)} but is not a "
+                            f"`kind: range` instance in bfdb.instances -- ignored")
+        return True
+
+    def _range_fail(self, server_name: str, what: str, ex: Exception) -> None:
+        key = (server_name, what)
+        n = self._range_fail_counts.get(key, 0) + 1
+        self._range_fail_counts[key] = n
+        # a range server that is down for an hour must not write 240 errors
+        if n in (1, 5) or n % 40 == 0:
+            self.log.error(f"FowlEngine: range {what} for {server_name} failed ({n}x in a row): "
+                           f"{type(ex).__name__}: {ex or '(no message)'}")
+
+    def _range_ok(self, server_name: str, what: str) -> None:
+        if self._range_fail_counts.pop((server_name, what), 0) >= 5:
+            self.log.info(f"FowlEngine: range {what} for {server_name} recovered")
+
+    def _embed_from_dict(self, d: dict, base: discord.Embed | None = None) -> discord.Embed:
+        """A rangefeed embed dict (already clipped to Discord's limits) onto a
+        discord.Embed -- a fresh one, or `base` (e.g. a branded _vs_embed)."""
+        embed = base if base is not None else discord.Embed()
+        if d.get("title"):
+            embed.title = d["title"]
+        if d.get("description"):
+            embed.description = d["description"]
+        if d.get("url"):
+            embed.url = d["url"]
+        if d.get("color") is not None:
+            embed.colour = discord.Colour(d["color"])
+        for f in d.get("fields") or []:
+            embed.add_field(name=f["name"], value=f["value"], inline=bool(f.get("inline")))
+        if d.get("footer"):
+            embed.set_footer(text=d["footer"])
+        if d.get("thumbnail"):
+            embed.set_thumbnail(url=d["thumbnail"])
+        if d.get("image"):
+            embed.set_image(url=d["image"])
+        return embed
+
+    async def _range_get_json(self, http, url: str, params: dict | None = None):
+        async with http.get(url, params=params) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"/api/{url.split('/api/', 1)[-1]} -> HTTP {resp.status}")
+            return await resp.json(content_type=None)
+
+    async def _fetch_range_live(self, http, api_url: str, server):
+        data = await self._range_get_json(http, f"{api_url}/api/range/live", self._range_params(server))
+        return data.get("live") if isinstance(data, dict) else None
+
+    async def _build_range_status_embed(self, server, config: dict) -> discord.Embed:
+        import aiohttp
+        running = server.status in (Status.RUNNING, Status.PAUSED)
+        live, err = None, None
+        if running:
+            api_url = config.get("api_url", "http://localhost:8880").rstrip("/")
+            try:
+                async with aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(total=RANGE_HTTP_TIMEOUT)) as http:
+                    live = await self._fetch_range_live(http, api_url, server)
+                self._range_ok(server.name, "live status")
+            except asyncio.CancelledError:
+                raise
+            except Exception as ex:
+                err = "bfdb did not answer."
+                self._range_fail(server.name, "live status", ex)
+        d = rangefeed.build_status(
+            live, self._range_site(config), running=running, error=err,
+            label=server.name if len(self._range_servers()) > 1 else "")
+        color = discord.Colour(d["color"]) if d.get("color") is not None else None
+        base = self._vs_embed(d["title"], color=color, url=d.get("url"))
+        return self._embed_from_dict({k: v for k, v in d.items() if k != "title"}, base=base)
+
+    async def _upsert_embed(self, ids: dict, key: str, channel, embed: discord.Embed) -> None:
+        """Edit the one persisted message for `key`, or post it (and persist)."""
+        msg_id = ids.get(key)
+        if msg_id:
+            try:
+                msg = await channel.fetch_message(msg_id)
+                await msg.edit(embed=embed)
+                return
+            except discord.NotFound:
+                ids.pop(key, None)
+            except discord.Forbidden:
+                self.log.error(f"FowlEngine: cannot read/edit messages in channel {channel.id}")
+                return
+        msg = await channel.send(embed=embed)
+        ids[key] = msg.id
+        self.save_state()
+
+    @tasks.loop(minutes=RANGE_STATUS_MINUTES)
+    async def update_range_status(self):
+        for server in list(self.bot.servers.values()):
+            try:
+                config = self.get_config(server) or {}
+                if not config.get("range_status_channel"):
+                    continue
+                if self._range_misconfigured(server, config, ("range_status_channel",)):
+                    continue
+                channel = self._channel_for(config, "range_status_channel", server.name)
+                if channel is None:
+                    continue
+                embed = await self._build_range_status_embed(server, config)
+                await self._upsert_embed(self.range_status_msg_ids, server.name, channel, embed)
+            except asyncio.CancelledError:
+                raise
+            except Exception as ex:
+                # never let one server's failure stop the loop for the others
+                self.log.error(f"FowlEngine: range status for {server.name}: "
+                               f"{type(ex).__name__}: {ex or '(no message)'}")
+
+    @update_range_status.before_loop
+    async def before_update_range_status(self):
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(seconds=RANGE_RESULTS_POLL_SECS)
+    async def poll_range_results(self):
+        keys = ("range_results_channel", "greenie_channel")
+        targets = []
+        for server in list(self.bot.servers.values()):
+            try:
+                config = self.get_config(server) or {}
+                if not any(config.get(k) for k in keys):
+                    continue
+                if self._range_misconfigured(server, config, keys):
+                    continue
+                targets.append((server, config))
+            except Exception as ex:
+                self.log.error(f"FowlEngine: range feed config for {server.name}: {ex}")
+        if not targets:
+            return
+        import aiohttp
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=RANGE_HTTP_TIMEOUT)) as http:
+            for server, config in targets:
+                try:
+                    await self._poll_range_results_for(http, server, config)
+                    self._range_ok(server.name, "results feed")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as ex:
+                    self._range_fail(server.name, "results feed", ex)
+
+    @poll_range_results.before_loop
+    async def before_poll_range_results(self):
+        await self.bot.wait_until_ready()
+
+    async def _poll_range_results_for(self, http, server, config: dict) -> None:
+        api_url = config.get("api_url", "http://localhost:8880").rstrip("/")
+        data = await self._range_get_json(
+            http, f"{api_url}/api/range/feed",
+            self._range_params(server, limit=rangefeed.FEED_LIMIT))
+        items = rangefeed.feed_items(data)
+        cursor = self.range_feed_cursors.get(server.name)
+        if cursor is None:
+            # The first poll this bot has ever made for this server: start
+            # from "now" instead of replaying the whole history as new.
+            self.range_feed_cursors[server.name] = rangefeed.next_cursor(items, None)
+            self.save_state()
+            self.log.info(f"FowlEngine: range results feed for {server.name} starts after "
+                          f"{self.range_feed_cursors[server.name].get('id') or '(empty feed)'}")
+            return
+        new, overflow = rangefeed.select_new(items, cursor, limit=rangefeed.FEED_LIMIT)
+        new_cursor = rangefeed.next_cursor(items, cursor)
+        if new_cursor != cursor:
+            # Advanced BEFORE posting: a Discord hiccup halfway through a
+            # batch must never make the next poll post the same results again.
+            self.range_feed_cursors[server.name] = new_cursor
+            self.save_state()
+        if not new:
+            return
+
+        site = self._range_site(config)
+        results_ch = self._channel_for(config, "range_results_channel", server.name)
+        greenie_ch = self._channel_for(config, "greenie_channel", server.name)
+        kinds = config.get("range_results_kinds") or None
+        cap = rangefeed.MAX_POSTS_PER_POLL
+        plan = []  # (channel, items to post oldest first, catch-up summary line)
+        if results_ch is not None:
+            want = rangefeed.parse_kinds(kinds)
+            if want and greenie_ch is not None and greenie_ch.id == results_ch.id:
+                want = want + ["trap"]  # one channel for both: traps still belong there
+            chosen = rangefeed.filter_kinds(new, want)
+            skipped, post = rangefeed.split_cap(chosen, cap)
+            plan.append((results_ch, post,
+                         rangefeed.summary_line(skipped, overflow and bool(chosen), site)))
+        if greenie_ch is not None and (results_ch is None or greenie_ch.id != results_ch.id):
+            traps = rangefeed.filter_kinds(new, ["trap"])
+            if traps:
+                skipped, post = rangefeed.split_cap(traps, cap)
+                plan.append((greenie_ch, post,
+                             rangefeed.summary_line(skipped, False, site, noun="carrier pass")))
+
+        rendered: dict = {}  # result id -> (embed dict, card png) -- fetched once per poll
+        for channel, post, summary in plan:
+            if summary:
+                try:
+                    await channel.send(summary)
+                except discord.HTTPException as ex:
+                    self.log.error(f"FowlEngine: range catch-up line to {channel.id} failed: {ex}")
+            for item in post:
+                rid = rangefeed.item_id(item)
+                if rid not in rendered:
+                    rendered[rid] = await self._render_range_result(http, api_url, server, item, site)
+                emb, png = rendered[rid]
+                try:
+                    await self._send_range_result(channel, rid, emb, png)
+                except discord.HTTPException as ex:
+                    self.log.error(f"FowlEngine: posting range result {rid} to {channel.id} failed: {ex}")
+
+    async def _render_range_result(self, http, api_url: str, server, item: dict, site: str):
+        """(embed dict, card PNG bytes or None) for one feed item: bfdb's own
+        Discord embed for the result, and the card downloaded here so Discord
+        never has to reach bfdb for the image."""
+        rid = rangefeed.item_id(item)
+        iid = self._instance_id(server)
+        params = {"instance": iid} if iid else srv_params(server.name)
+        emb = None
+        try:
+            data = await self._range_get_json(
+                http, f"{api_url}/api/range/result/{quote(rid, safe='')}/discord", params)
+            emb = rangefeed.normalize_embed(data)
+        except asyncio.CancelledError:
+            raise
+        except Exception as ex:
+            self.log.warning(f"FowlEngine: range result {rid}: embed route failed "
+                             f"({type(ex).__name__}: {ex or '(no message)'}) -- posting the headline")
+        if not emb or not (emb.get("title") or emb.get("description")):
+            emb = rangefeed.fallback_embed(item, site)
+        png = None
+        url = rangefeed.card_url(api_url, item, emb)
+        if url:
+            try:
+                async with http.get(url) as resp:
+                    ctype = (resp.headers.get("Content-Type") or "").lower()
+                    too_big = (resp.content_length or 0) > RANGE_CARD_MAX_BYTES
+                    if resp.status == 200 and not too_big and (not ctype or "image" in ctype):
+                        body = await resp.read()
+                        if 0 < len(body) <= RANGE_CARD_MAX_BYTES:
+                            png = body
+            except asyncio.CancelledError:
+                raise
+            except Exception as ex:
+                self.log.debug(f"FowlEngine: range card {url} not downloaded: {ex}")
+        return emb, png
+
+    async def _send_range_result(self, channel, rid: str, emb: dict, png: bytes | None) -> None:
+        embed = self._embed_from_dict(emb)
+        if png:
+            fname = rangefeed.attachment_name(rid)
+            embed.set_image(url=f"attachment://{fname}")
+            await channel.send(embed=embed, file=discord.File(io.BytesIO(png), filename=fname))
+        else:
+            # falls back to the absolute image URL bfdb put in the embed, if any
+            await channel.send(embed=embed)
+
+    # ── /range ──────────────────────────────────────────────────────────────
+
+    range_cmds = app_commands.Group(name="range", description="Vector Strike training range")
+
+    def _pick_range_server(self, server):
+        if server is not None:
+            if self._is_range(server):
+                return server, None
+            return None, f"**{server.name}** is not a training range server."
+        servers = self._range_servers()
+        if not servers:
+            return None, ("No training range server is configured (no `kind: range` instance "
+                          "in `bfdb.instances`).")
+        return servers[0], None
+
+    @range_cmds.command(name="status", description="Live range status: tankers, carriers, stations, who is flying.")
+    @app_commands.guild_only()
+    async def range_status(self, interaction: discord.Interaction,
+                           server: Optional[app_commands.Transform[Server, utils.ServerTransformer()]] = None):
+        await interaction.response.defer(ephemeral=True)
+        srv, why = self._pick_range_server(server)
+        if srv is None:
+            await interaction.followup.send(f"❌ {why}")
+            return
+        try:
+            embed = await self._build_range_status_embed(srv, self.get_config(srv) or {})
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {type(ex).__name__}: {ex}")
+            return
+        await interaction.followup.send(embed=embed)
+
+    @range_cmds.command(name="me", description="Link to your training range pilot page.")
+    @app_commands.guild_only()
+    async def range_me(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        srv = next(iter(self._range_servers()), None)
+        site = self._range_site(self.get_config(srv) if srv else None)
+        ucid = await self._ucid_for_member(interaction.user, [])
+        if not ucid:
+            linkme = "`/linkme`"
+            try:
+                cmd = await utils.get_command(self.bot, name="linkme")
+                if cmd is not None and getattr(cmd, "mention", None):
+                    linkme = cmd.mention
+            except Exception:  # noqa: BLE001 - only decorates the hint
+                pass
+            await interaction.followup.send(
+                f"I can't find a DCS account linked to your Discord user. Link it with {linkme} "
+                f"(you get a code to type into the in-game chat), then try again. Meanwhile, "
+                f"every result is on <{site}>.")
+            return
+        url = rangefeed.pilot_url(site, ucid)
+        embed = self._vs_embed("Your range record", color=discord.Color.teal(), url=url)
+        embed.description = (f"**[Open your pilot page ›]({url})**\n"
+                             f"Every graded bomb, strafe pass, trap and AAR session you have "
+                             f"flown, with the debrief cards.")
+        await interaction.followup.send(embed=embed)
+
+    @range_cmds.command(name="greenie", description="The carrier greenie board: top 10 LSO averages.")
+    @app_commands.guild_only()
+    @app_commands.describe(days="Look-back window in days (default 30)")
+    async def range_greenie(self, interaction: discord.Interaction,
+                            days: app_commands.Range[int, 1, 365] = 30):
+        await interaction.response.defer()
+        srv = next(iter(self._range_servers()), None)
+        config = (self.get_config(srv) if srv else self.get_config()) or {}
+        api_url = config.get("api_url", "http://localhost:8880").rstrip("/")
+        params = self._range_params(srv, days=days) if srv else {"days": days}
+        import aiohttp
+        try:
+            async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=RANGE_HTTP_TIMEOUT)) as http:
+                data = await self._range_get_json(http, f"{api_url}/api/range/greenie", params)
+        except Exception as ex:
+            await interaction.followup.send(f"❌ bfdb did not answer: {type(ex).__name__}: {ex or ''}")
+            return
+        site = self._range_site(config)
+        lines = rangefeed.greenie_lines(data, site, limit=10)
+        embed = self._vs_embed(f"Greenie Board — last {days} days", color=discord.Color.green(), url=site)
+        embed.description = ("\n".join(lines) if lines
+                             else "No graded carrier passes in that window yet.")[:4096]
         await interaction.followup.send(embed=embed)
 
 

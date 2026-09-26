@@ -28,6 +28,17 @@ file before using, copying, modifying, or redistributing any part of it.
   bfweb/            Campaign dashboard (web UI).     See bfweb/LICENSE
   bfsite/           Public website.                  See bfsite/LICENSE
   bfwiki/           Campaign wiki (web UI).          See bfwiki/LICENSE
+  bfrange/          Training range engine (DCS mission script DLL),
+                    its Lua loaders and the range mission builder.
+                                                     See bfrange/LICENSE
+  bfrange-web/      Training range site (range.vectorstrike.org).
+                                                     See bfrange-web/LICENSE
+  DCSServerBot/plugins/fowlengine/
+                    Vector Strike DCSServerBot plugin.
+                                   See DCSServerBot/plugins/fowlengine/LICENSE
+  DCSServerBot/extensions/bfbinaries/, bfviewlock/, bfweather/
+                    Vector Strike DCSServerBot extensions.
+                                   See the LICENSE file in each directory.
 
   These directories are the independent, original work of Dillen Weerasinghe.
   They are NOT open source. No license is granted. You may not use, run,
@@ -54,6 +65,24 @@ file before using, copying, modifying, or redistributing any part of it.
   Dillen Weerasinghe. That file sits in an upstream crate that is treated as
   AGPL-3.0 when distributed with bflib (see section 1); it is listed here only
   to record authorship.
+
+  The training range backend was written by Dillen Weerasinghe and is
+  proprietary — all rights reserved, no license granted (same terms as
+  section 2). It comprises:
+
+    bfdb/src/range/        (every file in the directory)
+    instances.range.sample.json
+    deploy/range.md
+    deploy/range-pc/       (every file in the directory)
+
+  The training range wire types in bfprotocols/src/range/ (mod.rs, cfg.rs,
+  grading.rs, lso.rs) were also authored by Dillen Weerasinghe. Like
+  bfprotocols/src/gci.rs they sit in an upstream crate (section 1) and are
+  listed here only to record authorship.
+
+  bfrange (section 2) is built against dcso3 (MIT) and bfprotocols (section
+  1). Those components keep their own terms; the proprietary license covers
+  only Dillen Weerasinghe's code in bfrange/.
 
   Other Dillen Weerasinghe contributions to bfdb/ and bfprotocols/ (dashboard
   API endpoints, stats fixes, TARPS recon intel, TACMAP fog-of-war, the
