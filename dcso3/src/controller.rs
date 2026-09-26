@@ -612,17 +612,30 @@ pub enum Task<'lua> {
     },
     WrappedCommand(Command),
     WrappedOption(AiOption<'lua>),
+    /// A task table this binding doesn't model, passed through untouched.
+    Raw(LuaTable<'lua>),
 }
 
 impl<'lua> FromLua<'lua> for Task<'lua> {
     fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
         let root: LuaTable = FromLua::from_lua(value, lua)?;
-        let id: String = root.raw_get("id")?;
+        let id = match root.raw_get::<_, Option<String>>("id")? {
+            Some(id) => id,
+            None => return Ok(Self::Raw(root)),
+        };
         let params = match root.raw_get::<_, Option<LuaTable>>("params")? {
             Some(tbl) => tbl,
             None => lua.create_table()?,
         };
         match id.as_str() {
+            "Land" => Ok(Self::Land {
+                point: params.raw_get("point")?,
+                duration: if params.raw_get::<_, Option<bool>>("durationFlag")?.unwrap_or(false) {
+                    params.raw_get("duration")?
+                } else {
+                    None
+                },
+            }),
             "AttackGroup" => Ok(Self::AttackGroup {
                 group: params.raw_get("groupId")?,
                 params: FromLua::from_lua(Value::Table(params), lua)?,
@@ -789,7 +802,10 @@ impl<'lua> FromLua<'lua> for Task<'lua> {
                     _cmd => Ok(Self::WrappedCommand(params.raw_get("action")?)),
                 }
             }
-            s => Err(err(&format_compact!("invalid action {s}"))),
+            // A task we don't model (ME routes carry plenty: WrappedAction
+            // scripts, new DCS task ids, ...). Failing here failed the whole
+            // route read, so keep it opaque and write it back verbatim.
+            _ => Ok(Self::Raw(root)),
         }
     }
 }
@@ -799,6 +815,7 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
         let root = lua.create_table()?;
         let params = lua.create_table()?;
         match self {
+            Self::Raw(tbl) => return Ok(Value::Table(tbl)),
             Self::AttackGroup { group, params: atp } => {
                 root.raw_set("id", "AttackGroup")?;
                 params.raw_set("groupId", group)?;

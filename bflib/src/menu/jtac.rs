@@ -248,7 +248,7 @@ pub fn jtac_designate_building(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result
 /// Marks are matched to the player through the unit that placed them, the
 /// same way the Actions menu lists "your" marks.
 pub(crate) fn latest_player_mark(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<Option<Vector2>> {
-    let mut best: Option<(f32, Vector2)> = None;
+    let mut best: Option<(f64, Vector2)> = None;
     for mk in World::singleton(lua)?.get_mark_panels()? {
         let mk = mk?;
         let Some(unit) = mk.initiator.as_ref() else { continue };

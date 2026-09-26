@@ -168,7 +168,7 @@ impl Connected {
             let ifo = net.get_player_info(id)?;
             let ucid =
                 ifo.ucid()?.ok_or_else(|| anyhow!("player {:?} has no ucid", ifo))?;
-            let name = ifo.name()?;
+            let name = ifo.name()?.unwrap_or_default();
             let addr = ifo.ip()?;
             info!("player name: '{}', id: {:?}, ucid: {:?}", name, id, ucid);
             self.player_connected(id, PlayerInfo { name, addr, ucid })?;
@@ -828,7 +828,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
     }
     match ev {
         Event::Birth(b) => {
-            if let Ok(unit) = b.initiator.as_unit() {
+            if let Some(unit) = b.initiator.as_ref().and_then(|o| o.as_unit().ok()) {
                 ctx.recently_born.insert(unit.object_id()?, Utc::now());
                 match ctx.db.unit_born(lua, &unit, &ctx.connected) {
                     Ok(BirthRes::None) => (),
@@ -868,7 +868,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                         error!("unit born failed {:?} {:?}", unit, e);
                     }
                 }
-            } else if let Ok(st) = b.initiator.as_static() {
+            } else if let Some(st) = b.initiator.as_ref().and_then(|o| o.as_static().ok()) {
                 if let Err(e) = ctx.db.static_born(&st) {
                     error!("static born failed {:?} {:?}", st, e);
                 }
@@ -979,7 +979,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             }
             // Record shot position for artillery/launcher units only so nearby enemy
             // objectives stay awake while shells/missiles are inbound.
-            if let Ok(obj_id) = e.initiator.object_id() {
+            if let Some(Ok(obj_id)) = e.initiator.as_ref().map(|u| u.object_id()) {
                 let shooter_info = ctx.db.ephemeral.get_uid_by_object_id(&obj_id)
                     .and_then(|uid| ctx.db.unit(uid).ok())
                     .map(|u| (u.side, u.tags.0, u.pos));
@@ -1003,7 +1003,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             if let Some(iadn) = ctx.db.ephemeral.cfg.iadn.as_ref() {
                 let arm_name = e.weapon_name.as_ref().map(|n| n.as_str()).unwrap_or("");
                 if iadn.anti_radiation_weapons.contains(arm_name) {
-                    let shooter_side = e.initiator.object_id().ok()
+                    let shooter_side = e.initiator.as_ref().and_then(|u| u.object_id().ok())
                         .and_then(|obj_id| ctx.db.ephemeral.get_uid_by_object_id(&obj_id))
                         .and_then(|uid| ctx.db.unit(uid).ok())
                         .map(|u| u.side);
@@ -1071,7 +1071,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             }
         }
         Event::Ejection(e) => {
-            if let Ok(unit) = e.initiator.as_unit() {
+            if let Some(unit) = e.initiator.as_ref().and_then(|o| o.as_unit().ok()) {
                 let csar_pilot = try_capture_csar_info(lua, ctx, &unit);
                 let id = unit.object_id()?;
                 // Live voice GCI: "chute observed" for the ejected pilot's side.
@@ -1096,7 +1096,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         // here: Takeoff and Land already fire for the same moments, and a
         // carrier bolter (touch then runway-takeoff) must not end a sortie.
         Event::Takeoff(e) => {
-            if let Ok(unit) = e.initiator.as_unit() {
+            if let Some(unit) = e.initiator.as_ref().and_then(|o| o.as_unit().ok()) {
                 let id = unit.object_id()?;
                 if !ctx.recently_born.contains_key(&id)
                     && ctx.airborne.insert(id.clone())
@@ -1157,7 +1157,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             }
         }
         Event::Land(e) => {
-            if let Ok(unit) = e.initiator.as_unit() {
+            if let Some(unit) = e.initiator.as_ref().and_then(|o| o.as_unit().ok()) {
                 let id = unit.object_id()?;
                 if !ctx.recently_born.contains_key(&id) && ctx.airborne.remove(&id) {
                     ctx.recently_landed.insert(id, Utc::now());
@@ -4281,7 +4281,7 @@ const MSGQ_DRAIN_HZ: usize = 5;
 /// once-per-second event tick.
 fn start_msgq_drain(lua: MizLua) -> Result<()> {
     let timer = Timer::singleton(lua)?;
-    let period = 1f32 / MSGQ_DRAIN_HZ as f32;
+    let period = 1f64 / MSGQ_DRAIN_HZ as f64;
     timer.schedule_function(timer.get_time()? + period, mlua::Value::Nil, move |lua, _, now| {
         let ctx = unsafe { Context::get_mut() };
         // Round up so a rate that does not divide evenly is never throttled

@@ -1666,7 +1666,7 @@ pub(crate) fn schedule_slot_briefing(lua: MizLua, slot: dcso3::net::SlotId) -> a
         return Ok(());
     }
     let timer = Timer::singleton(lua)?;
-    let when = timer.get_time()? + cfg.delay_secs as f32;
+    let when = timer.get_time()? + cfg.delay_secs as f64;
     timer.schedule_function(when, slot, move |lua, slot, _| {
         let ctx = unsafe { Context::get_mut() };
         // The player may have jumped back to spectator in the meantime.

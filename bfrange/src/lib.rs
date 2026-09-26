@@ -154,11 +154,11 @@ impl Ctx {
 }
 
 fn now_of(lua: MizLua) -> f64 {
-    Timer::singleton(lua).and_then(|t| t.get_time()).map(|t| t.0 as f64).unwrap_or(0.)
+    Timer::singleton(lua).and_then(|t| t.get_time()).map(|t| t.0).unwrap_or(0.)
 }
 
 fn abs_of(lua: MizLua) -> f64 {
-    Timer::singleton(lua).and_then(|t| t.get_abs_time()).map(|t| t.0 as f64).unwrap_or(0.)
+    Timer::singleton(lua).and_then(|t| t.get_abs_time()).map(|t| t.0).unwrap_or(0.)
 }
 
 // ------------------------------------------------------------------ hooks
@@ -301,11 +301,11 @@ fn delayed_init(lua: MizLua) -> Result<()> {
     let world = World::singleton(lua)?;
     ctx.handler = Some(world.add_event_handler(on_event)?);
     let timer = Timer::singleton(lua)?;
-    timer.schedule_function(dcso3::Time((now + 0.5) as f32), mlua::Value::Nil, move |lua, _, t| {
-        Ok(Some(dcso3::Time(fast_tick(lua, t.0 as f64) as f32)))
+    timer.schedule_function(dcso3::Time(now + 0.5), mlua::Value::Nil, move |lua, _, t| {
+        Ok(Some(dcso3::Time(fast_tick(lua, t.0))))
     })?;
-    timer.schedule_function(dcso3::Time((now + 1.) as f32), mlua::Value::Nil, move |lua, _, t| {
-        slow_tick(lua, t.0 as f64);
+    timer.schedule_function(dcso3::Time(now + 1.), mlua::Value::Nil, move |lua, _, t| {
+        slow_tick(lua, t.0);
         Ok(Some(dcso3::Time(t.0 + 1.)))
     })?;
     ctx.started = true;
@@ -353,7 +353,7 @@ fn ucid_for_name(lua: MizLua, ctx: &Ctx, name: &str) -> Option<Ucid> {
     let net = Net::singleton(lua).ok()?;
     for id in net.get_player_list().ok()?.into_iter().flatten() {
         if let Ok(info) = net.get_player_info(id) {
-            if info.name().ok().map(|n| n.as_str() == name).unwrap_or(false) {
+            if info.name().ok().flatten().map(|n| n.as_str() == name).unwrap_or(false) {
                 return info.ucid().ok().flatten();
             }
         }
@@ -442,9 +442,10 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
     let now = now_of(lua);
     match ev {
         Event::Birth(b) => {
-            let Ok(u) = b.initiator.as_unit() else {
+            let Some(init) = b.initiator else { return Ok(()) };
+            let Ok(u) = init.as_unit() else {
                 // DCS dynamic cargo arrives as a static object's birth
-                if let Ok(n) = b.initiator.get_name() {
+                if let Ok(n) = init.get_name() {
                     ctx.helo.static_born(lua, n.as_str(), now);
                 }
                 return Ok(());
@@ -508,7 +509,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             }
         }
         Event::Ejection(e) => {
-            if let Ok(name) = e.initiator.get_name() {
+            if let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) {
                 let name = name.to_string();
                 ctx.aa.unit_dead(&name);
                 if ctx.players.flying.contains_key(&name) {
@@ -517,7 +518,8 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             }
         }
         Event::Shot(s) => {
-            let Some((sh, pos, vel)) = shooter_of(ctx, &s.initiator) else { return Ok(()) };
+            let Some(init) = s.initiator.as_ref() else { return Ok(()) };
+            let Some((sh, pos, vel)) = shooter_of(ctx, init) else { return Ok(()) };
             let desc = s.weapon.get_weapon_desc()?;
             let (purpose, class) = weapons::classify(&desc);
             ctx.ground.lane_shot(&sh.unit_name);
@@ -616,14 +618,14 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             }
         }
         Event::Takeoff(e) => {
-            if let Ok(name) = e.initiator.get_name() {
+            if let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) {
                 if let Some(f) = ctx.players.flying.get(name.as_str()) {
                     ctx.players.takeoff(f.ucid);
                 }
             }
         }
         Event::Land(e) => {
-            let Ok(name) = e.initiator.get_name() else { return Ok(()) };
+            let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) else { return Ok(()) };
             let name = name.to_string();
             let place = e.place.as_ref().and_then(|p| p.get_name().ok()).map(|s| s.to_string()).unwrap_or_default();
             if let Some(f) = ctx.players.flying.get(&name).cloned() {
@@ -634,7 +636,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 if f.is_helo {
                     let cfg = ctx.cfg.clone();
                     let mut f = f;
-                    if let Ok(p) = e.initiator.get_point() {
+                    if let Some(Ok(p)) = e.initiator.as_ref().map(|o| o.get_point()) {
                         f.pos = p.0;
                     }
                     ctx.helo.landed(lua, &cfg, &mut ctx.rec, &f, now);
@@ -642,14 +644,14 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             }
         }
         Event::RunwayTouch(e) => {
-            let Ok(name) = e.initiator.get_name() else { return Ok(()) };
+            let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) else { return Ok(()) };
             let place = e.place.as_ref().and_then(|p| p.get_name().ok()).map(|s| s.to_string()).unwrap_or_default();
             if carrier::carrier_by_place(&ctx.cv, &place) {
                 ctx.cv.touch(lua, name.as_str(), &place, false, now);
             }
         }
         Event::RunwayTakeoff(e) => {
-            let Ok(name) = e.initiator.get_name() else { return Ok(()) };
+            let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) else { return Ok(()) };
             let place = e.place.as_ref().and_then(|p| p.get_name().ok()).map(|s| s.to_string()).unwrap_or_default();
             if carrier::carrier_by_place(&ctx.cv, &place) {
                 ctx.cv.runway_takeoff(name.as_str(), &place, now);

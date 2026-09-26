@@ -31,7 +31,7 @@ pub fn country_id(name: &str) -> Result<i64> {
     let norm = name.trim().to_ascii_uppercase().replace([' ', '-'], "_");
     let c: Country = serde_json::from_value(J::String(norm.clone()))
         .map_err(|_| anyhow!("unknown DCS country {name:?} ({norm})"))?;
-    Ok(c as u8 as i64)
+    Ok(c.id() as i64)
 }
 
 pub fn side_of_str(s: &str) -> Side {

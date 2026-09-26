@@ -11,12 +11,12 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use super::{as_tbl, controller::Controller, cvt_err, group::Group, object::Object, String};
+use super::{as_tbl, controller::Controller, group::Group, object::Object, String};
 use crate::{
     env::miz::UnitId,
     net::SlotId,
     object::{DcsObject, DcsOid},
-    record_perf, simple_enum, wrapped_table, LuaEnv, LuaVec2, LuaVec3, MizLua, Position3, Sequence,
+    record_perf, simple_enum_unknown, wrapped_table, LuaEnv, LuaVec2, LuaVec3, MizLua, Position3, Sequence,
 };
 use anyhow::{bail, Result};
 use log::debug;
@@ -25,7 +25,7 @@ use na::Vector2;
 use serde_derive::{Deserialize, Serialize};
 use std::{marker::PhantomData, ops::Deref};
 
-simple_enum!(UnitCategory, u8, [
+simple_enum_unknown!(UnitCategory, u8, [
     Airplane => 0,
     GroundUnit => 2,
     Helicopter => 1,
@@ -154,10 +154,10 @@ impl<'lua> Unit<'lua> {
         Ok(self.t.call_method("getCallsign", ())?)
     }
 
-    /// Current hit points. DCS returns a fraction for a damaged unit (0.4 of
-    /// a hit point is a real value), so this is a float -- reading it as an
-    /// integer truncated a badly damaged but living unit to 0 and called it
-    /// dead.
+    /// Current hit points, as the float DCS returns. By DCS's own rule a
+    /// unit whose life is below 1 is dead (a wreck can still report e.g.
+    /// 0.4), so callers test `< 1.`, not `<= 0.`. It is read as a float so
+    /// fractional hit points above 1 on a damaged unit aren't truncated.
     pub fn get_life(&self) -> Result<f64> {
         Ok(self.t.call_method("getLife", ())?)
     }

@@ -11,9 +11,9 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use super::{as_tbl, cvt_err, unit::Unit, weapon::Weapon, LuaVec3, Position3, String};
+use super::{as_tbl, unit::Unit, weapon::Weapon, LuaVec3, Position3, String};
 use crate::{
-    check_implements, record_perf, simple_enum, static_object::StaticObject, wrapped_table, LuaEnv,
+    check_implements, record_perf, simple_enum_unknown, static_object::StaticObject, wrapped_table, LuaEnv,
     MizLua,
 };
 use anyhow::{anyhow, bail, Result};
@@ -105,7 +105,7 @@ pub trait DcsObject<'lua>: Sized + Deref<Target = mlua::Table<'lua>> {
     fn get_instance_dyn<T>(lua: MizLua<'lua>, id: &DcsOid<T>) -> Result<Self>;
 }
 
-simple_enum!(ObjectCategory, u8, [
+simple_enum_unknown!(ObjectCategory, u8, [
     Void => 0,
     Unit => 1,
     Weapon => 2,

@@ -448,13 +448,19 @@ impl PerfStat {
 #[macro_export]
 macro_rules! record_perf {
     ($key:ident, $e:expr) => {{
-        use crate::perf::{Perf, Snap};
+        use crate::perf::Perf;
         use std::sync::Arc;
-        let t = unsafe { Perf::get_mut() };
-        let t = Arc::make_mut(&mut t.0); // takes about 20ns if we don't need to clone
-        let mut snap = Snap::new(&mut t.$key);
+        // Evaluate first, borrow the global afterwards. `$e` is a Lua call
+        // that can re-enter Rust (event handlers, timers) and hit another
+        // record_perf!, so holding the &mut from Perf::get_mut across it
+        // created two live aliases of the same static -- UB.
+        let ts = chrono::Utc::now();
         let res = $e;
-        snap.commit();
+        {
+            let t = unsafe { Perf::get_mut() };
+            let t = Arc::make_mut(&mut t.0); // takes about 20ns if we don't need to clone
+            crate::perf::record_perf(&mut t.$key, ts);
+        }
         res
     }};
 }
