@@ -60,6 +60,7 @@ mod gci;
 mod voice;
 mod intel;
 mod instance;
+mod range;
 
 use crate::db::InstanceState;
 use crate::instance::{InstanceCfg, InstanceId, Registry, DEFAULT_INSTANCE};
@@ -288,6 +289,20 @@ struct Args {
     /// right one. Falls back to $BFDB_NEWS_LLM_MODEL.
     #[arg(long = "news-llm-model")]
     news_llm_model: Option<String>,
+    /// Public base URL of the training range site (`range/` app). Used for
+    /// the result links in the Discord embeds `/api/range/result/<id>/discord`
+    /// hands the bot. Only matters when an instance has `kind: "range"`.
+    #[arg(long = "range-site-url", default_value = "https://range.vectorstrike.org")]
+    range_site_url: String,
+    /// Public base URL this API is reachable at, for absolute links that leave
+    /// the browser -- the result-card PNGs embedded in Discord messages.
+    #[arg(long = "public-api-url", default_value = "https://api.vectorstrike.org")]
+    public_api_url: String,
+    /// Days to keep a training-range result's debrief track (the sampled
+    /// geometry behind its card). The result itself is kept forever; after
+    /// this its card is drawn without the track.
+    #[arg(long = "range-track-days", default_value_t = 180)]
+    range_track_days: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -1360,9 +1375,12 @@ async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::R
         Some((ok, err, _)) => (ok, err, 0u64),
         None => {
             let started = std::time::Instant::now();
+            // a range server runs bfrange, which has no campaign state: its
+            // equivalent cheap in-memory query is the live range picture
+            let probe_rpc = if inst.cfg.is_range() { "query-range" } else { "query-campaign-state" };
             let probe = tokio::time::timeout(
                 PROBE_TIMEOUT,
-                call_engine_rpc_str(&db, &inst, "query-campaign-state", vec![]),
+                call_engine_rpc_str(&db, &inst, probe_rpc, vec![]),
             )
             .await;
             let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -1379,13 +1397,24 @@ async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::R
             };
             // Log it. The first version of this handler logged nothing, so a
             // persistent NO ENGINE left no trace in bfdb.log at all.
+            // Warn on the transition only: the probe re-runs every 15s per
+            // open dashboard, and during an outage each one said the same
+            // thing (the RPC breaker logs its own reminders).
+            let prev_ok = inst.health_cache.lock().await.as_ref().map(|c| c.1);
             if !ok {
-                log::warn!(
-                    "[{}] api_health: query-campaign-state probe failed after {}ms: {}",
+                let msg = format!(
+                    "[{}] api_health: {probe_rpc} probe failed after {}ms: {}",
                     inst.id,
                     elapsed_ms,
                     err.as_deref().unwrap_or("unknown")
                 );
+                if prev_ok == Some(false) {
+                    log::debug!("{msg}");
+                } else {
+                    log::warn!("{msg}");
+                }
+            } else if prev_ok == Some(false) {
+                log::info!("[{}] api_health: {probe_rpc} probe answering again", inst.id);
             }
             *inst.health_cache.lock().await = Some((std::time::Instant::now(), ok, err.clone()));
             (ok, err, elapsed_ms)
@@ -2549,6 +2578,105 @@ async fn api_admin_bot_mission_unpause(
     api_admin_bot_action(session_id, db, bot_cfg, inst, "instance/mission/unpause").await
 }
 
+/// GET|POST /api/admin/ops/<tail>  — the dashboard OPS page (admin only).
+///
+/// Forwarded to the FowlEngine plugin's OPS API on DCSServerBot's WebService
+/// (`{--dcsserverbot-url}/fowlengine/ops/<tail>`, see
+/// DCSServerBot/plugins/fowlengine/opsapi.py) with the same X-API-Key the
+/// RestAPI calls above use. The bot owns the processes and files the page
+/// manages -- DCS, bfdb itself, staging dirs, fowlengine.yaml -- and stays up
+/// while bfdb restarts, so it answers, not bfdb. The key never reaches the
+/// browser; the dashboard admin login gates it here.
+async fn api_admin_ops_proxy(
+    method: warp::http::Method,
+    tail: warp::path::Tail,
+    query: String,
+    session_id: Option<Uuid>,
+    body: bytes::Bytes,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<warp::reply::Response, Error> {
+    use warp::http::StatusCode;
+    require_admin(session_id, db.clone()).await?;
+    let path = tail.as_str();
+    let json_err = |status: StatusCode, msg: String| {
+        warp::reply::with_status(warp::reply::json(&serde_json::json!({ "error": msg })), status)
+            .into_response()
+    };
+    if path.is_empty()
+        || path.contains("..")
+        || !path.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-'))
+    {
+        return Ok(json_err(StatusCode::BAD_REQUEST, format!("bad ops path {path:?}")));
+    }
+    let Some(cfg) = bot_cfg.as_ref() else {
+        return Ok(json_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "DCSServerBot is not configured (--dcsserverbot-url/--dcsserverbot-api-key) -- the OPS \
+             page needs the bot"
+                .into(),
+        ));
+    };
+    let mut url = format!("{}/fowlengine/ops/{path}", cfg.base_url);
+    if !query.is_empty() {
+        url.push('?');
+        url.push_str(&query);
+    }
+    let http = reqwest::Client::builder()
+        // an update check downloads the release; give it room
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| anyhow::anyhow!("http client: {e}"))?;
+    let req = if method == warp::http::Method::POST {
+        http.post(&url)
+            .header("content-type", "application/json")
+            .body(if body.is_empty() { bytes::Bytes::from_static(b"{}") } else { body })
+    } else {
+        http.get(&url)
+    };
+    let resp = match req.header("X-API-Key", &cfg.api_key).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(json_err(
+                StatusCode::BAD_GATEWAY,
+                format!("the bot's WebService is not answering ({e}) -- is DCSServerBot running?"),
+            ))
+        }
+    };
+    let status = resp.status().as_u16();
+    let ctype = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/json")
+        .to_string();
+    let data = resp
+        .bytes()
+        .await
+        .map_err(|e| anyhow::anyhow!("reading the bot's answer: {e}"))?;
+    if status == 404 && !ctype.starts_with("application/json") {
+        return Ok(json_err(
+            StatusCode::BAD_GATEWAY,
+            "the bot has no OPS API -- update the FowlEngine plugin, and check that \
+             --dcsserverbot-url carries the RestAPI prefix"
+                .into(),
+        ));
+    }
+    if method == warp::http::Method::POST {
+        log::info!("ADMIN: OPS {path} -> {status}");
+    }
+    let mut out = warp::reply::Response::new(data.to_vec().into());
+    *out.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+    out.headers_mut().insert(
+        "content-type",
+        warp::http::HeaderValue::from_str(&ctype)
+            .unwrap_or(warp::http::HeaderValue::from_static("application/json")),
+    );
+    out.headers_mut()
+        .insert("cache-control", warp::http::HeaderValue::from_static("no-store"));
+    Ok(out)
+}
+
 /// GET /api/admin/cfg  — read the current campaign engine config JSON (admin only)
 async fn api_admin_cfg_get(
     session_id: Option<Uuid>,
@@ -3701,8 +3829,10 @@ async fn api_admin_engine_errors(
 
 /// GET /api/logs/:source  — plain-text tail of an in-memory log backlog.
 ///
-/// `source` is `engine` (bflib's live engine log, streamed in over netidx) or
-/// `bfdb` (this process's own log). Auth is a single static bearer token
+/// `source` is `engine` (bflib's live engine log, streamed in over netidx),
+/// `bfdb` (this process's own log), or one of the DCSServerBot-side sources
+/// handled below: `issues` (the log analyzer's report), `archive` (the
+/// persistent log archive), `bot` / `service` / `netidx` / `bfdb_boot`. Auth is a single static bearer token
 /// (`--log-read-token`), passed as `?token=` or `Authorization: Bearer`. When
 /// no token is configured the endpoint is disabled (404).
 ///
@@ -3717,6 +3847,7 @@ async fn api_logs(
     db: StatsDb,
     bfdb_log: LogHistory,
     inst: Inst,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> Response {
     fn text(status: warp::http::StatusCode, body: impl Into<String>) -> Response {
         warp::http::Response::builder()
@@ -3743,6 +3874,75 @@ async fn api_logs(
         .unwrap_or(false);
     if !ok {
         return text(warp::http::StatusCode::UNAUTHORIZED, "bad or missing token\n");
+    }
+
+    // Sources the DCSServerBot plugin owns (loganalyzer.py / opsapi.py):
+    //   issues   the log analyzer's Markdown issue report
+    //   archive  the persistent log archive -- index as JSON, or one day's
+    //            text with ?source=<engine_X|dcs_X|bfdb|bot>&date=YYYY-MM-DD
+    //   bot | service | netidx | bfdb_boot   tails of the bot-side logs
+    // Survive bfdb restarts, unlike the in-memory `engine` / `bfdb` tails.
+    if matches!(source.as_str(), "issues" | "archive" | "bot" | "service" | "netidx" | "bfdb_boot") {
+        let Some(cfg) = bot_cfg.as_ref() else {
+            return text(
+                warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                "this source comes from DCSServerBot, which bfdb is not configured to reach \
+                 (--dcsserverbot-url/--dcsserverbot-api-key)\n",
+            );
+        };
+        let mut pairs: Vec<(std::string::String, std::string::String)> = q
+            .iter()
+            .filter(|(k, _)| k.as_str() != "token")
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let path = match source.as_str() {
+            "issues" => "issues/report",
+            "archive" if q.contains_key("date") => {
+                pairs.push(("format".into(), "text".into()));
+                "archive/read"
+            }
+            "archive" => "archive",
+            _ => {
+                pairs.push(("which".into(), source.clone()));
+                "logs"
+            }
+        };
+        let http = reqwest::Client::new();
+        let resp = http
+            .get(format!("{}/fowlengine/ops/{path}", cfg.base_url))
+            .header("X-API-Key", &cfg.api_key)
+            .query(&pairs)
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await;
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                return text(
+                    warp::http::StatusCode::BAD_GATEWAY,
+                    format!("the bot is not answering: {e}\n"),
+                )
+            }
+        };
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        let body = if path == "logs" {
+            // {"lines": [...]} -> plain text, like the other sources
+            serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| {
+                    v.get("lines").and_then(|l| l.as_array()).map(|a| {
+                        a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("\n") + "\n"
+                    })
+                })
+                .unwrap_or(body)
+        } else {
+            body
+        };
+        return text(
+            warp::http::StatusCode::from_u16(status).unwrap_or(warp::http::StatusCode::BAD_GATEWAY),
+            body,
+        );
     }
 
     let level = q.get("level").map(|s| s.as_str()).unwrap_or("all");
@@ -3781,7 +3981,10 @@ async fn api_logs(
         other => {
             return text(
                 warp::http::StatusCode::BAD_REQUEST,
-                format!("unknown log source {other:?} (want 'engine' or 'bfdb')\n"),
+                format!(
+                    "unknown log source {other:?} (want engine, bfdb, issues, archive, bot, \
+                     service, netidx or bfdb_boot)\n"
+                ),
             )
         }
     };
@@ -4406,10 +4609,13 @@ const UNKNOWN_DCS_VERSION: &str = "unknown";
 /// ten minutes and, worse, reword the page under whoever is reading it.
 async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::WriterCfg>) {
     use chrono::{Duration as ChronoDuration, Utc};
-    /// A first run on a long campaign has a lot of days to write. Cap the calls
-    /// per tick and let the backfill walk forward over the following ticks
-    /// rather than firing a hundred requests at once.
-    const MAX_WRITES_PER_TICK: usize = 5;
+    // Calls are rationed process-wide by `news_llm::acquire` (one per tick
+    // across every instance, pushed back further on a 429). On top of that a
+    // day whose call failed backs off on its own, doubling per failure, so one
+    // day the model cannot write does not take the slot every tick while the
+    // rest of the backlog waits behind it.
+    let mut day_backoff: std::collections::HashMap<std::string::String, (u32, std::time::Instant)> =
+        std::collections::HashMap::new();
     // Let the stats reader catch up before judging what was newsworthy.
     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(10 * 60));
@@ -4417,9 +4623,11 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
     let mut first_pass = true;
     loop {
         tick.tick().await;
+        let inst_id = inst.id.clone();
         let db = db.clone();
         let inst = inst.clone();
         let writer = writer.clone();
+        let day_backoff = &mut day_backoff;
         let res = task::block_in_place(move || -> Result<usize> {
             let rounds = db.latest_rounds_for(&inst.id)?;
             let Some((_, rid, round)) = rounds
@@ -4453,7 +4661,6 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
             let earliest = today - ChronoDuration::days(news::HISTORY_KEEP_DAYS);
             let mut day = first.max(earliest);
             let mut written = 0usize;
-            let mut calls = 0usize;
             if first_pass {
                 log::info!(
                     "[{}] news: round {} opened {}, filing {} day(s) up to {}",
@@ -4507,20 +4714,45 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
                         digest.written_by = prev.written_by.clone();
                         digest.generated = prev.generated;
                     } else if let Some(w) = &writer {
-                        if calls >= MAX_WRITES_PER_TICK {
-                            // Out of budget: leave the day for the next tick
-                            // rather than freezing template prose into it.
-                            break;
-                        }
-                        calls += 1;
+                        let now = std::time::Instant::now();
+                        let resting = day_backoff.get(&key).map(|(_, t)| now < *t).unwrap_or(false);
+                        if resting || !news_llm::acquire(&inst.id) {
+                            // No call for this day this tick. A day that has
+                            // prose keeps it untouched (and, if it is due to be
+                            // frozen, stays open so the final copy still gets
+                            // written); a day with only template text is stored
+                            // with fresh facts, as it has nothing to lose.
+                            if existing.as_ref().map(|p| !p.body.is_empty()).unwrap_or(false)
+                                || becoming_final
+                            {
+                                day += ChronoDuration::days(1);
+                                continue;
+                            }
+                        } else {
                         match news_llm::write_dispatch(w, &digest, &hist) {
                             Ok(out) => {
+                                day_backoff.remove(&key);
                                 digest.headline = out.headline;
                                 digest.body = out.body;
                                 digest.written_by = w.model.clone();
                             }
                             Err(e) => {
-                                log::warn!("news: writer failed for {key}: {e}");
+                                if e.downcast_ref::<news_llm::RateLimited>().is_some() {
+                                    // The quota, not the day: the gate is
+                                    // already pushed back for every instance.
+                                    log::info!("[{}] news: writer for {key}: {e}", inst.id);
+                                } else {
+                                    let fails = day_backoff.get(&key).map(|(n, _)| *n).unwrap_or(0) + 1;
+                                    let wait = std::time::Duration::from_secs(
+                                        (20 * 60u64 << (fails - 1).min(5)).min(12 * 3600),
+                                    );
+                                    day_backoff.insert(key.clone(), (fails, now + wait));
+                                    log::warn!(
+                                        "[{}] news: writer failed for {key} (attempt {fails}, next try in {}m): {e}",
+                                        inst.id,
+                                        wait.as_secs() / 60
+                                    );
+                                }
                                 // Better yesterday's dispatch than a downgrade
                                 // to templates on a day that already had one.
                                 if let Some(prev) = existing.as_ref().filter(|p| !p.body.is_empty())
@@ -4532,6 +4764,7 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
                                 }
                             }
                         }
+                        }
                     }
                     db.news_put(rid, &digest)?;
                     written += 1;
@@ -4542,8 +4775,9 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
         });
         match res {
             Ok(0) => {}
-            Ok(n) => log::info!("news: wrote {n} digest(s)"),
-            Err(e) => log::warn!("news: generation failed: {e}"),
+            // Routine: today's digest is rebuilt every tick.
+            Ok(n) => log::debug!("[{inst_id}] news: wrote {n} digest(s)"),
+            Err(e) => log::warn!("[{inst_id}] news: generation failed: {e}"),
         }
         first_pass = false;
     }
@@ -4819,10 +5053,23 @@ async fn tacmap_poller(db: StatsDb, inst: Inst, state: TacState) {
             // minute of that, drop to one line every 10 minutes. A state change
             // still reports immediately, so recovery is never delayed.
             let interval = if fail_streak[i] > 30 { 600 } else { 30 };
-            if last_err_kind[i] != kind || (now - last_report[i]).num_seconds() >= interval {
+            // While the engine is down the breaker (1) and the probe that gets
+            // through every 10s and times out (2) alternate; that is one state,
+            // not a change, or every probe re-reports it (~5,400 WARNs in one
+            // 3.5h outage).
+            let class = |k: u8| if k == 2 { 1 } else { k };
+            if class(last_err_kind[i]) != class(kind)
+                || (now - last_report[i]).num_seconds() >= interval
+            {
                 let id = &inst.id;
                 if kind == 0 {
-                    log::info!("[{id}] tacmap_poller: query-tacmap({side}) ok -- {detail}");
+                    // Only the recovery is news; the steady "ok" was a quarter
+                    // of the whole log.
+                    if last_err_kind[i] != 0 && last_err_kind[i] != 255 {
+                        log::info!("[{id}] tacmap_poller: query-tacmap({side}) ok again -- {detail}");
+                    } else {
+                        log::debug!("[{id}] tacmap_poller: query-tacmap({side}) ok -- {detail}");
+                    }
                 } else if fail_streak[i] > 30 {
                     log::warn!(
                         "[{id}] tacmap_poller: query-tacmap({side}) {detail}                          (failing since {} attempt(s) ago -- is this instance's DCS server running?)",
@@ -5263,9 +5510,14 @@ fn with_live(map: LiveMap) -> impl Filter<Extract = (LiveMap,), Error = std::con
 /// An instance with `public: false` (a test/staging server) is omitted unless
 /// the caller is a dashboard admin, so it never shows up in a player's server
 /// selector. See `InstanceCfg::public` -- this hides it, it does not lock it.
+///
+/// Training-range instances (`kind: "range"`) are left out too, since the
+/// campaign dashboard has nothing to show for them: `?kind=range` lists only
+/// those, `?all=1` lists every kind. Each row carries its `kind`.
 async fn api_instances(
     session_id: Option<Uuid>,
     db: StatsDb,
+    q: std::collections::HashMap<std::string::String, std::string::String>,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let is_admin = match session_id {
         Some(id) => task::block_in_place(|| db.get_session(id))
@@ -5281,6 +5533,15 @@ async fn api_instances(
         .all()
         .iter()
         .filter(|cfg| cfg.public || is_admin)
+        .filter(|cfg| {
+            let all = q.get("all").map_or(false, |v| v == "1" || v == "true");
+            match q.get("kind").map(|k| k.as_str()) {
+                _ if all => true,
+                Some("range") => cfg.is_range(),
+                Some("all") => true,
+                _ => !cfg.is_range(),
+            }
+        })
         .map(|cfg| {
             let id: InstanceId = Arc::from(cfg.id.as_str());
             let st = db.state(&id);
@@ -5313,6 +5574,7 @@ async fn api_instances(
                 // false only ever reaches an admin (see the filter above) --
                 // the dashboard uses it to mark the entry as internal.
                 "public": cfg.public,
+                "kind": cfg.kind,
             })
         })
         .collect();
@@ -5354,6 +5616,7 @@ fn registry_from_args(args: &Args) -> Result<Registry> {
             id: DEFAULT_INSTANCE.to_string(),
             label: None,
             base: args.base.clone(),
+            netidx_config: None,
             sortie: args.sortie.clone(),
             stats_jsonl: args.stats_jsonl.clone(),
             stats_dir: args.stats_dir.clone(),
@@ -5370,6 +5633,10 @@ fn registry_from_args(args: &Args) -> Result<Registry> {
             red_faction: args.red_faction.clone(),
             blue_adjective: args.blue_adjective.clone(),
             red_adjective: args.red_adjective.clone(),
+            // A training range needs the instances file (`kind: "range"`).
+            kind: Default::default(),
+            range_jsonl: None,
+            tacview_dir: None,
         })),
     }
 }
@@ -5386,6 +5653,7 @@ fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
             id: DEFAULT_INSTANCE.to_string(),
             label: None,
             base: None,
+            netidx_config: None,
             sortie: None,
             stats_jsonl: None,
             stats_dir: None,
@@ -5401,9 +5669,12 @@ fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
             red_faction: None,
             blue_adjective: None,
             red_adjective: None,
+            kind: Default::default(),
+            range_jsonl: None,
+            tacview_dir: None,
         });
     }
-    StatsDb::new(None, db_path, reg, None, None)
+    StatsDb::new(&std::collections::HashMap::new(), db_path, reg, None, None)
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -5491,18 +5762,31 @@ async fn main() -> Result<()> {
     // True when *any* instance has a live engine to talk to.
     let has_engine = registry.all().iter().any(|i| i.base.is_some());
     let db = {
-        let subscriber = if has_engine {
-            Some(
-                SubscriberBuilder::new()
-                    .config(Config::load_default()?)
-                    .build()?,
-            )
-        } else {
+        // One subscriber per netidx client config: normally just the default
+        // one, plus one for each instance that reaches its engine through a
+        // resolver of its own (a DCS server on another PC).
+        use anyhow::Context as _;
+        let mut subscribers = std::collections::HashMap::new();
+        for cfg in registry.all().iter().filter(|i| i.base.is_some()) {
+            if subscribers.contains_key(&cfg.netidx_config) {
+                continue;
+            }
+            let ncfg = match &cfg.netidx_config {
+                None => Config::load_default()?,
+                Some(p) => Config::load(p).with_context(|| {
+                    format!("instance {:?}: loading netidx config {}", cfg.id, p.display())
+                })?,
+            };
+            if let Some(p) = &cfg.netidx_config {
+                log::info!("instance {:?}: netidx via {}", cfg.id, p.display());
+            }
+            subscribers.insert(cfg.netidx_config.clone(), SubscriberBuilder::new().config(ncfg).build()?);
+        }
+        if !has_engine {
             log::info!("Running in offline mode (no instance has a netidx base, Netidx disabled)");
-            None
-        };
+        }
         StatsDb::new(
-            subscriber,
+            &subscribers,
             args.db.clone(),
             registry,
             args.include.clone(),
@@ -5519,7 +5803,8 @@ async fn main() -> Result<()> {
     // retries next tick. Only runs when there's a live engine (--base).
     if has_engine {
         for cfg in db.instances().all() {
-        if cfg.base.is_none() {
+        // Recon markup is a campaign thing; a training range has none.
+        if cfg.base.is_none() || cfg.is_range() {
             continue;
         }
         let intel_db = db.clone();
@@ -5601,6 +5886,18 @@ async fn main() -> Result<()> {
         }
     });
 
+    // ── Training range (kind: "range" instances) ─────────────────────────
+    // Ingests each range instance's range.jsonl and serves /api/range/*. The
+    // routes exist either way (they answer 400 when no range is configured).
+    let range_ctx = range::RangeCtx::new(
+        db.clone(),
+        bot_link_cfg.clone(),
+        &args.range_site_url,
+        &args.public_api_url,
+    )?;
+    range::spawn_tasks(&range_ctx, args.range_track_days);
+    let range_routes = range::api::routes(range_ctx.clone());
+
     // ── Load campaign config JSON (served at /api/config) ────────────────
     let (campaign_json, srs_url_from_cfg, gci_cfg): (Arc<String>, Option<String>, Option<gci::GciConfig>) = match &args.config {
         Some(path) => {
@@ -5680,6 +5977,7 @@ async fn main() -> Result<()> {
     let instances_route = warp::path!("api" / "instances")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .then(api_instances);
 
     let rounds = warp::path!("api" / "rounds")
@@ -5890,7 +6188,10 @@ async fn main() -> Result<()> {
                     cfg.id
                 ),
             }
-            if cfg.base.is_some() {
+            // Campaign-only: a training range (bfrange) publishes none of
+            // query-tacmap / query-unitdb, and has no war to write a diary
+            // about. Its live state is polled on demand by `range::api`.
+            if cfg.base.is_some() && !cfg.is_range() {
                 tokio::spawn(tacmap_poller(db.clone(), inst.clone(), tac.clone()));
                 tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
                 tokio::spawn(news_generator(db.clone(), inst.clone(), news_writer.clone()));
@@ -6174,6 +6475,31 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_admin_bot_mission_unpause);
 
+    // GET and POST, outside the warp::get() group below so the SPA catch-all
+    // can't answer it and a POST still routes.
+    let admin_ops_proxy = warp::path("api")
+        .and(warp::path("admin"))
+        .and(warp::path("ops"))
+        .and(warp::method())
+        .and(warp::path::tail())
+        .and(
+            warp::query::raw()
+                .or(warp::any().map(String::new))
+                .unify(),
+        )
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(4 * 1024 * 1024))
+        .and(warp::body::bytes())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and_then(|method: warp::http::Method, tail, query, session, body, db, bot| async move {
+            if method != warp::http::Method::GET && method != warp::http::Method::POST {
+                return Err(warp::reject::not_found());
+            }
+            Ok::<_, warp::Rejection>(api_admin_ops_proxy(method, tail, query, session, body, db, bot).await)
+        })
+        .boxed();
+
     let admin_perf = warp::path!("api" / "admin" / "perf")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
@@ -6213,6 +6539,7 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .and(warp::any().map(move || logs_hist_api.clone()))
         .and(with_instance(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .then(api_logs);
 
     let admin_ban_route = warp::path!("api" / "admin" / "ban")
@@ -6613,6 +6940,11 @@ async fn main() -> Result<()> {
         // Ahead of everything, and outside the `warp::get()` group, so a POST
         // with an unroutable ?instance= gets the same 400 a GET does instead
         // of silently falling back to the default server.
+        // The training range API: one pre-boxed filter, ahead of the SPA
+        // catch-all in the GET group below (which would otherwise answer
+        // /api/range/... with index.html).
+        .or(range_routes)
+        .or(admin_ops_proxy)
         .or(warp::get()
         .and(
             api_routes

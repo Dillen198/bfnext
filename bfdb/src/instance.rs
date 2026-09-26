@@ -70,6 +70,12 @@ pub(crate) struct InstanceCfg {
     /// `<base>/<sortie>`; two instances MUST NOT share a base.
     #[serde(default)]
     pub base: Option<NetidxPath>,
+    /// The netidx client config (`client.json`) to reach this instance's
+    /// engine through, when it publishes via a different resolver from the
+    /// rest -- a DCS server on another PC running its own resolver. Unset, the
+    /// instance shares bfdb's default client config.
+    #[serde(default)]
+    pub netidx_config: Option<PathBuf>,
     /// Starting guess for the sortie (netidx path segment) this instance's
     /// bflib publishes under. Leave it unset.
     ///
@@ -150,6 +156,33 @@ pub(crate) struct InstanceCfg {
     /// intel and briefing) keep their own admin/coalition gates regardless.
     #[serde(default = "default_true")]
     pub public: bool,
+    /// What this instance runs: a campaign (bflib, the default) or a training
+    /// range (bfrange). A range instance still feeds identity stats through
+    /// `stats_jsonl`, but its results come from `range_jsonl`, it never counts
+    /// toward campaign lifetime totals, it is left out of the campaign
+    /// dashboard's selector, and the campaign-only background loops (TACMAP,
+    /// war diary, intel marks, unit database) are not started for it. See
+    /// `deploy/range.md`.
+    #[serde(default)]
+    pub kind: InstanceKind,
+    /// A range instance's `Logs/range.jsonl`. Unset, it is the `range.jsonl`
+    /// next to `stats_jsonl` -- see [`InstanceCfg::range_jsonl_path`].
+    #[serde(default)]
+    pub range_jsonl: Option<PathBuf>,
+    /// Folder holding this instance's Tacview `.acmi` recordings, for the
+    /// range site's "download Tacview" link. Unset disables that route.
+    #[serde(default)]
+    pub tacview_dir: Option<PathBuf>,
+}
+
+/// Which engine an instance runs. Serialized lowercase: `"campaign"` /
+/// `"range"`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum InstanceKind {
+    #[default]
+    Campaign,
+    Range,
 }
 
 fn default_true() -> bool {
@@ -159,6 +192,28 @@ fn default_true() -> bool {
 impl InstanceCfg {
     pub(crate) fn label(&self) -> &str {
         self.label.as_deref().unwrap_or(&self.id)
+    }
+
+    /// Whether this instance's activity counts toward the all-time pilot
+    /// totals (leaderboard, lifetime profile, global counters). A private
+    /// (`public: false`) instance never does, and neither does a training
+    /// range: flying the range must not pad anyone's campaign record. This is
+    /// the *accounting* rule only -- selector visibility still follows
+    /// `public` (and `kind`, in `GET /api/instances`).
+    pub(crate) fn counts_toward_totals(&self) -> bool {
+        self.public && self.kind == InstanceKind::Campaign
+    }
+
+    pub(crate) fn is_range(&self) -> bool {
+        self.kind == InstanceKind::Range
+    }
+
+    /// Where a range instance's engine writes its graded results: the
+    /// configured `range_jsonl`, else `range.jsonl` beside `stats_jsonl`.
+    pub(crate) fn range_jsonl_path(&self) -> Option<PathBuf> {
+        self.range_jsonl
+            .clone()
+            .or_else(|| self.stats_jsonl.as_ref().map(|p| p.with_file_name("range.jsonl")))
     }
 }
 
@@ -274,11 +329,12 @@ impl Registry {
         &self.instances
     }
 
-    /// True when at least one instance is non-public, i.e. the all-time stats
-    /// have to be filtered. Lets the common all-public case keep using the
+    /// True when at least one instance does not count toward the all-time
+    /// totals (non-public, or a training range), i.e. the all-time stats have
+    /// to be filtered. Lets the common all-public campaign case keep using the
     /// pre-aggregated pilot totals instead of re-summing per round.
     pub(crate) fn has_private(&self) -> bool {
-        self.instances.iter().any(|i| !i.public)
+        self.instances.iter().any(|i| !i.counts_toward_totals())
     }
 
     /// True when this bfdb fronts exactly one instance -- the legacy shape,

@@ -630,8 +630,9 @@ pub(crate) struct Group {
 #[derive(Debug, Clone)]
 struct StatCtxInner {
     /// Whether this round's activity counts towards lifetime pilot totals --
-    /// false for a round on an instance with `public: false`. Resolved once
-    /// when the round context is established rather than per stat.
+    /// false for a round on an instance with `public: false` or on a training
+    /// range (`InstanceCfg::counts_toward_totals`). Resolved once when the
+    /// round context is established rather than per stat.
     public: bool,
     sortie: Scenario,
     round: RoundId,
@@ -819,6 +820,17 @@ impl InstanceState {
                      immediately (one probe every {}s) so the dashboard stops waiting on them",
                     self.id, RPC_FAIL_THRESHOLD, RPC_PROBE_SECS
                 );
+            } else if g.0 > RPC_FAIL_THRESHOLD {
+                // Once open, only the probes land here (one per RPC_PROBE_SECS),
+                // so this is a reminder every ~5 minutes while it stays down.
+                let every = (300 / RPC_PROBE_SECS).max(1) as u32;
+                if (g.0 - RPC_FAIL_THRESHOLD) % every == 0 {
+                    warn!(
+                        "[{}] engine RPCs still unanswered (~{}m, breaker open)",
+                        self.id,
+                        (g.0 - RPC_FAIL_THRESHOLD) as u64 * RPC_PROBE_SECS / 60
+                    );
+                }
             }
         }
     }
@@ -1152,12 +1164,14 @@ impl StatsDb {
     /// Open the database and start one ingestion pipeline per configured
     /// instance.
     ///
-    /// `subscriber` is shared by every instance -- a netidx Subscriber
-    /// multiplexes any number of paths, and the instances are kept apart by
-    /// their distinct `base` paths, not by separate connections. It is `None`
-    /// in offline mode (no instance has a `base`).
+    /// `subscribers` holds one netidx Subscriber per distinct client config,
+    /// keyed by the instances' `netidx_config` (`None` = the default config).
+    /// Instances that share a resolver share its subscriber -- a Subscriber
+    /// multiplexes any number of paths, and they are kept apart by their
+    /// distinct `base` paths. It is empty in offline mode (no instance has a
+    /// `base`).
     pub(crate) fn new<P: AsRef<Path>>(
-        subscriber: Option<Subscriber>,
+        subscribers: &HashMap<Option<PathBuf>, Subscriber>,
         db: P,
         instances: Registry,
         include: Option<Regex>,
@@ -1170,9 +1184,11 @@ impl StatsDb {
             .map(|cfg| {
                 let st = Arc::new(InstanceState::new(
                     cfg.clone(),
-                    // Only hand the subscriber to instances that actually have
+                    // Only hand a subscriber to instances that actually have
                     // a live engine to talk to.
-                    cfg.base.as_ref().and(subscriber.clone()),
+                    cfg.base
+                        .as_ref()
+                        .and_then(|_| subscribers.get(&cfg.netidx_config).cloned()),
                 ));
                 (st.id.clone(), st)
             })
@@ -1352,6 +1368,12 @@ impl StatsDb {
         &self.0.instances
     }
 
+    /// The underlying sled database, for modules that keep their own raw
+    /// trees beside the typed ones here (the training range, `range/`).
+    pub(crate) fn sled(&self) -> &Db {
+        &self.0.db
+    }
+
     /// Runtime state for one instance id, or the default instance's when the
     /// id is unknown to us (which can only happen for a round tagged with an
     /// instance that has since been removed from the config).
@@ -1395,7 +1417,7 @@ impl StatsDb {
             .instances
             .all()
             .iter()
-            .filter(|i| !i.public)
+            .filter(|i| !i.counts_toward_totals())
             .map(|i| InstanceId::from(i.id.as_str()))
             .collect();
         let mut out = HashSet::new();
@@ -1886,7 +1908,7 @@ impl StatsDb {
                     rounds.into_iter().find(|(_, _, r)| r.end.is_none())
                 {
                     if let Ok(Some(seq)) = self.seq.get(&(sortie.clone(), round)) {
-                        ctx.0 = Some(StatCtxInner { public: inst.cfg.public, sortie, round, seq });
+                        ctx.0 = Some(StatCtxInner { public: inst.cfg.counts_toward_totals(), sortie, round, seq });
                     }
                 }
             }
@@ -1992,6 +2014,14 @@ impl StatsDb {
                 let mut undecodable = 0u64;
                 let mut first_undecodable: Option<std::string::String> = None;
                 while reader.read_line(&mut line)? > 0 {
+                    // A last line with no newline is one the engine is still
+                    // writing. Leave the cursor before it and read it whole
+                    // next pass -- advancing past it split a record in two,
+                    // and both halves were dropped as unparseable (413 stats
+                    // lost across four restarts, Sept 22-24).
+                    if !line.ends_with('\n') {
+                        break;
+                    }
                     new_pos = reader.stream_position()?;
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
@@ -2028,15 +2058,17 @@ impl StatsDb {
                 }
                 if let Some(first) = first_unparsed {
                     error!(
-                        "skipped {unparsed} unparsable JSONL line(s) (stats.jsonl is torn or \
+                        "[{}] skipped {unparsed} unparsable JSONL line(s) (stats.jsonl is torn or \
                          truncated -- the records themselves are lost, the cursor moves past \
-                         them); first: {first}"
+                         them); first: {first}",
+                        inst.id
                     );
                 }
                 if let Some(first) = first_undecodable {
                     error!(
-                        "skipped {undecodable} JSONL line(s) that parsed but are not a known \
-                         Stat (bflib/bfdb schema mismatch); first: {first}"
+                        "[{}] skipped {undecodable} JSONL line(s) that parsed but are not a known \
+                         Stat (bflib/bfdb schema mismatch); first: {first}",
+                        inst.id
                     );
                 }
                 Ok(JsonlRead::Read {
@@ -2106,7 +2138,9 @@ impl StatsDb {
                                 warn!("[{}] failed to add stat from JSONL: {e:?}", inst.id);
                             }
                         }
-                        info!(
+                        // Every few seconds on a live server: over a third of
+                        // the whole log at info. Debug only.
+                        debug!(
                             "[{}] processed {count} stats from JSONL (pos {last_pos} -> {pos})",
                             inst.id
                         );
@@ -2118,7 +2152,7 @@ impl StatsDb {
                     }
                     last_pos = pos;
                 }
-                Err(e) => error!("JSONL read error: {e:?}"),
+                Err(e) => error!("[{}] JSONL read error: {e:?}", inst.id),
             }
         }
     }
@@ -2147,7 +2181,7 @@ impl StatsDb {
         info!("new_round: round inserted successfully");
         *inst.current_sortie.lock().unwrap() = Some(sortie.clone());
         ctx.0 = Some(StatCtxInner {
-            public: inst.cfg.public,
+            public: inst.cfg.counts_toward_totals(),
             sortie,
             round: id,
             seq: seqnum,
@@ -3662,7 +3696,7 @@ impl StatsDb {
                                     inst.id
                                 );
                                 *inst.current_sortie.lock().unwrap() = Some(sortie.clone());
-                                ctx.0 = Some(StatCtxInner { public: inst.cfg.public, sortie, round, seq });
+                                ctx.0 = Some(StatCtxInner { public: inst.cfg.counts_toward_totals(), sortie, round, seq });
                             }
                             None => {
                                 info!(

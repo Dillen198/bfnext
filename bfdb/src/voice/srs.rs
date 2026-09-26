@@ -222,7 +222,9 @@ impl Opus {
 // ─── Client ───────────────────────────────────────────────────────────────
 
 struct Inner {
-    guid: [u8; GUID_LEN],
+    /// Rotated when the server keeps resetting us straight after the
+    /// handshake -- see `manager_loop`.
+    guid: Mutex<[u8; GUID_LEN]>,
     name: String,
     coalition: u8, // 1 = red, 2 = blue
     /// Every frequency this client controls. Mutable at runtime: ATC gains and
@@ -279,8 +281,10 @@ impl SrsClient {
         let addr = format!("{host}:{port}");
         let udp = UdpSocket::bind("0.0.0.0:0").context("binding voice UDP socket")?;
         udp.connect(&addr).with_context(|| format!("connecting UDP to {addr}"))?;
+        let guid = new_guid();
+        register_own_guid(None, guid);
         let inner = Arc::new(Inner {
-            guid: new_guid(),
+            guid: Mutex::new(guid),
             name: name.to_string(),
             coalition,
             radios: Mutex::new(radios),
@@ -415,9 +419,13 @@ impl Inner {
             .join(", ")
     }
 
-    fn guid_str(&self) -> &str {
+    fn guid(&self) -> [u8; GUID_LEN] {
+        *self.guid.lock().unwrap()
+    }
+
+    fn guid_str(&self) -> String {
         // GUID bytes are always printable ASCII (see new_guid).
-        std::str::from_utf8(&self.guid).unwrap_or("")
+        std::str::from_utf8(&self.guid()).unwrap_or("").to_string()
     }
 
     fn client_info(&self) -> serde_json::Value {
@@ -509,8 +517,9 @@ impl Inner {
         b[so..so + 4].copy_from_slice(&UNIT_ID.to_le_bytes());
         b[so + 4..so + 12].copy_from_slice(&packet_id.to_le_bytes());
         b[total - 45] = 0; // retransmission count
-        b[total - 44..total - 22].copy_from_slice(&self.guid); // original transmitter
-        b[total - 22..total].copy_from_slice(&self.guid); // this client
+        let guid = self.guid();
+        b[total - 44..total - 22].copy_from_slice(&guid); // original transmitter
+        b[total - 22..total].copy_from_slice(&guid); // this client
         b
     }
 }
@@ -579,7 +588,7 @@ fn udp_rx_loop(c: Arc<Inner>) {
         if fo + freq_len > n || freq_len % 10 != 0 || fo + freq_len + 12 > n {
             continue;
         }
-        if &pkt[n - GUID_LEN..n] == c.guid {
+        if pkt[n - GUID_LEN..n] == c.guid() {
             continue; // our own audio
         }
         // Which of our radios is this on? A packet can name several
@@ -606,6 +615,13 @@ fn udp_rx_loop(c: Arc<Inner>) {
             .insert(freq_hz.max(0.0) as u64, now_millis());
 
         if c.rx_tx.is_none() {
+            continue;
+        }
+        // Another of this process's own controllers (Red ATC's ATIS heard by
+        // Blue ATC on a shared 340.000): it still counts as a busy channel
+        // above, but it is not a player and must not be transcribed -- the log
+        // was full of Blue ATC "hearing" Red ATC's weather broadcasts.
+        if is_own_guid(&pkt[n - GUID_LEN..n]) {
             continue;
         }
         let who: [u8; GUID_LEN] = pkt[n - GUID_LEN..n].try_into().unwrap();
@@ -762,26 +778,42 @@ fn learn_clients(c: &Inner, v: &serde_json::Value) {
 
 /// Connect + handshake + serve until the connection drops, then return so the
 /// manager can retry.
-fn serve_once(c: &Inner) -> Result<()> {
+/// `failures` is how many attempts in a row have failed before this one: while
+/// the server is resetting every session, "connected" is not news, so it is
+/// logged at debug and announced once the session has actually held.
+fn serve_once(c: &Inner, failures: u32) -> Result<()> {
     let mut tcp = TcpStream::connect(&c.addr).with_context(|| format!("connecting TCP to {}", c.addr))?;
     tcp.set_nodelay(true).ok();
     tcp.set_read_timeout(Some(Duration::from_secs(1))).ok();
 
-    tcp.write_all(c.message(MSG_SYNC, None).as_bytes())?;
-    tcp.write_all(c.message(MSG_EAM_PASSWORD, Some(&c.eam_password)).as_bytes())?;
-    tcp.write_all(c.message(MSG_RADIO_UPDATE, None).as_bytes())?;
-    tcp.write_all(c.message(MSG_PING, None).as_bytes())?;
-    c.udp.send(&c.guid).ok();
+    // One context for the whole handshake, so a reset during it reads the same
+    // every time (a bare os error here used to alternate with the read error
+    // below, which kept resetting the manager's backoff to its minimum).
+    (|| -> std::io::Result<()> {
+        tcp.write_all(c.message(MSG_SYNC, None).as_bytes())?;
+        tcp.write_all(c.message(MSG_EAM_PASSWORD, Some(&c.eam_password)).as_bytes())?;
+        tcp.write_all(c.message(MSG_RADIO_UPDATE, None).as_bytes())?;
+        tcp.write_all(c.message(MSG_PING, None).as_bytes())
+    })()
+    .context("SRS session reset")?;
+    c.udp.send(&c.guid()).ok();
 
     c.connected.store(true, Ordering::Relaxed);
     c.radios_dirty.store(false, Ordering::Relaxed);
-    log::info!(
+    let connected_at = Instant::now();
+    let mut announced = failures == 0;
+    let line = format!(
         "voice srs[{}]: connected to {} ({} coalition), {}",
         c.name,
         c.addr,
         if c.coalition == 1 { "red" } else { "blue" },
         c.describe_radios(),
     );
+    if announced {
+        log::info!("{line}");
+    } else {
+        log::debug!("{line}");
+    }
 
     let mut rd = [0u8; 8192];
     let mut linebuf: Vec<u8> = Vec::with_capacity(16384);
@@ -803,8 +835,21 @@ fn serve_once(c: &Inner) -> Result<()> {
     // quiet, and every one a window where GCI and ATC cannot transmit. A
     // backstop that fires on healthy connections is not a backstop, so put it
     // far beyond any real quiet period and let the ping write do its job.
-    const IDLE_BAIL: Duration = Duration::from_secs(3 * 3600);
+    //
+    // 3h still fired on healthy links: a side with nobody on it overnight gets
+    // nothing from the server for longer than that (22:37 on 23 Sep, both blue
+    // clients), and the reconnect that followed walked straight into a reset
+    // storm. So 24h -- effectively never on a live server.
+    const IDLE_BAIL: Duration = Duration::from_secs(24 * 3600);
     loop {
+        if !announced && connected_at.elapsed() >= Duration::from_secs(STABLE_SECS) {
+            announced = true;
+            log::info!(
+                "voice srs[{}]: connected to {} and holding, after {failures} failed attempt(s)",
+                c.name,
+                c.addr
+            );
+        }
         match tcp.read(&mut rd) {
             Ok(0) => anyhow::bail!("SRS server closed the connection"),
             Ok(n) => {
@@ -845,7 +890,7 @@ fn serve_once(c: &Inner) -> Result<()> {
             // A failed write here is the real "connection is dead" signal.
             tcp.write_all(c.message(MSG_PING, None).as_bytes())
                 .context("SRS keepalive write failed")?;
-            c.udp.send(&c.guid).ok();
+            c.udp.send(&c.guid()).ok();
             last_ping = now;
         }
         if now.duration_since(last_rx) >= IDLE_BAIL {
@@ -862,40 +907,92 @@ fn manager_loop(c: Arc<Inner>) {
     // and buried everything else. Back off while the same failure repeats, and
     // say so periodically with a count instead of once per attempt. Anything
     // that changes -- including the first success -- resets both.
+    //
+    // The backoff used to reset whenever the error text changed. A server that
+    // accepts the TCP connection and resets it straight after the handshake
+    // produces two alternating texts (reset mid-handshake / reset on first
+    // read), so it never backed off: ~6,700 reconnects and ~4,450 WARNs in one
+    // night across the eight clients. Now what resets the backoff is a session
+    // that actually held for STABLE_SECS; anything shorter counts as a failure.
+    //
+    // Each failure after a short-lived session also rotates the client GUID.
+    // Those resets all follow a session the server may still hold under our
+    // old GUID (after our own idle bail, or a server-side drop), and a client
+    // that reconnects under the same GUID indefinitely cannot get out of that.
     const MIN_BACKOFF: Duration = Duration::from_secs(5);
-    const MAX_BACKOFF: Duration = Duration::from_secs(60);
+    const MAX_BACKOFF: Duration = Duration::from_secs(120);
+    const REMIND_EVERY: Duration = Duration::from_secs(300);
     let mut backoff = MIN_BACKOFF;
-    let mut last: Option<(std::string::String, u32)> = None;
+    let mut failures: u32 = 0;
+    let mut last_warn: Option<Instant> = None;
     loop {
-        match serve_once(&c) {
-            Ok(()) => {
-                backoff = MIN_BACKOFF;
-                last = None;
+        let started = Instant::now();
+        let res = serve_once(&c, failures);
+        c.connected.store(false, Ordering::Relaxed);
+        let held = started.elapsed() >= Duration::from_secs(STABLE_SECS);
+        let msg = match res {
+            Ok(()) => "session ended".to_string(),
+            Err(e) => format!("{e:#}"),
+        };
+        if held {
+            // A real session that ended: reconnect promptly, say it once.
+            log::warn!("voice srs[{}]: {msg}; reconnecting", c.name);
+            failures = 0;
+            backoff = MIN_BACKOFF;
+            last_warn = None;
+        } else {
+            failures = failures.saturating_add(1);
+            let due = last_warn.map_or(true, |t| t.elapsed() >= REMIND_EVERY);
+            if failures == 1 {
+                log::warn!("voice srs[{}]: {msg}", c.name);
+                last_warn = Some(Instant::now());
+            } else if due {
+                log::warn!(
+                    "voice srs[{}]: {msg} (still failing, {failures} attempts in a row, \
+                     retrying every {}s)",
+                    c.name,
+                    backoff.as_secs()
+                );
+                last_warn = Some(Instant::now());
+            } else {
+                log::debug!("voice srs[{}]: {msg} (attempt {failures})", c.name);
             }
-            Err(e) => {
-                let msg = format!("{e:#}");
-                match &mut last {
-                    Some((prev, n)) if *prev == msg => {
-                        *n += 1;
-                        if *n % 20 == 0 {
-                            log::warn!(
-                                "voice srs[{}]: {msg} (still failing after {n} attempts)",
-                                c.name
-                            );
-                        }
-                        backoff = (backoff * 2).min(MAX_BACKOFF);
-                    }
-                    _ => {
-                        log::warn!("voice srs[{}]: {msg}", c.name);
-                        last = Some((msg, 1));
-                        backoff = MIN_BACKOFF;
-                    }
-                }
+            // Only a session that got as far as the handshake can have left a
+            // stale GUID behind; a refused TCP connect never registered one.
+            if !msg.starts_with("connecting TCP") {
+                let fresh = new_guid();
+                let old = std::mem::replace(&mut *c.guid.lock().unwrap(), fresh);
+                register_own_guid(Some(old), fresh);
+            }
+            if failures > 1 {
+                backoff = (backoff * 2).min(MAX_BACKOFF);
             }
         }
-        c.connected.store(false, Ordering::Relaxed);
         std::thread::sleep(backoff);
     }
+}
+
+/// A session that lasted this long was a real one, not a reset-on-handshake.
+const STABLE_SECS: u64 = 30;
+
+/// Every GUID this process's SRS clients are currently using, so one of our
+/// controllers never transcribes another one.
+static OWN_GUIDS: Mutex<Vec<[u8; GUID_LEN]>> = Mutex::new(Vec::new());
+
+fn register_own_guid(old: Option<[u8; GUID_LEN]>, new: [u8; GUID_LEN]) {
+    let mut g = OWN_GUIDS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(old) = old {
+        g.retain(|x| *x != old);
+    }
+    g.push(new);
+}
+
+fn is_own_guid(who: &[u8]) -> bool {
+    OWN_GUIDS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|g| g[..] == *who)
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────

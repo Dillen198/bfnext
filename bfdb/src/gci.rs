@@ -583,11 +583,21 @@ pub(crate) async fn run(
             );
         }
         if tick % heartbeat_ticks == 0 {
+            // Once a minute at info was 6% of the log; keep one every 30
+            // minutes at info and the rest at debug. The not-answering warning
+            // repeats every 5 minutes -- still hard to miss, not a flood.
+            let beat = tick / heartbeat_ticks;
             if engine_ok {
-                log::info!(
-                    "gci: alive — {total_flights} airborne flight(s), {flights_in_combat} with contacts"
-                );
-            } else {
+                if beat % 30 == 0 {
+                    log::info!(
+                        "gci: alive — {total_flights} airborne flight(s), {flights_in_combat} with contacts"
+                    );
+                } else {
+                    log::debug!(
+                        "gci: alive — {total_flights} airborne flight(s), {flights_in_combat} with contacts"
+                    );
+                }
+            } else if beat % 5 == 0 {
                 // Keep saying it — a one-time warning is easy to miss when the
                 // RPC channel is down for a whole mission.
                 log::warn!(

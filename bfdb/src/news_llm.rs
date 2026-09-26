@@ -27,7 +27,129 @@
 use crate::news::NewsDigest;
 use anyhow::{anyhow, bail, Result};
 use serde::Deserialize;
-use std::time::Duration;
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
+
+/// Minimum gap between two writer calls, across every instance in the process.
+/// Each instance's generator ticks every ten minutes and they share one
+/// endpoint and one quota (Groq's free tier is 8,000 tokens a minute; a
+/// dispatch is ~2,000-3,000 of them), so this works out to one call per tick
+/// for the whole process. Backfill walks forward a day per tick.
+const MIN_SPACING: Duration = Duration::from_secs(9 * 60);
+/// Ceiling on the global backoff after repeated 429s.
+const MAX_RATE_BACKOFF: Duration = Duration::from_secs(60 * 60);
+
+struct Gate {
+    /// No call before this.
+    next_call: Option<Instant>,
+    /// An instance that was turned away and gets the next slot, so one
+    /// instance with a long backfill cannot starve the other.
+    waiting: Option<(String, Instant)>,
+    /// Consecutive 429s, for the exponential part of the backoff.
+    rate_limited: u32,
+}
+
+static GATE: Mutex<Gate> = Mutex::new(Gate { next_call: None, waiting: None, rate_limited: 0 });
+
+/// Ask for the process-wide writer slot. `true` means the caller may make one
+/// call now; `false` means leave the day for a later tick.
+pub fn acquire(who: &str) -> bool {
+    let mut g = GATE.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    if g.next_call.map(|t| now < t).unwrap_or(false) {
+        if g.waiting.is_none() {
+            g.waiting = Some((who.to_string(), now));
+        }
+        return false;
+    }
+    if let Some((w, since)) = &g.waiting {
+        if w != who && now.duration_since(*since) < Duration::from_secs(15 * 60) {
+            return false;
+        }
+    }
+    g.waiting = None;
+    g.next_call = Some(now + MIN_SPACING);
+    true
+}
+
+/// Record a 429: push the next call out by the server's retry-after or an
+/// exponential backoff, whichever is longer. Returns the delay applied.
+fn note_rate_limited(retry_after: Option<Duration>) -> Duration {
+    let mut g = GATE.lock().unwrap_or_else(|e| e.into_inner());
+    g.rate_limited = g.rate_limited.saturating_add(1);
+    let exp = MIN_SPACING
+        .saturating_mul(1u32 << g.rate_limited.min(6))
+        .min(MAX_RATE_BACKOFF);
+    let delay = retry_after.unwrap_or_default().max(exp);
+    g.next_call = Some(Instant::now() + delay);
+    delay
+}
+
+fn note_success() {
+    GATE.lock().unwrap_or_else(|e| e.into_inner()).rate_limited = 0;
+}
+
+/// The endpoint said 429. Not the day's fault, so the caller should not count
+/// it against the day; the process-wide gate has already been pushed back.
+#[derive(Debug)]
+pub struct RateLimited {
+    pub backoff: Duration,
+    pub body: String,
+}
+
+impl std::fmt::Display for RateLimited {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "rate limited, all news writing paused for {}s: {}",
+            self.backoff.as_secs(),
+            self.body
+        )
+    }
+}
+
+impl std::error::Error for RateLimited {}
+
+/// An error body squashed onto one line and cut short -- the providers' bodies
+/// end in a newline, which left a blank line in the log after every failure.
+fn one_line(s: &str, max: usize) -> String {
+    let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if s.chars().count() > max {
+        let cut: String = s.chars().take(max).collect();
+        format!("{cut}...")
+    } else {
+        s
+    }
+}
+
+/// Turn a failed HTTP reply into an error, feeding 429s to the gate.
+fn http_error(res: reqwest::blocking::Response) -> anyhow::Error {
+    let status = res.status();
+    let header_wait = res
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<f64>().ok());
+    let body = one_line(&res.text().unwrap_or_default(), 300);
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        // Groq puts it in the message too: "Please try again in 16.25s."
+        let body_wait = body.find("try again in ").and_then(|i| {
+            let rest = &body[i + "try again in ".len()..];
+            let num: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+            let secs = num.parse::<f64>().ok()?;
+            Some(if rest[num.len()..].starts_with("ms") { secs / 1000. } else { secs })
+        });
+        let wait = header_wait
+            .or(body_wait)
+            .filter(|s| s.is_finite() && *s >= 0.)
+            .map(|s| Duration::from_secs_f64(s.min(3600.)));
+        let backoff = note_rate_limited(wait);
+        return anyhow::Error::new(RateLimited { backoff, body });
+    }
+    anyhow!("news writer: {status} {body}")
+}
 
 /// Where to send the day's brief, and as whom.
 #[derive(Debug, Clone)]
@@ -248,10 +370,14 @@ pub struct Written {
 #[derive(Deserialize)]
 struct OaiChoice {
     message: OaiMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 #[derive(Deserialize)]
 struct OaiMessage {
-    content: String,
+    // Reasoning models may return null content when the budget ran out.
+    #[serde(default)]
+    content: Option<String>,
 }
 #[derive(Deserialize)]
 struct OaiReply {
@@ -300,39 +426,56 @@ pub fn write_dispatch(
         }
         let res = req.send()?;
         if !res.status().is_success() {
-            bail!("news writer: {} {}", res.status(), res.text().unwrap_or_default());
+            return Err(http_error(res));
         }
         let parsed: AnthropicReply = res.json()?;
-        parsed.content.into_iter().map(|b| b.text).collect::<Vec<_>>().join("")
+        (parsed.content.into_iter().map(|b| b.text).collect::<Vec<_>>().join(""), None)
     } else {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": cfg.model,
             "temperature": 0.9,
-            "max_tokens": 1200,
+            // Room for a reasoning model's thinking as well as the dispatch:
+            // at 1200, gpt-oss spent the budget reasoning about long briefs
+            // and returned no JSON at all (finish_reason "length").
+            "max_tokens": 2400,
             "messages": [
                 { "role": "system", "content": SYSTEM },
                 { "role": "user", "content": prompt },
             ],
         });
+        // gpt-oss (Groq, OpenRouter, Ollama) reasons before it answers; three
+        // paragraphs need little of it. Only sent to that family, as other
+        // endpoints reject the parameter on non-reasoning models.
+        if cfg.model.contains("gpt-oss") {
+            body["reasoning_effort"] = serde_json::json!("low");
+        }
         let mut req = client.post(&cfg.url).json(&body);
         if let Some(k) = &cfg.key {
             req = req.bearer_auth(k);
         }
         let res = req.send()?;
         if !res.status().is_success() {
-            bail!("news writer: {} {}", res.status(), res.text().unwrap_or_default());
+            return Err(http_error(res));
         }
         let parsed: OaiReply = res.json()?;
-        parsed
+        let choice = parsed
             .choices
             .into_iter()
             .next()
-            .ok_or_else(|| anyhow!("no choices in reply"))?
-            .message
-            .content
+            .ok_or_else(|| anyhow!("no choices in reply"))?;
+        (choice.message.content.unwrap_or_default(), choice.finish_reason)
     };
+    let (raw, finish) = raw;
+    note_success();
 
-    let mut w = extract_json(&raw)?;
+    let mut w = extract_json(&raw).map_err(|e| {
+        anyhow!(
+            "{e} (finish_reason={}, {} chars: {:?})",
+            finish.as_deref().unwrap_or("?"),
+            raw.len(),
+            one_line(&raw, 160)
+        )
+    })?;
     w.body.retain(|p| !p.trim().is_empty());
     if w.body.is_empty() {
         bail!("writer returned an empty dispatch");
