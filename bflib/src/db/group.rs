@@ -243,8 +243,12 @@ impl Db {
         {
             let at = *at;
             let group = group!(self, gid)?;
-            let center =
-                centroid2d(group.units.into_iter().map(|uid| self.persisted.units[uid].pos));
+            let center = centroid2d(
+                group
+                    .units
+                    .into_iter()
+                    .filter_map(|uid| self.persisted.units.get(uid).map(|u| u.pos)),
+            );
             if (center - at).norm() < min_move {
                 return Ok(());
             }
@@ -256,9 +260,24 @@ impl Db {
         if let Some((id, _)) = self.ephemeral.group_marks.remove(gid) {
             self.ephemeral.msgs.delete_mark(id)
         }
+        // Lookups by `get`, never by indexing: a unit or player record that has
+        // gone missing must cost this one pin, not panic the tick that asked
+        // for it (and with it every other system that tick was running).
+        let units = &self.persisted.units;
+        let players = &self.persisted.players;
+        let pname = |ucid: &Ucid| {
+            players
+                .get(ucid)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| String::from("unknown"))
+        };
         let group = group_mut!(self, gid)?;
-        let group_center =
-            centroid2d(group.units.into_iter().map(|uid| self.persisted.units[uid].pos));
+        let group_center = centroid2d(
+            group
+                .units
+                .into_iter()
+                .filter_map(|uid| units.get(uid).map(|u| u.pos)),
+        );
         let id = match &mut group.origin {
             DeployKind::ObjectiveDeprecated => None,
             // Garrison groups (the pre-placed SAM / AAA / armour / logi at every
@@ -270,7 +289,7 @@ impl Db {
             DeployKind::Action { name, spec: _, destination, player, marks, .. } => {
                 let pname = player
                     .as_ref()
-                    .map(|p| self.persisted.players[p].name.clone())
+                    .map(|p| pname(p))
                     .unwrap_or(String::from("Server"));
                 let pos_msg = format_compact!("{name} {gid} deployed by {pname}");
                 let pos_mark = self.ephemeral.msgs.mark_to_side(
@@ -297,7 +316,7 @@ impl Db {
                 }
             }
             DeployKind::Crate { player, spec, .. } => {
-                let name = self.persisted.players[player].name.clone();
+                let name = pname(player);
                 let msg = format_compact!("{} {gid} deployed by {name}", spec.name);
                 Some(self.ephemeral.msgs.mark_to_side(
                     group.side,
@@ -314,11 +333,11 @@ impl Db {
                 origin: _,
                 jtac: _,
             } => {
-                let name = self.persisted.players[player].name.clone();
+                let name = pname(player);
                 let resp = moved_by
                     .as_ref()
                     .map(|(u, _)| {
-                        let name = self.persisted.players[u].name.clone();
+                        let name = pname(u);
                         format_compact!("\nresponsible party: {name}")
                     })
                     .unwrap_or(CompactString::from(""));
@@ -334,11 +353,11 @@ impl Db {
                 ))
             }
             DeployKind::Troop { player, spec, moved_by, origin: _, cost_fraction: _, .. } => {
-                let name = self.persisted.players[player].name.clone();
+                let name = pname(player);
                 let resp = moved_by
                     .as_ref()
                     .map(|(u, _)| {
-                        let name = self.persisted.players[u].name.clone();
+                        let name = pname(u);
                         format_compact!("\nresponsible party: {name}")
                     })
                     .unwrap_or(CompactString::from(""));
@@ -373,6 +392,13 @@ impl Db {
             .groups
             .remove_cow(gid)
             .ok_or_else(|| anyhow!("no such group {:?}", gid))?;
+        // Read before the units go: whether this deletion is a squad being
+        // killed or one being removed with men still alive decides what
+        // happens to a post-capture hold it belongs to (scrub_capture_hold).
+        let killed = group
+            .units
+            .into_iter()
+            .all(|uid| self.persisted.units.get(uid).map(|u| u.dead).unwrap_or(true));
         self.persisted.groups_by_name.remove_cow(&group.name);
         self.persisted.groups_by_side.get_mut_cow(&group.side).map(|m| m.remove_cow(gid));
         match &group.origin {
@@ -387,7 +413,9 @@ impl Db {
             }
             DeployKind::Crate { player, .. } => {
                 self.persisted.crates.remove_cow(gid);
-                self.persisted.players[player].crates.remove_cow(gid);
+                if let Some(p) = self.persisted.players.get_mut_cow(player) {
+                    p.crates.remove_cow(gid);
+                }
                 // Drop any dynamic-cargo (C-130 / helo) tracking entry for this
                 // group too. Without this, unpacking or destroying a tracked
                 // crate through any path other than unpack_c130_crate leaves a
@@ -431,7 +459,14 @@ impl Db {
             }
             DeployKind::Dismount { .. } => {
                 self.persisted.dismounts.remove_cow(gid);
+                self.persisted.dismount_spawned.remove_cow(gid);
             }
+        }
+        if matches!(
+            group.origin,
+            DeployKind::Troop { .. } | DeployKind::Dismount { .. }
+        ) {
+            self.scrub_capture_hold(gid, killed);
         }
         if let Some((id, _)) = self.ephemeral.group_marks.remove(gid) {
             self.ephemeral.msgs.delete_mark(id);
@@ -478,6 +513,61 @@ impl Db {
         }
         self.ephemeral.stat(Stat::GroupDeleted { id: *gid });
         Ok(())
+    }
+
+    /// Live dismount squads belonging to `side`. The dismount cap is per side:
+    /// counted over both, one side's wrecks used up the other's allowance.
+    pub fn dismount_count(&self, side: Side) -> usize {
+        self.persisted
+            .dismounts
+            .into_iter()
+            .filter(|gid| self.persisted.groups.get(gid).map(|g| g.side == side).unwrap_or(false))
+            .count()
+    }
+
+    /// Remove dismount squads older than `dismount_ttl_secs`, if that is set.
+    ///
+    /// Dismounts are a battlefield side effect, nobody's deployable: nothing
+    /// ever picks them up or removes them, so on a long campaign they piled up
+    /// for good -- still counted toward the per-type cap, still able to
+    /// capture. A squad that is holding a freshly captured base is left alone
+    /// until the hold resolves; expiring it there would end the hold.
+    pub fn expire_dismounts(&mut self, now: DateTime<Utc>) {
+        let ttl = match self.ephemeral.cfg.dismount_ttl_secs {
+            Some(ttl) if ttl > 0 => chrono::Duration::seconds(ttl as i64),
+            _ => return,
+        };
+        let mut expired: SmallVec<[GroupId; 8]> = smallvec![];
+        let mut unstamped: SmallVec<[GroupId; 8]> = smallvec![];
+        for gid in &self.persisted.dismounts {
+            match self.persisted.dismount_spawned.get(gid) {
+                // Squads from a save that predates the timestamp start their
+                // clock now rather than all expiring at once.
+                None => unstamped.push(*gid),
+                Some(ts) if now - *ts >= ttl => expired.push(*gid),
+                Some(_) => (),
+            }
+        }
+        for gid in unstamped {
+            self.persisted.dismount_spawned.insert_cow(gid, now);
+            self.ephemeral.dirty();
+        }
+        expired.retain(|gid| {
+            !self
+                .persisted
+                .objectives
+                .into_iter()
+                .any(|(_, o)| o.capture_hold.contains(gid))
+        });
+        if expired.is_empty() {
+            return;
+        }
+        info!("expiring {} dismount squad(s) past their {}s lifetime", expired.len(), ttl.num_seconds());
+        for gid in expired {
+            if let Err(e) = self.delete_group(&gid) {
+                warn!("could not expire dismount squad {gid}: {e:?}");
+            }
+        }
     }
 
     /// add the units to the db, but don't actually spawn them
@@ -845,7 +935,12 @@ impl Db {
             }
             DeployKind::Crate { player, .. } => {
                 self.persisted.crates.insert_cow(gid);
-                self.persisted.players[player].crates.insert_cow(gid);
+                match self.persisted.players.get_mut_cow(&*player) {
+                    Some(p) => {
+                        p.crates.insert_cow(gid);
+                    }
+                    None => warn!("crate {gid} spawned for unknown player {player:?}"),
+                }
             }
             DeployKind::Deployed { spec, .. } => {
                 self.persisted.deployed.insert_cow(gid);
@@ -867,6 +962,7 @@ impl Db {
             }
             DeployKind::Dismount { .. } => {
                 self.persisted.dismounts.insert_cow(gid);
+                self.persisted.dismount_spawned.insert_cow(gid, Utc::now());
             }
         }
         self.persisted.groups.insert_cow(gid, spawned);
@@ -1298,7 +1394,12 @@ impl Db {
                                 moved_by: Some((ucid, p)),
                                 ..
                             } => {
-                                let owner = self.persisted.players[player].name.clone();
+                                let owner = self
+                                    .persisted
+                                    .players
+                                    .get(player)
+                                    .map(|p| p.name.clone())
+                                    .unwrap_or_else(|| String::from("unknown"));
                                 let ucid = ucid.clone();
                                 let p = -(*p as i32);
                                 let msg = format_compact!(

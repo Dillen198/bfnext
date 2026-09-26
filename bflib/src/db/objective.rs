@@ -196,6 +196,57 @@ pub fn is_logi_family_template(name: &str) -> bool {
     stem.starts_with("DEPOT") || stem.starts_with("FUEL")
 }
 
+/// Whether a campaign-ending countdown (last stand, victory reset) should be
+/// announced on this tick, given the seconds remaining on the previous check
+/// (`None` = first check since arming or since a restart) and now.
+///
+/// Announced when the countdown crosses a whole hour, and then 30, 15, 10, 5,
+/// 2 and 1 minutes and 30 and 10 seconds out. Both callers run on a tick, and
+/// used to put a fresh screen-clearing panel up on every one of them for the
+/// whole of an hour-long countdown.
+pub(super) fn countdown_announce_due(prev: Option<i64>, remaining: i64) -> bool {
+    const MARKS: [i64; 8] = [1800, 900, 600, 300, 120, 60, 30, 10];
+    let Some(prev) = prev else { return true };
+    let crossed = |t: i64| prev > t && remaining <= t;
+    // The only whole hour this tick can have crossed is the smallest one at
+    // or above `remaining`.
+    let hour = (remaining.max(1) + 3599).div_euclid(3600) * 3600;
+    MARKS.iter().any(|t| crossed(*t)) || crossed(hour)
+}
+
+/// "1h 05m", "12m 30s", "45s" -- for the countdown panels.
+pub(super) fn fmt_countdown(secs: i64) -> CompactString {
+    let secs = secs.max(0);
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    if h > 0 {
+        format_compact!("{h}h {m:02}m")
+    } else if m > 0 {
+        format_compact!("{m}m {s:02}s")
+    } else {
+        format_compact!("{s}s")
+    }
+}
+
+/// The side that has met the MapOwned victory condition, if any. Only
+/// objectives a side actually owns count toward it: Neutral bases used to be
+/// credited to *both* sides, and Blue was tested first, so a map with a
+/// Neutral-heavy middle handed Blue the win whatever Red held. A side that
+/// owns `fraction` of all objectives wins; if both do (only possible with a
+/// fraction of 0.5 or less) it is a tie and nobody wins.
+pub(super) fn map_owned_winner(blue: usize, red: usize, total: usize, fraction: f64) -> Option<Side> {
+    if total == 0 {
+        return None;
+    }
+    let total = total as f64;
+    let blue_met = blue as f64 / total >= fraction;
+    let red_met = red as f64 / total >= fraction;
+    match (blue_met, red_met) {
+        (true, false) => Some(Side::Blue),
+        (false, true) => Some(Side::Red),
+        (true, true) | (false, false) => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ObjGroup(String);
 
@@ -369,7 +420,9 @@ pub struct Objective {
     /// After a capture, the assaulting troop groups that are holding the base
     /// during the consolidation window. While non-empty the garrison does not
     /// spawn and `captureable()` stays true. Cleared on consolidation (troops
-    /// survived the timer) or when the base goes Neutral (troops wiped out).
+    /// banked the whole window), when the base goes Neutral (every holding
+    /// squad killed), or when the last holding squad is removed on purpose
+    /// rather than killed (see `Db::scrub_capture_hold`).
     #[serde(default)]
     pub(super) capture_hold: Vec<GroupId>,
     /// When the capture landed. Kept for reporting; the hold itself is driven
@@ -428,7 +481,10 @@ impl Objective {
 
     pub fn captureable(&self) -> bool {
         // A base still in its post-capture hold (garrison not yet consolidated)
-        // is takeable by either side until it consolidates or goes Neutral.
+        // is defended by nothing but the assault force. It is not open to a
+        // fresh capture timer (`check_capture` skips it) -- the defender's
+        // counterplay is to kill that force, which drops the base to Neutral
+        // (`check_capture_hold`) and makes it takeable by either side.
         !self.capture_hold.is_empty() || (self.health <= 20 && self.infantry == 0)
     }
 
@@ -1206,6 +1262,9 @@ impl Db {
     /// (or supply). This is the per-tick auto-repair step -- `do_repairs`
     /// calls it once per objective per pass, so a wrecked base rebuilds a
     /// group at a time. Returns whether anything was actually repaired.
+    ///
+    /// Does NOT refresh the supply/fuel percentages the repair drew down --
+    /// the caller runs `update_supply_status` once after its whole pass.
     pub fn repair_objective(&mut self, oid: ObjectiveId, now: DateTime<Utc>) -> Result<bool> {
         self.repair_objective_inner(oid, now, false)
     }
@@ -1398,15 +1457,13 @@ impl Db {
                                 }
                             }
                         }
-                        // A free repair draws nothing, so the supply/fuel
-                        // percentages cannot have moved -- skip the sweep. It
-                        // walks every objective's whole warehouse (~84k
-                        // item-slots on the live campaign) and the admin path
-                        // runs this loop once per damaged group.
-                        if !free {
-                            self.update_supply_status()
-                                .context("updating supply status after repair")?;
-                        }
+                        // No supply/fuel percentage sweep here. It walks every
+                        // objective's whole warehouse (~84k item-slots on the
+                        // live campaign), and doing it once per repaired group
+                        // made a repair pass cost that many times over. A paid
+                        // repair is swept once for the whole pass by
+                        // `maybe_do_repairs`; a free (admin) one draws nothing,
+                        // so there is nothing to sweep.
                         self.update_objective_status(&oid, now)?;
                         self.ephemeral.dirty();
                         return Ok(true);
@@ -1513,7 +1570,9 @@ impl Db {
             .players_by_slot
             .values()
             .filter_map(|ucid| {
-                let player = &self.persisted.players[ucid];
+                // `get`, not indexing: a slot entry that outlives its player
+                // record must not panic the whole cull pass.
+                let player = self.persisted.players.get(ucid)?;
                 let side = player.side;
                 player
                     .current_slot
@@ -2073,13 +2132,23 @@ impl Db {
                 error!("neutralize {oid} failed: {e:?}");
             }
         }
+        let mut repaired_any = false;
         for oid in to_repair {
             // One bad objective (e.g. a stale group id) must not abort the whole
             // repair pass -- that would freeze auto-repair for every other base.
-            if let Err(e) = self.repair_objective(oid, now) {
-                error!("repair {oid} failed: {e:?}");
+            match self.repair_objective(oid, now) {
+                Ok(repaired) => repaired_any |= repaired,
+                Err(e) => error!("repair {oid} failed: {e:?}"),
             }
         }
+        // One supply/fuel sweep for the whole pass rather than one per
+        // repaired group -- see repair_objective_inner.
+        if repaired_any {
+            self.update_supply_status()
+                .context("updating supply status after repairs")?;
+        }
+        // Rides the slow repair tick; see expire_dismounts.
+        self.expire_dismounts(now);
         Ok(())
     }
 
@@ -2103,16 +2172,13 @@ impl Db {
             obj.last_activate = now;
             obj.last_change_ts = now;
             obj.threatened = false;
-            obj.capture_hold.clear();
-            obj.capture_hold_ts = None;
+            obj.clear_capture_hold();
             obj.name.clone()
         };
         info!(
             "[CAPTURE] {name} neutralised: garrison health reached 0, ownership dropped to Neutral \
              (spawns locked, self-repair off, must be retaken with troops)"
         );
-        self.ephemeral.capture_progress.remove(&oid);
-        self.ephemeral.last_owner_change.insert(oid, now);
         self.ephemeral.msgs().panel_to_all(
             15,
             true,
@@ -2120,7 +2186,39 @@ impl Db {
                 "{name}: the garrison has been wiped out -- the base is now Neutral and must be retaken with troops"
             ),
         );
-        let obj = objective!(self, oid)?;
+        self.finish_neutralisation(oid, now)
+    }
+
+    /// Everything a base that just dropped to Neutral needs besides the owner
+    /// flip itself. Shared by `neutralize_depleted_objective` and the
+    /// assault-force-wiped-out path in `check_capture_hold`.
+    ///
+    /// The DCS airfield is handed to Neutral as well: left alone it stayed on
+    /// the old owner's coalition -- their ATC, their parking, their slots --
+    /// until the next restart re-synced it from the campaign state. And the
+    /// last occupant's leftovers (the services / logi groups, and during a
+    /// hold the revived garrison) are swept out the same way a capture sweeps
+    /// out the previous owner, so a Neutral base really is empty.
+    fn finish_neutralisation(&mut self, oid: ObjectiveId, now: DateTime<Utc>) -> Result<()> {
+        self.ephemeral.capture_progress.remove(&oid);
+        self.ephemeral.last_owner_change.insert(oid, now);
+        if let Err(e) = self.overrun_previous_occupants(oid, Side::Neutral) {
+            error!("could not clear the last occupants out of neutralised {oid}: {e:?}");
+        }
+        // Special SAM sites never hand an airfield over on capture either: a
+        // zone overlap can leave their `airbase_by_oid` entry pointing at a
+        // neighbouring field (see Ephemeral::resolve_airbase).
+        if !objective!(self, oid)?.kind.is_special_sam_site() {
+            self.ephemeral.queue_airbase_coalition(oid, Side::Neutral);
+        }
+        // Re-read health now that the sweep is done: a base that fell while its
+        // revived garrison was still on the books would otherwise keep that
+        // garrison's health, which reads as not `captureable()`.
+        self.update_objective_status(&oid, now)?;
+        // A FARP with no logi left is deleted outright by the status update.
+        let Some(obj) = self.persisted.objectives.get(&oid) else {
+            return Ok(());
+        };
         self.ephemeral.create_objective_markup(&self.persisted, obj);
         self.ephemeral.dirty();
         self.sync_scenery_markers(oid);
@@ -2154,32 +2252,37 @@ impl Db {
             if elapsed >= delay {
                 return Some(side);
             } else {
-                self.ephemeral.msgs().panel_to_all(
-                    10,
-                    true,
-                    format_compact!(
-                        "{side} has won. The server will reset in {}s",
-                        (delay - elapsed).num_seconds()
-                    ),
-                );
+                // This runs every tick. Announce on the countdown's threshold
+                // crossings only, not as a fresh panel every single tick.
+                let remaining = (delay - elapsed).num_seconds();
+                let prev = self.ephemeral.victory_countdown_last.replace(remaining);
+                if countdown_announce_due(prev, remaining) {
+                    self.ephemeral.msgs().panel_to_all(
+                        10,
+                        true,
+                        format_compact!(
+                            "{side} has won. The server will reset in {}",
+                            fmt_countdown(remaining)
+                        ),
+                    );
+                }
                 return None;
             }
         }
         // Check MapOwned condition if auto_reset is configured.
         if let Some(vc) = self.ephemeral.cfg.auto_reset {
             let VictoryCondition::MapOwned { fraction } = vc.condition;
-            let (blue, red, neutral, total) = self.persisted.objectives.into_iter().fold(
-                (0., 0., 0., 0.),
-                |(blue, red, neutral, total), (_, obj)| match obj.owner {
-                    Side::Blue => (blue + 1., red, neutral, total + 1.),
-                    Side::Red => (blue, red + 1., neutral, total + 1.),
-                    Side::Neutral => (blue, red, neutral + 1., total + 1.),
+            let (blue, red, total) = self.persisted.objectives.into_iter().fold(
+                (0usize, 0usize, 0usize),
+                |(blue, red, total), (_, obj)| match obj.owner {
+                    Side::Blue => (blue + 1, red, total + 1),
+                    Side::Red => (blue, red + 1, total + 1),
+                    Side::Neutral => (blue, red, total + 1),
                 },
             );
-            if ((blue + neutral) / total) >= fraction {
-                self.ephemeral.victory = Some((now, Side::Blue));
-            } else if ((red + neutral) / total) >= fraction {
-                self.ephemeral.victory = Some((now, Side::Red));
+            if let Some(side) = map_owned_winner(blue, red, total, fraction) {
+                self.ephemeral.victory = Some((now, side));
+                self.ephemeral.victory_countdown_last = None;
             }
         }
         None
@@ -2202,28 +2305,45 @@ impl Db {
             let remaining = countdown - elapsed;
             if remaining <= Duration::zero() {
                 self.ephemeral.last_stand_state = None;
+                self.ephemeral.last_stand_countdown_last = None;
+                self.ephemeral.dirty();
                 return Some(losing_side);
             }
-            let remaining_secs = remaining.num_seconds();
-            let winning_side = losing_side.opposite();
-            self.ephemeral.msgs().panel_to_all(
-                10,
-                true,
-                format_compact!(
-                    "{losing_side:?} is making their last stand! \
-                     {winning_side:?} wins in {remaining_secs}s unless {losing_side:?} recaptures."
-                ),
-            );
-            // Re-check: if losing side has recovered objectives, disarm timer.
+            // Re-check first: if the losing side has recovered objectives,
+            // disarm the timer rather than announcing a countdown that is
+            // already over.
             let losing_primary = self.persisted.objectives.into_iter()
                 .filter(|(_, o)| o.owner == losing_side && Self::is_primary_objective(&o.kind))
                 .count();
             if losing_primary > cfg.trigger_count {
                 self.ephemeral.last_stand_state = None;
+                self.ephemeral.last_stand_countdown_last = None;
+                self.ephemeral.dirty();
                 self.ephemeral.msgs().panel_to_all(
                     10,
                     false,
                     format_compact!("{losing_side:?} has recaptured objectives. Last stand cancelled."),
+                );
+                return None;
+            }
+            // Announce on threshold crossings (each hour, then 30/15/10/5/2/1
+            // minutes, ...) rather than a fresh screen-clearing panel on every
+            // slow tick for the whole hour-long countdown.
+            let remaining_secs = remaining.num_seconds();
+            let prev = self
+                .ephemeral
+                .last_stand_countdown_last
+                .replace(remaining_secs);
+            if countdown_announce_due(prev, remaining_secs) {
+                let winning_side = losing_side.opposite();
+                self.ephemeral.msgs().panel_to_all(
+                    10,
+                    true,
+                    format_compact!(
+                        "{losing_side:?} is making their last stand! \
+                         {winning_side:?} wins in {} unless {losing_side:?} recaptures.",
+                        fmt_countdown(remaining_secs)
+                    ),
                 );
             }
             return None;
@@ -2235,6 +2355,11 @@ impl Db {
                 .count();
             if primary_count <= cfg.trigger_count {
                 self.ephemeral.last_stand_state = Some((now, side));
+                // The arming panel below is the first announcement.
+                self.ephemeral.last_stand_countdown_last = Some(cfg.countdown_secs as i64);
+                // Persisted (see Db::maybe_snapshot) so a scheduled restart
+                // can't reset the losing side's countdown.
+                self.ephemeral.dirty();
                 let winning = side.opposite();
                 self.ephemeral.msgs().panel_to_all(
                     15,
@@ -2309,7 +2434,9 @@ impl Db {
             // consolidation window (`in_capture_hold`). The enemy can't simply
             // walk back in and re-flip it -- they have to eliminate that assault
             // force first, which drops the base to Neutral (see
-            // check_capture_hold) and only then makes it contestable again.
+            // check_capture_hold; the garrison the capture revived isn't
+            // spawned yet, so it can't hold the base on its own) and only then
+            // makes it contestable again.
             if obj.in_capture_hold() {
                 continue;
             }
@@ -2477,18 +2604,15 @@ impl Db {
             let (side, _, _, _) = gids.first().ok_or_else(|| anyhow!("no guid"))?;
             if gids.iter().all(|(s, _, _, _)| side == s) {
                 in_zone_objectives.insert(oid);
-                let is_sam = self
-                    .persisted
-                    .objectives
-                    .get(&oid)
-                    .map(|o| o.kind.is_special_sam_site())
-                    .unwrap_or(false);
-                let capture_secs = if is_sam {
-                    0i64
-                } else {
-                    // Base momentum (default 180s), divided by the number of
-                    // capturing troop groups in the zone -- bring more squads,
-                    // take it faster. Floored so it never goes instant.
+                // Base momentum (default 180s), divided by the number of
+                // capturing troop groups in the zone -- bring more squads,
+                // take it faster. Floored so it never goes instant.
+                //
+                // Special SAM sites run the same timer. They used to flip the
+                // instant a single squad touched the zone (capture_secs 0),
+                // which -- as they are always capturable -- gave the owner no
+                // window at all to see the capture coming and answer it.
+                let capture_secs = {
                     let base_secs = self
                         .ephemeral
                         .cfg
@@ -2960,8 +3084,7 @@ impl Db {
             obj.last_threatened_ts = now;
             obj.last_activate = now;
             obj.last_change_ts = now;
-            obj.capture_hold.clear();
-            obj.capture_hold_ts = None;
+            obj.clear_capture_hold();
         }
         self.ephemeral.capture_progress.remove(&oid);
 
@@ -3011,16 +3134,11 @@ impl Db {
         Ok(previous_owner)
     }
 
-    /// Resolve post-capture holds. A base captured with
-    /// `capture_consolidation_secs > 0` is held only by the assaulting troop
-    /// groups until either they survive the timer (consolidate -> garrison may
-    /// spawn) or they are all wiped out (base goes Neutral).
-    /// Credit consolidation progress at a base that is mid post-capture hold.
-    /// This is what lets a crew beat the wall clock by actually flying the
-    /// logistics sortie in, instead of orbiting a timer. No-op at a base that
-    /// isn't currently holding.
-    /// Grant outright consolidation progress for a delivery. Returns whether
-    /// it actually bought anything -- callers use that to decide whether the
+    /// Grant outright consolidation progress for a delivery at a base that is
+    /// mid post-capture hold. This is what lets a crew beat the wall clock by
+    /// actually flying the logistics sortie in, instead of orbiting a timer.
+    /// No-op at a base that isn't currently holding. Returns whether it
+    /// actually bought anything -- callers use that to decide whether the
     /// crate was consumed.
     pub fn bump_consolidation(&mut self, oid: ObjectiveId, reason: &str) -> Result<bool> {
         let bump = self.ephemeral.cfg.consolidation_crate_progress_secs;
@@ -3054,6 +3172,64 @@ impl Db {
         Ok(true)
     }
 
+    /// Keep `capture_hold` honest when one of its squads is deleted.
+    /// `delete_group` calls this for every troop / dismount group it removes.
+    ///
+    /// A troop group is deleted the moment its last man dies, and
+    /// `check_capture_hold` reads a hold squad that no longer exists as
+    /// killed -- that is how a wiped-out assault force drops the base to
+    /// Neutral, so a `killed` deletion is left for it to find. But a squad
+    /// removed with men still alive (an admin delete, a pickup) was not killed,
+    /// and leaving its id behind made the hold treat it as wiped out all the
+    /// same. Those are scrubbed here instead; if that removes the last squad
+    /// still on the ground, the hold ends as consolidated -- nobody beat the
+    /// assault force, it just left.
+    pub(super) fn scrub_capture_hold(&mut self, gid: &GroupId, killed: bool) {
+        if killed {
+            return;
+        }
+        let holding: SmallVec<[ObjectiveId; 1]> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(_, o)| o.capture_hold.contains(gid))
+            .map(|(oid, _)| *oid)
+            .collect();
+        let now = Utc::now();
+        for oid in holding {
+            let groups = &self.persisted.groups;
+            let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) else {
+                continue;
+            };
+            obj.capture_hold.retain(|g| g != gid);
+            // Ids of squads that were killed but not yet pruned by
+            // check_capture_hold don't hold anything.
+            if obj.capture_hold.iter().any(|g| groups.get(g).is_some()) {
+                self.ephemeral.dirty();
+                continue;
+            }
+            obj.clear_capture_hold();
+            obj.spawned = false;
+            obj.last_activate = now;
+            let (name, owner) = (obj.name.clone(), obj.owner);
+            info!("[CAPTURE] {name}: last holding squad {gid} was removed, not killed -- hold ends consolidated");
+            self.ephemeral.msgs().panel_to_side(
+                10,
+                false,
+                owner,
+                format_compact!("{name}: holding troops withdrawn -- consolidated, garrison moving in"),
+            );
+            if let Some(obj) = self.persisted.objectives.get(&oid) {
+                self.ephemeral.create_objective_markup(&self.persisted, obj);
+            }
+            self.ephemeral.dirty();
+        }
+    }
+
+    /// Resolve post-capture holds. A base captured with
+    /// `capture_consolidation_secs > 0` is held only by the assaulting troop
+    /// groups until either they bank the consolidation window (consolidate ->
+    /// garrison may spawn) or they are all killed (base goes Neutral).
     pub fn check_capture_hold(&mut self, now: DateTime<Utc>) -> Result<()> {
         let total = self.ephemeral.cfg.capture_consolidation_secs as f64;
         let grace = self.ephemeral.cfg.consolidation_zone_grace_secs as i64;
@@ -3094,11 +3270,17 @@ impl Db {
                 (alive, in_zone, obj.name.clone(), obj.owner)
             };
             // The assault force is gone. It only drops to Neutral if the base
-            // is *also* undefended -- if the garrison the capture revived is
-            // still standing (health > 20), the assault force did its job and
-            // the base consolidates under its new owner instead of becoming a
-            // free-for-all again.
-            let held_health = objective!(self, oid)?.health();
+            // is *also* undefended. Only a garrison that is actually on the
+            // ground counts for that: the fraction the capture revived is
+            // written back into the books but not spawned while the hold runs
+            // (spawning is gated on the hold being over), so counting its
+            // health meant killing every assault squad still "consolidated"
+            // the base behind a garrison nobody could see or shoot -- the
+            // defender had no counterplay at all.
+            let held_health = {
+                let obj = objective!(self, oid)?;
+                if obj.spawned { obj.health() } else { 0 }
+            };
             if alive.is_empty() && held_health <= 20 {
                 let dead_hold: Vec<GroupId> = {
                     let obj = objective_mut!(self, oid)?;
@@ -3107,17 +3289,22 @@ impl Db {
                     obj.owner = Side::Neutral;
                     obj.spawned = false;
                     obj.last_activate = now;
+                    obj.last_change_ts = now;
                     gids
                 };
                 // Nothing in there is alive any more -- drop the wrecks rather
                 // than leaving a dead squad sitting in the zone for the rest
-                // of the campaign.
+                // of the campaign. (Most are already gone: a troop group is
+                // deleted the moment its last man dies.)
                 for gid in dead_hold {
+                    if self.persisted.groups.get(&gid).is_none() {
+                        continue;
+                    }
                     if let Err(e) = self.delete_group(&gid) {
                         warn!("could not remove wiped-out assault group {gid}: {e:?}");
                     }
                 }
-                self.ephemeral.last_owner_change.insert(oid, now);
+                info!("[CAPTURE] {name}: assault force wiped out mid-hold, base dropped to Neutral");
                 self.ephemeral.msgs().panel_to_all(
                     15,
                     true,
@@ -3125,10 +3312,9 @@ impl Db {
                         "{name}: the assault force was wiped out -- the base is contested (Neutral)"
                     ),
                 );
-                let obj = objective!(self, oid)?;
-                self.ephemeral.create_objective_markup(&self.persisted, obj);
-                self.ephemeral.dirty();
-                self.sync_scenery_markers(oid);
+                if let Err(e) = self.finish_neutralisation(oid, now) {
+                    error!("finishing the neutralisation of {name} failed: {e:?}");
+                }
                 continue;
             }
             if !alive.is_empty() {
@@ -3195,8 +3381,10 @@ impl Db {
                     continue;
                 }
             }
-            // Consolidated: either the window is fully banked, or the assault
-            // force died with the revived garrison still standing.
+            // Consolidated: the window is fully banked (or, in principle, the
+            // assault force died with a spawned garrison standing -- the hold
+            // keeps the garrison unspawned, so in practice that branch is only
+            // reachable if something else woke the base).
             let stood_down: Vec<GroupId> = {
                 let obj = objective_mut!(self, oid)?;
                 let gids = std::mem::take(&mut obj.capture_hold);
@@ -3934,5 +4122,50 @@ impl Db {
         }
 
         Ok(actually_captured)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn countdown_announces_first_check_and_crossings_only() {
+        assert!(countdown_announce_due(None, 3000));
+        // No threshold between 3000 and 2990.
+        assert!(!countdown_announce_due(Some(3000), 2990));
+        // Crossing 30 minutes.
+        assert!(countdown_announce_due(Some(1805), 1795));
+        // Landing exactly on a mark counts once, not again on the next tick.
+        assert!(countdown_announce_due(Some(305), 300));
+        assert!(!countdown_announce_due(Some(300), 290));
+        // Whole hours on a long countdown.
+        assert!(countdown_announce_due(Some(7205), 7195));
+        assert!(!countdown_announce_due(Some(7195), 7185));
+        assert!(countdown_announce_due(Some(3601), 3599));
+        // The last seconds.
+        assert!(countdown_announce_due(Some(11), 9));
+        assert!(!countdown_announce_due(Some(9), 8));
+    }
+
+    #[test]
+    fn countdown_format() {
+        assert_eq!(fmt_countdown(3900).as_str(), "1h 05m");
+        assert_eq!(fmt_countdown(750).as_str(), "12m 30s");
+        assert_eq!(fmt_countdown(45).as_str(), "45s");
+        assert_eq!(fmt_countdown(-5).as_str(), "0s");
+    }
+
+    #[test]
+    fn map_owned_counts_owned_objectives_only() {
+        // Neutral no longer counts for anybody: 50 Blue + 45 Neutral used to
+        // be a Blue win at 0.95.
+        assert_eq!(map_owned_winner(50, 5, 100, 0.95), None);
+        assert_eq!(map_owned_winner(95, 0, 100, 0.95), Some(Side::Blue));
+        assert_eq!(map_owned_winner(3, 96, 100, 0.95), Some(Side::Red));
+        // Both meet a low threshold: tie, nobody wins (Blue is no longer
+        // favoured by being checked first).
+        assert_eq!(map_owned_winner(50, 50, 100, 0.5), None);
+        assert_eq!(map_owned_winner(0, 0, 0, 0.95), None);
     }
 }

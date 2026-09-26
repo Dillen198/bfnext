@@ -3822,6 +3822,10 @@ pub struct Cfg {
     /// Per vehicle type: if present, destroying that vehicle spawns infantry dismounts at the wreck.
     #[serde(default)]
     pub dismount: FxHashMap<Vehicle, DismountSpec>,
+    /// Seconds a dismount squad lives before it is removed. None (the
+    /// default) keeps them until they are killed.
+    #[serde(default)]
+    pub dismount_ttl_secs: Option<u32>,
     /// Mercy timer: when a side reaches `trigger_count` or fewer primary objectives,
     /// starts a countdown. On expiry the losing side's victory is triggered.
     #[serde(default)]
