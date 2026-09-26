@@ -45,7 +45,7 @@ use bfprotocols::{
 use compact_str::{format_compact, CompactString};
 use dcso3::{
     coalition::Side,
-    controller::{BeaconSystem, BeaconType, Command},
+    controller::{BeaconSystem, BeaconType, Command, TacanBand},
     group::Group,
     unit::Unit,
     String as LuaString, Vector2,
@@ -451,18 +451,43 @@ fn fingerprint(navs: &[Navaid]) -> Vec<(Option<u16>, Option<u16>, Option<u8>, bo
 
 // ── broadcasting ───────────────────────────────────────────────────────────
 
+/// The frequency (Hz) `ActivateBeacon` takes for a TACAN channel -- MOOSE's
+/// `UTILS.TACANToFrequency`, which its `BEACON:ActivateTACAN` passes for
+/// exactly this command. This used to send one fixed placeholder (1088 MHz)
+/// for every channel. `None` for a channel outside 1-126.
+pub(crate) fn tacan_frequency_hz(channel: u16, band: TacanBand) -> Option<i64> {
+    if !(1..=126).contains(&channel) {
+        return None;
+    }
+    let ch = channel as i64;
+    let low = ch < 64;
+    let (a, b) = match band {
+        TacanBand::X => (if low { 962 } else { 1151 }, if low { 1 } else { 64 }),
+        TacanBand::Y => (if low { 1088 } else { 1025 }, if low { 1 } else { 64 }),
+        TacanBand::Custom(_) => return None,
+    };
+    Some((a + ch - b) * 1_000_000)
+}
+
+// NEEDS IN-GAME TEST (both commands below): the TACAN frequency is now
+// derived from the channel, and the NDB uses the plain HOMER type.
 fn tacan_command(nav: &Navaid) -> Option<Command> {
     let ch = nav.tacan_channel?;
+    let band = nav.tacan_band_enum();
+    let Some(frequency) = tacan_frequency_hz(ch, band.clone()) else {
+        log::warn!("navaid {}: TACAN channel {ch} is outside 1-126, not lighting it", nav.morse);
+        return None;
+    };
+    // Type TACAN (4) with system TACAN (3) is the ground-station pair (MOOSE
+    // uses TACAN_TANKER_X/Y only for airborne beacons).
     Some(Command::ActivateBeacon {
         typ: BeaconType::TACAN,
         system: BeaconSystem::TACAN,
         name: None,
         callsign: LuaString::from(nav.morse.as_str()),
-        // DCS derives the RF frequency from channel + mode_channel; this is the
-        // same placeholder the AI-aircraft TACAN task uses.
-        frequency: 1_088_000_000,
+        frequency,
         channel: Some(ch as i64),
-        mode_channel: Some(nav.tacan_band_enum()),
+        mode_channel: Some(band),
         aa: Some(false),
         bearing: Some(true),
     })
@@ -471,7 +496,10 @@ fn tacan_command(nav: &Navaid) -> Option<Command> {
 fn ndb_command(nav: &Navaid) -> Option<Command> {
     let khz = nav.ndb_khz?;
     Some(Command::ActivateBeacon {
-        typ: BeaconType::NauticalHomer,
+        // HOMER (8) is the plain NDB. dcso3's `NauticalHomer` is 32776, which
+        // MOOSE's type table doesn't have at all (it lists NAUTICAL_HOMER as
+        // 65536), so it was not a type DCS knows.
+        typ: BeaconType::Homer,
         system: BeaconSystem::PAR10,
         name: None,
         callsign: LuaString::from(nav.morse.as_str()),
@@ -519,4 +547,22 @@ pub fn activate_carrier(deck: &Unit, nav: &Navaid) -> Result<()> {
         })?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tacan_frequencies_follow_the_channel() {
+        // MOOSE UTILS.TACANToFrequency reference values
+        assert_eq!(tacan_frequency_hz(1, TacanBand::X), Some(962_000_000));
+        assert_eq!(tacan_frequency_hz(63, TacanBand::X), Some(1_024_000_000));
+        assert_eq!(tacan_frequency_hz(64, TacanBand::X), Some(1_151_000_000));
+        assert_eq!(tacan_frequency_hz(126, TacanBand::X), Some(1_213_000_000));
+        assert_eq!(tacan_frequency_hz(1, TacanBand::Y), Some(1_088_000_000));
+        assert_eq!(tacan_frequency_hz(74, TacanBand::Y), Some(1_035_000_000));
+        assert_eq!(tacan_frequency_hz(0, TacanBand::X), None);
+        assert_eq!(tacan_frequency_hz(127, TacanBand::Y), None);
+    }
 }

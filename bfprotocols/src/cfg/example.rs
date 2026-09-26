@@ -2493,6 +2493,7 @@ impl Default for Cfg {
             }),
             navaids: crate::cfg::NavaidsCfg::default(),
             harm_codes: fxhash::FxHashMap::default(),
+            magnetic_variation_deg: None,
         }
     }
 }

@@ -17,6 +17,7 @@ for more details.
 use crate::{
     db::{Db, JtDesc, group::SpawnedUnit, player::InstancedPlayer},
     landcache::LandCache,
+    msgq::MsgQ,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
@@ -208,6 +209,90 @@ pub(crate) fn aim_and_fire_route<'lua>(
 
 type LocByCode = FxHashMap<Side, FxHashMap<ObjectiveId, FxHashMap<u16, FxHashSet<JtId>>>>;
 
+/// Whether `code` is a laser code DCS weapons can actually be set to: first
+/// digit 1, second 1-7, third and fourth 1-8 -- i.e. 1111 through 1788 with
+/// no 0s or 9s. A JTAC lasing on anything else can never be matched by a
+/// bomb, so reject it up front instead of letting a player dial it in.
+/// Also used by the `-jtac <id> code` chat command.
+pub fn validate_laser_code(code: u16) -> Result<()> {
+    let d = [code / 1000, code / 100 % 10, code / 10 % 10, code % 10];
+    if code > 9999
+        || d[0] != 1
+        || !(1..=7).contains(&d[1])
+        || !(1..=8).contains(&d[2])
+        || !(1..=8).contains(&d[3])
+    {
+        bail!(
+            "invalid laser code {code}: codes run 1111-1788 -- first digit 1, second 1-7, last two 1-8"
+        )
+    }
+    Ok(())
+}
+
+/// Apply a laser-code entry to `current`. A whole four digit code (`1513`)
+/// replaces it; a single digit at its scale (`500`, `10`, `3`, or `1000`)
+/// replaces just that digit -- that is what the F10 Code submenu sends. The
+/// result must be a valid code either way.
+fn apply_code_part(current: u16, code_part: u16) -> Result<u16> {
+    let code = match code_part {
+        p if p > 1000 && p % 1000 != 0 => p,
+        p if p >= 1000 && p % 1000 == 0 => p + current % 1000,
+        p if p >= 100 && p < 1000 && p % 100 == 0 => current / 1000 * 1000 + p + current % 100,
+        p if p >= 10 && p < 100 && p % 10 == 0 => current / 100 * 100 + p + current % 10,
+        p if p < 10 => current / 10 * 10 + p,
+        p => bail!(
+            "invalid laser code entry {p}: give a whole code like 1688, or one digit at its place (600, 80, 8)"
+        ),
+    };
+    validate_laser_code(code)?;
+    Ok(code)
+}
+
+/// A code for a new JTAC that no other JTAC on its side is using. Every JTAC
+/// used to come up on the configured default (1688 on the live servers), so
+/// two drones over one fight lased on the same code and a bomb took whichever
+/// spot it saw first. The default is still preferred -- the first JTAC keeps
+/// it -- and the rest walk the valid codes upward from it.
+fn pick_laser_code(preferred: u16, in_use: &FxHashSet<u16>) -> u16 {
+    const FALLBACK: u16 = 1688;
+    let start = if validate_laser_code(preferred).is_ok() { preferred } else { FALLBACK };
+    let valid = (1111u16..=1788).filter(|c| validate_laser_code(*c).is_ok());
+    valid
+        .clone()
+        .filter(|c| *c >= start)
+        .chain(valid.filter(|c| *c < start))
+        .find(|c| !in_use.contains(c))
+        // 448 valid codes; a side with more JTACs than that shares one
+        .unwrap_or(start)
+}
+
+/// A side-effect-free note for the players following one JTAC. Queued by
+/// `Jtacs` (which has no idea who is listening) and delivered by
+/// `menu::jtac::flush_jtac_notices`, which knows the requesters and the
+/// players who pinned or expanded the JTAC. These used to be panels to the
+/// whole coalition -- every target acquired, lost and destroyed by every
+/// JTAC, on every screen on the side.
+#[derive(Debug, Clone)]
+pub struct JtacNotice {
+    pub jtid: JtId,
+    pub side: Side,
+    pub oid: ObjectiveId,
+    pub text: CompactString,
+}
+
+/// How far (m) a lased target has to drift before a slot JTAC's F10 pin is
+/// re-dropped. Pins can't be moved, so following costs a delete plus a
+/// create; this matches the map layer's own symbol threshold
+/// (`JTAC_SYMBOL_FOLLOW_M`) so the two behave the same.
+const JTAC_PIN_FOLLOW_M: f64 = 600.;
+
+/// Convert a true bearing (degrees) to magnetic for a variation (degrees,
+/// east positive) and round it to a whole compass heading 1-360.
+fn mag_deg(true_rad: f64, magvar_deg: f64) -> u32 {
+    let d = crate::atis::true_to_magnetic(radians_to_degrees(true_rad), magvar_deg).round() as u32;
+    if d == 0 { 360 } else { d.min(360) }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Contact {
     pub pos: Vector3,
@@ -224,11 +309,19 @@ pub struct JtacTarget {
     source: DcsOid<ClassUnit>,
     spot: DcsOid<ClassSpot>,
     ir_pointer: Option<DcsOid<ClassSpot>>,
+    /// Slot JTACs only, see `Jtac::mark_target`.
     mark: Option<MarkId>,
+    /// Where `mark` was dropped, for the follow threshold.
+    mark_pos: Vector2,
 }
 
 impl JtacTarget {
-    fn destroy(self, lua: MizLua) -> Result<()> {
+    fn destroy(self, lua: MizLua, msgs: &mut MsgQ) -> Result<()> {
+        // The pin first: it goes through the queue and must not be left
+        // behind just because the spot below is already gone.
+        if let Some(id) = self.mark {
+            msgs.delete_mark(id)
+        }
         Spot::get_instance(lua, &self.spot)
             .context("getting laser spot")?
             .destroy()
@@ -238,12 +331,6 @@ impl JtacTarget {
                 .context("getting ir pointer")?
                 .destroy()
                 .context("destroying ir pointer")?
-        }
-        if let Some(id) = self.mark {
-            Trigger::singleton(lua)?
-                .action()?
-                .remove_mark(id)
-                .context("removing mark")?
         }
         Ok(())
     }
@@ -286,16 +373,17 @@ pub struct JtacLocation {
 }
 
 impl JtacLocation {
-    fn new(db: &Db, pos: Vector3) -> Self {
+    /// `None` only when the campaign has no objectives at all.
+    fn new(db: &Db, pos: Vector3) -> Option<Self> {
         let pos = Vector2::new(pos.x, pos.z);
         let (distance, bearing, obj) =
-            Db::objective_near_point(&db.persisted.objectives, pos, |_| true).unwrap();
-        Self {
+            Db::objective_near_point(&db.persisted.objectives, pos, |_| true)?;
+        Some(Self {
             pos,
             oid: obj.id,
             bearing,
             distance,
-        }
+        })
     }
 }
 
@@ -369,6 +457,10 @@ pub struct Jtac {
     /// inside the focus area if there is one. They are always the first
     /// `lasable` entries of `contacts`, see `sort_contacts`.
     lasable: usize,
+    /// Magnetic variation (degrees, east positive) as of the last contact
+    /// update, so bearings read to pilots can be magnetic without a lua
+    /// state to hand. See `crate::atis::magnetic_variation_deg`.
+    magvar_deg: f64,
 }
 
 impl Jtac {
@@ -412,12 +504,11 @@ impl Jtac {
     }
 
     fn new(
-        db: &Db,
         gid: JtId,
         name: Option<CompactString>,
         side: Side,
         priority: Vec<UnitTags>,
-        pos: Vector3,
+        location: JtacLocation,
         air: bool,
         default_laser_code: u16,
         lase_range_m: f64,
@@ -429,7 +520,7 @@ impl Jtac {
             contacts: IndexMap::default(),
             filter: BitFlags::default(),
             priority,
-            location: JtacLocation::new(db, pos),
+            location,
             target: None,
             autoshift: None,
             ir_pointer: false,
@@ -444,7 +535,40 @@ impl Jtac {
             building_idx: 0,
             focus: None,
             lasable: 0,
+            magvar_deg: 0.,
         }
+    }
+
+    /// "Reaper (123)" or "123", as every JTAC message names it.
+    pub fn display_name(&self) -> CompactString {
+        match &self.name {
+            Some(n) => format_compact!("{n} ({})", self.gid),
+            None => format_compact!("{}", self.gid),
+        }
+    }
+
+    fn notice(&self, text: CompactString) -> JtacNotice {
+        JtacNotice {
+            jtid: self.gid,
+            side: self.side,
+            oid: self.location.oid,
+            text,
+        }
+    }
+
+    /// The one-line callout for a newly acquired target.
+    fn acquired_line(&self, db: &Db) -> Option<CompactString> {
+        let target = self.target.as_ref()?;
+        let near = db
+            .objective(&self.location.oid)
+            .map(|o| o.name.clone())
+            .unwrap_or_else(|_| String::from("unknown"));
+        Some(format_compact!(
+            "JTAC {} [{}] near {near}: lasing {}",
+            self.display_name(),
+            self.code,
+            target.typ
+        ))
     }
 
     pub fn status(&self, db: &Db, loc_by_code: &LocByCode) -> Result<CompactString> {
@@ -461,20 +585,13 @@ impl Jtac {
             })
         }
         let mut msg = CompactString::new("");
-        match &self.name {
-            Some(n) => write!(msg, "JTAC {} ({}) status\n", n, self.gid)?,
-            None => write!(msg, "JTAC {} status\n", self.gid)?,
-        }
+        write!(msg, "JTAC {} [{}] status\n", self.display_name(), self.code)?;
         match &self.target {
             None => {
                 write!(msg, "no target\n")?;
             }
             Some(target) => {
                 let unit_typ = get_typ(db, &target.id)?;
-                let mid = match target.mark {
-                    None => format_compact!("none"),
-                    Some(mid) => format_compact!("{mid}"),
-                };
                 let conflicts = loc_by_code
                     .get(&self.side)
                     .and_then(|by_side| by_side.get(&self.location.oid))
@@ -498,11 +615,7 @@ impl Jtac {
                         }
                     })
                     .unwrap_or(String::from(""));
-                write!(
-                    msg,
-                    "lasing {unit_typ} code {}{} marker {mid}\n",
-                    self.code, conflicts
-                )?;
+                write!(msg, "lasing {unit_typ} code {}{}\n", self.code, conflicts)?;
             }
         };
         if let Some(bt) = &self.building_target {
@@ -510,8 +623,8 @@ impl Jtac {
         }
         write!(
             msg,
-            "position bearing {} for {:.1}km from {}\n\n",
-            radians_to_degrees(self.location.bearing) as u32,
+            "position {:03}°M {:.1}km from {}\n\n",
+            mag_deg(self.location.bearing, self.magvar_deg),
             self.location.distance / 1000.,
             db.objective(&self.location.oid)?.name
         )?;
@@ -583,48 +696,74 @@ impl Jtac {
         self.name.as_deref()
     }
 
-    pub fn nine_line(&self, db: &Db) -> Result<CompactString> {
+    /// The standard 9-line for the current target. Bearings are magnetic.
+    /// This used to carry no target coordinates at all and measured lines 2
+    /// and 3 from the JTAC rather than from the IP it named in line 1, so a
+    /// pilot running in from the IP flew the wrong heading and distance.
+    pub fn nine_line(&self, db: &Db, lua: MizLua) -> Result<CompactString> {
         use std::fmt::Write;
         let target = match &self.target {
             None => bail!("no target — lase a target first"),
             Some(t) => t,
         };
-        let target_pos2 = Vector2::new(target.pos.x, target.pos.z);
-        let jtac_pos2 = self.location.pos;
-        let diff = target_pos2 - jtac_pos2;
-        let dist_m = diff.magnitude();
-        let bearing_rad = diff.y.atan2(diff.x).rem_euclid(std::f64::consts::TAU);
-        let brg_deg = radians_to_degrees(bearing_rad) as u32;
-        let recip_deg = (brg_deg + 180) % 360;
-        let elev_ft = (target.pos.y * 3.28084) as i32;
-        let (tgt_dist_km, tgt_brg, tgt_obj) =
-            Db::objective_near_point(&db.persisted.objectives, target_pos2, |_| true)
-                .context("no objectives found")?;
-        let tgt_obj_name = &tgt_obj.name;
-        let tgt_brg_deg = radians_to_degrees(tgt_brg) as u32;
-        let jtac_brg_deg = radians_to_degrees(self.location.bearing) as u32;
-        let ip_name = db.objective(&self.location.oid)?.name.clone();
-        let jtac_name = match &self.name {
-            Some(n) => format_compact!("{n}"),
-            None => format_compact!("{}", self.gid),
+        let var = self.magvar_deg;
+        let tgt = Vector2::new(target.pos.x, target.pos.z);
+        // The IP is the objective the JTAC works from. Only when it can't be
+        // found, or sits right on the target, run lines 2/3 from the JTAC.
+        let ip = db
+            .objective(&self.location.oid)
+            .ok()
+            .map(|o| (o.name.clone(), o.pos()));
+        let (ip_label, from) = match &ip {
+            Some((name, p)) if (tgt - *p).norm() >= 500. => (format_compact!("{name}"), *p),
+            _ => (
+                format_compact!("none -- run in from JTAC {}", self.display_name()),
+                self.location.pos,
+            ),
         };
+        let run = tgt - from;
+        let hdg = mag_deg(dcso3::azumith2d(run), var);
+        let egress = if hdg > 180 { hdg - 180 } else { hdg + 180 };
+        let elev_ft = (target.pos.y * 3.28084).round() as i32;
+        let (ll, mgrs) = crate::menu::objectives::fmt_position(lua, tgt)
+            .unwrap_or_else(|| (CompactString::new("--"), CompactString::new("--")));
+        let (ref_dist, ref_brg, ref_obj) =
+            Db::objective_near_point(&db.persisted.objectives, tgt, |_| true)
+                .context("no objectives found")?;
+        let to_jtac = self.location.pos - tgt;
         let mut msg = CompactString::new("");
-        write!(msg, "== 9-LINE CAS - {jtac_name} ==\n")?;
-        write!(msg, "1. IP: {ip_name} (JTAC {jtac_brg_deg}° / {:.1}km from IP)\n",
-            self.location.distance / 1000.0)?;
-        write!(msg, "2. HDG: {brg_deg}° to target (egress {recip_deg}°)\n")?;
-        write!(msg, "3. DIST: {:.1}km - ELEV: {elev_ft}ft\n", dist_m / 1000.0)?;
-        write!(msg, "4. TGT: {}\n", target.typ)?;
-        write!(msg, "5. TGT POS: {tgt_brg_deg}° / {:.1}km from {tgt_obj_name}\n",
-            tgt_dist_km / 1000.0)?;
-        write!(msg, "6. MARK: LASER {}\n", self.code)?;
-        write!(msg, "7. FRIENDLIES: {:.0} side\n", self.side)?;
-        write!(msg, "8. EGRESS: {recip_deg}°\n")?;
-        let contact_count = self.contacts.len();
-        write!(msg, "9. REMARKS: {contact_count} contact(s) visible")?;
-        if self.ir_pointer {
-            write!(msg, ", IR pointer active")?;
-        }
+        write!(msg, "== 9-LINE CAS - JTAC {} ==\n", self.display_name())?;
+        write!(msg, "1. IP: {ip_label}\n")?;
+        write!(msg, "2. HDG: {hdg:03}°M IP to target\n")?;
+        write!(
+            msg,
+            "3. DIST: {:.1}km / {:.1}nm\n",
+            run.norm() / 1000.,
+            run.norm() / 1852.
+        )?;
+        write!(msg, "4. ELEV: {elev_ft}ft MSL\n")?;
+        write!(msg, "5. DESC: {} ({} contact(s) visible)\n", target.typ, self.contacts.len())?;
+        write!(msg, "6. LOC: {ll}\n    MGRS {mgrs}\n")?;
+        write!(
+            msg,
+            "    {:03}°M {:.1}km from {}\n",
+            mag_deg(ref_brg, var),
+            ref_dist / 1000.,
+            ref_obj.name
+        )?;
+        write!(
+            msg,
+            "7. MARK: LASER {}{}\n",
+            self.code,
+            if self.ir_pointer { " + IR pointer" } else { "" }
+        )?;
+        write!(
+            msg,
+            "8. FRIENDLIES: JTAC {:03}°M {:.1}km from target\n",
+            mag_deg(dcso3::azumith2d(to_jtac), var),
+            to_jtac.norm() / 1000.
+        )?;
+        write!(msg, "9. EGRESS: {egress:03}°M")?;
         Ok(msg)
     }
 
@@ -644,7 +783,7 @@ impl Jtac {
     fn remove_target(&mut self, db: &mut Db, lua: MizLua) -> Result<()> {
         if let Some(target) = self.target.take() {
             target
-                .destroy(lua)
+                .destroy(lua, db.ephemeral.msgs())
                 .with_context(|| format_compact!("destroying target for jtac {}", self.gid))?;
         }
         if let JtId::Group(gid) = self.gid {
@@ -654,25 +793,60 @@ impl Jtac {
         Ok(())
     }
 
-    fn mark_target(&mut self, lua: MizLua) -> Result<()> {
-        if let Some(target) = &mut self.target {
-            let act = Trigger::singleton(lua)?.action()?;
-            if let Some(mid) = target.mark.take() {
-                act.remove_mark(mid).context("removing mark")?;
-            }
-            let new_mid = MarkId::new();
-            let ct = &self.contacts[&target.id];
-            let msg = format_compact!(
-                "JTAC {} target {} marked by code {}",
-                self.gid,
-                ct.typ,
-                self.code
-            );
-            act.mark_to_coalition(new_mid, msg.into(), LuaVec3(ct.pos), self.side, true, None)
-                .context("marking target")?;
-            target.mark = Some(new_mid);
+    /// Pin the target on the F10 map, for slot JTACs only. Group JTACs get
+    /// the map layer's pin, code label and bearing line (`draw_layer`), and
+    /// this used to drop a second pin for them on top -- straight through
+    /// Trigger, bypassing the message queue, and again every time the target
+    /// crept more than a metre and a half, i.e. every second for anything
+    /// driving. That churn is what starved the F10 markup queue before. Now
+    /// the pin goes through the queue and only follows a target that has
+    /// really moved (`JTAC_PIN_FOLLOW_M`), unless `force` (new target, new
+    /// code) says the text itself changed.
+    fn mark_target(&mut self, db: &mut Db, force: bool) {
+        if !matches!(self.gid, JtId::Slot(_)) {
+            return;
         }
-        Ok(())
+        let Some(target) = &mut self.target else { return };
+        let Some(ct) = self.contacts.get(&target.id) else {
+            warn!("jtac {} target {} is not a contact, not marking it", self.gid, target.id);
+            return;
+        };
+        let pos = Vector2::new(ct.pos.x, ct.pos.z);
+        if !force && target.mark.is_some() && (pos - target.mark_pos).norm() < JTAC_PIN_FOLLOW_M {
+            return;
+        }
+        let text = format_compact!(
+            "JTAC {} target {} marked by code {}",
+            self.gid,
+            ct.typ,
+            self.code
+        );
+        let msgs = db.ephemeral.msgs();
+        if let Some(mid) = target.mark.take() {
+            msgs.delete_mark(mid);
+        }
+        target.mark = Some(msgs.mark_to_side(self.side, pos, true, text));
+        target.mark_pos = pos;
+    }
+
+    /// (Re)draw the map layer's marks for a group JTAC's current target:
+    /// bearing line, info pin and laser-code label.
+    fn draw_layer(&self, db: &mut Db) {
+        let (JtId::Group(gid), Some(t)) = (self.gid, self.target.as_ref()) else {
+            return;
+        };
+        let text = format_compact!("JTAC {}\nlasing {}\nCode: {}", self.gid, t.typ, self.code);
+        let (map_layer, msgs) = db.ephemeral.map_layer_and_msgs();
+        map_layer.on_jtac_target(
+            gid,
+            self.location.pos,
+            Vector2::new(t.pos.x, t.pos.z),
+            self.lase_range_m,
+            self.side,
+            text,
+            self.code,
+            msgs,
+        );
     }
 
     fn set_target(&mut self, db: &mut Db, lua: MizLua, i: usize) -> Result<bool> {
@@ -751,6 +925,7 @@ impl Jtac {
                     source: jtid,
                     ir_pointer,
                     mark: None,
+                    mark_pos: Vector2::new(pos.x, pos.z),
                     id,
                 });
                 self.nearby_artillery =
@@ -758,25 +933,8 @@ impl Jtac {
                 self.nearby_alcm = db.alcm_near_point(self.side, lua, Vector2::new(pos.x, pos.z));
                 self.menu_dirty |= prev_arty != self.nearby_artillery;
                 self.menu_dirty |= prev_alcm != self.nearby_alcm;
-                self.mark_target(lua).context("marking target")?;
-                if let JtId::Group(gid) = self.gid {
-                    let target_pos2 = Vector2::new(pos.x, pos.z);
-                    let text = {
-                        let t = self.target.as_ref().unwrap();
-                        format_compact!("JTAC {}\nlasing {}\nCode: {}", self.gid, t.typ, self.code)
-                    };
-                    let (map_layer, msgs) = db.ephemeral.map_layer_and_msgs();
-                    map_layer.on_jtac_target(
-                        gid,
-                        self.location.pos,
-                        target_pos2,
-                        self.lase_range_m,
-                        self.side,
-                        text,
-                        self.code,
-                        msgs,
-                    );
-                }
+                self.mark_target(db, true);
+                self.draw_layer(db);
                 Ok(true)
             }
         }
@@ -784,9 +942,9 @@ impl Jtac {
 
     /// Cycle through the logistics-relevant scenery buildings (the ones pinned
     /// with logi markers on the F10 map, from `scan_objective_scenery`) tracked
-    /// at this JTAC's nearest objective, lase the next one, and call it out to
-    /// the JTAC's side. Returns the label of the designated building, or `None`
-    /// if there are none left standing there.
+    /// at this JTAC's nearest objective and lase the next one. Returns the
+    /// callout for it (the caller decides who hears it), or `None` if there
+    /// are none left standing there.
     pub fn designate_building(&mut self, db: &mut Db, lua: MizLua) -> Result<Option<CompactString>> {
         let candidates = db.ephemeral.scenery_at_objective(self.location.oid);
         if candidates.is_empty() {
@@ -797,7 +955,12 @@ impl Jtac {
         let (id, label) = candidates[self.building_idx].clone();
         if let Some(bt) = &self.building_target {
             if bt.id == id {
-                return Ok(Some(bt.label.clone()));
+                return Ok(Some(format_compact!(
+                    "JTAC {} still designating building: {} (logistics target), code {}",
+                    self.gid,
+                    bt.label,
+                    self.code
+                )));
             }
         }
         let pos = match Object::get_instance(lua, &id) {
@@ -831,9 +994,9 @@ impl Jtac {
             .object_id()?;
         let mid = MarkId::new();
         let diff = Vector2::new(pos.x, pos.z) - self.location.pos;
-        let brg_deg = radians_to_degrees(diff.y.atan2(diff.x).rem_euclid(std::f64::consts::TAU)) as u32;
+        let brg_deg = mag_deg(dcso3::azumith2d(diff), self.magvar_deg);
         let msg = format_compact!(
-            "JTAC {} designating building: {label} (logistics target) {brg_deg}° / {:.1}km, code {}",
+            "JTAC {} designating building: {label} (logistics target) {brg_deg:03}°M / {:.1}km from the JTAC, code {}",
             self.gid,
             diff.magnitude() / 1000.,
             self.code
@@ -844,12 +1007,11 @@ impl Jtac {
             .context("marking building target")?;
         self.building_target = Some(BuildingTarget {
             id,
-            label: label.clone(),
+            label,
             spot,
             mark: Some(mid),
         });
-        db.ephemeral.msgs().panel_to_side(15, false, self.side, msg);
-        Ok(Some(label))
+        Ok(Some(msg))
     }
 
     fn remove_building_target(&mut self, lua: MizLua) -> Result<()> {
@@ -861,33 +1023,14 @@ impl Jtac {
         Ok(())
     }
 
+    /// Change the laser code (see `apply_code_part` for what `code_part` may
+    /// be). The pins that print the code are redrawn by the caller, which has
+    /// the db.
     fn set_code(&mut self, lua: MizLua, code_part: u16) -> Result<()> {
-        let thousands = code_part / 1000;
-        let hundreds = code_part / 100;
-        let tens = code_part / 10;
-        if thousands > 9 || (thousands > 0 && code_part % 1000 > 0) || (hundreds > 0 && code_part % 100 > 0) || (tens > 0 && code_part % 10 > 0)
-        {
-            bail!("invalid code part {code_part}, mixed scales")
-        }
-        if thousands > 0 {
-            let rest = self.code % 1000;
-            self.code = code_part + rest;
-        } else if hundreds > 0 {
-            let thou = self.code / 1000;
-            let tens_ones = self.code % 100;
-            self.code = 1000 * thou + code_part + tens_ones;
-        } else if tens > 0 {
-            let thou_hund = self.code / 100;
-            let ones = self.code % 10;
-            self.code = 100 * thou_hund + code_part + ones;
-        } else {
-            let c = self.code / 10;
-            self.code = 10 * c + code_part;
-        }
+        self.code = apply_code_part(self.code, code_part)?;
         if let Some(target) = &self.target {
             let spot = Spot::get_instance(lua, &target.spot).context("getting laser spot")?;
             spot.set_code(self.code).context("setting laser code")?;
-            self.mark_target(lua).context("marking target")?
         }
         Ok(())
     }
@@ -1030,8 +1173,11 @@ impl Jtac {
         if let Some(target) = &self.target {
             if let Some(ct) = self.contacts.get(&target.id) {
                 let now = Utc::now();
-                if now - self.last_smoke < Duration::seconds(60) {
-                    let rdy = (now - self.last_smoke).num_seconds();
+                let cooldown = Duration::seconds(60);
+                let since = now - self.last_smoke;
+                if since < cooldown {
+                    // was the time SINCE the last smoke, which counted up
+                    let rdy = (cooldown - since).num_seconds().max(1);
                     bail!("smoke will not be ready for another {}s", rdy)
                 }
                 self.last_smoke = now;
@@ -1204,8 +1350,8 @@ impl Jtac {
         gid: &GroupId,
         mut n: Vec<u8>,
     ) -> Result<()> {
-        let per_target = n.pop().unwrap();
-        let magazine_expend = n.pop().unwrap();
+        let per_target = n.pop().ok_or_else(|| anyhow!("missing ALCM per-target count"))?;
+        let magazine_expend = n.pop().ok_or_else(|| anyhow!("missing ALCM expend"))?;
 
         match self.target.as_mut() {
             None => bail!("no target"),
@@ -1441,7 +1587,17 @@ impl Jtac {
                     (inst.position.p.0, inst.velocity)
                 }
             };
-            let contact = self.contacts.get_mut(&target.id).unwrap();
+            // "the target is a contact" normally holds, but it has been seen to
+            // break (fast slot cycling) and this used to unwrap -- a panic in
+            // the timed-events loop. Skip the update and let the next contact
+            // pass re-acquire instead.
+            let Some(contact) = self.contacts.get_mut(&target.id) else {
+                warn!(
+                    "jtac {} target {} is not among its contacts, skipping position update",
+                    self.gid, target.id
+                );
+                return Ok(());
+            };
             if (contact.pos - pos).magnitude_squared() > 2. {
                 contact.pos = pos;
                 let typ_clone = contact.typ.clone();
@@ -1449,8 +1605,13 @@ impl Jtac {
                     Spot::get_instance(lua, &target.spot).context("getting the spot instance")?;
                 spot.set_point(LuaVec3(contact.pos + velocity))
                     .context("setting the spot position")?;
-                let _ = contact;
-                self.mark_target(lua).context("marking moved target")?;
+                // Keep the target's own copy current too: the 9-line and the
+                // fire missions read it, and it used to stay where the target
+                // was first lased.
+                if let Some(t) = &mut self.target {
+                    t.pos = pos;
+                }
+                self.mark_target(db, false);
                 if let JtId::Group(gid) = self.gid {
                     let new_target_pos2 = Vector2::new(pos.x, pos.z);
                     let text = format_compact!(
@@ -1566,6 +1727,14 @@ pub struct Jtacs {
     artillery_adjustment: FxHashMap<GroupId, ArtilleryAdjustment>,
     code_by_location: LocByCode,
     menu_dirty: FxHashMap<Side, FxHashSet<ObjectiveId>>,
+    /// Callouts waiting for `menu::jtac::flush_jtac_notices`.
+    notices: Vec<JtacNotice>,
+    /// The read-only pin each group last got from "Status", keyed by miz
+    /// group. Replaced on the next Status instead of piling up -- every click
+    /// used to drop a permanent one.
+    status_marks: FxHashMap<dcso3::env::miz::GroupId, MarkId>,
+    /// Magnetic variation, refreshed every contact update, see `Jtac::magvar_deg`.
+    magvar_deg: f64,
 }
 
 impl Jtacs {
@@ -1585,6 +1754,33 @@ impl Jtacs {
 
     pub fn jtacs(&self) -> impl Iterator<Item = &Jtac> {
         self.jtacs.values().flat_map(|jtx| jtx.values())
+    }
+
+    /// Drain the queued callouts, see `JtacNotice`.
+    pub fn take_notices(&mut self) -> Vec<JtacNotice> {
+        std::mem::take(&mut self.notices)
+    }
+
+    /// Remember `mark` as `group`'s status pin, returning the one it replaces.
+    pub fn replace_status_mark(
+        &mut self,
+        group: dcso3::env::miz::GroupId,
+        mark: MarkId,
+    ) -> Option<MarkId> {
+        self.status_marks.insert(group, mark)
+    }
+
+    /// Other JTACs on `side` lasing on `code`.
+    pub fn code_users(&self, side: Side, code: u16, except: JtId) -> SmallVec<[JtId; 4]> {
+        self.jtacs
+            .get(&side)
+            .map(|jtx| {
+                jtx.values()
+                    .filter(|j| j.code == code && j.gid != except)
+                    .map(|j| j.gid)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The objective a gun battery belongs to -- the nearest friendly objective
@@ -1897,7 +2093,9 @@ impl Jtacs {
 
     /// set part of the laser code, defined by the scale of the passed in number. For example,
     /// passing 600 sets the hundreds part of the code to 6. passing 8 sets the ones part of the code to 8.
-    /// other parts of the existing code are left alone.
+    /// other parts of the existing code are left alone. A whole four digit code
+    /// (e.g. 1513) replaces the code outright. The result must be a valid code
+    /// (`validate_laser_code`).
     pub fn set_code_part(&mut self, db: &mut Db, lua: MizLua, gid: &JtId, code_part: u16) -> Result<()> {
         let jt = self.get_mut(gid)?;
         let prev_code = jt.code;
@@ -1906,6 +2104,11 @@ impl Jtacs {
         jt.set_code(lua, code_part)?;
         let code = jt.code;
         jt.persist_state(db);
+        // Both pins print the code, so they are redrawn with it; and the
+        // JTAC's menu label carries it too.
+        jt.mark_target(db, true);
+        jt.draw_layer(db);
+        jt.menu_dirty = true;
         Self::remove_code_by_location(&mut self.code_by_location, side, oid, prev_code, *gid);
         Self::add_code_by_location(&mut self.code_by_location, side, oid, code, *gid);
         Ok(())
@@ -2044,15 +2247,19 @@ impl Jtacs {
                         },
                     };
                     if dead {
+                        let typ = jt.target.as_ref().map(|t| t.typ.clone());
                         if let Err(e) = jt.remove_target(db, lua) {
                             warn!("1 could not remove jtac target {:?}", e)
                         }
-                        db.ephemeral.msgs().panel_to_side(
-                            10,
-                            false,
-                            jt.side,
-                            format_compact!("{} target destroyed", jt.gid),
-                        );
+                        let text = match typ {
+                            Some(typ) => format_compact!(
+                                "JTAC {} [{}]: target {typ} destroyed",
+                                jt.display_name(),
+                                jt.code
+                            ),
+                            None => format_compact!("JTAC {}: target destroyed", jt.display_name()),
+                        };
+                        self.notices.push(jt.notice(text));
                     }
                     true
                 })
@@ -2123,6 +2330,17 @@ impl Jtacs {
         if !saw_jtacs.contains(&id) {
             saw_jtacs.push(id)
         }
+        let Some(location) = JtacLocation::new(db, pos) else {
+            warn!("jtac {id} has no objective to locate itself by, skipping it");
+            return Ok(());
+        };
+        let magvar_deg = self.magvar_deg;
+        // Codes already taken on this side, for a JTAC being created now.
+        let in_use: FxHashSet<u16> = match self.jtacs.get(&side) {
+            Some(jtx) if !jtx.contains_key(&id) => jtx.values().map(|j| j.code).collect(),
+            Some(_) => FxHashSet::default(),
+            None => FxHashSet::default(),
+        };
         let detected = self.detected.entry(side.opposite()).or_default();
         let range = (spec.range as f64).powi(2);
         let jtac = self
@@ -2132,27 +2350,27 @@ impl Jtacs {
             .entry(id)
             .or_insert_with(|| {
                 let mut jt = Jtac::new(
-                    db,
                     id,
                     spec.name.as_deref().map(CompactString::new),
                     side,
                     db.ephemeral.cfg.jtac_priority.clone(),
-                    pos,
+                    location,
                     air,
-                    spec.default_laser_code,
+                    pick_laser_code(spec.default_laser_code, &in_use),
                     spec.range as f64,
                 );
+                jt.magvar_deg = magvar_deg;
                 if let Some(st) = state.clone() {
                     jt.apply_state(st);
                     let obj_name = db.objective(&jt.location.oid).map(|o| o.name()).unwrap_or("Unknown location");
-                    let bearing = (jt.location.bearing * 180.0 / std::f64::consts::PI).round();
-                    let name_str = jt.name.as_deref().unwrap_or("");
-                    let display = if name_str.is_empty() {
-                        format_compact!("{}", jt.gid)
-                    } else {
-                        format_compact!("{} ({})", name_str, jt.gid)
-                    };
-                    let msg = format_compact!("JTAC {} is online at {} degrees {:.0} meters from {}", display, bearing, jt.location.distance, obj_name);
+                    let msg = format_compact!(
+                        "JTAC {} [{}] is online {:03}°M {:.0} meters from {}",
+                        jt.display_name(),
+                        jt.code,
+                        mag_deg(jt.location.bearing, magvar_deg),
+                        jt.location.distance,
+                        obj_name
+                    );
                     db.ephemeral.msgs().panel_to_side(10, false, jt.side, msg);
                 }
                 self.menu_dirty
@@ -2169,7 +2387,8 @@ impl Jtacs {
                 jt
             });
         let prev_loc = jtac.location;
-        jtac.location = JtacLocation::new(db, pos);
+        jtac.location = location;
+        jtac.magvar_deg = magvar_deg;
         let jtac_moved = (prev_loc.pos - jtac.location.pos).magnitude_squared() > 1.0;
         if jtac_moved {
             if let JtId::Group(gid) = jtac.gid {
@@ -2265,7 +2484,12 @@ impl Jtacs {
             let id = EnId::Player(*ucid);
             saw_units.insert(id);
             let detected = detected.entry(id).or_default();
-            let tags = db.ephemeral.cfg.unit_classification[&inst.typ];
+            // Indexed directly before: an unclassified player airframe
+            // panicked the whole contact update.
+            let Some(tags) = db.ephemeral.cfg.unit_classification.get(&inst.typ).copied() else {
+                warn!("jtac: player aircraft {} is not in unit_classification", inst.typ);
+                continue;
+            };
             if !jtac.filter.is_empty() && !tags.intersects(jtac.filter) {
                 to_remove.push(id);
                 continue;
@@ -2302,6 +2526,7 @@ impl Jtacs {
         db: &mut Db,
     ) -> Result<FxHashMap<Side, FxHashSet<ObjectiveId>>> {
         let land = Land::singleton(lua)?;
+        self.magvar_deg = crate::atis::magnetic_variation_deg(lua, &db.ephemeral.cfg);
         self.prepare_detected();
         let mut saw_jtacs: SmallVec<[JtId; 32]> = smallvec![];
         let mut saw_units: FxHashSet<EnId> = FxHashSet::default();
@@ -2367,19 +2592,22 @@ impl Jtacs {
                 }
             })
         }
-        for (side, gid, uid) in lost_targets {
+        for (_, gid, uid) in lost_targets {
+            // `?` here used to abandon the rest of the update (menus, the
+            // acquire callouts) over one JTAC that had just gone away.
+            let Ok(jt) = self.get_mut(&gid) else {
+                warn!("lost target for jtac {gid}, which no longer exists");
+                continue;
+            };
             match uid {
-                Some(uid) => match self.get_mut(&gid)?.remove_contact(lua, db, &uid) {
+                Some(uid) => match jt.remove_contact(lua, db, &uid) {
                     Ok(_) => (),
                     Err(e) => warn!("3 could not remove jtac target {uid} {:?}", e),
                 },
                 None => {
-                    db.ephemeral.msgs().panel_to_side(
-                        10,
-                        false,
-                        side,
-                        format_compact!("JTAC {gid} target lost"),
-                    );
+                    let notice =
+                        jt.notice(format_compact!("JTAC {} [{}]: target lost", jt.display_name(), jt.code));
+                    self.notices.push(notice);
                 }
             }
         }
@@ -2404,15 +2632,12 @@ impl Jtacs {
                 }
             }
         }
-        let mut msgs: SmallVec<[(Side, CompactString); 32]> = smallvec![];
+        // One line to the players following the JTAC. This was the full
+        // multi-line status panel, to the whole coalition, on every acquire.
         for jtac in new_contacts {
-            let msg = jtac
-                .status(db, &self.code_by_location)
-                .with_context(|| format_compact!("generating jtac status for {}", jtac.gid))?;
-            msgs.push((jtac.side, msg))
-        }
-        for (side, msg) in msgs {
-            db.ephemeral.msgs().panel_to_side(10, false, side, msg);
+            if let Some(line) = jtac.acquired_line(db) {
+                self.notices.push(jtac.notice(line));
+            }
         }
         for (side, jtx) in self.jtacs.iter_mut() {
             for jt in jtx.values_mut() {
@@ -2426,5 +2651,55 @@ impl Jtacs {
             }
         }
         Ok(std::mem::take(&mut self.menu_dirty))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn laser_code_validation() {
+        for ok in [1111, 1688, 1788, 1511, 1234] {
+            assert!(validate_laser_code(ok).is_ok(), "{ok}");
+        }
+        for bad in [0, 1000, 1110, 1189, 1800, 1900, 2111, 1698, 11111, 688] {
+            assert!(validate_laser_code(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn code_parts_and_whole_codes() {
+        // whole codes, which "-jtac <id> code 1688" used to reject
+        assert_eq!(apply_code_part(1111, 1688).unwrap(), 1688);
+        assert!(apply_code_part(1688, 1699).is_err());
+        // single digits at their scale, as the F10 Code menu sends them
+        assert_eq!(apply_code_part(1688, 1000).unwrap(), 1688);
+        assert_eq!(apply_code_part(1688, 500).unwrap(), 1588);
+        assert_eq!(apply_code_part(1688, 30).unwrap(), 1638);
+        assert_eq!(apply_code_part(1688, 2).unwrap(), 1682);
+        // digits that make an invalid code
+        assert!(apply_code_part(1688, 9).is_err());
+        assert!(apply_code_part(1688, 0).is_err());
+        assert!(apply_code_part(1688, 800).is_err());
+        // mixed scales that aren't a whole code
+        assert!(apply_code_part(1688, 150).is_err());
+    }
+
+    #[test]
+    fn new_jtacs_get_unique_codes() {
+        let mut used = FxHashSet::default();
+        let a = pick_laser_code(1688, &used);
+        assert_eq!(a, 1688);
+        used.insert(a);
+        let b = pick_laser_code(1688, &used);
+        assert_ne!(b, a);
+        assert!(validate_laser_code(b).is_ok());
+        // wraps round past 1788
+        let used: FxHashSet<u16> = (1688u16..=1788).collect();
+        let c = pick_laser_code(1688, &used);
+        assert!(c < 1688 && validate_laser_code(c).is_ok());
+        // an invalid configured default falls back to a valid one
+        assert!(validate_laser_code(pick_laser_code(1000, &FxHashSet::default())).is_ok());
     }
 }
