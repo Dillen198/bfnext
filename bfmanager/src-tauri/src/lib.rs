@@ -7,6 +7,7 @@
 
 pub mod agent;
 pub mod bot;
+pub mod botcfg;
 pub mod config;
 pub mod desktop;
 pub mod update;
@@ -387,10 +388,106 @@ async fn open_path(which: String) -> CmdResult<()> {
         "logs" => config::logs_dir(),
         "backups" => config::backups_dir(),
         "bot" => ManagerConfig::load().bot_dir().ok_or("no bot folder configured")?,
+        "bot-config" => botcfg::current_config_dir().map_err(err)?,
         _ => return Err("unknown folder".into()),
     };
     std::process::Command::new("explorer.exe").arg(target).spawn().map_err(err)?;
     Ok(())
+}
+
+// ---- DCSServerBot's config files (the BOT CONFIG tab) -------------------------------
+//
+// Direct file edits, not the OPS API: this app runs on the box as its admin,
+// so it may change the keys the OPS API refuses (programs, paths, URLs,
+// update source and keys, tokens). See botcfg.rs for the guard rails.
+
+#[derive(Serialize)]
+struct BotConfigList {
+    dir: String,
+    files: Vec<botcfg::ConfigFile>,
+}
+
+#[tauri::command]
+async fn list_bot_configs() -> CmdResult<BotConfigList> {
+    blocking(|| {
+        let dir = botcfg::current_config_dir()?;
+        Ok(BotConfigList { files: botcfg::list(&dir)?, dir: botcfg::display(&dir) })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn read_bot_config(rel: String) -> CmdResult<botcfg::ConfigText> {
+    blocking(move || botcfg::read(&botcfg::current_config_dir()?, &rel)).await
+}
+
+#[tauri::command]
+async fn validate_bot_config(rel: String, text: String) -> CmdResult<botcfg::Validation> {
+    blocking(move || Ok(botcfg::validate(&rel, &text))).await
+}
+
+/// Errors starting with `CONFLICT:` mean the file changed since it was read.
+#[tauri::command]
+async fn write_bot_config(rel: String, text: String, expected_sha: String) -> CmdResult<botcfg::Written> {
+    blocking(move || botcfg::write(&botcfg::current_config_dir()?, &rel, &text, &expected_sha)).await
+}
+
+#[tauri::command]
+async fn config_checks() -> CmdResult<Vec<botcfg::Check>> {
+    blocking(|| Ok(botcfg::checks(&botcfg::current_config_dir()?))).await
+}
+
+#[tauri::command]
+async fn generate_secret() -> CmdResult<String> {
+    blocking(botcfg::generate_secret).await
+}
+
+#[tauri::command]
+async fn read_public_key(path: Option<String>) -> CmdResult<botcfg::PublicKey> {
+    blocking(move || botcfg::read_public_key(path.as_deref())).await
+}
+
+#[derive(Serialize)]
+struct ConfigValuePreview {
+    /// secret values masked
+    change: botcfg::Change,
+    /// of the file the change was planned against; hand it to set_config_value
+    sha256: String,
+}
+
+/// What set_config_value would change, without writing. Errors starting with
+/// `MANUAL:` mean the edit can't be done safely by line -- use the editor.
+#[tauri::command]
+async fn preview_config_value(rel: String, path: Vec<String>, value: String) -> CmdResult<ConfigValuePreview> {
+    blocking(move || {
+        let cur = botcfg::read(&botcfg::current_config_dir()?, &rel)?;
+        let (_, change) = botcfg::plan_set(&cur.text, &path, &value)?;
+        Ok(ConfigValuePreview { change: botcfg::mask_change(&change), sha256: cur.sha256 })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct ConfigValueSet {
+    written: botcfg::Written,
+    change: botcfg::Change,
+}
+
+/// One scalar set in place, comments kept; same conflict / backup / atomic
+/// path as write_bot_config.
+#[tauri::command]
+async fn set_config_value(rel: String, path: Vec<String>, value: String, expected_sha: String) -> CmdResult<ConfigValueSet> {
+    blocking(move || {
+        let dir = botcfg::current_config_dir()?;
+        let cur = botcfg::read(&dir, &rel)?;
+        if !cur.sha256.eq_ignore_ascii_case(expected_sha.trim()) {
+            anyhow::bail!("{}: {rel} was changed on disk since it was read -- reload and try again", botcfg::CONFLICT);
+        }
+        let (text, change) = botcfg::plan_set(&cur.text, &path, &value)?;
+        let written = botcfg::write(&dir, &rel, &text, &cur.sha256)?;
+        Ok(ConfigValueSet { written, change: botcfg::mask_change(&change) })
+    })
+    .await
 }
 
 // ---- the window lives in the tray -------------------------------------------------
@@ -521,6 +618,15 @@ pub fn run() {
             ops_request,
             read_log,
             open_path,
+            list_bot_configs,
+            read_bot_config,
+            validate_bot_config,
+            write_bot_config,
+            config_checks,
+            generate_secret,
+            read_public_key,
+            preview_config_value,
+            set_config_value,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fowl Engine Manager");
