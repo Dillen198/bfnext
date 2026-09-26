@@ -6,6 +6,8 @@
 #   .\deploy\publish-release.ps1 -Channel beta -Notes "try the new CAP"
 #   .\deploy\publish-release.ps1 -Folder \\server\fowl-releases   # LAN folder source
 #   .\deploy\publish-release.ps1 -DryRun                # build + manifest only, publish nothing
+#   .\deploy\publish-release.ps1 -SignOnly -OutDir <d>    # sign what a -DryRun left in <d>
+#   .\deploy\publish-release.ps1 -PublishOnly -OutDir <d> -Channel <c>   # publish it (must be signed)
 #
 # A release is always ONE COMMIT: by default the build runs in a fresh
 # `git worktree` of -Ref (HEAD), so whatever else is half-edited in this tree
@@ -41,7 +43,9 @@ param(
     [switch]$DryRun,
     [string]$TargetDir = (Join-Path $env:LOCALAPPDATA "fowl-release\target"),
     [string]$OutDir,
-    [string]$SigningKey = (Join-Path $env:USERPROFILE ".tauri\fowl-engine.key")
+    [string]$SigningKey = (Join-Path $env:USERPROFILE ".tauri\fowl-engine.key"),
+    [switch]$SignOnly,
+    [switch]$PublishOnly
 )
 
 # "Continue", not "Stop": Windows PowerShell 5.1 turns any stderr line from a
@@ -56,6 +60,76 @@ function Run([string]$what, [scriptblock]$cmd) {
     Say $what
     & $cmd
     if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE)" }
+}
+
+# Sign manifest.json -> manifest.json.sig with $SigningKey.
+function Sign-Manifest([string]$manifestPath) {
+    if (-not (Test-Path $SigningKey)) { throw "no signing key at $SigningKey (pass -SigningKey)" }
+    # `tauri signer` from bfmanager's own dev dependencies: the same tool (and
+    # key format) the manager's releases are signed with.
+    $mgr = Join-Path $repoRoot "bfmanager"
+    if (-not (Test-Path (Join-Path $mgr "node_modules\.bin\tauri.cmd"))) {
+        Push-Location $mgr
+        try { Run "npm ci (bfmanager, for tauri signer)" { npm ci --no-audit --no-fund --ignore-scripts } } finally { Pop-Location }
+    }
+    Remove-Item "$manifestPath.sig" -ErrorAction SilentlyContinue
+    # The password travels in the environment the signer reads, never on a
+    # command line. Unset/blank = a key made without one ("--password=" is
+    # then passed so the signer doesn't sit on a hidden prompt).
+    $pwArgs = @()
+    if ("$env:FOWL_ENGINE_SIGNING_PASSWORD") { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $env:FOWL_ENGINE_SIGNING_PASSWORD }
+    else { $pwArgs = @("--password=") }
+    Push-Location $mgr
+    try { Run "sign manifest.json" { npx tauri signer sign --private-key-path "$SigningKey" @pwArgs "$manifestPath" } }
+    finally {
+        Pop-Location
+        Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path "$manifestPath.sig")) { throw "tauri signer wrote no $manifestPath.sig" }
+    if (Test-Path "$SigningKey.pub") {
+        Say ("  signed; servers need autoupdate.public_key = the key in {0}" -f "$SigningKey.pub") "Gray"
+    }
+}
+
+# Publish what is in manifest.json's folder: to -Folder, or as a GitHub release.
+function Publish-Out([string]$manifestPath, [string]$tag, [string]$notes, [string]$commit, [bool]$checkPushed) {
+    $out = Split-Path $manifestPath
+    if (-not (Test-Path "$manifestPath.sig")) { throw "$manifestPath is not signed -- servers would refuse it" }
+    $assets = Get-ChildItem $out -File | ForEach-Object { $_.FullName }
+    if ($Folder) {
+        $dest = Join-Path $Folder $tag
+        if (Test-Path $dest) { throw "$dest already exists -- releases are immutable, pick a new -Tag" }
+        New-Item -ItemType Directory -Force $dest -ErrorAction Stop | Out-Null
+        # manifest last, so a server scanning the folder never sees a half-copied release
+        Get-ChildItem $out -File | Where-Object Name -ne "manifest.json" | Copy-Item -Destination $dest -ErrorAction Stop
+        Copy-Item $manifestPath $dest -ErrorAction Stop
+        Say "published to $dest" "Green"
+    } else {
+        if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw "gh (GitHub CLI) is not installed -- or use -Folder" }
+        if ($checkPushed) {
+            $onRemote = git -C $repoRoot branch -r --contains $commit 2>$null
+            if (-not $onRemote) { throw "commit $($commit.Substring(0, 12)) is not pushed to any remote branch -- push it first (the release tag points at it)" }
+        }
+        $ghArgs = @("release", "create", $tag) + $assets + @("--repo", $Repo, "--title", $tag, "--notes", $notes, "--target", $commit)
+        if ($Channel -eq "beta") { $ghArgs += "--prerelease" }
+        Run "gh release create $tag" { gh @ghArgs }
+        Say "published https://github.com/$Repo/releases/tag/$tag" "Green"
+    }
+    Say "servers with autoupdate enabled pick it up on their next check (or: OPS page -> Check now, /feops update_check)" "Green"
+}
+
+# -SignOnly / -PublishOnly: the later stages of a release a `-DryRun` build
+# left in -OutDir, so CI can build without the signing key or the GitHub
+# token in reach, sign with only the key, and publish with only the token.
+if ($SignOnly -or $PublishOnly) {
+    if (-not $OutDir) { throw "-SignOnly / -PublishOnly need -OutDir: the folder a -DryRun build left" }
+    $manifestPath = Join-Path $OutDir "manifest.json"
+    if (-not (Test-Path $manifestPath)) { throw "no manifest.json in $OutDir" }
+    if ($SignOnly) { Sign-Manifest $manifestPath; return }
+    $m = Get-Content $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    if ($m.channel -ne $Channel) { throw "manifest says channel $($m.channel), -Channel says $Channel" }
+    Publish-Out $manifestPath $m.tag $m.notes $m.commit $false
+    return
 }
 
 # ---- what are we building ------------------------------------------------------
@@ -204,66 +278,21 @@ try {
     [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding $false))
     Say "manifest written: $manifestPath"
 
-    # ---- sign ----------------------------------------------------------------------
+    # ---- sign + publish --------------------------------------------------------------
 
     if (Test-Path $SigningKey) {
-        # `tauri signer` from bfmanager's own dev dependencies: the same tool
-        # (and key format) the manager's releases are signed with.
-        $mgr = Join-Path $repoRoot "bfmanager"
-        if (-not (Test-Path (Join-Path $mgr "node_modules\.bin\tauri.cmd"))) {
-            Push-Location $mgr
-            try { Run "npm ci (bfmanager, for tauri signer)" { npm ci --no-audit --no-fund --ignore-scripts } } finally { Pop-Location }
-        }
-        Remove-Item "$manifestPath.sig" -ErrorAction SilentlyContinue
-        # The password travels in the environment the signer reads, never on
-        # a command line. Unset/blank = a key made without one ("--password="
-        # is then passed so the signer doesn't sit on a hidden prompt).
-        $pwArgs = @()
-        if ("$env:FOWL_ENGINE_SIGNING_PASSWORD") { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $env:FOWL_ENGINE_SIGNING_PASSWORD }
-        else { $pwArgs = @("--password=") }
-        Push-Location $mgr
-        try { Run "sign manifest.json" { npx tauri signer sign --private-key-path "$SigningKey" @pwArgs "$manifestPath" } }
-        finally {
-            Pop-Location
-            Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
-        }
-        if (-not (Test-Path "$manifestPath.sig")) { throw "tauri signer wrote no $manifestPath.sig" }
-        if (Test-Path "$SigningKey.pub") {
-            Say ("  signed; servers need autoupdate.public_key = the key in {0}" -f "$SigningKey.pub") "Gray"
-        }
+        Sign-Manifest $manifestPath
     } elseif ($DryRun) {
         Say "no signing key at $SigningKey -- dry run left manifest.json UNSIGNED (servers would refuse it)" "Yellow"
     } else {
         throw "no signing key at $SigningKey (pass -SigningKey). Servers refuse unsigned releases -- see deploy/auto-update.md, 'Signing releases'."
     }
 
-    # ---- publish -------------------------------------------------------------------
-
     if ($DryRun) {
         Say "dry run -- nothing published. Output: $OutDir" "Yellow"
         return
     }
-    $assets = Get-ChildItem $OutDir -File | ForEach-Object { $_.FullName }
-    if ($Folder) {
-        $dest = Join-Path $Folder $Tag
-        if (Test-Path $dest) { throw "$dest already exists -- releases are immutable, pick a new -Tag" }
-        New-Item -ItemType Directory -Force $dest -ErrorAction Stop | Out-Null
-        # manifest last, so a server scanning the folder never sees a half-copied release
-        Get-ChildItem $OutDir -File | Where-Object Name -ne "manifest.json" | Copy-Item -Destination $dest -ErrorAction Stop
-        Copy-Item $manifestPath $dest -ErrorAction Stop
-        Say "published to $dest" "Green"
-    } else {
-        if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw "gh (GitHub CLI) is not installed -- or use -Folder" }
-        if (-not $WorkingTree -or -not $dirty) {
-            $onRemote = git -C $repoRoot branch -r --contains $commit 2>$null
-            if (-not $onRemote) { throw "commit $short is not pushed to any remote branch -- push it first (the release tag points at it)" }
-        }
-        $ghArgs = @("release", "create", $Tag) + $assets + @("--repo", $Repo, "--title", $Tag, "--notes", $Notes, "--target", $commit)
-        if ($Channel -eq "beta") { $ghArgs += "--prerelease" }
-        Run "gh release create $Tag" { gh @ghArgs }
-        Say "published https://github.com/$Repo/releases/tag/$Tag" "Green"
-    }
-    Say "servers with autoupdate enabled pick it up on their next check (or: OPS page -> Check now, /feops update_check)" "Green"
+    Publish-Out $manifestPath $Tag $Notes $commit (-not $WorkingTree -or -not $dirty)
 }
 finally {
     if ($worktree) {
