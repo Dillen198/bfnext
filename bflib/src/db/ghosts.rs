@@ -27,8 +27,11 @@ for more details.
 //! group that should be in the world right now, with no DCS object mapped
 //! to it), tries one respawn, and if that doesn't bring it back, retires it:
 //! objective units are marked dead so the objective's health says what is
-//! really there, player-side groups are deleted. The rest of this module is
-//! the admin/owner diagnostics for "why won't this base repair".
+//! really there, player-side groups are deleted. Before either step DCS is
+//! asked directly (`Unit.getByName`) whether each unit is there: one that is
+//! was only missing its Birth event, so it is re-mapped, not touched. The
+//! rest of this module is the admin/owner diagnostics for "why won't this
+//! base repair".
 
 use super::{Db, objective::Objective};
 use crate::spawnctx::Despawn;
@@ -42,10 +45,16 @@ use bfprotocols::{
 };
 use chrono::prelude::*;
 use compact_str::{CompactString, format_compact};
-use dcso3::{Vector2, azumith2d_to, coalition::Side, group::GroupCategory};
+use dcso3::{
+    MizLua, Vector2, azumith2d_to,
+    coalition::Side,
+    group::GroupCategory,
+    object::{DcsObject, DcsOid},
+    unit::{ClassUnit, Unit},
+};
 use enumflags2::BitFlags;
 use fxhash::{FxHashMap, FxHashSet};
-use log::warn;
+use log::{info, warn};
 use smallvec::SmallVec;
 
 /// How long a group has to stay a ghost before anything is done about it,
@@ -263,7 +272,8 @@ struct ThreatUnit {
     unarmed: bool,
     /// In `units_potentially_close_to_enemies`, i.e. the threat check sees it.
     counted: bool,
-    live: bool,
+    /// Has an entry in `object_id_by_uid` (the engine thinks it's in DCS).
+    mapped: bool,
 }
 
 /// Coarse distance for the owner-facing text: enough to go and look, no more.
@@ -465,9 +475,68 @@ impl Db {
         Ok(true)
     }
 
-    /// The slow-tick ghost pass. O(units in candidate groups), no Lua calls;
-    /// the only thing it asks DCS for is the one respawn, through the queue.
-    pub fn reconcile_ghosts(&mut self, now: DateTime<Utc>) {
+    /// Ask DCS whether the db unit `uid` is really in the world, by name.
+    /// The object-id map only ever learns about a unit from its Birth event,
+    /// so a Birth we missed would otherwise read as a ghost; this is the
+    /// ground truth the state machine checks before it acts.
+    fn dcs_live_unit(&self, lua: MizLua, uid: &UnitId) -> Option<DcsOid<ClassUnit>> {
+        let unit = self.persisted.units.get(uid)?;
+        // getByName on a name DCS doesn't know returns nil, which the binding
+        // reports as an error: that's "missing", not a failure.
+        let dcs = Unit::get_by_name(lua, unit.name.as_str()).ok()?;
+        if !dcs.is_exist().unwrap_or(false) {
+            return None;
+        }
+        // Below 1 is a wreck by DCS's own rule (see `Unit::get_life`).
+        if dcs.get_life().map(|l| l < 1.).unwrap_or(true) {
+            return None;
+        }
+        dcs.object_id().ok()
+    }
+
+    /// Record a live DCS object for `uid` exactly as `unit_born` would have.
+    fn remap_live_unit(&mut self, uid: UnitId, id: DcsOid<ClassUnit>) {
+        self.ephemeral.uid_by_object_id.insert(id.clone(), uid);
+        self.ephemeral.object_id_by_uid.insert(uid, id);
+        self.ephemeral.units_potentially_close_to_enemies.insert(uid);
+        if let Some(unit) = self.persisted.units.get(&uid)
+            && (unit.tags.contains(UnitTag::Driveable)
+                || unit.tags.contains(UnitTag::Boat))
+        {
+            self.ephemeral.units_able_to_move.insert(uid);
+        }
+    }
+
+    /// Check a ghost group's units against DCS before acting on it. Units DCS
+    /// has alive are re-mapped and dropped from `g.ghosts`; only the ones DCS
+    /// reports missing are left. Returns true if nothing is missing any more.
+    fn confirm_ghosts(&mut self, lua: MizLua, g: &mut GhostGroup) -> bool {
+        let mut remapped = 0;
+        let ghosts = std::mem::take(&mut g.ghosts);
+        for uid in ghosts {
+            match self.dcs_live_unit(lua, &uid) {
+                Some(id) => {
+                    self.remap_live_unit(uid, id);
+                    remapped += 1;
+                }
+                None => g.ghosts.push(uid),
+            }
+        }
+        if remapped > 0 {
+            let name =
+                self.persisted.groups.get(&g.gid).map(|g| g.name.as_str()).unwrap_or("?");
+            info!(
+                "[GHOST] {name} was live after all; re-mapped {remapped} unit(s), {} still missing",
+                g.ghosts.len()
+            );
+        }
+        g.ghosts.is_empty()
+    }
+
+    /// The slow-tick ghost pass. O(units in candidate groups); DCS is only
+    /// asked about a candidate's units at the two decision points (respawn,
+    /// retire), plus the respawn itself through the queue.
+    pub fn reconcile_ghosts(&mut self, lua: MizLua, now: DateTime<Utc>) {
         let epoch = *self.ephemeral.ghosts.epoch.get_or_insert(now);
         let pending = self.ephemeral.spawn_pending_gids();
         let found = self.scan_ghosts(&pending);
@@ -478,14 +547,20 @@ impl Db {
             .ghosts
             .groups
             .retain(|gid, _| found_ids.contains(gid) || pending.contains(gid));
-        for g in found {
+        for mut g in found {
             let track = self
                 .ephemeral
                 .ghosts
                 .groups
                 .entry(g.gid)
                 .or_insert_with(|| GhostTrack::new(now));
-            match ghost_step(track, now, epoch) {
+            let step = ghost_step(track, now, epoch);
+            if step != GhostStep::Wait && self.confirm_ghosts(lua, &mut g) {
+                // All there after all: no respawn, no retire, clock reset.
+                self.ephemeral.ghosts.groups.remove(&g.gid);
+                continue;
+            }
+            match step {
                 GhostStep::Wait => (),
                 GhostStep::Respawn => {
                     warn!(
@@ -576,11 +651,20 @@ impl Db {
 
     /// `purge-ghosts` admin command: retire every current ghost now, skipping
     /// the grace periods and the whole-garrison guard.
-    pub fn admin_purge_ghosts(&mut self, now: DateTime<Utc>) -> (usize, usize) {
+    pub fn admin_purge_ghosts(
+        &mut self,
+        lua: MizLua,
+        now: DateTime<Utc>,
+    ) -> (usize, usize) {
         let pending = self.ephemeral.spawn_pending_gids();
         let found = self.scan_ghosts(&pending);
         let (mut groups, mut units) = (0, 0);
-        for g in found {
+        for mut g in found {
+            // Skipping the grace periods is fine; skipping the DCS check isn't.
+            if self.confirm_ghosts(lua, &mut g) {
+                self.ephemeral.ghosts.groups.remove(&g.gid);
+                continue;
+            }
             let what = self.describe_ghost(&g);
             match self.retire_ghost(&g, now, true) {
                 Ok(_) => {
@@ -631,7 +715,7 @@ impl Db {
                     air,
                     unarmed: unit.tags.0.contains(UnitTag::Unarmed),
                     counted: close.contains(uid),
-                    live: self.ephemeral.object_id_by_uid.contains_key(uid),
+                    mapped: self.ephemeral.object_id_by_uid.contains_key(uid),
                 });
             }
         };
@@ -721,7 +805,7 @@ impl Db {
 
     /// `whythreat <objective>` admin command: everything that stops the
     /// objective repairing, and every enemy db unit the threat check can see.
-    pub fn admin_why_threat(&self, oid: &ObjectiveId) -> Vec<CompactString> {
+    pub fn admin_why_threat(&self, lua: MizLua, oid: &ObjectiveId) -> Vec<CompactString> {
         let Some(obj) = self.persisted.objectives.get(oid) else {
             return vec![CompactString::from("no such objective")];
         };
@@ -810,8 +894,12 @@ impl Db {
             lines.push(format_compact!("repair blocked: {}", why.join("; ")));
         }
         let units = self.threat_units(obj, true);
+        // Liveness from DCS itself, not the object-id map: the map is what a
+        // missed Birth or Dead event gets wrong, which is what this is for.
+        let live: SmallVec<[bool; 16]> =
+            units.iter().map(|u| self.dcs_live_unit(lua, &u.uid).is_some()).collect();
         let counted = units.iter().filter(|u| u.counted && !u.unarmed).count();
-        let ghosts = units.iter().filter(|u| !u.live).count();
+        let ghosts = live.iter().filter(|l| !**l).count();
         lines.push(format_compact!(
             "enemy db units in threat reach: {} ({} counted by the threat check, {} with no DCS object)",
             units.len(),
@@ -819,7 +907,7 @@ impl Db {
             ghosts
         ));
         let pos = obj.zone.pos();
-        for u in units.iter().take(THREAT_LIST_MAX) {
+        for (u, live) in units.iter().zip(live.iter().copied()).take(THREAT_LIST_MAX) {
             let Some(unit) = self.persisted.units.get(&u.uid) else { continue };
             let gname = self
                 .persisted
@@ -835,7 +923,13 @@ impl Db {
                 unit.side,
                 u.dist / 1000.,
                 brg,
-                if u.live { "live" } else { "GHOST" },
+                // Where DCS and the map disagree, say so: that's the bug.
+                match (live, u.mapped) {
+                    (true, true) => "live",
+                    (true, false) => "live (unmapped)",
+                    (false, true) => "GHOST (still mapped)",
+                    (false, false) => "GHOST",
+                },
                 if u.unarmed { " unarmed" } else { "" },
                 if u.counted { "" } else { " (not in close set)" }
             ));

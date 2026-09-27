@@ -3321,7 +3321,7 @@ fn run_admin_command(
             },
             AdminCommand::WhyThreat { objective } => {
                 let oid = airbase!(&objective);
-                for line in ctx.db.admin_why_threat(&oid) {
+                for line in ctx.db.admin_why_threat(lua, &oid) {
                     reply_ok!("{line}")
                 }
             }
@@ -3331,7 +3331,7 @@ fn run_admin_command(
                 }
             }
             AdminCommand::PurgeGhosts => {
-                let (groups, units) = ctx.db.admin_purge_ghosts(Utc::now());
+                let (groups, units) = ctx.db.admin_purge_ghosts(lua, Utc::now());
                 reply_ok!("purged {units} ghost unit(s) in {groups} group(s)")
             }
             AdminCommand::Reset { winner } => match admin_shutdown(ctx, lua, Some(winner)) {
