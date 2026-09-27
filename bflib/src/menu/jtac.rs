@@ -274,10 +274,14 @@ pub fn jtac_smoke_target(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
             format_compact!("COULD NOT SMOKE TARGET\njtac {}\n{e:#}", arg.snd),
         ),
         Ok(()) => {
+            // The code goes in every time: a JTAC that isn't the side's first
+            // lases on its own code, not 1688, and a pilot still set to 1688
+            // sees the smoke but never finds the spot.
             let msg = format_compact!(
-                "SMOKE DEPLOYED ON TARGET\njtac {} near {}\nrequested by {}",
+                "SMOKE DEPLOYED ON TARGET\njtac {} near {}\nlaser code {}\nrequested by {}",
                 arg.snd,
                 near,
+                jtac.code(),
                 name
             );
             notify_jtac(ctx, arg.snd, &arg.fst, msg)
@@ -374,15 +378,24 @@ pub fn jtac_set_focus(
     let n = jtac.set_focus(&mut ctx.db, lua, pos).context("setting jtac focus")?;
     let (near, name) = change_info(jtac, &ctx.db, ucid);
     let km = JTAC_FOCUS_RADIUS_M / 1000.;
+    let code = jtac.code();
+    let (in_area, nearest) = jtac.focus_area_contacts();
+    let limit_km = jtac.lase_limit() / 1000.;
     let msg = match pos {
         None => format_compact!(
             "JTAC {jtid} near {near}: focus cleared, back to working its whole area\nrequested by {name}"
         ),
+        // It can see them, it just can't reach them with the laser: say so,
+        // and what to do about it, instead of a bare "nothing to lase".
+        Some(_) if n == 0 && in_area > 0 => format_compact!(
+            "JTAC {jtid} near {near}: focusing on {name}'s mark. It sees {in_area} contact(s) there, but the nearest is {:.1} km away and it lases out to {limit_km:.1} km -- move it closer (Actions > DRONE Waypoint) and it will lase on code {code}",
+            nearest.unwrap_or(0.) / 1000.
+        ),
         Some(_) if n == 0 => format_compact!(
-            "JTAC {jtid} near {near}: focusing on {name}'s mark. Nothing it can lase within {km:.0} km of it yet -- it will pick up the first contact there"
+            "JTAC {jtid} near {near}: focusing on {name}'s mark. It sees nothing within {km:.0} km of it yet -- it will lase the first contact there on code {code}"
         ),
         Some(_) => format_compact!(
-            "JTAC {jtid} near {near}: focusing on {name}'s mark, {n} contact(s) within {km:.0} km, lasing the nearest"
+            "JTAC {jtid} near {near}: focusing on {name}'s mark, {n} contact(s) within {km:.0} km, lasing the nearest on code {code}"
         ),
     };
     notify_jtac(ctx, jtid, ucid, msg);

@@ -1169,6 +1169,30 @@ impl Jtac {
         self.focus
     }
 
+    /// How far out this JTAC can put a laser spot, metres.
+    pub fn lase_limit(&self) -> f64 {
+        self.lase_limit_m()
+    }
+
+    /// Contacts inside the focus area, and how far the nearest of them is
+    /// from the JTAC itself -- so a focus that finds nothing to lase can say
+    /// whether that is because the area is empty or out of laser range.
+    pub fn focus_area_contacts(&self) -> (usize, Option<f64>) {
+        let Some(f) = self.focus else { return (0, None) };
+        let jpos = self.location.pos;
+        let mut n = 0;
+        let mut nearest: Option<f64> = None;
+        for ct in self.contacts.values() {
+            let p = Vector2::new(ct.pos.x, ct.pos.z);
+            if (p - f).norm() <= JTAC_FOCUS_RADIUS_M {
+                n += 1;
+                let d = (p - jpos).norm();
+                nearest = Some(nearest.map_or(d, |m: f64| m.min(d)));
+            }
+        }
+        (n, nearest)
+    }
+
     pub fn smoke_target(&mut self, lua: MizLua) -> Result<()> {
         if let Some(target) = &self.target {
             if let Some(ct) = self.contacts.get(&target.id) {
