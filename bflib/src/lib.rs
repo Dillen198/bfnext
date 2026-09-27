@@ -807,7 +807,7 @@ fn try_capture_dismount_info(ctx: &Context, unit: &Unit) -> Option<DismountInfo>
     let id = unit.object_id().ok()?;
     let uid = ctx.db.ephemeral.get_uid_by_object_id(&id)?;
     let su = ctx.db.persisted.units.get(uid)?;
-    // Skip aircraft — only ground vehicles dismount
+    // Skip aircraft â€” only ground vehicles dismount
     if su.tags.contains(UnitTag::Helicopter) || su.tags.contains(UnitTag::Aircraft) {
         return None;
     }
@@ -1170,6 +1170,14 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         Event::Shot(e) => {
             if let Err(e) = ctx.shots_out.shot(&ctx.db, start_ts, &e) {
                 error!("error processing shot event {:?}", e)
+            }
+            if let Some(ucid) = e
+                .initiator
+                .as_ref()
+                .and_then(|u| u.object_id().ok())
+                .and_then(|oid| ctx.db.player_in_unit(false, &oid))
+            {
+                ctx.db.note_shot(&ucid);
             }
             // (Artillery/launcher shots used to be pushed onto
             // `ephemeral.recent_shots` here "to keep nearby objectives awake",
@@ -1715,8 +1723,7 @@ fn return_lives(lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
         };
     }
     let db = &mut ctx.db;
-    let mut returned: SmallVec<[(LifeType, SlotId); 4]> = smallvec![];
-    let mut landed: SmallVec<[SlotId; 4]> = smallvec![];
+    let mut reports: SmallVec<[(SlotId, crate::db::player::LandReport); 4]> = smallvec![];
     ctx.recently_landed.retain(|id, landed_ts| {
         if ts - *landed_ts < Duration::seconds(10) {
             return true;
@@ -1724,9 +1731,8 @@ fn return_lives(lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
         let unit = or_false!(Unit::get_instance(lua, id));
         let pos = or_false!(unit.get_ground_position());
         let slot = or_false!(unit.slot());
-        match db.land(slot.clone(), pos.0, &unit) {
-            Some(typ) => returned.push((typ, slot)),
-            None => landed.push(slot),
+        if let Some(report) = db.land(slot.clone(), pos.0, &unit) {
+            reports.push((slot, report));
         }
         // The landing is processed either way, so always drop the entry.
         // Keeping it whenever no life came back -- landed outside an owned
@@ -1735,31 +1741,91 @@ fn return_lives(lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
         // swallowed its next takeoff.
         false
     });
-    for (typ, slot) in returned {
-        if let Err(e) = message_life(ctx, &slot, Some(typ), "Landing registered, life returned\n") {
-            error!("failed to send life returned message to {:?} {}", slot, e);
+    for (slot, report) in reports {
+        let Some(uid) = slot.as_unit_id() else { continue };
+        let msg = land_debrief(ctx, &report, ts);
+        ctx.db.ephemeral.msgs().panel_to_unit(20, false, uid, msg);
+    }
+}
+
+/// The debrief a pilot gets once a landing is processed: whether it counted,
+/// what the flight did, and what the landing settled. Before it, only a
+/// returned life said anything at all -- on a server without lives a landing
+/// was silent, and pilots logged off not knowing whether it had registered
+/// (Discord, Sept 25).
+fn land_debrief(ctx: &mut Context, r: &crate::db::player::LandReport, now: DateTime<Utc>) -> CompactString {
+    use std::fmt::Write;
+    let name = |db: &Db, oid: ObjectiveId| db.objective(&oid).ok().map(|o| format_compact!("{}", o.name()));
+    let mut m = CompactString::new("");
+    match r.at.and_then(|oid| name(&ctx.db, oid)) {
+        Some(at) => {
+            let _ = writeln!(m, "LANDED at {at} -- landing registered, safe to leave the slot");
+        }
+        None => {
+            let _ = writeln!(m, "LANDED outside a friendly objective -- no landing credit here");
         }
     }
-    // Every processed landing says where it stands. Without lives there was
-    // no message at all, so pilots couldn't tell a registered landing from
-    // one that wasn't, and logged off not knowing (Discord, Sept 25).
-    for slot in landed {
-        let Some(uid) = slot.as_unit_id() else { continue };
-        let at = ctx.db.ephemeral.player_in_slot(&slot).copied().and_then(|ucid| {
-            let inst = ctx.db.player(&ucid)?.current_slot.as_ref()?.1.as_ref()?;
-            inst.landed_at_objective
-        });
-        let msg: CompactString = match at.and_then(|oid| ctx.db.objective(&oid).ok()) {
-            Some(obj) => {
-                format_compact!("Landing registered at {}. Safe to leave the slot.", obj.name())
+    if let Some(took_off) = r.tally.took_off {
+        let mins = (now - took_off).num_minutes().max(0);
+        match r.tally.from.and_then(|oid| name(&ctx.db, oid)) {
+            Some(from) => {
+                let _ = writeln!(m, "Sortie: {mins} min from {from}");
             }
-            None => CompactString::from(
-                "Landed outside a friendly objective: no landing credit here. Leaving the \
-                 slot only counts as a loss if you were hit in the last 10 minutes.",
-            ),
-        };
-        ctx.db.ephemeral.msgs().panel_to_unit(10, false, uid, msg);
+            None => {
+                let _ = writeln!(m, "Sortie: {mins} min");
+            }
+        }
     }
+    if r.tally.fired > 0 {
+        let _ = writeln!(m, "Weapons fired: {}", r.tally.fired);
+    }
+    let kills = r.tally.kill_count();
+    if kills == 0 {
+        let _ = writeln!(m, "Kills: none");
+    } else {
+        let list: Vec<std::string::String> =
+            r.tally.kills.iter().map(|(typ, n)| format!("{n}x {typ}")).collect();
+        let _ = writeln!(m, "Kills: {kills} (+{} pts): {}", r.tally.kill_points, list.join(", "));
+    }
+    if r.at.is_some() {
+        if r.charged > 0 {
+            let _ = writeln!(
+                m,
+                "Airframe/stores: {} charged at takeoff, {} refunded for what's still aboard",
+                r.charged, r.refunded
+            );
+        }
+        if r.banked > 0 {
+            let _ = writeln!(m, "Kill points banked: +{}", r.banked);
+        }
+    } else if r.pending > 0 {
+        let _ = writeln!(
+            m,
+            "Kill points pending: {} -- land at a friendly objective to bank them",
+            r.pending
+        );
+    }
+    let _ = writeln!(m, "Balance: {} pts", r.points);
+    if ctx.db.ephemeral.cfg.limited_lives
+        && let Some(lt) = r.life_type
+    {
+        let left = lives(&mut ctx.db, &r.ucid, Some(lt)).unwrap_or_default();
+        let left = left.trim_end();
+        if r.life_returned {
+            let _ = writeln!(m, "Lives: {left} (life returned)");
+        } else if r.at.is_some() {
+            let _ = writeln!(m, "Lives: {left}");
+        } else {
+            let _ = writeln!(m, "Lives: {left} (no life back away from a friendly objective)");
+        }
+    }
+    if r.at.is_none() {
+        let _ = write!(
+            m,
+            "Leaving the slot here only counts as a loss if you were hit in the last 10 minutes."
+        );
+    }
+    m
 }
 
 fn advise_captureable(ctx: &mut Context) -> Result<()> {
@@ -2042,7 +2108,7 @@ fn tick_smart_commander(_lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
     }
     commander::tick(&mut ctx.db, &cfg, ts, &ucids_by_side);
 
-    // Strategic events — only when campaign_events is also configured.
+    // Strategic events â€” only when campaign_events is also configured.
     if let Some(events_cfg) = ctx.db.ephemeral.cfg.campaign_events.clone() {
         if events_cfg.enabled {
             let player_count = ctx.connected.len();
@@ -2166,9 +2232,9 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
     for effect in effects {
         match effect {
 
-            // C: Artillery/armor barrage — move Armor/Mr/Lr groups into firing range then fire.
+            // C: Artillery/armor barrage â€” move Armor/Mr/Lr groups into firing range then fire.
             // Groups already in range fire immediately; out-of-range groups are given a
-            // waypoint along the src→target vector at (arty_range * 0.85) from the target
+            // waypoint along the srcâ†’target vector at (arty_range * 0.85) from the target
             // with a FireAtPoint task embedded, so DCS AI drives them into position and fires.
             EventEffect::FireBarrage { event_id, side, source_objective, target_pos } => {
                 let land = match Land::singleton(lua) {
@@ -2186,7 +2252,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     .as_ref().map(|c| c.barrage_radius_m).unwrap_or(500.0);
                 let barrage_max_groups = ctx.db.ephemeral.cfg.campaign_events
                     .as_ref().map(|c| c.barrage_max_groups).unwrap_or(5);
-                // Effective weapon range — stay 15% inside it to ensure the AI can engage.
+                // Effective weapon range â€” stay 15% inside it to ensure the AI can engage.
                 let arty_range = ctx.db.ephemeral.cfg.artillery_mission_range as f64 * 0.85;
 
                 let alt = land.get_height(LuaVec2(target_pos)).unwrap_or(0.);
@@ -2281,13 +2347,13 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             line_type: LineType::Dashed,
                             read_only: true,
                         },
-                        Some(format_compact!("Fire Support [{:?}] — {} units firing", side, fired).into()),
+                        Some(format_compact!("Fire Support [{:?}] â€” {} units firing", side, fired).into()),
                     );
                     ctx.event_scheduler.register_mark(event_id, mid);
                 }
             }
 
-            // D: ALCM / Scud / HIMARS missile strike — fire pre-selected groups at target.
+            // D: ALCM / Scud / HIMARS missile strike â€” fire pre-selected groups at target.
             EventEffect::FireMissileStrike { event_id, side, shooter_gids, target_pos } => {
                 let land = match Land::singleton(lua) {
                     Ok(l) => l,
@@ -2343,7 +2409,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             line_type: LineType::Dashed,
                             read_only: true,
                         },
-                        Some(format_compact!("Missile Strike [{:?}] — {} launchers firing", side, fired).into()),
+                        Some(format_compact!("Missile Strike [{:?}] â€” {} launchers firing", side, fired).into()),
                     );
                     ctx.event_scheduler.register_mark(event_id, mid);
                 }
@@ -2380,7 +2446,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
 
                         // Issue AttackGroup toward the convoy. The ambush group is not in DCS
                         // yet (spawn queue lag), so queue a move toward the convoy's last position
-                        // as a fallback — the pending_moves system will retry until it appears.
+                        // as a fallback â€” the pending_moves system will retry until it appears.
                         // Try to get the convoy group name directly; if it works, AttackGroup
                         // is more accurate as it tracks the moving convoy.
                         let convoy_group_name = ctx.db.persisted.groups.get(&convoy_group_id)
@@ -2569,7 +2635,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             },
                             Some(
                                 format_compact!(
-                                    "Enemy {} [{:?}] — ACTIVE",
+                                    "Enemy {} [{:?}] â€” ACTIVE",
                                     if rotary { "helo patrol" } else { "CAP" },
                                     cap_side
                                 )
@@ -2656,7 +2722,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 }
                 ctx.event_scheduler.cap_hard_expiry.remove(&event_id);
                 info!(
-                    "DespawnCap: {:?} {} wave from {:?} ended ({}) — field cooldown started",
+                    "DespawnCap: {:?} {} wave from {:?} ended ({}) â€” field cooldown started",
                     cap_side,
                     if rotary { "helo patrol" } else { "CAP" },
                     objective,
@@ -2904,7 +2970,7 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
         }
         let dcs_group = match Group::get_by_name(lua, group_name.as_str()) {
             Ok(g) => g,
-            Err(_) => continue, // Not in DCS yet — try next tick
+            Err(_) => continue, // Not in DCS yet â€” try next tick
         };
         let controller = match dcs_group.get_controller() {
             Ok(c) => c,
@@ -2943,10 +3009,10 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
         if let Err(e) = controller.set_task(task) {
             error!("flush_pending_moves: set_task for {group_name}: {e}");
         } else {
-            info!("flush_pending_moves: ordered {group_name} to move ({} waypoints) → {:?}",
+            info!("flush_pending_moves: ordered {group_name} to move ({} waypoints) â†’ {:?}",
                   target_route.len(), target_pos);
         }
-        // Order issued (success or terminal failure) — remove from pending
+        // Order issued (success or terminal failure) â€” remove from pending
         ctx.event_scheduler.pending_moves.remove(&gid);
     }
 
@@ -2980,7 +3046,7 @@ fn flush_pending_moves(lua: MizLua, ctx: &mut Context) {
         };
         let dcs_group = match Group::get_by_name(lua, group_name.as_str()) {
             Ok(g) => g,
-            Err(_) => continue, // Not in DCS yet — retry next tick
+            Err(_) => continue, // Not in DCS yet â€” retry next tick
         };
         // Don't task the flight until it's actually airborne. A CAP group
         // ground-starts with a TakeOffParkingHot first waypoint; issuing an
@@ -3622,7 +3688,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             break; // global cap hit mid-loop
         }
 
-        // ── Step 1: gate on enemy PLAYER count in this airframe class ───────────
+        // â”€â”€ Step 1: gate on enemy PLAYER count in this airframe class â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Only enemy PLAYERS trigger a reactive response (AI excluded), and
         // only in the class this pass answers: jets for CAP, helicopters for
         // the helo patrol. Normally this is what the defending side's radar
@@ -3641,7 +3707,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
                 .detected_enemy_player_count(defending_side, now, &ctx.db, rotary)
         };
         // Air-balance: scramble for the outnumbered side even without a
-        // detected incursion (Blue 4 up, Red 1 up → Red gets one). This is the
+        // detected incursion (Blue 4 up, Red 1 up â†’ Red gets one). This is the
         // path that covers "tonight only helo pilots showed up".
         let my_air = enemy_players_airborne(&ctx.db, defending_side, rotary);
         let their_air = enemy_players_airborne(&ctx.db, attacking, rotary);
@@ -3677,7 +3743,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             if changed || stale {
                 LAST_LOG[slot].store(secs, Ordering::Relaxed);
                 info!(
-                    "{}: {:?} not scrambling — {} enemy {} player(s) {} (need {}), \
+                    "{}: {:?} not scrambling â€” {} enemy {} player(s) {} (need {}), \
                      balance {}v{} (gap {})",
                     rc.label,
                     defending_side,
@@ -3703,7 +3769,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             );
         }
 
-        // ── Step 2: enemy positions for cluster geometry ────────────────────────
+        // â”€â”€ Step 2: enemy positions for cluster geometry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Normally the radar picture (players + AI) so the response is placed
         // nearest the real incursion -- filtered to helicopter contacts on the
         // rotary pass, since stationing a helo on a jet track sends it
@@ -3724,7 +3790,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             continue;
         }
 
-        // ── Step 3: greedy spatial clustering ─────────────────────────────────────
+        // â”€â”€ Step 3: greedy spatial clustering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Group the detected contacts: if two contacts are within the trigger
         // radius of each other they belong to the same incursion. One response
         // handles one cluster. This prevents 5 aircraft spread over 3
@@ -3751,7 +3817,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             clusters.push((Vector2::new(cx / count as f64, cz / count as f64), count));
         }
 
-        // ── Step 4: filter clusters below the minimum threat threshold ────────────
+        // â”€â”€ Step 4: filter clusters below the minimum threat threshold â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Even though we already checked player_threat_count, filter any cluster whose
         // raw position count is below min_threat (edge case: positions from AI only).
         // When scrambling purely to balance, a single-contact cluster is fine.
@@ -3761,10 +3827,10 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             continue;
         }
 
-        // Sort clusters largest → smallest so the most dangerous incursion gets covered first.
+        // Sort clusters largest â†’ smallest so the most dangerous incursion gets covered first.
         clusters.sort_unstable_by(|a, b| b.1.cmp(&a.1));
 
-        // ── Step 4b: this side's sortie budget for the last hour ────────────
+        // â”€â”€ Step 4b: this side's sortie budget for the last hour â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // The between-waves cooldown is per field now, so nothing side-wide
         // would otherwise stop a coalition with a dozen airbases from running
         // an endless conveyor of AI fighters. This is that limit: N launches
@@ -3786,13 +3852,13 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
         };
         if sorties_left == 0 {
             info!(
-                "{}: {:?} has used its whole sortie budget ({}/hour) — not scrambling",
+                "{}: {:?} has used its whole sortie budget ({}/hour) â€” not scrambling",
                 rc.label, defending_side, rc.max_sorties_per_hour
             );
             continue;
         }
 
-        // ── Step 5: for each cluster find the nearest friendly launch field ───────
+        // â”€â”€ Step 5: for each cluster find the nearest friendly launch field â”€â”€â”€â”€â”€â”€â”€
         let slots_remaining = (max_per_side - side_active_count)
             .min(max_concurrent - (active_red.len() + active_blue.len()));
 
@@ -3852,7 +3918,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
                 None => {
                     info!(
                         "{}: {:?} has no owned {} near the incursion that is free \
-                         (already flying this class, or still on its post-wave cooldown) — skipping",
+                         (already flying this class, or still on its post-wave cooldown) â€” skipping",
                         rc.label,
                         defending_side,
                         if rotary { "airbase/FARP/FOB" } else { "airbase" }
@@ -3895,7 +3961,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             }
 
             info!(
-                "{}: {:?} scrambled from {} — cluster of {} contacts to the {}",
+                "{}: {:?} scrambled from {} â€” cluster of {} contacts to the {}",
                 rc.label, defending_side, obj_name, cluster_count, direction
             );
 
@@ -4429,7 +4495,7 @@ fn run_slow_timed_events(
     step(lua, ctx, "commander", |ctx| tick_smart_commander(lua, ctx, start_ts));
     record_perf(&mut perf.slow_timed, start_ts);
 
-    // Tick campaign events — active event processing (expiry, effects, escalation).
+    // Tick campaign events â€” active event processing (expiry, effects, escalation).
     // New event spawning is now handled by tick_smart_commander above.
     let events_cfg = ctx
         .db

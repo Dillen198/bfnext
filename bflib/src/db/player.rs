@@ -152,6 +152,60 @@ pub struct FlightCharge {
     pub life: Option<LifeType>,
     #[serde(default)]
     pub points: Option<PointsCharge>,
+    #[serde(default)]
+    pub tally: SortieTally,
+}
+
+/// What the pilot did on the flight in progress, for the debrief they get on
+/// landing. It lives on `FlightCharge` so it lasts exactly as long as the
+/// flight -- across a stop at a field that isn't friendly, and a restart.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SortieTally {
+    #[serde(default)]
+    pub took_off: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub from: Option<ObjectiveId>,
+    #[serde(default)]
+    pub fired: u32,
+    /// Victim type and count, in the order first killed.
+    #[serde(default)]
+    pub kills: Vec<(String, u16)>,
+    #[serde(default)]
+    pub kill_points: i32,
+}
+
+impl SortieTally {
+    fn add_kill(&mut self, typ: &str, points: i32) {
+        match self.kills.iter_mut().find(|(t, _)| t.as_str() == typ) {
+            Some((_, n)) => *n = n.saturating_add(1),
+            None => self.kills.push((String::from(typ), 1)),
+        }
+        self.kill_points = self.kill_points.saturating_add(points);
+    }
+
+    pub fn kill_count(&self) -> u32 {
+        self.kills.iter().map(|(_, n)| *n as u32).sum()
+    }
+}
+
+/// Everything a processed landing settled, for the pilot's debrief.
+#[derive(Debug, Clone)]
+pub struct LandReport {
+    pub ucid: Ucid,
+    /// The friendly objective landed at; `None` is a landing that earns nothing.
+    pub at: Option<ObjectiveId>,
+    pub life_type: Option<LifeType>,
+    pub life_returned: bool,
+    /// What the takeoff charged, and how much of it came back for stores
+    /// still aboard.
+    pub charged: u32,
+    pub refunded: i32,
+    /// Provisional kill points banked by this landing, or still waiting for
+    /// a friendly one.
+    pub banked: i32,
+    pub pending: i32,
+    pub points: i32,
+    pub tally: SortieTally,
 }
 
 /// Split `cost` into the (player, objective) shares actually paid. The
@@ -693,9 +747,14 @@ impl Db {
         // stop at a neutral base) keeps whatever an earlier leg of the same
         // flight took -- that life is still owed back when the aircraft
         // comes home.
+        let from = owned_objective.as_ref().map(|(id, _)| **id);
         let flight = player.flight.get_or_insert_with(FlightCharge::default);
         if took_life {
             flight.life = Some(life_type);
+        }
+        if flight.tally.took_off.is_none() {
+            flight.tally.took_off = Some(time);
+            flight.tally.from = from;
         }
         let side = player.side;
         self.ephemeral.dirty();
@@ -771,7 +830,14 @@ impl Db {
     /// was charged) to the player and the objective fund in the proportion
     /// they paid. The fund's share is dropped if that objective is no longer
     /// held by the side that paid.
-    pub fn refund_charge(&mut self, ucid: &Ucid, charge: &PointsCharge, amount: u32, msg: &str) {
+    pub fn refund_charge(
+        &mut self,
+        ucid: &Ucid,
+        charge: &PointsCharge,
+        amount: u32,
+        msg: &str,
+        announce: bool,
+    ) {
         let (to_player, to_obj) = charge.refund_split(amount);
         if to_obj > 0
             && let Some(obj) = self.persisted.objectives.get_mut_cow(&charge.oid)
@@ -780,10 +846,25 @@ impl Db {
             obj.points += to_obj;
             self.ephemeral.dirty();
         }
-        self.adjust_points(ucid, to_player, msg);
+        if announce {
+            self.adjust_points(ucid, to_player, msg);
+        } else {
+            self.adjust_points_silent(ucid, to_player, msg);
+        }
     }
 
-    pub fn land(&mut self, slot: SlotId, position: Vector2, unit: &Unit) -> Option<LifeType> {
+    /// Count a weapon a pilot fired, for their landing debrief.
+    pub fn note_shot(&mut self, ucid: &Ucid) {
+        if let Some(p) = self.persisted.players.get_mut_cow(ucid)
+            && let Some(f) = p.flight.as_mut()
+        {
+            f.tally.fired = f.tally.fired.saturating_add(1);
+        }
+    }
+
+    /// Settle a landing and say what it settled. `None` only when the slot
+    /// isn't a known player's.
+    pub fn land(&mut self, slot: SlotId, position: Vector2, unit: &Unit) -> Option<LandReport> {
         // Record the touchdown before any of the bookkeeping below can bail
         // out. `player_deslot` reads this to decide whether the slot session
         // ended on the ground, so every landing has to be marked -- not just
@@ -797,6 +878,7 @@ impl Db {
             Some(sifo) => sifo,
             None => return None,
         };
+        let life_type = self.ephemeral.cfg.life_types.get(&sifo.typ).copied();
         let (cost, _, cost_msg) = match self.compute_flight_cost(&sifo, unit) {
             Ok(cost) => cost,
             Err(e) => {
@@ -844,6 +926,7 @@ impl Db {
                 inst.landed_at_objective = Some(oid);
             }
             let lives = player.lives.clone();
+            let (mut charged, mut refunded, mut banked) = (0, 0, 0);
             if let Some(points) = self.ephemeral.cfg.points.as_ref() {
                 let is_provisional = points.provisional;
                 let provisional_points = player.provisional_points;
@@ -851,14 +934,18 @@ impl Db {
                 // The refund is what is still on the aircraft (so expended
                 // stores stay paid for), capped at what was actually charged
                 // and returned to whoever paid it -- the fund charged at
-                // departure, not the one landed at.
-                if cost > 0
-                    && let Some(charge) = flight.as_ref().and_then(|f| f.points)
-                {
-                    self.refund_charge(&ucid, &charge, cost, cost_msg.as_str());
+                // departure, not the one landed at. Quietly: the debrief
+                // says it, along with everything else.
+                if let Some(charge) = flight.as_ref().and_then(|f| f.points) {
+                    charged = charge.cost;
+                    if cost > 0 {
+                        refunded = charge.refund_split(cost).0;
+                        self.refund_charge(&ucid, &charge, cost, cost_msg.as_str(), false);
+                    }
                 }
                 if is_provisional && provisional_points > 0 {
-                    self.adjust_points(
+                    banked = provisional_points;
+                    self.adjust_points_silent(
                         &ucid,
                         provisional_points as i32,
                         "provisional points committed",
@@ -866,15 +953,36 @@ impl Db {
                 }
             }
             self.ephemeral.dirty();
-            match returned {
-                Some(life_type) if self.ephemeral.cfg.limited_lives => {
-                    self.ephemeral.stat(Stat::Life { id: ucid, lives });
-                    Some(life_type)
-                }
-                Some(_) | None => None,
+            if returned.is_some() && self.ephemeral.cfg.limited_lives {
+                self.ephemeral.stat(Stat::Life { id: ucid, lives });
             }
+            let points = self.persisted.players.get(&ucid).map(|p| p.points).unwrap_or(0);
+            Some(LandReport {
+                ucid,
+                at: Some(oid),
+                life_type,
+                life_returned: returned.is_some() && self.ephemeral.cfg.limited_lives,
+                charged,
+                refunded,
+                banked,
+                pending: 0,
+                points,
+                tally: flight.map(|f| f.tally).unwrap_or_default(),
+            })
         } else {
-            None
+            let flight = player.flight.as_ref();
+            Some(LandReport {
+                ucid,
+                at: None,
+                life_type,
+                life_returned: false,
+                charged: flight.and_then(|f| f.points).map(|c| c.cost).unwrap_or(0),
+                refunded: 0,
+                banked: 0,
+                pending: player.provisional_points,
+                points: player.points,
+                tally: flight.map(|f| f.tally.clone()).unwrap_or_default(),
+            })
         }
     }
 
@@ -1914,6 +2022,21 @@ impl Db {
                     })
                 }
             };
+            // Only a pilot's own shots go on their debrief -- not kills their
+            // deployed AI made while they flew.
+            let victim_typ = dead
+                .shots
+                .iter()
+                .find(|s| s.target_typ.trim() != "")
+                .map(|s| s.target_typ.clone());
+            let pilot_shooters: SmallVec<[Ucid; 4]> = dead
+                .shots
+                .iter()
+                .filter_map(|s| match &s.shooter {
+                    Who::Player { ucid, .. } => Some(*ucid),
+                    Who::AI { .. } => None,
+                })
+                .collect();
             for (ucid, provisional) in hit_by {
                 if let Some(player) = self.persisted.players.get_mut_cow(&ucid) {
                     let msg = if player.side == *dead.victim.side() {
@@ -1934,6 +2057,12 @@ impl Db {
                             player.points += pps_with_streak;
                             player.points
                         };
+                        if pilot_shooters.contains(&ucid)
+                            && let Some(f) = player.flight.as_mut()
+                        {
+                            let typ = victim_typ.as_ref().map(|t| t.as_str()).unwrap_or("unknown");
+                            f.tally.add_kill(typ, pps_with_streak);
+                        }
                         // Increment streak and total kills
                         player.kill_streak = player.kill_streak.saturating_add(1);
                         player.total_kills = player.total_kills.saturating_add(1);
@@ -2009,6 +2138,18 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sortie_tally_groups_kills_by_type() {
+        let mut t = SortieTally::default();
+        t.add_kill("T-72B", 50);
+        t.add_kill("Su-25T", 100);
+        t.add_kill("T-72B", 50);
+        assert_eq!(t.kill_count(), 3);
+        assert_eq!(t.kill_points, 200);
+        assert_eq!((t.kills[0].0.as_str(), t.kills[0].1), ("T-72B", 2));
+        assert_eq!((t.kills[1].0.as_str(), t.kills[1].1), ("Su-25T", 1));
+    }
 
     fn charge(cost: u32, frac: f32) -> PointsCharge {
         PointsCharge {
