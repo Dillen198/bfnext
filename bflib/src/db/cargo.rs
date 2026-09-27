@@ -4118,21 +4118,35 @@ impl Db {
             // State machine for crate tracking
             match crate_data.state {
                 C130CargoState::Spawned | C130CargoState::Loaded => {
-                    // Airdrop detection: crate moving very fast means it was dropped from fixed-wing
-                    if speed > 50.0 {
+                    // Airdrop detection. The crate is skipped above while it
+                    // is aboard, so the cruise-speed ride no longer trips this
+                    // -- only the first tick after it leaves the ramp can, and
+                    // by then the chute may already have it under 50 m/s. A
+                    // crate that just left its aircraft still moving is
+                    // falling, whatever the exact figure.
+                    let left_aircraft = before.1 && !crate_data.aboard;
+                    if speed > 50.0 || (left_aircraft && speed > 10.0) {
                         info!("[C130_CARGO] Crate '{}' transitioned to Airborne (speed={:.2}m/s)", crate_name, speed);
                         crate_data.state = C130CargoState::Airborne;
                         crate_data.airborne_time = Some(Utc::now());
-                    } else if !crate_data.auto_unpack && speed < 1.0 {
-                        // Slingload delivery detection: helo crates don't go airborne independently —
-                        // when a CH-47 slingloads a crate and releases it the static object is just
-                        // placed at the new position at near-zero speed. Detect this by checking if
-                        // the crate has moved more than 100 m from where it was spawned.
+                    } else if speed < 1.0 {
+                        // Delivered without ever being seen falling: a helo
+                        // slingload (the static is just placed at the new
+                        // position at near-zero speed), a C-130 unloaded on
+                        // the ground elsewhere, or a drop whose fall happened
+                        // between ticks. Detect it by the crate resting more
+                        // than 100 m from where it was spawned.
                         let dist = na::distance(&new_pos.into(), &crate_data.spawn_pos.into());
                         if dist > 100.0 {
-                            info!("[C130_CARGO] Crate '{}' slingload-delivered (moved {:.0}m from spawn, speed={:.2}m/s) - manual unpack required",
-                                crate_name, dist, speed);
                             crate_data.state = C130CargoState::Landed;
+                            if crate_data.auto_unpack {
+                                info!("[C130_CARGO] Crate '{}' delivered (moved {:.0}m from spawn, speed={:.2}m/s) - queuing for auto-unpack",
+                                    crate_name, dist, speed);
+                                to_unpack.push(crate_name.clone());
+                            } else {
+                                info!("[C130_CARGO] Crate '{}' slingload-delivered (moved {:.0}m from spawn, speed={:.2}m/s) - manual unpack required",
+                                    crate_name, dist, speed);
+                            }
                         }
                     }
                 }
