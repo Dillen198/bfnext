@@ -1107,16 +1107,22 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                             .and_then(|(_, i)| i.as_ref())
                             .filter(|inst| inst.landed_at_objective.is_none())
                             .map(|inst| {
-                                (p.side, Vector2::new(inst.position.p.x, inst.position.p.z))
+                                (
+                                    p.side,
+                                    Vector2::new(inst.position.p.x, inst.position.p.z),
+                                    inst.in_air,
+                                )
                             })
                     })
                 });
-                if let Some((my_side, my_pos)) = leave_info {
-                    ctx.shots_out.dead(initiator.clone(), start_ts);
+                if let Some((my_side, my_pos, in_air)) = leave_info
+                    && ctx.shots_out.left_slot(initiator.clone(), in_air, start_ts)
+                {
                     // Anti-abuse: bailing a losing fight. If an enemy aircraft
-                    // is close, credit them with the kill.
+                    // is close, credit them with the kill -- airborne only; a
+                    // pilot on the ground is not escaping a dogfight.
                     let radius = ctx.db.ephemeral.cfg.slot_leave_kill_radius_m;
-                    if radius > 0.0 {
+                    if radius > 0.0 && in_air {
                         if let Some(enemy_oid) =
                             nearest_enemy_player_in_air(&ctx.db, my_side, my_pos, radius)
                         {
@@ -1710,6 +1716,7 @@ fn return_lives(lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
     }
     let db = &mut ctx.db;
     let mut returned: SmallVec<[(LifeType, SlotId); 4]> = smallvec![];
+    let mut landed: SmallVec<[SlotId; 4]> = smallvec![];
     ctx.recently_landed.retain(|id, landed_ts| {
         if ts - *landed_ts < Duration::seconds(10) {
             return true;
@@ -1717,8 +1724,9 @@ fn return_lives(lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
         let unit = or_false!(Unit::get_instance(lua, id));
         let pos = or_false!(unit.get_ground_position());
         let slot = or_false!(unit.slot());
-        if let Some(typ) = db.land(slot.clone(), pos.0, &unit) {
-            returned.push((typ, slot));
+        match db.land(slot.clone(), pos.0, &unit) {
+            Some(typ) => returned.push((typ, slot)),
+            None => landed.push(slot),
         }
         // The landing is processed either way, so always drop the entry.
         // Keeping it whenever no life came back -- landed outside an owned
@@ -1728,9 +1736,29 @@ fn return_lives(lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
         false
     });
     for (typ, slot) in returned {
-        if let Err(e) = message_life(ctx, &slot, Some(typ), "life returned\n") {
+        if let Err(e) = message_life(ctx, &slot, Some(typ), "Landing registered, life returned\n") {
             error!("failed to send life returned message to {:?} {}", slot, e);
         }
+    }
+    // Every processed landing says where it stands. Without lives there was
+    // no message at all, so pilots couldn't tell a registered landing from
+    // one that wasn't, and logged off not knowing (Discord, Sept 25).
+    for slot in landed {
+        let Some(uid) = slot.as_unit_id() else { continue };
+        let at = ctx.db.ephemeral.player_in_slot(&slot).copied().and_then(|ucid| {
+            let inst = ctx.db.player(&ucid)?.current_slot.as_ref()?.1.as_ref()?;
+            inst.landed_at_objective
+        });
+        let msg: CompactString = match at.and_then(|oid| ctx.db.objective(&oid).ok()) {
+            Some(obj) => {
+                format_compact!("Landing registered at {}. Safe to leave the slot.", obj.name())
+            }
+            None => CompactString::from(
+                "Landed outside a friendly objective: no landing credit here. Leaving the \
+                 slot only counts as a loss if you were hit in the last 10 minutes.",
+            ),
+        };
+        ctx.db.ephemeral.msgs().panel_to_unit(10, false, uid, msg);
     }
 }
 

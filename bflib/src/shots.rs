@@ -100,6 +100,51 @@ impl ShotDb {
         }
     }
 
+    /// A player left their slot away from a friendly objective. Returns
+    /// whether that counts as a death.
+    ///
+    /// It used to count unconditionally, and the kill went to whoever was
+    /// first in `by_target` -- which keeps every shot, hit or miss, for up to
+    /// an hour. So a pilot who dodged a Hawk, flew on, landed at a strip that
+    /// isn't an objective and logged off handed that Hawk a kill (reported on
+    /// Discord, Sept 25). Now leaving is only a death when the aircraft could
+    /// still have been killed: airborne, or hit recently. And only recent
+    /// shots can be credited: a hit within `HIT_WINDOW`, or anything still in
+    /// the air within `THREAT_WINDOW` -- leaving to dodge a missile in flight
+    /// is exactly what should cost the kill.
+    pub fn left_slot(
+        &mut self,
+        target: DcsOid<ClassUnit>,
+        in_air: bool,
+        now: DateTime<Utc>,
+    ) -> bool {
+        const HIT_WINDOW: Duration = Duration::minutes(10);
+        const THREAT_WINDOW: Duration = Duration::seconds(90);
+        let recent = |s: &Shot| {
+            let age = now - s.time;
+            (s.hit && age <= HIT_WINDOW) || age <= THREAT_WINDOW
+        };
+        let recently_hit = self
+            .by_target
+            .get(&target)
+            .is_some_and(|v| v.iter().any(|s| s.hit && now - s.time <= HIT_WINDOW));
+        if !in_air && !recently_hit {
+            return false;
+        }
+        let emptied = match self.by_target.get_mut(&target) {
+            Some(shots) => {
+                shots.retain(|s| recent(s));
+                shots.is_empty()
+            }
+            None => false,
+        };
+        if emptied {
+            self.by_target.remove(&target);
+        }
+        self.dead(target, now);
+        true
+    }
+
     /// A player bailed out of a slot while airborne and under threat (an enemy
     /// aircraft close by). Credit that enemy with the kill: mark the unit dead
     /// and, only if nothing has already been recorded against it, attach a
