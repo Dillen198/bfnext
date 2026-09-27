@@ -428,6 +428,13 @@ async fn resolve_ucid_via_bot(
     discord_id: &str,
 ) -> Option<dcso3::net::Ucid> {
     let cfg = bot_cfg.as_ref()?;
+    // Only a real Discord snowflake can have a DCSServerBot link. A local-login
+    // session (`local:admin`, the bot's own account) was sent too, and the
+    // bot's getuser crashed on it -- 98 Postgres "invalid input syntax for
+    // type bigint" tracebacks in two hours, one per page load.
+    if discord_id.is_empty() || !discord_id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
     // Every page load asks (via /api/auth/me) and so does every coalition-
     // gated call; a link changes only when someone runs /linkme. A minute of
     // caching turns dozens of bot round-trips per page into one.

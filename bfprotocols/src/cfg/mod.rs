@@ -4880,6 +4880,11 @@ fn unknown_keys(
     match (raw, known) {
         (J::Object(r), J::Object(k)) => {
             for (key, rv) in r {
+                // `_note`-style keys are comments by convention in the live
+                // configs (JSON has no comments); they are ignored on purpose.
+                if key.starts_with('_') {
+                    continue;
+                }
                 let len = path.len();
                 if !path.is_empty() {
                     path.push('.');
@@ -4911,8 +4916,8 @@ mod load_tests {
     #[test]
     fn unknown_keys_reports_only_ignored_keys() {
         let raw = serde_json::json!({
-            "a": 1, "typo": 2,
-            "nested": {"b": 1, "bogus": true},
+            "a": 1, "typo": 2, "_note": "a comment",
+            "nested": {"b": 1, "bogus": true, "_why": "also a comment"},
             "list": [{"c": 1, "extra": 0}]
         });
         let known = serde_json::json!({
