@@ -70,6 +70,6 @@ export const CFG_CATEGORIES: CfgCategory[] = [
   },
   {
     key: 'campaign', label: 'Campaign & Events', icon: Award,
-    fields: ['campaign_events', 'air_life', 'auto_reset', 'carrier', 'pilot_experience', 'csar'],
+    fields: ['campaign_events', 'air_life', 'modern_war', 'auto_reset', 'carrier', 'pilot_experience', 'csar'],
   },
 ]

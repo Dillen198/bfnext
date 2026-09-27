@@ -724,6 +724,8 @@ struct PlayerGci {
     prev_contacts: usize,
     /// Phase 4: active intercept, if the pilot committed.
     intercept: Option<Intercept>,
+    /// The flight was inside enemy radio jamming last poll.
+    jammed: bool,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
@@ -972,6 +974,7 @@ fn decide(
         splashes: HashMap::new(),
         prev_contacts: 0,
         intercept: None,
+        jammed: false,
     });
     pg.side = side;
     pg.last_seen_tick = tick;
@@ -1200,10 +1203,28 @@ fn decide(
         }
     }
 
-    let (prio, text) = best?;
+    // Enemy radio jamming (modern_war EW): one notice on the way in, then
+    // most calls are lost and the ones that get through are broken up.
+    let was_jammed = pg.jammed;
+    pg.jammed = flight.comms_jammed;
+    if flight.comms_jammed && !was_jammed && !quiet {
+        pg.last_tx = Some(Instant::now());
+        return Some((
+            true,
+            format!("{}, {}, you are being jammed, comms degraded", spoken_callsign(who), controller),
+        ));
+    }
+    let (prio, mut text) = best?;
     // Ledger is up to date; this flight just doesn't want to be spoken to.
     if quiet {
         return None;
+    }
+    if flight.comms_jammed {
+        let roll = jam_roll(&flight.ucid, tick);
+        if roll % 10 < 7 {
+            return None;
+        }
+        text = break_up(&text, roll);
     }
     let urgent = matches!(
         prio,
@@ -1218,6 +1239,32 @@ fn decide(
     }
     pg.last_tx = Some(Instant::now());
     Some((urgent, text))
+}
+
+/// A cheap, repeatable roll per flight and poll (bfdb has no RNG).
+fn jam_roll(ucid: &str, tick: u64) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    ucid.hash(&mut h);
+    tick.hash(&mut h);
+    h.finish()
+}
+
+/// A transmission through jamming: runs of words drop out.
+fn break_up(text: &str, roll: u64) -> String {
+    let mut out: Vec<&str> = vec![];
+    let mut bits = roll;
+    for (i, w) in text.split_whitespace().enumerate() {
+        if i > 0 && bits & 0b11 == 0 {
+            if out.last() != Some(&"...") {
+                out.push("...");
+            }
+        } else {
+            out.push(w);
+        }
+        bits = bits.rotate_right(2);
+    }
+    out.join(" ")
 }
 
 // ─── Brevity rendering ─────────────────────────────────────────────────────

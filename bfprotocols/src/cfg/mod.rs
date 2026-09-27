@@ -1875,6 +1875,12 @@ pub struct ArtilleryCfg {
     /// and the next one in range fires instead. Default: 60.
     #[serde(default = "default_arty_cooldown")]
     pub cooldown_secs: u32,
+    /// Shoot and scoot: after a fire mission a battery relocates up to this
+    /// many metres (DCS `counterbattaryRadius`, 0..500), so counter-battery
+    /// fire and players hunting the muzzle flashes find an empty position.
+    /// Unset = batteries stay put.
+    #[serde(default)]
+    pub shoot_and_scoot_m: Option<f64>,
 }
 
 fn default_arty_max() -> f64 { 30_000.0 }
@@ -1892,6 +1898,7 @@ impl Default for ArtilleryCfg {
             radius_m: default_arty_radius(),
             max_groups: default_arty_group_count(),
             cooldown_secs: default_arty_cooldown(),
+            shoot_and_scoot_m: None,
         }
     }
 }
@@ -3926,7 +3933,282 @@ pub struct Cfg {
     /// neutral civilian airliners. Absent = all three off.
     #[serde(default)]
     pub air_life: Option<AirLifeCfg>,
+    /// Modern-war systems modelled on Russia-Ukraine and the 2025 Iran war:
+    /// electronic warfare, finite SAM interceptors, drone and missile raids
+    /// on infrastructure, sea-drone raids and campaign tempo. Absent = off.
+    #[serde(default)]
+    pub modern_war: Option<ModernWarCfg>,
 }
+
+/// See `Cfg::modern_war`. Each part is independent; leave one out to turn it
+/// off.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ModernWarCfg {
+    #[serde(default)]
+    pub ew: Option<EwCfg>,
+    #[serde(default)]
+    pub sam_stock: Option<SamStockCfg>,
+    #[serde(default)]
+    pub raids: Option<RaidsCfg>,
+    #[serde(default)]
+    pub boat_raids: Option<BoatRaidsCfg>,
+    #[serde(default)]
+    pub tempo: Option<TempoCfg>,
+}
+
+/// Ground electronic warfare. Objectives of `host_kinds` get a radio/GNSS
+/// jammer truck (`GPS_Spoofer_Blue`/`_Red`) that switches on while enemy
+/// aircraft are inside `activation_radius_m` and off again once they have
+/// gone -- emitting gives it away. Killing the truck silences the site until
+/// the objective replaces it. Radio jamming also breaks the enemy's GCI voice
+/// inside `comms_jam_radius_m`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EwCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Objective kinds that host a jammer, by display name: "Airbase", "FOB",
+    /// "FARP", "Logistics Hub", "Naval Base", "Carrier Group", "Factory",
+    /// "Special SAM Site", "Command Center".
+    #[serde(default = "default_ew_host_kinds")]
+    pub host_kinds: Vec<String>,
+    /// Of those, the kinds that SPOOF satellite navigation (push receivers
+    /// toward a false position) rather than just jam it.
+    #[serde(default = "default_ew_spoof_kinds")]
+    pub spoof_kinds: Vec<String>,
+    /// Enemy aircraft this close switch a jammer on. Default 80 km.
+    #[serde(default = "default_ew_activation")]
+    pub activation_radius_m: f64,
+    /// A jammer stays on at least this long once it switches on. Default 180.
+    #[serde(default = "default_ew_min_on")]
+    pub min_on_secs: u32,
+    #[serde(default = "default_ew_gnss")]
+    pub gps: GnssMode,
+    #[serde(default = "default_ew_gnss")]
+    pub glonass: GnssMode,
+    #[serde(default = "default_ew_radio")]
+    pub radio: RadioJamMode,
+    /// Radio band jammed, MHz. Default 225-400 (military UHF).
+    #[serde(default = "default_ew_band")]
+    pub band_mhz: (f64, f64),
+    /// How far from a spoofing site its false position is. Default 25 km.
+    #[serde(default = "default_ew_spoof_offset")]
+    pub spoof_offset_m: f64,
+    /// Enemy flights this close to an active radio jammer get broken GCI.
+    /// Default 60 km.
+    #[serde(default = "default_ew_comms_radius")]
+    pub comms_jam_radius_m: f64,
+    /// Seconds before a destroyed jammer is replaced (the objective must still
+    /// be held and not at zero health). Default 1800.
+    #[serde(default = "default_ew_respawn")]
+    pub respawn_secs: u32,
+    /// Put an intel mark for the enemy near an active jammer -- ELINT finds
+    /// emitters. Offset by up to `intel_uncertainty_m`. Default true.
+    #[serde(default = "default_true")]
+    pub intel_marks: bool,
+    #[serde(default = "default_ew_uncertainty")]
+    pub intel_uncertainty_m: f64,
+}
+
+/// Satellite-navigation mode of a jammer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum GnssMode {
+    Off,
+    Jam,
+    Spoof,
+}
+
+/// Radio mode of a jammer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum RadioJamMode {
+    Off,
+    Simple,
+    Adaptive,
+}
+
+fn default_ew_host_kinds() -> Vec<String> {
+    ["Command Center", "Special SAM Site", "Naval Base"].into_iter().map(String::from).collect()
+}
+fn default_ew_spoof_kinds() -> Vec<String> {
+    ["Naval Base"].into_iter().map(String::from).collect()
+}
+fn default_ew_activation() -> f64 { 80_000.0 }
+fn default_ew_min_on() -> u32 { 180 }
+fn default_ew_gnss() -> GnssMode { GnssMode::Jam }
+fn default_ew_radio() -> RadioJamMode { RadioJamMode::Adaptive }
+fn default_ew_band() -> (f64, f64) { (225.0, 400.0) }
+fn default_ew_spoof_offset() -> f64 { 25_000.0 }
+fn default_ew_comms_radius() -> f64 { 60_000.0 }
+fn default_ew_respawn() -> u32 { 1800 }
+fn default_ew_uncertainty() -> f64 { 5_000.0 }
+
+/// Finite SAM interceptors. Each SAM group holds `missiles_per_launcher` x
+/// its launchers x `reload_multiplier` missiles; every SAM launch spends one.
+/// A site at zero goes weapons-hold ("Winchester") until logistics rearm it:
+/// every `resupply_period_secs` it gets `resupply_per_period` back, but only
+/// while the objective it belongs to has at least `min_supply` supply. The
+/// count survives the site being culled and respawned (which refills DCS's
+/// own launcher ammo).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SamStockCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_sam_per_launcher")]
+    pub missiles_per_launcher: u32,
+    #[serde(default = "default_sam_reload_mult")]
+    pub reload_multiplier: f32,
+    #[serde(default = "default_sam_resupply_period")]
+    pub resupply_period_secs: u32,
+    #[serde(default = "default_sam_resupply")]
+    pub resupply_per_period: u32,
+    #[serde(default = "default_sam_min_supply")]
+    pub min_supply: u8,
+    /// Tell the owning side when a site runs dry and when it is rearmed.
+    #[serde(default = "default_true")]
+    pub announce: bool,
+}
+
+fn default_sam_per_launcher() -> u32 { 4 }
+fn default_sam_reload_mult() -> f32 { 2.0 }
+fn default_sam_resupply_period() -> u32 { 900 }
+fn default_sam_resupply() -> u32 { 4 }
+fn default_sam_min_supply() -> u8 { 40 }
+
+/// Long-range strike raids on infrastructure: one-way attack drones (a
+/// template flown low to the target, which explodes on arrival) and ballistic
+/// missiles from the side's deployed launchers. Damage is real on the map and
+/// in the economy: every drone that arrives, and every missile not
+/// intercepted, cuts the target's stores by `supply_damage_pct` and pauses a
+/// factory for `factory_pause_secs`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RaidsCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Raid with nobody on the server. Default false.
+    #[serde(default)]
+    pub run_when_empty: bool,
+    /// Mission-clock hours a raid may launch in, [start, end), wrapping past
+    /// midnight. Default 20-05: raids come at night. Null = any time.
+    #[serde(default = "default_raid_hours")]
+    pub hours: Option<(u32, u32)>,
+    /// Seconds between one side's raids (jittered +-30%, shortened during an
+    /// offensive). Default 2700.
+    #[serde(default = "default_raid_interval")]
+    pub interval_secs: u32,
+    /// Plane-section .miz groups flown as one-way attack drones. Empty = no
+    /// drone raids for that side. Any slow UAV or light aircraft will do.
+    #[serde(default)]
+    pub drone_templates_red: Vec<String>,
+    #[serde(default)]
+    pub drone_templates_blue: Vec<String>,
+    #[serde(default = "default_raid_drones")]
+    pub drones_per_raid: u32,
+    #[serde(default = "default_raid_drone_speed")]
+    pub drone_speed_ms: f64,
+    #[serde(default = "default_raid_drone_alt")]
+    pub drone_alt_agl_m: f64,
+    /// Longest drone leg. Default 400 km.
+    #[serde(default = "default_raid_drone_range")]
+    pub drone_range_m: f64,
+    /// Explosive mass detonated on arrival, kg. Default 60.
+    #[serde(default = "default_raid_warhead")]
+    pub drone_warhead_kg: f64,
+    /// Fire the side's in-range ballistic-missile launchers (`Launcher`
+    /// tagged, `artillery.units` ranges) at the target as part of a raid.
+    #[serde(default = "default_true")]
+    pub use_missiles: bool,
+    #[serde(default = "default_raid_launchers")]
+    pub max_launchers: u32,
+    /// Chance each missile is intercepted, per enemy missile-defence SAM site
+    /// (`EngagesWeapons` tag) within 40 km of the target, capped at 85%.
+    #[serde(default = "default_raid_intercept")]
+    pub intercept_per_site: f64,
+    /// Target kinds, by objective display name.
+    #[serde(default = "default_raid_targets")]
+    pub target_kinds: Vec<String>,
+    #[serde(default = "default_raid_supply_damage")]
+    pub supply_damage_pct: u8,
+    #[serde(default = "default_raid_factory_pause")]
+    pub factory_pause_secs: u32,
+    /// Warn the target side when a raid launches. Default true.
+    #[serde(default = "default_true")]
+    pub warn_defenders: bool,
+}
+
+fn default_raid_hours() -> Option<(u32, u32)> { Some((20, 5)) }
+fn default_raid_interval() -> u32 { 2700 }
+fn default_raid_drones() -> u32 { 4 }
+fn default_raid_drone_speed() -> f64 { 50.0 }
+fn default_raid_drone_alt() -> f64 { 400.0 }
+fn default_raid_drone_range() -> f64 { 400_000.0 }
+fn default_raid_warhead() -> f64 { 60.0 }
+fn default_raid_launchers() -> u32 { 2 }
+fn default_raid_intercept() -> f64 { 0.35 }
+fn default_raid_targets() -> Vec<String> {
+    ["Factory", "Logistics Hub", "Airbase", "Naval Base"].into_iter().map(String::from).collect()
+}
+fn default_raid_supply_damage() -> u8 { 5 }
+fn default_raid_factory_pause() -> u32 { 1800 }
+
+/// Sea-drone raids: fast boats run at enemy ships from friendly water and
+/// detonate alongside. Needs a friendly Naval Base to launch from.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BoatRaidsCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub run_when_empty: bool,
+    #[serde(default = "default_boat_interval")]
+    pub interval_secs: u32,
+    #[serde(default = "default_boat_count")]
+    pub boats_per_raid: u32,
+    /// DCS ship type used as the sea drone. Default "speedboat".
+    #[serde(default = "default_boat_type")]
+    pub boat_type: String,
+    #[serde(default = "default_boat_speed")]
+    pub speed_ms: f64,
+    #[serde(default = "default_boat_warhead")]
+    pub warhead_kg: f64,
+    /// Detonation distance from the target ship, metres. Default 150.
+    #[serde(default = "default_boat_trigger")]
+    pub trigger_radius_m: f64,
+    #[serde(default = "default_boat_range")]
+    pub max_range_m: f64,
+}
+
+fn default_boat_interval() -> u32 { 3600 }
+fn default_boat_count() -> u32 { 3 }
+fn default_boat_type() -> String { "speedboat".into() }
+fn default_boat_speed() -> f64 { 18.0 }
+fn default_boat_warhead() -> f64 { 250.0 }
+fn default_boat_trigger() -> f64 { 150.0 }
+fn default_boat_range() -> f64 { 150_000.0 }
+
+/// Campaign tempo: each side alternates an offensive (raids and AI packages
+/// come faster, aimed along one axis) with a regroup, and is told when its
+/// posture changes. The two sides run out of phase.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TempoCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_tempo_offensive")]
+    pub offensive_hours: f64,
+    #[serde(default = "default_tempo_regroup")]
+    pub regroup_hours: f64,
+    /// Interval multiplier during an offensive (0.5 = twice as often).
+    #[serde(default = "default_tempo_offensive_factor")]
+    pub offensive_factor: f64,
+    /// Interval multiplier while regrouping.
+    #[serde(default = "default_tempo_regroup_factor")]
+    pub regroup_factor: f64,
+    #[serde(default = "default_true")]
+    pub announce: bool,
+}
+
+fn default_tempo_offensive() -> f64 { 6.0 }
+fn default_tempo_regroup() -> f64 { 10.0 }
+fn default_tempo_offensive_factor() -> f64 { 0.5 }
+fn default_tempo_regroup_factor() -> f64 { 1.5 }
+
 
 /// See `Cfg::air_life`. Each part is independent; leave one out to disable it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -4099,6 +4381,39 @@ pub struct CivilTrafficCfg {
     /// Treasury taken from the shooter's side. Default 1000.
     #[serde(default = "default_civil_shootdown_treasury")]
     pub shootdown_treasury_penalty: i64,
+    /// Neutral merchant shipping on sea lanes across the map's water (a
+    /// lane is only used if every sample along it is open water). Sinking
+    /// one costs the same as an airliner. Empty = no ships.
+    #[serde(default = "default_civil_ships")]
+    pub ships: Vec<CivilShipCfg>,
+    /// Merchant ships at sea at once. Default 3.
+    #[serde(default = "default_civil_max_ships")]
+    pub max_ships: u32,
+    /// Seconds between ship spawns (jittered). Default 900.
+    #[serde(default = "default_civil_ship_interval")]
+    pub ship_spawn_interval_secs: u32,
+}
+
+/// One merchant ship type. `typ` is the DCS unit type name.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CivilShipCfg {
+    pub typ: String,
+    #[serde(default = "default_cap_template_weight")]
+    pub weight: u32,
+    /// Speed, m/s. Default 7 (about 14 knots).
+    #[serde(default = "default_civil_ship_speed")]
+    pub speed_ms: f64,
+}
+
+fn default_civil_ship_speed() -> f64 { 7.0 }
+fn default_civil_max_ships() -> u32 { 3 }
+fn default_civil_ship_interval() -> u32 { 900 }
+
+fn default_civil_ships() -> Vec<CivilShipCfg> {
+    ["Dry-cargo ship-1", "Dry-cargo ship-2", "HandyWind", "ELNYA", "Seawise_Giant"]
+        .into_iter()
+        .map(|t| CivilShipCfg { typ: t.into(), weight: 1, speed_ms: default_civil_ship_speed() })
+        .collect()
 }
 
 /// One airliner type. `typ` is the DCS unit type name.
@@ -4170,6 +4485,9 @@ impl Default for CivilTrafficCfg {
             max_flight_secs: default_civil_max_flight(),
             shootdown_penalty_points: default_civil_shootdown_points(),
             shootdown_treasury_penalty: default_civil_shootdown_treasury(),
+            ships: default_civil_ships(),
+            max_ships: default_civil_max_ships(),
+            ship_spawn_interval_secs: default_civil_ship_interval(),
         }
     }
 }
@@ -4518,6 +4836,34 @@ mod load_tests {
     }
 
     #[test]
+    fn modern_war_empty_blocks_take_defaults() {
+        let mw: ModernWarCfg = serde_json::from_value(serde_json::json!({
+            "ew": {}, "sam_stock": {}, "raids": {}, "boat_raids": {}, "tempo": {}
+        }))
+        .unwrap();
+        let ew = mw.ew.as_ref().unwrap();
+        assert_eq!(ew.gps, GnssMode::Jam);
+        assert_eq!(ew.radio, RadioJamMode::Adaptive);
+        assert_eq!(ew.band_mhz, (225., 400.));
+        let r = mw.raids.as_ref().unwrap();
+        assert_eq!(r.hours, Some((20, 5)));
+        assert!(r.use_missiles);
+        assert_eq!(mw.sam_stock.as_ref().unwrap().missiles_per_launcher, 4);
+        assert_eq!(mw.boat_raids.as_ref().unwrap().boat_type.as_str(), "speedboat");
+        let mut cfg = Cfg::default();
+        cfg.modern_war = Some(mw);
+        cfg.validate().unwrap();
+        if let Some(t) = cfg.modern_war.as_mut().and_then(|m| m.tempo.as_mut()) {
+            t.regroup_hours = 0.;
+        }
+        assert!(cfg.validate().is_err());
+        // Enum values are spelled as in the docs.
+        let e: EwCfg = serde_json::from_value(serde_json::json!({"gps": "Spoof", "radio": "Off"})).unwrap();
+        assert_eq!(e.gps, GnssMode::Spoof);
+        assert_eq!(e.radio, RadioJamMode::Off);
+    }
+
+    #[test]
     fn write_atomic_replaces_and_cleans_up() {
         let dir = std::env::temp_dir().join(format!("bfcfg-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
@@ -4715,6 +5061,44 @@ impl Cfg {
                 }
                 if ct.airline_codes.is_empty() {
                     bail!("air_life.civil_traffic.airline_codes is empty")
+                }
+            }
+        }
+        if let Some(mw) = &cfg.modern_war {
+            const KINDS: &[&str] = &[
+                "Airbase", "FOB", "FARP", "Logistics Hub", "Naval Base", "Carrier Group",
+                "Factory", "Special SAM Site", "Command Center",
+            ];
+            let check_kinds = |what: &str, kinds: &[String]| {
+                for k in kinds {
+                    if !KINDS.contains(&k.as_str()) {
+                        warn!("modern_war.{what}: '{k}' is not an objective kind; expected one of {KINDS:?}")
+                    }
+                }
+            };
+            if let Some(ew) = mw.ew.as_ref().filter(|e| e.enabled) {
+                check_kinds("ew.host_kinds", &ew.host_kinds);
+                check_kinds("ew.spoof_kinds", &ew.spoof_kinds);
+                for side in ["GPS_Spoofer_Blue", "GPS_Spoofer_Red"] {
+                    if !cfg.unit_classification.contains_key(side) {
+                        warn!("modern_war.ew: {side} is not in unit_classification -- that side's jammers can't spawn")
+                    }
+                }
+            }
+            if let Some(r) = mw.raids.as_ref().filter(|r| r.enabled) {
+                check_kinds("raids.target_kinds", &r.target_kinds);
+                if r.drone_templates_red.is_empty() && r.drone_templates_blue.is_empty() && !r.use_missiles {
+                    warn!("modern_war.raids: no drone templates and use_missiles off -- nothing can raid")
+                }
+                if let Some((a, b)) = r.hours {
+                    if a > 23 || b > 24 {
+                        bail!("modern_war.raids.hours must be within 0..24")
+                    }
+                }
+            }
+            if let Some(t) = mw.tempo.as_ref().filter(|t| t.enabled) {
+                if t.offensive_hours <= 0. || t.regroup_hours <= 0. {
+                    bail!("modern_war.tempo: offensive_hours and regroup_hours must be positive")
                 }
             }
         }

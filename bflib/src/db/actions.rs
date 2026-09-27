@@ -3942,6 +3942,7 @@ impl Db {
             weapon_type: None,
             altitude: Some(alt),
             altitude_type: Some(AltType::BARO),
+            counter_battery_radius: cfg.shoot_and_scoot_m,
         };
 
         let mut fired = 0u32;

@@ -115,6 +115,8 @@ enum CivKind {
     Overflight,
     Departure,
     Arrival,
+    /// A merchant ship on a sea lane.
+    Ship,
 }
 
 #[derive(Debug)]
@@ -124,8 +126,11 @@ struct CivFlight {
     typ: String,
     kind: CivKind,
     spawned_at: DateTime<Utc>,
-    /// Map-edge exit for overflights and departures.
+    /// Map-edge exit for overflights and departures, lane end for ships.
     exit: Option<Vector2>,
+    /// Ships only: removed after this, wherever they are (a voyage takes
+    /// hours, far past `max_flight_secs`).
+    expires: Option<DateTime<Utc>>,
     on_ground_since: Option<DateTime<Utc>>,
 }
 
@@ -146,6 +151,7 @@ pub(crate) struct AirLife {
     /// Civilian flights by group name.
     civ: FxHashMap<String, CivFlight>,
     next_civ_spawn: Option<DateTime<Utc>>,
+    next_ship_spawn: Option<DateTime<Utc>>,
     /// The neutral country airliners fly for, resolved once per mission.
     civ_country: Option<Country>,
     civ_country_resolved: bool,
@@ -182,15 +188,15 @@ fn side_pilots(ctx: &Context, side: Side) -> u32 {
     ctx.db.instanced_players().filter(|(_, p, _)| p.side == side).count() as u32
 }
 
-fn heading_of(v: Vector2) -> f64 {
+pub(crate) fn heading_of(v: Vector2) -> f64 {
     v.y.atan2(v.x)
 }
 
-fn dist(a: Vector2, b: Vector2) -> f64 {
+pub(crate) fn dist(a: Vector2, b: Vector2) -> f64 {
     (a - b).norm()
 }
 
-fn air_point<'lua>(
+pub(crate) fn air_point<'lua>(
     pos: Vector2,
     alt: f64,
     speed: f64,
@@ -277,7 +283,7 @@ fn flush_rtb(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
 
 /// True if any unit of `gid` is still alive. A group the db no longer knows
 /// counts as dead.
-fn alive(ctx: &Context, gid: &GroupId) -> bool {
+pub(crate) fn alive(ctx: &Context, gid: &GroupId) -> bool {
     ctx.db.group_health(gid).map(|(alive, _)| alive > 0).unwrap_or(false)
 }
 
@@ -644,7 +650,7 @@ fn tick_wingmen(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
 /// Points along the front: the midpoint between every red/blue objective and
 /// the nearest objective of the other side. Crude, but it follows the real
 /// contact line wherever it bends, and it needs nothing but objective owners.
-fn front_points(ctx: &Context) -> Vec<Vector2> {
+pub(crate) fn front_points(ctx: &Context) -> Vec<Vector2> {
     let mut red = vec![];
     let mut blue = vec![];
     for (_, o) in ctx.db.objectives() {
@@ -665,7 +671,7 @@ fn front_points(ctx: &Context) -> Vec<Vector2> {
     out
 }
 
-fn front_dist(front: &[Vector2], p: Vector2) -> f64 {
+pub(crate) fn front_dist(front: &[Vector2], p: Vector2) -> f64 {
     front.iter().map(|f| dist(*f, p)).fold(f64::INFINITY, f64::min)
 }
 
@@ -779,12 +785,21 @@ fn package_targets(
     // nearest a friendly pilot in the air, or a random one of the three
     // tightest when nobody is up.
     let front: Vec<_> = pairs.iter().take(6).cloned().collect();
+    // A friendly pilot in the air wins; otherwise the side's offensive axis
+    // (modern_war tempo), so packages follow the operational plan.
     let anchor: Option<Vector2> = ctx
         .db
         .instanced_players()
         .filter(|(_, p, i)| p.side == side && i.in_air)
         .map(|(_, _, i)| Vector2::new(i.position.p.x, i.position.p.z))
-        .next();
+        .next()
+        .or_else(|| {
+            ctx.modern_war
+                .tempo
+                .axis(side)
+                .and_then(|a| ctx.db.persisted.objectives.get(&a))
+                .map(|o| o.pos())
+        });
     let pick = match anchor {
         Some(a) => front.iter().min_by(|x, y| {
             dist((x.0 + x.3) * 0.5, a).total_cmp(&dist((y.0 + y.3) * 0.5, a))
@@ -884,7 +899,11 @@ fn tick_packages(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Date
             .airlife
             .last_package_launch
             .get(&side)
-            .map(|t| (now - *t).num_seconds() < cfg.launch_interval_secs as i64)
+            .map(|t| {
+                let tempo = ctx.db.ephemeral.cfg.modern_war.as_ref().and_then(|m| m.tempo.as_ref());
+                let factor = ctx.modern_war.tempo.factor(tempo, side, now);
+                (now - *t).num_seconds() < (cfg.launch_interval_secs as f64 * factor) as i64
+            })
             .unwrap_or(false)
         {
             continue;
@@ -1064,7 +1083,10 @@ fn tick_civil(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
             .and_then(|u| u.get_point().ok())
             .map(|p| Vector2::new(p.x, p.z));
         let in_air = unit.as_ref().and_then(|u| u.in_air().ok()).unwrap_or(true);
-        let overdue = (now - f.spawned_at).num_seconds() >= cfg.max_flight_secs as i64;
+        let overdue = match f.expires {
+            Some(t) => now >= t,
+            None => (now - f.spawned_at).num_seconds() >= cfg.max_flight_secs as i64,
+        };
         let exited = match (f.exit, pos) {
             (Some(exit), Some(p)) => dist(exit, p) <= CIV_EXIT_RADIUS_M,
             _ => false,
@@ -1103,7 +1125,21 @@ fn tick_civil(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     if (ctx.db.instanced_players().count() as u32) < cfg.min_players {
         return;
     }
-    if ctx.airlife.civ.len() >= cfg.max_active as usize {
+    // Merchant shipping, on its own count and clock.
+    let ships = ctx.airlife.civ.values().filter(|f| f.kind == CivKind::Ship).count();
+    if !cfg.ships.is_empty()
+        && ships < cfg.max_ships as usize
+        && ctx.airlife.next_ship_spawn.map(|t| now >= t).unwrap_or(true)
+    {
+        let jitter = thread_rng().gen_range(0.7..1.3);
+        ctx.airlife.next_ship_spawn =
+            Some(now + Duration::seconds((cfg.ship_spawn_interval_secs as f64 * jitter) as i64));
+        if let Err(e) = spawn_civil_ship(lua, ctx, &cfg, now) {
+            warn!("air_life: merchant ship not spawned: {e:?}");
+        }
+    }
+    let airliners = ctx.airlife.civ.len() - ctx.airlife.civ.values().filter(|f| f.kind == CivKind::Ship).count();
+    if airliners >= cfg.max_active as usize {
         return;
     }
     if ctx.airlife.next_civ_spawn.map(|t| now < t).unwrap_or(false) {
@@ -1117,29 +1153,163 @@ fn tick_civil(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     }
 }
 
+const SHIP_NAMES: &[&str] = &[
+    "Nordic Star", "Baltic Trader", "Sea Pearl", "Black Sea Carrier", "Caspian Spirit",
+    "Gulf Horizon", "Anatolia", "Odessa Star", "Bosporus", "Aegean Wind", "Levant Pride",
+    "Hormuz Venture", "Kharg Trader", "Persian Dawn", "Crimea Bay", "Danube Queen",
+];
+
+/// A sea lane: two open-water points at least 50 km apart with open water
+/// every 2 km between them, so a ship sailing straight never runs aground.
+fn sea_lane(lua: MizLua, lo: Vector2, hi: Vector2) -> Option<(Vector2, Vector2)> {
+    use dcso3::land::SurfaceType;
+    let land = Land::singleton(lua).ok()?;
+    let water = |p: Vector2| matches!(land.get_surface_type(LuaVec2(p)), Ok(SurfaceType::Water));
+    let mut rng = thread_rng();
+    let points: Vec<Vector2> = (0..60)
+        .map(|_| Vector2::new(rng.gen_range(lo.x..=hi.x), rng.gen_range(lo.y..=hi.y)))
+        .filter(|p| water(*p))
+        .collect();
+    for _ in 0..40 {
+        let (Some(a), Some(b)) = (points.choose(&mut rng), points.choose(&mut rng)) else {
+            return None;
+        };
+        let d = dist(*a, *b);
+        if d < 50_000. {
+            continue;
+        }
+        let steps = (d / 2_000.).ceil() as usize;
+        if (1..steps).all(|i| water(*a + (*b - *a) * (i as f64 / steps as f64))) {
+            return Some((*a, *b));
+        }
+    }
+    None
+}
+
+fn spawn_civil_ship(
+    lua: MizLua,
+    ctx: &mut Context,
+    cfg: &CivilTrafficCfg,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    ensure_civ_country(lua, ctx, cfg);
+    let Some(country) = ctx.airlife.civ_country else { return Ok(()) };
+    let mut lo = Vector2::new(f64::INFINITY, f64::INFINITY);
+    let mut hi = Vector2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in ctx.db.objectives().map(|(_, o)| o.pos()) {
+        lo = Vector2::new(lo.x.min(p.x), lo.y.min(p.y));
+        hi = Vector2::new(hi.x.max(p.x), hi.y.max(p.y));
+    }
+    if !lo.x.is_finite() {
+        bail!("no objectives")
+    }
+    let pad = Vector2::new(cfg.map_margin_m + 60_000., cfg.map_margin_m + 60_000.);
+    let Some((a, b)) = sea_lane(lua, lo - pad, hi + pad) else {
+        debug!("air_life: no open-water lane found this time");
+        return Ok(());
+    };
+    let mut rng = thread_rng();
+    let ship = cfg
+        .ships
+        .choose_weighted(&mut rng, |s| s.weight.max(1))
+        .map_err(|e| anyhow!("no ship type: {e}"))?;
+    let callsign = format_compact!(
+        "MV {} {}",
+        SHIP_NAMES.choose(&mut rng).copied().unwrap_or("Trader"),
+        rng.gen_range(1..99)
+    );
+    let gname = String::from(format_compact!("{CIV_PREFIX}{callsign}"));
+    let uname = String::from(format_compact!("{CIV_PREFIX}{callsign}-1"));
+    if ctx.airlife.civ.contains_key(&gname) {
+        return Ok(());
+    }
+    let wp = |p: Vector2| MissionPoint {
+        typ: PointType::TurningPoint,
+        airdrome_id: None,
+        time_re_fu_ar: None,
+        helipad: None,
+        link_unit: None,
+        action: None,
+        pos: LuaVec2(p),
+        alt: 0.,
+        alt_typ: None,
+        speed: ship.speed_ms,
+        speed_locked: None,
+        eta: None,
+        eta_locked: None,
+        name: None,
+        task: Box::new(Task::ComboTask(vec![])),
+    };
+    let l = lua.inner();
+    let pts = l.create_table()?;
+    pts.raw_set(1, wp(a))?;
+    pts.raw_set(2, wp(b))?;
+    let route = l.create_table()?;
+    route.raw_set("points", pts)?;
+    let unit = l.create_table()?;
+    unit.raw_set("name", uname.as_str())?;
+    unit.raw_set("type", ship.typ.as_str())?;
+    unit.raw_set("x", a.x)?;
+    unit.raw_set("y", a.y)?;
+    unit.raw_set("heading", heading_of(b - a))?;
+    unit.raw_set("skill", "Average")?;
+    let units = l.create_table()?;
+    units.raw_set(1, unit)?;
+    let group = l.create_table()?;
+    group.raw_set("name", gname.as_str())?;
+    group.raw_set("route", route)?;
+    group.raw_set("units", units)?;
+    let group = miz::Group::from_lua(Value::Table(group), l)?;
+    Coalition::singleton(lua)?
+        .add_group(country, GroupCategory::Ship, group)
+        .with_context(|| format_compact!("spawning merchant {callsign} ({})", ship.typ))?;
+    let voyage = dist(a, b) / ship.speed_ms.max(1.) * 1.3 + 600.;
+    info!("air_life: merchant {callsign} ({}) sailing {:.0} km", ship.typ, dist(a, b) / 1000.);
+    ctx.airlife.civ.insert(
+        gname,
+        CivFlight {
+            unit_name: uname,
+            callsign,
+            typ: String::from(ship.typ.as_str()),
+            kind: CivKind::Ship,
+            spawned_at: now,
+            exit: Some(b),
+            expires: Some(now + Duration::seconds(voyage as i64)),
+            on_ground_since: None,
+        },
+    );
+    Ok(())
+}
+
+/// Work out, once per mission, the neutral country civil traffic flies for.
+fn ensure_civ_country(lua: MizLua, ctx: &mut Context, cfg: &CivilTrafficCfg) {
+    if ctx.airlife.civ_country_resolved {
+        return;
+    }
+    ctx.airlife.civ_country_resolved = true;
+    ctx.airlife.civ_country = match cfg.country {
+        Some(c) => Some(c),
+        None => mission_neutral_country(lua).unwrap_or_else(|e| {
+            warn!("air_life: reading the mission's neutral countries: {e:?}");
+            None
+        }),
+    };
+    match ctx.airlife.civ_country {
+        Some(c) => info!("air_life: civil traffic flies for {c:?}"),
+        None => warn!(
+            "air_life: the mission has no neutral country and civil_traffic.country is not \
+             set -- civil traffic is off"
+        ),
+    }
+}
+
 fn spawn_civil(
     lua: MizLua,
     ctx: &mut Context,
     cfg: &CivilTrafficCfg,
     now: DateTime<Utc>,
 ) -> Result<()> {
-    if !ctx.airlife.civ_country_resolved {
-        ctx.airlife.civ_country_resolved = true;
-        ctx.airlife.civ_country = match cfg.country {
-            Some(c) => Some(c),
-            None => mission_neutral_country(lua).unwrap_or_else(|e| {
-                warn!("air_life: reading the mission's neutral countries: {e:?}");
-                None
-            }),
-        };
-        match ctx.airlife.civ_country {
-            Some(c) => info!("air_life: civil traffic flies for {c:?}"),
-            None => warn!(
-                "air_life: the mission has no neutral country and civil_traffic.country is not \
-                 set -- civil traffic is off"
-            ),
-        }
-    }
+    ensure_civ_country(lua, ctx, cfg);
     let Some(country) = ctx.airlife.civ_country else { return Ok(()) };
     let fields = airports(lua)?;
     if fields.is_empty() {
@@ -1212,6 +1382,7 @@ fn spawn_civil(
         ])
     };
     let (start, start_alt, points, exit, desc) = match kind {
+        CivKind::Ship => bail!("ships are spawned by spawn_civil_ship"),
         CivKind::Overflight => {
             let mut chosen: Option<(Vector2, Vector2, f64)> = None;
             for _ in 0..12 {
@@ -1341,6 +1512,7 @@ fn spawn_civil(
             kind,
             spawned_at: now,
             exit,
+            expires: None,
             on_ground_since: None,
         },
     );
@@ -1369,6 +1541,7 @@ pub(crate) fn civil_down(ctx: &mut Context, unit_name: &str, now: DateTime<Utc>)
         .civ_hits
         .remove(unit_name)
         .filter(|(_, t)| (now - *t).num_seconds() < CIV_HIT_MEMORY_SECS);
+    let ship = flight.as_ref().map(|f| f.kind == CivKind::Ship).unwrap_or(false);
     let (callsign, typ) = match &flight {
         Some(f) => (f.callsign.clone(), f.typ.clone()),
         None => (
@@ -1407,13 +1580,16 @@ pub(crate) fn civil_down(ctx: &mut Context, unit_name: &str, now: DateTime<Utc>)
     }
     let msg = if cfg.shootdown_treasury_penalty != 0 {
         format_compact!(
-            "CIVILIAN AIRLINER DOWN: flight {callsign} ({typ}) was shot down by {name} ({side:?}). \
-             {side:?} pays {} from its treasury.",
+            "{}: {callsign} ({typ}) was {} by {name} ({side:?}). {side:?} pays {} from its treasury.",
+            if ship { "CIVILIAN SHIP SUNK" } else { "CIVILIAN AIRLINER DOWN" },
+            if ship { "sunk" } else { "shot down" },
             cfg.shootdown_treasury_penalty
         )
     } else {
         format_compact!(
-            "CIVILIAN AIRLINER DOWN: flight {callsign} ({typ}) was shot down by {name} ({side:?})."
+            "{}: {callsign} ({typ}) was {} by {name} ({side:?}).",
+            if ship { "CIVILIAN SHIP SUNK" } else { "CIVILIAN AIRLINER DOWN" },
+            if ship { "sunk" } else { "shot down" }
         )
     };
     ctx.db.ephemeral.msgs().panel_to_all(20, true, msg);

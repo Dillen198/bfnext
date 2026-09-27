@@ -31,6 +31,7 @@ mod jtac;
 mod landcache;
 mod mapcolor;
 mod menu;
+mod modern_war;
 mod msgq;
 mod navaids;
 mod shots;
@@ -409,6 +410,9 @@ struct Context {
     /// On-call wingmen, autonomous AI packages and civil traffic
     /// (`Cfg::air_life`). Session state only.
     airlife: airlife::AirLife,
+    /// Electronic warfare, SAM magazines, strike raids, sea drones and
+    /// campaign tempo (`Cfg::modern_war`). Session state only.
+    modern_war: modern_war::ModernWar,
     last_junk_removal: DateTime<Utc>,
     last_weather_publish: DateTime<Utc>,
     /// When each held player last got the takeoff-hold countdown panel.
@@ -963,7 +967,11 @@ fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Objec
         // Civil airliners never enter the campaign db. Without this, an
         // unknown unit being born is taken for a dynamic player slot with
         // nobody in it -- and destroyed on the spot.
-        if unit.get_name().map(|n| airlife::is_civil(n.as_str())).unwrap_or(false) {
+        if unit
+            .get_name()
+            .map(|n| airlife::is_civil(n.as_str()) || modern_war::is_unmanaged(n.as_str()))
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         ctx.recently_born.insert(unit.object_id()?, Utc::now());
@@ -1046,6 +1054,10 @@ fn on_hit(
             if dead {
                 airlife::civil_down(ctx, name.as_str(), start_ts);
             }
+            return Ok(());
+        }
+        // Sea drones aren't campaign units either.
+        if target.get_name().map(|n| modern_war::is_unmanaged(n.as_str())).unwrap_or(false) {
             return Ok(());
         }
         if let Some(shooter) = e.initiator.and_then(|u| u.as_unit().ok()) {
@@ -1214,8 +1226,8 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             if let Some(Ok(obj_id)) = e.initiator.as_ref().map(|u| u.object_id()) {
                 let shooter_info = ctx.db.ephemeral.get_uid_by_object_id(&obj_id)
                     .and_then(|uid| ctx.db.unit(uid).ok())
-                    .map(|u| (u.side, u.tags.0, u.pos));
-                if let Some((side, tags, pos)) = shooter_info {
+                    .map(|u| (u.side, u.tags.0, u.pos, u.group));
+                if let Some((side, tags, pos, gid)) = shooter_info {
                     // Live voice GCI: an enemy SAM firing -> "SAM launch, defend"
                     // for nearby friendly flights (see admin::query_gci).
                     if side != Side::Neutral
@@ -1223,6 +1235,13 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                         && !tags.contains(UnitTag::Aircraft)
                     {
                         ctx.ewr.record_sam_launch(pos, side, start_ts);
+                    }
+                    // A SAM launch spends one from that site's magazine.
+                    if side != Side::Neutral
+                        && tags.contains(UnitTag::SAM)
+                        && !tags.contains(UnitTag::Aircraft)
+                    {
+                        modern_war::on_sam_shot(ctx, gid, start_ts);
                     }
                 }
             }
@@ -1284,14 +1303,16 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             }
         }
         Event::Dead(e) | Event::UnitLost(e) => {
-            if let Some(name) = e
+            let unmanaged = e
                 .initiator
                 .as_ref()
                 .and_then(|u| u.as_unit().ok())
                 .and_then(|u| u.get_name().ok())
-                .filter(|n| airlife::is_civil(n.as_str()))
-            {
-                airlife::civil_down(ctx, name.as_str(), start_ts);
+                .filter(|n| airlife::is_civil(n.as_str()) || modern_war::is_unmanaged(n.as_str()));
+            if let Some(name) = unmanaged {
+                if airlife::is_civil(name.as_str()) {
+                    airlife::civil_down(ctx, name.as_str(), start_ts);
+                }
             } else if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
                 let dismount = try_capture_dismount_info(ctx, &unit);
                 try_gv_passenger_eject(lua, ctx, &unit);
@@ -2312,6 +2333,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     weapon_type: None,
                     altitude: Some(alt),
                     altitude_type: Some(AltType::BARO),
+                    counter_battery_radius: shoot_and_scoot(&ctx.db.ephemeral.cfg),
                 };
 
                 let mut fired = 0u32;
@@ -2416,6 +2438,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     weapon_type: None,
                     altitude: Some(alt),
                     altitude_type: Some(AltType::BARO),
+                    counter_battery_radius: shoot_and_scoot(&ctx.db.ephemeral.cfg),
                 };
 
                 let mut fired = 0u32;
@@ -2863,6 +2886,12 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
 }
 
 
+
+/// Shoot and scoot distance for artillery and launcher fire missions
+/// (`artillery.shoot_and_scoot_m`), when configured.
+pub(crate) fn shoot_and_scoot(cfg: &Cfg) -> Option<f64> {
+    cfg.artillery.as_ref().and_then(|a| a.shoot_and_scoot_m)
+}
 
 /// The templates a scramble may spawn, best candidate first.
 ///
@@ -4599,6 +4628,8 @@ fn run_slow_timed_events(
     }
     // Wingmen, autonomous AI packages and civil traffic (`Cfg::air_life`).
     step(lua, ctx, "air life", |ctx| airlife::tick(lua, ctx, perf, start_ts));
+    // EW, SAM magazines, strike raids, sea drones, tempo (`Cfg::modern_war`).
+    step(lua, ctx, "modern war", |ctx| modern_war::tick(lua, ctx, perf, start_ts));
     step(lua, ctx, "junk removal", |ctx| remove_junk_periodic(lua, ctx, start_ts));
     // Publish weather to dashboard every 5 minutes
     if (start_ts - ctx.last_weather_publish).num_seconds() >= 300 {

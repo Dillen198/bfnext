@@ -534,6 +534,9 @@ pub enum Task<'lua> {
         weapon_type: Option<u64>, // weapon flag(s)
         altitude: Option<f64>,
         altitude_type: Option<AltType>,
+        /// Vehicles only: relocate up to this many metres after the fire
+        /// mission (shoot and scoot, DCS `counterbattaryRadius`, 0..500).
+        counter_battery_radius: Option<f64>,
     },
     Hold,
     FACAttackGroup {
@@ -726,6 +729,7 @@ impl<'lua> Task<'lua> {
                 weapon_type: params.raw_get("weaponType")?,
                 altitude: params.raw_get("altitude")?,
                 altitude_type: params.raw_get("alt_type")?,
+                counter_battery_radius: params.raw_get("counterbattaryRadius")?,
             }),
             "Hold" => Ok(Self::Hold),
             "FAC_AttackGroup" => Ok(Self::FACAttackGroup {
@@ -961,8 +965,13 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                 weapon_type,
                 altitude,
                 altitude_type,
+                counter_battery_radius,
             } => {
                 root.raw_set("id", "FireAtPoint")?;
+                if let Some(r) = counter_battery_radius {
+                    // DCS's own spelling.
+                    params.raw_set("counterbattaryRadius", r.clamp(0., 500.))?;
+                }
                 params.raw_set("point", point)?;
                 if let Some(radius) = radius {
                     // The scripting docs call it `radius`, the Mission Editor

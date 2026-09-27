@@ -3467,6 +3467,7 @@ const WIKI_FACT_KEYS: &[&str] = &[
     "deployables",
     "troops",
     "air_life",
+    "modern_war",
 ];
 
 /// Reduce the `actions` block to what a wiki page ever quotes -- the menu name,

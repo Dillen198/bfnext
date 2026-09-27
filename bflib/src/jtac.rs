@@ -1236,6 +1236,7 @@ impl Jtac {
                     weapon_type: None,
                     altitude: Some(0.),
                     altitude_type: Some(AltType::RADIO),
+                    counter_battery_radius: crate::shoot_and_scoot(&db.ephemeral.cfg),
                 };
                 let task = aim_and_fire_route(apos, pos, group_facing(db, gid), task);
                 let group = Group::get_by_name(lua, &name)
@@ -1311,6 +1312,7 @@ impl Jtac {
                         weapon_type: None,
                         altitude: Some(0.),
                         altitude_type: Some(AltType::RADIO),
+                        counter_battery_radius: crate::shoot_and_scoot(&db.ephemeral.cfg),
                     };
                     
                     fire_task_vec.push(task);
@@ -2001,6 +2003,7 @@ impl Jtacs {
                 weapon_type: None,
                 altitude: Some(0.),
                 altitude_type: Some(AltType::RADIO),
+                counter_battery_radius: crate::shoot_and_scoot(&db.ephemeral.cfg),
             };
             let mission =
                 aim_and_fire_route(apos, adjusted_pos, group_facing(db, gid), fire_task);

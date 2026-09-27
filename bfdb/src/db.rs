@@ -3391,6 +3391,7 @@ impl StatsDb {
             ("advanced/helo-missions", "AI Helo Missions", "Advanced Topics", 5, include_str!("../seed_wiki/advanced/helo-missions.md")),
             ("advanced/ai-opposition", "AI Opposition (CAP & Helo Patrols)", "Advanced Topics", 6, include_str!("../seed_wiki/advanced/ai-opposition.md")),
             ("advanced/air-life", "Wingmen, AI Packages & Civil Traffic", "Advanced Topics", 7, include_str!("../seed_wiki/advanced/air-life.md")),
+            ("advanced/modern-war", "Modern War: EW, Air Defence, Raids & Tempo", "Advanced Topics", 8, include_str!("../seed_wiki/advanced/modern-war.md")),
         ];
         let mut refreshed = 0u32;
         for (slug, title, section, order, content) in seed {

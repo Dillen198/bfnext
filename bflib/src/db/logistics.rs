@@ -6639,6 +6639,20 @@ impl Db {
         Ok(())
     }
 
+    /// Halt a factory's production for `pause` (a strike on it). Returns
+    /// false if `oid` is not a factory.
+    pub fn pause_factory(&mut self, oid: &ObjectiveId, pause: Duration) -> Result<bool> {
+        let obj = objective_mut!(self, oid)?;
+        let ObjectiveKind::Factory { last_production_ts, .. } = &mut obj.kind else {
+            return Ok(false);
+        };
+        // Production runs when `now - last >= interval`, so a timestamp in
+        // the future holds it off for `pause` on top of the normal cycle.
+        *last_production_ts = Some(Utc::now() + pause);
+        self.ephemeral.dirty();
+        Ok(true)
+    }
+
     pub fn admin_reduce_inventory(
         &mut self,
         lua: MizLua,

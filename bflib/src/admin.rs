@@ -2537,6 +2537,11 @@ pub(crate) fn query_gci(
             sam_threats,
             sam_launches,
             splashes,
+            comms_jammed: crate::modern_war::comms_jammed(
+                ctx,
+                side,
+                dcso3::Vector2::new(inst.position.p.x, inst.position.p.z),
+            ),
         });
     }
 

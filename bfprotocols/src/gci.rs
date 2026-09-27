@@ -225,6 +225,10 @@ pub struct GciFlight {
     /// `brg`/`rng_m` point at the kill location.
     #[serde(default)]
     pub splashes: Vec<GciSamThreat>,
+    /// The flight is inside an active enemy radio jammer (`modern_war.ew`):
+    /// most calls to it are lost and the rest come through broken.
+    #[serde(default)]
+    pub comms_jammed: bool,
 }
 
 /// A friendly support asset (tanker / AWACS) on the coalition picture.
