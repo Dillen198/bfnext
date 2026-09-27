@@ -254,8 +254,16 @@ fn repair_state(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
         return CompactString::from("at full strength");
     }
     let cfg = &db.ephemeral.cfg;
-    if obj.threatened() || db.capture_in_progress(oid) {
-        return CompactString::from("suppressed (enemy in contact)");
+    // Only ever shown to the owner. "Suppressed" alone left a base's own side
+    // with nothing to act on when it stayed frozen for hours, so say what is
+    // holding it: how many enemy ground units, and roughly how far out.
+    if obj.threatened() {
+        return db
+            .owner_threat_note(oid)
+            .unwrap_or_else(|| CompactString::from("suppressed (enemy in contact)"));
+    }
+    if db.capture_in_progress(oid) {
+        return CompactString::from("FROZEN -- an enemy capture timer is running");
     }
     if obj.supply() < cfg.repair_supply_cost {
         return format_compact!(
@@ -658,6 +666,9 @@ fn build_capture_advisor_card(
 
     if diag.owner == viewer {
         let _ = write!(s, "You already own this objective.\n");
+        if obj.health() < 100 {
+            let _ = write!(s, "REPAIR: {}\n", repair_state(db, oid, obj));
+        }
         return s;
     }
 

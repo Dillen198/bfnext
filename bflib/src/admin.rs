@@ -167,6 +167,15 @@ pub enum AdminCommand {
     Remark {
         objective: String,
     },
+    /// Why an objective isn't repairing: threat units (live or ghost),
+    /// capture timer, logi, supply, next pulse.
+    WhyThreat {
+        objective: String,
+    },
+    /// List units that are alive in the db but have no DCS object.
+    Ghosts,
+    /// Retire every current ghost now (see `db::ghosts`).
+    PurgeGhosts,
     Reset {
         winner: Option<Side>,
     },
@@ -366,6 +375,9 @@ impl AdminCommand {
             "delete <groupid>: delete deployed group, now with 100% less mess",
             "deslot <player>: force <player> to spectators",
             "remark <obj>: force refresh the markup on objective",
+            "whythreat <obj>: why <obj> isn't repairing -- threat units (live or ghost), capture timer, logi, supply, next pulse",
+            "ghosts: list units alive in the campaign db that have no DCS object",
+            "purge-ghosts: immediately mark dead / delete every unit the ghosts command lists",
             "reset [winner]: shutdown the server and reset the campaign state",
             "shutdown: shutdown the server",
             "blacklist <rule> <player>: deny <player> access to <rule> (actions|cargo|troops|jtac|ca)",
@@ -558,6 +570,14 @@ impl FromStr for AdminCommand {
             Ok(Self::Remark {
                 objective: s.into(),
             })
+        } else if let Some(s) = s.strip_prefix("whythreat ") {
+            Ok(Self::WhyThreat {
+                objective: s.into(),
+            })
+        } else if s == "ghosts" {
+            Ok(Self::Ghosts)
+        } else if s == "purge-ghosts" {
+            Ok(Self::PurgeGhosts)
         } else if let Some(s) = s.strip_prefix("reset") {
             // strip_prefix leaves the separating space, so `reset blue` used
             // to try to parse " blue" as a side and fail.
@@ -2936,6 +2956,8 @@ impl AdminCommand {
                 | Self::LogWarehouse { .. }
                 | Self::LogLogistics
                 | Self::Logdesc
+                | Self::WhyThreat { .. }
+                | Self::Ghosts
                 | Self::QueryObjectives
                 | Self::QueryObjective { .. }
                 | Self::QueryPlayers
@@ -3297,6 +3319,21 @@ fn run_admin_command(
                 Ok(()) => reply_ok!("{objective} remark queued"),
                 Err(e) => reply_err!("could not remark {objective} {e:?}"),
             },
+            AdminCommand::WhyThreat { objective } => {
+                let oid = airbase!(&objective);
+                for line in ctx.db.admin_why_threat(&oid) {
+                    reply_ok!("{line}")
+                }
+            }
+            AdminCommand::Ghosts => {
+                for line in ctx.db.admin_ghost_report() {
+                    reply_ok!("{line}")
+                }
+            }
+            AdminCommand::PurgeGhosts => {
+                let (groups, units) = ctx.db.admin_purge_ghosts(Utc::now());
+                reply_ok!("purged {units} ghost unit(s) in {groups} group(s)")
+            }
             AdminCommand::Reset { winner } => match admin_shutdown(ctx, lua, Some(winner)) {
                 Ok(s) => {
                     result = s;
@@ -3709,5 +3746,20 @@ mod tests {
             }
             r => panic!("{r:?}"),
         }
+    }
+
+    #[test]
+    fn ghost_admin_commands_parse() {
+        match "WhyThreat Kutaisi Airfield".parse::<AdminCommand>() {
+            Ok(AdminCommand::WhyThreat { objective }) => {
+                assert_eq!(objective.as_str(), "Kutaisi Airfield")
+            }
+            r => panic!("{r:?}"),
+        }
+        assert!(matches!("Ghosts".parse::<AdminCommand>(), Ok(AdminCommand::Ghosts)));
+        assert!(matches!("purge-ghosts".parse::<AdminCommand>(), Ok(AdminCommand::PurgeGhosts)));
+        // Reads stay out of the audit trail, the purge doesn't.
+        assert!(!AdminCommand::Ghosts.audited());
+        assert!(AdminCommand::PurgeGhosts.audited());
     }
 }

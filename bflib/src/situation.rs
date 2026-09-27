@@ -541,6 +541,11 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective, friendly: bool) -
         return CompactString::from("NEUTRAL -- never self-repairs, must be retaken with troops");
     }
     if obj.threatened() {
+        // The owner is told what is holding the base (count and a distance
+        // band); the other side already knows, they're its units.
+        if friendly && let Some(note) = db.owner_threat_note(oid) {
+            return note;
+        }
         return CompactString::from("repairs FROZEN while enemy units stay in sight");
     }
     if db.capture_in_progress(oid) {

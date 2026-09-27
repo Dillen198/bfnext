@@ -4283,6 +4283,9 @@ fn run_slow_timed_events(
             ctx.do_bg_task(Task::Stat(Stat::Kill(dead)));
         }
     });
+    // Before repairs: a ghost enemy unit parked by a base keeps it
+    // "threatened", and a threatened base never repairs.
+    step(lua, ctx, "ghost units", |ctx| ctx.db.reconcile_ghosts(ts));
     step(lua, ctx, "repairs", |ctx| {
         if let Err(e) = ctx.db.maybe_do_repairs(ts) {
             error!("error doing repairs {:?}", e)

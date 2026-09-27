@@ -16,6 +16,7 @@ for more details.
 
 use super::{
     cargo::{Cargo, C130Cargo, GroundVehiclePassengers},
+    ghosts::GhostTracker,
 
     group::{DeployKind, SpawnedGroup, SpawnedUnit},
     intel::IntelDatabase,
@@ -354,6 +355,9 @@ pub struct Ephemeral {
     /// RPC), keyed by the source markup id. Not persisted -- redrawn on the
     /// next push after a restart.
     pub(crate) intel_map_marks: FxHashMap<std::string::String, SmallVec<[dcso3::trigger::MarkId; 4]>>,
+    /// Ghost-unit reconciliation state (see `db::ghosts`). Session-scoped on
+    /// purpose: every unit's DCS object is re-learned after a load anyway.
+    pub(super) ghosts: GhostTracker,
 }
 
 impl Default for Ephemeral {
@@ -447,6 +451,7 @@ impl Default for Ephemeral {
             recon_sessions: FxHashMap::default(),
             recon_cooldown: FxHashMap::default(),
             intel_map_marks: FxHashMap::default(),
+            ghosts: GhostTracker::default(),
         }
     }
 }
@@ -850,6 +855,15 @@ impl Ephemeral {
 
     pub fn spawnq_len(&self) -> usize {
         self.spawnq.len()
+    }
+
+    /// Every group with a spawn, delayed spawn or despawn still queued: in
+    /// between states, so not yet expected to match what DCS has.
+    pub(super) fn spawn_pending_gids(&self) -> FxHashSet<GroupId> {
+        let mut s: FxHashSet<GroupId> = self.spawnq.iter().copied().collect();
+        s.extend(self.despawnq.iter().map(|(gid, _)| *gid));
+        s.extend(self.delayspawnq.values().flat_map(|gids| gids.iter().copied()));
+        s
     }
 
     pub fn process_spawn_queue(

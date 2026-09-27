@@ -45,6 +45,7 @@ pub mod actions;
 pub mod cargo;
 pub mod ephemeral;
 pub mod events;
+pub mod ghosts;
 pub mod group;
 pub mod intel;
 pub mod logistics;
