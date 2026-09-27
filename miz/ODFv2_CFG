@@ -147,7 +147,11 @@
       "delivery_distance": 500,
       "check_interval_secs": 10,
       "max_transit_minutes": 90,
-      "dispatch_cooldown_ticks": 2
+      "dispatch_cooldown_ticks": 2,
+      "fuel_template": {
+        "Red": "RFUELCONVOY",
+        "Blue": "BFUELCONVOY"
+      }
     },
     "air_logistics": {
       "enabled": true,
@@ -3711,6 +3715,14 @@
     ]
   },
   "unit_classification": {
+    "TZ-22_KrAZ": ["Logistics", "Unarmed"],
+    "TZ-22_TANK": ["Logistics", "Unarmed"],
+    "ATZ-60_TANK": ["Logistics", "Unarmed"],
+    "CHAP_HX81_Tractor": ["Logistics", "Unarmed"],
+    "CHAP_SLT50_Tractor": ["Logistics", "Unarmed"],
+    "CHAP_SLT50_Trailer": ["Logistics", "Unarmed"],
+    "S-75_Zil": ["Logistics", "Unarmed"],
+    "S_75_Zil_Trailer": ["Logistics", "Unarmed"],
     "CHAP_HX77": [
       "Logistics",
       "Unarmed",
@@ -15433,6 +15445,12 @@
     "tempo": {
       "offensive_hours": 6,
       "regroup_hours": 10
+    },
+    "rail": {
+      "interval_secs": 1800,
+      "max_trains_per_side": 2,
+      "speed_kph": 60,
+      "station_radius_m": 5000
     }
   }
 }

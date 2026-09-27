@@ -28,6 +28,8 @@ for more details.
 //! - `boats`: sea-drone attacks on enemy ships.
 //! - `tempo`: each side alternates offensives and regroups, which set how
 //!   often the rest of it fires and where.
+//! - `rail`: supply trains between stations on the railway; a train
+//!   destroyed on the line takes its cargo with it.
 //!
 //! All of it is session state; the groups it spawns are `EventSpawn` or live
 //! outside the campaign db, so a restart starts it clean.
@@ -35,6 +37,7 @@ for more details.
 pub(crate) mod boats;
 pub(crate) mod ew;
 pub(crate) mod raids;
+pub(crate) mod rail;
 pub(crate) mod sam_stock;
 pub(crate) mod tempo;
 
@@ -54,6 +57,7 @@ pub(crate) struct ModernWar {
     pub(crate) raids: raids::Raids,
     pub(crate) boats: boats::Boats,
     pub(crate) tempo: tempo::Tempo,
+    pub(crate) rail: rail::Rail,
 }
 
 fn cfg(ctx: &Context) -> Option<ModernWarCfg> {
@@ -167,10 +171,11 @@ pub(crate) fn comms_jammed(ctx: &Context, side: Side, pos: Vector2) -> bool {
     }
 }
 
-/// Group names the engine spawns outside the campaign db (sea drones). The
-/// birth handler must leave them alone, the same as civil traffic.
+/// Group names the engine spawns outside the campaign db (sea drones,
+/// supply trains). The birth handler must leave them alone, the same as
+/// civil traffic.
 pub(crate) fn is_unmanaged(name: &str) -> bool {
-    name.starts_with(boats::USV_PREFIX)
+    name.starts_with(boats::USV_PREFIX) || name.starts_with(rail::RAIL_PREFIX)
 }
 
 /// The slow-tick entry point.
@@ -190,5 +195,8 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Da
     }
     if let Some(c) = cfg.boat_raids.as_ref().filter(|c| c.enabled) {
         boats::tick(lua, ctx, c, cfg.tempo.as_ref(), now);
+    }
+    if let Some(c) = cfg.rail.as_ref().filter(|c| c.enabled) {
+        rail::tick(lua, ctx, c, now);
     }
 }

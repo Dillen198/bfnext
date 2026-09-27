@@ -571,6 +571,19 @@ pub enum Task<'lua> {
         altitude: f64,
         last_wpt_idx: Option<i64>,
     },
+    /// Hitch `trailer` to `tractor` (vehicles whose type can tow it: a
+    /// tractor's `canTow` saddle matches the trailer's). A trailer has no
+    /// engine of its own and stays where it is until attached.
+    AttachTrailer {
+        tractor: UnitId,
+        trailer: UnitId,
+        on_start_mission: bool,
+    },
+    /// Unhitch `tractor`'s trailer at `pos`.
+    DetachTrailer {
+        tractor: UnitId,
+        pos: LuaVec2,
+    },
     EngageTargets {
         target_types: Vec<Attribute>,
         max_dist: Option<f64>,
@@ -772,6 +785,15 @@ impl<'lua> Task<'lua> {
                 } else {
                     None
                 },
+            }),
+            "AttachTrailer" => Ok(Self::AttachTrailer {
+                tractor: params.raw_get("unitIdTractor")?,
+                trailer: params.raw_get("unitIdTrailer")?,
+                on_start_mission: params.raw_get::<_, Option<bool>>("onStartMission")?.unwrap_or(false),
+            }),
+            "DetachTrailer" => Ok(Self::DetachTrailer {
+                tractor: params.raw_get("unitIdTractor")?,
+                pos: LuaVec2(Vector2::new(params.raw_get("x")?, params.raw_get("y")?)),
             }),
             "EngageTargets" => Ok(Self::EngageTargets {
                 target_types: params.raw_get("targetTypes")?,
@@ -1061,6 +1083,18 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                     params.raw_set("lastWptIndexFlag", true)?;
                     params.raw_set("lastWptIndex", idx)?;
                 }
+            }
+            Self::AttachTrailer { tractor, trailer, on_start_mission } => {
+                root.raw_set("id", "AttachTrailer")?;
+                params.raw_set("unitIdTractor", tractor)?;
+                params.raw_set("unitIdTrailer", trailer)?;
+                params.raw_set("onStartMission", on_start_mission)?;
+            }
+            Self::DetachTrailer { tractor, pos } => {
+                root.raw_set("id", "DetachTrailer")?;
+                params.raw_set("unitIdTractor", tractor)?;
+                params.raw_set("x", pos.x)?;
+                params.raw_set("y", pos.y)?;
             }
             Self::EngageTargets {
                 target_types,
@@ -2356,6 +2390,28 @@ mod decode_tests {
         // The Mission Editor's spelling of StopTransmission now decodes.
         let st = eval(&lua, "{ id = 'StopTransmission', params = {} }");
         assert!(matches!(Command::from_lua(st, &lua).unwrap(), Command::StopTransmission));
+    }
+
+    #[test]
+    fn trailer_tasks_round_trip() {
+        let lua = Lua::new();
+        let t = Task::AttachTrailer {
+            tractor: UnitId::from(7),
+            trailer: UnitId::from(8),
+            on_start_mission: true,
+        };
+        let v = t.into_lua(&lua).unwrap();
+        let tbl: LuaTable = FromLua::from_lua(v.clone(), &lua).unwrap();
+        assert_eq!(tbl.raw_get::<_, String>("id").unwrap().as_str(), "AttachTrailer");
+        let p: LuaTable = tbl.raw_get("params").unwrap();
+        assert_eq!(p.raw_get::<_, i64>("unitIdTractor").unwrap(), 7);
+        assert_eq!(p.raw_get::<_, i64>("unitIdTrailer").unwrap(), 8);
+        let back = Task::from_lua(v, &lua).unwrap();
+        assert!(matches!(back, Task::AttachTrailer { on_start_mission: true, .. }));
+        // The ME's shape for a trailer drop decodes too.
+        let src = "{ id = 'DetachTrailer', params = { unitIdTractor = 7, x = 1, y = 2 } }";
+        let back = Task::from_lua(eval(&lua, src), &lua).unwrap();
+        assert!(matches!(back, Task::DetachTrailer { .. }));
     }
 
     #[test]

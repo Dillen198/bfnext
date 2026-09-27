@@ -502,6 +502,14 @@
 
   "unit_classification": {
 
+    "TZ-22_KrAZ": ["Logistics", "Unarmed"],
+    "TZ-22_TANK": ["Logistics", "Unarmed"],
+    "ATZ-60_TANK": ["Logistics", "Unarmed"],
+    "CHAP_HX81_Tractor": ["Logistics", "Unarmed"],
+    "CHAP_SLT50_Tractor": ["Logistics", "Unarmed"],
+    "CHAP_SLT50_Trailer": ["Logistics", "Unarmed"],
+    "S-75_Zil": ["Logistics", "Unarmed"],
+    "S_75_Zil_Trailer": ["Logistics", "Unarmed"],
     "F-15C":    ["Aircraft"],
     "Su-27":    ["Aircraft"],
     "A-10C":    ["Aircraft"],

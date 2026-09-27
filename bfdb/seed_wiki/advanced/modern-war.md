@@ -73,6 +73,26 @@ friendly water, run at the target and detonate alongside it. The target's side
 is warned when they close within 15 km. Escorts, helicopters and strafing runs
 can stop them.
 
+## Supply by rail and road
+
+**Supply trains** run between a side's stations: any objective with a
+railway within {{cfg:modern_war.rail.station_radius_m|5000}} m. A logistics
+hub or factory with stock loads a train for the neediest station nearer the
+front, and it runs the real rail line at
+{{cfg:modern_war.rail.speed_kph|60}} km/h. A train carries far more than a
+truck convoy.
+
+- The load leaves the origin when the train departs and arrives only if the
+  train does. **Destroy the train and its cargo is gone**, and both sides are
+  told.
+- Trains never use a line that passes within
+  {{cfg:modern_war.rail.enemy_clearance_m|15000}} m of an enemy objective. To
+  hit one, you have to go behind the lines.
+
+**Fuel convoys** can be tractor-trailer refuelers: a KrAZ or MAZ truck towing
+a fuel tank trailer. The trailers are hitched when the convoy sets off. Kill
+the tractor and its trailer goes nowhere.
+
 ## Offensives and pauses
 
 Each side alternates an **offensive** of

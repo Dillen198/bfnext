@@ -1502,6 +1502,30 @@ pub struct ConvoyConfig {
     /// convoys to every under-stocked destination on every tick.
     #[serde(default = "default_dispatch_cooldown")]
     pub dispatch_cooldown_ticks: u32,
+    /// Template per side for FUEL convoys -- e.g. tractor-trailer refuelers
+    /// (KrAZ + TZ-22). Unset side = `truck_template`.
+    #[serde(default)]
+    pub fuel_template: FxHashMap<Side, String>,
+    /// Tractor type -> the trailer type it tows. After a convoy spawns, every
+    /// tractor in it is hitched to the nearest free trailer of its type (DCS
+    /// `AttachTrailer`); a trailer left unhitched just sits there, so a
+    /// template with trailers needs its tractors listed here. Defaults to
+    /// every pair DCS ships.
+    #[serde(default = "default_trailer_pairs")]
+    pub trailer_pairs: FxHashMap<String, String>,
+}
+
+fn default_trailer_pairs() -> FxHashMap<String, String> {
+    [
+        ("TZ-22_KrAZ", "TZ-22_TANK"),
+        ("ATZ-60_Maz", "ATZ-60_TANK"),
+        ("S-75_Zil", "S_75_Zil_Trailer"),
+        ("CHAP_HX81_Tractor", "CHAP_SLT50_Trailer"),
+        ("CHAP_SLT50_Tractor", "CHAP_SLT50_Trailer"),
+    ]
+    .into_iter()
+    .map(|(a, b)| (String::from(a), String::from(b)))
+    .collect()
 }
 
 fn default_convoy_max_transit() -> u32 {
@@ -1533,6 +1557,8 @@ impl Default for ConvoyConfig {
             check_interval_secs: default_convoy_check_interval(),
             max_transit_minutes: default_convoy_max_transit(),
             dispatch_cooldown_ticks: default_dispatch_cooldown(),
+            fuel_template: FxHashMap::default(),
+            trailer_pairs: default_trailer_pairs(),
         }
     }
 }
@@ -3954,7 +3980,73 @@ pub struct ModernWarCfg {
     pub boat_raids: Option<BoatRaidsCfg>,
     #[serde(default)]
     pub tempo: Option<TempoCfg>,
+    #[serde(default)]
+    pub rail: Option<RailCfg>,
 }
+
+/// Rail logistics: supply trains between the side's objectives that sit on a
+/// railway. A train loads a big share of its origin's surplus (debited on
+/// departure, like any transport), runs the actual rails, and delivers on
+/// arrival. Destroy the locomotive and the cargo is lost -- rail lines and
+/// the trains on them become interdiction targets, as in both current wars.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RailCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Seconds between one side's train departures. Default 1800.
+    #[serde(default = "default_rail_interval")]
+    pub interval_secs: u32,
+    /// Trains one side may have running at once. Default 2.
+    #[serde(default = "default_rail_max")]
+    pub max_trains_per_side: u32,
+    /// Locomotive first, then the wagons, as DCS type names.
+    #[serde(default = "default_rail_train_red")]
+    pub train_red: Vec<String>,
+    #[serde(default = "default_rail_train_blue")]
+    pub train_blue: Vec<String>,
+    #[serde(default = "default_rail_speed")]
+    pub speed_kph: f64,
+    /// An objective is a station if a railway passes within this. Default 5 km.
+    #[serde(default = "default_rail_station_radius")]
+    pub station_radius_m: f64,
+    /// Units of each item a train carries, capped by what the origin holds
+    /// and the destination has room for. Default 150.
+    #[serde(default = "default_rail_cap")]
+    pub per_item_cap: u32,
+    /// Only stations below this supply % are sent a train. Default 70.
+    #[serde(default = "default_rail_below")]
+    pub destination_supply_below: u8,
+    #[serde(default = "default_rail_min_route")]
+    pub min_route_m: f64,
+    #[serde(default = "default_rail_max_route")]
+    pub max_route_m: f64,
+    /// Routes passing this close to an enemy objective are not used.
+    /// Default 15 km.
+    #[serde(default = "default_rail_clearance")]
+    pub enemy_clearance_m: f64,
+}
+
+fn default_rail_interval() -> u32 { 1800 }
+fn default_rail_max() -> u32 { 2 }
+fn default_rail_train_red() -> Vec<String> {
+    ["Locomotive", "Coach a tank yellow", "Coach cargo", "Coach cargo open", "Coach cargo"]
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+fn default_rail_train_blue() -> Vec<String> {
+    ["ES44AH", "Tankcartrinity", "Boxcartrinity", "Wellcarnsc", "Boxcartrinity"]
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+fn default_rail_speed() -> f64 { 60.0 }
+fn default_rail_station_radius() -> f64 { 5_000.0 }
+fn default_rail_cap() -> u32 { 150 }
+fn default_rail_below() -> u8 { 70 }
+fn default_rail_min_route() -> f64 { 30_000.0 }
+fn default_rail_max_route() -> f64 { 400_000.0 }
+fn default_rail_clearance() -> f64 { 15_000.0 }
 
 /// Ground electronic warfare. Objectives of `host_kinds` get a radio/GNSS
 /// jammer truck (`GPS_Spoofer_Blue`/`_Red`) that switches on while enemy
@@ -4867,6 +4959,14 @@ mod load_tests {
         assert!(r.use_missiles);
         assert_eq!(mw.sam_stock.as_ref().unwrap().missiles_per_launcher, 4);
         assert_eq!(mw.boat_raids.as_ref().unwrap().boat_type.as_str(), "speedboat");
+        let rail: RailCfg = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(rail.train_red[0].as_str(), "Locomotive");
+        assert_eq!(rail.train_blue[0].as_str(), "ES44AH");
+        let convoy = ConvoyConfig::default();
+        assert_eq!(
+            convoy.trailer_pairs.get("TZ-22_KrAZ").map(|s| s.as_str()),
+            Some("TZ-22_TANK")
+        );
         let mut cfg = Cfg::default();
         cfg.modern_war = Some(mw);
         cfg.validate().unwrap();

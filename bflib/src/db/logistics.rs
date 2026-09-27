@@ -241,6 +241,11 @@ pub struct Transfer {
 }
 
 impl Transfer {
+    /// Units of the item this transfer moves.
+    pub fn amount(&self) -> u32 {
+        self.amount
+    }
+
     fn with_amount(&self, amount: u32) -> Transfer {
         Transfer {
             amount,
@@ -402,6 +407,59 @@ pub enum ConvoyCargoType {
     Weapons,
     /// Auto-dispatched convoy carrying a mix of whatever the hub has available.
     Mixed,
+}
+
+/// Hitch each tractor in `group` to the nearest free trailer it can tow
+/// (`pairs`: tractor type -> trailer type), by putting the `AttachTrailer`
+/// tasks on the first waypoint of `route` and re-issuing the route. Returns
+/// how many were hitched; with none, the group keeps the route it spawned
+/// with.
+fn attach_trailers(
+    group: &dcso3::group::Group,
+    mut route: Vec<dcso3::controller::MissionPoint>,
+    pairs: &FxHashMap<dcso3::String, dcso3::String>,
+) -> Result<usize> {
+    use dcso3::controller::Task;
+    if pairs.is_empty() || route.is_empty() {
+        return Ok(0);
+    }
+    let units: Vec<(dcso3::env::miz::UnitId, dcso3::String, Vector2)> = group
+        .get_units()?
+        .into_iter()
+        .filter_map(|u| u.ok())
+        .filter_map(|u| {
+            let p = u.get_point().ok()?;
+            Some((u.id().ok()?, u.get_type_name().ok()?, Vector2::new(p.x, p.z)))
+        })
+        .collect();
+    let mut taken = vec![false; units.len()];
+    let mut tasks = vec![];
+    for (i, (tractor, typ, pos)) in units.iter().enumerate() {
+        let Some(trailer_typ) = pairs.get(typ) else { continue };
+        let nearest = units
+            .iter()
+            .enumerate()
+            .filter(|(j, (_, t, _))| *j != i && !taken[*j] && t == trailer_typ)
+            .min_by(|(_, (_, _, a)), (_, (_, _, b))| {
+                (a - pos).norm().total_cmp(&(b - pos).norm())
+            })
+            .map(|(j, _)| j);
+        if let Some(j) = nearest {
+            taken[j] = true;
+            tasks.push(Task::AttachTrailer {
+                tractor: *tractor,
+                trailer: units[j].0,
+                on_start_mission: true,
+            });
+        }
+    }
+    if tasks.is_empty() {
+        return Ok(0);
+    }
+    let n = tasks.len();
+    route[0].task = Box::new(Task::ComboTask(tasks));
+    group.get_controller()?.set_task(Task::Mission { airborne: Some(false), route })?;
+    Ok(n)
 }
 
 impl ConvoyCargoType {
@@ -2216,7 +2274,7 @@ impl Db {
         origin: ObjectiveId,
         destination: ObjectiveId,
         side: Side,
-        group: GroupId,
+        group: Option<GroupId>,
         transfers: &[Transfer],
         now: DateTime<Utc>,
     ) -> Vec<Transfer> {
@@ -2265,7 +2323,7 @@ impl Db {
                 transfers: loaded.clone(),
                 departed: now,
                 side: Some(side),
-                group: Some(group),
+                group,
                 credit_on_arrival: true,
             },
         );
@@ -2298,7 +2356,7 @@ impl Db {
         let Some((side, group)) = found else {
             return false;
         };
-        let loaded = self.escrow_cargo(id, origin, destination, side, group, transfers, now);
+        let loaded = self.escrow_cargo(id, origin, destination, side, Some(group), transfers, now);
         if loaded.is_empty() {
             warn!("[LOGI_CARGO] {id}: the origin had nothing left to load, standing the transport down");
             match kind {
@@ -2341,6 +2399,38 @@ impl Db {
             }
         }
         true
+    }
+
+    /// Load a transport that lives outside the campaign db (a supply train):
+    /// a batch of `origin`'s surplus, up to `per_item_cap` of each item and
+    /// what `destination` has room for, taken out of `origin` now and held
+    /// in the in-flight ledger under `id` until `deliver_unmanaged_cargo`,
+    /// `lose_unmanaged_cargo` or `refund_unmanaged_cargo`. A restart refunds
+    /// it like any other load. Returns what was loaded (empty = nothing to
+    /// carry).
+    pub(crate) fn load_unmanaged_cargo(
+        &mut self,
+        id: &str,
+        origin: ObjectiveId,
+        destination: ObjectiveId,
+        side: Side,
+        per_item_cap: u32,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Transfer>> {
+        let transfers = self.build_helo_supply_transfer(origin, destination, per_item_cap)?;
+        Ok(self.escrow_cargo(id, origin, destination, side, None, &transfers, now))
+    }
+
+    pub(crate) fn deliver_unmanaged_cargo(&mut self, id: &str, side: Side) {
+        self.deliver_cargo(id, side)
+    }
+
+    pub(crate) fn lose_unmanaged_cargo(&mut self, id: &str) {
+        self.lose_cargo(id)
+    }
+
+    pub(crate) fn refund_unmanaged_cargo(&mut self, id: &str) {
+        self.refund_cargo(id)
     }
 
     /// Remove a finished transport's group from the campaign (and DCS), if it
@@ -2549,6 +2639,7 @@ impl Db {
         if let Some(w) = self.ephemeral.cfg.warehouse.as_ref() {
             if let Some(c) = w.convoy.as_ref() {
                 templates.extend(c.truck_template.values().map(|t| t.as_str()));
+                templates.extend(c.fuel_template.values().map(|t| t.as_str()));
             }
             if let Some(a) = w.air_logistics.as_ref() {
                 templates.extend(a.aircraft_template.values().map(|t| t.as_str()));
@@ -3929,7 +4020,17 @@ impl Db {
         let dest_name = dest_obj.name.clone();
 
         // Get truck template for this side and clone values we'll need
-        let (truck_template, mut speed_kph, trucks_per_convoy) = match convoy_cfg.truck_template.get(&side) {
+        // A fuel run goes in the side's fuel template (tractor-trailer
+        // refuelers) when there is one.
+        let template_for_side = match cargo_type {
+            ConvoyCargoType::Fuel => convoy_cfg
+                .fuel_template
+                .get(&side)
+                .or_else(|| convoy_cfg.truck_template.get(&side)),
+            _ => convoy_cfg.truck_template.get(&side),
+        };
+        let trailer_pairs = convoy_cfg.trailer_pairs.clone();
+        let (truck_template, mut speed_kph, trucks_per_convoy) = match template_for_side {
             Some(t) => (t.clone(), convoy_cfg.speed_kph, convoy_cfg.trucks_per_convoy),
             None => {
                 warn!("No truck template configured for side {:?}, skipping convoy spawn", side);
@@ -4126,7 +4227,8 @@ impl Db {
             .sum();
 
         // Spawn the queued group now, with the road route baked in.
-        {
+        let route_for_trailers = route_points.clone();
+        let spawned = {
             let perf = unsafe { Perf::get_mut() };
             let perf = Arc::make_mut(&mut perf.inner);
             self.ephemeral
@@ -4140,7 +4242,16 @@ impl Db {
                 )
                 .with_context(|| {
                     format_compact!("convoy: spawn_group '{truck_template}' {origin_name} -> {dest_name}")
-                })?;
+                })?
+        };
+        // Tractor-trailers: now that the units exist with their real ids,
+        // hitch every tractor to its trailer before it drives off.
+        if let Some(crate::spawnctx::Spawned::Group(g)) = spawned {
+            match attach_trailers(&g, route_for_trailers, &trailer_pairs) {
+                Ok(0) => (),
+                Ok(n) => info!("Convoy {convoy_id}: {n} trailer(s) hitched"),
+                Err(e) => warn!("Convoy {convoy_id}: could not hitch its trailers: {e:?}"),
+            }
         }
 
         // Create convoy tracking struct
