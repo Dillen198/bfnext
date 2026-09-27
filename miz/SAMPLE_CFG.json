@@ -1294,7 +1294,8 @@
   },
   "modern_war": {
     "ew": {
-      "host_kinds": ["Command Center", "Special SAM Site", "Naval Base"],
+      "host_kinds": ["Command Center", "Naval Base"],
+      "sam_site_kinds": ["Special SAM Site"],
       "spoof_kinds": ["Naval Base"],
       "activation_radius_m": 80000,
       "gps": "Jam",

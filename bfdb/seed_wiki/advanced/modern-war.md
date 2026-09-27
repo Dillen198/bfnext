@@ -11,7 +11,7 @@ switched on separately per server.
 
 ## Electronic warfare
 
-Command centres, special SAM sites and naval bases can host a **jammer
+Command centres and naval bases (and any other kind the server picks) host a **jammer
 truck**. It sits dark until enemy aircraft come within
 {{cfg:modern_war.ew.activation_radius_m|80000}} m. Then it switches on and
 stays on for at least {{cfg:modern_war.ew.min_on_secs|180}} seconds.
@@ -28,6 +28,17 @@ stays on for at least {{cfg:modern_war.ew.min_on_secs|180}} seconds.
 - **Emitting gives it away.** When a jammer switches on, the other side gets
   an ELINT mark on the F10 map somewhere within
   {{cfg:modern_war.ew.intel_uncertainty_m|5000}} m of it.
+- **SAM sites have their own jammer**, which works differently:
+  - It jams GPS and GLONASS only. GPS-guided weapons (JDAM, JSOW, GMLRS)
+    aimed at the site go astray; HARMs home on the radar and are unaffected.
+  - It wakes only when aircraft come within
+    {{cfg:modern_war.ew.sam_activation_radius_m|40000}} m.
+  - It keeps the site hidden. There is no radio jamming to give it away, and
+    ELINT only marks the area, roughly (within
+    {{cfg:modern_war.ew.sam_reveal_uncertainty_m|15000}} m), after it has jammed
+    for {{cfg:modern_war.ew.sam_reveal_after_secs|600}} seconds.
+  - If you find your JDAMs missing around a site, suppress it with HARMs or
+    switch to laser-guided weapons.
 - **Kill it and the area clears.** A destroyed jammer is replaced after
   {{cfg:modern_war.ew.respawn_secs|1800}} seconds, but only while its side
   still holds the objective. Capture the objective and it's gone for good.

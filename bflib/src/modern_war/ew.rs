@@ -26,6 +26,12 @@ for more details.
 //! - Emitting gives it away: the enemy gets an intel mark near it.
 //! - While it jams radio, enemy flights inside `comms_jam_radius_m` get
 //!   broken GCI (see `comms_jammed`, read by `admin::query_gci`).
+//! - At `sam_site_kinds` the jammer **guards a SAM site** instead: GPS and
+//!   GLONASS only, so GPS-guided weapons aimed at the site go astray (HARMs
+//!   home on the radar and are unaffected); it wakes only for aircraft within
+//!   `sam_activation_radius_m`; and it keeps the site hidden -- the enemy's
+//!   ELINT places it only roughly, and only after it has emitted for
+//!   `sam_reveal_after_secs`. Nothing said about a guard names its site.
 
 use super::{enemy_air, land_near};
 use crate::{airlife::dist, spawnctx::SpawnCtx, Context};
@@ -59,6 +65,8 @@ struct Site {
     down_since: Option<DateTime<Utc>>,
     on_since: Option<DateTime<Utc>>,
     spoof: bool,
+    /// Guards a SAM site: GPS only, short fuse, slow reveal, never named.
+    guard: bool,
     spoof_point: Vector2,
     intel_mark: Option<MarkId>,
 }
@@ -91,6 +99,7 @@ impl Ew {
         cfg.radio != RadioJamMode::Off
             && self.sites.values().any(|s| {
                 s.side == victim.opposite()
+                    && !s.guard
                     && s.on_since.is_some()
                     && dist(s.pos, pos) <= cfg.comms_jam_radius_m
             })
@@ -130,14 +139,18 @@ pub(crate) fn tick(
     now: DateTime<Utc>,
 ) {
     // Which objectives host a site now.
-    let hosts: Vec<(ObjectiveId, Side, dcso3::String, Vector2, bool, u8)> = ctx
+    let is = |kinds: &[dcso3::String], name: &str| kinds.iter().any(|k| k.as_str() == name);
+    let hosts: Vec<(ObjectiveId, Side, dcso3::String, Vector2, bool, bool, u8)> = ctx
         .db
         .objectives()
         .filter(|(_, o)| o.owner() != Side::Neutral)
-        .filter(|(_, o)| cfg.host_kinds.iter().any(|k| k.as_str() == o.kind().name()))
+        .filter(|(_, o)| {
+            is(&cfg.host_kinds, o.kind().name()) || is(&cfg.sam_site_kinds, o.kind().name())
+        })
         .map(|(id, o)| {
-            let spoof = cfg.spoof_kinds.iter().any(|k| k.as_str() == o.kind().name());
-            (*id, o.owner(), o.name.clone(), o.pos(), spoof, o.health())
+            let guard = is(&cfg.sam_site_kinds, o.kind().name());
+            let spoof = !guard && is(&cfg.spoof_kinds, o.kind().name());
+            (*id, o.owner(), o.name.clone(), o.pos(), spoof, guard, o.health())
         })
         .collect();
     // Sites whose objective no longer qualifies (neutralised) go away.
@@ -159,7 +172,7 @@ pub(crate) fn tick(
     }
     let land = Land::singleton(lua).ok();
     let spctx = SpawnCtx::new(lua).ok();
-    for (oid, owner, name, pos, spoof, health) in hosts {
+    for (oid, owner, name, pos, spoof, guard, health) in hosts {
         // New site, or one that changed hands: the old owner's truck goes.
         let changed = ctx.modern_war.ew.sites.get(&oid).map(|s| s.side != owner).unwrap_or(false);
         if changed {
@@ -181,6 +194,7 @@ pub(crate) fn tick(
                     down_since: changed.then_some(now),
                     on_since: None,
                     spoof,
+                    guard,
                     spoof_point: pos + Vector2::new(a.cos(), a.sin()) * cfg.spoof_offset_m,
                     intel_mark: None,
                 },
@@ -201,18 +215,20 @@ pub(crate) fn tick(
                 let _ = ctx.db.delete_group(&gid);
             }
             info!("ew: {owner:?} jammer at {name} destroyed");
-            ctx.db.ephemeral.msgs().panel_to_side(
-                15,
-                false,
-                owner.opposite(),
-                format_compact!("Enemy jammer at {name} destroyed -- GPS and comms clear there."),
-            );
-            ctx.db.ephemeral.msgs().panel_to_side(
-                15,
-                false,
-                owner,
-                format_compact!("Our jammer at {name} has been destroyed."),
-            );
+            // A SAM guard's name is the hidden site's name: don't broadcast it.
+            let (theirs, ours) = if guard {
+                (
+                    format_compact!("Enemy GPS jammer destroyed -- guided weapons clear in that area."),
+                    format_compact!("A GPS jammer guarding one of our SAM sites has been destroyed."),
+                )
+            } else {
+                (
+                    format_compact!("Enemy jammer at {name} destroyed -- GPS and comms clear there."),
+                    format_compact!("Our jammer at {name} has been destroyed."),
+                )
+            };
+            ctx.db.ephemeral.msgs().panel_to_side(15, false, owner.opposite(), theirs);
+            ctx.db.ephemeral.msgs().panel_to_side(15, false, owner, ours);
         }
         // Replace a missing truck once the site has been down long enough
         // and the objective is still standing.
@@ -246,24 +262,43 @@ pub(crate) fn tick(
         // On or off.
         let site = &ctx.modern_war.ew.sites[&oid];
         let Some(gid) = site.gid else { continue };
+        let radius = if site.guard { cfg.sam_activation_radius_m } else { cfg.activation_radius_m };
         let threat = enemy_air(ctx, owner, now)
             .into_iter()
-            .any(|p| dist(p, site.pos) <= cfg.activation_radius_m);
+            .any(|p| dist(p, site.pos) <= radius);
         match (threat, site.on_since) {
             (true, None) => {
-                let cmd = Command::ActivateJammer {
-                    gps: gnss(cfg.gps, site.spoof),
-                    glonass: gnss(cfg.glonass, site.spoof),
-                    radio: radio(cfg.radio),
-                    band_mhz: Some(cfg.band_mhz),
-                    spoof_point: Some(site.spoof_point),
+                let cmd = if site.guard {
+                    // Satellite navigation only, and plain jamming: spoofing
+                    // or radio jamming would draw attention to the site.
+                    let gnss_guard = |m: GnssMode| match m {
+                        GnssMode::Off => GnssJamming::Off,
+                        _ => GnssJamming::Jamming,
+                    };
+                    Command::ActivateJammer {
+                        gps: gnss_guard(cfg.gps),
+                        glonass: gnss_guard(cfg.glonass),
+                        radio: RadioJamming::Off,
+                        band_mhz: None,
+                        spoof_point: None,
+                    }
+                } else {
+                    Command::ActivateJammer {
+                        gps: gnss(cfg.gps, site.spoof),
+                        glonass: gnss(cfg.glonass, site.spoof),
+                        radio: radio(cfg.radio),
+                        band_mhz: Some(cfg.band_mhz),
+                        spoof_point: Some(site.spoof_point),
+                    }
                 };
+                let guard = site.guard;
                 let (spos, sname, spoofing) = (site.pos, site.name.clone(), site.spoof);
                 match set_jammer(lua, ctx, &gid, cmd) {
                     Err(e) => warn!("ew: could not switch on the jammer at {sname}: {e:?}"),
                     Ok(()) => {
                         info!("ew: {owner:?} jammer at {sname} ON");
-                        let mark = cfg.intel_marks.then(|| {
+                        // A guard is only found by ELINT later (below).
+                        let mark = (cfg.intel_marks && !guard).then(|| {
                             let a: f64 = thread_rng().gen_range(0.0..std::f64::consts::TAU);
                             let r: f64 = thread_rng().gen_range(0.0..cfg.intel_uncertainty_m.max(1.));
                             let at = spos + Vector2::new(a.cos(), a.sin()) * r;
@@ -287,6 +322,27 @@ pub(crate) fn tick(
             (false, Some(since)) if (now - since).num_seconds() >= cfg.min_on_secs as i64 => {
                 info!("ew: {owner:?} jammer at {} off", site.name);
                 go_dark(lua, ctx, oid);
+            }
+            // A SAM guard left emitting long enough gets located -- roughly.
+            (true, Some(since))
+                if site.guard
+                    && cfg.intel_marks
+                    && site.intel_mark.is_none()
+                    && (now - since).num_seconds() >= cfg.sam_reveal_after_secs as i64 =>
+            {
+                let spos = site.pos;
+                let a: f64 = thread_rng().gen_range(0.0..std::f64::consts::TAU);
+                let r: f64 = thread_rng().gen_range(0.0..cfg.sam_reveal_uncertainty_m.max(1.));
+                let at = spos + Vector2::new(a.cos(), a.sin()) * r;
+                let mark = ctx.db.ephemeral.msgs().mark_to_side(
+                    owner.opposite(),
+                    at,
+                    true,
+                    "ELINT: GPS jamming somewhere in this area",
+                );
+                if let Some(site) = ctx.modern_war.ew.sites.get_mut(&oid) {
+                    site.intel_mark = Some(mark);
+                }
             }
             _ => (),
         }

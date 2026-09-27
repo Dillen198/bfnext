@@ -4099,6 +4099,20 @@ pub struct EwCfg {
     pub intel_marks: bool,
     #[serde(default = "default_ew_uncertainty")]
     pub intel_uncertainty_m: f64,
+    /// Objective kinds whose jammer GUARDS a SAM site: it jams GPS/GLONASS
+    /// only (so GPS-guided weapons -- JDAM, JSOW, GMLRS -- go astray; it does
+    /// nothing against radar-homing HARMs), never radio, switches on only
+    /// for aircraft inside `sam_activation_radius_m`, and stays hidden: the
+    /// enemy's ELINT only places it, roughly, after it has emitted for
+    /// `sam_reveal_after_secs`. A kind in both lists is a SAM guard.
+    #[serde(default = "default_ew_sam_kinds")]
+    pub sam_site_kinds: Vec<String>,
+    #[serde(default = "default_ew_sam_activation")]
+    pub sam_activation_radius_m: f64,
+    #[serde(default = "default_ew_sam_reveal_after")]
+    pub sam_reveal_after_secs: u32,
+    #[serde(default = "default_ew_sam_uncertainty")]
+    pub sam_reveal_uncertainty_m: f64,
 }
 
 /// Satellite-navigation mode of a jammer.
@@ -4118,8 +4132,14 @@ pub enum RadioJamMode {
 }
 
 fn default_ew_host_kinds() -> Vec<String> {
-    ["Command Center", "Special SAM Site", "Naval Base"].into_iter().map(String::from).collect()
+    ["Command Center", "Naval Base"].into_iter().map(String::from).collect()
 }
+fn default_ew_sam_kinds() -> Vec<String> {
+    ["Special SAM Site"].into_iter().map(String::from).collect()
+}
+fn default_ew_sam_activation() -> f64 { 40_000.0 }
+fn default_ew_sam_reveal_after() -> u32 { 600 }
+fn default_ew_sam_uncertainty() -> f64 { 15_000.0 }
 fn default_ew_spoof_kinds() -> Vec<String> {
     ["Naval Base"].into_iter().map(String::from).collect()
 }
@@ -5196,6 +5216,7 @@ impl Cfg {
             if let Some(ew) = mw.ew.as_ref().filter(|e| e.enabled) {
                 check_kinds("ew.host_kinds", &ew.host_kinds);
                 check_kinds("ew.spoof_kinds", &ew.spoof_kinds);
+                check_kinds("ew.sam_site_kinds", &ew.sam_site_kinds);
                 for side in ["GPS_Spoofer_Blue", "GPS_Spoofer_Red"] {
                     if !cfg.unit_classification.contains_key(side) {
                         warn!("modern_war.ew: {side} is not in unit_classification -- that side's jammers can't spawn")

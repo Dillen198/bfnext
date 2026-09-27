@@ -15405,6 +15405,10 @@
       "spoof_kinds": [
         "Naval Base"
       ],
+      "sam_site_kinds": [
+        "Special SAM Site"
+      ],
+      "sam_activation_radius_m": 40000,
       "activation_radius_m": 80000,
       "gps": "Jam",
       "glonass": "Jam",
