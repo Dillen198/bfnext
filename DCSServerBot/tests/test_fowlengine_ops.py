@@ -1222,3 +1222,84 @@ def test_incomplete_roster_never_revokes():
          "complete": False, "sides": {"someone": {"Red"}}}
     asyncio.run(apply(cog, g))
     assert blue in holder.roles
+
+
+# ---- persistent Discord embeds are edited in place, never re-posted per tick -------
+
+def _upsert_embed_fn():
+    """commands.py's _upsert_embed on its own (the module itself needs discord
+    and DCSServerBot), with stand-in discord exceptions."""
+    import ast
+    src = (PLUGIN / "commands.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.AsyncFunctionDef) and n.name == "_upsert_embed")
+    fn.decorator_list = []
+    fake = types.SimpleNamespace(
+        HTTPException=type("HTTPException", (Exception,), {}),
+        Embed=object,
+    )
+    fake.NotFound = type("NotFound", (fake.HTTPException,), {})
+    fake.Forbidden = type("Forbidden", (fake.HTTPException,), {})
+    ns = {"discord": fake}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "commands.py", "exec"), ns)
+    return ns["_upsert_embed"], fake
+
+
+class _Chan:
+    def __init__(self, edit_error=None):
+        self.id = 42
+        self.edit_error = edit_error
+        self.sent, self.edited = [], []
+
+    def get_partial_message(self, mid):
+        chan = self
+
+        class _P:
+            async def edit(self, embed):
+                if chan.edit_error:
+                    raise chan.edit_error
+                chan.edited.append((mid, embed))
+        return _P()
+
+    async def fetch_message(self, mid):  # must never be needed
+        raise AssertionError("fetch_message needs Read Message History")
+
+    async def send(self, embed):
+        self.sent.append(embed)
+        return types.SimpleNamespace(id=1000 + len(self.sent))
+
+
+def _cog():
+    warned = []
+    return types.SimpleNamespace(log=log, save_state=lambda: None,
+                                 _warn_once=lambda *a: warned.append(a), warned=warned)
+
+
+def test_embed_is_edited_in_place_without_read_history():
+    upsert, fake = _upsert_embed_fn()
+    cog, ids = _cog(), {}
+    ch = _Chan()
+    asyncio.run(upsert(cog, ids, "vs1", ch, "e1"))          # first tick posts
+    asyncio.run(upsert(cog, ids, "vs1", ch, "e2"))          # later ticks edit
+    asyncio.run(upsert(cog, ids, "vs1", ch, "e3"))
+    assert ch.sent == ["e1"] and [e for _, e in ch.edited] == ["e2", "e3"] and ids == {"vs1": 1001}
+
+
+def test_permission_or_api_errors_never_post_a_new_embed():
+    upsert, fake = _upsert_embed_fn()
+    for err in (fake.Forbidden(), fake.HTTPException()):
+        cog, ids, ch = _cog(), {"vs1": 7}, _Chan(edit_error=err)
+        for _ in range(3):
+            asyncio.run(upsert(cog, ids, "vs1", ch, "e"))
+        assert ch.sent == [] and ids == {"vs1": 7}
+
+
+def test_deleted_embed_is_replaced_once_and_legacy_id_rehomed():
+    upsert, fake = _upsert_embed_fn()
+    cog, ch = _cog(), _Chan(edit_error=fake.NotFound())
+    ids = {"vs1": 7}
+    asyncio.run(upsert(cog, ids, "vs1", ch, "e"))
+    assert ch.sent == ["e"] and ids == {"vs1": 1001}
+    ids, ch = {"__legacy__": 9}, _Chan()
+    asyncio.run(upsert(cog, ids, "vs2", ch, "e"))
+    assert ids == {"vs2": 9} and ch.sent == [] and ch.edited == [(9, "e")]

@@ -828,11 +828,12 @@ class FowlEngine(Plugin):
         await self._notify_ops(cfg, message)
 
     def save_state(self):
-        # tmp + os.replace: the bot can be stopped at any moment (a restart
-        # from Fowl Engine Manager, a crash), and a half-written state file
-        # would lose every tracked message id -- a channel full of duplicates.
-        tmp = self.state_file + '.tmp'
+        # Written to a temp file and swapped in: the bot can be killed at any
+        # moment (a service stop, a reboot), and a half-written state file
+        # loses every message id -- the next start then posts a new copy of
+        # every embed.
         try:
+            tmp = self.state_file + '.tmp'
             with open(tmp, 'w') as f:
                 json.dump({
                     'status_msg_ids': self.status_msg_ids,
@@ -844,6 +845,8 @@ class FowlEngine(Plugin):
                     'range_status_msg_ids': self.range_status_msg_ids,
                     'range_feed_cursors': self.range_feed_cursors,
                 }, f)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, self.state_file)
         except Exception as ex:
             self.log.error(f"Failed to save Fowl Engine state: {ex}")
@@ -950,22 +953,7 @@ class FowlEngine(Plugin):
                     self.log.error(f"FowlEngine: status_channel {channel_id} not found or bot lacks access.")
                     continue
                     
-                msg_id = self.status_msg_ids.get(server.name) or self.status_msg_ids.pop('__legacy__', None)
-                if msg_id:
-                    try:
-                        msg = await channel.fetch_message(msg_id)
-                        await msg.edit(embed=embed)
-                        self.status_msg_ids[server.name] = msg_id
-                        continue
-                    except discord.NotFound:
-                        self.status_msg_ids.pop(server.name, None)
-                    except discord.Forbidden:
-                        self.log.error(f"FowlEngine: Bot lacks permissions to read/edit in channel {channel_id}")
-                        self.status_msg_ids.pop(server.name, None)
-
-                msg = await channel.send(embed=embed)
-                self.status_msg_ids[server.name] = msg.id
-                self.save_state()
+                await self._upsert_embed(self.status_msg_ids, server.name, channel, embed, "status embed")
                 
             except Exception as ex:
                 import traceback
@@ -1239,22 +1227,7 @@ class FowlEngine(Plugin):
                     self.log.error(f"FowlEngine: perf_channel {channel_id} not found or bot lacks access.")
                     continue
 
-                msg_id = self.perf_msg_ids.get(server.name) or self.perf_msg_ids.pop('__legacy__', None)
-                if msg_id:
-                    try:
-                        msg = await channel.fetch_message(msg_id)
-                        await msg.edit(embed=embed)
-                        self.perf_msg_ids[server.name] = msg_id
-                        continue
-                    except discord.NotFound:
-                        self.perf_msg_ids.pop(server.name, None)
-                    except discord.Forbidden:
-                        self.log.error(f"FowlEngine: Bot lacks permissions to read/edit in channel {channel_id}")
-                        self.perf_msg_ids.pop(server.name, None)
-
-                msg = await channel.send(embed=embed)
-                self.perf_msg_ids[server.name] = msg.id
-                self.save_state()
+                await self._upsert_embed(self.perf_msg_ids, server.name, channel, embed, "performance embed")
 
             except Exception as ex:
                 import traceback
@@ -1453,21 +1426,10 @@ class FowlEngine(Plugin):
             except Exception as ex:
                 self.log.error(f"FowlEngine: failed to build server-info embed: {ex}")
                 continue
-            msg_id = self.info_msg_ids.get(server.name) or self.info_msg_ids.pop('__legacy__', None)
-            if msg_id:
-                try:
-                    msg = await channel.fetch_message(msg_id)
-                    await msg.edit(embed=embed)
-                    self.info_msg_ids[server.name] = msg_id
-                    continue
-                except discord.NotFound:
-                    self.info_msg_ids.pop(server.name, None)
-                except discord.Forbidden:
-                    self.log.error(f"FowlEngine: cannot edit server_info_channel {channel_id}")
-                    self.info_msg_ids.pop(server.name, None)
-            msg = await channel.send(embed=embed)
-            self.info_msg_ids[server.name] = msg.id
-            self.save_state()
+            try:
+                await self._upsert_embed(self.info_msg_ids, server.name, channel, embed, "server-info embed")
+            except Exception as ex:
+                self.log.error(f"FowlEngine: failed to post the server-info embed: {ex}")
 
     @update_server_info.before_loop
     async def before_update_server_info(self):
@@ -2179,20 +2141,7 @@ class FowlEngine(Plugin):
             body = body[-3800:]
         embed = self._vs_embed(f"Live Engine Log — {server_name}", color=discord.Color.dark_gray())
         embed.description = f"```{body}```"
-        msg_id = self.tail_msg_ids.get(server_name)
-        try:
-            if msg_id:
-                msg = await channel.fetch_message(msg_id)
-                await msg.edit(embed=embed)
-                return
-        except discord.NotFound:
-            pass
-        except discord.HTTPException as ex:
-            self.log.error(f"FowlEngine: failed to edit engine log tail for {server_name}: {ex}")
-            return
-        msg = await channel.send(embed=embed)
-        self.tail_msg_ids[server_name] = msg.id
-        self.save_state()
+        await self._upsert_embed(self.tail_msg_ids, server_name, channel, embed, "engine log tail")
 
     async def _send_engine_log_alerts(self, channel: discord.abc.Messageable, lines: list):
         body = "\n".join(lines)
@@ -2314,21 +2263,7 @@ class FowlEngine(Plugin):
             instance_label=server.name if len(self.bot.servers) > 1 else "",
         )
         per_server = self.briefing_msg_ids.setdefault(server.name, {})
-        msg_id = per_server.get(side)
-        if msg_id:
-            try:
-                msg = await channel.fetch_message(msg_id)
-                await msg.edit(embed=embed)
-                return
-            except discord.NotFound:
-                per_server.pop(side, None)
-            except discord.Forbidden:
-                self.log.error(f"FowlEngine: cannot edit in briefing channel {channel_id}")
-                per_server.pop(side, None)
-                return
-        msg = await channel.send(embed=embed)
-        per_server[side] = msg.id
-        self.save_state()
+        await self._upsert_embed(per_server, side, channel, embed, f"{side} briefing")
 
     @update_briefings.before_loop
     async def before_update_briefings(self):
@@ -3638,18 +3573,37 @@ class FowlEngine(Plugin):
         base = self._vs_embed(d["title"], color=color, url=d.get("url"))
         return self._embed_from_dict({k: v for k, v in d.items() if k != "title"}, base=base)
 
-    async def _upsert_embed(self, ids: dict, key: str, channel, embed: discord.Embed) -> None:
-        """Edit the one persisted message for `key`, or post it (and persist)."""
+    async def _upsert_embed(self, ids: dict, key: str, channel, embed: discord.Embed,
+                            what: str = "embed") -> None:
+        """Edit the one persisted message for `key` in place, or post it (and
+        persist its id) when there is none yet or it was deleted.
+
+        Edits go straight to the message by id (a partial message) instead of
+        fetching it first: fetching needs "Read Message History" on the
+        channel, and without it every tick used to fail, forget the id and
+        post a fresh embed -- a new message every few minutes. Only "that
+        message is gone" (404) posts a replacement; any other failure is
+        logged and retried next tick, never answered with another post."""
+        if key not in ids and '__legacy__' in ids:
+            ids[key] = ids.pop('__legacy__')  # pre-multi-server id: re-home it
         msg_id = ids.get(key)
         if msg_id:
             try:
-                msg = await channel.fetch_message(msg_id)
-                await msg.edit(embed=embed)
+                if hasattr(channel, 'get_partial_message'):
+                    await channel.get_partial_message(int(msg_id)).edit(embed=embed)
+                else:
+                    await (await channel.fetch_message(int(msg_id))).edit(embed=embed)
                 return
             except discord.NotFound:
+                self.log.info(f"FowlEngine: {what} message {msg_id} in channel {channel.id} is gone -- posting a new one")
                 ids.pop(key, None)
             except discord.Forbidden:
-                self.log.error(f"FowlEngine: cannot read/edit messages in channel {channel.id}")
+                self._warn_once(str(channel.id), "edit-forbidden",
+                                f"FowlEngine: can't edit the {what} in channel {channel.id} -- give the bot "
+                                f"View Channel, Send Messages and Embed Links there")
+                return
+            except discord.HTTPException as ex:
+                self.log.warning(f"FowlEngine: editing the {what} in channel {channel.id} failed ({ex}); retrying next tick")
                 return
         msg = await channel.send(embed=embed)
         ids[key] = msg.id
