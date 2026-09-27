@@ -1148,3 +1148,77 @@ def test_archive_source_cannot_escape():
     for bad in ("..", ".", "...", "../..", "..\\x"):
         assert ".." != la.LogAnalyzer._safe(bad) and la.LogAnalyzer._safe(bad) not in (".", "..")
     assert la.LogAnalyzer._safe("engine_vs1") == "engine_vs1"
+
+
+# ---- coalition roles: servers sharing one role pair are synced as one -------------
+
+
+def _apply_roles_fn():
+    import ast
+    src = (PLUGIN / "commands.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.AsyncFunctionDef) and n.name == "_apply_coalition_roles")
+    fake = types.SimpleNamespace(Forbidden=type("Forbidden", (Exception,), {}))
+    ns = {"discord": fake, "REVOKE_MIN_PER_TICK": 10, "REVOKE_MAX_FRACTION": 0.25}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "commands.py", "exec"), ns)
+    return ns["_apply_coalition_roles"]
+
+
+class _Role:
+    def __init__(self, rid):
+        self.id, self.name, self.members = rid, f"role{rid}", []
+
+
+class _Member:
+    def __init__(self, mid, *roles):
+        self.id, self.roles = mid, []
+        for r in roles:
+            self._add(r)
+
+    def _add(self, r):
+        self.roles.append(r)
+        r.members.append(self)
+
+    async def add_roles(self, r, reason=None):
+        self._add(r)
+
+    async def remove_roles(self, r, reason=None):
+        self.roles.remove(r)
+        r.members.remove(self)
+
+
+def test_shared_role_pair_keeps_pilots_backed_by_either_server():
+    apply = _apply_roles_fn()
+    blue, red = _Role(1), _Role(2)
+    modern_only = _Member(10, blue)      # Blue on Modern, never flew 2008
+    both = _Member(11, blue)             # Blue on Modern, Red on 2008
+    stray = _Member(12, red)             # registered nowhere
+    members = {"u10": modern_only, "u11": both}
+
+    class _Bot:
+        async def get_member_by_ucid(self, ucid):
+            return members.get(ucid)
+    cog = types.SimpleNamespace(bot=_Bot(), log=log)
+    g = {"roles": {"Blue": blue, "Red": red}, "cr": {}, "servers": ["vs1", "vs2"],
+         "complete": True,
+         # merged: vs1 says u10/u11 Blue, vs2 says u11 Red
+         "sides": {"u10": {"Blue"}, "u11": {"Blue", "Red"}}}
+    asyncio.run(apply(cog, g))
+    assert blue in modern_only.roles           # not stripped by the 2008 roster
+    assert blue in both.roles and red in both.roles
+    assert red not in stray.roles              # unbacked role still revoked
+
+
+def test_incomplete_roster_never_revokes():
+    apply = _apply_roles_fn()
+    blue, red = _Role(1), _Role(2)
+    holder = _Member(10, blue)
+
+    class _Bot:
+        async def get_member_by_ucid(self, ucid):
+            return None
+    cog = types.SimpleNamespace(bot=_Bot(), log=log)
+    g = {"roles": {"Blue": blue, "Red": red}, "cr": {}, "servers": ["vs1", "vs2"],
+         "complete": False, "sides": {"someone": {"Red"}}}
+    asyncio.run(apply(cog, g))
+    assert blue in holder.roles
