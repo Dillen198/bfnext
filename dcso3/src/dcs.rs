@@ -62,8 +62,10 @@ impl<'lua> Dcs<'lua> {
         Ok(self.t.call_function("getMissionResult", side)?)
     }
 
-    pub fn get_unit_property(&self, name: String) -> Result<Value<'lua>> {
-        Ok(self.t.call_function("getUnitProperty", name)?)
+    /// `DCS.getUnitProperty(missionId, propertyId)` -- the unit's mission
+    /// id and a `DCS.UNIT_*` property id.
+    pub fn get_unit_property(&self, mission_id: String, property: i64) -> Result<Value<'lua>> {
+        Ok(self.t.call_function("getUnitProperty", (mission_id, property))?)
     }
 
     pub fn set_pause(&self, pause: bool) -> Result<()> {

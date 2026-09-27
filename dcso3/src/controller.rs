@@ -26,6 +26,7 @@ use crate::{
 use anyhow::Result;
 use compact_str::format_compact;
 use enumflags2::{bitflags, BitFlags};
+use log::debug;
 use mlua::{prelude::*, Value, Variadic};
 use na::Vector2;
 use serde_derive::{Deserialize, Serialize};
@@ -627,7 +628,31 @@ impl<'lua> FromLua<'lua> for Task<'lua> {
             Some(tbl) => tbl,
             None => lua.create_table()?,
         };
-        match id.as_str() {
+        // Anything this binding can't decode -- a command or AI option it
+        // doesn't model yet, a param shape the Mission Editor writes that the
+        // scripting docs don't (x/y instead of `point`, a ControlledTask with
+        // only one condition, a numeric option with its checkbox off), a
+        // value added in a newer DCS -- is kept as the raw table and written
+        // back verbatim. It used to fail the whole waypoint, which is a hard
+        // error at mission init and a silently dropped waypoint at spawn.
+        match Self::decode(&root, &id, params, lua) {
+            Ok(task) => Ok(task),
+            Err(e) => {
+                debug!("keeping undecodable task {id} verbatim: {e}");
+                Ok(Self::Raw(root))
+            }
+        }
+    }
+}
+
+impl<'lua> Task<'lua> {
+    fn decode(
+        root: &LuaTable<'lua>,
+        id: &str,
+        params: LuaTable<'lua>,
+        lua: &'lua Lua,
+    ) -> LuaResult<Self> {
+        match id {
             "Land" => Ok(Self::Land {
                 point: params.raw_get("point")?,
                 duration: if params.raw_get::<_, Option<bool>>("durationFlag")?.unwrap_or(false) {
@@ -779,7 +804,14 @@ impl<'lua> FromLua<'lua> for Task<'lua> {
             }),
             "Mission" => Ok(Self::Mission {
                 airborne: params.raw_get("airborne")?,
-                route: FromLua::from_lua(Value::Table(params), lua)?,
+                // Written as params.route.points (see into_lua); reading it
+                // from `params` itself always came back empty.
+                route: match params.raw_get::<_, Option<LuaTable>>("route")? {
+                    Some(route) => route
+                        .raw_get::<_, Option<Vec<MissionPoint>>>("points")?
+                        .unwrap_or_default(),
+                    None => vec![],
+                },
             }),
             "ComboTask" => Ok(Self::ComboTask(FromLua::from_lua(
                 Value::Table(params.raw_get("tasks")?),
@@ -805,7 +837,7 @@ impl<'lua> FromLua<'lua> for Task<'lua> {
             // A task we don't model (ME routes carry plenty: WrappedAction
             // scripts, new DCS task ids, ...). Failing here failed the whole
             // route read, so keep it opaque and write it back verbatim.
-            _ => Ok(Self::Raw(root)),
+            _ => Ok(Self::Raw(root.clone())),
         }
     }
 }
@@ -933,7 +965,10 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                 root.raw_set("id", "FireAtPoint")?;
                 params.raw_set("point", point)?;
                 if let Some(radius) = radius {
+                    // The scripting docs call it `radius`, the Mission Editor
+                    // writes `zoneRadius`; send both until one is proven.
                     params.raw_set("radius", radius)?;
+                    params.raw_set("zoneRadius", radius)?;
                 }
                 if let Some(qty) = expend_qty {
                     params.raw_set("expendQtyEnabled", true)?;
@@ -1026,6 +1061,9 @@ impl<'lua> IntoLua<'lua> for Task<'lua> {
                 root.raw_set("id", "EngageTargets")?;
                 params.raw_set("targetTypes", target_types)?;
                 if let Some(d) = max_dist {
+                    // Without the flag the Mission Editor's own tasks treat
+                    // maxDist as unset, and the AI engages at any range.
+                    params.raw_set("maxDistEnabled", true)?;
                     params.raw_set("maxDist", d)?;
                 }
                 if let Some(p) = priority {
@@ -1231,16 +1269,39 @@ pub enum Command {
     },
     DeactivateICLS,
     /// Activates the MiG-29 GCI (ground controlled intercept) station on the unit.
-    /// `x`/`y` are latitude/longitude in degrees (not map coordinates) — the unit's
-    /// own position, converted via `coord.lo_to_ll`.
+    /// `center` is the centre of its area of responsibility as an offset in
+    /// metres from the unit (map x north, y east) -- what the Mission Editor
+    /// writes (me_action_edit_panel: "coordinates relative to the unit");
+    /// zero centres it on the station. The ME clamps |center| + radius to
+    /// 400 km.
     ActivateGci {
         unit: UnitId,
-        latitude: f64,
-        longitude: f64,
+        center: crate::Vector2,
         channel: i64,
         /// Max control radius in meters.
         radius: u32,
     },
+    DeactivateGci,
+    /// Radio / GNSS jammer. Only units with the `Jammer` attribute have one
+    /// (`GPS_Spoofer_Blue` / `GPS_Spoofer_Red`). `spoof_point` is the absolute
+    /// map position spoofed receivers are pushed toward and is only sent when
+    /// either GNSS mode is `Spoofing`; `band_mhz` only when radio jamming is on.
+    ActivateJammer {
+        gps: GnssJamming,
+        glonass: GnssJamming,
+        radio: RadioJamming,
+        band_mhz: Option<(f64, f64)>,
+        spoof_point: Option<crate::Vector2>,
+    },
+    DeactivateJammer,
+    /// Soviet RSBN / PRMG beacon on a unit that carries one (`rsbn_beacon`,
+    /// `prmg_gp_beacon`, `prmg_loc_beacon`). Channel 1..40.
+    ActivateRsbn {
+        channel: i64,
+        callsign: String,
+    },
+    DeactivateRsbn,
+    NoAction,
     EPLRS {
         enable: bool,
         group: Option<GroupId>,
@@ -1384,18 +1445,51 @@ impl<'lua> IntoLua<'lua> for Command {
             Self::DeactivateICLS => root.raw_set("id", "DeactivateICLS")?,
             Self::ActivateGci {
                 unit,
-                latitude,
-                longitude,
+                center,
                 channel,
                 radius,
             } => {
                 root.raw_set("id", "ActivateGCI")?;
                 params.raw_set("unitId", unit)?;
-                params.raw_set("x", longitude)?;
-                params.raw_set("y", latitude)?;
+                params.raw_set("x", center.x)?;
+                params.raw_set("y", center.y)?;
                 params.raw_set("channel", channel)?;
                 params.raw_set("radius", radius)?;
             }
+            Self::DeactivateGci => root.raw_set("id", "DeactivateGCI")?,
+            Self::ActivateJammer {
+                gps,
+                glonass,
+                radio,
+                band_mhz,
+                spoof_point,
+            } => {
+                root.raw_set("id", "ActivateJammer")?;
+                params.raw_set("gpsSpoofing", gps)?;
+                params.raw_set("glonassSpoofing", glonass)?;
+                params.raw_set("radioJamming", radio)?;
+                // The ME only writes the band with radio jamming on, and the
+                // spoof point with a GNSS mode spoofing; match it.
+                if radio != RadioJamming::Off {
+                    let (start, end) = band_mhz.unwrap_or((120., 120.));
+                    params.raw_set("jammingStart", start)?;
+                    params.raw_set("jammingEnd", end)?;
+                }
+                if gps == GnssJamming::Spoofing || glonass == GnssJamming::Spoofing {
+                    if let Some(p) = spoof_point {
+                        params.raw_set("x", p.x)?;
+                        params.raw_set("y", p.y)?;
+                    }
+                }
+            }
+            Self::DeactivateJammer => root.raw_set("id", "DeactivateJammer")?,
+            Self::ActivateRsbn { channel, callsign } => {
+                root.raw_set("id", "ActivateRSBN")?;
+                params.raw_set("channel", channel)?;
+                params.raw_set("callsign", callsign)?;
+            }
+            Self::DeactivateRsbn => root.raw_set("id", "DeactivateRSBN")?,
+            Self::NoAction => root.raw_set("id", "NoAction")?,
             Self::EPLRS { enable, group } => {
                 root.raw_set("id", "EPLRS")?;
                 params.raw_set("value", enable)?;
@@ -1422,7 +1516,9 @@ impl<'lua> IntoLua<'lua> for Command {
                     params.raw_set("loop", l)?;
                 }
             }
-            Self::StopTransmission => root.raw_set("id", "stopTransmission")?,
+            // The Mission Editor's spelling; the scripting docs' lower-case
+            // one is still accepted on read.
+            Self::StopTransmission => root.raw_set("id", "StopTransmission")?,
             Self::Smoke(on) => {
                 root.raw_set("id", "SMOKE_ON_OFF")?;
                 params.raw_set("value", on)?
@@ -1509,12 +1605,44 @@ impl<'lua> FromLua<'lua> for Command {
             "DeactivateICLS" => Ok(Self::DeactivateICLS),
             "ActivateGCI" => Ok(Self::ActivateGci {
                 unit: params.raw_get("unitId")?,
-                // written as x = longitude, y = latitude (see into_lua)
-                latitude: params.raw_get("y")?,
-                longitude: params.raw_get("x")?,
+                center: Vector2::new(
+                    params.raw_get::<_, Option<f64>>("x")?.unwrap_or(0.),
+                    params.raw_get::<_, Option<f64>>("y")?.unwrap_or(0.),
+                ),
                 channel: params.raw_get("channel")?,
                 radius: params.raw_get("radius")?,
             }),
+            "DeactivateGCI" => Ok(Self::DeactivateGci),
+            "ActivateJammer" => Ok(Self::ActivateJammer {
+                gps: params.raw_get::<_, Option<GnssJamming>>("gpsSpoofing")?.unwrap_or(GnssJamming::Off),
+                glonass: params
+                    .raw_get::<_, Option<GnssJamming>>("glonassSpoofing")?
+                    .unwrap_or(GnssJamming::Off),
+                radio: params
+                    .raw_get::<_, Option<RadioJamming>>("radioJamming")?
+                    .unwrap_or(RadioJamming::Off),
+                band_mhz: match (
+                    params.raw_get::<_, Option<f64>>("jammingStart")?,
+                    params.raw_get::<_, Option<f64>>("jammingEnd")?,
+                ) {
+                    (Some(a), Some(b)) => Some((a, b)),
+                    _ => None,
+                },
+                spoof_point: match (
+                    params.raw_get::<_, Option<f64>>("x")?,
+                    params.raw_get::<_, Option<f64>>("y")?,
+                ) {
+                    (Some(x), Some(y)) => Some(Vector2::new(x, y)),
+                    _ => None,
+                },
+            }),
+            "DeactivateJammer" => Ok(Self::DeactivateJammer),
+            "ActivateRSBN" => Ok(Self::ActivateRsbn {
+                channel: params.raw_get("channel")?,
+                callsign: params.raw_get("callsign")?,
+            }),
+            "DeactivateRSBN" => Ok(Self::DeactivateRsbn),
+            "NoAction" => Ok(Self::NoAction),
             "SMOKE_ON_OFF" => Ok(Self::Smoke(params.raw_get("value")?)),
             "EPLRS" => Ok(Self::EPLRS {
                 enable: params.raw_get("value")?,
@@ -1527,7 +1655,7 @@ impl<'lua> FromLua<'lua> for Command {
                 looping: params.raw_get("loop")?,
                 file: params.raw_get("file")?,
             }),
-            "stopTransmission" => Ok(Self::StopTransmission),
+            "stopTransmission" | "StopTransmission" => Ok(Self::StopTransmission),
             "ActivateLink4" => Ok(Self::ActivateLink4 {
                 unit: params.raw_get("unitId")?,
                 frequency: params.raw_get("frequency")?,
@@ -1548,6 +1676,20 @@ impl<'lua> FromLua<'lua> for Command {
     }
 }
 
+// GPS / GLONASS mode of a `Jammer` unit (`ActivateJammer`).
+simple_enum!(GnssJamming, u8, [
+    Off => 0,
+    Jamming => 1,
+    Spoofing => 2
+]);
+
+// Radio jamming mode of a `Jammer` unit (`ActivateJammer`).
+simple_enum!(RadioJamming, u8, [
+    Off => 0,
+    Simple => 1,
+    Adaptive => 2
+]);
+
 simple_enum!(AirRoe, u8, [
     OpenFire => 2,
     OpenFireWeaponFree => 1,
@@ -1561,7 +1703,17 @@ simple_enum!(AirReactionToThreat, u8, [
     PassiveDefence => 1,
     EvadeFire => 2,
     BypassAndEscape => 3,
-    AllowAbortMission => 4
+    AllowAbortMission => 4,
+    // Jink horizontally against AAA (the ME's HOR_AAA_EVADE_FIRE).
+    HorAaaEvadeFire => 5
+]);
+
+// How AI planes come in to land (`LANDING_OPTIONS`, 36).
+simple_enum!(AirLandingOption, u8, [
+    StraightIn => 0,
+    ForcePair => 1,
+    RestrictPair => 2,
+    OverheadBreak => 3
 ]);
 
 simple_enum!(AirEcmUsing, u8, [
@@ -1627,6 +1779,15 @@ pub enum AirOption<'lua> {
     RtbOnOutOfAmmo(bool),
     Silence(bool),
     AllowFormationSideSwap(bool),
+    /// Helicopters: prefer vertical take-off and landing (32) -- confined
+    /// LZs and FARPs.
+    PreferVertical(bool),
+    /// Planes: landing pattern (36).
+    LandingOptions(AirLandingOption),
+    /// Planes: line up on the runway after taxi before the takeoff roll (37).
+    AllowLineUpRunway(bool),
+    /// Planes: break off and RTB after this many losses in the group, 1..3 (38).
+    DisengageAndRtb(u8),
 }
 
 impl<'lua> IntoLua<'lua> for AirOption<'lua> {
@@ -1652,7 +1813,11 @@ impl<'lua> IntoLua<'lua> for AirOption<'lua> {
             Self::RtbOnBingo(v)
             | Self::RtbOnOutOfAmmo(v)
             | Self::Silence(v)
-            | Self::AllowFormationSideSwap(v) => v.into_lua(lua),
+            | Self::AllowFormationSideSwap(v)
+            | Self::PreferVertical(v)
+            | Self::AllowLineUpRunway(v) => v.into_lua(lua),
+            Self::LandingOptions(v) => v.into_lua(lua),
+            Self::DisengageAndRtb(v) => v.into_lua(lua),
         }
     }
 }
@@ -1681,6 +1846,10 @@ impl<'lua> AirOption<'lua> {
             Self::RtbOnOutOfAmmo(_) => 10,
             Self::Silence(_) => 7,
             Self::AllowFormationSideSwap(_) => 35,
+            Self::PreferVertical(_) => 32,
+            Self::LandingOptions(_) => 36,
+            Self::AllowLineUpRunway(_) => 37,
+            Self::DisengageAndRtb(_) => 38,
         }
     }
 
@@ -1740,6 +1909,10 @@ impl<'lua> AirOption<'lua> {
             10 => Ok(Self::RtbOnOutOfAmmo(FromLua::from_lua(val, lua)?)),
             7 => Ok(Self::Silence(FromLua::from_lua(val, lua)?)),
             35 => Ok(Self::AllowFormationSideSwap(FromLua::from_lua(val, lua)?)),
+            32 => Ok(Self::PreferVertical(FromLua::from_lua(val, lua)?)),
+            36 => Ok(Self::LandingOptions(FromLua::from_lua(val, lua)?)),
+            37 => Ok(Self::AllowLineUpRunway(FromLua::from_lua(val, lua)?)),
+            38 => Ok(Self::DisengageAndRtb(FromLua::from_lua(val, lua)?)),
             e => Err(err(&format_compact!("invalid AirOption {e}"))),
         }
     }
@@ -1752,13 +1925,34 @@ simple_enum!(AlarmState, u8, [
 ]);
 
 simple_enum!(GroundRoe, u8, [
+    // The Mission Editor's default for vehicles and ships.
+    WeaponFree => 0,
     OpenFire => 2,
     ReturnFire => 3,
     WeaponHold => 4
 ]);
 
+// Which targets a ground group may engage (`RESTRICT_TARGET`, 28).
+simple_enum!(GroundRestrictTarget, u8, [
+    All => 0,
+    AirOnly => 1,
+    GroundOnly => 2
+]);
+
 #[derive(Debug, Clone, Serialize)]
 pub enum GroundOption {
+    /// AAA: lowest altitude it will fire at, metres (27).
+    AltRestrictionMin(f64),
+    /// What the group may engage (28) -- e.g. SHORAD that never gives itself
+    /// away shooting at ground targets.
+    RestrictTarget(GroundRestrictTarget),
+    /// AAA: highest altitude it will fire at, metres (29).
+    AltRestrictionMax(f64),
+    /// Spacing between vehicles in column, metres 0..100 (30).
+    ColumnInterval(f64),
+    /// Air defence: react to an inbound anti-radiation missile (31). DCS
+    /// defaults it on; false makes a site that just keeps radiating.
+    EvasionOfArm(bool),
     AcEngagementRangeRestriction(u8),
     AlarmState(AlarmState),
     DisperseOnAttack(i64),
@@ -1778,6 +1972,11 @@ impl<'lua> IntoLua<'lua> for GroundOption {
             Self::Formation(v) => v.into_lua(lua),
             Self::Roe(v) => v.into_lua(lua),
             Self::AllowFormationSideSwap(v) => v.into_lua(lua),
+            Self::AltRestrictionMin(v)
+            | Self::AltRestrictionMax(v)
+            | Self::ColumnInterval(v) => v.into_lua(lua),
+            Self::RestrictTarget(v) => v.into_lua(lua),
+            Self::EvasionOfArm(v) => v.into_lua(lua),
         }
     }
 }
@@ -1792,6 +1991,11 @@ impl GroundOption {
             Self::Formation(_) => 5,
             Self::Roe(_) => 0,
             Self::AllowFormationSideSwap(_) => 35,
+            Self::AltRestrictionMin(_) => 27,
+            Self::RestrictTarget(_) => 28,
+            Self::AltRestrictionMax(_) => 29,
+            Self::ColumnInterval(_) => 30,
+            Self::EvasionOfArm(_) => 31,
         }
     }
 
@@ -1806,6 +2010,11 @@ impl GroundOption {
                 val, lua,
             )?)),
             35 => Ok(Self::AllowFormationSideSwap(FromLua::from_lua(val, lua)?)),
+            27 => Ok(Self::AltRestrictionMin(FromLua::from_lua(val, lua)?)),
+            28 => Ok(Self::RestrictTarget(FromLua::from_lua(val, lua)?)),
+            29 => Ok(Self::AltRestrictionMax(FromLua::from_lua(val, lua)?)),
+            30 => Ok(Self::ColumnInterval(FromLua::from_lua(val, lua)?)),
+            31 => Ok(Self::EvasionOfArm(FromLua::from_lua(val, lua)?)),
             e => Err(err(&format_compact!("unknown GroundOption {e}"))),
         }
     }
@@ -2062,5 +2271,110 @@ impl<'lua> Controller<'lua> {
             args.push(method.into_lua(self.lua)?);
         }
         Ok(self.t.call_method("getDetectedTargets", args)?)
+    }
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::*;
+
+    fn eval<'lua>(lua: &'lua Lua, src: &str) -> Value<'lua> {
+        lua.load(src).eval().unwrap()
+    }
+
+    #[test]
+    fn undecodable_task_is_kept_verbatim() {
+        let lua = Lua::new();
+        // A command this binding doesn't model, and a known task in the
+        // Mission Editor's x/y shape (no `point`): both used to fail the
+        // whole waypoint.
+        for src in [
+            "{ id = 'WrappedAction', params = { action = { id = 'ScriptFile', params = { file = 'ResKey_1' } } } }",
+            "{ id = 'Bombing', params = { x = 1, y = 2, weaponType = 1 } }",
+            "{ id = 'WrappedAction', params = { action = { id = 'Option', params = { name = 11, value = 2 } } } }",
+        ] {
+            let task = Task::from_lua(eval(&lua, src), &lua).unwrap();
+            let Task::Raw(tbl) = &task else { panic!("{src} decoded as {task:?}") };
+            let back = match task.clone().into_lua(&lua).unwrap() {
+                Value::Table(t) => t,
+                v => panic!("{v:?}"),
+            };
+            assert_eq!(tbl.raw_get::<_, String>("id").unwrap(), back.raw_get::<_, String>("id").unwrap());
+        }
+    }
+
+    #[test]
+    fn mission_route_is_read_back() {
+        let lua = Lua::new();
+        let src = "{ id = 'Mission', params = { airborne = true, route = { points = {
+            { type = 'Turning Point', x = 1, y = 2, alt = 100, speed = 50, task = { id = 'ComboTask', params = { tasks = {} } } },
+            { type = 'Turning Point', x = 3, y = 4, alt = 100, speed = 50, task = { id = 'ComboTask', params = { tasks = {} } } },
+        } } } }";
+        let task = Task::from_lua(eval(&lua, src), &lua).unwrap();
+        match &task {
+            Task::Mission { route, .. } => assert_eq!(route.len(), 2),
+            t => panic!("{t:?}"),
+        };
+    }
+
+    #[test]
+    fn jammer_and_new_commands_round_trip() {
+        let lua = Lua::new();
+        let cmd = Command::ActivateJammer {
+            gps: GnssJamming::Spoofing,
+            glonass: GnssJamming::Jamming,
+            radio: RadioJamming::Adaptive,
+            band_mhz: Some((225., 400.)),
+            spoof_point: Some(crate::Vector2::new(1000., 2000.)),
+        };
+        let v = cmd.into_lua(&lua).unwrap();
+        let t: LuaTable = FromLua::from_lua(v.clone(), &lua).unwrap();
+        assert_eq!(t.raw_get::<_, String>("id").unwrap().as_str(), "ActivateJammer");
+        let p: LuaTable = t.raw_get("params").unwrap();
+        assert_eq!(p.raw_get::<_, i64>("gpsSpoofing").unwrap(), 2);
+        assert_eq!(p.raw_get::<_, i64>("glonassSpoofing").unwrap(), 1);
+        assert_eq!(p.raw_get::<_, i64>("radioJamming").unwrap(), 2);
+        assert_eq!(p.raw_get::<_, f64>("jammingEnd").unwrap(), 400.);
+        assert_eq!(p.raw_get::<_, f64>("x").unwrap(), 1000.);
+        let back = Command::from_lua(v, &lua).unwrap();
+        match &back {
+            Command::ActivateJammer { band_mhz, spoof_point, .. } => {
+                assert_eq!(*band_mhz, Some((225., 400.)));
+                assert_eq!(*spoof_point, Some(crate::Vector2::new(1000., 2000.)));
+            }
+            c => panic!("{c:?}"),
+        };
+        // The Mission Editor's spelling of StopTransmission now decodes.
+        let st = eval(&lua, "{ id = 'StopTransmission', params = {} }");
+        assert!(matches!(Command::from_lua(st, &lua).unwrap(), Command::StopTransmission));
+    }
+
+    #[test]
+    fn engage_targets_sends_the_range_flag() {
+        let lua = Lua::new();
+        let task = Task::EngageTargets {
+            target_types: vec![],
+            max_dist: Some(15_000.),
+            priority: None,
+        };
+        let t: LuaTable = FromLua::from_lua(task.into_lua(&lua).unwrap(), &lua).unwrap();
+        let p: LuaTable = t.raw_get("params").unwrap();
+        assert!(p.raw_get::<_, bool>("maxDistEnabled").unwrap());
+        assert_eq!(p.raw_get::<_, f64>("maxDist").unwrap(), 15_000.);
+    }
+
+    #[test]
+    fn new_options_decode() {
+        let lua = Lua::new();
+        for (tag, val) in [("31", "false"), ("27", "200"), ("28", "1"), ("36", "3"), ("38", "2"), ("1", "5"), ("0", "0")] {
+            let src = format!(
+                "{{ id = 'WrappedAction', params = {{ action = {{ id = 'Option', params = {{ name = {tag}, value = {val} }} }} }} }}"
+            );
+            let task = Task::from_lua(eval(&lua, &src), &lua).unwrap();
+            match &task {
+                Task::WrappedOption(_) => (),
+                t => panic!("option {tag}={val} decoded as {t:?}"),
+            };
+        }
     }
 }

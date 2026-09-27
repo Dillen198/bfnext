@@ -36,7 +36,7 @@ use bfprotocols::{
 };
 use std::collections::HashMap;
 use chrono::prelude::*;
-use compact_str::format_compact;
+use compact_str::{format_compact, CompactString};
 use dcso3::{
     MizLua, String, Vector2,
     coalition::Side,
@@ -115,6 +115,18 @@ pub enum AdminCommand {
     },
     Spawn {
         key: String,
+    },
+    /// Spawn a radio/GNSS jammer truck at every f10 mark `<key> <side>`.
+    JammerSpawn {
+        key: String,
+    },
+    /// Switch a jammer group's modes (all off = DeactivateJammer).
+    JammerMode {
+        group: GroupId,
+        gps: dcso3::controller::GnssJamming,
+        glonass: dcso3::controller::GnssJamming,
+        radio: dcso3::controller::RadioJamming,
+        band_mhz: Option<(f64, f64)>,
     },
     SideSwitch {
         side: Side,
@@ -357,6 +369,8 @@ impl AdminCommand {
             "capture <objective> <blue|red|neutral>: force an objective to change hands",
             "tim <key> [size] [alt]: create explosions of [size] default 3000 at every f10 mark with text <key>",
             "spawn <key>: spawn at f10 mark. <key> <troop|deployable> <side> <heading> <name>",
+            "jammer <key>: spawn a GPS/radio jammer truck at every f10 mark '<key> <side>' (starts off)",
+            "jammer_mode <group> <gps> <glonass> <radio> [start_mhz end_mhz]: gps/glonass off|jam|spoof, radio off|simple|adaptive; spoofing aims at an f10 mark 'spoof' (else 20 km north)",
             "switch <side> <alias|playerid|ucid>: force side switch a player",
             "ban <duration|forever> <alias|playerid|ucid>: kick a player and ban them. e.g. ban 10days D4n",
             "unban <alias|ucid>: unban a player",
@@ -493,6 +507,38 @@ impl FromStr for AdminCommand {
             }
         } else if let Some(s) = s.strip_prefix("spawn ") {
             Ok(Self::Spawn { key: s.into() })
+        } else if let Some(s) = s.strip_prefix("jammer_mode ") {
+            use dcso3::controller::{GnssJamming, RadioJamming};
+            let gnss = |s: &str| -> Result<GnssJamming> {
+                Ok(match s.to_ascii_lowercase().as_str() {
+                    "off" => GnssJamming::Off,
+                    "jam" => GnssJamming::Jamming,
+                    "spoof" => GnssJamming::Spoofing,
+                    s => bail!("expected off|jam|spoof, got {s}"),
+                })
+            };
+            let parts: SmallVec<[&str; 6]> = s.split_whitespace().collect();
+            let usage = "jammer_mode <group> <gps off|jam|spoof> <glonass off|jam|spoof> <radio off|simple|adaptive> [start_mhz end_mhz]";
+            if parts.len() != 4 && parts.len() != 6 {
+                bail!("{usage}")
+            }
+            Ok(Self::JammerMode {
+                group: parts[0].parse()?,
+                gps: gnss(parts[1])?,
+                glonass: gnss(parts[2])?,
+                radio: match parts[3].to_ascii_lowercase().as_str() {
+                    "off" => RadioJamming::Off,
+                    "simple" => RadioJamming::Simple,
+                    "adaptive" => RadioJamming::Adaptive,
+                    s => bail!("radio: expected off|simple|adaptive, got {s}"),
+                },
+                band_mhz: match parts.get(4..6) {
+                    Some([a, b]) => Some((a.parse()?, b.parse()?)),
+                    _ => None,
+                },
+            })
+        } else if let Some(s) = s.strip_prefix("jammer ") {
+            Ok(Self::JammerSpawn { key: s.trim().into() })
         } else if let Some(s) = s.strip_prefix("switch ") {
             match s.split_once(" ") {
                 None => bail!("switch <side> <player>"),
@@ -685,6 +731,78 @@ fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String
         )
     }
     Ok(spawned)
+}
+
+/// Spawn a jammer truck at every f10 mark whose text is `<key> <side>`.
+fn admin_jammer_spawn(ctx: &mut Context, lua: MizLua, key: &str) -> Result<Vec<GroupId>> {
+    let act = Trigger::singleton(lua)?.action()?;
+    let spctx = SpawnCtx::new(lua)?;
+    let prefix = format_compact!("{key} ");
+    let mut perf = bfprotocols::perf::PerfInner::default();
+    let mut out = vec![];
+    for mk in World::singleton(lua)?.get_mark_panels().context("getting marks")? {
+        let mk = mk?;
+        let Some(side) = mk.text.as_str().strip_prefix(prefix.as_str()) else { continue };
+        let side = parse_side(side.trim())?;
+        let pos = Vector2::new(mk.pos.x, mk.pos.z);
+        let gid = ctx.db.spawn_jammer_truck(&mut perf, &spctx, &ctx.idx, side, pos, 0.)?;
+        info!("admin: jammer {gid} spawned for {side} at {pos:?}");
+        let _ = act.remove_mark(mk.id);
+        out.push(gid);
+    }
+    Ok(out)
+}
+
+/// Set a jammer group's modes. Spoofing aims at the f10 mark with text
+/// `spoof` if there is one, otherwise 20 km north of the jammer.
+fn admin_jammer_mode(
+    ctx: &mut Context,
+    lua: MizLua,
+    gid: GroupId,
+    gps: dcso3::controller::GnssJamming,
+    glonass: dcso3::controller::GnssJamming,
+    radio: dcso3::controller::RadioJamming,
+    band_mhz: Option<(f64, f64)>,
+) -> Result<CompactString> {
+    use dcso3::controller::{Command, GnssJamming, RadioJamming};
+    let name = ctx
+        .db
+        .persisted
+        .groups
+        .get(&gid)
+        .map(|g| g.name.clone())
+        .ok_or_else(|| anyhow!("no such group"))?;
+    let group = dcso3::group::Group::get_by_name(lua, name.as_str())?;
+    let p = group.get_unit(1)?.get_point()?;
+    let here = Vector2::new(p.x, p.z);
+    let spoof_point = World::singleton(lua)?
+        .get_mark_panels()?
+        .into_iter()
+        .filter_map(|m| m.ok())
+        .find(|m| m.text.as_str().trim().eq_ignore_ascii_case("spoof"))
+        .map(|m| Vector2::new(m.pos.x, m.pos.z))
+        .unwrap_or(here + Vector2::new(20_000., 0.));
+    let off = gps == GnssJamming::Off && glonass == GnssJamming::Off && radio == RadioJamming::Off;
+    let cmd = if off {
+        Command::DeactivateJammer
+    } else {
+        Command::ActivateJammer { gps, glonass, radio, band_mhz, spoof_point: Some(spoof_point) }
+    };
+    group.get_controller()?.set_command(cmd)?;
+    info!(
+        "admin: jammer {gid} ({name}) gps={gps:?} glonass={glonass:?} radio={radio:?}          band={band_mhz:?} spoof={spoof_point:?}"
+    );
+    Ok(if off {
+        format_compact!("jammer {gid} off")
+    } else {
+        format_compact!(
+            "jammer {gid}: gps {gps:?}, glonass {glonass:?}, radio {radio:?} {}",
+            match band_mhz {
+                Some((a, b)) => format_compact!("{a}-{b} MHz"),
+                None => format_compact!(""),
+            }
+        )
+    })
 }
 
 fn admin_spawn_one(
@@ -3220,6 +3338,20 @@ fn run_admin_command(
                 match admin_spawn(ctx, lua, id, key) {
                     Ok(n) => reply_ok!("spawned {n}"),
                     Err(e) => reply_err!("could not spawn {:?}", e),
+                }
+            }
+            AdminCommand::JammerSpawn { key } => match admin_jammer_spawn(ctx, lua, &key) {
+                Ok(gids) if gids.is_empty() => reply_err!("no f10 mark starting with '{key} '"),
+                Ok(gids) => reply_ok!(
+                    "jammer(s) spawned, off: {} -- use jammer_mode <group> ...",
+                    gids.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ")
+                ),
+                Err(e) => reply_err!("could not spawn jammer {e:?}"),
+            },
+            AdminCommand::JammerMode { group, gps, glonass, radio, band_mhz } => {
+                match admin_jammer_mode(ctx, lua, group, gps, glonass, radio, band_mhz) {
+                    Ok(msg) => reply_ok!("{msg}"),
+                    Err(e) => reply_err!("could not set jammer {group}: {e:?}"),
                 }
             }
             AdminCommand::SideSwitch { side, player } => {

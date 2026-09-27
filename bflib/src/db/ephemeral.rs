@@ -2542,15 +2542,13 @@ impl Ephemeral {
                     };
                     if let Some(gci) = gci {
                         if let Some(unit) = g.get_units()?.into_iter().filter_map(|u| u.ok()).next() {
-                            let ll = dcso3::coord::Coord::singleton(spctx.lua())?
-                                .lo_to_ll(unit.get_point()?)?;
                             let controller = unit.get_controller()
                                 .context("getting GCI unit controller")?;
                             controller
                                 .set_command(dcso3::controller::Command::ActivateGci {
                                     unit: unit.id()?,
-                                    latitude: ll.latitude,
-                                    longitude: ll.longitude,
+                                    // centred on the station
+                                    center: Vector2::new(0., 0.),
                                     channel: gci.channel,
                                     radius: gci.radius,
                                 })

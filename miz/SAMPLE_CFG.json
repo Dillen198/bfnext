@@ -117,30 +117,25 @@
 
   "artillery": {
     "units": {
-      "M142 HIMARS":           { "max_range_m": 70000,  "min_range_m": 15000 },
+      "CHAP_M142_GMLRS_M30":           { "max_range_m": 70000,  "min_range_m": 15000 },
       "CHAP_M142_GMLRS_M31":   { "max_range_m": 70000,  "min_range_m": 15000 },
       "MLRS":                  { "max_range_m": 32000,  "min_range_m": 10000 },
       "M-109":                 { "max_range_m": 30000,  "min_range_m": 4000  },
       "T155_Firtina":          { "max_range_m": 40000,  "min_range_m": 4000  },
       "2B11 mortar":           { "max_range_m": 7000,   "min_range_m": 500   },
-      "M-30 mortar":           { "max_range_m": 4500,   "min_range_m": 200   },
       "SAU Msta":              { "max_range_m": 29000,  "min_range_m": 4000  },
       "SAU Gvozdika":          { "max_range_m": 15000,  "min_range_m": 4000  },
-      "2S3 Akatsia":           { "max_range_m": 18000,  "min_range_m": 4000  },
+      "SAU Akatsia":           { "max_range_m": 18000,  "min_range_m": 4000  },
       "SAU 2-C9":              { "max_range_m": 8000,   "min_range_m": 500   },
       "Uragan_BM-27":          { "max_range_m": 35000,  "min_range_m": 5000  },
-      "9A52 Smerch":           { "max_range_m": 70000,  "min_range_m": 20000 },
-      "9A52-2 Smerch-M":       { "max_range_m": 70000,  "min_range_m": 20000 },
+      "Smerch":           { "max_range_m": 70000,  "min_range_m": 20000 },
+      "Smerch_HE":       { "max_range_m": 70000,  "min_range_m": 20000 },
       "Grad_FDDM":             { "max_range_m": 20000,  "min_range_m": 5000  },
       "CHAP_TOS1A":            { "max_range_m": 6000,   "min_range_m": 400   },
       "HL_B8M1":               { "max_range_m": 6000,   "min_range_m": 400   },
       "Scud_B":                { "max_range_m": 300000, "min_range_m": 50000 },
-      "SS_1B_Scud_A":          { "max_range_m": 180000, "min_range_m": 30000 },
-      "SS-21_Scarab_TEL":      { "max_range_m": 70000,  "min_range_m": 15000 },
-      "9K720_Iskander_TEL":    { "max_range_m": 500000, "min_range_m": 50000 },
-      "4K51_Rubezh":           { "max_range_m": 80000,  "min_range_m": 5000  },
-      "Bastion_LN":            { "max_range_m": 300000, "min_range_m": 10000 },
-      "P-15_Termit_S":         { "max_range_m": 80000,  "min_range_m": 5000  }
+      "CHAP_9K720_HE":    { "max_range_m": 400000, "min_range_m": 75000 },
+      "CHAP_9K720_Cluster":    { "max_range_m": 400000, "min_range_m": 75000 }
     },
     "default_max_range_m": 30000,
     "default_min_range_m": 4000,
@@ -524,28 +519,27 @@
 
     "M-109":             ["Armor", "MR", "Artillery", "Driveable"],
     "MLRS":              ["Armor", "LR", "Artillery", "Driveable"],
-    "M142 HIMARS":       ["Armor", "LR", "Artillery", "Driveable"],
+    "CHAP_M142_GMLRS_M30":       ["Armor", "LR", "Artillery", "Driveable"],
+    "CHAP_M142_GMLRS_M31":       ["Armor", "LR", "Artillery", "Driveable"],
     "T155_Firtina":      ["Armor", "LR", "Artillery", "SmallArms", "Driveable"],
     "2B11 mortar":       ["Infantry", "LR", "Artillery"],
-    "M-30 mortar":       ["Infantry", "SR", "Artillery"],
 
     "SAU Msta":          ["Armor", "MR", "Artillery", "SmallArms", "Driveable"],
     "SAU Gvozdika":      ["Armor", "MR", "Artillery", "Driveable"],
-    "2S3 Akatsia":       ["Armor", "MR", "Artillery", "Driveable"],
+    "SAU Akatsia":       ["Armor", "MR", "Artillery", "Driveable"],
     "SAU 2-C9":          ["Armor", "MR", "Artillery", "Driveable"],
     "Uragan_BM-27":      ["Armor", "LR", "Artillery", "Driveable"],
-    "9A52 Smerch":       ["Armor", "LR", "Artillery", "Driveable"],
-    "9A52-2 Smerch-M":   ["Armor", "LR", "Artillery", "Driveable"],
+    "Smerch":       ["Armor", "LR", "Artillery", "Driveable"],
+    "Smerch_HE":   ["Armor", "LR", "Artillery", "Driveable"],
     "Grad_FDDM":         ["Armor", "MR", "Artillery", "Driveable"],
 
     "Scud_B":            ["Armor", "LR", "Launcher", "Driveable"],
-    "SS_1B_Scud_A":      ["Armor", "LR", "Launcher", "Driveable"],
-    "SS-21_Scarab_TEL":  ["Armor", "LR", "Launcher", "Driveable"],
-    "9K720_Iskander_TEL":["Armor", "LR", "Launcher", "Driveable"],
+    "CHAP_9K720_HE":["Armor", "LR", "Launcher", "Driveable"],
+    "CHAP_9K720_Cluster":["Armor", "LR", "Launcher", "Driveable"],
 
-    "4K51_Rubezh":       ["Armor", "LR", "Launcher", "Driveable"],
-    "Bastion_LN":        ["Armor", "LR", "Launcher", "Driveable"],
-    "P-15_Termit_S":     ["Armor", "LR", "Launcher", "Driveable"]
+    "GPS_Spoofer_Blue":  ["Unarmed"],
+    "GPS_Spoofer_Red":   ["Unarmed"]
+
   },
 
   "crate_template": {

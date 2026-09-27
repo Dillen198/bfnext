@@ -5222,41 +5222,11 @@
       "Launcher",
       "Driveable"
     ],
-    "SS_1B_Scud_A": [
-      "Armor",
-      "LR",
-      "Launcher",
-      "Driveable"
+    "GPS_Spoofer_Blue": [
+      "Unarmed"
     ],
-    "SS-21_Scarab_TEL": [
-      "Armor",
-      "LR",
-      "Launcher",
-      "Driveable"
-    ],
-    "9K720_Iskander_TEL": [
-      "Armor",
-      "LR",
-      "Launcher",
-      "Driveable"
-    ],
-    "4K51_Rubezh": [
-      "Armor",
-      "LR",
-      "Launcher",
-      "Driveable"
-    ],
-    "Bastion_LN": [
-      "Armor",
-      "LR",
-      "Launcher",
-      "Driveable"
-    ],
-    "P-15_Termit_S": [
-      "Armor",
-      "LR",
-      "Launcher",
-      "Driveable"
+    "GPS_Spoofer_Red": [
+      "Unarmed"
     ]
   },
   "airborne_jtacs": {

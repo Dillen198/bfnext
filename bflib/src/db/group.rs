@@ -1091,6 +1091,65 @@ impl Db {
         Ok(gid)
     }
 
+    /// Spawn a lone radio/GNSS jammer truck (`GPS_Spoofer_Blue`/`_Red`, the
+    /// only DCS units with the `Jammer` attribute) at `pos`, straight away.
+    /// No .miz template is needed -- the group is built from the unit type,
+    /// the same way special SAM sites are. It is session scoped
+    /// (`EventSpawn`): a restart drops it rather than respawning a synthetic
+    /// template that no longer exists. The jammer starts switched off; turn
+    /// it on with `Command::ActivateJammer` on its group controller.
+    pub fn spawn_jammer_truck(
+        &mut self,
+        perf: &mut bfprotocols::perf::PerfInner,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        side: Side,
+        pos: Vector2,
+        heading: f64,
+    ) -> Result<GroupId> {
+        let (typ, country) = match side {
+            Side::Blue => ("GPS_Spoofer_Blue", Country::CJTF_BLUE),
+            Side::Red => ("GPS_Spoofer_Red", Country::CJTF_RED),
+            Side::Neutral => bail!("a jammer needs a side"),
+        };
+        let origin = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(_, o)| o.owner == side)
+            .min_by(|(_, a), (_, b)| {
+                na::distance_squared(&a.zone.pos().into(), &pos.into())
+                    .total_cmp(&na::distance_squared(&b.zone.pos().into(), &pos.into()))
+            })
+            .map(|(id, _)| *id)
+            .ok_or_else(|| anyhow!("{side} holds no objectives"))?;
+        let gid = self.add_group_from_units(
+            spctx,
+            side,
+            country,
+            &[SpecialSamUnitCfg {
+                typ: String::from(typ),
+                pos: bfprotocols::cfg::Pos2d { x: pos.x, y: pos.y },
+                heading,
+            }],
+            DeployKind::Objective { origin },
+        )?;
+        if let Some(group) = self.persisted.groups.get_mut_cow(&gid) {
+            group.tags.0.insert(UnitTag::EventSpawn);
+        }
+        let spawned = group!(self, gid).and_then(|group| {
+            self.ephemeral
+                .spawn_group(perf, &self.persisted, idx, spctx, group, vec![])
+        });
+        if let Err(e) = spawned {
+            if let Err(de) = self.delete_group(&gid) {
+                error!("could not remove unspawned jammer {gid:?}: {de:?}");
+            }
+            return Err(e);
+        }
+        Ok(gid)
+    }
+
     /// Spawn an air group from `template` in the air at `pos` and fly
     /// `mission` instead of the template's route, right now rather than via
     /// the spawn queue. The group is tagged `EventSpawn`, so it is session
