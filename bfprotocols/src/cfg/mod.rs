@@ -3921,6 +3921,257 @@ pub struct Cfg {
     /// to use the engine's built-in approximate per-theatre value.
     #[serde(default)]
     pub magnetic_variation_deg: Option<f64>,
+    /// Air activity for thin servers: an on-call AI wingman (F10 > Wingman),
+    /// autonomous AI CAP/strike packages for a side short of human pilots, and
+    /// neutral civilian airliners. Absent = all three off.
+    #[serde(default)]
+    pub air_life: Option<AirLifeCfg>,
+}
+
+/// See `Cfg::air_life`. Each part is independent; leave one out to disable it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AirLifeCfg {
+    #[serde(default)]
+    pub wingman: Option<WingmanCfg>,
+    #[serde(default)]
+    pub packages: Option<AiPackagesCfg>,
+    #[serde(default)]
+    pub civil_traffic: Option<CivilTrafficCfg>,
+}
+
+/// F10 > Wingman: a player asks for an AI flight, it spawns in the air behind
+/// them and flies DCS's Escort task on their aircraft until they release it,
+/// land, leave the slot, or it runs out of `lifetime_secs`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WingmanCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Only offered while the requester's side has at most this many human
+    /// pilots in slots -- it is for thin servers, not a force multiplier on a
+    /// full one. 0 = always offered. Default 4.
+    #[serde(default = "default_wingman_max_side_pilots")]
+    pub max_side_pilots: u32,
+    /// Points charged per request. Default 0.
+    #[serde(default)]
+    pub cost: i32,
+    /// Seconds before the wingman is sent home regardless. Default 3600.
+    #[serde(default = "default_wingman_lifetime")]
+    pub lifetime_secs: u32,
+    /// Seconds a player must wait for a new wingman after losing one. Default 300.
+    #[serde(default = "default_wingman_cooldown")]
+    pub cooldown_secs: u32,
+    /// Plane-section groups in the .miz to draw a fixed-wing player's wingman
+    /// from. Empty = fall back to `campaign_events.cap_templates_red/_blue`.
+    #[serde(default)]
+    pub templates_red: Vec<String>,
+    #[serde(default)]
+    pub templates_blue: Vec<String>,
+    /// Helicopter-section groups for a helicopter player's wingman. Empty =
+    /// fall back to `campaign_events.helo_templates_red/_blue`; with neither,
+    /// helicopter pilots are told no wingman is available.
+    #[serde(default)]
+    pub rotary_templates_red: Vec<String>,
+    #[serde(default)]
+    pub rotary_templates_blue: Vec<String>,
+    /// How far from the escorted player a fixed-wing wingman will go to engage
+    /// an air threat. Default 40 km.
+    #[serde(default = "default_wingman_engage_m")]
+    pub engage_dist_m: f64,
+    /// Same for a helicopter wingman, which engages helicopters and ground
+    /// units. Default 8 km.
+    #[serde(default = "default_wingman_rotary_engage_m")]
+    pub rotary_engage_dist_m: f64,
+}
+
+fn default_wingman_max_side_pilots() -> u32 { 4 }
+fn default_wingman_lifetime() -> u32 { 3600 }
+fn default_wingman_cooldown() -> u32 { 300 }
+fn default_wingman_engage_m() -> f64 { 40_000.0 }
+fn default_wingman_rotary_engage_m() -> f64 { 8_000.0 }
+
+/// Autonomous AI packages: while a side has few human pilots, the engine
+/// launches that side's own Fighters / Attackers / SEAD actions (the same
+/// templates players buy through the Actions menu) against the front, so a
+/// solo player has both friends and enemies in the air.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AiPackagesCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// A side with MORE human pilots in slots than this gets no packages.
+    /// Default 3.
+    #[serde(default = "default_packages_max_side_pilots")]
+    pub max_side_pilots: u32,
+    /// Launch packages even with nobody on the server. Off by default: the
+    /// point is company for the players who are on, and an empty server
+    /// should not grind itself down overnight.
+    #[serde(default)]
+    pub run_when_empty: bool,
+    /// Seconds between launch decisions. Default 120.
+    #[serde(default = "default_packages_check_interval")]
+    pub check_interval_secs: u32,
+    /// Minimum seconds between two launches for one side. Default 900.
+    #[serde(default = "default_packages_launch_interval")]
+    pub launch_interval_secs: u32,
+    /// Packages one side may have up at once. Default 2.
+    #[serde(default = "default_packages_max_active")]
+    pub max_active_per_side: u32,
+    /// Seconds a package works its target before it is sent home. Default 1800.
+    #[serde(default = "default_packages_lifetime")]
+    pub lifetime_secs: u32,
+    /// Side treasury charged per launch. Default 0 (free, rate-limited only).
+    #[serde(default)]
+    pub treasury_cost: i64,
+    /// Names from `actions.red` to launch. Empty = every Fighters, Attackers
+    /// and SEAD action the side has.
+    #[serde(default)]
+    pub actions_red: Vec<String>,
+    #[serde(default)]
+    pub actions_blue: Vec<String>,
+    /// Targets farther than this from every friendly airbase are skipped.
+    /// Default 150 km.
+    #[serde(default = "default_packages_max_range")]
+    pub max_target_range_m: f64,
+    /// Tell the side's players when a package launches. Default true.
+    #[serde(default = "default_true")]
+    pub announce: bool,
+}
+
+fn default_packages_max_side_pilots() -> u32 { 3 }
+fn default_packages_check_interval() -> u32 { 120 }
+fn default_packages_launch_interval() -> u32 { 900 }
+fn default_packages_max_active() -> u32 { 2 }
+fn default_packages_lifetime() -> u32 { 1800 }
+fn default_packages_max_range() -> f64 { 150_000.0 }
+
+/// Neutral civilian airliners: high overflights that keep clear of the front
+/// where they can, plus departures from and arrivals at airports well behind
+/// it. They belong to a neutral country, so no AI on either side engages
+/// them -- only a player can, and `shootdown_penalty_points` says what that
+/// costs.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CivilTrafficCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Only fly while at least this many players are in aircraft. 0 =
+    /// always, including an empty server. Default 1.
+    #[serde(default = "default_civil_min_players")]
+    pub min_players: u32,
+    /// Airliners in the air at once. Default 4.
+    #[serde(default = "default_civil_max_active")]
+    pub max_active: u32,
+    /// Seconds between spawns (jittered +-30%). Default 300.
+    #[serde(default = "default_civil_spawn_interval")]
+    pub spawn_interval_secs: u32,
+    /// Country the airliners fly for. Must be in the mission's NEUTRAL
+    /// coalition. Unset = the first neutral country the mission lists.
+    #[serde(default)]
+    pub country: Option<Country>,
+    #[serde(default = "default_civil_aircraft")]
+    pub aircraft: Vec<CivilAircraftCfg>,
+    /// Airline prefixes for the flight numbers players see ("THY1843").
+    #[serde(default = "default_civil_airline_codes")]
+    pub airline_codes: Vec<String>,
+    /// Relative pick weights of the three flight kinds.
+    #[serde(default = "default_civil_overflight_weight")]
+    pub overflight_weight: u32,
+    #[serde(default = "default_civil_airport_weight")]
+    pub departure_weight: u32,
+    #[serde(default = "default_civil_airport_weight")]
+    pub arrival_weight: u32,
+    /// An airport is "rear" -- used for departures and arrivals -- only if it
+    /// is at least this far from the front. Default 60 km.
+    #[serde(default = "default_civil_rear_airport_min_front")]
+    pub rear_airport_min_front_m: f64,
+    /// Overflight routes try to stay at least this far from the front, and
+    /// take the widest berth available when none clears it. Default 40 km.
+    #[serde(default = "default_civil_front_standoff")]
+    pub front_standoff_m: f64,
+    /// How far beyond the outermost airbase or objective the map-edge entry
+    /// and exit points sit. Default 20 km.
+    #[serde(default = "default_civil_map_margin")]
+    pub map_margin_m: f64,
+    /// Anything still flying after this long is removed. Default 5400.
+    #[serde(default = "default_civil_max_flight")]
+    pub max_flight_secs: u32,
+    /// Points taken from a player who shoots one down. Default 500.
+    #[serde(default = "default_civil_shootdown_points")]
+    pub shootdown_penalty_points: i32,
+    /// Treasury taken from the shooter's side. Default 1000.
+    #[serde(default = "default_civil_shootdown_treasury")]
+    pub shootdown_treasury_penalty: i64,
+}
+
+/// One airliner type. `typ` is the DCS unit type name.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CivilAircraftCfg {
+    pub typ: String,
+    #[serde(default = "default_cap_template_weight")]
+    pub weight: u32,
+    /// Livery names to pick from. Empty = the country's default livery.
+    #[serde(default)]
+    pub liveries: Vec<String>,
+    pub cruise_alt_min_m: f64,
+    pub cruise_alt_max_m: f64,
+    /// Cruise true airspeed, m/s.
+    pub cruise_speed_ms: f64,
+}
+
+fn default_civil_min_players() -> u32 { 1 }
+fn default_civil_max_active() -> u32 { 4 }
+fn default_civil_spawn_interval() -> u32 { 300 }
+fn default_civil_overflight_weight() -> u32 { 3 }
+fn default_civil_airport_weight() -> u32 { 1 }
+fn default_civil_rear_airport_min_front() -> f64 { 60_000.0 }
+fn default_civil_front_standoff() -> f64 { 40_000.0 }
+fn default_civil_map_margin() -> f64 { 20_000.0 }
+fn default_civil_max_flight() -> u32 { 5400 }
+fn default_civil_shootdown_points() -> i32 { 500 }
+fn default_civil_shootdown_treasury() -> i64 { 1000 }
+
+fn default_civil_aircraft() -> Vec<CivilAircraftCfg> {
+    let t = |typ: &str, alt_min: f64, alt_max: f64, speed: f64| CivilAircraftCfg {
+        typ: typ.into(),
+        weight: 1,
+        liveries: vec![],
+        cruise_alt_min_m: alt_min,
+        cruise_alt_max_m: alt_max,
+        cruise_speed_ms: speed,
+    };
+    vec![
+        t("Yak-40", 6_000., 7_500., 150.),
+        t("An-26B", 5_000., 6_500., 120.),
+        t("IL-76MD", 9_000., 11_000., 215.),
+    ]
+}
+
+fn default_civil_airline_codes() -> Vec<String> {
+    ["AFL", "THY", "AZE", "GEO", "UAE", "QTR", "DLH", "SVA", "ETD", "PGT"]
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+
+impl Default for CivilTrafficCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_players: default_civil_min_players(),
+            max_active: default_civil_max_active(),
+            spawn_interval_secs: default_civil_spawn_interval(),
+            country: None,
+            aircraft: default_civil_aircraft(),
+            airline_codes: default_civil_airline_codes(),
+            overflight_weight: default_civil_overflight_weight(),
+            departure_weight: default_civil_airport_weight(),
+            arrival_weight: default_civil_airport_weight(),
+            rear_airport_min_front_m: default_civil_rear_airport_min_front(),
+            front_standoff_m: default_civil_front_standoff(),
+            map_margin_m: default_civil_map_margin(),
+            max_flight_secs: default_civil_max_flight(),
+            shootdown_penalty_points: default_civil_shootdown_points(),
+            shootdown_treasury_penalty: default_civil_shootdown_treasury(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -4238,6 +4489,35 @@ mod load_tests {
     }
 
     #[test]
+    fn air_life_empty_blocks_take_defaults() {
+        let al: AirLifeCfg = serde_json::from_value(serde_json::json!({
+            "wingman": {}, "packages": {}, "civil_traffic": {}
+        }))
+        .unwrap();
+        let w = al.wingman.as_ref().unwrap();
+        assert!(w.enabled);
+        assert_eq!(w.max_side_pilots, 4);
+        assert_eq!(w.lifetime_secs, 3600);
+        let p = al.packages.as_ref().unwrap();
+        assert!(p.enabled && !p.run_when_empty);
+        assert_eq!(p.max_side_pilots, 3);
+        let c = al.civil_traffic.as_ref().unwrap();
+        assert!(c.enabled);
+        assert_eq!(c.aircraft.len(), 3);
+        assert!(!c.airline_codes.is_empty());
+        assert_eq!(c.shootdown_penalty_points, 500);
+
+        let mut cfg = Cfg::default();
+        cfg.air_life = Some(al);
+        cfg.validate().unwrap();
+        // An airliner whose altitude band is upside down is refused.
+        if let Some(c) = cfg.air_life.as_mut().and_then(|a| a.civil_traffic.as_mut()) {
+            c.aircraft[0].cruise_alt_min_m = 12_000.;
+        }
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
     fn write_atomic_replaces_and_cleans_up() {
         let dir = std::env::temp_dir().join(format!("bfcfg-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
@@ -4401,6 +4681,40 @@ impl Cfg {
                              is empty -- list at least one helicopter-section group from the .miz"
                         )
                     }
+                }
+            }
+        }
+        if let Some(al) = &cfg.air_life {
+            if let Some(w) = al.wingman.as_ref().filter(|w| w.enabled) {
+                let cap = cfg.campaign_events.as_deref();
+                for (side, own, fallback) in [
+                    ("red", &w.templates_red, cap.map(|c| c.cap_templates_red.len())),
+                    ("blue", &w.templates_blue, cap.map(|c| c.cap_templates_blue.len())),
+                ] {
+                    if own.is_empty() && fallback.unwrap_or(0) == 0 {
+                        warn!(
+                            "air_life.wingman: templates_{side} is empty and there is no \
+                             campaign_events.cap_templates_{side} to fall back on -- {side} \
+                             jet pilots will be told no wingman is available"
+                        )
+                    }
+                }
+            }
+            if let Some(ct) = al.civil_traffic.as_ref().filter(|c| c.enabled) {
+                if ct.aircraft.is_empty() {
+                    bail!("air_life.civil_traffic is enabled but its aircraft list is empty")
+                }
+                for a in &ct.aircraft {
+                    if a.cruise_alt_min_m > a.cruise_alt_max_m || a.cruise_speed_ms <= 0. {
+                        bail!(
+                            "air_life.civil_traffic.aircraft {}: cruise_alt_min_m must not exceed \
+                             cruise_alt_max_m and cruise_speed_ms must be positive",
+                            a.typ
+                        )
+                    }
+                }
+                if ct.airline_codes.is_empty() {
+                    bail!("air_life.civil_traffic.airline_codes is empty")
                 }
             }
         }

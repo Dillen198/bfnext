@@ -604,6 +604,51 @@ fn group_position(lua: MizLua, name: &str) -> Result<Vector2> {
 }
 
 impl Db {
+    /// Launch one of `side`'s configured Fighters / Attackers / SEAD actions
+    /// on the engine's own account, for air_life's AI packages. It flies the
+    /// same template and mission a player's purchase would, but no player is
+    /// charged or credited, and the group carries `name` rather than the
+    /// action's own name, so it never occupies one of the side's `limit`
+    /// slots that players buy from. Tagged `EventSpawn`: a restart drops it
+    /// instead of respawning it with no tracker left to send it home.
+    pub fn spawn_auto_package(
+        &mut self,
+        perf: &mut PerfInner,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        side: Side,
+        name: String,
+        action: Action,
+        target: Vector2,
+    ) -> Result<GroupId> {
+        let plane = match &action.kind {
+            ActionKind::Fighters(p) | ActionKind::Attackers(p) | ActionKind::Sead(p) => p.clone(),
+            _ => bail!("{name} is not a Fighters, Attackers or SEAD action"),
+        };
+        let kind = action.kind.clone();
+        self.add_and_spawn_ai_air(
+            perf,
+            spctx,
+            idx,
+            side,
+            &None,
+            name,
+            action,
+            0.,
+            &WithPos { cfg: plane, pos: target },
+            None,
+            UnitTag::EventSpawn.into(),
+            move |db, group, pos| {
+                let args = WithPosAndGroup { cfg: (), pos: target, group };
+                match kind {
+                    ActionKind::Fighters(_) => db.ai_fighters_mission(side, None, pos, args),
+                    ActionKind::Attackers(_) => db.ai_attackers_mission(side, None, pos, args),
+                    _ => db.ai_sead_mission(side, None, pos, args),
+                }
+            },
+        )
+    }
+
     pub fn start_action(
         &mut self,
         lua: MizLua,

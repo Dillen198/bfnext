@@ -15,6 +15,7 @@ for more details.
 */
 
 mod admin;
+mod airlife;
 mod api;
 mod atis;
 mod bg;
@@ -405,6 +406,9 @@ struct Context {
     frontline: Option<frontline::FrontLine>,
     last_frontline_update: DateTime<Utc>,
     event_scheduler: EventScheduler,
+    /// On-call wingmen, autonomous AI packages and civil traffic
+    /// (`Cfg::air_life`). Session state only.
+    airlife: airlife::AirLife,
     last_junk_removal: DateTime<Utc>,
     last_weather_publish: DateTime<Utc>,
     /// When each held player last got the takeoff-hold countdown panel.
@@ -956,6 +960,12 @@ fn drain_deferred_events(lua: MizLua, ctx: &mut Context) {
 
 fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Object) -> Result<()> {
     if let Ok(unit) = initiator.as_unit() {
+        // Civil airliners never enter the campaign db. Without this, an
+        // unknown unit being born is taken for a dynamic player slot with
+        // nobody in it -- and destroyed on the spot.
+        if unit.get_name().map(|n| airlife::is_civil(n.as_str())).unwrap_or(false) {
+            return Ok(());
+        }
         ctx.recently_born.insert(unit.object_id()?, Utc::now());
         match ctx.db.unit_born(lua, &unit, &ctx.connected) {
             Ok(BirthRes::None) => (),
@@ -1020,6 +1030,24 @@ fn on_hit(
             Ok(life) => life < 1.,
             Err(_) => is_kill,
         };
+        // A civil airliner is not in the campaign db: remember which player
+        // hit it (they pay if it goes down) and keep it away from the kill
+        // bookkeeping, which only knows campaign units.
+        if let Ok(name) = target.get_name()
+            && airlife::is_civil(name.as_str())
+        {
+            let shooter = e
+                .initiator
+                .as_ref()
+                .and_then(|u| u.as_unit().ok())
+                .and_then(|u| u.object_id().ok())
+                .and_then(|oid| ctx.db.player_in_unit(false, &oid));
+            airlife::civil_hit(ctx, name.as_str(), shooter, start_ts);
+            if dead {
+                airlife::civil_down(ctx, name.as_str(), start_ts);
+            }
+            return Ok(());
+        }
         if let Some(shooter) = e.initiator.and_then(|u| u.as_unit().ok()) {
             if let Err(e) =
                 ctx.shots_out
@@ -1242,8 +1270,29 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         {
             debug!("UnitLost for a unit we no longer track (despawn), ignored")
         }
+        Event::Crash(e) => {
+            // Only civil airliners are handled here (campaign units are done
+            // on Dead/UnitLost); a crash is how a shot-up airliner usually ends.
+            if let Some(name) = e
+                .initiator
+                .as_ref()
+                .and_then(|u| u.as_unit().ok())
+                .and_then(|u| u.get_name().ok())
+                .filter(|n| airlife::is_civil(n.as_str()))
+            {
+                airlife::civil_down(ctx, name.as_str(), start_ts);
+            }
+        }
         Event::Dead(e) | Event::UnitLost(e) => {
-            if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
+            if let Some(name) = e
+                .initiator
+                .as_ref()
+                .and_then(|u| u.as_unit().ok())
+                .and_then(|u| u.get_name().ok())
+                .filter(|n| airlife::is_civil(n.as_str()))
+            {
+                airlife::civil_down(ctx, name.as_str(), start_ts);
+            } else if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
                 let dismount = try_capture_dismount_info(ctx, &unit);
                 try_gv_passenger_eject(lua, ctx, &unit);
                 let id = unit.object_id()?;
@@ -4548,6 +4597,8 @@ fn run_slow_timed_events(
             retarget_cap_groups(lua, ctx, start_ts)
         });
     }
+    // Wingmen, autonomous AI packages and civil traffic (`Cfg::air_life`).
+    step(lua, ctx, "air life", |ctx| airlife::tick(lua, ctx, perf, start_ts));
     step(lua, ctx, "junk removal", |ctx| remove_junk_periodic(lua, ctx, start_ts));
     // Publish weather to dashboard every 5 minutes
     if (start_ts - ctx.last_weather_publish).num_seconds() >= 300 {
@@ -4613,6 +4664,8 @@ fn run_timed_events(
         Some(Err(e)) => error!("error running slow timed events {:?}", e),
     }
     step(lua, ctx, "menu init", |ctx| menu::process_init_queue(ctx, lua));
+    // F10 wingman requests, answered within a second of the click.
+    step(lua, ctx, "air life requests", |ctx| airlife::process_requests(lua, ctx, perf, ts));
     step(lua, ctx, "spawn queue", |ctx| {
         let now = Utc::now();
         match SpawnCtx::new(lua) {

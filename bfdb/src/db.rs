@@ -3390,6 +3390,7 @@ impl StatsDb {
             ("advanced/recon-intel-map", "Recon Intel Map (TARPS)", "Advanced Topics", 4, include_str!("../seed_wiki/advanced/recon-intel-map.md")),
             ("advanced/helo-missions", "AI Helo Missions", "Advanced Topics", 5, include_str!("../seed_wiki/advanced/helo-missions.md")),
             ("advanced/ai-opposition", "AI Opposition (CAP & Helo Patrols)", "Advanced Topics", 6, include_str!("../seed_wiki/advanced/ai-opposition.md")),
+            ("advanced/air-life", "Wingmen, AI Packages & Civil Traffic", "Advanced Topics", 7, include_str!("../seed_wiki/advanced/air-life.md")),
         ];
         let mut refreshed = 0u32;
         for (slug, title, section, order, content) in seed {

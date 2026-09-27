@@ -1091,6 +1091,51 @@ impl Db {
         Ok(gid)
     }
 
+    /// Spawn an air group from `template` in the air at `pos` and fly
+    /// `mission` instead of the template's route, right now rather than via
+    /// the spawn queue. The group is tagged `EventSpawn`, so it is session
+    /// scoped: a restart drops it instead of respawning it with nothing left
+    /// to manage it. `origin` is only bookkeeping (the friendly objective it
+    /// is attributed to); nothing about the start resolves an airbase.
+    ///
+    /// On a failed spawn the group is removed from the db again, so the
+    /// caller never has to clean up a phantom.
+    pub fn spawn_air_flight<'lua>(
+        &mut self,
+        perf: &mut bfprotocols::perf::PerfInner,
+        spctx: &SpawnCtx<'lua>,
+        idx: &MizIndex,
+        side: Side,
+        template: &str,
+        origin: ObjectiveId,
+        pos: Vector2,
+        heading: f64,
+        altitude: f64,
+        speed: f64,
+        mission: Vec<dcso3::controller::MissionPoint<'lua>>,
+    ) -> Result<GroupId> {
+        let gid = self.add_group(
+            spctx,
+            idx,
+            side,
+            SpawnLoc::InAir { pos, heading, altitude, speed },
+            template,
+            DeployKind::Objective { origin },
+            UnitTag::EventSpawn.into(),
+        )?;
+        let spawned = group!(self, gid).and_then(|group| {
+            self.ephemeral
+                .spawn_group(perf, &self.persisted, idx, spctx, group, mission)
+        });
+        if let Err(e) = spawned {
+            if let Err(de) = self.delete_group(&gid) {
+                error!("could not remove unspawned air flight {gid:?}: {de:?}");
+            }
+            return Err(e);
+        }
+        Ok(gid)
+    }
+
     pub(crate) fn unit_born(
         &mut self,
         lua: MizLua,

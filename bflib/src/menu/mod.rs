@@ -22,6 +22,7 @@ pub mod jtac;
 pub(crate) mod objectives;
 mod recon;
 mod troop;
+mod wingman;
 
 use crate::{db::Db, Context};
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
@@ -72,8 +73,10 @@ const PAGE_ITEMS: u32 = 10;
 /// deliberately *not* paged: every top-level menu is removed and rebuilt by its
 /// own fixed path ("Cargo", "JTAC>>", "Info", ...) from several places, and a
 /// `More >>` page would move those paths out from under the rebuild. So the
-/// root gets a budget instead. Nine are in use today; adding a tenth top-level
-/// menu means restructuring, not just adding a line to `init_for_slot`.
+/// root gets a budget instead. With Wingman, ten can be in use at once (only
+/// for an airframe that is recon-capable AND carries cargo and troops, which
+/// none does today); an eleventh top-level menu means restructuring, not just
+/// adding a line to `init_for_slot`.
 const ROOT_MENU_BUDGET: u32 = PAGE_ITEMS;
 
 impl Pager {
@@ -388,7 +391,7 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             let miz_gid = si.miz_gid;
             let si_side = si.side;
             let si_typ = si.typ.clone();
-            for name in ["GCI/EWR", "Cargo", "C-130 Cargo", "CSAR", "Troops", "Actions", "Recon"] {
+            for name in ["GCI/EWR", "Cargo", "C-130 Cargo", "CSAR", "Troops", "Actions", "Recon", "Wingman"] {
                 if let Err(e) = mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec![name.into()])) {
                     warn!("slot {slot:?}: could not remove the old {name} menu: {e:?}");
                 }
@@ -414,6 +417,9 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             built("GCI/EWR", ewr::add_ewr_menu_for_group(&mc, miz_gid));
             if ctx.db.recon_capable(&si_typ) {
                 built("Recon", recon::add_recon_menu_for_group(&mc, miz_gid));
+            }
+            if crate::airlife::wingman_offered(&cfg) {
+                built("Wingman", wingman::add_wingman_menu_for_group(&mc, miz_gid));
             }
             let cap = CarryCap::from_typ(&cfg, si_typ.as_str());
 

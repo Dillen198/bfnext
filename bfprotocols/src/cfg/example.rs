@@ -2474,6 +2474,7 @@ impl Default for Cfg {
             comms_plan: None,
             logi_from_scenery: None,
             helo_insertion: None,
+            air_life: None,
             ground_vehicle_cargo: FxHashMap::default(),
             smart_commander: Some(SmartCommanderCfg {
                 tick_period_secs: 60,

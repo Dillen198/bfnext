@@ -1257,5 +1257,37 @@
     "red_flight_base_mhz": 230.0,
     "flight_step_mhz": 1.0,
     "flight_count": 8
+  },
+  "air_life": {
+    "wingman": {
+      "max_side_pilots": 4,
+      "cost": 0,
+      "lifetime_secs": 3600,
+      "cooldown_secs": 300,
+      "templates_red": [],
+      "templates_blue": [],
+      "rotary_templates_red": [],
+      "rotary_templates_blue": []
+    },
+    "packages": {
+      "max_side_pilots": 3,
+      "run_when_empty": false,
+      "launch_interval_secs": 900,
+      "max_active_per_side": 2,
+      "lifetime_secs": 1800,
+      "treasury_cost": 0
+    },
+    "civil_traffic": {
+      "min_players": 1,
+      "max_active": 4,
+      "spawn_interval_secs": 300,
+      "aircraft": [
+        { "typ": "Yak-40", "cruise_alt_min_m": 6000, "cruise_alt_max_m": 7500, "cruise_speed_ms": 150 },
+        { "typ": "An-26B", "cruise_alt_min_m": 5000, "cruise_alt_max_m": 6500, "cruise_speed_ms": 120 },
+        { "typ": "IL-76MD", "cruise_alt_min_m": 9000, "cruise_alt_max_m": 11000, "cruise_speed_ms": 215 }
+      ],
+      "shootdown_penalty_points": 500,
+      "shootdown_treasury_penalty": 1000
+    }
   }
 }

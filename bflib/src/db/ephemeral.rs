@@ -2312,6 +2312,22 @@ impl Ephemeral {
                     first.helipad = None;
                 }
             }
+            // An aircraft starting in the air (no parking start, waypoint 0 a
+            // plain turning point) flies off at its unit table's `speed`,
+            // which is whatever the template was saved with -- zero for a
+            // group parked on the ramp in the ME. Give it waypoint 0's speed
+            // instead, so it doesn't appear near the stall. (A ground start
+            // has a TakeOff* waypoint 0, so it never matches.)
+            let air_start_speed = if parking_anchor.is_none()
+                && matches!(template.category, GroupKind::Plane | GroupKind::Helicopter)
+            {
+                points
+                    .first()
+                    .filter(|p| p.typ == PointType::TurningPoint && p.speed > 0.)
+                    .map(|p| p.speed)
+            } else {
+                None
+            };
             if points.len() > 0 {
                 route.set_points(points).context("setting points")?;
             }
@@ -2374,6 +2390,13 @@ impl Ephemeral {
                                     None => {
                                         unit.set_pos(su.pos)?;
                                         unit.set_alt(su.position.p.y)?;
+                                        if let Some(speed) = air_start_speed {
+                                            // A parked template's spot
+                                            // belongs to an airfield this
+                                            // flight is nowhere near.
+                                            unit.clear_parking()?;
+                                            unit.raw_set("speed", speed)?;
+                                        }
                                     }
                                 },
                             }
