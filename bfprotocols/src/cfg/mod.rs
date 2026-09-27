@@ -4118,6 +4118,11 @@ pub struct RaidsCfg {
     pub use_missiles: bool,
     #[serde(default = "default_raid_launchers")]
     pub max_launchers: u32,
+    /// Launcher unit types that fire raid missiles -- surface-to-surface
+    /// ballistic ones. Anti-ship launchers (Silkworm `hy_launcher`) carry the
+    /// same `Launcher` tag and must not be sent at a factory.
+    #[serde(default = "default_raid_missile_types")]
+    pub missile_types: Vec<String>,
     /// Chance each missile is intercepted, per enemy missile-defence SAM site
     /// (`EngagesWeapons` tag) within 40 km of the target, capped at 85%.
     #[serde(default = "default_raid_intercept")]
@@ -4142,6 +4147,18 @@ fn default_raid_drone_alt() -> f64 { 400.0 }
 fn default_raid_drone_range() -> f64 { 400_000.0 }
 fn default_raid_warhead() -> f64 { 60.0 }
 fn default_raid_launchers() -> u32 { 2 }
+fn default_raid_missile_types() -> Vec<String> {
+    [
+        "Scud_B",
+        "CHAP_9K720_HE",
+        "CHAP_9K720_Cluster",
+        "CHAP_M142_ATACMS_M39A1",
+        "CHAP_M142_ATACMS_M48",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
 fn default_raid_intercept() -> f64 { 0.35 }
 fn default_raid_targets() -> Vec<String> {
     ["Factory", "Logistics Hub", "Airbase", "Naval Base"].into_iter().map(String::from).collect()

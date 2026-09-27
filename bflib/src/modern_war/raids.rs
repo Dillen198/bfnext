@@ -120,7 +120,12 @@ fn interval(cfg: &RaidsCfg, factor: f64) -> Duration {
 
 /// The side's deployed ballistic-missile launchers that can reach `target`,
 /// nearest first: (group, launcher units alive).
-fn launchers_in_range(ctx: &Context, side: Side, target: Vector2) -> Vec<(GroupId, u32)> {
+fn launchers_in_range(
+    ctx: &Context,
+    cfg: &RaidsCfg,
+    side: Side,
+    target: Vector2,
+) -> Vec<(GroupId, u32)> {
     let Some(arty) = ctx.db.ephemeral.cfg.artillery.as_ref() else { return vec![] };
     let Some(gids) = ctx.db.persisted.groups_by_side.get(&side) else { return vec![] };
     let mut out: Vec<(GroupId, u32, f64)> = gids
@@ -134,8 +139,7 @@ fn launchers_in_range(ctx: &Context, side: Side, target: Vector2) -> Vec<(GroupI
                 .filter(|u| {
                     !u.dead
                         && u.tags.contains(UnitTag::Launcher)
-                        && !u.tags.contains(UnitTag::SAM)
-                        && !u.tags.contains(UnitTag::Aircraft)
+                        && cfg.missile_types.iter().any(|t| t.as_str() == u.typ.0.as_str())
                 })
                 .collect();
             let first = launchers.first()?;
@@ -250,7 +254,7 @@ fn launch(
     let can_drone = !templates.is_empty();
     let target = pick_target(ctx, cfg, side, |p| {
         (can_drone && drone_launch_site(ctx, side, p, cfg.drone_range_m, &front).is_some())
-            || (cfg.use_missiles && !launchers_in_range(ctx, side, p).is_empty())
+            || (cfg.use_missiles && !launchers_in_range(ctx, cfg, side, p).is_empty())
     });
     let Some((target, target_name, target_pos)) = target else {
         return false;
@@ -345,7 +349,7 @@ fn launch(
     }
     // Missiles.
     if cfg.use_missiles {
-        let launchers = launchers_in_range(ctx, side, target_pos);
+        let launchers = launchers_in_range(ctx, cfg, side, target_pos);
         let land_alt = land
             .as_ref()
             .and_then(|l| l.get_height(LuaVec2(target_pos)).ok())

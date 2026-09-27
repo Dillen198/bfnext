@@ -15357,5 +15357,82 @@
     "CHAP_IRISTSLM_CP": 40000,
     "CHAP_TorM2": 20000,
     "Roland Radar": 15000
+  },
+  "air_life": {
+    "wingman": {
+      "max_side_pilots": 4,
+      "cost": 0,
+      "lifetime_secs": 3600,
+      "cooldown_secs": 300
+    },
+    "packages": {
+      "max_side_pilots": 3,
+      "run_when_empty": false,
+      "launch_interval_secs": 900,
+      "max_active_per_side": 2,
+      "lifetime_secs": 1800,
+      "treasury_cost": 0
+    },
+    "civil_traffic": {
+      "min_players": 1,
+      "max_active": 4,
+      "spawn_interval_secs": 300,
+      "country": "UN_PEACEKEEPERS",
+      "max_ships": 3,
+      "shootdown_penalty_points": 500,
+      "shootdown_treasury_penalty": 1000
+    }
+  },
+  "modern_war": {
+    "ew": {
+      "host_kinds": [
+        "Command Center",
+        "Logistics Hub",
+        "Naval Base"
+      ],
+      "spoof_kinds": [
+        "Naval Base"
+      ],
+      "activation_radius_m": 80000,
+      "gps": "Jam",
+      "glonass": "Jam",
+      "radio": "Adaptive",
+      "band_mhz": [
+        225,
+        400
+      ]
+    },
+    "sam_stock": {
+      "missiles_per_launcher": 4,
+      "reload_multiplier": 2,
+      "resupply_period_secs": 900,
+      "resupply_per_period": 4,
+      "min_supply": 30
+    },
+    "raids": {
+      "hours": [
+        20,
+        5
+      ],
+      "interval_secs": 2700,
+      "drone_templates_red": [
+        "RDRONE"
+      ],
+      "drone_templates_blue": [
+        "BDRONE"
+      ],
+      "drones_per_raid": 4,
+      "use_missiles": true,
+      "supply_damage_pct": 5,
+      "factory_pause_secs": 1800
+    },
+    "boat_raids": {
+      "interval_secs": 3600,
+      "boats_per_raid": 3
+    },
+    "tempo": {
+      "offensive_hours": 6,
+      "regroup_hours": 10
+    }
   }
 }
