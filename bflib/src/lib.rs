@@ -622,9 +622,25 @@ fn process_slot_rejection(ctx: &mut Context, id: PlayerId, ucid: Ucid, rej: Slot
             );
         }
         SlotAuth::NoPoints { vehicle, cost, balance } => {
+            // Point a broke pilot at what they CAN fly, not just at the wall.
+            let lifeline = ctx
+                .db
+                .ephemeral
+                .cfg
+                .points
+                .as_ref()
+                .and_then(|p| p.lifeline.as_ref())
+                .filter(|l| !l.airframes.is_empty())
+                .map(|l| {
+                    let types: Vec<&str> = l.airframes.iter().map(|v| v.as_str()).collect();
+                    format_compact!(" -- lifeline: {} fly free while you're short", types.join(", "))
+                })
+                .unwrap_or_default();
+            // An empty list covers every airframe, so a NoPoints here means
+            // the pilot is above the lifeline threshold -- no hint to give.
             ctx.db.ephemeral.msgs().send(
                 MsgTyp::Chat(Some(id)),
-                format_compact!("{vehicle} costs {cost}, you have {balance}"),
+                format_compact!("{vehicle} costs {cost}, you have {balance}{lifeline}"),
             );
         }
         SlotAuth::NoLives(typ) => {

@@ -617,6 +617,36 @@ impl Db {
         let Some((items, strict)) = self.flight_cost_items(sifo, unit)? else {
             return Ok(None);
         };
+        if let Some(points) = self.ephemeral.cfg.points.as_ref()
+            && points.lifeline_applies(balance, &sifo.typ)
+        {
+            let stores: u32 = items.iter().skip(1).map(|(_, n, each)| n * each).sum();
+            let charge = points.lifeline_store_charge(stores);
+            let mut m = format_compact!(
+                "LIFELINE FLIGHT\n\
+                 You have {balance} points, so this {} flies free",
+                sifo.typ
+            );
+            match points.lifeline.as_ref().and_then(|l| l.store_budget) {
+                None => m.push_str(", weapons included."),
+                Some(budget) => {
+                    let _ = write!(m, ", with up to {budget} points of weapons.");
+                    if charge > 0 {
+                        let available = balance.max(0) + fund.map(|(_, p)| p.max(0)).unwrap_or(0);
+                        let _ = write!(m, "\nYour loadout is {stores}: {charge} over the budget.");
+                        if strict && charge as i32 > available {
+                            m.push_str(
+                                "\n\n!! NOT ENOUGH POINTS -- DO NOT TAKE OFF !!\n\
+                                 Taking off will DESTROY your aircraft. Unload some weapons \
+                                 at the rearm menu.",
+                            );
+                        }
+                    }
+                }
+            }
+            m.push_str("\nKills, logistics and captures earn your way back.");
+            return Ok(Some(m));
+        }
         let total: u32 = items.iter().map(|(_, n, each)| n * each).sum();
         if total == 0 {
             return Ok(None);
@@ -675,13 +705,14 @@ impl Db {
         let Some(sifo) = self.ephemeral.slot_info.get(&slot) else {
             return Ok(TakeoffRes::NotPlayerSlot);
         };
-        let (cost, strict, cost_msg) = match self.compute_flight_cost(&sifo, unit) {
+        let (mut cost, strict, cost_msg) = match self.compute_flight_cost(&sifo, unit) {
             Ok(cost) => cost,
             Err(e) => {
                 error!("failed to compute flight cost {e:?}");
                 (0, false, String::from(""))
             }
         };
+        let typ = sifo.typ.clone();
         // An AI unit can occupy a slot the miz also offers to players, so this
         // is the second place a non-player takeoff can land.
         let Some((ucid, player)) = self
@@ -692,6 +723,20 @@ impl Db {
         else {
             return Ok(TakeoffRes::NotPlayerSlot);
         };
+        // Checked against the pilot's own points before anything is charged;
+        // a lifeline flight costs nothing at all, so it can't be "out of
+        // points" either.
+        let lifeline = self
+            .ephemeral
+            .cfg
+            .points
+            .as_ref()
+            .is_some_and(|p| p.lifeline_applies(player.points, &typ));
+        if lifeline && let Some(points) = self.ephemeral.cfg.points.as_ref() {
+            // The airframe is free; only weapons over the budget are charged.
+            let airframe = points.airframe_cost.get(&typ).copied().unwrap_or(0);
+            cost = points.lifeline_store_charge(cost.saturating_sub(airframe));
+        }
         // Enforce the post-slot-entry takeoff hold.
         if let Some((_, Some(inst))) = &player.current_slot {
             if let Some(ok_at) = inst.takeoff_ok_at {
@@ -763,6 +808,9 @@ impl Db {
         } else {
             Ok(TakeoffRes::NoLifeTaken)
         };
+        if lifeline {
+            info!("[POINTS] {ucid} took off on the lifeline in a {typ}");
+        }
         if cost > 0
             && let Some(oid) = owned_objective.map(|(id, _)| *id)
         {
@@ -1240,7 +1288,7 @@ impl Db {
             // a pilot's own debt) used to be netted against the other and
             // lock out players who could in fact cover the airframe.
             let balance = max(0, player.points) + max(0, objective.points);
-            if cost > 0 && balance < cost {
+            if cost > 0 && balance < cost && !points.lifeline_applies(player.points, &sifo.typ) {
                 return SlotAuth::NoPoints {
                     cost: cost as u32,
                     vehicle: sifo.typ.clone(),

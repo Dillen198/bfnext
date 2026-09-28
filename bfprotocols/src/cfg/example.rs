@@ -2294,6 +2294,7 @@ impl Default for Cfg {
                 award_kill_points: true,
                 convoy_interdiction_points: 10,
                 kill_streak_bonuses: vec![],
+                lifeline: None,
             }),
             warehouse: Some(WarehouseConfig {
                 hub_max: 25,

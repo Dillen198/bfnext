@@ -1781,6 +1781,146 @@ pub struct PointsCfg {
     /// Default: empty (no bonus).
     #[serde(default)]
     pub kill_streak_bonuses: Vec<(u8, f64)>,
+    /// Keeps a pilot who has run out of points flying. Absent = off. See
+    /// `LifelineCfg`.
+    #[serde(default)]
+    pub lifeline: Option<LifelineCfg>,
+}
+
+impl PointsCfg {
+    /// Whether a pilot with `points` of their own flies `typ` on the
+    /// lifeline: free airframe, stores free up to the budget.
+    pub fn lifeline_applies(&self, points: i32, typ: &Vehicle) -> bool {
+        let Some(l) = &self.lifeline else { return false };
+        if !l.airframes.is_empty() && !l.airframes.contains(typ) {
+            return false;
+        }
+        let cost = self.airframe_cost.get(typ).copied().unwrap_or(0);
+        if l.max_airframe_cost.is_some_and(|max| cost > max) {
+            return false;
+        }
+        let below = l
+            .below
+            .unwrap_or_else(|| self.airframe_cost.get(typ).copied().unwrap_or(0) as i32);
+        points < below
+    }
+
+    /// What a lifeline flight still charges for `stores` points of weapons:
+    /// whatever is over the free budget.
+    pub fn lifeline_store_charge(&self, stores: u32) -> u32 {
+        match self.lifeline.as_ref().and_then(|l| l.store_budget) {
+            None => 0,
+            Some(budget) => stores.saturating_sub(budget),
+        }
+    }
+}
+
+/// Keeps a pilot who has spent everything in the air. With strict points, a
+/// pilot who burned through their balance could fly nothing but the free
+/// transports -- whatever modules they own -- and a pilot who doesn't do
+/// logistics then has no way to earn anything back. On the lifeline the
+/// airframe costs nothing and a small loadout (`store_budget`) is free, so
+/// they fly the aircraft they have, just not with a full rack of the
+/// expensive stuff, until they have earned their way back above `below`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LifelineCfg {
+    /// Aircraft types it covers (DCS type names). Empty = every airframe.
+    #[serde(default)]
+    pub airframes: Vec<Vehicle>,
+    /// The lifeline applies while the pilot's OWN points are below this --
+    /// base funds don't count, it is the pilot who is broke. Unset: whenever
+    /// their own points can't cover that airframe's cost.
+    #[serde(default)]
+    pub below: Option<i32>,
+    /// Points' worth of weapons a lifeline flight carries free; anything
+    /// over it is charged as usual (so under strict points: unload it or
+    /// don't take off). Unset = all weapons free. Guns and unpriced stores
+    /// are always free.
+    #[serde(default)]
+    pub store_budget: Option<u32>,
+    /// Airframes priced above this are never covered. Campaigns price an
+    /// airframe out of the era (99999) rather than removing it, and a free
+    /// ride would walk straight past that. Unset = no cap.
+    #[serde(default)]
+    pub max_airframe_cost: Option<u32>,
+}
+
+#[cfg(test)]
+mod lifeline_tests {
+    use super::*;
+
+    fn points(below: Option<i32>) -> PointsCfg {
+        let mut airframe_cost = FxHashMap::default();
+        airframe_cost.insert(Vehicle::from("Su-25T"), 560);
+        PointsCfg {
+            new_player_join: 0,
+            air_kill: 0,
+            ground_kill: 0,
+            lr_sam_bonus: 0,
+            logistics_repair: 0,
+            logistics_transfer: 0,
+            capture: 0,
+            tk_window: 5,
+            provisional: false,
+            strict: true,
+            airframe_cost,
+            weapon_cost: FxHashMap::default(),
+            periodic_point_gain: (0, 0),
+            award_kill_points: true,
+            convoy_interdiction_points: 0,
+            kill_streak_bonuses: vec![],
+            lifeline: Some(LifelineCfg {
+                airframes: vec![Vehicle::from("Su-25T"), Vehicle::from("TF-51D")],
+                below,
+                store_budget: None,
+                max_airframe_cost: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn lifeline_defaults_to_cant_afford_the_airframe() {
+        let p = points(None);
+        let su25 = Vehicle::from("Su-25T");
+        assert!(p.lifeline_applies(559, &su25));
+        assert!(p.lifeline_applies(-40, &su25));
+        assert!(!p.lifeline_applies(560, &su25));
+        // unpriced airframe: already free, nobody is "below" 0 unless in debt
+        assert!(!p.lifeline_applies(0, &Vehicle::from("TF-51D")));
+        assert!(p.lifeline_applies(-1, &Vehicle::from("TF-51D")));
+        // not on the list
+        assert!(!p.lifeline_applies(-1000, &Vehicle::from("A-10C")));
+    }
+
+    #[test]
+    fn lifeline_explicit_threshold() {
+        let p = points(Some(1000));
+        assert!(p.lifeline_applies(999, &Vehicle::from("Su-25T")));
+        assert!(!p.lifeline_applies(1000, &Vehicle::from("Su-25T")));
+        assert!(p.lifeline_applies(999, &Vehicle::from("TF-51D")));
+        let mut off = points(None);
+        off.lifeline = None;
+        assert!(!off.lifeline_applies(-5000, &Vehicle::from("Su-25T")));
+    }
+
+    #[test]
+    fn lifeline_any_airframe_with_store_budget() {
+        let mut p = points(Some(500));
+        let l = p.lifeline.as_mut().unwrap();
+        l.airframes.clear();
+        l.store_budget = Some(300);
+        assert!(p.lifeline_applies(0, &Vehicle::from("F-16C_50")));
+        assert!(!p.lifeline_applies(500, &Vehicle::from("F-16C_50")));
+        assert_eq!(p.lifeline_store_charge(250), 0);
+        assert_eq!(p.lifeline_store_charge(420), 120);
+        p.lifeline.as_mut().unwrap().store_budget = None;
+        assert_eq!(p.lifeline_store_charge(5000), 0);
+        // priced out of the era: never a free ride
+        p.airframe_cost.insert(Vehicle::from("TF-51D"), 99999);
+        p.lifeline.as_mut().unwrap().max_airframe_cost = Some(1000);
+        assert!(!p.lifeline_applies(0, &Vehicle::from("TF-51D")));
+        assert!(p.lifeline_applies(0, &Vehicle::from("Su-25T")));
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]

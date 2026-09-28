@@ -144,15 +144,46 @@ fn jtac_nine_line(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     Ok(())
 }
 
-pub fn jtac_status(_: MizLua, arg: ArgTuple<Option<Ucid>, JtId>) -> Result<()> {
+/// The radio a JTAC group answers on in DCS's own comms menu -- where an AI
+/// drone on a FAC task reads out target coordinates -- taken from its
+/// mission template. None for groups that have none (ground JTACs).
+fn jtac_radio(lua: MizLua, ctx: &Context, gid: &DbGid) -> Option<compact_str::CompactString> {
+    let group = ctx.db.persisted.groups.get(gid)?;
+    let miz = dcso3::env::miz::Miz::singleton(lua).ok()?;
+    let t = miz
+        .get_group_by_name(
+            &ctx.idx,
+            dcso3::env::miz::GroupKind::Any,
+            group.side,
+            group.template_name.as_str(),
+        )
+        .ok()??;
+    // A group without a radio has no `frequency` key; that reads as an error.
+    let mhz = t.group.frequency().ok().filter(|f| *f > 0.)?;
+    let modulation = match t.group.modulation().unwrap_or(0) {
+        1 => "FM",
+        _ => "AM",
+    };
+    Some(format_compact!("{mhz:.3} MHz {modulation}"))
+}
+
+pub fn jtac_status(lua: MizLua, arg: ArgTuple<Option<Ucid>, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = ctx
         .jtac
         .get(&arg.snd)
         .with_context(|| format_compact!("get jtac {}", arg.snd))?;
-    let msg = jtac
+    let mut msg = jtac
         .status(&ctx.db, ctx.jtac.location_by_code())
         .context("generate jtac status")?;
+    // Discord, Sept 28: a Reaper on its own frequency reads coordinates over
+    // the DCS comms menu, but nothing told pilots which frequency to tune.
+    if let JtId::Group(gid) = &arg.snd
+        && let Some(radio) = jtac_radio(lua, ctx, gid)
+    {
+        msg.push_str(&format_compact!("
+Radio: {radio} (comms menu for coordinates)"));
+    }
     let side = jtac.side();
     // If a specific player requested status and there's a target, drop a group-visible mark
     if let Some(ucid) = &arg.fst {
