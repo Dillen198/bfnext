@@ -136,6 +136,17 @@ pub(crate) struct InstanceCfg {
     pub blue_adjective: Option<String>,
     #[serde(default)]
     pub red_adjective: Option<String>,
+    /// Where and when this campaign's war is, for the war diary's pictures
+    /// (`news_image.rs`) -- e.g. "the August 2008 Russo-Georgian war in the
+    /// Caucasus". Unset, it is worked out from the scenario name and the
+    /// theatre the objectives sit in.
+    #[serde(default)]
+    pub news_image_setting: Option<String>,
+    /// The look of this instance's diary pictures, replacing the global
+    /// `--news-image-style`. The safety rules (no text, no real people, no
+    /// flags, no gore) are appended whatever this says.
+    #[serde(default)]
+    pub news_image_style: Option<String>,
     /// Whether this instance is part of the *public* picture. Default true.
     ///
     /// A `false` instance -- a test/staging server -- is:

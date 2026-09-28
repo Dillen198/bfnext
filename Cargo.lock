@@ -250,6 +250,7 @@ dependencies = [
  "anyhow",
  "arcstr",
  "arrayvec",
+ "base64 0.22.1",
  "bfprotocols",
  "bincode",
  "bytes",
