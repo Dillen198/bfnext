@@ -1303,3 +1303,29 @@ def test_deleted_embed_is_replaced_once_and_legacy_id_rehomed():
     ids, ch = {"__legacy__": 9}, _Chan()
     asyncio.run(upsert(cog, ids, "vs2", ch, "e"))
     assert ids == {"vs2": 9} and ch.sent == [] and ch.edited == [(9, "e")]
+
+
+# ---- war diary pictures: bfdb flags from the YAML, key never on argv ---------------
+
+
+def test_news_image_flags_and_key_stay_off_argv(world):
+    pm = world.cog.procman
+    assert not any(a.startswith("--news-image") for a in pm._build_args("pw", False))
+    world.cfg["bfdb"].update({
+        "news_image_url": "https://api.openai.com/v1/images/generations",
+        "news_image_key": "sk-img",
+        "news_image_model": "gpt-image-1",
+        "news_image_quality": "medium",
+        "news_image_daily_per_instance": 2,
+        "news_image_daily_global": "5",
+    })
+    pm.reload_config(world.cfg)
+    args = pm._build_args("pw", False)
+    assert "sk-img" not in " ".join(args)
+    flag = lambda f: args[args.index(f) + 1]  # noqa: E731
+    assert flag("--news-image-url") == "https://api.openai.com/v1/images/generations"
+    assert flag("--news-image-quality") == "medium"
+    assert (flag("--news-image-daily-per-instance"), flag("--news-image-daily-global")) == ("2", "5")
+    assert "--news-image-size" not in args          # unset -> bfdb's default
+    assert pm._bfdb_env()["BFDB_NEWS_IMAGE_KEY"] == "sk-img"
+    assert oa.is_secret_key("news_image_key") and oa.is_protected_key("news_image_url")

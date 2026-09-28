@@ -69,7 +69,7 @@ __all__ = ["OpsApi", "mask_secrets", "unmask_secrets", "SECRET_MASK", "is_secret
            "tail_lines", "validate_plugin_yaml", "protected_changes", "is_protected_key"]
 
 SECRET_MASK = "__SECRET__"
-_SECRET_HINTS = ("password", "secret", "api_key", "apikey", "token", "webhook", "llm_key")
+_SECRET_HINTS = ("password", "secret", "api_key", "apikey", "token", "webhook", "llm_key", "image_key")
 CONFIG_BACKUPS_KEEP = 20
 LOG_FILES = ("bot", "service", "bfdb", "bfdb_boot", "netidx")
 

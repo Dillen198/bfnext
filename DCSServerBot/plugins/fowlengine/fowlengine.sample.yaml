@@ -187,6 +187,28 @@ DEFAULT:
     shutdown_path: "/api/admin/shutdown"
     # news_llm_key is handed to bfdb in its environment (BFDB_NEWS_LLM_KEY),
     # never on its command line.
+    #
+    # War diary PICTURES (bfdb/src/news_image.rs): one wire-photo style image
+    # per filed daily dispatch, shown on the dashboard's WAR NEWS panel / War
+    # Diary page and posted with the dispatch to news_channel. OFF unless
+    # news_image_url or news_image_key is set. Every call costs money, so:
+    # only filed days are drawn (once each, never redrawn automatically), at
+    # most news_image_daily_per_instance calls per server and
+    # news_image_daily_global in all per UTC day, and a dispatch whose calls
+    # keep failing is given up on after 3 tries. Pilot names and callsigns are
+    # stripped from the story before it is sent.
+    # Any OpenAI-compatible images endpoint:
+    #   OpenAI    https://api.openai.com/v1/images/generations    gpt-image-1 | dall-e-3
+    #   Together  https://api.together.xyz/v1/images/generations  black-forest-labs/FLUX.1-schnell
+    # news_image_url: "https://api.openai.com/v1/images/generations"
+    # news_image_key: ""                         # secret -- handed over as BFDB_NEWS_IMAGE_KEY, never argv
+    # news_image_model: "gpt-image-1"
+    # news_image_size: "1024x1024"               # the one size every model takes; gpt-image-1 also 1536x1024
+    # news_image_quality: "medium"               # gpt-image-1 only: low | medium | high (price)
+    # news_image_style: ""                       # replaces the default war-photojournalism look; the
+    #                                            # no-text / no-real-people / no-flags / no-gore rules always apply
+    # news_image_daily_per_instance: 3
+    # news_image_daily_global: 8
 
     # -------------------------------------------------------------------
     # MULTIPLE DCS SERVERS ON ONE MACHINE
@@ -228,6 +250,12 @@ DEFAULT:
     #     srs_url: "http://127.0.0.1:5002"
     #     gci:                     # merged OVER the top-level `gci:` block
     #       srs_port: 5002
+    #     # War diary pictures (only with bfdb.news_image_url/key set). Unset,
+    #     # the setting is worked out from the scenario (RGW2008 -> the 2008
+    #     # Russo-Georgian war) and the theatre; style falls back to
+    #     # bfdb.news_image_style.
+    #     # news_image_setting: "a present-day war in Syria and the Levant"
+    #     # news_image_style: ""
     #   - id: vs2
     #     label: "Vector Strike #2"
     #     dcs_server_name: "[VS] Vector Strike #2 | Training"
@@ -468,6 +496,21 @@ DEFAULT:
   red_briefing_channel: 123456789012345678
 
   # ---------------------------------------------
+  # War diary feed
+  # ---------------------------------------------
+  # (Optional) Each newly FILED daily dispatch of the war diary (bfdb's
+  # /api/news -- a day is filed a little after 00:00 UTC) is posted here once:
+  # headline, the dispatch, a "Read more" link to <dashboard_url>/news, and
+  # the day's picture attached when bfdb draws them (bfdb.news_image_*).
+  # A picture still being drawn is waited for up to 10 minutes, then the
+  # dispatch goes out without one (and is not edited later -- the dashboard
+  # still shows it). Posted ids are kept in the plugin state file, so a bot
+  # restart never reposts; switching this on posts the latest dispatch only,
+  # no backfill. Public data -- no admin login needed. Per server: put it in
+  # the per-server sections with several servers. Unset = off.
+  # news_channel: 123456789012345678
+
+  # ---------------------------------------------
   # Coalition roles, mirrored from the engine
   # ---------------------------------------------
   # Every ~5 minutes the bot reads bfdb's /api/admin/pilot-sides (the engine's
@@ -547,6 +590,7 @@ DEFAULT:
 #   # Coalition briefings -- ALWAYS per server, never in DEFAULT.
 #   blue_briefing_channel: 100000000000000008
 #   red_briefing_channel: 100000000000000009
+#   news_channel: 100000000000000012          # the war diary, one post per filed day
 #   coalition_roles:
 #     manage: true
 #     blue: 100000000000000010      # this server's OWN Blue role
