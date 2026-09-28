@@ -115,6 +115,82 @@ pub struct SyncReport {
     pub backup: Option<String>,
 }
 
+/// Which build of the plugin a folder holds, and who put it there
+/// ("manager-bundle" from scripts/stage-bot.mjs, "engine-release" from the
+/// bot's own updater, DCSServerBot/plugins/fowlengine/autoupdate.py). Both
+/// installers read the other's stamp so neither downgrades the plugin.
+pub const PLUGIN_STAMP: &str = "plugins/fowlengine/.fowl-plugin.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginStamp {
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub git: Option<String>,
+    /// when the commit was made (UTC, RFC 3339) -- what builds are ordered by
+    #[serde(default)]
+    pub commit_time: Option<String>,
+    #[serde(default)]
+    pub built: Option<String>,
+    #[serde(default)]
+    pub tag: Option<String>,
+}
+
+impl PluginStamp {
+    fn when(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        [&self.commit_time, &self.built]
+            .into_iter()
+            .flatten()
+            .find_map(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.with_timezone(&chrono::Utc))
+    }
+
+    fn commit(&self) -> &str {
+        self.git.as_deref().unwrap_or("").split('-').next().unwrap_or("")
+    }
+
+    fn describe(&self) -> String {
+        format!(
+            "{} {}, {}",
+            self.source.as_deref().unwrap_or("?"),
+            self.git.as_deref().unwrap_or("?"),
+            self.commit_time.as_deref().or(self.built.as_deref()).unwrap_or("?")
+        )
+    }
+}
+
+pub fn read_stamp(p: &Path) -> Option<PluginStamp> {
+    std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok())
+}
+
+/// Why `bundle` must not replace `installed` -- the installed plugin is from
+/// a later commit (typically an engine release newer than this app) -- or
+/// None to sync. Same rules as autoupdate.py's plugin_stamp_older: an
+/// unstamped install is older than anything, the same commit is never newer,
+/// and when either side can't be dated the sync goes ahead as it always did.
+pub fn installed_is_newer(installed: Option<&PluginStamp>, bundle: Option<&PluginStamp>) -> Option<String> {
+    let (have, ours) = (installed?, bundle?);
+    if !ours.commit().is_empty() && ours.commit() == have.commit() {
+        return None;
+    }
+    let (t_have, t_ours) = (have.when()?, ours.when()?);
+    (t_have > t_ours).then(|| {
+        format!(
+            "the installed plugin ({}) is newer than this app's bundle ({}) -- not downgrading it",
+            have.describe(),
+            ours.describe()
+        )
+    })
+}
+
+/// installed_is_newer() for a bot folder against this app's bundle.
+pub fn newer_installed_plugin(bot_dir: &Path) -> Option<String> {
+    installed_is_newer(
+        read_stamp(&bot_dir.join(PLUGIN_STAMP)).as_ref(),
+        read_stamp(&bundled_bot_dir().join(PLUGIN_STAMP)).as_ref(),
+    )
+}
+
 pub fn bundle_manifest() -> Option<BundleManifest> {
     let p = bundled_bot_dir().join("manifest.json");
     std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok())
@@ -164,6 +240,12 @@ pub fn sync_plugin(bot_dir: &Path) -> Result<SyncReport> {
         bail!("{} is not a DCSServerBot folder", bot_dir.display());
     }
     if let Some(why) = linked_plugin(bot_dir) {
+        rep.skipped_reason = Some(why);
+        return Ok(rep);
+    }
+    // An engine release may have put a later plugin in than this app carries;
+    // syncing now would quietly roll the bot back to the older one.
+    if let Some(why) = newer_installed_plugin(bot_dir) {
         rep.skipped_reason = Some(why);
         return Ok(rep);
     }
@@ -294,6 +376,53 @@ mod tests {
         let t = ops_target(&d).unwrap();
         assert_eq!(t.base, "http://127.0.0.1:9999/fowlengine/ops");
         assert_eq!(t.key, "Z");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn stamp(source: &str, git: &str, commit_time: Option<&str>, built: Option<&str>) -> PluginStamp {
+        PluginStamp {
+            source: Some(source.into()),
+            git: Some(git.into()),
+            commit_time: commit_time.map(String::from),
+            built: built.map(String::from),
+            tag: None,
+        }
+    }
+
+    #[test]
+    fn sync_never_downgrades_a_newer_plugin() {
+        let release = stamp("engine-release", "bbbb", Some("2026-09-27T10:00:00Z"), None);
+        let bundle = stamp("manager-bundle", "aaaa", Some("2026-09-20T10:00:00Z"), Some("2026-09-28T09:00:00Z"));
+        // an engine release newer than the bundle: skip, and say why
+        let why = installed_is_newer(Some(&release), Some(&bundle)).expect("must skip");
+        assert!(why.contains("engine-release bbbb") && why.contains("not downgrading"), "{why}");
+        // the bundle is the newer one: sync
+        assert!(installed_is_newer(Some(&bundle), Some(&release)).is_none());
+        // an unstamped install (anything before stamps) is older than everything
+        assert!(installed_is_newer(None, Some(&bundle)).is_none());
+        // the same commit, dirty or not, is never "newer"
+        let dirty = stamp("manager-bundle", "bbbb-dirty", Some("2026-09-20T10:00:00Z"), None);
+        assert!(installed_is_newer(Some(&release), Some(&dirty)).is_none());
+        // can't date one side: the old behaviour (sync)
+        let undated = stamp("manager-bundle", "cccc", None, None);
+        assert!(installed_is_newer(Some(&release), Some(&undated)).is_none());
+        // commit time outranks build time: an old commit built today is still older
+        let late_build = stamp("manager-bundle", "dddd", Some("2026-09-01T00:00:00Z"), Some("2026-09-28T23:00:00Z"));
+        assert!(installed_is_newer(Some(&release), Some(&late_build)).is_some());
+    }
+
+    #[test]
+    fn stamp_reads_what_autoupdate_and_stage_bot_write() {
+        let d = std::env::temp_dir().join(format!("fowl-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join(".fowl-plugin.json");
+        std::fs::write(&p, r#"{"schema": 1, "source": "engine-release", "tag": "engine-x", "git": "abc",
+            "commit": "abcdef", "commit_time": "2026-09-28T12:45:49Z", "built": "2026-09-28T14:39:21Z"}"#)
+            .unwrap();
+        let s = read_stamp(&p).unwrap();
+        assert_eq!(s.tag.as_deref(), Some("engine-x"));
+        assert_eq!(s.when().unwrap().to_rfc3339(), "2026-09-28T12:45:49+00:00");
+        assert!(read_stamp(&d.join("missing")).is_none());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

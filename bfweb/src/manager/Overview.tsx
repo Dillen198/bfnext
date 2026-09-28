@@ -79,18 +79,21 @@ export default function Overview({ state: s, onSetup }: { state?: AppState; onSe
         </Card>
 
         <Card icon={<Server size={13} style={{ color: OK }} />} title="Fowl Engine bot plugin"
-          badge={<Pill color={s.plugin_pending.length ? AMBER : OK}>{s.plugin_pending.length ? `${s.plugin_pending.length} file(s) behind` : 'in sync'}</Pill>}>
+          badge={<Pill color={s.plugin_pending.length ? AMBER : OK}>{s.plugin_newer ? 'newer than bundle' : s.plugin_pending.length ? `${s.plugin_pending.length} file(s) behind` : 'in sync'}</Pill>}>
           <Row k="Bundled">{s.bundle_version ?? '— (this build carries none)'}</Row>
           <Row k="Last sync">{s.agent?.last_sync ? `${fmtWhen(s.agent.last_sync.at)} · ${s.agent.last_sync.changed.length} file(s)${s.agent.last_sync.skipped_reason ? ` · skipped: ${s.agent.last_sync.skipped_reason}` : ''}` : '—'}</Row>
           {s.plugin_link && <Note tone="warn">{s.plugin_link}</Note>}
+          {s.plugin_newer && <Note>{s.plugin_newer}. An engine release updated it; the sync leaves it alone until this app carries something newer.</Note>}
           {s.plugin_pending.length > 0 && (
             <div style={{ fontSize: '0.64rem', color: 'var(--text-dim)', ...MONO, maxHeight: 90, overflow: 'auto', margin: '6px 0' }}>
               {s.plugin_pending.slice(0, 30).map(f => <div key={f}>{f}</div>)}
             </div>
           )}
           <div style={{ fontSize: '0.64rem', color: 'var(--text-dim)', margin: '8px 0', lineHeight: 1.5 }}>
-            The service copies the plugin shipped with this app into DCSServerBot before every bot start, backing up what it replaces.
-            Engine binaries (bflib.dll, bfdb.exe) are updated by the plugin itself -- see Server OPS.
+            The service copies the plugin shipped with this app into DCSServerBot before every bot start, backing up what it replaces
+            -- unless the bot already has a newer one (an engine release can update the plugin too).
+            Engine binaries (bflib.dll, bfdb.exe) and campaign packs (each server's cfg + mission) are updated by the plugin itself;
+            a pack held because the server's copy was edited is answered under Server OPS → Campaign packs.
           </div>
           <Btn disabled={busy || !s.bot_dir_valid || s.plugin_pending.length === 0} onClick={() => act.run('sync', mgr.syncPluginNow)}><RefreshCw size={11} />Sync now</Btn>
         </Card>

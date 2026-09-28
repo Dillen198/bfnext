@@ -451,6 +451,123 @@ function EnginesCard({ s }: { s: OpsStatus }) {
   )
 }
 
+const CAMPAIGN_COLOR: Record<string, string> = {
+  staged: AMBER, held: RED, probation: AMBER, failed: RED, cancelled: 'var(--text-dim)',
+}
+
+/** Campaign packs: each server's cfg + mission files from engine releases.
+ *  A pack that would overwrite something edited on the server is HELD until
+ *  an admin picks Apply (overwrite, backup kept) or Keep (the server's copy). */
+function CampaignsCard({ s }: { s: OpsStatus }) {
+  const act = useAction()
+  const camps = s.updates?.campaigns
+  if (!camps) return null
+  const rows = camps.servers.filter(r => r.installed || r.pack || r.probation || r.last_applied || r.last_error)
+  const held = camps.servers.filter(r => r.pack?.status === 'held').length
+  return (
+    <div className="vs-card">
+      <CardHeader icon={<Config size={13} style={{ color: OK }} />} label="Campaign packs (cfg + mission)"
+        badge={!camps.enabled ? <Pill color="var(--text-dim)">off</Pill>
+          : held ? <Pill color={RED}>{held} held</Pill> : <Pill color={OK}>on</Pill>} />
+      <div className="p-4">
+        <ResultLine result={act.result} onClose={act.clear} />
+        {!camps.enabled && (
+          <div style={{ fontSize: '0.66rem', color: 'var(--text-dim)', marginBottom: 10, lineHeight: 1.6 }}>
+            Off. Set <span style={MONO}>autoupdate.campaigns: true</span> in fowlengine.yaml on the server to have
+            releases update each server's campaign config and mission files (deploy/auto-update.md, "Campaign packs").
+          </div>
+        )}
+        {rows.length === 0 && camps.enabled && (
+          <div style={{ fontSize: '0.66rem', color: 'var(--text-dim)' }}>
+            No campaign pack has arrived yet. Packs are matched to a server by{' '}
+            {camps.servers.map((r, i) => <span key={r.server}>{i ? '; ' : ''}{r.server}: <span style={MONO}>{r.keys.join(' / ') || '—'}</span></span>)}.
+          </div>
+        )}
+        {rows.length > 0 && (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+              <thead>
+                <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
+                  {['Server', 'Installed', 'Waiting', 'Last applied', ''].map(h => (
+                    <th key={h} style={{ ...CELL, color: 'var(--text-dim)', textAlign: 'left', fontWeight: 600 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => {
+                  const p = r.pack
+                  const decidable = p && (p.status === 'held' || p.status === 'staged')
+                  return (
+                    <tr key={r.server}>
+                      <td style={{ ...CELL, color: 'var(--text)' }}>
+                        {r.server}
+                        <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', ...MONO }}>key {r.key ?? r.keys[0] ?? '—'}</div>
+                        {r.remote && <div style={{ fontSize: '0.6rem', color: AMBER }}>agent node -- packs aren't applied there</div>}
+                      </td>
+                      <td style={{ ...CELL, ...MONO }}>
+                        {r.installed ? <>{r.installed.tag}{r.installed.partial ? ' (missions only)' : ''}
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>{fmtWhen(r.installed.at)}</div></> : '—'}
+                      </td>
+                      <td style={CELL}>
+                        {r.probation ? (
+                          <span style={{ color: AMBER }}>
+                            <Clock size={10} /> {r.probation.tag} on probation ·{' '}
+                            {r.probation.loaded ? (r.probation.passes_in_secs != null ? `up, passes in ${fmtDur(r.probation.passes_in_secs)}` : 'up') : 'waiting for the mission'}
+                            {r.probation.crashes > 0 && <span style={{ color: RED }}> · {r.probation.crashes} crash(es)</span>}
+                          </span>
+                        ) : p ? (
+                          <>
+                            <span style={MONO}>{p.tag}</span> <Pill color={CAMPAIGN_COLOR[p.status] ?? 'var(--text-dim)'}>{p.status}</Pill>
+                            <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginTop: 3 }}>{p.files.join(', ')}</div>
+                            {p.reason && <div style={{ fontSize: '0.62rem', color: p.status === 'held' || p.status === 'failed' ? RED : 'var(--text-muted)', marginTop: 3 }}>{p.reason}</div>}
+                            {p.status === 'staged' && <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginTop: 3 }}>written at the server's next DCS start</div>}
+                          </>
+                        ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
+                        {r.restore_pending && <div style={{ fontSize: '0.62rem', color: RED }}>restore of the previous files pending (next start)</div>}
+                        {r.last_error && <div style={{ fontSize: '0.62rem', color: RED }}>{r.last_error}</div>}
+                      </td>
+                      <td style={CELL}>
+                        {r.last_applied ? (
+                          <>
+                            <span style={MONO}>{r.last_applied.tag}</span>{' '}
+                            <span style={{ color: r.last_applied.result === 'passed' ? OK : RED }}>{r.last_applied.result}</span>
+                            <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>{fmtWhen(r.last_applied.at)}{r.last_applied.reason ? ` -- ${r.last_applied.reason}` : ''}</div>
+                          </>
+                        ) : '—'}
+                        {r.failed.length > 0 && <div style={{ fontSize: '0.6rem', color: RED, marginTop: 3 }}>never again here: {r.failed.join(', ')}</div>}
+                      </td>
+                      <td style={{ ...CELL, textAlign: 'right' }}>
+                        {decidable && (
+                          <span className="inline-flex gap-2" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                            <ConfirmBtn label="Apply" icon={<Play size={11} />}
+                              confirm={`Overwrite ${r.server}'s ${p.held?.length ? p.held.join(', ') : 'files'} with ${p.tag} at its next start? (backup kept)`}
+                              disabled={act.busy !== null || (p.status === 'staged' && p.decision === 'overwrite')}
+                              onConfirm={() => act.run(`camp-apply-${r.server}`, () => api.ops.campaignApply(r.server))} />
+                            <ConfirmBtn label="Keep server's" danger={false}
+                              confirm={`Keep ${r.server}'s ${p.cfg_name}? Its unchanged missions from ${p.tag} still go in.`}
+                              disabled={act.busy !== null}
+                              onConfirm={() => act.run(`camp-keep-${r.server}`, () => api.ops.campaignKeep(r.server))} />
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', marginTop: 10, lineHeight: 1.6 }}>
+          A pack is written when that DCS server next starts (same timing as an engine DLL), after a backup in
+          {' '}<span style={MONO}>Saved Games\&lt;instance&gt;\_fowl_campaign_backups</span>. If the mission then crashes, never comes up or the
+          engine refuses the cfg, the backup is restored and that release is never applied to the server again.
+          A file edited on the server since the last update is never overwritten without asking.
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const POLICY_LABEL: Record<OpsApplyPolicy, string> = {
   next_restart: 'At the next scheduled restart',
   when_idle: 'As soon as the server is empty',
@@ -594,6 +711,8 @@ function AutoUpdateCard({ s }: { s: OpsStatus }) {
 const EVENT_COLOR: Record<string, string> = {
   rollback: RED, marked_bad: RED, probation_passed: 'var(--accent)', found: 'var(--text)',
   staged: 'var(--yellow)', applied: 'var(--accent)', dcs_restart: 'var(--yellow)',
+  campaign_held: RED, campaign_rollback: RED, campaign_rejected: RED, campaign_staged: 'var(--yellow)',
+  campaign_applied: 'var(--accent)', campaign_passed: 'var(--accent)',
 }
 
 function HistoryCard({ s }: { s: OpsStatus }) {
@@ -1026,6 +1145,7 @@ export default function OpsPage() {
             <HostCard s={data} />
             <ProcessesCard s={data} />
             <EnginesCard s={data} />
+            <CampaignsCard s={data} />
             <AutoUpdateCard s={data} />
             <HistoryCard s={data} />
           </>
