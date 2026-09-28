@@ -7452,8 +7452,17 @@ async fn main() -> Result<()> {
                 .unify(),
         )
         .and(extract_session_cookie())
-        .and(warp::body::content_length_limit(4 * 1024 * 1024))
-        .and(warp::body::bytes())
+        // A GET has no body to read. warp's content_length_limit also
+        // *requires* a Content-Length header, which browsers never send on a
+        // GET -- so every GET the OPS page made was rejected here and fell
+        // through to the SPA catch-all, and the page got index.html back
+        // ("Unexpected token '<'", Sept 28). Only a POST is size-checked.
+        .and(
+            warp::get()
+                .map(bytes::Bytes::new)
+                .or(warp::body::content_length_limit(4 * 1024 * 1024).and(warp::body::bytes()))
+                .unify(),
+        )
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and_then(|method: warp::http::Method, tail, query, session, body, db, bot| async move {
