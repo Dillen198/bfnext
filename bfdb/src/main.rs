@@ -292,32 +292,60 @@ struct Args {
     /// right one. Falls back to $BFDB_NEWS_LLM_MODEL.
     #[arg(long = "news-llm-model")]
     news_llm_model: Option<String>,
-    /// OpenAI-compatible `images/generations` endpoint that draws one picture
-    /// per filed war-diary dispatch (see `news_image.rs`): OpenAI
-    /// (https://api.openai.com/v1/images/generations), Together
-    /// (https://api.together.xyz/v1/images/generations), or a compatible
-    /// gateway. Defaults to OpenAI's when only a key is given. Falls back to
-    /// $BFDB_NEWS_IMAGE_URL. Unset with no key: no pictures, no calls.
+    /// Who draws one picture per filed war-diary dispatch (see
+    /// `news_image.rs`): `pollinations` (with an account key via
+    /// --news-image-key; anonymous without one, rate limited and may
+    /// watermark), `cloudflare` (Workers AI FLUX schnell, free tier) or `openai` (any
+    /// OpenAI-compatible images endpoint, paid). Unset: cloudflare when
+    /// --news-image-cf-account-id is set, openai when --news-image-url or
+    /// --news-image-key is, else no pictures. Also $BFDB_NEWS_IMAGE_PROVIDER.
+    #[arg(long = "news-image-provider")]
+    news_image_provider: Option<String>,
+    /// Endpoint override. openai: the images/generations URL (default
+    /// OpenAI's; Together is https://api.together.xyz/v1/images/generations).
+    /// cloudflare: a full run URL (e.g. through an AI Gateway). pollinations:
+    /// the prompt base. Falls back to $BFDB_NEWS_IMAGE_URL.
     #[arg(long = "news-image-url")]
     news_image_url: Option<String>,
-    /// API key for --news-image-url. Also --news-image-key-file or
-    /// $BFDB_NEWS_IMAGE_KEY. Never taken from $OPENAI_API_KEY: images cost
-    /// money per call, so they are switched on by name only.
+    /// The provider's credential: the Pollinations account key (`sk_...`),
+    /// the Cloudflare API token (Workers AI permission), or the OpenAI key.
+    /// Only ever sent as an Authorization header, and masked in logs. Also
+    /// --news-image-key-file or $BFDB_NEWS_IMAGE_KEY. Never taken from
+    /// $OPENAI_API_KEY, and never sent to the fallback.
     #[arg(long = "news-image-key")]
     news_image_key: Option<String>,
+    /// Cloudflare account id (dashboard -> Workers AI -> "Use REST API").
+    /// Also $BFDB_NEWS_IMAGE_CF_ACCOUNT_ID.
+    #[arg(long = "news-image-cf-account-id")]
+    news_image_cf_account_id: Option<String>,
+    /// Cloudflare diffusion steps, 1-8 (default 6). More is sharper and costs
+    /// more neurons.
+    #[arg(long = "news-image-steps")]
+    news_image_steps: Option<u32>,
+    /// `pollinations`: when the provider's call fails (a Cloudflare quota
+    /// included), try Pollinations once, keyless. Default off.
+    #[arg(long = "news-image-fallback")]
+    news_image_fallback: Option<String>,
+    /// Seconds between pollinations.ai calls when --news-image-key is set
+    /// (default 3). Anonymous calls stay at least 16 s apart regardless.
+    #[arg(long = "news-image-min-interval")]
+    news_image_min_interval: Option<u32>,
     /// File holding the --news-image-key (first line).
     #[arg(long = "news-image-key-file")]
     news_image_key_file: Option<PathBuf>,
-    /// Image model id (default gpt-image-1; e.g. dall-e-3, or
-    /// black-forest-labs/FLUX.1-schnell on Together). Also $BFDB_NEWS_IMAGE_MODEL.
+    /// Model id: openai default gpt-image-1 (e.g. dall-e-3, or
+    /// black-forest-labs/FLUX.1-schnell on Together); cloudflare default
+    /// @cf/black-forest-labs/flux-1-schnell; pollinations default flux. Also
+    /// $BFDB_NEWS_IMAGE_MODEL.
     #[arg(long = "news-image-model")]
     news_image_model: Option<String>,
-    /// WIDTHxHEIGHT. 1024x1024 is the one size every model accepts; wider ones
-    /// (gpt-image-1: 1536x1024, dall-e-3: 1792x1024) are per model.
+    /// WIDTHxHEIGHT. openai default 1024x1024, the one size every model
+    /// accepts (gpt-image-1 also 1536x1024, dall-e-3 1792x1024); pollinations
+    /// default 1024x576. Cloudflare's FLUX schnell is always square.
     #[arg(long = "news-image-size")]
     news_image_size: Option<String>,
-    /// Passed through as `quality` when set (gpt-image-1: low / medium / high,
-    /// its main price knob). Omit for models that do not take it.
+    /// openai only: passed through as `quality` when set (gpt-image-1: low /
+    /// medium / high, its main price knob).
     #[arg(long = "news-image-quality")]
     news_image_quality: Option<String>,
     /// The look of the pictures, replacing the default (realistic war
@@ -7283,27 +7311,39 @@ async fn main() -> Result<()> {
         ),
     }
     // Pictures for the diary. Off unless named -- see `news_image.rs`.
-    let news_images = news_image::ImageCfg::resolve(
-        args.news_image_url.clone(),
-        args.news_image_key.clone(),
-        args.news_image_model.clone(),
-        args.news_image_size.clone(),
-        args.news_image_quality.clone(),
-        args.news_image_style.clone(),
-        args.news_image_daily_per_instance,
-        args.news_image_daily_global,
-    )
-    .map(Arc::new);
+    // A misconfigured provider turns pictures off with an error rather than
+    // stopping bfdb: they are decoration, the rest of the server is not.
+    let news_images = match news_image::ImageCfg::resolve(news_image::ImageArgs {
+        provider: args.news_image_provider.clone(),
+        url: args.news_image_url.clone(),
+        key: args.news_image_key.clone(),
+        model: args.news_image_model.clone(),
+        size: args.news_image_size.clone(),
+        quality: args.news_image_quality.clone(),
+        style: args.news_image_style.clone(),
+        cf_account_id: args.news_image_cf_account_id.clone(),
+        steps: args.news_image_steps,
+        fallback: args.news_image_fallback.clone(),
+        min_interval_secs: args.news_image_min_interval,
+        per_instance_daily: args.news_image_daily_per_instance,
+        global_daily: args.news_image_daily_global,
+    }) {
+        Ok(c) => c.map(Arc::new),
+        Err(e) => {
+            log::error!("news: dispatch pictures are OFF -- {e}");
+            None
+        }
+    };
     match &news_images {
         Some(c) => log::info!(
-            "news: dispatch pictures by {} at {} ({}, at most {}/instance and {} in all per day)",
-            c.model,
-            c.url,
+            "news: dispatch pictures by {} ({}{}, at most {}/instance and {} in all per day)",
+            c.label(),
             c.size,
+            c.fallback.map(|f| format!(", falling back to {}", f.name())).unwrap_or_default(),
             c.per_instance_daily,
             c.global_daily
         ),
-        None => log::info!("news: no --news-image-url/--news-image-key -- dispatches run without pictures"),
+        None => log::info!("news: no --news-image-provider -- dispatches run without pictures"),
     }
 
     let export_listen = ExportListenCfg {

@@ -4,7 +4,7 @@
 //! asks an image model for one "wire photo" to run beside the finished
 //! dispatch. It is decoration, so everything about it is conservative:
 //!
-//!  * **Off unless configured.** No `--news-image-url` / key, no calls.
+//!  * **Off unless configured.** No provider / account id / url / key, no calls.
 //!  * **One image per dispatch, made once.** Only a *filed* day (`final_`) is
 //!    illustrated -- the running day's headline still moves. Once stored an
 //!    image is never replaced by the generator; only an admin's explicit
@@ -17,11 +17,20 @@
 //!    story before it becomes a prompt, and the prompt forbids identifiable
 //!    people, lettering, flags and gore.
 //!
-//! Any OpenAI-compatible `images/generations` endpoint works: OpenAI
-//! (`gpt-image-1`, `dall-e-3`), Together (`black-forest-labs/FLUX.1-schnell`),
-//! and most self-hosted gateways. Both reply forms are handled -- inline
-//! `b64_json`, and a `url`, which is downloaded at once because those links
-//! expire within the hour.
+//! Three providers (`--news-image-provider`):
+//!
+//!  * `cloudflare` -- Workers AI, FLUX.1 schnell. Free: 10,000 neurons a day
+//!    at ~40 an image. Needs an account id and a "Workers AI" API token.
+//!  * `pollinations` -- pollinations.ai. With an account key (`sk_...`, sent
+//!    only as a Bearer header) it uses the current API and calls are spaced
+//!    `--news-image-min-interval` apart (3 s); without one, the legacy
+//!    anonymous host at one call per 15 s (enforced here), which may
+//!    watermark and is no longer documented. Also usable as a keyless
+//!    fallback when the provider's call fails.
+//!  * `openai` -- any OpenAI-compatible `images/generations` endpoint (paid):
+//!    OpenAI (`gpt-image-1`, `dall-e-3`), Together, most gateways. Both reply
+//!    forms are handled -- inline `b64_json`, and a `url`, which is
+//!    downloaded at once because those links expire within the hour.
 
 use crate::{
     db::{RoundId, StatsDb},
@@ -32,12 +41,41 @@ use anyhow::{anyhow, bail, Result};
 use base64::Engine;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, io::Read, sync::Mutex, time::Duration};
+use std::{
+    collections::HashSet,
+    io::Read,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
-/// Default endpoint when only a key is given.
+/// OpenAI's endpoint, when the `openai` provider is given only a key.
 const DEFAULT_URL: &str = "https://api.openai.com/v1/images/generations";
 const DEFAULT_MODEL: &str = "gpt-image-1";
-/// Square is the one size every provider and model accepts (DALL-E 2/3,
+/// Cloudflare Workers AI: `{account}` is filled in. FLUX.1 schnell is ~40
+/// neurons an image against a free 10,000 a day.
+const CF_URL: &str = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}";
+const CF_MODEL: &str = "@cf/black-forest-labs/flux-1-schnell";
+/// Workers AI's FLUX schnell takes 1..=8 diffusion steps.
+const CF_DEFAULT_STEPS: u32 = 6;
+const CF_MAX_STEPS: u32 = 8;
+const CF_PROMPT_MAX: usize = 2048;
+/// Pollinations with an account key (`sk_...`): the current API, prompt in
+/// the path. The key goes in the `Authorization` header only -- the service
+/// also accepts `?key=`, which would put it in every log that records a URL.
+const POLLINATIONS_KEYED_URL: &str = "https://gen.pollinations.ai/image/";
+/// Pollinations without a key: the legacy anonymous host. No longer in
+/// their docs, so it may stop answering; the keyed API is the supported one.
+const POLLINATIONS_URL: &str = "https://image.pollinations.ai/prompt/";
+/// The anonymous host's model. With a key the model is left to the service's
+/// default unless `--news-image-model` names one.
+const POLLINATIONS_MODEL: &str = "flux";
+const POLLINATIONS_SIZE: &str = "1024x576";
+/// Anonymous Pollinations allows one request per 15 s; a second of slack.
+/// Nothing configured can make an anonymous call come sooner.
+const POLLINATIONS_ANON_SPACING: Duration = Duration::from_secs(16);
+/// Default gap between keyed Pollinations calls (`--news-image-min-interval`).
+pub const POLLINATIONS_KEYED_SPACING_SECS: u32 = 3;
+/// Square is the one size every OpenAI-style model accepts (DALL-E 2/3,
 /// gpt-image-1, FLUX via Together). Wider sizes are per-model; pass one with
 /// `--news-image-size` if the model supports it.
 pub const DEFAULT_SIZE: &str = "1024x1024";
@@ -75,63 +113,211 @@ signs or watermarks. No identifiable real people, politicians or public figures;
 soldiers are distant or seen from behind. No national flags or real military \
 insignia. No gore, blood, bodies or casualties. No brand logos.";
 
+/// Who draws the pictures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    /// Any OpenAI-compatible `images/generations` endpoint (paid).
+    OpenAi,
+    /// Cloudflare Workers AI (free tier: 10,000 neurons a day).
+    Cloudflare,
+    /// pollinations.ai (free, no key; the free tier may watermark).
+    Pollinations,
+}
+
+impl Provider {
+    fn parse(s: &str) -> Result<Option<Self>> {
+        Ok(match s.trim().to_ascii_lowercase().as_str() {
+            "" | "none" | "off" => None,
+            "openai" => Some(Self::OpenAi),
+            "cloudflare" | "cf" => Some(Self::Cloudflare),
+            "pollinations" => Some(Self::Pollinations),
+            other => bail!("unknown news image provider {other:?} (openai | cloudflare | pollinations)"),
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::OpenAi => "openai",
+            Self::Cloudflare => "cloudflare",
+            Self::Pollinations => "pollinations",
+        }
+    }
+}
+
+/// The raw flags / environment, before a provider is settled on.
+#[derive(Debug, Default)]
+pub struct ImageArgs {
+    pub provider: Option<String>,
+    pub url: Option<String>,
+    pub key: Option<String>,
+    pub model: Option<String>,
+    pub size: Option<String>,
+    pub quality: Option<String>,
+    pub style: Option<String>,
+    pub cf_account_id: Option<String>,
+    pub steps: Option<u32>,
+    pub fallback: Option<String>,
+    /// Seconds between Pollinations calls with a key (default 3).
+    pub min_interval_secs: Option<u32>,
+    pub per_instance_daily: u32,
+    pub global_daily: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct ImageCfg {
+    pub provider: Provider,
+    /// The full endpoint (OpenAI, Cloudflare) or the prompt-path base
+    /// (Pollinations).
     pub url: String,
+    /// Bearer token. For Cloudflare the Workers AI API token; for Pollinations
+    /// an optional account token (lifts the watermark and the rate limit).
     pub key: Option<String>,
     pub model: String,
     pub size: String,
     /// Passed through when set (`gpt-image-1`: low / medium / high -- the
-    /// main cost knob there). Omitted otherwise, as other models reject it.
+    /// main cost knob there). OpenAI provider only.
     pub quality: Option<String>,
     /// Replaces `DEFAULT_STYLE` for every instance without its own.
     pub style: Option<String>,
+    /// Cloudflare diffusion steps, 1..=8.
+    pub steps: u32,
+    /// Tried once, keyless, when the provider's own call fails.
+    pub fallback: Option<Provider>,
+    /// Where that fallback goes -- always Pollinations; a field so the tests
+    /// can point it at a local stub.
+    pub fallback_url: String,
+    /// Least gap between two calls to pollinations.ai, process-wide.
+    pub min_interval: Duration,
     pub per_instance_daily: u32,
     pub global_daily: u32,
 }
 
 impl ImageCfg {
-    /// Resolve from the CLI flags, falling back to the environment. `None`
-    /// (feature off) unless a URL or a key is configured. Deliberately does NOT
-    /// fall back to `$OPENAI_API_KEY` the way the writer does: images cost real
-    /// money per call, so they are turned on by name only.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve(
-        url: Option<String>,
-        key: Option<String>,
-        model: Option<String>,
-        size: Option<String>,
-        quality: Option<String>,
-        style: Option<String>,
-        per_instance_daily: u32,
-        global_daily: u32,
-    ) -> Option<Self> {
+    /// Settle the provider from the flags, falling back to the environment.
+    ///
+    /// `Ok(None)` is "off". An explicit provider wins; otherwise a Cloudflare
+    /// account id means Cloudflare, an OpenAI url or key means OpenAI, and
+    /// nothing at all means no pictures. Pollinations needs no key, so it is
+    /// only ever used when named. Deliberately never reads `$OPENAI_API_KEY`
+    /// the way the writer does: a paid provider is switched on by name only.
+    pub fn resolve(a: ImageArgs) -> Result<Option<Self>> {
         let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
         let nonempty = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-        let url = nonempty(url).or_else(|| env("BFDB_NEWS_IMAGE_URL"));
-        let key = nonempty(key).or_else(|| env("BFDB_NEWS_IMAGE_KEY"));
-        if url.is_none() && key.is_none() {
-            return None;
+        let url = nonempty(a.url).or_else(|| env("BFDB_NEWS_IMAGE_URL"));
+        let key = nonempty(a.key).or_else(|| env("BFDB_NEWS_IMAGE_KEY"));
+        let model = nonempty(a.model).or_else(|| env("BFDB_NEWS_IMAGE_MODEL"));
+        let account = nonempty(a.cf_account_id).or_else(|| env("BFDB_NEWS_IMAGE_CF_ACCOUNT_ID"));
+        let provider = match nonempty(a.provider).or_else(|| env("BFDB_NEWS_IMAGE_PROVIDER")) {
+            Some(p) => match Provider::parse(&p)? {
+                Some(p) => p,
+                None => return Ok(None),
+            },
+            None if account.is_some() => Provider::Cloudflare,
+            None if url.is_some() || key.is_some() => Provider::OpenAi,
+            None => return Ok(None),
+        };
+        let fallback = match nonempty(a.fallback) {
+            Some(f) => match Provider::parse(&f)? {
+                None => None,
+                Some(Provider::Pollinations) => Some(Provider::Pollinations),
+                Some(p) => bail!("news image fallback can only be pollinations, not {}", p.name()),
+            },
+            None => None,
         }
-        Some(Self {
-            url: url.unwrap_or_else(|| DEFAULT_URL.to_string()),
+        // Falling back to itself is just a second try.
+        .filter(|f| *f != provider);
+        let (url, model, size) = match provider {
+            Provider::OpenAi => {
+                if url.is_none() && key.is_none() {
+                    bail!("the openai news image provider needs --news-image-url or --news-image-key");
+                }
+                (
+                    url.unwrap_or_else(|| DEFAULT_URL.to_string()),
+                    model.unwrap_or_else(|| DEFAULT_MODEL.to_string()),
+                    nonempty(a.size).unwrap_or_else(|| DEFAULT_SIZE.to_string()),
+                )
+            }
+            Provider::Cloudflare => {
+                if key.is_none() {
+                    bail!("the cloudflare news image provider needs an API token (--news-image-key)");
+                }
+                let model = model.unwrap_or_else(|| CF_MODEL.to_string());
+                let url = match (url, &account) {
+                    // An explicit endpoint (e.g. through an AI Gateway) as given.
+                    (Some(u), _) => u,
+                    (None, Some(acct)) => CF_URL.replace("{account}", acct).replace("{model}", &model),
+                    (None, None) => bail!(
+                        "the cloudflare news image provider needs --news-image-cf-account-id"
+                    ),
+                };
+                // FLUX schnell on Workers AI draws squares only.
+                (url, model, "1024x1024".to_string())
+            }
+            Provider::Pollinations => {
+                let keyed = key.is_some();
+                let default_url = if keyed { POLLINATIONS_KEYED_URL } else { POLLINATIONS_URL };
+                let default_model = if keyed { "" } else { POLLINATIONS_MODEL };
+                (
+                    url.unwrap_or_else(|| default_url.to_string()),
+                    model.unwrap_or_else(|| default_model.to_string()),
+                    nonempty(a.size).unwrap_or_else(|| POLLINATIONS_SIZE.to_string()),
+                )
+            }
+        };
+        let min_interval = if provider == Provider::Pollinations && key.is_some() {
+            Duration::from_secs(a.min_interval_secs.unwrap_or(POLLINATIONS_KEYED_SPACING_SECS) as u64)
+        } else {
+            POLLINATIONS_ANON_SPACING.max(Duration::from_secs(a.min_interval_secs.unwrap_or(0) as u64))
+        };
+        Ok(Some(Self {
+            provider,
+            url,
             key,
-            model: nonempty(model)
-                .or_else(|| env("BFDB_NEWS_IMAGE_MODEL"))
-                .unwrap_or_else(|| DEFAULT_MODEL.to_string()),
-            size: nonempty(size).unwrap_or_else(|| DEFAULT_SIZE.to_string()),
-            quality: nonempty(quality),
-            style: nonempty(style),
-            per_instance_daily,
-            global_daily,
+            model,
+            size,
+            quality: nonempty(a.quality),
+            style: nonempty(a.style),
+            steps: a.steps.unwrap_or(CF_DEFAULT_STEPS).clamp(1, CF_MAX_STEPS),
+            fallback,
+            fallback_url: POLLINATIONS_URL.to_string(),
+            min_interval,
+            per_instance_daily: a.per_instance_daily,
+            global_daily: a.global_daily,
+        }))
+    }
+
+    /// The keyless Pollinations config a failed call falls back to. Never
+    /// carries this config's key: a Cloudflare token must not be sent to a
+    /// different service.
+    fn fallback_cfg(&self) -> Option<Self> {
+        (self.fallback == Some(Provider::Pollinations)).then(|| Self {
+            provider: Provider::Pollinations,
+            url: self.fallback_url.clone(),
+            key: None,
+            model: POLLINATIONS_MODEL.to_string(),
+            size: POLLINATIONS_SIZE.to_string(),
+            quality: None,
+            style: None,
+            steps: self.steps,
+            fallback: None,
+            fallback_url: self.fallback_url.clone(),
+            min_interval: POLLINATIONS_ANON_SPACING,
+            per_instance_daily: self.per_instance_daily,
+            global_daily: self.global_daily,
         })
+    }
+
+    /// `provider:model`, as stored with a picture.
+    pub fn label(&self) -> String {
+        let model = if self.model.is_empty() { "default" } else { &self.model };
+        format!("{}:{model}", self.provider.name())
     }
 
     fn is_together(&self) -> bool {
         self.url.contains("together")
     }
 
-    /// The JSON body for one image. The common subset (`model`, `prompt`,
+    /// The OpenAI-style JSON body. The common subset (`model`, `prompt`,
     /// `n`, `size`) plus the few per-provider knobs that matter.
     fn request_body(&self, prompt: &str) -> serde_json::Value {
         let mut body = serde_json::json!({
@@ -157,11 +343,40 @@ impl ImageCfg {
         }
         body
     }
+
+    /// Workers AI body: prompt (at most 2048 chars), steps and a fresh seed.
+    /// No size -- FLUX schnell there is square.
+    fn cf_body(&self, prompt: &str, seed: u32) -> serde_json::Value {
+        serde_json::json!({
+            "prompt": prompt.chars().take(CF_PROMPT_MAX).collect::<String>(),
+            "steps": self.steps,
+            "seed": seed,
+        })
+    }
+
+    /// Pollinations request URL: the prompt is the path. Never the key.
+    fn pollinations_url(&self, prompt: &str, seed: u32) -> String {
+        let (w, h) = parse_size(&self.size).unwrap_or((1024, 576));
+        let model = if self.model.is_empty() {
+            String::new()
+        } else {
+            format!("&model={}", urlencoding::encode(&self.model))
+        };
+        format!(
+            "{}/{}?width={w}&height={h}{model}&seed={seed}&nologo=true&private=true&safe=true",
+            self.url.trim_end_matches('/'),
+            urlencoding::encode(prompt),
+        )
+    }
 }
 
 fn parse_size(s: &str) -> Option<(u32, u32)> {
     let (w, h) = s.split_once(['x', 'X'])?;
     Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+}
+
+fn random_seed() -> u32 {
+    (uuid::Uuid::new_v4().as_u128() % (i32::MAX as u128)) as u32
 }
 
 // ── the prompt ───────────────────────────────────────────────────────────────
@@ -334,24 +549,21 @@ enum Returned {
     Url(String),
 }
 
-/// Read `data[0]` of an images reply: inline base64 (`b64_json`, also a
-/// `data:` URL some gateways put in `url`) or a link to download.
+/// Read `data[0]` of an OpenAI-style reply: inline base64 (`b64_json`, also
+/// a `data:` URL some gateways put in `url`) or a link to download.
 fn parse_reply(v: &serde_json::Value) -> Result<Returned> {
     let first = v
         .get("data")
         .and_then(|d| d.as_array())
         .and_then(|a| a.first())
         .ok_or_else(|| anyhow!("no data[] in reply"))?;
-    let decode = |b64: &str| -> Result<Vec<u8>> {
-        Ok(base64::engine::general_purpose::STANDARD.decode(b64.trim())?)
-    };
     if let Some(b) = first.get("b64_json").and_then(|b| b.as_str()).filter(|b| !b.is_empty()) {
-        return Ok(Returned::Bytes(decode(b)?));
+        return Ok(Returned::Bytes(decode_b64(b)?));
     }
     if let Some(u) = first.get("url").and_then(|u| u.as_str()).filter(|u| !u.is_empty()) {
         if let Some(rest) = u.strip_prefix("data:") {
             let (_, b64) = rest.split_once(',').ok_or_else(|| anyhow!("malformed data: URL"))?;
-            return Ok(Returned::Bytes(decode(b64)?));
+            return Ok(Returned::Bytes(decode_b64(b64)?));
         }
         if !(u.starts_with("https://") || u.starts_with("http://")) {
             bail!("reply url is not http(s)");
@@ -359,6 +571,58 @@ fn parse_reply(v: &serde_json::Value) -> Result<Returned> {
         return Ok(Returned::Url(u.to_string()));
     }
     bail!("reply has neither b64_json nor url")
+}
+
+fn decode_b64(b64: &str) -> Result<Vec<u8>> {
+    Ok(base64::engine::general_purpose::STANDARD.decode(b64.trim())?)
+}
+
+/// The `errors[]` of a Cloudflare API envelope as one line, if it says the
+/// call failed (`success: false` or any error listed).
+fn cf_error(v: &serde_json::Value) -> Option<String> {
+    let errors: Vec<String> = v
+        .get("errors")
+        .and_then(|e| e.as_array())
+        .map(|a| {
+            a.iter()
+                .map(|e| match (e.get("code"), e.get("message").and_then(|m| m.as_str())) {
+                    (Some(c), Some(m)) => format!("{c}: {m}"),
+                    (_, Some(m)) => m.to_string(),
+                    _ => e.to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let failed = v.get("success").and_then(|s| s.as_bool()) == Some(false);
+    if errors.is_empty() && !failed {
+        return None;
+    }
+    Some(if errors.is_empty() { "success: false".to_string() } else { errors.join("; ") })
+}
+
+/// The image in a Workers AI reply: the REST envelope's `result.image`, or a
+/// bare `image` (the model's own output shape), base64 either way.
+fn parse_cf_reply(v: &serde_json::Value) -> Result<Vec<u8>> {
+    if let Some(e) = cf_error(v) {
+        bail!("cloudflare: {e}");
+    }
+    let b64 = v
+        .pointer("/result/image")
+        .or_else(|| v.get("image"))
+        .and_then(|i| i.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("cloudflare: no result.image in reply"))?;
+    decode_b64(b64)
+}
+
+/// Out of free neurons, or throttled: the quota's fault, not the dispatch's.
+fn cf_quota(status: u16, text: &str) -> bool {
+    let t = text.to_ascii_lowercase();
+    status == 429
+        || t.contains("neuron")
+        || t.contains("daily free allocation")
+        || t.contains("rate limit")
+        || t.contains("capacity temporarily exceeded")
 }
 
 /// PNG, JPEG or WebP and not too big -- else an error naming why.
@@ -379,7 +643,7 @@ pub struct GenError {
     /// The endpoint answered 2xx, so the call was probably billed even though
     /// the image was unusable. Counts against the daily caps.
     pub billed: bool,
-    /// A 429: the quota, not this dispatch. Not counted as an attempt.
+    /// A 429 / quota refusal: not this dispatch's fault, not an attempt.
     pub rate_limited: bool,
 }
 
@@ -398,18 +662,76 @@ fn one_line(s: &str, max: usize) -> String {
     }
 }
 
-/// Make one image. Blocking: the callers are already off the async runtime.
+/// Keeps calls to one host at least `min` apart. `reserve` books the next
+/// slot and says how long to wait for it.
+#[derive(Debug, Default)]
+struct Spacing {
+    next: Option<Instant>,
+}
+
+impl Spacing {
+    fn reserve(&mut self, now: Instant, min: Duration) -> Duration {
+        let start = self.next.map(|n| n.max(now)).unwrap_or(now);
+        self.next = Some(start + min);
+        start - now
+    }
+}
+
+/// Pollinations' rate limit, process-wide.
+static POLLINATIONS_GATE: Mutex<Spacing> = Mutex::new(Spacing { next: None });
+
+fn fail(msg: String, billed: bool) -> GenError {
+    GenError { msg, billed, rate_limited: false }
+}
+
+/// A transport error without its URL: the URL carries the whole prompt
+/// (Pollinations) and adds nothing to a log line.
+fn send_failed(e: reqwest::Error) -> GenError {
+    fail(format!("request failed: {}", e.without_url()), false)
+}
+
+/// `msg` with every occurrence of the secret masked. Applied to every error
+/// a call returns, since a provider may echo the key back in its body.
+fn redact(msg: &str, key: Option<&str>) -> String {
+    match key.map(str::trim).filter(|k| k.len() >= 4) {
+        Some(k) => msg.replace(k, "***"),
+        None => msg.to_string(),
+    }
+}
+
+/// Make one image with `cfg`'s provider. Blocking: the callers are already
+/// off the async runtime.
 fn generate(cfg: &ImageCfg, prompt: &str) -> std::result::Result<Vec<u8>, GenError> {
-    let fail = |msg: String, billed: bool| GenError { msg, billed, rate_limited: false };
+    generate_raw(cfg, prompt).map_err(|mut e| {
+        e.msg = redact(&e.msg, cfg.key.as_deref());
+        e
+    })
+}
+
+fn generate_raw(cfg: &ImageCfg, prompt: &str) -> std::result::Result<Vec<u8>, GenError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(CALL_TIMEOUT)
         .build()
-        .map_err(|e| fail(e.to_string(), false))?;
+        .map_err(|e| fail(e.without_url().to_string(), false))?;
+    let bytes = match cfg.provider {
+        Provider::OpenAi => generate_openai(&client, cfg, prompt)?,
+        Provider::Cloudflare => generate_cf(&client, cfg, prompt)?,
+        Provider::Pollinations => generate_pollinations(&client, cfg, prompt)?,
+    };
+    validate(&bytes).map_err(|e| fail(e.to_string(), true))?;
+    Ok(bytes)
+}
+
+fn generate_openai(
+    client: &reqwest::blocking::Client,
+    cfg: &ImageCfg,
+    prompt: &str,
+) -> std::result::Result<Vec<u8>, GenError> {
     let mut req = client.post(&cfg.url).json(&cfg.request_body(prompt));
     if let Some(k) = &cfg.key {
         req = req.bearer_auth(k);
     }
-    let res = req.send().map_err(|e| fail(format!("request failed: {e}"), false))?;
+    let res = req.send().map_err(send_failed)?;
     let status = res.status();
     if !status.is_success() {
         let body = one_line(&res.text().unwrap_or_default(), 300);
@@ -420,27 +742,116 @@ fn generate(cfg: &ImageCfg, prompt: &str) -> std::result::Result<Vec<u8>, GenErr
         });
     }
     let v: serde_json::Value =
-        res.json().map_err(|e| fail(format!("unreadable reply: {e}"), true))?;
-    let bytes = match parse_reply(&v).map_err(|e| fail(e.to_string(), true))? {
-        Returned::Bytes(b) => b,
-        Returned::Url(u) => download(&client, &u).map_err(|e| fail(e.to_string(), true))?,
-    };
-    validate(&bytes).map_err(|e| fail(e.to_string(), true))?;
-    Ok(bytes)
+        res.json().map_err(|e| fail(format!("unreadable reply: {}", e.without_url()), true))?;
+    match parse_reply(&v).map_err(|e| fail(e.to_string(), true))? {
+        Returned::Bytes(b) => Ok(b),
+        Returned::Url(u) => download(client, &u).map_err(|e| fail(e.to_string(), true)),
+    }
+}
+
+fn generate_cf(
+    client: &reqwest::blocking::Client,
+    cfg: &ImageCfg,
+    prompt: &str,
+) -> std::result::Result<Vec<u8>, GenError> {
+    let mut req = client.post(&cfg.url).json(&cfg.cf_body(prompt, random_seed()));
+    if let Some(k) = &cfg.key {
+        req = req.bearer_auth(k);
+    }
+    let res = req.send().map_err(send_failed)?;
+    let status = res.status();
+    let text = res
+        .text()
+        .map_err(|e| fail(format!("unreadable reply: {}", e.without_url()), status.is_success()))?;
+    // Errors come back as the same JSON envelope, with the reason in errors[].
+    let v: Option<serde_json::Value> = serde_json::from_str(&text).ok();
+    if !status.is_success() {
+        let why = v.as_ref().and_then(cf_error).unwrap_or_else(|| one_line(&text, 300));
+        return Err(GenError {
+            rate_limited: cf_quota(status.as_u16(), &why),
+            msg: format!("cloudflare {status} {why}"),
+            billed: false,
+        });
+    }
+    let v = v.ok_or_else(|| fail(format!("cloudflare: not JSON: {}", one_line(&text, 160)), true))?;
+    parse_cf_reply(&v).map_err(|e| {
+        let msg = e.to_string();
+        GenError { rate_limited: cf_quota(200, &msg), msg, billed: true }
+    })
+}
+
+fn generate_pollinations(
+    client: &reqwest::blocking::Client,
+    cfg: &ImageCfg,
+    prompt: &str,
+) -> std::result::Result<Vec<u8>, GenError> {
+    // Only the real service is rate limited; a local stub / self-hosted
+    // instance is not.
+    if cfg.url.contains("pollinations.ai") {
+        let wait = POLLINATIONS_GATE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .reserve(Instant::now(), cfg.min_interval);
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+        }
+    }
+    let mut req = client.get(cfg.pollinations_url(prompt, random_seed()));
+    if let Some(k) = &cfg.key {
+        req = req.bearer_auth(k);
+    }
+    let res = req.send().map_err(send_failed)?;
+    let status = res.status();
+    if !status.is_success() {
+        let body = one_line(&res.text().unwrap_or_default(), 300);
+        return Err(GenError {
+            msg: format!("pollinations {status} {body}"),
+            billed: false,
+            // 429 throttled, 402 the account's pollen budget is spent: both
+            // the quota's fault, not the dispatch's.
+            rate_limited: matches!(status.as_u16(), 402 | 429),
+        });
+    }
+    read_capped(res).map_err(|e| fail(format!("pollinations: {e}"), true))
 }
 
 /// Fetch a returned image URL at once (they expire), never more than the cap.
 fn download(client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>> {
-    let res = client.get(url).send()?;
+    let res = client.get(url).send().map_err(|e| e.without_url())?;
     if !res.status().is_success() {
         bail!("image download: {}", res.status());
     }
+    read_capped(res)
+}
+
+fn read_capped(res: reqwest::blocking::Response) -> Result<Vec<u8>> {
     if res.content_length().map(|n| n as usize > MAX_IMAGE_BYTES).unwrap_or(false) {
-        bail!("image download is over the {MAX_IMAGE_BYTES} byte cap");
+        bail!("image is over the {MAX_IMAGE_BYTES} byte cap");
     }
     let mut buf = Vec::new();
     res.take(MAX_IMAGE_BYTES as u64 + 1).read_to_end(&mut buf)?;
     Ok(buf)
+}
+
+/// The provider's call, then -- if it failed and a fallback is configured --
+/// one keyless try at Pollinations. Returns the bytes and who drew them. A
+/// double failure reports the provider's error (and its rate-limit flag),
+/// with the fallback's appended.
+fn generate_with_fallback(
+    cfg: &ImageCfg,
+    prompt: &str,
+) -> std::result::Result<(Vec<u8>, String), GenError> {
+    match generate(cfg, prompt) {
+        Ok(b) => Ok((b, cfg.label())),
+        Err(e) => {
+            let Some(fb) = cfg.fallback_cfg() else { return Err(e) };
+            log::info!("news image: {} failed ({e}); trying {}", cfg.provider.name(), fb.label());
+            match generate(&fb, prompt) {
+                Ok(b) => Ok((b, fb.label())),
+                Err(fe) => Err(GenError { msg: format!("{}; fallback: {}", e.msg, fe.msg), ..e }),
+            }
+        }
+    }
 }
 
 // ── bookkeeping ──────────────────────────────────────────────────────────────
@@ -574,13 +985,13 @@ pub fn illustrate(
     }
     let style = inst.news_image_style.as_deref().or(cfg.style.as_deref());
     let prompt = build_prompt(d, &campaign_setting(inst, &d.facts.theatre), style);
-    match generate(cfg, &prompt) {
-        Ok(bytes) => {
+    match generate_with_fallback(cfg, &prompt) {
+        Ok((bytes, drawn_by)) => {
             count_call(db, &inst.id, &today)?;
             meta.has_image = true;
             meta.version = meta.version.saturating_add(1);
             meta.created = Some(now);
-            meta.model = cfg.model.clone();
+            meta.model = drawn_by;
             meta.headline = d.headline.clone();
             meta.prompt = prompt;
             meta.attempts = 0;
@@ -806,17 +1217,11 @@ mod tests {
 
     #[test]
     fn request_body_follows_the_provider() {
-        let mut c = ImageCfg::resolve(
-            Some("https://api.openai.com/v1/images/generations".into()),
-            Some("k".into()),
-            None,
-            None,
-            None,
-            None,
-            3,
-            8,
-        )
-        .unwrap();
+        let mut c = cfg(ImageArgs {
+            url: Some("https://api.openai.com/v1/images/generations".into()),
+            key: Some("k".into()),
+            ..Default::default()
+        });
         let b = c.request_body("p");
         assert_eq!(b["model"], "gpt-image-1");
         assert_eq!(b["size"], DEFAULT_SIZE);
@@ -836,8 +1241,300 @@ mod tests {
         std::env::remove_var("BFDB_NEWS_IMAGE_MODEL");
         // (Not setting $OPENAI_API_KEY here to prove it is ignored: tests run
         // in parallel and news_llm's asserts on that variable.)
-        assert!(ImageCfg::resolve(None, None, None, None, None, None, 3, 8).is_none());
-        assert!(ImageCfg::resolve(None, Some(" ".into()), None, None, None, None, 3, 8).is_none());
+        assert!(ImageCfg::resolve(ImageArgs::default()).unwrap().is_none());
+        let blank = ImageArgs { key: Some(" ".into()), ..Default::default() };
+        assert!(ImageCfg::resolve(blank).unwrap().is_none());
+        let off = ImageArgs { provider: Some("off".into()), key: Some("k".into()), ..Default::default() };
+        assert!(ImageCfg::resolve(off).unwrap().is_none());
+    }
+
+    fn cfg(a: ImageArgs) -> ImageCfg {
+        ImageCfg::resolve(ImageArgs { per_instance_daily: 10, global_daily: 10, ..a }).unwrap().unwrap()
+    }
+
+    #[test]
+    fn provider_is_inferred_or_named() {
+        // An account id means Cloudflare; the token rides in the key.
+        let c = cfg(ImageArgs {
+            cf_account_id: Some("acc123".into()),
+            key: Some("tok".into()),
+            ..Default::default()
+        });
+        assert_eq!(c.provider, Provider::Cloudflare);
+        assert_eq!(
+            c.url,
+            "https://api.cloudflare.com/client/v4/accounts/acc123/ai/run/@cf/black-forest-labs/flux-1-schnell"
+        );
+        assert_eq!((c.steps, c.label().as_str()), (6, "cloudflare:@cf/black-forest-labs/flux-1-schnell"));
+        // A url or key alone is OpenAI, as before.
+        assert_eq!(cfg(ImageArgs { key: Some("k".into()), ..Default::default() }).provider, Provider::OpenAi);
+        // Pollinations only when named -- it needs nothing, so it is never guessed.
+        let p = cfg(ImageArgs { provider: Some("pollinations".into()), ..Default::default() });
+        assert_eq!((p.provider, p.key.as_deref(), p.size.as_str()), (Provider::Pollinations, None, "1024x576"));
+        // Named but incomplete, or unknown: a clear error, not a silent guess.
+        for bad in [
+            ImageArgs { provider: Some("cloudflare".into()), key: Some("t".into()), ..Default::default() },
+            ImageArgs { provider: Some("cloudflare".into()), cf_account_id: Some("a".into()), ..Default::default() },
+            ImageArgs { provider: Some("openai".into()), ..Default::default() },
+            ImageArgs { provider: Some("midjourney".into()), ..Default::default() },
+            ImageArgs { key: Some("k".into()), fallback: Some("openai".into()), ..Default::default() },
+        ] {
+            assert!(ImageCfg::resolve(bad).is_err());
+        }
+        // Steps are clamped to what FLUX schnell takes; model overrides the path.
+        let c = cfg(ImageArgs {
+            cf_account_id: Some("a".into()),
+            key: Some("t".into()),
+            model: Some("@cf/other/model".into()),
+            steps: Some(40),
+            ..Default::default()
+        });
+        assert!(c.url.ends_with("/accounts/a/ai/run/@cf/other/model") && c.steps == 8);
+    }
+
+    #[test]
+    fn fallback_is_keyless_pollinations_only() {
+        let c = cfg(ImageArgs {
+            cf_account_id: Some("a".into()),
+            key: Some("cf-secret".into()),
+            fallback: Some("pollinations".into()),
+            ..Default::default()
+        });
+        let fb = c.fallback_cfg().unwrap();
+        assert_eq!(fb.provider, Provider::Pollinations);
+        assert!(fb.key.is_none(), "the Cloudflare token must never go to Pollinations");
+        assert!(fb.fallback_cfg().is_none());
+        // Default off; and a provider never falls back to itself.
+        let plain = ImageArgs { cf_account_id: Some("a".into()), key: Some("t".into()), ..Default::default() };
+        assert!(cfg(plain).fallback_cfg().is_none());
+        let p = ImageArgs {
+            provider: Some("pollinations".into()),
+            fallback: Some("pollinations".into()),
+            ..Default::default()
+        };
+        assert!(cfg(p).fallback.is_none());
+    }
+
+    #[test]
+    fn cloudflare_request_and_replies() {
+        let c = cfg(ImageArgs { cf_account_id: Some("a".into()), key: Some("t".into()), ..Default::default() });
+        let b = c.cf_body(&"x".repeat(5000), 42);
+        assert_eq!(b["prompt"].as_str().unwrap().len(), CF_PROMPT_MAX);
+        assert_eq!((b["steps"].as_u64(), b["seed"].as_u64()), (Some(6), Some(42)));
+        assert!(b.get("width").is_none() && b.get("height").is_none());
+
+        let jpg = vec![0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&jpg);
+        let env = serde_json::json!({"result": {"image": b64}, "success": true, "errors": [], "messages": []});
+        assert_eq!(parse_cf_reply(&env).unwrap(), jpg);
+        assert_eq!(parse_cf_reply(&serde_json::json!({"image": b64})).unwrap(), jpg);
+        let bad = serde_json::json!({"result": null, "success": false,
+            "errors": [{"code": 3036, "message": "Account limited: daily free allocation of 10,000 neurons used"}]});
+        let e = parse_cf_reply(&bad).unwrap_err().to_string();
+        assert!(e.contains("3036") && e.contains("neurons"), "{e}");
+        assert!(cf_quota(200, &e) && cf_quota(429, "") && !cf_quota(400, "bad prompt"));
+        assert!(parse_cf_reply(&serde_json::json!({"success": false})).is_err());
+        assert!(parse_cf_reply(&serde_json::json!({"success": true, "result": {}})).is_err());
+    }
+
+    #[test]
+    fn pollinations_url_is_built_from_the_prompt() {
+        // Anonymous: the legacy host, model flux, 16 s apart whatever is asked.
+        let c = cfg(ImageArgs {
+            provider: Some("pollinations".into()),
+            min_interval_secs: Some(1),
+            ..Default::default()
+        });
+        assert_eq!(c.min_interval, Duration::from_secs(16));
+        let u = c.pollinations_url("tanks at dawn, no text & no flags?", 7);
+        assert!(u.starts_with("https://image.pollinations.ai/prompt/tanks%20at%20dawn%2C%20no%20text%20%26%20no%20flags%3F?"), "{u}");
+        for q in ["width=1024", "height=576", "model=flux", "seed=7", "nologo=true", "private=true", "safe=true"] {
+            assert!(u.contains(q), "{u} lacks {q}");
+        }
+        // With a key: the current API, the service's own default model, 3 s
+        // apart by default -- and the key is nowhere in the URL.
+        let k = cfg(ImageArgs {
+            provider: Some("pollinations".into()),
+            key: Some("sk_test_not_real".into()),
+            ..Default::default()
+        });
+        assert_eq!((k.min_interval, k.label().as_str()), (Duration::from_secs(3), "pollinations:default"));
+        let u = k.pollinations_url("p", 1);
+        assert!(u.starts_with("https://gen.pollinations.ai/image/p?width=1024&height=576&seed=1"), "{u}");
+        assert!(!u.contains("model=") && !u.contains("sk_") && !u.contains("key="), "{u}");
+        let k = cfg(ImageArgs {
+            provider: Some("pollinations".into()),
+            key: Some("sk_test_not_real".into()),
+            model: Some("black-forest-labs/flux.1-schnell".into()),
+            min_interval_secs: Some(10),
+            ..Default::default()
+        });
+        assert_eq!(k.min_interval, Duration::from_secs(10));
+        assert!(k.pollinations_url("p", 1).contains("&model=black-forest-labs%2Fflux.1-schnell&"));
+    }
+
+    #[test]
+    fn keys_never_reach_an_error_message() {
+        assert_eq!(redact("bad key sk_abc123 given", Some("sk_abc123")), "bad key *** given");
+        assert_eq!(redact("nothing", None), "nothing");
+        // A provider that echoes the key back in its error body.
+        let (url, h) = stub(1, "401 Unauthorized", "application/json",
+            br#"{"error":"invalid key sk_test_echoed_back"}"#.to_vec());
+        let c = cfg(ImageArgs {
+            provider: Some("pollinations".into()),
+            url: Some(format!("{url}/image/")),
+            key: Some("sk_test_echoed_back".into()),
+            ..Default::default()
+        });
+        let e = generate(&c, "p").unwrap_err();
+        assert!(!e.msg.contains("sk_test_echoed_back") && e.msg.contains("401"), "{}", e.msg);
+        assert!(!e.rate_limited, "a bad key is not a quota");
+        h.join().unwrap();
+        // A spent pollen budget is.
+        let (url, h) = stub(1, "402 Payment Required", "application/json", b"{}".to_vec());
+        let c = cfg(ImageArgs {
+            provider: Some("pollinations".into()),
+            url: Some(format!("{url}/image/")),
+            key: Some("sk_x".into()),
+            ..Default::default()
+        });
+        assert!(generate(&c, "p").unwrap_err().rate_limited);
+        h.join().unwrap();
+        // Transport errors do not carry the (prompt-bearing) URL either.
+        let c = cfg(ImageArgs {
+            provider: Some("pollinations".into()),
+            url: Some("http://127.0.0.1:9/image/".into()),
+            ..Default::default()
+        });
+        let e = generate(&c, "secret-ish prompt").unwrap_err();
+        assert!(!e.msg.contains("prompt") && !e.msg.contains("127.0.0.1"), "{}", e.msg);
+    }
+
+    #[test]
+    fn pollinations_calls_are_spaced() {
+        let min = Duration::from_secs(16);
+        let t0 = Instant::now();
+        let mut g = Spacing::default();
+        assert_eq!(g.reserve(t0, min), Duration::ZERO);
+        // Five seconds later the next slot is eleven seconds away...
+        assert_eq!(g.reserve(t0 + Duration::from_secs(5), min), Duration::from_secs(11));
+        // ...and the one after queues behind it.
+        assert_eq!(g.reserve(t0 + Duration::from_secs(5), min), Duration::from_secs(27));
+        // Long after, no wait.
+        assert_eq!(g.reserve(t0 + Duration::from_secs(100), min), Duration::ZERO);
+    }
+
+    /// A one-shot local HTTP server answering `n` requests with a fixed reply,
+    /// and handing back each request's head+body -- the providers' stand-in.
+    /// Nothing leaves the machine.
+    fn stub(n: usize, status: &'static str, ctype: &'static str, body: Vec<u8>)
+        -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::Write;
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        let h = std::thread::spawn(move || {
+            let mut seen = vec![];
+            for _ in 0..n {
+                let (mut s, _) = l.accept().unwrap();
+                s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut buf = vec![0u8; 64 * 1024];
+                let mut got = Vec::new();
+                // Head, then as much body as Content-Length says.
+                loop {
+                    let k = s.read(&mut buf).unwrap_or(0);
+                    got.extend_from_slice(&buf[..k]);
+                    let text = String::from_utf8_lossy(&got).to_string();
+                    if let Some(i) = text.find("
+
+") {
+                        let len = text[..i]
+                            .lines()
+                            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                            .unwrap_or(0);
+                        if got.len() >= i + 4 + len || k == 0 {
+                            break;
+                        }
+                    } else if k == 0 {
+                        break;
+                    }
+                }
+                seen.push(String::from_utf8_lossy(&got).to_string());
+                let head = format!(
+                    "HTTP/1.1 {status}
+Content-Type: {ctype}
+Content-Length: {}
+Connection: close
+
+",
+                    body.len()
+                );
+                let _ = s.write_all(head.as_bytes());
+                let _ = s.write_all(&body);
+            }
+            seen
+        });
+        (url, h)
+    }
+
+    #[test]
+    fn cloudflare_end_to_end_against_a_stub() {
+        let jpg = vec![0xFF, 0xD8, 0xFF, 0xE0, 9, 9];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&jpg);
+        let reply = serde_json::json!({"result": {"image": b64}, "success": true, "errors": []});
+        let (url, h) = stub(1, "200 OK", "application/json", reply.to_string().into_bytes());
+        let c = cfg(ImageArgs {
+            provider: Some("cloudflare".into()),
+            url: Some(format!("{url}/client/v4/accounts/a/ai/run/@cf/black-forest-labs/flux-1-schnell")),
+            key: Some("cf-token".into()),
+            ..Default::default()
+        });
+        assert_eq!(generate(&c, "a prompt").unwrap(), jpg);
+        let req = h.join().unwrap().remove(0);
+        assert!(req.starts_with("POST /client/v4/accounts/a/ai/run/@cf/black-forest-labs/flux-1-schnell"));
+        assert!(req.to_ascii_lowercase().contains("authorization: bearer cf-token"));
+        assert!(req.contains("\"prompt\":\"a prompt\"") && req.contains("\"steps\":6"));
+    }
+
+    #[test]
+    fn cloudflare_quota_is_not_an_attempt_and_pollinations_takes_over() {
+        let quota = serde_json::json!({"success": false, "result": null,
+            "errors": [{"code": 3036, "message": "you have used up your daily free allocation of 10,000 neurons"}]});
+        let (cf_url, cf_h) = stub(2, "429 Too Many Requests", "application/json", quota.to_string().into_bytes());
+        let png = b"\x89PNG\r\n\x1a\nfake-png-body".to_vec();
+        let (pl_url, pl_h) = stub(1, "200 OK", "image/png", png.clone());
+        let mut c = cfg(ImageArgs {
+            provider: Some("cloudflare".into()),
+            url: Some(format!("{cf_url}/run")),
+            key: Some("cf-token".into()),
+            ..Default::default()
+        });
+        // No fallback: a quota error, flagged as such.
+        let e = generate_with_fallback(&c, "p").unwrap_err();
+        assert!(e.rate_limited && e.msg.contains("neurons"), "{}", e.msg);
+        // With the fallback: Pollinations draws it, keyless.
+        c.fallback = Some(Provider::Pollinations);
+        c.fallback_url = format!("{pl_url}/prompt/");
+        let (bytes, by) = generate_with_fallback(&c, "tanks at dawn").unwrap();
+        assert_eq!((bytes, by.as_str()), (png, "pollinations:flux"));
+        cf_h.join().unwrap();
+        let req = pl_h.join().unwrap().remove(0);
+        assert!(req.starts_with("GET /prompt/tanks%20at%20dawn?width=1024&height=576&model=flux"), "{req}");
+        assert!(!req.to_ascii_lowercase().contains("authorization"), "{req}");
+    }
+
+    #[test]
+    fn pollinations_raw_bytes_are_validated() {
+        let (url, h) = stub(1, "200 OK", "text/html", b"<html>busy</html>".to_vec());
+        let c = cfg(ImageArgs {
+            provider: Some("pollinations".into()),
+            url: Some(format!("{url}/prompt/")),
+            key: Some("pl-token".into()),
+            ..Default::default()
+        });
+        let e = generate(&c, "p").unwrap_err();
+        assert!(e.billed && !e.rate_limited && e.msg.contains("not a PNG"), "{}", e.msg);
+        // Its own account token, when it is the provider, is sent.
+        assert!(h.join().unwrap()[0].to_ascii_lowercase().contains("authorization: bearer pl-token"));
     }
 
     #[test]
@@ -875,8 +1572,14 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn caps_are_per_instance_and_global() {
         let db = temp_db();
-        let cfg = ImageCfg::resolve(Some("http://127.0.0.1:9/x".into()), None, None, None, None, None, 2, 3)
-            .unwrap();
+        let cfg = ImageCfg::resolve(ImageArgs {
+            url: Some("http://127.0.0.1:9/x".into()),
+            per_instance_daily: 2,
+            global_daily: 3,
+            ..Default::default()
+        })
+        .unwrap()
+        .unwrap();
         let day = "2026-09-28";
         assert!(under_caps(&db, &cfg, "vs1", day).unwrap().is_none());
         count_call(&db, "vs1", day).unwrap();
@@ -915,8 +1618,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn failures_back_off_then_give_up() {
         let db = temp_db();
-        let cfg = ImageCfg::resolve(Some("http://127.0.0.1:9/v1/images".into()), None, None, None, None, None, 10, 10)
-            .unwrap();
+        let cfg = cfg(ImageArgs { url: Some("http://127.0.0.1:9/v1/images".into()), ..Default::default() });
         let ic = inst(serde_json::json!({"id": "vs1"}));
         let rid = RoundId(3);
         let d = digest("X", &["y"], None);

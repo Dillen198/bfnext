@@ -190,21 +190,55 @@ DEFAULT:
     #
     # War diary PICTURES (bfdb/src/news_image.rs): one wire-photo style image
     # per filed daily dispatch, shown on the dashboard's WAR NEWS panel / War
-    # Diary page and posted with the dispatch to news_channel. OFF unless
-    # news_image_url or news_image_key is set. Every call costs money, so:
-    # only filed days are drawn (once each, never redrawn automatically), at
-    # most news_image_daily_per_instance calls per server and
-    # news_image_daily_global in all per UTC day, and a dispatch whose calls
-    # keep failing is given up on after 3 tries. Pilot names and callsigns are
-    # stripped from the story before it is sent.
-    # Any OpenAI-compatible images endpoint:
+    # Diary page and posted with the dispatch to news_channel. OFF until a
+    # provider is set. Only filed days are drawn (once each, never redrawn
+    # automatically), at most news_image_daily_per_instance calls per server
+    # and news_image_daily_global in all per UTC day, and a dispatch whose
+    # calls keep failing is given up on after 3 tries. Pilot names and
+    # callsigns are stripped from the story before it is sent. The key /
+    # token is handed to bfdb as BFDB_NEWS_IMAGE_KEY (never on argv), only
+    # ever sent as an Authorization header, and masked in every log line.
+    #
+    # FREE SETUP 1 -- Pollinations with your account key (simplest):
+    #   news_image_provider: pollinations
+    #   news_image_key: "sk_..."                 # secret -- your pollinations.ai secret key
+    #   Calls go to gen.pollinations.ai, spaced news_image_min_interval
+    #   seconds apart (default 3). news_image_model picks a model (default:
+    #   the service's own); a spent pollen budget is retried an hour later.
+    #
+    # FREE SETUP 2 -- Cloudflare Workers AI (10,000 neurons/day free; FLUX
+    # schnell is ~40 an image):
+    #   1. dash.cloudflare.com -> My Profile -> API Tokens -> Create Token ->
+    #      "Workers AI" template (or a custom token with Account > Workers AI
+    #      > Read + Edit).
+    #   2. Copy the Account ID (Workers AI -> "Use REST API", or the right-hand
+    #      column of the account overview).
+    #   3. Set:
+    #   news_image_provider: cloudflare
+    #   news_image_cf_account_id: "0123456789abcdef0123456789abcdef"
+    #   news_image_key: "..."                    # secret -- the API token
+    #   news_image_steps: 6                      # 1-8; more = sharper, more neurons
+    #   news_image_fallback: pollinations        # optional: if Cloudflare fails (quota
+    #                                            # spent included), try anonymous Pollinations
+    #                                            # once -- the token is never sent there
+    #
+    # FREE SETUP 3 -- Pollinations anonymous (no key at all, last resort):
+    #   news_image_provider: pollinations
+    #   The legacy anonymous host: one call per 15 s (enforced), pictures may
+    #   carry a Pollinations watermark, and it is no longer in their docs, so
+    #   it may stop answering.
+    #
+    # PAID -- any OpenAI-compatible images endpoint:
     #   OpenAI    https://api.openai.com/v1/images/generations    gpt-image-1 | dall-e-3
     #   Together  https://api.together.xyz/v1/images/generations  black-forest-labs/FLUX.1-schnell
+    # news_image_provider: openai
     # news_image_url: "https://api.openai.com/v1/images/generations"
-    # news_image_key: ""                         # secret -- handed over as BFDB_NEWS_IMAGE_KEY, never argv
+    # news_image_key: ""                         # secret
     # news_image_model: "gpt-image-1"
-    # news_image_size: "1024x1024"               # the one size every model takes; gpt-image-1 also 1536x1024
+    # news_image_size: "1024x1024"               # openai: the one size every model takes
     # news_image_quality: "medium"               # gpt-image-1 only: low | medium | high (price)
+    #
+    # Any provider:
     # news_image_style: ""                       # replaces the default war-photojournalism look; the
     #                                            # no-text / no-real-people / no-flags / no-gore rules always apply
     # news_image_daily_per_instance: 3

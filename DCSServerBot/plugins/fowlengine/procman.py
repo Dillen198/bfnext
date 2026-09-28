@@ -1005,9 +1005,16 @@ class Procman:
             # any local process could read it.
             "--news-llm-url": (c.get("news_llm_url") or None),
             "--news-llm-model": (c.get("news_llm_model") or None),
-            # One picture per filed dispatch (bfdb/src/news_image.rs). Off
-            # unless news_image_url or news_image_key is set; the key goes in
-            # through the environment like the writer's.
+            # One picture per filed dispatch (bfdb/src/news_image.rs):
+            # provider pollinations | cloudflare | openai. Off unless a
+            # provider (or a cloudflare account id / openai url or key) is set.
+            # The key / token goes in through the environment like the
+            # writer's, never on the command line.
+            "--news-image-provider": (c.get("news_image_provider") or None),
+            "--news-image-cf-account-id": (c.get("news_image_cf_account_id") or None),
+            "--news-image-steps": _opt_int(c.get("news_image_steps")),
+            "--news-image-fallback": (c.get("news_image_fallback") or None),
+            "--news-image-min-interval": _opt_int(c.get("news_image_min_interval")),
             "--news-image-url": (c.get("news_image_url") or None),
             "--news-image-model": (c.get("news_image_model") or None),
             "--news-image-size": (c.get("news_image_size") or None),
