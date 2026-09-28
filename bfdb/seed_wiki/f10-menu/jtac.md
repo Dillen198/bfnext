@@ -84,6 +84,8 @@ F10 → JTAC → [JTAC ID] → Status
 - Autoshift setting
 - IR pointer setting
 - Filter settings
+- **Radio** — for a JTAC drone, the frequency it answers on in DCS's own
+  comms menu (tune it to get target coordinates / a 9-line read out)
 
 ### Reading Status
 
@@ -256,7 +258,11 @@ is automatically fed into the coalition's intel picture and marked on the F10
 map, the same way a [Recon Pass](./recon.md) is. While the JTAC keeps watching it
 the mark stays fresh; once the JTAC loses it (killed, out of range, LOS blocked),
 the mark lingers for a long time (about an hour by default) before fading, so a
-target a JTAC spotted stays visible well after you've moved on. This works for
+target a JTAC spotted stays visible well after you've moved on.
+**Marks clean up after themselves.** A mark whose unit is destroyed is removed
+right away, and a target that drives off doesn't leave its old mark behind —
+the mark follows it. Only a target the JTAC simply loses sight of lingers and
+fades as described above. This works for
 every JTAC type -- ground, drone, and player -- and needs no extra setup.
 
 ## Common Issues

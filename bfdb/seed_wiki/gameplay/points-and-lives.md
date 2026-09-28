@@ -76,6 +76,14 @@ after launch costs you twice.
 delivers — shot down, or lost to the terrain — hands its points back, the
 troop cost included. Nothing arrives, but you are not charged for nothing.
 
+**Lifeline.** Where the server has it switched on, running out of points does
+not ground you. While your own balance is below the server's lifeline
+threshold, the aircraft you slot is **free**, with a small **free weapons
+budget** — load past it and the extra is charged as usual (under strict points:
+unload it at the rearm menu or you can't take off). Airframes priced out of the
+campaign's era stay locked. The taxi panel says `LIFELINE FLIGHT` when it
+applies; kills, logistics and captures earn your way back above the line.
+
 Deployables are paid for in **crates and materiel**, not points. See
 [Deployable Units](../reference/deployables.md) and
 [Materiel & the War Economy](./war-economy.md).

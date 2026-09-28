@@ -299,6 +299,34 @@ their troop type**. See [Objectives Menu](../f10-menu/objectives.md).
 - [AI Helo Missions](../advanced/helo-missions.md) — getting capture troops into a zone without flying them yourself
 - [The Tasking Board](./tasking-board.md) — posting a CAPTURE task that closes itself out
 - [Logistics & Supply](./logistics.md) — holding what you took
+## How Bases Repair (and How to Stop Them)
+
+A damaged base you own rebuilds itself **one destroyed group at a time**. Each
+group takes **{{cfg:repair_time|1800}} seconds** at full logistics — longer when
+its logistics are damaged — and costs the base materiel or supply.
+
+- **Repairs freeze while the enemy is at the base.** Any enemy unit or pilot in
+  sight of it stops repairs, and the base only counts as clear again
+  **{{cfg:threatened_cooldown|300}} seconds** after the last one leaves.
+- **The countdown starts over after every attack.** It runs from the last moment
+  an enemy was seen, not from when the base was damaged — so a base you hit,
+  left, and came back to has not quietly finished its repair while you were
+  away. After an attack the defender waits the all-clear *plus* a full repair
+  interval before the first group comes back.
+- **A wiped garrison does not heal at all.** When a base's garrison reaches 0%
+  it drops to **Neutral**: its slots lock and it stays Neutral until someone
+  captures it with troops. Waiting does nothing.
+- **Emergency repair crate.** Where the server has it, logistics pilots can fly
+  an *Emergency Repair* crate (cargo menu → Base Supply) into a damaged
+  friendly base that is not under attack; it rebuilds one group on the spot.
+  See [Logistics](./logistics.md).
+- **Starve it.** Every repair spends the base's materiel or supply, which
+  arrives by convoy and air. Cut the supply line and the repairs stop on their
+  own.
+
+The Capture Advisor (F10 → Objectives) tells you, for any base, whether it is
+repairing, frozen, or starved, and roughly when the next group comes back.
+
 - [Materiel & the War Economy](./war-economy.md) — captured airframes, and why a fresh base can't repair
 - [Deployable Units](../reference/deployables.md) — which troop types can actually capture
 - [Carrier Operations](./carrier-ops.md)

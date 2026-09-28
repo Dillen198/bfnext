@@ -1,5 +1,38 @@
 # Changelog — v2.0
 
+## September 28, 2026
+
+**Bases and captures**
+- Repairs now wait out an attack: the repair countdown restarts from the last
+  moment an enemy was near the base (see
+  [Capturing Objectives](../gameplay/capturing-objectives.md)).
+- New **Emergency Repair crate** for logistics pilots (where configured).
+- **Empty-server protection**: captures against a side with nobody flying take
+  longer (where configured).
+- The capture reward is no longer skipped when something fails mid-capture.
+
+**Pilots**
+- **Lifeline**: pilots who run out of points can keep flying their own aircraft
+  with a small free loadout (where configured). See
+  [Points and Lives](../gameplay/points-and-lives.md).
+- `/fe_side_switch` lets admins move a pilot to the other side from Discord.
+
+**JTAC**
+- JTAC marks disappear with their target; drone JTACs report their radio
+  frequency in Status.
+
+**AI helo missions**
+- Helos plan around known SAM sites, fly low near them, defend themselves and
+  re-route under fire; they land at the safest spot in the zone.
+- If the helo can't deliver, the squad goes **by road** from the nearest
+  friendly base instead of the mission being refunded. See
+  [AI Helo Missions](../advanced/helo-missions.md).
+- Fixed AI helos sitting cold on the runway (empty fuel templates, parking).
+
+**War news**
+- Daily dispatches get an illustration and are posted to Discord (where
+  configured).
+
 What's changed since the original open-source Fowl Engine. This page only lists what's **different from stock Fowl Engine** — not a full commit history, and not core mechanics (F10 menus, JTAC, cargo, points/lives, capturing objectives) that were already part of the base engine and are simply documented elsewhere in this wiki.
 
 ## Campaign Balance Pass
