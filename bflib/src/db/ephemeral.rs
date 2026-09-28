@@ -551,6 +551,12 @@ impl Ephemeral {
         v
     }
 
+    /// Is this tracked logistics building still standing? Destroyed ones are
+    /// dropped by `Db::check_scenery_buildings`.
+    pub fn scenery_standing(&self, id: &DcsOid<ClassObject>) -> bool {
+        self.tracked_scenery.contains_key(id)
+    }
+
     pub fn get_slot_info_by_miz_gid(&self, gid: &miz::GroupId) -> Option<(SlotId, &SlotInfo)> {
         self.slot_by_miz_gid
             .get(gid)

@@ -4426,7 +4426,12 @@ fn run_slow_timed_events(
     });
 
     // ELINT/SIGINT: decay intel contacts and refresh/remove their F10 marks.
-    step(lua, ctx, "intel decay", |ctx| ctx.db.ephemeral.tick_intel_decay(Utc::now()));
+    // JTAC eyes-on contacts whose units died go first, so their pins come off
+    // in the same pass instead of fading out over the JTAC half-life.
+    step(lua, ctx, "intel decay", |ctx| {
+        ctx.db.retire_dead_jtac_intel();
+        ctx.db.ephemeral.tick_intel_decay(Utc::now())
+    });
 
     // Player recon passes: advance timers, run scans, reveal contacts.
     step(lua, ctx, "recon sessions", |ctx| {
@@ -4587,6 +4592,7 @@ fn run_slow_timed_events(
         ctx.db.ephemeral.update_map_layer(&ctx.db.persisted, ts)
     });
     step(lua, ctx, "jtac contacts", |ctx| update_jtac_contacts(ctx, lua));
+    step(lua, ctx, "jtac marks", |ctx| ctx.jtac.reconcile_marks(lua, &mut ctx.db));
     record_perf(&mut perf.update_jtac_contacts, ts);
     step(lua, ctx, "periodic points", |ctx| award_periodic_points(ctx, start_ts));
     step(lua, ctx, "commander", |ctx| tick_smart_commander(lua, ctx, start_ts));

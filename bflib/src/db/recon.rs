@@ -33,6 +33,7 @@ use bfprotocols::{
 use chrono::prelude::*;
 use compact_str::{format_compact, CompactString};
 use dcso3::{coalition::Side, land::Land, net::Ucid, MizLua, Vector2, Vector3};
+use log::debug;
 
 /// An in-progress player recon pass.
 #[derive(Debug, Clone)]
@@ -111,16 +112,31 @@ impl Db {
             .map(|tags| IntelUnitClass::from_tags(*tags))
             .unwrap_or(IntelUnitClass::Unknown);
         let elint_cfg = self.elint_cfg();
-        self.ephemeral.intel_db.upsert(
+        self.ephemeral.intel_db.note_jtac_unit(
             friendly_side,
             unit.side,
+            unit.id,
             unit.pos,
             class,
-            1,
-            IntelSource::Jtac,
             &elint_cfg,
             now,
         );
+    }
+
+    /// Remove JTAC eyes-on intel whose units no longer exist, so a pin goes
+    /// when the tank under it is destroyed instead of sitting at full
+    /// confidence for the whole JTAC half-life. Covers every way a unit
+    /// dies, including the ones with no DCS event (ghost retirement, the
+    /// capture sweep). See `IntelDatabase::note_jtac_unit`.
+    pub fn retire_dead_jtac_intel(&mut self) {
+        let units = &self.persisted.units;
+        let n = self
+            .ephemeral
+            .intel_db
+            .retire_jtac_units(|uid| units.get(&uid).map_or(true, |u| u.dead));
+        if n > 0 {
+            debug!("removed {n} JTAC intel contacts whose units are gone");
+        }
     }
 
     /// Scan enemy units within `scan_radius_m` of `target_pos` and insert
