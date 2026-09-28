@@ -35,7 +35,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod balance;
 mod example;
+
+pub use balance::{fmt_mult, EmergencyRepairCfg, PopulationScalingCfg};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default, schemars::JsonSchema)]
 pub struct Vehicle(pub String);
@@ -3837,6 +3840,15 @@ pub struct Cfg {
     /// logistics sortie. 0 disables it. Default 120.
     #[serde(default = "default_consolidation_crate_progress_secs")]
     pub consolidation_crate_progress_secs: u32,
+    /// Emergency repair crate: logistics players deliver it to a damaged,
+    /// quiet friendly base for one immediate repair step. Absent = off.
+    #[serde(default)]
+    pub emergency_repair: Option<EmergencyRepairCfg>,
+    /// Empty-server protection: captures against a side with (almost) nobody
+    /// online take longer, and optionally its bases repair faster. Absent =
+    /// off.
+    #[serde(default)]
+    pub population_scaling: Option<PopulationScalingCfg>,
     /// Seconds a player must sit in a freshly-taken slot before they're allowed
     /// to get airborne. They get a once-a-second "time remaining" message; take
     /// off early and they're sent straight back to spectators. 0 disables it.
@@ -5441,6 +5453,47 @@ impl Cfg {
         }
         if cfg.slow_timed_events_freq == 0 {
             warn!("slow_timed_events_freq is 0: slow timed events run every frame")
+        }
+        if let Some(ps) = cfg.population_scaling.as_ref().filter(|p| p.enabled) {
+            for (name, m) in [
+                ("capture_time_mult_when_undefended", ps.capture_time_mult_when_undefended),
+                ("max_capture_time_mult", ps.max_capture_time_mult),
+                ("repair_speed_mult_when_undefended", ps.repair_speed_mult_when_undefended),
+            ] {
+                if !(m >= 1.) {
+                    warn!("population_scaling.{name} is {m}: anything under 1 is treated as 1 (no effect)")
+                }
+            }
+            if ps.min_defenders == 0 {
+                warn!("population_scaling.min_defenders is 0: no side ever counts as undefended")
+            }
+        }
+        if let Some(er) = cfg.emergency_repair.as_ref().filter(|e| e.enabled) {
+            if er.crate_def.required != 1 {
+                warn!(
+                    "emergency_repair.crate.required is {}: an emergency repair always takes one crate",
+                    er.crate_def.required
+                )
+            }
+            // Crates are matched by name everywhere (spawn menus, unpack,
+            // C-130 tracking), so a shared name would make the emergency
+            // crate unpack as something else, or vice versa.
+            let name = &er.crate_def.name;
+            let wh = cfg.warehouse.as_ref();
+            let clash = cfg.repair_crate.values().any(|c| &c.name == name)
+                || wh.map_or(false, |w| {
+                    w.supply_transfer_fuel_crate
+                        .values()
+                        .chain(w.supply_transfer_weapons_crate.values())
+                        .chain(w.carrier_repair_crate.values())
+                        .any(|c| &c.name == name)
+                })
+                || cfg.deployables.values().flatten().any(|d| {
+                    d.crates.iter().chain(d.repair_crate.iter()).any(|c| &c.name == name)
+                });
+            if clash {
+                bail!("emergency_repair.crate.name '{name}' is already used by another crate")
+            }
         }
         if let Some(sc) = &cfg.smart_commander {
             for (name, cost) in [

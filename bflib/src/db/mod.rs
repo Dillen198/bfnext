@@ -42,7 +42,9 @@ use std::{
 use tokio::sync::mpsc::UnboundedSender;
 
 pub mod actions;
+pub mod balance;
 pub mod cargo;
+pub mod emergency_repair;
 pub mod ephemeral;
 pub mod events;
 pub mod ghosts;

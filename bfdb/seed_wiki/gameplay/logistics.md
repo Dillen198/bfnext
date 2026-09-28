@@ -233,9 +233,12 @@ Logi represents the physical infrastructure:
 
 ### Automatic repair
 
-An objective with working logistics repairs itself on a pulse, every
-**{{cfg:repair_time|1800}} seconds**, and each repair **costs the base
-supplies** — {{cfg:repair_supply_cost|5}}% of stock per group repaired, plus
+An objective with working logistics repairs itself one group at a time, on a
+pulse of **{{cfg:repair_time|1800}} seconds** at full logistics (longer as its
+logistics drop: at 50% logi it is twice that). The countdown only runs while
+the base is **left alone** — every time an enemy is in sight of it the
+countdown starts over, so a base under sustained attack does not heal. Each
+repair **costs the base supplies** — {{cfg:repair_supply_cost|5}}% of stock per group repaired, plus
 {{cfg:warehouse.materiel.repair_cost|250}} materiel where the server runs the
 materiel economy.
 
@@ -265,6 +268,42 @@ air kill — and at a base that has just been captured it pushes the
 
 Carrier repairs work the same way with a **Carrier Repair** crate; see
 [Carrier Operations](./carrier-ops.md).
+
+### Emergency repair crates
+
+Where the server enables them, **Base Supply** also offers an
+**{{cfg:emergency_repair.crate.name|Emergency Repair}}** crate. It skips the
+countdown: unpacked **inside the zone** of a damaged friendly base, it rebuilds
+one destroyed group on the spot and restarts the repair countdown, just like an
+automatic repair pulse would.
+
+```
+F10 → Cargo → Crates → Base Supply → Emergency Repair
+```
+
+It works by sling load, C-130 airdrop or ground-crew cargo alike, but only on a
+base that is **left alone**:
+
+- friendly, damaged (under 100%) and not wiped out (0% health — that base is
+  falling to Neutral and needs troops, not crates)
+- **not under attack** (no enemy in sight of it) and **no enemy capture timer**
+  running, and not still consolidating after its own capture
+- **not the base the crate was loaded at** — fly it somewhere
+- at most one every **{{cfg:emergency_repair.cooldown_secs_per_objective|600}}
+  seconds** per base, so a stack of crates can't rebuild a base instantly
+
+The repair is paid out of the **target base's own stores** exactly like an
+automatic one (materiel, or supply), so a starving base can't be crate-repaired
+either — resupply it first. Where the server sets a points price
+({{cfg:emergency_repair.cost_points|0}} points) it is taken from the pilot who
+delivered it, only when the repair actually goes through.
+
+If the crate can't be used, **nothing is spent**: the crate stays on the ground
+and you are told why (`under attack`, `capture in progress`, `Neutral`,
+`already at full health`, `cooldown`, `can't pay for the repair`). An airdropped
+crate keeps retrying on its own about once a minute, so one that lands during an
+attack does its job as soon as the base goes quiet. On success your side sees
+`Emergency repair at <base>: <group> rebuilt`.
 
 ### Supply transfer crates
 

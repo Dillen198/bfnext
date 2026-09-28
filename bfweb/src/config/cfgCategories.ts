@@ -35,12 +35,12 @@ export const CFG_CATEGORIES: CfgCategory[] = [
       'cargo', 'c130_cargo', 'c130_cargo_template', 'helo_cargo', 'helo_cargo_template',
       'crate_template', 'crate_load_distance', 'crate_spread', 'max_crates', 'ground_vehicle_cargo',
       'warehouse', 'logi_from_scenery', 'helo_insertion', 'logistics_exclusion', 'supply_alert_threshold', 'supply_auto_convoy_delay_secs',
-      'factory', 'repair_crate', 'repair_time', 'repair_supply_cost', 'deploy_supply_cost',
+      'factory', 'repair_crate', 'emergency_repair', 'repair_time', 'repair_supply_cost', 'deploy_supply_cost',
     ],
   },
   {
     key: 'objectives', label: 'Objectives & Deployables', icon: Capture,
-    fields: ['deployables', 'troops', 'dismount', 'unit_classification', 'extra_fixed_wing_objectives', 'frontline', 'actions', 'capture_consolidation_secs'],
+    fields: ['deployables', 'troops', 'dismount', 'unit_classification', 'extra_fixed_wing_objectives', 'frontline', 'actions', 'capture_consolidation_secs', 'population_scaling'],
   },
   {
     key: 'airdefense', label: 'SAM Sites & Air Defense', icon: Radar,

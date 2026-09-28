@@ -31,7 +31,9 @@ Access via F10 → Cargo
 - **List Nearby Crates** / **List Cargo** — what's around you, what's aboard
 - **Destroy Nearby Crate** — clear a mis-dropped or unwanted crate
 - **Crates** — request a new crate set (Logistics, Base Supply, and the
-  deployable categories)
+  deployable categories). Base Supply includes the **Emergency Repair** crate
+  where the server enables it — see
+  [Logistics & Supply](../gameplay/logistics.md#emergency-repair-crates)
 
 The C-130 gets its own **C-130 Cargo** menu instead, with `List Nearby Crates`,
 `Delete Nearby Crate`, `Delete All Nearby Crates` and a **Vehicles** category —

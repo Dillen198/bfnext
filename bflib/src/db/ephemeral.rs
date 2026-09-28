@@ -342,6 +342,14 @@ pub struct Ephemeral {
     /// repair. Divides the repair timer (see check_carrier_repairs). Not
     /// persisted -- a repair spanning a restart just reverts to base speed.
     pub(crate) carrier_repair_crates: FxHashMap<ObjectiveId, u32>,
+    /// When the last emergency repair crate landed at each objective, for
+    /// its per-objective cooldown. Not persisted -- a restart clears it.
+    pub(crate) emergency_repair_last: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// The capture timer each running capture actually needs, in seconds --
+    /// split across the capturing squads and stretched by population scaling
+    /// -- refreshed every capture tick so the F10 label and the Capture
+    /// Advisor show the real figure, not the base `capture_time_secs`.
+    pub(crate) capture_total_secs: FxHashMap<ObjectiveId, i64>,
     /// ELINT/SIGINT persistent intel database (populated when cfg.elint is Some).
     pub(crate) intel_db: IntelDatabase,
     /// When intel confidence was last decayed, so the decay runs in real
@@ -453,6 +461,8 @@ impl Default for Ephemeral {
             restart_notices: Vec::new(),
             last_under_attack_notif: FxHashMap::default(),
             carrier_repair_crates: FxHashMap::default(),
+            emergency_repair_last: FxHashMap::default(),
+            capture_total_secs: FxHashMap::default(),
             intel_db: IntelDatabase::default(),
             last_intel_decay: None,
             ground_vehicle_passengers: FxHashMap::default(),
@@ -576,12 +586,17 @@ impl Ephemeral {
     /// no meaningful bar to show there.
     fn capture_pct_for(&self, oid: &ObjectiveId) -> Option<u8> {
         let (_, start, _) = self.capture_progress.get(oid)?;
-        // Missing campaign_events still means the default 60s momentum, not instant.
-        let total = self
-            .cfg
-            .campaign_events
-            .as_ref()
-            .map_or(180, |c| c.capture_time_secs);
+        // The capture tick records what this capture really needs (squads,
+        // population scaling); before its first tick fall back to the base.
+        // Missing campaign_events still means the default 180s, not instant.
+        let total = match self.capture_total_secs.get(oid) {
+            Some(t) => (*t).max(0) as u32,
+            None => self
+                .cfg
+                .campaign_events
+                .as_ref()
+                .map_or(180, |c| c.capture_time_secs),
+        };
         if total == 0 {
             return None;
         }
@@ -607,7 +622,7 @@ impl Ephemeral {
             .map(|(pct, secs)| (bucket_pct(pct), bucket_eta(secs)))
     }
 
-    fn repair_pct_for(&self, obj: &Objective) -> Option<(u8, i64)> {
+    fn repair_pct_for(&self, persisted: &Persisted, obj: &Objective) -> Option<(u8, i64)> {
         if let ObjectiveKind::CarrierGroup { repair_start_time: Some(start), .. } = &obj.kind {
             let total = self.cfg.carrier.as_ref().map(|c| c.repair_time).unwrap_or(600) as f64;
             if total <= 0.0 {
@@ -628,8 +643,8 @@ impl Ephemeral {
             return None;
         }
         if obj.health < 100 && obj.logi > 0 {
-            let logi_frac = obj.logi as f64 / 100.;
-            let total = self.cfg.repair_time as f64 / logi_frac;
+            let speed = super::balance::repair_speed_mult(self, persisted, obj.owner);
+            let total = super::balance::repair_pulse_secs(&self.cfg, obj, speed);
             if !total.is_finite() || total <= 0.0 {
                 return None;
             }
@@ -660,7 +675,7 @@ impl Ephemeral {
             mk.remove(&mut self.msgs);
         }
         let capture_pct = self.capture_pct_for(&obj.id);
-        let repair_pct = self.repair_pct_for(obj);
+        let repair_pct = self.repair_pct_for(persisted, obj);
         let hold_pct = self.hold_pct_for(obj);
         self.objective_markup.insert(
             obj.id,
@@ -683,7 +698,7 @@ impl Ephemeral {
         moved: &[ObjectiveId],
     ) {
         let capture_pct = self.capture_pct_for(&obj.id);
-        let repair_pct = self.repair_pct_for(obj);
+        let repair_pct = self.repair_pct_for(persisted, obj);
         let hold_pct = self.hold_pct_for(obj);
         // Owner-only markup (carrier groups, special SAM sites) has its side
         // filter fixed when the marks are created, and `update` cannot change

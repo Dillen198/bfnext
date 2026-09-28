@@ -3486,6 +3486,8 @@ const WIKI_FACT_KEYS: &[&str] = &[
     "repair_supply_cost",
     "deploy_supply_cost",
     "repair_crate",
+    "emergency_repair",
+    "population_scaling",
     "logistics_exclusion",
     "supply_alert_threshold",
     "objective_start_points",
