@@ -52,6 +52,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterable, Optional
 
+from .icons import icon
+
 __all__ = [
     "LogAnalyzer", "parse_entries", "fingerprint", "scrub", "Entry", "IssuesConfig",
     "render_report", "LEVEL_RANK",
@@ -751,7 +753,7 @@ class LogAnalyzer:
             if len(recent) >= 5:
                 continue  # a storm: the OPS page has the rest
             self._notices.append(now)
-            tag = "🔁 REGRESSED" if it.get("status") == "regressed" else "🆕 New"
+            tag = f"{icon('restart')} REGRESSED" if it.get("status") == "regressed" else f"{icon('new')} New"
             try:
                 await self.cog.notify_ops(
                     f"{tag} **{it['level']}** issue `{it['id']}` in `{it['source']}`:\n"

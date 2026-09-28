@@ -27,6 +27,8 @@ from typing import Awaitable, Callable, Optional
 
 import aiohttp
 
+from .icons import icon
+
 __all__ = [
     "Procman", "BFDB_HEALTH_CHECK_SECS", "INSTANCE_KINDS", "instance_kind",
     "effective_instance_gci", "default_range_jsonl", "sha256_of", "sha256_cached",
@@ -766,7 +768,7 @@ class Procman:
                     shutil.copy2(backup, live_path)
                 except OSError:
                     pass
-            return f"⚠️ staged {name} swap FAILED ({ex}) -- kept the previous binary"
+            return f"{icon('warning')} staged {name} swap FAILED ({ex}) -- kept the previous binary"
         self.cancel_pending(name, staging_dir)  # clears the sidecar
         self._prune_backups(live_path, keep)
         note = f"swapped in staged `{name}` (backup: `{os.path.basename(backup)}`)"
@@ -904,7 +906,7 @@ class Procman:
         if not backup or not os.path.exists(backup):
             self.probation = None
             self._save_probation()
-            return f"⛔ bfdb rollback wanted ({why}) but there is no bfdb.exe backup to restore."
+            return f"{icon('blocked')} bfdb rollback wanted ({why}) but there is no bfdb.exe backup to restore."
         async with self._op_lock:
             return await self._rollback_bfdb_locked(admin_password, why, p, backup)
 
@@ -922,7 +924,7 @@ class Procman:
             notes.append(f"exe ← `{os.path.basename(backup)}`")
         except OSError as ex:
             await self._start_unlocked(admin_password)
-            return f"⛔ bfdb rollback failed while restoring the exe ({ex}); restarted what was there."
+            return f"{icon('blocked')} bfdb rollback failed while restoring the exe ({ex}); restarted what was there."
         snap = p.get("db_snapshot")
         if snap and os.path.isdir(snap):
             try:
@@ -944,7 +946,7 @@ class Procman:
             except Exception as ex:  # noqa: BLE001
                 self.log.debug(f"FowlEngine/procman: on_rollback hook failed: {ex}")
         await self._start_unlocked(admin_password)
-        msg = (f"⏪ **bfdb rolled back** -- {why}. " + "; ".join(notes)
+        msg = (f"{icon('rollback')} **bfdb rolled back** -- {why}. " + "; ".join(notes)
                + (f". Release {rel} is marked bad." if rel else "."))
         self.log.error(f"FowlEngine/procman: {msg}")
         return msg
@@ -963,7 +965,7 @@ class Procman:
             elif now - p["healthy_at"] >= self.probation_minutes * 60:
                 self.probation = None
                 self._save_probation()
-                await self._safe_notify(f"✅ bfdb {p.get('tag') or '(manual upload)'} passed probation.")
+                await self._safe_notify(f"{icon('good')} bfdb {p.get('tag') or '(manual upload)'} passed probation.")
             return False
         if self._bfdb is not None and self._bfdb.poll() is not None:
             # died on the new build: that's the clearest signal there is.
@@ -1349,7 +1351,7 @@ class Procman:
                            f"-- enable autoupdate or drop a bfdb.exe into the admin channel")
             return
         if note:
-            await self._safe_notify(f"🧩 bfdb: {note}")
+            await self._safe_notify(f"{icon('build')} bfdb: {note}")
 
         # Multi-instance renders instances.json (and one gci.<id>.json per
         # instance); single-server keeps the flat gci.json.
@@ -1453,7 +1455,7 @@ class Procman:
         jsonl = self._resolved("stats_jsonl")
         stats_dir = self._resolved("stats_dir")
         if not jsonl and not stats_dir:
-            return "❌ neither `bfdb.stats_jsonl` nor `bfdb.stats_dir` is configured -- nothing to rebuild from."
+            return f"{icon('bad')} neither `bfdb.stats_jsonl` nor `bfdb.stats_dir` is configured -- nothing to rebuild from."
         args = [self.exe, "--db", db_path, "--rebuild-stats"]
         if jsonl:
             args += ["--stats-jsonl", jsonl]
@@ -1476,7 +1478,7 @@ class Procman:
                     self.log.warning(f"FowlEngine/procman: DB snapshot -> {backup}")
                 except Exception as ex:  # noqa: BLE001
                     await self._start_unlocked(admin_password)
-                    return f"❌ could not snapshot the DB before rebuild ({ex}); aborted, bfdb restarted unchanged."
+                    return f"{icon('bad')} could not snapshot the DB before rebuild ({ex}); aborted, bfdb restarted unchanged."
 
             self.log.warning(f"FowlEngine/procman: running one-shot {self._redact(args)}")
             try:
@@ -1487,13 +1489,13 @@ class Procman:
                 )
             except Exception as ex:  # noqa: BLE001
                 await self._start_unlocked(admin_password)
-                return f"❌ rebuild one-shot failed to run ({ex}); bfdb restarted with existing data."
+                return f"{icon('bad')} rebuild one-shot failed to run ({ex}); bfdb restarted with existing data."
             out = ((proc.stdout or "") + (proc.stderr or "")).strip()
             await self._start_unlocked(admin_password)
         if proc.returncode != 0:
-            return (f"❌ `--rebuild-stats` exited {proc.returncode}: {out[:400]}\n"
+            return (f"{icon('bad')} `--rebuild-stats` exited {proc.returncode}: {out[:400]}\n"
                     f"bfdb restarted with existing data{backup_note}.")
-        return (f"✅ {out[:400] or 'wiped derived stats + rewound cursors'}{backup_note}\n"
+        return (f"{icon('good')} {out[:400] or 'wiped derived stats + rewound cursors'}{backup_note}\n"
                 f"bfdb restarted -- it's re-ingesting the stats log now (watch the engine-log / perf embed). "
                 f"Run `/feops merge_rounds` afterwards to fold in any residual rounds. "
                 f"If the rebuilt numbers look wrong, restore the backup folder over `bfdb` and restart.")
@@ -1508,7 +1510,7 @@ class Procman:
         to the seeded content), and per-round recon photos."""
         db_path = os.path.join(self.home, "bfdb")
         if not os.path.isdir(db_path):
-            return f"❌ no bfdb DB folder at `{db_path}` -- nothing to move."
+            return f"{icon('bad')} no bfdb DB folder at `{db_path}` -- nothing to move."
         async with self._op_lock:
             await self._stop_bfdb(admin_password)
             await self._stop_orphans(admin_password)
@@ -1518,10 +1520,10 @@ class Procman:
                 os.rename(db_path, archived)
             except OSError as ex:
                 await self._start_unlocked(admin_password)
-                return f"❌ could not move the DB folder ({ex}); bfdb restarted on the old one."
+                return f"{icon('bad')} could not move the DB folder ({ex}); bfdb restarted on the old one."
             self.log.warning(f"FowlEngine/procman: moved DB {db_path} -> {archived}, starting fresh")
             await self._start_unlocked(admin_password)
-        return (f"✅ old DB moved to `{os.path.basename(archived)}`, bfdb started on a fresh one.\n"
+        return (f"{icon('good')} old DB moved to `{os.path.basename(archived)}`, bfdb started on a fresh one.\n"
                 f"It's re-ingesting `stats.jsonl` from the top now — pilot stats, Discord links and one "
                 f"clean round rebuild over the next several minutes (watch the engine-log embed).\n"
                 f"Re-add any dashboard bans; wiki is back to seeded content. "
@@ -1611,7 +1613,7 @@ class Procman:
         self.relaunches += 1
         await self.restart(admin_password)
         await self._safe_notify(
-            f"⚠️ **bfdb was {why}** at `{self.api_url}` -- the bot relaunched it."
+            f"{icon('warning')} **bfdb was {why}** at `{self.api_url}` -- the bot relaunched it."
         )
 
     async def _safe_notify(self, msg: str) -> None:

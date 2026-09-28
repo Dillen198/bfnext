@@ -118,6 +118,15 @@ class BFBinaries(Extension):
         except Exception:  # noqa: BLE001 - bot not up yet / plugin not loaded
             return None
 
+    def _icon(self, key: str) -> str:
+        """A FowlEngine icon (its custom emoji once installed, unicode before).
+        Empty without the cog -- nothing then reaches Discord anyway."""
+        icons = getattr(self._fowlengine_cog(), "icons", None)
+        try:
+            return icons(key) if icons else ""
+        except Exception:  # noqa: BLE001 - an icon never blocks a swap
+            return ""
+
     @property
     def _staging_dir(self) -> str:
         raw = self.config.get("staging_dir")
@@ -219,7 +228,7 @@ class BFBinaries(Extension):
                     shutil.copy2(backup, live)
                 except OSError:
                     pass
-            return f"⚠️ staged `{name}` swap FAILED ({ex}); kept the previous engine."
+            return f"{self._icon('warning')} staged `{name}` swap FAILED ({ex}); kept the previous engine.".lstrip()
         for side in (pending + ".json",):
             if os.path.exists(side):
                 try:
@@ -288,7 +297,7 @@ class BFBinaries(Extension):
         try:
             cog = self._fowlengine_cog()
             if cog and hasattr(cog, "notify_ops"):
-                await cog.notify_ops(f"🧩 {self.server.name}: {note}")
+                await cog.notify_ops(f"{self._icon('build')} {self.server.name}: {note}".lstrip())
         except Exception as ex:  # noqa: BLE001
             self.log.debug(f"{self.name}: ops announce skipped: {ex}")
 

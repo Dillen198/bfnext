@@ -4,9 +4,10 @@
 """
 Training range (bfrange) helpers for the FowlEngine cog -- pure logic only.
 
-Nothing in here imports discord, aiohttp or the bot: every function takes and
+Nothing in here needs discord, aiohttp or the bot: every function takes and
 returns plain dicts/lists/strings, so it can be exercised without a running
-bot. commands.py does the I/O (bfdb HTTP, Discord sends) and turns the embed
+bot. Icons come from `icons.icon()`, which is the unicode stand-in when there
+is no bot. commands.py does the I/O (bfdb HTTP, Discord sends) and turns the embed
 dicts built here into discord.Embed objects.
 
 bfdb routes this consumes (all instance-scoped, `?instance=<id>` or
@@ -23,6 +24,8 @@ import re
 from datetime import datetime, timezone
 from typing import Iterable, Optional
 from urllib.parse import quote, urlparse
+
+from .icons import icon
 
 __all__ = [
     "RANGE_SITE_URL", "FEED_LIMIT", "MAX_POSTS_PER_POLL", "RECENT_IDS_KEEP",
@@ -252,10 +255,10 @@ def summary_line(skipped: list, overflow: bool, site_url: str = RANGE_SITE_URL,
     plural = noun + ("es" if noun.endswith(("s", "sh", "ch", "x")) else "s")
     if skipped:
         n = len(skipped)
-        head = (f"⏩ {n}{'+' if overflow else ''} earlier {noun if n == 1 and not overflow else plural} "
+        head = (f"{icon('forward')} {n}{'+' if overflow else ''} earlier {noun if n == 1 and not overflow else plural} "
                 f"not posted one by one (catching up)")
         return f"{head}: {breakdown} — all of them at <{site}>"
-    return f"⏩ More {plural} arrived than one poll holds — the older ones are at <{site}>"
+    return f"{icon('forward')} More {plural} arrived than one poll holds — the older ones are at <{site}>"
 
 
 # ---- embeds -------------------------------------------------------------------
@@ -438,15 +441,15 @@ def build_status(live: Optional[dict], site_url: str = RANGE_SITE_URL, *,
     label    server name, only when more than one server is configured"""
     site = (site_url or RANGE_SITE_URL).rstrip("/")
     title = "Training Range" + (f" — {label}" if label else "")
-    link = {"name": "🔗 Range", "value": f"[{_host(site)}]({site}) · live map, results, greenie board",
+    link = {"name": f"{icon('url')} Range", "value": f"[{_host(site)}]({site}) · live map, results, greenie board",
             "inline": False}
     if not running or not isinstance(live, dict):
         if not running:
-            desc = "🔴 **Server offline.** The range comes back with the next restart."
+            desc = f"{icon('down')} **Server offline.** The range comes back with the next restart."
         elif error:
-            desc = f"🟠 **No live data** — {error}"
+            desc = f"{icon('stale')} **No live data** — {error}"
         else:
-            desc = "🟠 **No live data** — the range engine isn't reporting (mission loading or restarting)."
+            desc = f"{icon('stale')} **No live data** — the range engine isn't reporting (mission loading or restarting)."
         return normalize_embed({"title": title, "url": site, "description": desc,
                                 "color": 0x95A5A6, "fields": [link]})
 
@@ -457,10 +460,10 @@ def build_status(live: Optional[dict], site_url: str = RANGE_SITE_URL, *,
         head.append(f"**{live['theatre']}**")
     if live.get("mission_time"):
         head.append(_s(live["mission_time"]))
-    head.append("🌙 night" if live.get("night") else "☀️ day")
+    head.append(f"{icon('night')} night" if live.get("night") else f"{icon('day')} day")
     desc.append(" · ".join(head))
     if wind:
-        w = (f"💨 {_deg(wind.get('surface_from_deg'))}°/{_num(wind.get('surface_kts'), 0):.0f} kt surface"
+        w = (f"{icon('wind')} {_deg(wind.get('surface_from_deg'))}°/{_num(wind.get('surface_kts'), 0):.0f} kt surface"
              f" · {_deg(wind.get('alt_from_deg'))}°/{_num(wind.get('alt_kts'), 0):.0f} kt aloft")
         if _num(wind.get("qnh_hpa")):
             w += f" · QNH {_num(wind.get('qnh_hpa')):.0f}"
@@ -468,7 +471,7 @@ def build_status(live: Optional[dict], site_url: str = RANGE_SITE_URL, *,
             w += f" · {_num(wind.get('temperature_c')):.0f}°C"
         desc.append(w)
     if _num(live.get("uptime_s")):
-        desc.append(f"⏱️ up {_duration(live.get('uptime_s'))}")
+        desc.append(f"{icon('uptime')} up {_duration(live.get('uptime_s'))}")
 
     fields = []
 
@@ -493,7 +496,7 @@ def build_status(live: Optional[dict], site_url: str = RANGE_SITE_URL, *,
     others = len(tankers) - len(on_station)
     if others:
         lines.append(f"*{others} more spawning / RTB*")
-    fields.append({"name": f"⛽ Tankers on station — {len(on_station)}",
+    fields.append({"name": f"{icon('fuel')} Tankers on station — {len(on_station)}",
                    "value": _lines_value(lines) if lines else "None on station.", "inline": False})
 
     # Carriers
@@ -509,10 +512,10 @@ def build_status(live: Optional[dict], site_url: str = RANGE_SITE_URL, *,
                  f" · {wod}")
         if c.get("recovery_open"):
             case = c.get("case")
-            second = [f"🟢 recovery OPEN" + (f" (Case {case})" if case else "")]
+            second = [f"{icon('live')} recovery OPEN" + (f" (Case {case})" if case else "")]
         else:
             nxt = c.get("next_window")
-            second = ["🔴 deck closed" + (f", next {nxt}" if nxt else "")]
+            second = [f"{icon('down')} deck closed" + (f", next {nxt}" if nxt else "")]
         if c.get("tacan"):
             second.append(f"TACAN {c['tacan']}")
         if c.get("icls") is not None:
@@ -523,7 +526,7 @@ def build_status(live: Optional[dict], site_url: str = RANGE_SITE_URL, *,
             second.append(f"{len(c['pattern'])} in the pattern")
         lines.append(first + "\n" + " · ".join(second))
     if lines:
-        fields.append({"name": f"⚓ Carriers — {len(lines)}", "value": _lines_value(lines), "inline": False})
+        fields.append({"name": f"{icon('carrier')} Carriers — {len(lines)}", "value": _lines_value(lines), "inline": False})
 
     # Stations
     stations = [s for s in (live.get("stations") or []) if isinstance(s, dict)]
@@ -532,12 +535,12 @@ def build_status(live: Optional[dict], site_url: str = RANGE_SITE_URL, *,
     lines = []
     for s in hot:
         kind = _s(s.get("kind")).replace("_", " ")
-        lines.append(f"🔴 **{_s(s.get('name')) or s.get('id')}** ({kind}) — {', '.join(map(str, s['hot_by']))}")
+        lines.append(f"{icon('hot')} **{_s(s.get('name')) or s.get('id')}** ({kind}) — {', '.join(map(str, s['hot_by']))}")
     if cold:
         names = " · ".join(_s(s.get("name")) or _s(s.get("id")) for s in cold)
-        lines.append("⚪ " + _clip(names, 700))
+        lines.append(f"{icon('cold')} " + _clip(names, 700))
     if stations:
-        fields.append({"name": f"🎯 Stations — {len(hot)} hot · {len(cold)} cold",
+        fields.append({"name": f"{icon('target')} Stations — {len(hot)} hot · {len(cold)} cold",
                        "value": _lines_value(lines, more_noun="more hot"), "inline": False})
 
     # Players
@@ -550,7 +553,7 @@ def build_status(live: Optional[dict], site_url: str = RANGE_SITE_URL, *,
         elif p.get("in_air") is False:
             line += " · on deck"
         lines.append(line)
-    fields.append({"name": f"👥 Players online — {len(players)}",
+    fields.append({"name": f"{icon('players')} Players online — {len(players)}",
                    "value": _lines_value(lines, more_noun="more") if lines else "Nobody flying right now.",
                    "inline": False})
     fields.append(link)
@@ -616,7 +619,7 @@ def greenie_rows(data) -> list[dict]:
 
 
 def greenie_lines(data, site_url: str = RANGE_SITE_URL, limit: int = 10) -> list[str]:
-    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    medals = {1: icon("gold"), 2: icon("silver"), 3: icon("bronze")}
     lines = []
     for n, r in enumerate(greenie_rows(data)[:limit], 1):
         who = f"[{r['name']}]({pilot_url(site_url, r['ucid'])})" if r["ucid"] else r["name"]

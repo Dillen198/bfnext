@@ -37,6 +37,8 @@ import os
 from datetime import datetime, timezone
 from typing import Callable, Iterable, Optional
 
+from .icons import icon
+
 __all__ = [
     "BFBINARY_PATTERNS", "ENGINE_DLLS", "KIND_DLL", "handle_bfbinary_upload",
     "global_staging_dir", "resolve_engine_binaries", "engine_binaries",
@@ -299,7 +301,7 @@ async def handle_bfbinary_upload(cog, message) -> bool:
             continue
         if att.size > _MAX_SIZE:
             await message.channel.send(
-                f"❌ `{name}` is {att.size / 1024 / 1024:.0f} MB -- refusing, that's not a real engine binary."
+                f"{icon('bad')} `{name}` is {att.size / 1024 / 1024:.0f} MB -- refusing, that's not a real engine binary."
             )
             continue
 
@@ -307,12 +309,12 @@ async def handle_bfbinary_upload(cog, message) -> bool:
             staging = procman.staging_dir if procman else global_staging_dir(cog.get_config() or {})
             if not staging:
                 await message.channel.send(
-                    "❌ `bfdb.staging_dir` (or `bfdb.home`) is not configured in fowlengine.yaml.")
+                    f"{icon('bad')} `bfdb.staging_dir` (or `bfdb.home`) is not configured in fowlengine.yaml.")
                 continue
             node = local_node or (scoped.node if scoped else (servers[0].node if servers else None))
             sidecar, err = await _stage_one(node, staging, name, att, notes, message.author, ["bfdb"])
             if err:
-                await message.channel.send(f"❌ Failed to stage `{name}`: {err}")
+                await message.channel.send(f"{icon('bad')} Failed to stage `{name}`: {err}")
                 continue
             staged_any = True
             lines.append(f"• `{name}` — {sidecar['size'] / 1024 / 1024:.1f} MB, "
@@ -323,20 +325,20 @@ async def handle_bfbinary_upload(cog, message) -> bool:
 
         targets, why = pick_targets(name, servers, lambda s: engine_binaries(cog, s), scoped)
         if not targets:
-            await message.channel.send(f"❌ Not staging `{name}`: {why}")
+            await message.channel.send(f"{icon('bad')} Not staging `{name}`: {why}")
             continue
         for (_node_name, staging), group in group_by_staging_dir(targets).items():
             names = [s.name for s, _ in group]
             if not group[0][1]["staging_dir"]:
                 await message.channel.send(
-                    f"❌ No staging dir for {', '.join(names)}: set `staging_dir` on its BFBinaries "
+                    f"{icon('bad')} No staging dir for {', '.join(names)}: set `staging_dir` on its BFBinaries "
                     f"extension in nodes.yaml (or `bfdb.staging_dir` in fowlengine.yaml).")
                 continue
             staging_dir = group[0][1]["staging_dir"]
             node = getattr(group[0][0], "node", None) or local_node
             sidecar, err = await _stage_one(node, staging_dir, name, att, notes, message.author, names)
             if err:
-                await message.channel.send(f"❌ Failed to stage `{name}` for {', '.join(names)}: {err}")
+                await message.channel.send(f"{icon('bad')} Failed to stage `{name}` for {', '.join(names)}: {err}")
                 continue
             staged_any = True
             when = _next_restart_hint(group[0][0])
@@ -347,13 +349,13 @@ async def handle_bfbinary_upload(cog, message) -> bool:
             audit.append(f"`{name}` → {', '.join(names)}, sha256 `{sidecar['sha256'] or '?'}`")
             if len(group) > 1:
                 warnings.append(
-                    f"⚠️ {', '.join(names)} share one staging dir, so whichever restarts first "
+                    f"{icon('warning')} {', '.join(names)} share one staging dir, so whichever restarts first "
                     f"takes `{name}` and the other keeps its old engine. Give each its own "
                     f"BFBinaries `staging_dir` in nodes.yaml.")
             for s, b in group:
                 if not b["has_extension"]:
                     warnings.append(
-                        f"⚠️ **{s.name}** has no BFBinaries extension, so nothing swaps `{name}` in "
+                        f"{icon('warning')} **{s.name}** has no BFBinaries extension, so nothing swaps `{name}` in "
                         f"on restart -- use `/feops stage_apply` once it is shut down.")
             for s, _ in group:
                 await bot.audit(f'staged engine binary "{name}"', server=s, user=message.author)
@@ -361,7 +363,7 @@ async def handle_bfbinary_upload(cog, message) -> bool:
     if not staged_any:
         return True
 
-    out = ["✅ Staged -- each server swaps it in on its own next DCS restart:"]
+    out = [f"{icon('good')} Staged -- each server swaps it in on its own next DCS restart:"]
     out += lines
     out += warnings
     out.append("Use `/feops stage_apply` to swap it in now, or `/feops stage_cancel` to discard.")
@@ -371,7 +373,7 @@ async def handle_bfbinary_upload(cog, message) -> bool:
     notify = getattr(cog, "notify_ops", None)
     if notify and audit:
         try:
-            await notify(f"📥 **{message.author}** (`{getattr(message.author, 'id', '?')}`) staged an engine "
+            await notify(f"{icon('upload')} **{message.author}** (`{getattr(message.author, 'id', '?')}`) staged an engine "
                          f"binary from Discord:\n" + "\n".join(audit))
         except Exception:  # noqa: BLE001 - the audit notice is best-effort
             pass
