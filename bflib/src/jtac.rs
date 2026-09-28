@@ -349,17 +349,17 @@ struct BuildingTarget {
 }
 
 impl BuildingTarget {
-    fn destroy(self, lua: MizLua) -> Result<()> {
+    fn destroy(self, lua: MizLua, msgs: &mut MsgQ) -> Result<()> {
+        // The pin first, as in `JtacTarget::destroy`: it used to come after
+        // the spot, so a failure destroying one DCS had already cleaned up
+        // (the JTAC died) stranded the pin for good.
+        if let Some(id) = self.mark {
+            msgs.delete_mark(id)
+        }
         Spot::get_instance(lua, &self.spot)
             .context("getting laser spot")?
             .destroy()
             .context("destroying laser spot")?;
-        if let Some(id) = self.mark {
-            Trigger::singleton(lua)?
-                .action()?
-                .remove_mark(id)
-                .context("removing mark")?
-        }
         Ok(())
     }
 }
@@ -781,16 +781,33 @@ impl Jtac {
     }
 
     fn remove_target(&mut self, db: &mut Db, lua: MizLua) -> Result<()> {
+        // The map layer's marks first. They used to come after the spot, and
+        // any failure destroying it (a spot that went with a dead JTAC) bailed
+        // out before them -- so a group JTAC that died lasing something could
+        // leave its bearing line, pin and code label on the map with nothing
+        // tracking them any more.
+        if let JtId::Group(gid) = self.gid {
+            let (map_layer, msgs) = db.ephemeral.map_layer_and_msgs();
+            map_layer.on_jtac_cleared(&gid, msgs);
+        }
         if let Some(target) = self.target.take() {
             target
                 .destroy(lua, db.ephemeral.msgs())
                 .with_context(|| format_compact!("destroying target for jtac {}", self.gid))?;
         }
-        if let JtId::Group(gid) = self.gid {
-            let (map_layer, msgs) = db.ephemeral.map_layer_and_msgs();
-            map_layer.on_jtac_cleared(&gid, msgs);
-        }
         Ok(())
+    }
+
+    /// Everything this JTAC has on the map, for when it is gone. Only the
+    /// unit target used to be cleared, so a JTAC that died designating a
+    /// building left that building's pin up forever.
+    fn stand_down(&mut self, db: &mut Db, lua: MizLua) {
+        if let Err(e) = self.remove_target(db, lua) {
+            warn!("could not remove target of dead jtac {}: {e:?}", self.gid)
+        }
+        if let Err(e) = self.remove_building_target(db, lua) {
+            warn!("could not remove building target of dead jtac {}: {e:?}", self.gid)
+        }
     }
 
     /// Pin the target on the F10 map, for slot JTACs only. Group JTACs get
@@ -948,7 +965,7 @@ impl Jtac {
     pub fn designate_building(&mut self, db: &mut Db, lua: MizLua) -> Result<Option<CompactString>> {
         let candidates = db.ephemeral.scenery_at_objective(self.location.oid);
         if candidates.is_empty() {
-            self.remove_building_target(lua)?;
+            self.remove_building_target(db, lua)?;
             return Ok(None);
         }
         self.building_idx = (self.building_idx + 1) % candidates.len();
@@ -967,11 +984,11 @@ impl Jtac {
             Ok(o) => o.get_point().context("getting building position")?.0,
             Err(_) => {
                 // stale entry, e.g. destroyed between scan and now -- retry next cycle
-                self.remove_building_target(lua)?;
+                self.remove_building_target(db, lua)?;
                 return Ok(None);
             }
         };
-        self.remove_building_target(lua)?;
+        self.remove_building_target(db, lua)?;
         let jtid = match &self.gid {
             JtId::Group(gid) => db
                 .first_living_unit(gid)
@@ -1014,10 +1031,10 @@ impl Jtac {
         Ok(Some(msg))
     }
 
-    fn remove_building_target(&mut self, lua: MizLua) -> Result<()> {
+    fn remove_building_target(&mut self, db: &mut Db, lua: MizLua) -> Result<()> {
         if let Some(target) = self.building_target.take() {
             target
-                .destroy(lua)
+                .destroy(lua, db.ephemeral.msgs())
                 .with_context(|| format_compact!("destroying building target for jtac {}", self.gid))?;
         }
         Ok(())
@@ -1746,6 +1763,41 @@ struct Detected {
     detected: bool,
 }
 
+/// Is the unit or player `id` names no longer in the fight: unknown, dead,
+/// or a player out of their aircraft?
+fn target_gone(db: &Db, id: &EnId) -> bool {
+    match id {
+        EnId::Unit(uid) => db.unit(uid).map_or(true, |u| u.dead),
+        EnId::Player(ucid) => db
+            .player(ucid)
+            .and_then(|p| p.current_slot.as_ref())
+            .and_then(|(_, inst)| inst.as_ref())
+            .is_none(),
+    }
+}
+
+/// A group's "Status" pin: the target it was dropped on, by which JTAC,
+/// and where, so `Jtacs::reconcile_marks` can tell when it has gone stale.
+#[derive(Debug, Clone, Copy)]
+struct StatusMark {
+    id: MarkId,
+    jtid: JtId,
+    target: EnId,
+    pos: Vector2,
+}
+
+impl StatusMark {
+    /// The pin names one target at one spot. It is stale once that JTAC is
+    /// gone or lasing something else (`current` is its target now, if any),
+    /// or the target has driven off from under it.
+    fn stale(&self, current: Option<(EnId, Vector2)>) -> bool {
+        match current {
+            None => true,
+            Some((id, pos)) => id != self.target || (pos - self.pos).norm() >= JTAC_PIN_FOLLOW_M,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Jtacs {
     jtacs: FxHashMap<Side, FxHashMap<JtId, Jtac>>,
@@ -1757,8 +1809,9 @@ pub struct Jtacs {
     notices: Vec<JtacNotice>,
     /// The read-only pin each group last got from "Status", keyed by miz
     /// group. Replaced on the next Status instead of piling up -- every click
-    /// used to drop a permanent one.
-    status_marks: FxHashMap<dcso3::env::miz::GroupId, MarkId>,
+    /// used to drop a permanent one -- and removed by `reconcile_marks` once
+    /// its target is gone.
+    status_marks: FxHashMap<dcso3::env::miz::GroupId, StatusMark>,
     /// Magnetic variation, refreshed every contact update, see `Jtac::magvar_deg`.
     magvar_deg: f64,
 }
@@ -1787,13 +1840,18 @@ impl Jtacs {
         std::mem::take(&mut self.notices)
     }
 
-    /// Remember `mark` as `group`'s status pin, returning the one it replaces.
+    /// Remember `mark`, dropped at `pos` on `jtid`'s `target`, as `group`'s
+    /// status pin, returning the one it replaces.
     pub fn replace_status_mark(
         &mut self,
         group: dcso3::env::miz::GroupId,
         mark: MarkId,
+        jtid: JtId,
+        target: EnId,
+        pos: Vector2,
     ) -> Option<MarkId> {
-        self.status_marks.insert(group, mark)
+        let sm = StatusMark { id: mark, jtid, target, pos };
+        self.status_marks.insert(group, sm).map(|old| old.id)
     }
 
     /// Other JTACs on `side` lasing on `code`.
@@ -2209,6 +2267,73 @@ impl Jtacs {
         &self.code_by_location
     }
 
+    /// Safety net for every F10 mark the JTACs own, run on the slow tick
+    /// after the contact update.
+    ///
+    /// Players asked for JTAC drones to wipe and redraw their marks every few
+    /// minutes, because stale target pins and labels were piling up around
+    /// busy bases. Wiping and redrawing everything is exactly the churn that
+    /// starved the F10 markup queue before, so this only looks, and deletes
+    /// just the marks whose subject is gone: a target that died (the JTAC
+    /// then re-acquires, which draws the next one fresh), a designated
+    /// building that was destroyed, map-layer marks no living JTAC target
+    /// owns, and Status pins whose target died or moved on. The leaks this
+    /// catches are fixed where they start; this is here for the next one.
+    pub fn reconcile_marks(&mut self, lua: MizLua, db: &mut Db) {
+        let mut live_layers: FxHashSet<GroupId> = FxHashSet::default();
+        for jt in self.jtacs.values_mut().flat_map(|jtx| jtx.values_mut()) {
+            if let Some(tid) = jt.target.as_ref().map(|t| t.id) {
+                if target_gone(db, &tid) {
+                    info!("jtac {} target {tid} is gone, clearing its marks", jt.gid);
+                    if let Err(e) = jt.remove_contact(lua, db, &tid) {
+                        warn!("could not remove gone target {tid} of jtac {}: {e:?}", jt.gid)
+                    }
+                }
+            }
+            let building_gone = jt
+                .building_target
+                .as_ref()
+                .map_or(false, |bt| !db.ephemeral.scenery_standing(&bt.id));
+            if building_gone {
+                if let Err(e) = jt.remove_building_target(db, lua) {
+                    warn!("could not remove destroyed building target of jtac {}: {e:?}", jt.gid)
+                }
+            }
+            if let (JtId::Group(gid), Some(_)) = (jt.gid, &jt.target) {
+                live_layers.insert(gid);
+            }
+        }
+        let (map_layer, msgs) = db.ephemeral.map_layer_and_msgs();
+        let orphans: SmallVec<[GroupId; 8]> = map_layer
+            .jtac_marks
+            .keys()
+            .filter(|gid| !live_layers.contains(gid))
+            .copied()
+            .collect();
+        for gid in orphans {
+            info!("removing orphaned jtac map marks of group {gid}");
+            map_layer.on_jtac_cleared(&gid, msgs);
+        }
+        let stale: SmallVec<[dcso3::env::miz::GroupId; 8]> = self
+            .status_marks
+            .iter()
+            .filter(|(_, sm)| {
+                let current = self
+                    .get(&sm.jtid)
+                    .ok()
+                    .and_then(|jt| jt.target.as_ref())
+                    .map(|t| (t.id, Vector2::new(t.pos.x, t.pos.z)));
+                sm.stale(current)
+            })
+            .map(|(group, _)| *group)
+            .collect();
+        for group in stale {
+            if let Some(sm) = self.status_marks.remove(&group) {
+                db.ephemeral.msgs().delete_mark(sm.id);
+            }
+        }
+    }
+
     pub fn unit_dead(&mut self, lua: MizLua, db: &mut Db, id: &DcsOid<ClassUnit>) -> Result<()> {
         let ctid = db
             .ephemeral
@@ -2232,9 +2357,7 @@ impl Jtacs {
                     if &jtid == gid {
                         macro_rules! dead {
                             () => {{
-                                if let Err(e) = jt.remove_target(db, lua) {
-                                    warn!("0 could not remove jtac target {:?}", e)
-                                }
+                                jt.stand_down(db, lua);
                                 ui_jtac_dead(db, *side, jtid, jt.name.as_ref());
                                 Self::remove_code_by_location(
                                     &mut self.code_by_location,
@@ -2469,6 +2592,16 @@ impl Jtacs {
             if unit.side == jtac.side {
                 continue;
             }
+            // Marked dead without leaving the instanced set: ghost
+            // retirement and the capture sweep flag units dead and only drop
+            // their DCS mapping once a despawn drains, and a partly ghosted
+            // group never does. The JTAC kept "seeing" those -- teleported
+            // back to their spawn points by the dead reset -- and kept their
+            // intel pins at full confidence around the base indefinitely.
+            // Unseen, they fall out of the contacts like any despawned unit.
+            if unit.dead {
+                continue;
+            }
             saw_units.insert(id);
             let detected = detected.entry(id).or_default();
             // Filter is "target any of these types" -- keep a unit if it carries
@@ -2574,9 +2707,7 @@ impl Jtacs {
         for (side, jtx) in self.jtacs.iter_mut() {
             jtx.retain(|gid, jt| {
                 saw_jtacs.contains(gid) || {
-                    if let Err(e) = jt.remove_target(db, lua) {
-                        warn!("2 could not remove jtac target {:?}", e)
-                    }
+                    jt.stand_down(db, lua);
                     ui_jtac_dead(db, *side, *gid, jt.name.as_ref());
                     Self::remove_code_by_location(
                         &mut self.code_by_location,
@@ -2728,5 +2859,19 @@ mod tests {
         assert!(c < 1688 && validate_laser_code(c).is_ok());
         // an invalid configured default falls back to a valid one
         assert!(validate_laser_code(pick_laser_code(1000, &FxHashSet::default())).is_ok());
+    }
+
+    #[test]
+    fn status_pin_goes_with_its_target() {
+        let tank = EnId::Unit(UnitId::from(1));
+        let other = EnId::Unit(UnitId::from(2));
+        let here = Vector2::new(1_000., 2_000.);
+        let sm = StatusMark { id: MarkId::new(), jtid: JtId::Group(GroupId::from(7)), target: tank, pos: here };
+        // Same target, crept a little: keep the pin.
+        assert!(!sm.stale(Some((tank, here + Vector2::new(100., 0.)))));
+        // JTAC gone or lasing nothing / something else, or the target drove off.
+        assert!(sm.stale(None));
+        assert!(sm.stale(Some((other, here))));
+        assert!(sm.stale(Some((tank, here + Vector2::new(JTAC_PIN_FOLLOW_M, 0.)))));
     }
 }

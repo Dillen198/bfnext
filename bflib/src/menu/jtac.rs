@@ -166,13 +166,13 @@ pub fn jtac_status(_: MizLua, arg: ArgTuple<Option<Ucid>, JtId>) -> Result<()> {
                 .map(|ifo| ifo.miz_gid)?;
             let tgt_pos = Vector2::new(target.pos.x, target.pos.z);
             let mark_text = format_compact!("JTAC {} — {}", arg.snd, target.typ);
-            Some((miz_gid, tgt_pos, mark_text))
+            Some((miz_gid, tgt_pos, mark_text, target.id))
         });
-        if let Some((miz_gid, tgt_pos, mark_text)) = mark_info {
+        if let Some((miz_gid, tgt_pos, mark_text, tgt_id)) = mark_info {
             // One status pin per group, replaced on the next click. Each
             // click used to leave another permanent read-only pin behind.
             let id = ctx.db.ephemeral.msgs().mark_to_group(miz_gid, tgt_pos, true, mark_text);
-            if let Some(old) = ctx.jtac.replace_status_mark(miz_gid, id) {
+            if let Some(old) = ctx.jtac.replace_status_mark(miz_gid, id, arg.snd, tgt_id, tgt_pos) {
                 ctx.db.ephemeral.msgs().delete_mark(old);
             }
         }

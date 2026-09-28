@@ -21,11 +21,12 @@ for more details.
 //! decays exponentially with a configurable half-life and is removed when it falls
 //! below a threshold.  F10 map markers are maintained in sync with contact state.
 
-use bfprotocols::cfg::ElintConfig;
+use bfprotocols::{cfg::ElintConfig, db::group::UnitId};
 use chrono::prelude::*;
 use compact_str::{CompactString, format_compact};
 use dcso3::{Vector2, coalition::Side, trigger::MarkId};
 use fxhash::FxHashMap;
+use smallvec::SmallVec;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -171,6 +172,9 @@ pub struct IntelContact {
     /// Position-uncertainty ring. Its radius is how unsure the engine is about
     /// where this contact actually is, which is the part a pilot acts on.
     pub map_mark_ring: Option<MarkId>,
+    /// The units a JTAC has had eyes on inside this contact, see
+    /// `IntelDatabase::note_jtac_unit`. Empty for every other source.
+    pub jtac_units: SmallVec<[UnitId; 4]>,
 }
 
 // ─── Database ────────────────────────────────────────────────────────────────
@@ -184,6 +188,9 @@ pub struct IntelDatabase {
     /// (the per-side cap evicting the least confident one). Drained by
     /// `Ephemeral::tick_intel_decay`, which is what actually talks to the map.
     pub orphaned_marks: Vec<(Option<MarkId>, Option<MarkId>, Option<MarkId>)>,
+    /// The contact each JTAC-tracked unit currently feeds, keyed by the side
+    /// that owns the intel. See `note_jtac_unit`.
+    jtac_unit_contact: FxHashMap<(Side, UnitId), ContactId>,
 }
 
 impl IntelDatabase {
@@ -271,6 +278,7 @@ impl IntelDatabase {
                 mark_pos: pos,
                 mark_confidence: 1.0,
                 map_mark_label: None,
+                jtac_units: SmallVec::new(),
             });
             self.by_side.entry(side).or_default().push(id);
             id
@@ -308,8 +316,96 @@ impl IntelDatabase {
         for ids in self.by_side.values_mut() {
             ids.retain(|id| self.contacts.contains_key(id));
         }
+        // Same for the JTAC unit index: a contact that faded out (or was
+        // evicted by the cap) no longer owns the units that fed it.
+        let contacts = &self.contacts;
+        self.jtac_unit_contact.retain(|_, id| contacts.contains_key(id));
 
         (updated, removed)
+    }
+
+    /// `upsert` for one unit a JTAC has eyes on, remembering which contact
+    /// the unit feeds so the contact can leave with it.
+    ///
+    /// Players reported JTAC drones leaving a carpet of stale intel pins
+    /// around a base: every tank a Reaper had watched stayed pinned at 100%
+    /// long after it burned, and one that drove off left its old pin behind
+    /// and grew a new one, because a JTAC contact only ever faded out over
+    /// its (hour-long by default) half-life. Now a unit that shows up in a
+    /// different contact is taken out of the old one, and a JTAC contact
+    /// with none of its units left in it is removed straight away -- the
+    /// JTAC saw it move on. `retire_jtac_units` does the same for units that
+    /// died.
+    pub fn note_jtac_unit(
+        &mut self,
+        side: Side,
+        enemy_side: Side,
+        uid: UnitId,
+        pos: Vector2,
+        unit_class: IntelUnitClass,
+        cfg: &ElintConfig,
+        now: DateTime<Utc>,
+    ) -> ContactId {
+        let id = self.upsert(side, enemy_side, pos, unit_class, 1, IntelSource::Jtac, cfg, now);
+        if let Some(c) = self.contacts.get_mut(&id) {
+            if !c.jtac_units.contains(&uid) {
+                c.jtac_units.push(uid);
+            }
+        }
+        match self.jtac_unit_contact.insert((side, uid), id) {
+            Some(old) if old != id => self.release_jtac_unit(old, uid),
+            Some(_) | None => (),
+        }
+        id
+    }
+
+    /// Take `uid` out of contact `id`, removing the contact if it was the
+    /// JTAC's last unit in it. A contact some other sensor has refreshed
+    /// since (its source is no longer `Jtac`) is left to decay as that
+    /// sensor's intel.
+    fn release_jtac_unit(&mut self, id: ContactId, uid: UnitId) {
+        let Some(c) = self.contacts.get_mut(&id) else { return };
+        c.jtac_units.retain(|u| *u != uid);
+        if c.jtac_units.is_empty() && c.source == IntelSource::Jtac {
+            self.remove_contact(id);
+        }
+    }
+
+    /// Drop a contact outside the decay pass. Its marks go to
+    /// `orphaned_marks` for `Ephemeral::tick_intel_decay` to delete.
+    fn remove_contact(&mut self, id: ContactId) {
+        let Some(c) = self.contacts.remove(&id) else { return };
+        self.orphaned_marks
+            .push((c.map_mark_rect, c.map_mark_label, c.map_mark_ring));
+        if let Some(ids) = self.by_side.get_mut(&c.side) {
+            ids.retain(|i| *i != id);
+        }
+        for uid in &c.jtac_units {
+            if self.jtac_unit_contact.get(&(c.side, *uid)) == Some(&id) {
+                self.jtac_unit_contact.remove(&(c.side, *uid));
+            }
+        }
+    }
+
+    /// Forget every JTAC-tracked unit that `gone` says no longer exists
+    /// (dead, retired as a ghost, deleted), removing the JTAC contacts that
+    /// leaves empty. Only touches contacts that actually lost a unit, so a
+    /// quiet map costs one hash lookup per tracked unit and no map traffic.
+    /// Returns how many contacts were removed.
+    pub fn retire_jtac_units(&mut self, mut gone: impl FnMut(UnitId) -> bool) -> usize {
+        let stale: SmallVec<[(Side, UnitId); 16]> = self
+            .jtac_unit_contact
+            .keys()
+            .filter(|(_, uid)| gone(*uid))
+            .copied()
+            .collect();
+        let before = self.contacts.len();
+        for key in stale {
+            if let Some(id) = self.jtac_unit_contact.remove(&key) {
+                self.release_jtac_unit(id, key.1);
+            }
+        }
+        before - self.contacts.len()
     }
 
     /// Top N highest-confidence contacts visible to `side`, ordered by
@@ -367,5 +463,78 @@ impl IntelDatabase {
         } else {
             format_compact!("[INTEL/{side_label}] {class_part} ±{acc_km:.1}km")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(x: f64) -> Vector2 {
+        Vector2::new(x, 0.)
+    }
+
+    #[test]
+    fn jtac_contact_leaves_with_its_last_unit() {
+        let cfg = ElintConfig::default();
+        let now = Utc::now();
+        let mut db = IntelDatabase::default();
+        let (a, b) = (UnitId::from(1), UnitId::from(2));
+        let id = db.note_jtac_unit(Side::Blue, Side::Red, a, at(0.), IntelUnitClass::Armor, &cfg, now);
+        assert_eq!(db.note_jtac_unit(Side::Blue, Side::Red, b, at(50.), IntelUnitClass::Armor, &cfg, now), id);
+        db.contacts.get_mut(&id).unwrap().map_mark_label = Some(MarkId::new());
+        // One of two tanks burns: the contact still has something in it.
+        assert_eq!(db.retire_jtac_units(|u| u == a), 0);
+        assert!(db.contacts.contains_key(&id));
+        assert!(db.orphaned_marks.is_empty());
+        // The second one goes too: so does the pin.
+        assert_eq!(db.retire_jtac_units(|u| u == b), 1);
+        assert!(db.contacts.is_empty());
+        assert_eq!(db.orphaned_marks.len(), 1);
+        assert!(db.orphaned_marks[0].1.is_some());
+        assert_eq!(db.contacts_for(Side::Blue).count(), 0);
+    }
+
+    #[test]
+    fn jtac_contact_left_behind_by_a_moving_unit_goes() {
+        let cfg = ElintConfig::default();
+        let now = Utc::now();
+        let mut db = IntelDatabase::default();
+        let a = UnitId::from(1);
+        let old = db.note_jtac_unit(Side::Blue, Side::Red, a, at(0.), IntelUnitClass::Armor, &cfg, now);
+        // Well past the cluster radius: a new contact, and the old one empties.
+        let new = db.note_jtac_unit(Side::Blue, Side::Red, a, at(5_000.), IntelUnitClass::Armor, &cfg, now);
+        assert_ne!(old, new);
+        assert!(!db.contacts.contains_key(&old));
+        assert!(db.contacts.contains_key(&new));
+        assert_eq!(db.orphaned_marks.len(), 1);
+    }
+
+    #[test]
+    fn contact_another_sensor_refreshed_is_left_to_decay() {
+        let cfg = ElintConfig::default();
+        let now = Utc::now();
+        let mut db = IntelDatabase::default();
+        let a = UnitId::from(1);
+        let id = db.note_jtac_unit(Side::Blue, Side::Red, a, at(0.), IntelUnitClass::Armor, &cfg, now);
+        // A recon pass confirms the site after the JTAC saw it.
+        let id2 = db.upsert(Side::Blue, Side::Red, at(10.), IntelUnitClass::Armor, 4, IntelSource::ReconFlight, &cfg, now);
+        assert_eq!(id, id2);
+        assert_eq!(db.retire_jtac_units(|_| true), 0);
+        assert!(db.contacts.contains_key(&id));
+    }
+
+    #[test]
+    fn living_units_and_other_sides_are_untouched() {
+        let cfg = ElintConfig::default();
+        let now = Utc::now();
+        let mut db = IntelDatabase::default();
+        let a = UnitId::from(1);
+        let blue = db.note_jtac_unit(Side::Blue, Side::Red, a, at(0.), IntelUnitClass::Armor, &cfg, now);
+        let red = db.note_jtac_unit(Side::Red, Side::Blue, UnitId::from(2), at(0.), IntelUnitClass::Armor, &cfg, now);
+        assert_eq!(db.retire_jtac_units(|_| false), 0);
+        assert_eq!(db.retire_jtac_units(|u| u == UnitId::from(2)), 1);
+        assert!(db.contacts.contains_key(&blue));
+        assert!(!db.contacts.contains_key(&red));
     }
 }
