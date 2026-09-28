@@ -72,6 +72,9 @@ pub struct UnitInfo {
     /// systems. Some launchers carry their acquisition range here rather than
     /// in `DetectionRange`.
     pub max_target_detection_range_m: Option<f64>,
+    /// Full internal fuel in kg, aircraft only (`M_fuel_max`). What a spawned
+    /// flight gets when its template's payload says it has no fuel at all.
+    pub max_fuel_kg: Option<f64>,
 }
 
 impl UnitInfo {
@@ -241,6 +244,11 @@ fn parse_unit(t: &LuaTable, category: &str) -> Option<UnitInfo> {
         detection_range_m: opt_f64(t, "DetectionRange").filter(|v| *v > 0.0),
         max_target_detection_range_m: ws
             .and_then(|ws| max_target_detection(&ws, SENSOR_SCAN_DEPTH, &mut seen))
+            .filter(|v| *v > 0.0),
+        // `MaxFuelWeight` is the same number as a string on most airframes;
+        // it's only the fallback for the odd mod that leaves `M_fuel_max` out.
+        max_fuel_kg: opt_f64(t, "M_fuel_max")
+            .or_else(|| opt_string(t, "MaxFuelWeight").and_then(|s| s.trim().parse().ok()))
             .filter(|v| *v > 0.0),
     })
 }
