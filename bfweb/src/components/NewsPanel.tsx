@@ -13,7 +13,9 @@
  *
  * This is the compact form for the SITREP column. `NewsPage` shows the archive.
  */
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { API_ROOT } from '../api'
 import type { NewsDay, NewsItem } from '../api'
 
 /** Ordering is the server's; this only decides what gets emphasis. */
@@ -66,6 +68,40 @@ function Paragraphs({ day, compact }: { day: NewsDay; compact?: boolean }) {
   )
 }
 
+/**
+ * The wire photo filed with a dispatch (`bfdb/src/news_image.rs`). Absent for
+ * the running day, for campaigns without an image endpoint, and when a call
+ * failed -- so this simply renders nothing then, and also hides itself if the
+ * file will not load rather than leaving a broken-image box.
+ */
+function DispatchImage({ day, compact }: { day: NewsDay; compact?: boolean }) {
+  const [failed, setFailed] = useState(false)
+  if (!day.image || failed) return null
+  return (
+    <figure style={{ margin: compact ? '2px 0 8px' : '4px 0 12px' }}>
+      <img
+        src={`${API_ROOT}${day.image}`}
+        alt={day.headline}
+        loading="lazy"
+        decoding="async"
+        onError={() => setFailed(true)}
+        style={{
+          display: 'block',
+          width: '100%',
+          height: 'auto',
+          // Square or wide, whatever the model drew: the compact panel crops
+          // to a strip so three dispatches still fit the SITREP column.
+          aspectRatio: compact ? '16 / 7' : undefined,
+          maxHeight: compact ? 150 : 520,
+          objectFit: 'cover',
+          border: '1px solid var(--border)',
+          background: 'var(--bg-elevated)',
+        }}
+      />
+    </figure>
+  )
+}
+
 export function NewsDayBlock({ day, compact }: { day: NewsDay; compact?: boolean }) {
   const blueLost = lossTotal(day, 'blue')
   const redLost = lossTotal(day, 'red')
@@ -94,6 +130,8 @@ export function NewsDayBlock({ day, compact }: { day: NewsDay; compact?: boolean
           {!day.final_ && ' · developing'}
         </time>
       </header>
+
+      <DispatchImage day={day} compact={compact} />
 
       <Paragraphs day={day} compact={compact} />
 

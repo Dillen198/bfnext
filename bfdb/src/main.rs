@@ -53,6 +53,7 @@ struct SiteAssets;
 mod geo;
 mod news;
 mod news_llm;
+mod news_image;
 mod db;
 mod db_id;
 mod atc;
@@ -291,6 +292,75 @@ struct Args {
     /// right one. Falls back to $BFDB_NEWS_LLM_MODEL.
     #[arg(long = "news-llm-model")]
     news_llm_model: Option<String>,
+    /// Who draws one picture per filed war-diary dispatch (see
+    /// `news_image.rs`): `pollinations` (with an account key via
+    /// --news-image-key; anonymous without one, rate limited and may
+    /// watermark), `cloudflare` (Workers AI FLUX schnell, free tier) or `openai` (any
+    /// OpenAI-compatible images endpoint, paid). Unset: cloudflare when
+    /// --news-image-cf-account-id is set, openai when --news-image-url or
+    /// --news-image-key is, else no pictures. Also $BFDB_NEWS_IMAGE_PROVIDER.
+    #[arg(long = "news-image-provider")]
+    news_image_provider: Option<String>,
+    /// Endpoint override. openai: the images/generations URL (default
+    /// OpenAI's; Together is https://api.together.xyz/v1/images/generations).
+    /// cloudflare: a full run URL (e.g. through an AI Gateway). pollinations:
+    /// the prompt base. Falls back to $BFDB_NEWS_IMAGE_URL.
+    #[arg(long = "news-image-url")]
+    news_image_url: Option<String>,
+    /// The provider's credential: the Pollinations account key (`sk_...`),
+    /// the Cloudflare API token (Workers AI permission), or the OpenAI key.
+    /// Only ever sent as an Authorization header, and masked in logs. Also
+    /// --news-image-key-file or $BFDB_NEWS_IMAGE_KEY. Never taken from
+    /// $OPENAI_API_KEY, and never sent to the fallback.
+    #[arg(long = "news-image-key")]
+    news_image_key: Option<String>,
+    /// Cloudflare account id (dashboard -> Workers AI -> "Use REST API").
+    /// Also $BFDB_NEWS_IMAGE_CF_ACCOUNT_ID.
+    #[arg(long = "news-image-cf-account-id")]
+    news_image_cf_account_id: Option<String>,
+    /// Cloudflare diffusion steps, 1-8 (default 6). More is sharper and costs
+    /// more neurons.
+    #[arg(long = "news-image-steps")]
+    news_image_steps: Option<u32>,
+    /// `pollinations`: when the provider's call fails (a Cloudflare quota
+    /// included), try Pollinations once, keyless. Default off.
+    #[arg(long = "news-image-fallback")]
+    news_image_fallback: Option<String>,
+    /// Seconds between pollinations.ai calls when --news-image-key is set
+    /// (default 3). Anonymous calls stay at least 16 s apart regardless.
+    #[arg(long = "news-image-min-interval")]
+    news_image_min_interval: Option<u32>,
+    /// File holding the --news-image-key (first line).
+    #[arg(long = "news-image-key-file")]
+    news_image_key_file: Option<PathBuf>,
+    /// Model id: openai default gpt-image-1 (e.g. dall-e-3, or
+    /// black-forest-labs/FLUX.1-schnell on Together); cloudflare default
+    /// @cf/black-forest-labs/flux-1-schnell; pollinations default flux. Also
+    /// $BFDB_NEWS_IMAGE_MODEL.
+    #[arg(long = "news-image-model")]
+    news_image_model: Option<String>,
+    /// WIDTHxHEIGHT. openai default 1024x1024, the one size every model
+    /// accepts (gpt-image-1 also 1536x1024, dall-e-3 1792x1024); pollinations
+    /// default 1024x576. Cloudflare's FLUX schnell is always square.
+    #[arg(long = "news-image-size")]
+    news_image_size: Option<String>,
+    /// openai only: passed through as `quality` when set (gpt-image-1: low /
+    /// medium / high, its main price knob).
+    #[arg(long = "news-image-quality")]
+    news_image_quality: Option<String>,
+    /// The look of the pictures, replacing the default (realistic war
+    /// photojournalism). An instance's `news_image_style` overrides this. The
+    /// safety rules -- no text, no real people, no flags, no gore -- are always
+    /// appended.
+    #[arg(long = "news-image-style")]
+    news_image_style: Option<String>,
+    /// Most image calls one instance may make per UTC day (admin regenerates
+    /// included).
+    #[arg(long = "news-image-daily-per-instance", default_value_t = news_image::DEFAULT_PER_INSTANCE_DAILY)]
+    news_image_daily_per_instance: u32,
+    /// Most image calls the whole process may make per UTC day.
+    #[arg(long = "news-image-daily-global", default_value_t = news_image::DEFAULT_GLOBAL_DAILY)]
+    news_image_daily_global: u32,
     /// Public base URL of the training range site (`range/` app). Used for
     /// the result links in the Discord embeds `/api/range/result/<id>/discord`
     /// hands the bot. Only matters when an instance has `kind: "range"`.
@@ -3571,24 +3641,131 @@ fn wiki_summarize_actions(actions: &serde_json::Value) -> serde_json::Value {
 /// Deliberately public and deliberately NOT fog-of-war scoped: both coalitions
 /// read the same wire report, because in a real war the enemy reads the paper
 /// too. `news.rs` has the reasoning for how a day is judged newsworthy.
+///
+/// Each day also carries `image` (a `/api/news/image/...` path, or null) and
+/// `image_pending` (pictures are on and this day is still expected to get
+/// one) -- the latter is what the Discord feed waits on.
 async fn api_news(
     db: StatsDb,
     limit: Option<usize>,
     inst: Inst,
+    images: Option<Arc<news_image::ImageCfg>>,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<serde_json::Value> {
-        let rounds = db.latest_rounds_for(&inst.id)?;
-        let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
-            Some((_, rid, _)) => *rid,
-            None => match rounds.first() {
-                Some((_, rid, _)) => *rid,
-                None => return Ok(serde_json::json!({ "days": [] })),
-            },
+        let enabled = images.is_some();
+        let Some(rid) = news_round(&db, &inst)? else {
+            return Ok(serde_json::json!({ "days": [], "images": enabled }));
         };
-        Ok(serde_json::json!({ "days": db.news_history(rid, limit.unwrap_or(30))? }))
+        let mut days = Vec::new();
+        for d in db.news_history(rid, limit.unwrap_or(30))? {
+            let (image, pending) = news_image::api_fields(&db, &inst.id, rid, &d, enabled)?;
+            let mut v = serde_json::to_value(&d)?;
+            v["image"] = serde_json::json!(image);
+            v["image_pending"] = serde_json::json!(pending);
+            days.push(v);
+        }
+        Ok(serde_json::json!({ "days": days, "images": enabled }))
     })
     .map_err(Error)?;
     Ok(warp::reply::json(&data))
+}
+
+/// The round the war diary is showing for an instance: the open one, else
+/// the most recent.
+fn news_round(db: &StatsDb, inst: &Inst) -> Result<Option<db::RoundId>> {
+    let rounds = db.latest_rounds_for(&inst.id)?;
+    Ok(rounds
+        .iter()
+        .find(|(_, _, r)| r.end.is_none())
+        .or_else(|| rounds.first())
+        .map(|(_, rid, _)| *rid))
+}
+
+/// `GET /api/news/image/<YYYY-MM-DD>` -- the picture filed with that day's
+/// dispatch, for the instance's current round. Public, like the diary. 404
+/// when there is none (yet). Cached for a day; the `/api/news` URL carries a
+/// version, so a regenerated picture is a new URL.
+async fn api_news_image(
+    day: std::string::String,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    if !news_image::valid_day(&day) {
+        return Err(websec::not_found("no such dispatch").into());
+    }
+    let bytes = task::block_in_place(|| -> Result<Option<Vec<u8>>> {
+        match news_round(&db, &inst)? {
+            Some(rid) => db.news_image_get(&inst.id, rid, &day),
+            None => Ok(None),
+        }
+    })?
+    .ok_or_else(|| websec::not_found("no picture for that dispatch"))?;
+    Ok(websec::serve_upload(bytes, "public, max-age=86400"))
+}
+
+/// `POST /api/admin/news/regenerate-image?day=YYYY-MM-DD` (admin only) --
+/// draw a new picture for a filed dispatch, replacing the stored one if the
+/// call succeeds. Counts against the daily caps like any other call, and runs
+/// in the background (a generation takes up to a minute or two): the answer is
+/// 202 once it is queued, and the day's `image` URL changes when it lands.
+async fn api_admin_news_regenerate_image(
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    inst: Inst,
+    images: Option<Arc<news_image::ImageCfg>>,
+) -> std::result::Result<warp::reply::Response, Error> {
+    use warp::Reply;
+    require_admin(session_id, db.clone()).await?;
+    let Some(cfg) = images else {
+        return Err(websec::unavailable(
+            "dispatch pictures are not configured (--news-image-url / --news-image-key)",
+        )
+        .into());
+    };
+    let day = query.get("day").cloned().unwrap_or_default();
+    if !news_image::valid_day(&day) {
+        return Err(websec::bad_request("day must be YYYY-MM-DD").into());
+    }
+    let (rid, digest) = task::block_in_place(|| -> Result<_> {
+        let rid = news_round(&db, &inst)?.ok_or_else(|| websec::not_found("no round for this instance"))?;
+        let d = db.news_get(rid, &day)?.ok_or_else(|| websec::not_found("no dispatch for that day"))?;
+        if let Some(why) = news_image::capped(&db, &cfg, &inst.id)? {
+            return Err(websec::too_many(why));
+        }
+        Ok((rid, d))
+    })?;
+    if !digest.final_ {
+        return Err(websec::bad_request(
+            "that day is still running -- pictures are drawn once it is filed",
+        )
+        .into());
+    }
+    let inst_cfg = inst.cfg.clone();
+    let inst_id = inst.id.clone();
+    let day2 = day.clone();
+    tokio::task::spawn_blocking(move || {
+        match news_image::illustrate(&db, &inst_cfg, rid, &digest, &cfg, true) {
+            Ok(news_image::Outcome::Stored { version }) => {
+                log::info!("ADMIN: [{inst_id}] news image for {day2} regenerated (v{version})")
+            }
+            Ok(other) => {
+                log::warn!("ADMIN: [{inst_id}] news image for {day2} not regenerated: {other:?}")
+            }
+            Err(e) => log::warn!("ADMIN: [{inst_id}] news image for {day2}: {e}"),
+        }
+    });
+    Ok(warp::reply::with_status(
+        warp::reply::json(&serde_json::json!({
+            "ok": true,
+            "queued": true,
+            "message": format!(
+                "regenerating the picture for {day} -- it replaces the old one in a minute or two if the call succeeds"
+            ),
+        })),
+        warp::http::StatusCode::ACCEPTED,
+    )
+    .into_response())
 }
 
 /// `GET /api/wiki/facts` -- the selected instance's campaign numbers, for the
@@ -5386,7 +5563,15 @@ const UNKNOWN_DCS_VERSION: &str = "unknown";
 /// angles, so a day that is rebuilt every ten minutes is re-*written* only when
 /// something happened. Rebuilding it otherwise would burn a model call every
 /// ten minutes and, worse, reword the page under whoever is reading it.
-async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::WriterCfg>) {
+///
+/// After the text, the same tick illustrates at most one filed day when
+/// pictures are configured (`news_image::tick`).
+async fn news_generator(
+    db: StatsDb,
+    inst: Inst,
+    writer: Option<news_llm::WriterCfg>,
+    images: Option<Arc<news_image::ImageCfg>>,
+) {
     use chrono::{Duration as ChronoDuration, Utc};
     // Calls are rationed process-wide by `news_llm::acquire` (one per tick
     // across every instance, pushed back further on a 429). On top of that a
@@ -5406,6 +5591,7 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
         let db = db.clone();
         let inst = inst.clone();
         let writer = writer.clone();
+        let images = images.clone();
         let day_backoff = &mut day_backoff;
         let res = task::block_in_place(move || -> Result<usize> {
             let rounds = db.latest_rounds_for(&inst.id)?;
@@ -5549,6 +5735,14 @@ async fn news_generator(db: StatsDb, inst: Inst, writer: Option<news_llm::Writer
                     written += 1;
                 }
                 day += ChronoDuration::days(1);
+            }
+            // The picture for a filed day. Its own failures are handled (and
+            // logged) inside; only a DB error lands here, and it must not
+            // cost the text pass its result.
+            if let Some(ic) = &images {
+                if let Err(e) = news_image::tick(&db, &inst.cfg, rid, ic, writer.is_some()) {
+                    log::warn!("[{}] news image: {e}", inst.id);
+                }
             }
             Ok(written)
         });
@@ -6210,6 +6404,12 @@ fn serve_asset(path: &str) -> Response {
 
 // ── Server setup ────────────────────────────────────────────────────
 
+fn with_news_images(
+    c: Option<Arc<news_image::ImageCfg>>,
+) -> impl Filter<Extract = (Option<Arc<news_image::ImageCfg>>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || c.clone())
+}
+
 fn with_db(db: StatsDb) -> impl Filter<Extract = (StatsDb,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || db.clone())
 }
@@ -6496,6 +6696,10 @@ fn registry_from_args(args: &Args) -> Result<Registry> {
             red_faction: args.red_faction.clone(),
             blue_adjective: args.blue_adjective.clone(),
             red_adjective: args.red_adjective.clone(),
+            // Single-server mode takes the look from --news-image-style and
+            // works the setting out from the scenario.
+            news_image_setting: None,
+            news_image_style: None,
             // A training range needs the instances file (`kind: "range"`).
             kind: Default::default(),
             range_jsonl: None,
@@ -6532,6 +6736,8 @@ fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
             red_faction: None,
             blue_adjective: None,
             red_adjective: None,
+            news_image_setting: None,
+            news_image_style: None,
             kind: Default::default(),
             range_jsonl: None,
             tacview_dir: None,
@@ -6583,6 +6789,11 @@ async fn main() -> Result<()> {
     args.shutdown_token = secret_from(args.shutdown_token.take(), None, "BFDB_SHUTDOWN_TOKEN")?;
     args.ops_api_key = secret_from(args.ops_api_key.take(), None, "BFDB_OPS_API_KEY")?;
     args.export_secret = secret_from(args.export_secret.take(), None, "BFDB_EXPORT_SECRET")?;
+    args.news_image_key = secret_from(
+        args.news_image_key.take(),
+        args.news_image_key_file.as_deref(),
+        "BFDB_NEWS_IMAGE_KEY",
+    )?;
 
     if args.clear_sessions {
         let db = open_db_offline(&args, args.db.clone())?;
@@ -7100,6 +7311,41 @@ async fn main() -> Result<()> {
             "news: no --news-llm-url/--news-llm-key -- the war diary will use its template bank"
         ),
     }
+    // Pictures for the diary. Off unless named -- see `news_image.rs`.
+    // A misconfigured provider turns pictures off with an error rather than
+    // stopping bfdb: they are decoration, the rest of the server is not.
+    let news_images = match news_image::ImageCfg::resolve(news_image::ImageArgs {
+        provider: args.news_image_provider.clone(),
+        url: args.news_image_url.clone(),
+        key: args.news_image_key.clone(),
+        model: args.news_image_model.clone(),
+        size: args.news_image_size.clone(),
+        quality: args.news_image_quality.clone(),
+        style: args.news_image_style.clone(),
+        cf_account_id: args.news_image_cf_account_id.clone(),
+        steps: args.news_image_steps,
+        fallback: args.news_image_fallback.clone(),
+        min_interval_secs: args.news_image_min_interval,
+        per_instance_daily: args.news_image_daily_per_instance,
+        global_daily: args.news_image_daily_global,
+    }) {
+        Ok(c) => c.map(Arc::new),
+        Err(e) => {
+            log::error!("news: dispatch pictures are OFF -- {e}");
+            None
+        }
+    };
+    match &news_images {
+        Some(c) => log::info!(
+            "news: dispatch pictures by {} ({}{}, at most {}/instance and {} in all per day)",
+            c.label(),
+            c.size,
+            c.fallback.map(|f| format!(", falling back to {}", f.name())).unwrap_or_default(),
+            c.per_instance_daily,
+            c.global_daily
+        ),
+        None => log::info!("news: no --news-image-provider -- dispatches run without pictures"),
+    }
 
     let export_listen = ExportListenCfg {
         bind: args.export_bind,
@@ -7136,7 +7382,12 @@ async fn main() -> Result<()> {
             if cfg.base.is_some() && !cfg.is_range() {
                 tokio::spawn(tacmap_poller(db.clone(), inst.clone(), tac.clone()));
                 tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
-                tokio::spawn(news_generator(db.clone(), inst.clone(), news_writer.clone()));
+                tokio::spawn(news_generator(
+                    db.clone(),
+                    inst.clone(),
+                    news_writer.clone(),
+                    news_images.clone(),
+                ));
             }
             m.insert(id, InstanceLive { live, live_tx, tac });
         }
@@ -7755,10 +8006,25 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
         .and(with_instance(db.clone()))
-        .then(|db, q: std::collections::HashMap<String, String>, inst| {
+        .and(with_news_images(news_images.clone()))
+        .then(|db, q: std::collections::HashMap<String, String>, inst, images| {
             let limit = q.get("limit").and_then(|s| s.parse().ok());
-            api_news(db, limit, inst)
+            api_news(db, limit, inst, images)
         });
+
+    let news_image_route = warp::path!("api" / "news" / "image" / String)
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_news_image);
+
+    let admin_news_regenerate_image = warp::path!("api" / "admin" / "news" / "regenerate-image")
+        .and(warp::post())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .and(with_news_images(news_images.clone()))
+        .then(api_admin_news_regenerate_image);
 
     let wiki_facts_route = warp::path!("api" / "wiki" / "facts")
         .and(with_db(db.clone()))
@@ -7912,6 +8178,7 @@ async fn main() -> Result<()> {
         .or(wiki_get_route)
         .or(wiki_get_image_route)
         .or(news_route)
+        .or(news_image_route)
         .or(wiki_facts_route)
         .or(intel_list_route)
         .or(intel_get_image_route)
@@ -8006,6 +8273,7 @@ async fn main() -> Result<()> {
         .or(admin_reset)
         .or(admin_merge_rounds)
         .or(admin_rebuild_stats)
+        .or(admin_news_regenerate_image)
         .or(admin_reset_lives_all)
         .or(admin_side_switch)
         .or(admin_ban_route)

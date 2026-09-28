@@ -1629,3 +1629,57 @@ def test_bot_plugin_release_skips_older_and_stamps(tmp_path, world):
     assert (plugin / "commands.py").read_text() == "# from the release"
     stamp = json.loads((plugin / au.PLUGIN_STAMP).read_text())
     assert stamp["source"] == "engine-release" and stamp["tag"] == "engine-p2" and stamp["git"] == "newest"
+
+# ---- war diary pictures: bfdb flags from the YAML, key never on argv ---------------
+
+
+def test_news_image_flags_and_key_stay_off_argv(world):
+    pm = world.cog.procman
+    assert not any(a.startswith("--news-image") for a in pm._build_args("pw", False))
+    world.cfg["bfdb"].update({
+        "news_image_url": "https://api.openai.com/v1/images/generations",
+        "news_image_key": "sk-img",
+        "news_image_model": "gpt-image-1",
+        "news_image_quality": "medium",
+        "news_image_daily_per_instance": 2,
+        "news_image_daily_global": "5",
+    })
+    pm.reload_config(world.cfg)
+    args = pm._build_args("pw", False)
+    assert "sk-img" not in " ".join(args)
+    flag = lambda f: args[args.index(f) + 1]  # noqa: E731
+    assert flag("--news-image-url") == "https://api.openai.com/v1/images/generations"
+    assert flag("--news-image-quality") == "medium"
+    assert (flag("--news-image-daily-per-instance"), flag("--news-image-daily-global")) == ("2", "5")
+    assert "--news-image-size" not in args          # unset -> bfdb's default
+    assert pm._bfdb_env()["BFDB_NEWS_IMAGE_KEY"] == "sk-img"
+    assert oa.is_secret_key("news_image_key") and oa.is_protected_key("news_image_url")
+
+
+def test_free_image_providers_reach_bfdb_and_the_token_stays_off_argv(world):
+    pm = world.cog.procman
+    # Pollinations with an account key: two keys.
+    world.cfg["bfdb"].update({"news_image_provider": "pollinations", "news_image_key": "sk_test_not_real"})
+    pm.reload_config(world.cfg)
+    args = pm._build_args("pw", False)
+    assert args[args.index("--news-image-provider") + 1] == "pollinations"
+    assert "sk_test_not_real" not in " ".join(args)
+    assert pm._bfdb_env()["BFDB_NEWS_IMAGE_KEY"] == "sk_test_not_real"
+    # Cloudflare, with the anonymous fallback and tuning.
+    world.cfg["bfdb"].update({"news_image_provider": "cloudflare", "news_image_cf_account_id": "acc123",
+                              "news_image_key": "cf-token", "news_image_steps": 8,
+                              "news_image_fallback": "pollinations", "news_image_min_interval": "5"})
+    pm.reload_config(world.cfg)
+    args = pm._build_args("pw", False)
+    flag = lambda f: args[args.index(f) + 1]  # noqa: E731
+    assert (flag("--news-image-provider"), flag("--news-image-cf-account-id"), flag("--news-image-steps"),
+            flag("--news-image-fallback"), flag("--news-image-min-interval")) == \
+        ("cloudflare", "acc123", "8", "pollinations", "5")
+    assert "cf-token" not in " ".join(args) and pm._bfdb_env()["BFDB_NEWS_IMAGE_KEY"] == "cf-token"
+    # The dashboard's config editor cannot re-point the saved token.
+    for k in ("news_image_provider", "news_image_fallback", "news_image_cf_account_id"):
+        assert oa.is_protected_key(k), k
+    new = {"bfdb": {"news_image_provider": "pollinations", "news_image_key": oa.SECRET_MASK}}
+    old = {"bfdb": {"news_image_provider": "cloudflare", "news_image_key": "cf-token"}}
+    with pytest.raises(ValueError):
+        oa.unmask_secrets(new, old)

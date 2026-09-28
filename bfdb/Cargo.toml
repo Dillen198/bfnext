@@ -17,6 +17,7 @@ path = "src/migrate.rs"
 [dependencies]
 anyhow = { workspace = true }
 arrayvec = { workspace = true }
+base64 = { workspace = true }
 bfprotocols = { version = "0.1.0", path = "../bfprotocols" }
 bincode = { workspace = true }
 bytes = { workspace = true }

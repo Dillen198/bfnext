@@ -73,7 +73,7 @@ __all__ = ["OpsApi", "mask_secrets", "unmask_secrets", "SECRET_MASK", "is_secret
            "tail_lines", "validate_plugin_yaml", "protected_changes", "is_protected_key"]
 
 SECRET_MASK = "__SECRET__"
-_SECRET_HINTS = ("password", "secret", "api_key", "apikey", "token", "webhook", "llm_key")
+_SECRET_HINTS = ("password", "secret", "api_key", "apikey", "token", "webhook", "llm_key", "image_key")
 CONFIG_BACKUPS_KEEP = 20
 LOG_FILES = ("bot", "service", "bfdb", "bfdb_boot", "netidx")
 
@@ -106,7 +106,8 @@ def mask_secrets(node: Any) -> int:
 
 def _is_endpoint_key(key: Any) -> bool:
     k = str(key).lower()
-    return "url" in k or "uri" in k or k.endswith("host")
+    return ("url" in k or "uri" in k or k.endswith("host")
+            or k.endswith("_provider") or k.endswith("_account_id"))
 
 
 def unmask_secrets(new: Any, old: Any, path: str = "") -> None:
@@ -152,6 +153,9 @@ _PROTECTED_EXACT = {
     "exe", "cmd", "command", "home", "folder", "source", "repo", "url", "uri", "public_key",
     "bot_plugin", "campaigns", "token", "files", "tag_prefix", "config", "prefix", "bftools", "path",
     "listen", "shutdown_path",
+    # Which service the saved news_image_key is sent to: switching the
+    # provider (or the fallback) would hand a Cloudflare token to someone else.
+    "news_image_provider", "news_image_fallback", "news_image_cf_account_id",
 }
 _PROTECTED_SUFFIXES = (
     "_exe", "_cmd", "_command", "_path", "_dir", "_url", "_uri", "_config", "_jsonl", "_file",

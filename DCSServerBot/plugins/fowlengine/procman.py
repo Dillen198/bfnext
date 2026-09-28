@@ -173,6 +173,17 @@ def _expand(val) -> Optional[str]:
     return os.path.expandvars(val)
 
 
+def _opt_int(val) -> Optional[str]:
+    """A whole-number YAML value as a flag argument; empty/missing/garbage -> None
+    (bfdb's own default then applies)."""
+    if val in (None, "") or isinstance(val, bool):
+        return None
+    try:
+        return str(int(val))
+    except (TypeError, ValueError):
+        return None
+
+
 # What a `bfdb.instances:` entry runs. "campaign" is bflib (the default, and
 # every instance that predates the training range); "range" is bfrange.
 INSTANCE_KINDS = ("campaign", "range")
@@ -617,6 +628,11 @@ class Procman:
                 "red_faction": inst.get("red_faction") or None,
                 "blue_adjective": inst.get("blue_adjective") or None,
                 "red_adjective": inst.get("red_adjective") or None,
+                # The war diary's pictures: where/when the war is, and the
+                # look (over bfdb.news_image_style). Unset -> worked out from
+                # the scenario / the default war-photo style.
+                "news_image_setting": inst.get("news_image_setting") or None,
+                "news_image_style": inst.get("news_image_style") or None,
                 # "campaign" (bflib) or "range" (bfrange). A range instance's
                 # graded results come from range_jsonl (bfrange's
                 # Logs/range.jsonl); its stats_jsonl still carries the
@@ -989,6 +1005,23 @@ class Procman:
             # any local process could read it.
             "--news-llm-url": (c.get("news_llm_url") or None),
             "--news-llm-model": (c.get("news_llm_model") or None),
+            # One picture per filed dispatch (bfdb/src/news_image.rs):
+            # provider pollinations | cloudflare | openai. Off unless a
+            # provider (or a cloudflare account id / openai url or key) is set.
+            # The key / token goes in through the environment like the
+            # writer's, never on the command line.
+            "--news-image-provider": (c.get("news_image_provider") or None),
+            "--news-image-cf-account-id": (c.get("news_image_cf_account_id") or None),
+            "--news-image-steps": _opt_int(c.get("news_image_steps")),
+            "--news-image-fallback": (c.get("news_image_fallback") or None),
+            "--news-image-min-interval": _opt_int(c.get("news_image_min_interval")),
+            "--news-image-url": (c.get("news_image_url") or None),
+            "--news-image-model": (c.get("news_image_model") or None),
+            "--news-image-size": (c.get("news_image_size") or None),
+            "--news-image-quality": (c.get("news_image_quality") or None),
+            "--news-image-style": (c.get("news_image_style") or None),
+            "--news-image-daily-per-instance": _opt_int(c.get("news_image_daily_per_instance")),
+            "--news-image-daily-global": _opt_int(c.get("news_image_daily_global")),
         }
         if instances_file:
             # Multi-instance: every per-server path/port/base lives in the file,
@@ -1031,13 +1064,17 @@ class Procman:
 
     def _bfdb_env(self) -> dict:
         """bfdb's environment: the bot's, plus the secrets bfdb can read from
-        the environment instead of its command line. Only BFDB_NEWS_LLM_KEY so
-        far (bfdb/src/news_llm.rs); the other secrets still go as flags until
-        bfdb reads them from the environment too."""
+        the environment instead of its command line: BFDB_NEWS_LLM_KEY
+        (bfdb/src/news_llm.rs) and BFDB_NEWS_IMAGE_KEY (news_image.rs); the
+        other secrets still go as flags until bfdb reads them from the
+        environment too."""
         env = dict(os.environ)
         key = self.cfg.get("news_llm_key")
         if key:
             env["BFDB_NEWS_LLM_KEY"] = str(key)
+        image_key = self.cfg.get("news_image_key")
+        if image_key:
+            env["BFDB_NEWS_IMAGE_KEY"] = str(image_key)
         # bfdb's OPS proxy calls use this key when set (--ops-api-key /
         # BFDB_OPS_API_KEY), falling back to dcsserverbot_api_key -- so a
         # separate ops_api.api_key doesn't lock the dashboard's OPS page out.

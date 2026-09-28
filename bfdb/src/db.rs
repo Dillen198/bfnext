@@ -950,6 +950,14 @@ pub(crate) struct StatsDbInner {
     /// bfdb; it WILL grow fields. JSON costs a little space and makes a new
     /// field a non-event.
     news: Tree<(RoundId, std::string::String), std::string::String>,
+    /// War-diary pictures (`news_image.rs`), keyed (instance id, round, day).
+    /// The state is JSON for the same reason `news` is; the bytes sit apart so
+    /// listing a day's state never drags a few MB of PNG through the decoder.
+    news_image_meta: Tree<(std::string::String, RoundId, std::string::String), std::string::String>,
+    news_image_data: Tree<(std::string::String, RoundId, std::string::String), Vec<u8>>,
+    /// Image calls made per (instance id or "*" for all, UTC day) -- the
+    /// daily cost caps.
+    news_image_count: Tree<(std::string::String, std::string::String), u32>,
     // bfwiki content, keyed by page slug (e.g. "gameplay/objectives")
     wiki_pages: Tree<std::string::String, WikiPage>,
     // bfwiki uploaded images (screenshots etc.), keyed by generated Uuid
@@ -1276,6 +1284,9 @@ impl StatsDb {
             // them is better than a decode error on every pass. The old tree is
             // left alone and ages out -- at most 120 days of small records.
             news: Tree::open(&db, "news_json")?,
+            news_image_meta: Tree::open(&db, "news_image_meta")?,
+            news_image_data: Tree::open(&db, "news_image_data")?,
+            news_image_count: Tree::open(&db, "news_image_count")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
             intel_captures: Tree::open(&db, "intel_captures")?,
@@ -2622,6 +2633,61 @@ impl StatsDb {
             },
             None => None,
         })
+    }
+
+    /// A war-diary picture's state, if one was ever attempted. An unreadable
+    /// row reads as absent (the generator then simply tries again).
+    pub(crate) fn news_image_meta(
+        &self,
+        inst: &str,
+        round: RoundId,
+        day: &str,
+    ) -> Result<Option<crate::news_image::ImageMeta>> {
+        Ok(self
+            .news_image_meta
+            .get(&(inst.to_string(), round, day.to_string()))?
+            .and_then(|raw| serde_json::from_str(&raw).ok()))
+    }
+
+    pub(crate) fn news_image_meta_put(
+        &self,
+        inst: &str,
+        round: RoundId,
+        day: &str,
+        meta: &crate::news_image::ImageMeta,
+    ) -> Result<()> {
+        let json = serde_json::to_string(meta)?;
+        self.news_image_meta.insert(&(inst.to_string(), round, day.to_string()), &json)?;
+        Ok(())
+    }
+
+    /// Store a picture and its state together. Bytes first: a crash between
+    /// the two leaves bytes nobody points at, never state pointing at nothing.
+    pub(crate) fn news_image_put(
+        &self,
+        inst: &str,
+        round: RoundId,
+        day: &str,
+        bytes: &[u8],
+        meta: &crate::news_image::ImageMeta,
+    ) -> Result<()> {
+        self.news_image_data.insert(&(inst.to_string(), round, day.to_string()), &bytes.to_vec())?;
+        self.news_image_meta_put(inst, round, day, meta)
+    }
+
+    pub(crate) fn news_image_get(&self, inst: &str, round: RoundId, day: &str) -> Result<Option<Vec<u8>>> {
+        self.news_image_data.get(&(inst.to_string(), round, day.to_string()))
+    }
+
+    pub(crate) fn news_image_count(&self, scope: &str, day: &str) -> Result<u32> {
+        Ok(self.news_image_count.get(&(scope.to_string(), day.to_string()))?.unwrap_or(0))
+    }
+
+    pub(crate) fn news_image_count_bump(&self, scope: &str, day: &str) -> Result<()> {
+        let key = (scope.to_string(), day.to_string());
+        let n = self.news_image_count.get(&key)?.unwrap_or(0);
+        self.news_image_count.insert(&key, &n.saturating_add(1))?;
+        Ok(())
     }
 
     pub(crate) fn recent_captures(&self, round: RoundId, limit: usize) -> Result<Vec<CaptureRecord>> {
