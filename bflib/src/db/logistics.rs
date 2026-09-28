@@ -5055,6 +5055,9 @@ impl Db {
         > = smallvec![];
         // Where each supply run's cargo ends up (troop runs carry none).
         let mut cargo: SmallVec<[(HeloMissionId, Side, TransportEnd); 2]> = smallvec![];
+        // Failed troop insertions, to go in by road instead of being refunded.
+        let mut diverted: SmallVec<[super::ground_insertion::FailedInsertion; 2]> = smallvec![];
+        use super::ground_insertion::refund_or_divert;
 
         for mission_id in self
             .ephemeral
@@ -5078,7 +5081,7 @@ impl Db {
                 Ok(g) => g.name.clone(),
                 Err(_) => {
                     warn!("[HELO_MISSION] {} group not found in database", mission_id);
-                    refunds.push((player, cost, format_compact!("helo mission lost")));
+                    refund_or_divert(&mut refunds, &mut diverted, &mission_id, mission, format_compact!("helo mission lost"));
                     if carries {
                         cargo.push((mission_id.clone(), side, TransportEnd::Lost));
                     }
@@ -5141,13 +5144,15 @@ impl Db {
                                 .map(|p| (mission.last_pos - p).norm())
                                 .unwrap_or(0.)
                         );
-                        refunds.push((
-                            player,
-                            cost,
+                        refund_or_divert(
+                            &mut refunds,
+                            &mut diverted,
+                            &mission_id,
+                            mission,
                             format_compact!(
                                 "your helo to {dest_name} never took off from {origin_name}: {why}, mission cancelled"
                             ),
-                        ));
+                        );
                         if carries {
                             cargo.push((mission_id.clone(), side, TransportEnd::Returned));
                         }
@@ -5160,11 +5165,13 @@ impl Db {
                             (mission.last_pos - dest_pos).norm(),
                             dest_name
                         );
-                        refunds.push((
-                            player,
-                            cost,
+                        refund_or_divert(
+                            &mut refunds,
+                            &mut diverted,
+                            &mission_id,
+                            mission,
                             format_compact!("helo mission to {dest_name} never made it down, recalled"),
-                        ));
+                        );
                         if carries {
                             cargo.push((mission_id.clone(), side, TransportEnd::Returned));
                         }
@@ -5179,17 +5186,14 @@ impl Db {
                         mission_id,
                         if airborne { "en route" } else { "before it took off" }
                     );
-                    refunds.push((
-                        player,
-                        cost,
-                        if airborne {
-                            format_compact!("helo mission to {dest_name} lost en route")
-                        } else {
-                            format_compact!(
-                                "helo mission to {dest_name} lost on the ground at {origin_name} before it took off"
-                            )
-                        },
-                    ));
+                    let why = if airborne {
+                        format_compact!("helo mission to {dest_name} lost en route")
+                    } else {
+                        format_compact!(
+                            "helo mission to {dest_name} lost on the ground at {origin_name} before it took off"
+                        )
+                    };
+                    refund_or_divert(&mut refunds, &mut diverted, &mission_id, mission, why);
                     if carries {
                         cargo.push((mission_id.clone(), side, TransportEnd::Lost));
                     }
@@ -5254,6 +5258,9 @@ impl Db {
         for (ucid, msg) in delivered_msgs {
             self.ephemeral.panel_to_player(&self.persisted, 15, &ucid, msg);
         }
+        // Failed troop insertions go in by road (`ground_insertion`); only the
+        // ones that can't join the refunds below.
+        self.divert_to_road(lua, diverted, &mut refunds, now);
         // Always say it. The refund used to carry the only message, so a
         // free troop insertion (cost 0 on the live config) vanished without a
         // word and players were left thinking nothing had been dispatched.

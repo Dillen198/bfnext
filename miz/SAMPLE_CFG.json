@@ -1260,6 +1260,27 @@
     "flight_step_mhz": 1.0,
     "flight_count": 8
   },
+  "_helo_insertion_note": "F10 > Actions > AI Helo Missions: an AI helicopter flies a paid troop squad (or a supply run) from the nearest friendly airbase/FARP/FOB and lands at the target. aircraft_template names a HELICOPTER group per side in the .miz. Absent block = feature off.",
+  "helo_insertion": {
+    "aircraft_template": {
+      "Blue": "BHELO_LOGI",
+      "Red": "RHELO_LOGI"
+    },
+    "troop_name": "Standard",
+    "troop_mission_cost": 0,
+    "supply_mission_cost": 50,
+    "max_range_m": 150000,
+    "refund_on_loss": true,
+    "cold_start": true,
+    "_ground_fallback_note": "When a TROOP insertion helo fails (never takes off, is shot down, never gets down at the target) the same squad is driven in by road from the nearest friendly objective within max_range_m that has a road to the target, instead of refunding. Absent block = on with these defaults; enabled false = plain refund. template per side overrides warehouse.convoy.truck_template. The squad dismounts within arrive_m of the zone, or after the vehicle stops for a minute within twice that. timeout_mins unset = twice the planned drive + 10 min, at least 20. A lost, wedged or late vehicle is refunded (refund_on_loss); a restart refunds legs still on the road. Supply runs always just refund.",
+    "ground_fallback": {
+      "enabled": true,
+      "template": {},
+      "speed_kph": 50,
+      "arrive_m": 400,
+      "max_range_m": 60000
+    }
+  },
   "air_life": {
     "wingman": {
       "max_side_pilots": 4,

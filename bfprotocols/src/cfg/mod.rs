@@ -4863,6 +4863,84 @@ pub struct HeloInsertionCfg {
     /// startup delay before it gets moving is more than you want to wait.
     #[serde(default = "default_true")]
     pub cold_start: bool,
+    /// What happens when a TROOP INSERTION helo fails -- never takes off, is
+    /// shot down, or never gets down at the target: instead of a refund the
+    /// same squad is driven there by road from the nearest friendly objective.
+    /// Absent = on, with the defaults below; `"enabled": false` turns it off
+    /// and brings back the plain refund. Supply runs always just refund.
+    #[serde(default)]
+    pub ground_fallback: HeloGroundFallbackCfg,
+}
+
+/// See `HeloInsertionCfg::ground_fallback`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HeloGroundFallbackCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Vehicle group template per side (a ground group in the .miz). A side
+    /// with no entry uses its `warehouse.convoy.truck_template`; a side with
+    /// neither gets the refund.
+    #[serde(default)]
+    pub template: FxHashMap<Side, String>,
+    /// Road speed in km/h. Default 50.
+    #[serde(default = "default_ground_fallback_speed_kph")]
+    pub speed_kph: f64,
+    /// The squad dismounts once the vehicle is this close to the target's
+    /// zone, or has stopped for a minute within twice this. Default 400m.
+    #[serde(default = "default_ground_fallback_arrive_m")]
+    pub arrive_m: f64,
+    /// Only objectives this close to the target (straight line) may send the
+    /// vehicle. Default 60km.
+    #[serde(default = "default_ground_fallback_max_range_m")]
+    pub max_range_m: f64,
+    /// Give up (and refund) after this many minutes on the road. Unset =
+    /// twice the planned drive plus 10 minutes, never under 20.
+    #[serde(default)]
+    pub timeout_mins: Option<u32>,
+}
+
+impl Default for HeloGroundFallbackCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            template: FxHashMap::default(),
+            speed_kph: default_ground_fallback_speed_kph(),
+            arrive_m: default_ground_fallback_arrive_m(),
+            max_range_m: default_ground_fallback_max_range_m(),
+            timeout_mins: None,
+        }
+    }
+}
+
+fn default_ground_fallback_speed_kph() -> f64 { 50.0 }
+fn default_ground_fallback_arrive_m() -> f64 { 400.0 }
+fn default_ground_fallback_max_range_m() -> f64 { 60_000.0 }
+
+#[cfg(test)]
+mod ground_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn absent_block_means_on_with_defaults() {
+        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({})).unwrap();
+        let g = h.ground_fallback;
+        assert!(g.enabled);
+        assert!(g.template.is_empty());
+        assert_eq!((g.speed_kph, g.arrive_m, g.max_range_m), (50., 400., 60_000.));
+        assert_eq!(g.timeout_mins, None);
+    }
+
+    #[test]
+    fn a_partial_block_keeps_the_other_defaults() {
+        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({
+            "ground_fallback": { "enabled": false, "template": { "Red": "RTRUCK" } }
+        }))
+        .unwrap();
+        let g = h.ground_fallback;
+        assert!(!g.enabled);
+        assert_eq!(g.template.get(&Side::Red).map(|s| s.as_str()), Some("RTRUCK"));
+        assert_eq!(g.arrive_m, 400.);
+    }
 }
 
 fn default_helo_troop_name() -> String { String::from("Standard") }

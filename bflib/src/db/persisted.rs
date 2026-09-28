@@ -20,6 +20,7 @@ use super::{
     player::Player,
     Map, MapM, MapS, Set, SetM, SetS,
 };
+use super::ground_insertion::GroundInsertion;
 use super::logistics::PendingCargo;
 use super::tasks::{Task, TaskId};
 use crate::navaids::Navaid;
@@ -146,6 +147,11 @@ pub struct Persisted {
     /// instead of a restart re-opening every freshly flipped base at once.
     #[serde(default)]
     pub last_owner_change: MapS<ObjectiveId, DateTime<Utc>>,
+    /// Troop insertions on their way in by road after the helo failed, by
+    /// id. Persisted so a restart can refund them: the vehicle itself is not
+    /// respawned. See `crate::db::ground_insertion`.
+    #[serde(default)]
+    pub ground_insertions: MapS<CompactString, GroundInsertion>,
 }
 
 /// Backward compatibility: saves written before the per-ship rework stored

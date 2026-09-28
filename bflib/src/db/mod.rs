@@ -46,6 +46,7 @@ pub mod cargo;
 pub mod ephemeral;
 pub mod events;
 pub mod ghosts;
+pub mod ground_insertion;
 pub mod group;
 pub mod intel;
 pub mod logistics;

@@ -2004,6 +2004,9 @@ impl Db {
         }
         self.setup_warehouses_after_load(spctx.lua())
             .context("setting up warehouses")?;
+        // Road troop insertions still under way when the last mission ended
+        // lost their vehicle with it; refund them.
+        self.reconcile_ground_insertions();
         let mut mark_deployed_and_logistics = || -> Result<()> {
             let groups = self
                 .persisted

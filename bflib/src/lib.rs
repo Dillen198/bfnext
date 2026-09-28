@@ -4642,6 +4642,10 @@ fn run_slow_timed_events(
             if let Err(e) = ctx.db.tick_helo_missions(lua, start_ts) {
                 error!("error ticking helo missions {e:?}");
             }
+            // Troop insertions whose helo failed, going in by road instead.
+            if let Err(e) = ctx.db.tick_ground_insertions(lua, start_ts) {
+                error!("error ticking road troop insertions {e:?}");
+            }
         });
         // Dynamic CAP retargeting: redirect active CAP groups toward enemy aircraft.
         step(lua, ctx, "retarget_cap_groups", |ctx| {
