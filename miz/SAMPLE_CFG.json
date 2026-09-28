@@ -1279,6 +1279,17 @@
       "speed_kph": 50,
       "arrive_m": 400,
       "max_range_m": 60000
+    },
+    "_threat_avoidance_note": "The helo plans around the enemy air defence ITS SIDE KNOWS ABOUT: its intel contacts classed as air defence (recon, JTAC, SF, AWACS, EWR; sized by the weapons inside the contact's uncertainty, unknown_radius_m when that says nothing, plus the uncertainty) and a presumed MANPADS/AAA ring of garrison_radius_m beyond the zone of every enemy objective on the F10 map whose garrison still stands (0 = off). Every radius is multiplied by margin. With no threat-free route inside ~1.6x the direct distance it takes the least-exposed one. Flown at noe_agl_m near threats and on the final approach, terrain_clearance_m elsewhere. Lands at the spot in the zone farthest from known enemies (flat, on land, clear of units). In flight it re-routes when shot at or hit, or when new air defence is reported across the rest of its route: at most max_replans times, min_replan_secs apart. Also sets WEAPON HOLD, evade fire, flares in SAM range, no RTB on bingo. Absent block = on with these defaults; enabled false = old behaviour (zone centre, terrain-only route, no AI options).",
+    "threat_avoidance": {
+      "enabled": true,
+      "margin": 1.25,
+      "noe_agl_m": 40,
+      "replan": true,
+      "max_replans": 4,
+      "min_replan_secs": 20,
+      "unknown_radius_m": 10000,
+      "garrison_radius_m": 3000
     }
   },
   "air_life": {

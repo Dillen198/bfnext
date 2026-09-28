@@ -31,9 +31,11 @@ or holding after a capture. It is also the fastest way to close a `SUPPLY` task
 on the [tasking board](../gameplay/tasking-board.md).
 
 Neither is free of risk. The helo cruises at
-{{cfg:helo_insertion.speed_kph|220}} km/h on a route planned around the terrain,
-not around the threats. If that route crosses a live SAM, you have bought an
-expensive fireball — and while the points come back, the time does not.
+{{cfg:helo_insertion.speed_kph|220}} km/h on a route planned around the terrain
+**and around the air defence your side knows about** — see
+[Staying alive](#staying-alive). Air defence nobody has reported is still a
+surprise, and a target inside its own defences can only be flown into low and
+fast. The points come back if it dies; the time does not.
 
 ## Troop insertion
 
@@ -47,9 +49,10 @@ Pick the target base. The engine:
 3. Charges you the troop's own cost plus the mission fee
    ({{cfg:helo_insertion.troop_mission_cost|0}} points).
 4. Spawns the helo and flies it.
-5. On landing within
-   **{{cfg:helo_insertion.landing_radius_m|200}} m** of the objective, deploys a
-   **{{cfg:helo_insertion.troop_name|Standard}}** squad there and despawns.
+5. On landing inside the objective's zone, deploys a
+   **{{cfg:helo_insertion.troop_name|Standard}}** squad where it put down and
+   despawns. It lands at the safest spot in the zone it can find, not
+   necessarily the middle — see [Staying alive](#staying-alive).
 
 The squad belongs to you, exactly as if you had unloaded it from your own
 aircraft — it holds the zone, it counts toward the capture timer, it speeds up
@@ -106,12 +109,59 @@ just been taken.
   wheels touching and the delivery message.
 - **It despawns after delivering.** You do not have to clean it up.
 
+## Staying alive
+
+The helo plans its route around the enemy air defence **your side knows
+about** — nothing more. It never cheats: a SAM nobody on your side has found is
+as invisible to it as it is to you. What it does know:
+
+- **Your intel picture.** Every air-defence contact on your side's map — from
+  recon passes, JTACs, special forces, AWACS and EWR fusion. Each is treated as a
+  ring as wide as what is actually there can reach (or
+  {{cfg:helo_insertion.threat_avoidance.unknown_radius_m|10000}} m when the
+  contact says nothing about that), plus how unsure the contact's position is.
+- **Enemy bases on the F10 map.** Every enemy objective whose garrison is still
+  standing is assumed to have MANPADS and guns out to
+  {{cfg:helo_insertion.threat_avoidance.garrison_radius_m|3000}} m beyond its
+  zone. You can see those bases; so can it.
+- **What it sees itself.** A SAM that launches or guns that open up near it, a
+  hit, or a radar on its own warning receiver (if the airframe has one).
+
+Every ring is widened by ×{{cfg:helo_insertion.threat_avoidance.margin|1.25}}
+for safety. Then:
+
+1. **Route.** It takes the shortest route that stays out of every ring. If there
+   is none within about 1.6× the direct distance — the target sits inside its own
+   defences, or a line of SAMs is too wide to go round — it takes the route that
+   spends the **least time inside** them, preferring the weaker ones. You are
+   told when the route bends around threats, and when there was no clean way in.
+2. **Height.** Near known threats and on the final approach it flies
+   **nap-of-the-earth**, about
+   **{{cfg:helo_insertion.threat_avoidance.noe_agl_m|40}} m** over the ground.
+   Everywhere else it keeps the normal terrain clearance (below).
+3. **Landing spot.** It puts down at the spot in the zone **farthest from known
+   enemies** that is flat, on land and clear of units — still well inside the
+   zone, so the troops count for the capture. With nothing known about, that is
+   the middle, as always.
+4. **In flight.** If it comes under fire, or new air defence is reported across
+   the rest of its route, it **re-plans from where it is** and you are told. At
+   most {{cfg:helo_insertion.threat_avoidance.max_replans|4}} times per mission,
+   and not more than once every
+   {{cfg:helo_insertion.threat_avoidance.min_replan_secs|20}} s. Inside the last
+   3 km it is committed and just lands.
+5. **Behaviour.** It holds its fire (it is there to land, not to fight), jinks
+   when shot at and then carries on, drops flares whenever it is inside a SAM's
+   reach, and does not turn for home on low fuel.
+
+If your side knows of nothing anywhere near the route, it flies exactly the
+terrain route described next.
+
 ## How it routes
 
-**It still flies straight at the objective.** What changed is the altitude: it
-now climbs and descends with the ground underneath it, instead of holding one
-fixed height and meeting the first ridge taller than that — which is how these
-used to be lost.
+**Without known threats it flies straight at the objective.** What matters is
+the altitude: it climbs and descends with the ground underneath it, instead of
+holding one fixed height and meeting the first ridge taller than that — which is
+how these used to be lost.
 
 When you call the mission the engine samples the terrain along the track and
 builds a profile from it:
@@ -185,6 +235,9 @@ delivered, so the base is no better off; you have only lost the round trip.
 
 ## Using it well
 
+- **Find the threats first.** The helo only avoids what your side has reported.
+  A [recon pass](../f10-menu/recon.md) or a JTAC over the route before you call
+  it is the difference between a detour and a surprise.
 - **Escort it when it matters.** A CAP or SEAD pass down the route, or a
   [`CAS` task posted](../gameplay/tasking-board.md) on the threat, turns a coin
   flip into a delivery.

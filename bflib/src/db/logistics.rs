@@ -854,27 +854,27 @@ impl HeloMission {
 /// into the first ridge taller than that altitude and the mission was lost
 /// en route. The planner samples the terrain and hands back enough waypoints
 /// that every leg is flown above the ground underneath it.
-struct HeloRoutePlan {
+pub(super) struct HeloRoutePlan {
     /// Altitude for waypoint 0. Only matters if the ground-start rewrite in
     /// `ephemeral::spawn_group` can't resolve the launch field and the flight
     /// air-starts after all.
-    departure_alt: f64,
+    pub(super) departure_alt: f64,
     /// Cruise waypoints between the origin and the final approach, as
     /// (position, BARO altitude in metres). Neither the origin nor the
     /// destination is included.
-    cruise: SmallVec<[(Vector2, f64); 16]>,
+    pub(super) cruise: SmallVec<[(Vector2, f64); 16]>,
     /// Where to roll out on final, and at what altitude, before the `Land`
     /// waypoint at the objective itself.
-    approach: (Vector2, f64),
+    pub(super) approach: (Vector2, f64),
     /// Highest terrain anywhere under the planned track.
-    peak_terrain: f64,
+    pub(super) peak_terrain: f64,
     /// Set when the planner had to route around high ground rather than fly
     /// straight at the objective.
-    detoured: bool,
+    pub(super) detoured: bool,
     /// Set when even the best track needs the helo higher than
     /// `max_altitude_m`. The route still climbs over -- flying under a ridge
     /// isn't an option -- but the airframe may not make it.
-    above_ceiling: bool,
+    pub(super) above_ceiling: bool,
 }
 
 /// Highest terrain on the straight line `a`..`b`, sampled at roughly `step`
@@ -971,11 +971,17 @@ fn plan_helo_ground_track(
 /// given only the distance it actually needs at a helicopter's climb rate and
 /// the leg is flown low until then, and each descent starts promptly once the
 /// ground has dropped away rather than gliding down the whole leg.
-fn plan_helo_route(
+///
+/// With `threats` (see `helo_route`), the ground track is the one the threat
+/// planner chose instead, and wherever it runs near a known threat -- and on
+/// the final approach -- the profile hugs the ground at `noe_agl_m` instead
+/// of `terrain_clearance_m`, cut finer so it can.
+pub(super) fn plan_helo_route(
     land: &dcso3::land::Land,
     origin: Vector2,
     dest: Vector2,
     cfg: &bfprotocols::cfg::HeloInsertionCfg,
+    threats: Option<&super::helo_route::ProfileHint>,
 ) -> HeloRoutePlan {
     // Terrain difference within a run that isn't worth a waypoint. This is
     // what sets how closely the profile tracks the ground: every rise or
@@ -994,12 +1000,21 @@ fn plan_helo_route(
     // still below it.
     const CLIMB_RATE_MPS: f64 = 6.0;
     const DESCENT_RATE_MPS: f64 = 8.0;
+    // The same two, for the stretches flown nap-of-the-earth: every rise
+    // worth a tree line gets its own waypoint, and no run is long enough to
+    // hide a hill in.
+    const NOE_MERGE_TOLERANCE: f64 = 25.;
+    const NOE_MAX_RUN: f64 = 3_000.;
 
     let clearance = cfg.terrain_clearance_m.max(0.);
     let climbable = (cfg.max_altitude_m - clearance).max(0.);
-    let (track, peak_terrain) =
-        plan_helo_ground_track(land, origin, dest, climbable, cfg.lateral_avoidance);
-    let detoured = track.len() > 2;
+    let (track, direct_peak) = match threats {
+        // Already routed around the threats; its peak comes from the finer
+        // segment sampling below rather than another pass along every leg.
+        Some(h) => (h.track.iter().copied().collect(), f64::MIN),
+        None => plan_helo_ground_track(land, origin, dest, climbable, cfg.lateral_avoidance),
+    };
+    let detoured = threats.is_none() && track.len() > 2;
 
     // Cut the track into segments: at every track vertex, and at most
     // `step` metres apart within a leg.
@@ -1008,66 +1023,111 @@ fn plan_helo_route(
         .waypoint_spacing_m
         .max(total_len / MAX_SEGMENTS as f64)
         .max(500.);
+    // Legs near a threat are cut finer: a segment's altitude is set by the
+    // highest ground anywhere under it, so a 2.5km one can't hug anything.
+    let noe_step = (total_len / 200.).max(800.);
     // (position, is a vertex of the ground track)
     let mut bounds: SmallVec<[(Vector2, bool); 64]> = smallvec![(origin, true)];
     for w in track.windows(2) {
         let (a, b) = (w[0], w[1]);
         let d = (b - a).norm();
-        let n = ((d / step).ceil() as usize).max(1);
+        let leg_step = match threats {
+            Some(h) if h.leg_is_noe(a, b) => step.min(noe_step),
+            _ => step,
+        };
+        let n = ((d / leg_step).ceil() as usize).max(1);
         for i in 1..=n {
             let p = a + (b - a) * (i as f64 / n as f64);
             bounds.push((p, i == n));
         }
     }
 
-    // Highest terrain under each segment, sampled finer than the segment
-    // itself so a narrow ridge between two waypoints still registers.
-    let peaks: SmallVec<[f64; 64]> = bounds
+    // Whether each segment is flown nap-of-the-earth. All false without
+    // threats, which leaves the profile exactly as it always was.
+    let noe: SmallVec<[bool; 64]> = bounds
         .windows(2)
-        .map(|w| leg_peak_terrain(land, w[0].0, w[1].0, step / 8., 16))
+        .map(|w| threats.is_some_and(|h| h.is_noe((w[0].0 + w[1].0) / 2.)))
         .collect();
 
+    // Highest terrain under each segment, sampled finer than the segment
+    // itself so a narrow ridge between two waypoints still registers. A
+    // finer NOE segment is sampled proportionally finer.
+    let peaks: SmallVec<[f64; 64]> = bounds
+        .windows(2)
+        .zip(noe.iter())
+        .map(|(w, noe)| {
+            let sample = if *noe {
+                ((w[1].0 - w[0].0).norm() / 8.).max(50.)
+            } else {
+                step / 8.
+            };
+            leg_peak_terrain(land, w[0].0, w[1].0, sample, 16)
+        })
+        .collect();
+    let peak_terrain = if threats.is_some() {
+        peaks.iter().copied().fold(f64::MIN, f64::max)
+    } else {
+        direct_peak
+    };
+
     // Merge consecutive segments of similar height, breaking at track
-    // vertices and at `MAX_MERGED_RUN`. Each run records the bound index it
-    // ends at and the highest terrain anywhere in it.
-    let mut runs: SmallVec<[(usize, f64); 16]> = smallvec![];
+    // vertices, at `MAX_MERGED_RUN`, and wherever the route goes in or out
+    // of NOE. Each run records the bound index it ends at, the highest
+    // terrain anywhere in it, and whether it is flown NOE.
+    let mut runs: SmallVec<[(usize, f64, bool); 16]> = smallvec![];
     let mut run_peak = f64::MIN;
     let mut run_start = 0usize;
     for (i, peak) in peaks.iter().copied().enumerate() {
         run_peak = run_peak.max(peak);
         let run_len = (bounds[i + 1].0 - bounds[run_start].0).norm();
+        let (tolerance, max_run) = if noe[i] {
+            (NOE_MERGE_TOLERANCE, NOE_MAX_RUN)
+        } else {
+            (MERGE_TOLERANCE, MAX_MERGED_RUN)
+        };
         let next_differs = peaks
             .get(i + 1)
-            .map(|n| (n - run_peak).abs() > MERGE_TOLERANCE)
+            .map(|n| (n - run_peak).abs() > tolerance || noe[i + 1] != noe[i])
             .unwrap_or(true);
-        if bounds[i + 1].1 || next_differs || run_len >= MAX_MERGED_RUN {
-            runs.push((i + 1, run_peak));
+        if bounds[i + 1].1 || next_differs || run_len >= max_run {
+            runs.push((i + 1, run_peak, noe[i]));
             run_start = i + 1;
             run_peak = f64::MIN;
         }
     }
 
     let floor = cfg.altitude_m;
-    let alt_for = |a: f64, b: f64| (a.max(b) + clearance).max(floor);
+    let noe_agl = threats.map(|h| h.noe_agl_m).unwrap_or(0.);
+    // What one run needs at both its ends: NOE hugs the ground under it and
+    // ignores the cruise floor, everything else keeps the full clearance.
+    let need = |peak: f64, noe: bool| {
+        if noe {
+            peak + noe_agl
+        } else {
+            (peak + clearance).max(floor)
+        }
+    };
+    let alt_for = |a: (f64, bool), b: (f64, bool)| need(a.0, a.1).max(need(b.0, b.1));
 
     // Every airborne waypoint, origin included: the origin sits at what its
     // own first run needs, not at what the rest of the route needs, so the
     // departure isn't already a climb toward a mountain 40km away.
-    let first_peak = runs.first().map(|r| r.1).unwrap_or(peak_terrain);
-    let mut nodes: SmallVec<[(Vector2, f64); 24]> =
-        smallvec![(origin, alt_for(first_peak, first_peak))];
-    for (n, (end, peak)) in runs.iter().copied().enumerate() {
+    let first = runs.first().map(|r| (r.1, r.2)).unwrap_or((peak_terrain, false));
+    let mut nodes: SmallVec<[(Vector2, f64); 24]> = smallvec![(origin, alt_for(first, first))];
+    for (n, (end, peak, run_noe)) in runs.iter().copied().enumerate() {
         // The last run ends at the destination, which gets the approach and
         // the `Land` waypoint instead of a cruise point.
         if n + 1 == runs.len() {
             break;
         }
-        nodes.push((bounds[end].0, alt_for(peak, runs[n + 1].1)));
+        nodes.push((bounds[end].0, alt_for((peak, run_noe), (runs[n + 1].1, runs[n + 1].2))));
     }
 
     // Roll out on final short of the objective so the descent to the ground
     // is a normal approach rather than a dive off the last cruise waypoint.
+    // With known threats about, the final approach is always flown low.
     let last_peak = runs.last().map(|r| r.1).unwrap_or(peak_terrain);
+    let approach_noe = threats.is_some();
     let inbound = match nodes.last() {
         Some((p, _)) => dest - *p,
         None => dest - origin,
@@ -1079,7 +1139,8 @@ fn plan_helo_route(
         dest
     };
     let approach_peak = leg_peak_terrain(land, approach_pos, dest, 250., 16).max(last_peak);
-    nodes.push((approach_pos, alt_for(approach_peak, approach_peak)));
+    let approach_need = (approach_peak, approach_noe);
+    nodes.push((approach_pos, alt_for(approach_need, approach_need)));
 
     // Place the climbs and descents. Both inserted points sit at the *lower*
     // of the leg's two altitudes, which is still at or above that leg's own
@@ -1115,7 +1176,7 @@ fn plan_helo_route(
     }
 
     let departure_alt = timed.first().map(|(_, a)| *a).unwrap_or(floor);
-    let approach = timed.pop().unwrap_or((approach_pos, alt_for(approach_peak, approach_peak)));
+    let approach = timed.pop().unwrap_or((approach_pos, alt_for(approach_need, approach_need)));
     let cruise: SmallVec<[(Vector2, f64); 16]> = timed.into_iter().skip(1).collect();
 
     HeloRoutePlan {
@@ -4741,16 +4802,29 @@ impl Db {
 
         let land = dcso3::land::Land::singleton(lua)?;
 
+        // Around the air defence this side knows about, low near it, down at
+        // the safest spot in the zone (see `helo_route`). `None` with threat
+        // avoidance off: the zone centre and the plain terrain route.
+        let smart =
+            self.plan_helo_threat_route(&land, side, origin_pos, &destination, &helo_cfg, &[]);
+        let land_pos = smart.as_ref().map(|s| s.land_pos).unwrap_or(dest_pos);
+
         // Terrain elevation at the destination: a Land waypoint's altitude is
         // the ground it lands on, not sea level.
-        let dest_alt = land.get_height(LuaVec2(dest_pos)).unwrap_or(0.0);
+        let dest_alt = land.get_height(LuaVec2(land_pos)).unwrap_or(0.0);
 
         // The transit leg used to be a single straight line at a fixed cruise
         // altitude, which is fine over the desert and fatal in the mountains:
         // the first ridge above `altitude_m` was flown into. Plan it against
         // the terrain instead -- around high ground where there's a way
         // around, over it where there isn't.
-        let plan = plan_helo_route(&land, origin_pos, dest_pos, &helo_cfg);
+        let plan = plan_helo_route(
+            &land,
+            origin_pos,
+            land_pos,
+            &helo_cfg,
+            smart.as_ref().and_then(|s| s.hint.as_ref()),
+        );
         if plan.above_ceiling {
             warn!(
                 "[HELO_MISSION] {} {} -> {}: no track under {:.0}m, highest terrain on the \
@@ -4815,7 +4889,8 @@ impl Db {
             speed: speed_mps,
             speed_locked: Some(true),
             name: None,
-            task: Box::new(Task::ComboTask(vec![])),
+            // The defensive AI options; the ground-start rewrite keeps them.
+            task: Box::new(super::helo_route::defensive_task(&helo_cfg)),
         });
         for (pos, alt) in plan.cruise.iter().copied() {
             route_points.push(cruise_point(pos, alt));
@@ -4832,7 +4907,7 @@ impl Db {
             helipad: None,
             typ: PointType::Land,
             link_unit: None,
-            pos: LuaVec2(dest_pos),
+            pos: LuaVec2(land_pos),
             alt: dest_alt,
             alt_typ: Some(AltType::BARO),
             // Sit on the ground for up to 10 minutes -- plenty of margin
@@ -4887,6 +4962,9 @@ impl Db {
             mission_id, origin_name, dest_name
         );
         self.ephemeral.active_helo_missions.insert(mission_id.clone(), mission);
+        if let Some(smart) = smart {
+            self.helo_route_dispatched(&mission_id, origin_pos, smart, &dest_name, speed_mps);
+        }
         Ok(mission_id)
     }
 
@@ -5305,6 +5383,8 @@ impl Db {
                 TransportEnd::Returned => self.refund_cargo(&id),
             }
         }
+        // Re-route the ones still flying that need it (`helo_route`).
+        self.tick_helo_routes(lua, now);
         Ok(())
     }
 

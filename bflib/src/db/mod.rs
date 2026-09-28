@@ -48,6 +48,7 @@ pub mod events;
 pub mod ghosts;
 pub mod ground_insertion;
 pub mod group;
+pub mod helo_route;
 pub mod intel;
 pub mod logistics;
 pub mod map_layer;
