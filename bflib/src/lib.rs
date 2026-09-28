@@ -1076,6 +1076,20 @@ fn on_hit(
         if target.get_name().map(|n| modern_war::is_unmanaged(n.as_str())).unwrap_or(false) {
             return Ok(());
         }
+        // An AI helo mission taking hits re-routes (no-op for anything else).
+        if let Some(uid) = target
+            .object_id()
+            .ok()
+            .and_then(|oid| ctx.db.ephemeral.get_uid_by_object_id(&oid).copied())
+        {
+            let shooter = e
+                .initiator
+                .as_ref()
+                .and_then(|u| u.as_unit().ok())
+                .and_then(|u| u.object_id().ok())
+                .and_then(|oid| ctx.db.ephemeral.get_uid_by_object_id(&oid).copied());
+            ctx.db.note_helo_hit(&uid, shooter, start_ts);
+        }
         if let Some(shooter) = e.initiator.and_then(|u| u.as_unit().ok()) {
             if let Err(e) =
                 ctx.shots_out
@@ -1259,6 +1273,10 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                     {
                         modern_war::on_sam_shot(ctx, gid, start_ts);
                     }
+                }
+                // AI helo missions near an air-defence launch re-route.
+                if let Some(uid) = ctx.db.ephemeral.get_uid_by_object_id(&obj_id).copied() {
+                    ctx.db.note_air_defence_fire(&uid, start_ts);
                 }
             }
             // IADN HARM defense: if this shot is a configured anti-radiation
@@ -1472,6 +1490,19 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 if !ctx.recently_born.contains_key(&id) && ctx.airborne.remove(&id) {
                     ctx.recently_landed.insert(id, Utc::now());
                 }
+            }
+        }
+        // Guns don't raise Shot, only this: AAA opening up near an AI helo
+        // mission counts as it being under fire.
+        Event::ShootingStart(e) => {
+            if let Some(uid) = e
+                .initiator
+                .as_ref()
+                .and_then(|u| u.as_unit().ok())
+                .and_then(|u| u.object_id().ok())
+                .and_then(|oid| ctx.db.ephemeral.get_uid_by_object_id(&oid).copied())
+            {
+                ctx.db.note_air_defence_fire(&uid, start_ts);
             }
         }
         Event::MarkAdded(MarkPanel { initiator: Some(unit), .. }) => {
@@ -4641,6 +4672,10 @@ fn run_slow_timed_events(
         step(lua, ctx, "helo missions", |ctx| {
             if let Err(e) = ctx.db.tick_helo_missions(lua, start_ts) {
                 error!("error ticking helo missions {e:?}");
+            }
+            // Troop insertions whose helo failed, going in by road instead.
+            if let Err(e) = ctx.db.tick_ground_insertions(lua, start_ts) {
+                error!("error ticking road troop insertions {e:?}");
             }
         });
         // Dynamic CAP retargeting: redirect active CAP groups toward enemy aircraft.

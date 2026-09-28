@@ -209,6 +209,9 @@ pub struct Ephemeral {
     /// AI helo mission tracking (F10-callable troop insertion / resource
     /// delivery): mission_id -> HeloMission
     pub(super) active_helo_missions: FxHashMap<super::logistics::HeloMissionId, super::logistics::HeloMission>,
+    /// Threat-aware routing state for those missions, see `helo_route`. Not
+    /// persisted: a mission load drops the helos anyway.
+    pub(super) helo_routes: FxHashMap<super::logistics::HeloMissionId, super::helo_route::HeloRouteState>,
     /// Counter for generating unique helo mission IDs
     pub(super) helo_mission_counter: u32,
     pub(super) deployable_idx: FxHashMap<Side, Arc<DeployableIndex>>,
@@ -386,6 +389,7 @@ impl Default for Ephemeral {
             last_sea_route_spawn: FxHashMap::default(),
             sea_route_counter: 0,
             active_helo_missions: FxHashMap::default(),
+            helo_routes: FxHashMap::default(),
             helo_mission_counter: 0,
             deployable_idx: FxHashMap::default(),
             group_marks: FxHashMap::default(),

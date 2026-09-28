@@ -4863,6 +4863,167 @@ pub struct HeloInsertionCfg {
     /// startup delay before it gets moving is more than you want to wait.
     #[serde(default = "default_true")]
     pub cold_start: bool,
+    /// What happens when a TROOP INSERTION helo fails -- never takes off, is
+    /// shot down, or never gets down at the target: instead of a refund the
+    /// same squad is driven there by road from the nearest friendly objective.
+    /// Absent = on, with the defaults below; `"enabled": false` turns it off
+    /// and brings back the plain refund. Supply runs always just refund.
+    #[serde(default)]
+    pub ground_fallback: HeloGroundFallbackCfg,
+    /// Route around the enemy air defence the calling side knows about (its
+    /// intel contacts, and a presumed short-range garrison at every enemy
+    /// objective on the map), fly nap-of-the-earth near it, land at the spot
+    /// in the target zone farthest from known enemies, and re-route in the
+    /// air when the helo comes under fire or new air defence is reported
+    /// across its path. Absent = on, with the defaults below;
+    /// `"enabled": false` brings back the plain terrain-only route to the
+    /// zone centre.
+    #[serde(default)]
+    pub threat_avoidance: HeloThreatAvoidanceCfg,
+}
+
+/// See `HeloInsertionCfg::threat_avoidance`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HeloThreatAvoidanceCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Multiplier on every known threat's engagement radius before the route
+    /// is planned around it. Default 1.25.
+    #[serde(default = "default_helo_threat_margin")]
+    pub margin: f64,
+    /// Height above the ground flown near known threats and on the final
+    /// approach, in metres. Elsewhere the route keeps `terrain_clearance_m`.
+    /// Default 40.
+    #[serde(default = "default_helo_noe_agl_m")]
+    pub noe_agl_m: f64,
+    /// Re-route in flight when the helo is shot at or a newly reported
+    /// threat lies across the rest of its route. Default true.
+    #[serde(default = "default_true")]
+    pub replan: bool,
+    /// Most in-flight re-routes one mission may make. Default 4.
+    #[serde(default = "default_helo_max_replans")]
+    pub max_replans: u32,
+    /// Least time between two re-routes of one mission, seconds. Default 20.
+    #[serde(default = "default_helo_min_replan_secs")]
+    pub min_replan_secs: u32,
+    /// Engagement radius assumed for an air-defence contact whose weapons the
+    /// intel can't size, in metres. Default 10000 (a short-range radar SAM).
+    #[serde(default = "default_helo_unknown_threat_m")]
+    pub unknown_radius_m: f64,
+    /// Short-range air defence (MANPADS, AAA) presumed around every enemy
+    /// objective whose garrison is still standing, in metres beyond its
+    /// zone. 0 turns the presumption off. Default 3000.
+    #[serde(default = "default_helo_garrison_threat_m")]
+    pub garrison_radius_m: f64,
+}
+
+impl Default for HeloThreatAvoidanceCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            margin: default_helo_threat_margin(),
+            noe_agl_m: default_helo_noe_agl_m(),
+            replan: true,
+            max_replans: default_helo_max_replans(),
+            min_replan_secs: default_helo_min_replan_secs(),
+            unknown_radius_m: default_helo_unknown_threat_m(),
+            garrison_radius_m: default_helo_garrison_threat_m(),
+        }
+    }
+}
+
+fn default_helo_threat_margin() -> f64 { 1.25 }
+fn default_helo_noe_agl_m() -> f64 { 40.0 }
+fn default_helo_max_replans() -> u32 { 4 }
+fn default_helo_min_replan_secs() -> u32 { 20 }
+fn default_helo_unknown_threat_m() -> f64 { 10_000.0 }
+fn default_helo_garrison_threat_m() -> f64 { 3_000.0 }
+
+/// See `HeloInsertionCfg::ground_fallback`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HeloGroundFallbackCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Vehicle group template per side (a ground group in the .miz). A side
+    /// with no entry uses its `warehouse.convoy.truck_template`; a side with
+    /// neither gets the refund.
+    #[serde(default)]
+    pub template: FxHashMap<Side, String>,
+    /// Road speed in km/h. Default 50.
+    #[serde(default = "default_ground_fallback_speed_kph")]
+    pub speed_kph: f64,
+    /// The squad dismounts once the vehicle is this close to the target's
+    /// zone, or has stopped for a minute within twice this. Default 400m.
+    #[serde(default = "default_ground_fallback_arrive_m")]
+    pub arrive_m: f64,
+    /// Only objectives this close to the target (straight line) may send the
+    /// vehicle. Default 60km.
+    #[serde(default = "default_ground_fallback_max_range_m")]
+    pub max_range_m: f64,
+    /// Give up (and refund) after this many minutes on the road. Unset =
+    /// twice the planned drive plus 10 minutes, never under 20.
+    #[serde(default)]
+    pub timeout_mins: Option<u32>,
+}
+
+impl Default for HeloGroundFallbackCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            template: FxHashMap::default(),
+            speed_kph: default_ground_fallback_speed_kph(),
+            arrive_m: default_ground_fallback_arrive_m(),
+            max_range_m: default_ground_fallback_max_range_m(),
+            timeout_mins: None,
+        }
+    }
+}
+
+fn default_ground_fallback_speed_kph() -> f64 { 50.0 }
+fn default_ground_fallback_arrive_m() -> f64 { 400.0 }
+fn default_ground_fallback_max_range_m() -> f64 { 60_000.0 }
+
+#[cfg(test)]
+mod ground_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn absent_block_means_on_with_defaults() {
+        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({})).unwrap();
+        let g = h.ground_fallback;
+        assert!(g.enabled);
+        assert!(g.template.is_empty());
+        assert_eq!((g.speed_kph, g.arrive_m, g.max_range_m), (50., 400., 60_000.));
+        assert_eq!(g.timeout_mins, None);
+    }
+
+    #[test]
+    fn a_partial_block_keeps_the_other_defaults() {
+        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({
+            "ground_fallback": { "enabled": false, "template": { "Red": "RTRUCK" } }
+        }))
+        .unwrap();
+        let g = h.ground_fallback;
+        assert!(!g.enabled);
+        assert_eq!(g.template.get(&Side::Red).map(|s| s.as_str()), Some("RTRUCK"));
+        assert_eq!(g.arrive_m, 400.);
+    }
+
+    #[test]
+    fn threat_avoidance_is_on_by_default() {
+        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({})).unwrap();
+        let t = h.threat_avoidance;
+        assert!(t.enabled && t.replan);
+        assert_eq!((t.margin, t.noe_agl_m), (1.25, 40.));
+        assert_eq!((t.max_replans, t.min_replan_secs), (4, 20));
+        assert_eq!((t.unknown_radius_m, t.garrison_radius_m), (10_000., 3_000.));
+        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({
+            "threat_avoidance": { "margin": 1.5, "replan": false }
+        }))
+        .unwrap();
+        assert_eq!(h.threat_avoidance.margin, 1.5);
+        assert!(!h.threat_avoidance.replan && h.threat_avoidance.enabled);
+    }
 }
 
 fn default_helo_troop_name() -> String { String::from("Standard") }
