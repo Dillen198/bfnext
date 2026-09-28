@@ -575,7 +575,7 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective, friendly: bool) -
         (obj.logi() as f32 / 100.0).max(0.01)
     };
     let pulse = (cfg.repair_time as f32 / logi).max(1.0);
-    let elapsed = (Utc::now() - obj.last_change()).num_seconds().max(0) as f32;
+    let elapsed = (Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f32;
     format_compact!(
         "self-repairing -- next pulse in ~{:.0}m",
         ((pulse - elapsed).max(0.0) / 60.0).ceil()

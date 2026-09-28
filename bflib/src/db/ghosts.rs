@@ -27,7 +27,10 @@ for more details.
 //! group that should be in the world right now, with no DCS object mapped
 //! to it), tries one respawn, and if that doesn't bring it back, retires it:
 //! objective units are marked dead so the objective's health says what is
-//! really there, player-side groups are deleted. Before either step DCS is
+//! really there, player-side groups are deleted. An objective's ghosts are
+//! never respawned while the enemy is at the base: they go straight to
+//! retirement, because conjuring a squad next to the attackers who just
+//! cleared the place is worse than the frozen base this module exists for. Before either step DCS is
 //! asked directly (`Unit.getByName`) whether each unit is there: one that is
 //! was only missing its Birth event, so it is re-mapped, not touched. The
 //! rest of this module is the admin/owner diagnostics for "why won't this
@@ -423,7 +426,11 @@ impl Db {
     /// Stop pretending a ghost group exists. Returns false (and does nothing)
     /// when that would wipe out an objective's whole garrison and `force`
     /// isn't set: that drops the base to Neutral, which is too big a call to
-    /// make automatically on "DCS never told us about these units".
+    /// make automatically on "DCS never told us about these units" -- unless
+    /// the enemy is at the base right now. Then they are looking at the
+    /// place and it is empty; keeping invisible defenders alive only means
+    /// the base can't fall, and JTACs keep reporting infantry that isn't
+    /// there (Discord, Sept 28).
     fn retire_ghost(
         &mut self,
         g: &GhostGroup,
@@ -433,6 +440,7 @@ impl Db {
         let oid = self.persisted.objectives_by_group.get(&g.gid).copied();
         if g.class == GhostClass::Garrison
             && !force
+            && !self.ghost_contested(g)
             && let Some(oid) = oid
             && self.garrison_alive(&oid) <= g.ghosts.len()
         {
@@ -473,6 +481,19 @@ impl Db {
             self.update_objective_status(&oid, now)?;
         }
         Ok(true)
+    }
+
+    /// An objective ghost whose base has the enemy at it: threatened (an
+    /// enemy unit or pilot in sight) or a capture timer running.
+    fn ghost_contested(&self, g: &GhostGroup) -> bool {
+        if !matches!(g.class, GhostClass::Garrison | GhostClass::LeftBehind) {
+            return false;
+        }
+        let Some(oid) = self.persisted.objectives_by_group.get(&g.gid) else {
+            return false;
+        };
+        self.persisted.objectives.get(oid).is_some_and(|o| o.threatened)
+            || self.ephemeral.capture_progress.contains_key(oid)
     }
 
     /// Ask DCS whether the db unit `uid` is really in the world, by name.
@@ -562,6 +583,17 @@ impl Db {
             }
             match step {
                 GhostStep::Wait => (),
+                GhostStep::Respawn if self.ghost_contested(&g) => {
+                    // The clock still advances (ghost_step set `respawned`),
+                    // so it is retired one grace period from now -- or
+                    // forgotten, if its Birth turns up in the meantime.
+                    warn!(
+                        "[GHOST] {} -- alive in the db, not in DCS for {}s; the enemy is at \
+                         the base, so NOT respawning it (it will be retired instead)",
+                        self.describe_ghost(&g),
+                        GHOST_GRACE_SECS
+                    );
+                }
                 GhostStep::Respawn => {
                     warn!(
                         "[GHOST] {} -- alive in the db, not in DCS for {}s; queueing a respawn",
@@ -884,7 +916,7 @@ impl Db {
                 (obj.logi as f32 / 100.).max(0.01)
             };
             let pulse = (cfg.repair_time as f32 / logi) as i64;
-            let left = pulse - (now - obj.last_change_ts).num_seconds();
+            let left = pulse - (now - obj.repair_clock_start()).num_seconds();
             lines.push(format_compact!(
                 "repair: nothing blocking; next pulse in ~{}",
                 fmt_mins(left)

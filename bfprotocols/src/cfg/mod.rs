@@ -887,12 +887,25 @@ pub struct Troop {
 pub struct DismountSpec {
     /// DCS group template name per side. If a side has no entry no dismounts spawn for it.
     pub template: FxHashMap<Side, String>,
-    /// Max simultaneous dismount groups spawned from this vehicle type. 0 = unlimited.
+    /// Stop spawning this type's dismounts once the side has this many
+    /// dismount groups alive (all vehicle types count). 0 = unlimited.
     #[serde(default)]
     pub max_concurrent: u32,
     /// Can these dismounts capture objectives?
     #[serde(default)]
     pub can_capture: bool,
+    /// Chance (0.0-1.0) that a destroyed vehicle of this type has a squad
+    /// that gets out. Defaults to 1.0, which was the only behaviour before:
+    /// every kill, a full squad. That fits an APC; for a supply truck parked
+    /// on an airfield it means clearing a base spawns a fresh squad per
+    /// truck (Discord, Sept 28: "2 sets of super infantry just spawned in
+    /// the middle of the runway").
+    #[serde(default = "default_dismount_chance")]
+    pub chance: f32,
+}
+
+fn default_dismount_chance() -> f32 {
+    1.0
 }
 
 /// Configuration for vehicles that can be loaded into C-130 cargo

@@ -475,6 +475,23 @@ impl Objective {
         self.last_change_ts
     }
 
+    /// Where the auto-repair countdown runs from: the last time the base
+    /// changed, or the last time an enemy was near it, whichever is later.
+    ///
+    /// It used to be `last_change_ts` alone, and repairs are only *skipped*
+    /// while the base is threatened -- the clock kept running underneath. So
+    /// a long assault that stopped killing things for a while (a Chinook run
+    /// back to a FARP for troops) came back to a base whose countdown had
+    /// expired mid-attack: the first quiet tick rebuilt a group at its post,
+    /// on the runway, next to the attackers who had just cleared it (Discord,
+    /// Sept 28: "repairing is a race against time", "infantry just spawned
+    /// in the middle of the runway"). Every sighting of an enemy now restarts
+    /// the full countdown, so a base only heals once it has been left alone
+    /// for a whole repair interval.
+    pub fn repair_clock_start(&self) -> DateTime<Utc> {
+        self.last_change_ts.max(self.last_threatened_ts)
+    }
+
     pub fn logi(&self) -> u8 {
         self.logi
     }
@@ -2122,7 +2139,7 @@ impl Db {
             };
             if repair_time < i64::MAX as f32 {
                 let repair_time = Duration::seconds(repair_time as i64);
-                if obj.health < 100 && (now - obj.last_change_ts) >= repair_time {
+                if obj.health < 100 && (now - obj.repair_clock_start()) >= repair_time {
                     to_repair.push(*oid);
                 }
             }
@@ -2678,7 +2695,17 @@ impl Db {
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     to_mark.push(*gid);
                 }
-                self.overrun_previous_occupants(oid, new_owner)?;
+                // Everything from here on runs with the owner already
+                // flipped, so none of it may `?` out of the pass: a bail-out
+                // left the base taken but with the rest undone -- no
+                // consolidation hold, no redraw, and no capture reward, since
+                // the points are paid at the very end (Discord, Sept 28: "got
+                // nothing for capturing a base"). Each step logs and the
+                // capture carries on; see the airfield handover below for the
+                // first of these that bit.
+                if let Err(e) = self.overrun_previous_occupants(oid, new_owner) {
+                    error!("[CAPTURE] {name}: clearing the previous occupants failed: {e:?}");
+                }
                 let is_sam = objective!(self, oid)?.kind.is_special_sam_site();
                 // Hand the DCS airfield over, if this objective is one. Not
                 // every objective is: a zone-only FOB or a command center has
@@ -2708,10 +2735,12 @@ impl Db {
                         }
                     }
                 }
-                self.repair_one_logi_step(*side, now, oid)
-                    .context("repairing captured airbase logi")?;
-                self.repair_services(*side, now, oid)
-                    .context("repairing captured airbase services")?;
+                if let Err(e) = self.repair_one_logi_step(*side, now, oid) {
+                    error!("[CAPTURE] {name}: repairing the captured logi failed: {e:?}");
+                }
+                if let Err(e) = self.repair_services(*side, now, oid) {
+                    error!("[CAPTURE] {name}: repairing the captured services failed: {e:?}");
+                }
                 // Bring a *fraction* of the new owner's combat garrison
                 // (armour, infantry, AAA, SAM) back on capture -- config
                 // `capture_garrison_revive_fraction`. The .miz pre-places BOTH
@@ -2814,8 +2843,9 @@ impl Db {
                                 self.ephemeral.push_spawn(*gid);
                             }
                         }
-                        self.update_objective_status(&oid, now)
-                            .context("status after garrison revive")?;
+                        if let Err(e) = self.update_objective_status(&oid, now) {
+                            error!("[CAPTURE] {name}: status after the garrison revive: {e:?}");
+                        }
                         let hp = objective!(self, oid)?.health;
                         self.ephemeral.msgs().panel_to_all(
                             15,
@@ -2827,12 +2857,16 @@ impl Db {
                         );
                     }
                 }
-                self.capture_warehouse(lua, oid)
-                    .context("capturing warehouse")?;
+                if let Err(e) = self.capture_warehouse(lua, oid) {
+                    error!("[CAPTURE] {name}: capturing the warehouse failed: {e:?}");
+                }
                 self.sync_scenery_markers(oid);
-                self.setup_supply_lines().context("setup supply lines")?;
-                self.deliver_supplies_from_logistics_hubs(lua, now)
-                    .context("delivering supplies")?;
+                if let Err(e) = self.setup_supply_lines() {
+                    error!("[CAPTURE] {name}: rebuilding supply lines failed: {e:?}");
+                }
+                if let Err(e) = self.deliver_supplies_from_logistics_hubs(lua, now) {
+                    error!("[CAPTURE] {name}: delivering supplies failed: {e:?}");
+                }
                 let mut ucids: SmallVec<[Ucid; 1]> = smallvec![];
                 let mut hold_gids: Vec<GroupId> = vec![];
                 for (_, ucid, troop_origin, gid) in gids {

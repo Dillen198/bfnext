@@ -277,7 +277,7 @@ fn repair_state(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
     }
     let logi = (obj.logi() as f32 / 100.0).max(0.01);
     let pulse = (cfg.repair_time as f32 / logi).max(1.0);
-    let elapsed = (chrono::Utc::now() - obj.last_change()).num_seconds().max(0) as f32;
+    let elapsed = (chrono::Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f32;
     let remaining = (pulse - elapsed).max(0.0);
     format_compact!("active -- next pulse in ~{:.0}m", (remaining / 60.0).ceil())
 }
@@ -298,7 +298,10 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
         return CompactString::from("NEUTRAL -- does not self-repair, must be retaken with troops");
     }
     if obj.threatened() {
-        return CompactString::from("FROZEN while you keep units within sight of the base");
+        return CompactString::from(
+            "FROZEN while you keep units within sight of the base -- and the repair countdown \
+             starts over from the moment you leave",
+        );
     }
     if db.capture_in_progress(oid) {
         return CompactString::from("FROZEN while the capture timer is running");
@@ -322,7 +325,7 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
         (obj.logi() as f32 / 100.0).max(0.01)
     };
     let pulse = (cfg.repair_time as f32 / logi).max(1.0);
-    let elapsed = (chrono::Utc::now() - obj.last_change()).num_seconds().max(0) as f32;
+    let elapsed = (chrono::Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f32;
     let remaining = (pulse - elapsed).max(0.0);
     format_compact!(
         "WILL self-repair -- next pulse ~{:.0}m; act fast or it heals back above 20%",

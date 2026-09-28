@@ -5227,15 +5227,25 @@ impl Db {
             None => return Ok(()),
             Some(s) => s.clone(),
         };
-        if spec.max_concurrent > 0
-            && self.dismount_count(side) as u32 >= spec.max_concurrent
-        {
+        let active = self.dismount_count(side);
+        if spec.max_concurrent > 0 && active as u32 >= spec.max_concurrent {
             return Ok(());
         }
         let template = match spec.template.get(&side) {
             None => return Ok(()),
             Some(t) => t.clone(),
         };
+        if spec.chance < 1.0 && rand::Rng::r#gen::<f32>(&mut rand::thread_rng()) >= spec.chance {
+            return Ok(());
+        }
+        // Logged because these squads appear with no other trace: a player
+        // who sees infantry pop up next to a wreck and asks "where did that
+        // come from" is answered by this line and nothing else.
+        info!(
+            "[DISMOUNT] {vehicle_typ} ({side:?}, from group {from_group}) destroyed at \
+             ({:.0}, {:.0}); {template} gets out ({} dismount group(s) already active)",
+            pos.x, pos.y, active
+        );
         let spawnpos = SpawnLoc::AtPos {
             pos,
             offset_direction: Vector2::new(heading.sin(), heading.cos()),

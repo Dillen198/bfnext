@@ -580,12 +580,12 @@ impl Ephemeral {
     /// progressing toward a repair completion.
     ///
     /// Carriers have a single timed repair operation (repair_start_time +
-    /// carrier.repair_time). Regular objectives auto-repair to 100% once
-    /// `now - last_change_ts` reaches `repair_time / logi_fraction` (see
-    /// `maybe_do_repairs`/`repair_objective`) -- last_change_ts only moves
+    /// carrier.repair_time). Regular objectives repair a group each time
+    /// `now - repair_clock_start()` reaches `repair_time / logi_fraction`
+    /// (see `maybe_do_repairs`/`repair_objective`) -- the clock only moves
     /// when something actually changes (combat, crate delivery, scenery
-    /// loss), so during a quiet stretch this is just as much a clean
-    /// countdown as the carrier's is.
+    /// loss) or an enemy shows up, so during a quiet stretch this is just as
+    /// much a clean countdown as the carrier's is.
     /// Consolidation progress for a base still in its post-capture hold, as
     /// (percent, seconds remaining), bucketed like `repair_pct_for`.
     fn hold_pct_for(&self, obj: &Objective) -> Option<(u8, i64)> {
@@ -619,7 +619,7 @@ impl Ephemeral {
             if !total.is_finite() || total <= 0.0 {
                 return None;
             }
-            let elapsed = (Utc::now() - obj.last_change_ts).num_seconds().max(0) as f64;
+            let elapsed = (Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
             // A working repair resets last_change_ts each tick it fires, so a
             // real countdown never sits past `total`. If elapsed has run well
             // past it, the repair is blocked (contested, no revivable groups,
