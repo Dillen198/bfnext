@@ -1105,6 +1105,8 @@ export interface OpsUpdateConfig {
   load_timeout_minutes: number
   rollback_on_crash: boolean
   bot_plugin: boolean
+  /** campaign packs (cfg + mission) are staged and applied -- fowlengine.yaml only */
+  campaigns?: boolean
   paused: boolean
 }
 
@@ -1120,6 +1122,42 @@ export interface OpsRelease {
 
 export interface OpsHistoryEntry { ts: string; event: string; detail: string; tag?: string | null; server?: string }
 
+/** staged → (DCS start) → probation → applied; held waits for Apply / Keep. */
+export type OpsCampaignStatus = 'staged' | 'held' | 'probation' | 'failed' | 'cancelled'
+
+/** One DCS server's campaign pack state (autoupdate.py campaign_status). */
+export interface OpsCampaignRow {
+  server: string
+  /** the pack keys that mean this server: bfdb instance id, then DCSServerBot instance name */
+  keys: string[]
+  key: string | null
+  remote: boolean
+  installed: { tag: string; at: string; files: Record<string, string>; cfg_name?: string; partial?: boolean } | null
+  pack: {
+    tag: string
+    git: string | null
+    built: string | null
+    status: OpsCampaignStatus
+    reason: string | null
+    /** files edited on the server that the pack would overwrite */
+    held: string[] | null
+    decision: 'overwrite' | 'keep' | null
+    apply_only: string[] | null
+    staged_at: string
+    cfg_name: string
+    files: string[]
+  } | null
+  probation: { tag: string; running_secs: number; loaded: boolean; crashes: number; passes_in_secs: number | null } | null
+  last_applied: { tag: string; at: string; result: 'passed' | 'failed'; reason?: string; backup?: string; files?: string[] } | null
+  failed: string[]
+  dismissed: string[]
+  restore_pending: boolean
+  last_error: string | null
+  backups: string[]
+}
+
+export interface OpsCampaigns { enabled: boolean; servers: OpsCampaignRow[] }
+
 export interface OpsUpdates {
   config: OpsUpdateConfig
   busy: string | null
@@ -1129,6 +1167,7 @@ export interface OpsUpdates {
   bad: string[]
   probation: OpsProbation[]
   idle_since: Record<string, string>
+  campaigns?: OpsCampaigns
   history: OpsHistoryEntry[]
 }
 
@@ -1578,6 +1617,10 @@ export const api = {
     rollback:    (target: 'bfdb' | 'dll', server?: string) =>
                    post<OpsResult>('/admin/ops/update/rollback', { target, server }),
     unmark:      (tag: string) => post<OpsResult>('/admin/ops/update/unmark', { tag }),
+    /** A held campaign pack: overwrite the server's edited copy at its next start (backup kept)... */
+    campaignApply: (server: string) => post<OpsResult>('/admin/ops/campaign/apply', { server }),
+    /** ...or keep the server's cfg (its other missions still go in) and dismiss the pack. */
+    campaignKeep:  (server: string) => post<OpsResult>('/admin/ops/campaign/keep', { server }),
     cancelStaged: (name: string, server?: string) => post<OpsResult>('/admin/ops/stage/cancel', { name, server }),
     config:      () => get<OpsConfigDoc>('/admin/ops/config'),
     saveConfig:  (yaml: string, baseMtime: number, restartBfdb: boolean) =>

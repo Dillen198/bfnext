@@ -22,7 +22,8 @@ The server box looks after itself:
 |---|---|
 | Windows service, preflight check | `deploy/windows-service/install-service.ps1`, `check-autostart.ps1` |
 | Releases | `deploy/publish-release.ps1`, `.github/workflows/release.yml` |
-| Auto-updater + DLL probation | `DCSServerBot/plugins/fowlengine/autoupdate.py` |
+| Campaign packs (publisher side) | `deploy/campaigns.sample.json` → `publish-release.ps1 -Campaigns` |
+| Auto-updater + DLL probation + campaign packs | `DCSServerBot/plugins/fowlengine/autoupdate.py` |
 | bfdb probation, DB snapshots, rollback | `DCSServerBot/plugins/fowlengine/procman.py` |
 | DLL swap at DCS start → probation | `DCSServerBot/extensions/bfbinaries/extension.py` |
 | Log analyzer + archive | `DCSServerBot/plugins/fowlengine/loganalyzer.py` |
@@ -55,7 +56,8 @@ The server box looks after itself:
    (see `fowlengine.sample.yaml`), including `autoupdate.public_key` (see
    "Signing releases" below). Start with `autoupdate.enabled: false`,
    open the OPS page, press **Check now**, and look at what it would stage.
-   Then switch it on.
+   Then switch it on. The exact keys for the whole hands-off setup (engine,
+   bot plugin and campaign packs) are in "Server checklist" below.
 5. **Claude's read access (optional but recommended):** start bfdb with
    `--log-read-token <long random string>` (the `bfdb:` block gets a
    `log_read_token:`, or add it to the args) and give Claude the public bfdb
@@ -72,6 +74,8 @@ git push                                   # the release tag points at a pushed 
 .\deploy\publish-release.ps1 -Folder \\SERVER\fowl-releases   # no GitHub: a shared folder
 .\deploy\publish-release.ps1 -DryRun       # build + manifest only
 .\deploy\publish-release.ps1 -BotPlugin    # also ship the bot plugin (fowlengine-bot.zip)
+.\deploy\publish-release.ps1 -Campaigns deploy\campaigns.json   # + each server's cfg + mission
+.\deploy\publish-release.ps1 -Files @() -SkipBuild -Campaigns deploy\campaigns.json   # campaign packs only
 ```
 
 It builds `bflib.dll`, `bfrange.dll` (when it is a workspace member at that
@@ -113,6 +117,43 @@ it has pinned.
 The GitHub Action **Engine release** runs the same script on a Windows runner.
 It is manual-dispatch only, and **beta** is the safer channel for it: `Cargo.lock`
 is gitignored, so CI resolves dependencies fresh.
+
+### Campaign packs
+
+A release can also carry each server's **campaign**: its engine config
+(`<sortie>_CFG`, e.g. `ODFv2_CFG`, `RGW2008_CFG`) and mission file(s). Keep a
+`campaigns.json` on the publishing PC (start from `deploy/campaigns.sample.json`):
+
+```json
+{
+  "vs1": { "cfg": "C:\\...\\ODFv2_CFG",   "cfg_name": "ODFv2_CFG",   "miz": ["C:\\...\\vs-odf-1.0.0.miz"] },
+  "vs2": { "cfg": "C:\\...\\RGW2008_CFG", "cfg_name": "RGW2008_CFG", "miz": ["C:\\...\\rgw2008_1.0.0.miz"] }
+}
+```
+
+- **The key** is how a server recognises its pack: the server's `id` in
+  `bfdb.instances` (fowlengine.yaml) -- short, stable, and already the id bfdb
+  tags rounds with. On a box without `bfdb.instances`, use the DCSServerBot
+  instance name instead (`DCS.vectorstrike_1`, the Saved Games folder name).
+  Case doesn't matter. The OPS page's Campaign packs card lists the keys each
+  server answers to.
+- `cfg_name` is the file name on the server (default: the cfg file's own
+  name). It must end in `_CFG`: bflib loads `<write dir>\<sortie>_CFG`.
+- `miz`: each file replaces the file **of the same name** on that server: the
+  mission-list entry of that name, else a BFWeather template of that name
+  (`base`/`weapon`/`options`/`warehouse`), else `<Missions>\<name>`. DCSServerBot's
+  own `.dcssb\<name>.orig` / `.dcssb\<name>` copies are replaced too, so the
+  next start can't bring the old mission back. A new name (a version bump) is
+  added to the Missions folder; switching the server to it is still yours to
+  do (`/mission`).
+- Every cfg is parsed as JSON before packing (UTF-8, no BOM); one that doesn't
+  parse fails the publish.
+
+Each entry becomes `campaign-<key>.zip` -- the cfg and the missions, flat, no
+folders -- and the manifest entry lists every file in it with its sha256
+(`key`, `cfg_name`, `contents: {name: {sha256, size, role: cfg|miz}}`), so it is
+covered by the manifest signature like everything else. `-DryRun`,
+`-SignOnly`, `-PublishOnly` and `-Folder` work as for any release.
 
 ## 3. What the server does with it
 
@@ -162,7 +203,98 @@ is gitignored, so CI resolves dependencies fresh.
      on the OPS page or `/feops update_unmark`.
 
 Everything is announced in `ops_channel`. Discord: `/feops update_status`,
-`update_check`, `update_pause`, `update_rollback`, `update_unmark`, `issues`.
+`update_check`, `update_pause`, `update_rollback`, `update_unmark`,
+`campaign_apply`, `campaign_keep`, `issues`.
+
+### Campaign packs on the server (`autoupdate.campaigns: true`)
+
+Off by default. With it on, a pack whose key matches one of **this box's**
+servers (see "Campaign packs" above; agent-node servers never get one) goes:
+
+```
+ staged ──(that DCS server's next start)──> probation ──(mission up, probation_minutes)──> applied
+   │  ▲                                          └──(crash / engine refused it / never came up)──> failed
+   ▼  │ Apply                                                               (backup restored, tag never retried)
+  held ──Keep server's──> dismissed  (or staged for the unedited missions only)
+```
+
+- **Staged:** downloaded with the release (sha256 checked against the signed
+  manifest), unpacked into `<staging>\_campaigns\<key>\<tag>\`, the cfg parsed
+  as JSON. A pack that doesn't verify or parse is refused and not retried.
+- **Applied at the next DCS start**, from BFBinaries' `prepare()` -- the same
+  moment and extension that swap a staged DLL, so the instance needs BFBinaries
+  in nodes.yaml. The `apply:` policy counts for packs too (`when_idle` restarts
+  an empty server for a staged pack, `next_restart` waits). First the files it
+  replaces are copied to `<instance home>\_fowl_campaign_backups\<ts>-<tag>\`
+  (the newest `campaign_backups_keep` are kept), then each file is written to a
+  temp name and renamed into place.
+- **Held -- "server copy was edited since the last update":** the bot remembers
+  the sha256 of every cfg/mission it wrote (and, the first time, of what it
+  found: every `*_CFG` in the server's write dir is noted as soon as the
+  feature is on). If the file on the server no longer matches -- the dashboard
+  CONFIG page, a text editor, a mission uploaded through Discord -- the pack is
+  **not written**; it waits, and ops_channel says so. Answer it on the OPS page
+  (**Campaign packs**: **Apply** / **Keep server's**), or in Discord:
+  - `/feops campaign_apply server:<name> confirm:True` (or `POST campaign/apply {server}`):
+    write the pack over the server's copy at its next start; the edited copy is in the backup.
+  - `/feops campaign_keep server:<name>` (or `POST campaign/keep {server}`): keep the
+    server's cfg (and any mission edited there). The pack's other missions still
+    go in at the next start; the pack is dismissed for that server. The next
+    release asks again while the server's cfg still differs from ours.
+  A pack whose cfg has a different `netidx_base` than the running one is held
+  too -- that is almost always another server's pack under the wrong key.
+- **Probation:** passes once bflib logs that the mission is up ("starting timed
+  events" in `Logs\bfnext.txt`) and the server has run `probation_minutes`.
+  **Rolled back** if DCS goes down unexpectedly, bflib logs `THE MISSION CANNOT
+  START` (a cfg it refuses), the mission isn't up after `load_timeout_minutes`
+  of running, or DCS sits in LOADING that long. The backup is restored at the
+  next start (the server is restarted for it), the tag goes on the server's
+  "never again" list, and ops_channel says why. If the DLL of the same release
+  fails on that server at the same time, one restart restores both.
+- A release rolled back for its DLL anywhere cancels its still-waiting packs too.
+
+### Server checklist
+
+What to set on the server box for the whole hands-off setup. In
+`<DCSServerBot>\config\plugins\fowlengine.yaml`, `DEFAULT:`:
+
+```yaml
+  autoupdate:
+    enabled: true
+    # the contents of %USERPROFILE%\.tauri\fowl-engine.key.pub on the publishing
+    # PC (tauri writes it as one base64 line), or just the decoded "RW..." line
+    public_key: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6..."
+    source: github                # or folder + folder: "\\\\PC\\fowl-releases"
+    repo: "Dillen198/bfnext"
+    bot_plugin: true              # releases built with -BotPlugin update the plugin itself
+    campaigns: true               # releases built with -Campaigns update cfg + missions
+  bfdb:
+    instances:                    # the `id`s are the campaign keys in campaigns.json
+      - id: vs1
+        dcs_server_name: "[VS] Vector Strike - ..."
+        # ...
+      - id: vs2
+        dcs_server_name: "[VS] Vector Strike #2 ..."
+        # ...
+```
+
+1. Restart the bot (the OPS page's **Restart bot**, or the service). `bot_plugin`,
+   `campaigns`, `public_key` and the source are read from the YAML only -- the
+   OPS page can't change them.
+2. Every campaign instance has **BFBinaries** in nodes.yaml (it already does if
+   engine DLLs auto-update).
+3. OPS page → **Campaign packs** shows `on`, and under each server the keys it
+   answers to (`vs1 / dcs.vectorstrike_1`). They must match the keys in the
+   publisher's `campaigns.json`.
+4. **Check now** after publishing. A pack for a server whose cfg was edited on
+   the box since the feature was switched on shows up **held** -- decide there.
+
+Fowl Engine Manager: keep **Settings → keep the plugin synced** on. The
+plugin carries a build stamp (`plugins\fowlengine\.fowl-plugin.json`: commit,
+commit time, and `engine-release` or `manager-bundle`); the Manager's pre-start
+sync skips a bundle older than the installed plugin (Overview says so), and a
+`bot_plugin` release is not unpacked over a newer plugin either. So the plugin
+only ever moves forward, whichever of the two brought it.
 
 ## 4. The OPS page (dashboard → OPS)
 
@@ -174,6 +306,9 @@ Everything is announced in `ops_channel`. Discord: `/feops update_status`,
   **Restart bfdb**, **Restart bot** (DCS keeps running).
 - **Engine builds:** per binary, the *running* build vs the file on disk vs what's staged vs
   the latest release; **Apply now**, **Discard**, **Roll back**.
+- **Campaign packs:** per server, the installed pack, what's staged / held (and
+  why) / on probation, the last result; **Apply** and **Keep server's** for a held
+  pack. Fowl Engine Manager shows the same card under **Server OPS**.
 - **Automatic updates:** on/off, pause, channel, apply policies, idle minutes, window,
   **Check now**, the latest release and its notes, probation, bad releases.
 - **History & backups:** every find / stage / apply / probation / rollback; DB snapshots.
@@ -231,3 +366,10 @@ addresses, UCIDs, Discord webhook URLs and bearer tokens.
   `bfdb.exe` and `_backups\db-<ts>-<tag>` over `bfdb`, then start the service.
 - **Manual DLL rollback:** `/feops update_rollback which:dll server:<name> confirm:True`,
   or copy `Scripts\bflib.dll.backup-<ts>` over `bflib.dll` while DCS is down.
+- **Manual campaign rollback:** with DCS down, copy the files back from
+  `<instance home>\_fowl_campaign_backups\<ts>-<tag>\` -- `backup.json` there lists
+  where each one came from (an entry with no backup file was added by the pack:
+  delete it).
+- **A campaign pack stays held and nobody edited anything:** the engine itself
+  rewrites its cfg when it migrates deprecated keys, which counts as an edit.
+  Check the file, then **Apply** or **Keep server's**.

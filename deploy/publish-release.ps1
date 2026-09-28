@@ -8,6 +8,15 @@
 #   .\deploy\publish-release.ps1 -DryRun                # build + manifest only, publish nothing
 #   .\deploy\publish-release.ps1 -SignOnly -OutDir <d>    # sign what a -DryRun left in <d>
 #   .\deploy\publish-release.ps1 -PublishOnly -OutDir <d> -Channel <c>   # publish it (must be signed)
+#   .\deploy\publish-release.ps1 -Campaigns deploy\campaigns.json        # + one campaign pack per server
+#   .\deploy\publish-release.ps1 -Files @() -Campaigns <json> -SkipBuild # campaign packs only, no build
+#
+# Campaign packs: -Campaigns names a JSON on THIS PC (deploy/campaigns.sample.json)
+# mapping each server's key -- its bfdb instance id, see autoupdate.py -- to its
+# campaign config and mission file(s). Each becomes campaign-<key>.zip (flat
+# file names) with every file's sha256 in the signed manifest; a cfg that isn't
+# valid JSON fails the publish. Servers apply them only with
+# autoupdate.campaigns: true (deploy/auto-update.md, "Campaign packs").
 #
 # A release is always ONE COMMIT: by default the build runs in a fresh
 # `git worktree` of -Ref (HEAD), so whatever else is half-edited in this tree
@@ -39,6 +48,7 @@ param(
     [string]$Repo = "Dillen198/bfnext",
     [string]$TagPrefix = "engine-",
     [switch]$BotPlugin,
+    [string]$Campaigns,
     [switch]$SkipBuild,
     [switch]$DryRun,
     [string]$TargetDir = (Join-Path $env:LOCALAPPDATA "fowl-release\target"),
@@ -118,11 +128,104 @@ function Publish-Out([string]$manifestPath, [string]$tag, [string]$notes, [strin
     Say "servers with autoupdate enabled pick it up on their next check (or: OPS page -> Check now, /feops update_check)" "Green"
 }
 
+# The engine reads a campaign cfg with serde_json: strict UTF-8 JSON, no BOM, an
+# object. One that doesn't parse would stop the mission on the server, so the
+# release is refused here instead.
+function Assert-CfgJson([string]$path) {
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        throw "$path starts with a UTF-8 BOM -- the engine refuses that; save it as UTF-8 without a BOM"
+    }
+    try {
+        $text = (New-Object System.Text.UTF8Encoding($false, $true)).GetString($bytes)
+        if ($PSVersionTable.PSVersion.Major -ge 6) {
+            $doc = ConvertFrom-Json -InputObject $text -AsHashtable -ErrorAction Stop
+        } else {
+            # Windows PowerShell's ConvertFrom-Json chokes on big documents and
+            # on keys that differ only in case; the serializer under it doesn't
+            Add-Type -AssemblyName System.Web.Extensions
+            $js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+            $js.MaxJsonLength = [int]::MaxValue
+            $js.RecursionLimit = 1000
+            $doc = $js.DeserializeObject($text)
+        }
+    } catch { throw "$path is not valid JSON: $($_.Exception.Message)" }
+    if ($doc -isnot [System.Collections.IDictionary]) { throw "$path is not a JSON object" }
+}
+
+# campaign-<key>.zip for every entry of -Campaigns, into $outDir; returns the
+# manifest entries. Relative paths in the JSON are relative to the JSON itself.
+function Build-CampaignPacks([string]$jsonPath, [string]$outDir, [string]$git, [string]$built) {
+    $base = Split-Path $jsonPath
+    $at = { param($p) if ([System.IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $base $p } }
+    $doc = Get-Content $jsonPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $out = [ordered]@{}
+    foreach ($prop in $doc.PSObject.Properties) {
+        if ($prop.Name.StartsWith("_")) { continue }   # "_comment" and friends
+        # the key is a file name on both ends; the server compares it lower-case
+        $key = $prop.Name.ToLower()
+        if ($key -notmatch '^[a-z0-9][a-z0-9_.-]{0,63}$') {
+            throw "campaigns key '$($prop.Name)': use the server's bfdb instance id (letters, digits, . _ -)"
+        }
+        $zipName = "campaign-$key.zip"
+        if ($out.Contains($zipName)) { throw "campaigns key '$key' is listed twice" }
+        $e = $prop.Value
+        $cfgPath = if ($e.cfg) { & $at ([string]$e.cfg) } else { $null }
+        if (-not $cfgPath -or -not (Test-Path $cfgPath -PathType Leaf)) { throw "campaigns.$key.cfg: no file at '$cfgPath'" }
+        $cfgName = if ($e.cfg_name) { [string]$e.cfg_name } else { Split-Path $cfgPath -Leaf }
+        if ($cfgName -notmatch '^[^\\/:*?"<>|]+_CFG$') {
+            throw "campaigns.$key.cfg_name '$cfgName' must be a file name ending in _CFG (the engine loads <sortie>_CFG)"
+        }
+        Assert-CfgJson $cfgPath
+        $members = [ordered]@{}
+        $members[$cfgName] = @{ path = (Resolve-Path $cfgPath).Path; role = "cfg" }
+        foreach ($m in @($e.miz)) {
+            if (-not $m) { continue }
+            $p = & $at ([string]$m)
+            if (-not (Test-Path $p -PathType Leaf)) { throw "campaigns.$key.miz: no file at '$p'" }
+            $leaf = Split-Path $p -Leaf
+            if ($leaf -notmatch '\.miz$') { throw "campaigns.$key.miz: $leaf is not a .miz" }
+            if ($members.Contains($leaf)) { throw "campaigns.$key has two files named $leaf" }
+            $members[$leaf] = @{ path = (Resolve-Path $p).Path; role = "miz" }
+        }
+        $contents = [ordered]@{}
+        $zipPath = Join-Path $outDir $zipName
+        $zip = [System.IO.Compression.ZipFile]::Open($zipPath, "Create")
+        try {
+            foreach ($n in $members.Keys) {
+                $src = $members[$n].path
+                $contents[$n] = [ordered]@{
+                    sha256 = (Get-FileHash $src -Algorithm SHA256).Hash.ToLower()
+                    size   = (Get-Item $src).Length
+                    role   = $members[$n].role
+                }
+                # flat names: the server decides where each file goes
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $src, $n) | Out-Null
+            }
+        } finally { $zip.Dispose() }
+        $zi = Get-Item $zipPath
+        $out[$zipName] = [ordered]@{
+            sha256   = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
+            size     = $zi.Length
+            git      = $git
+            built    = $built
+            key      = $key
+            cfg_name = $cfgName
+            contents = $contents
+        }
+        Say ("  {0,-24} {1}" -f $zipName, (($members.Keys) -join ", ")) "Gray"
+    }
+    if ($out.Count -eq 0) { throw "$jsonPath lists no campaigns" }
+    return $out
+}
+
 # -SignOnly / -PublishOnly: the later stages of a release a `-DryRun` build
 # left in -OutDir, so CI can build without the signing key or the GitHub
 # token in reach, sign with only the key, and publish with only the token.
 if ($SignOnly -or $PublishOnly) {
     if (-not $OutDir) { throw "-SignOnly / -PublishOnly need -OutDir: the folder a -DryRun build left" }
+    if ($Campaigns) { Say "-Campaigns is ignored here: the packs were made by the -DryRun that left $OutDir" "Yellow" }
     $manifestPath = Join-Path $OutDir "manifest.json"
     if (-not (Test-Path $manifestPath)) { throw "no manifest.json in $OutDir" }
     if ($SignOnly) { Sign-Manifest $manifestPath; return }
@@ -149,7 +252,16 @@ if ($WorkingTree) {
     }
 }
 $gitLabel = if ($dirty) { "$short-dirty" } else { $short }
+# When the commit was made, UTC: plugin stamps are ordered by it, so a Manager
+# bundle and a release built from different commits compare the right way
+# round whenever each was built.
+$commitTime = ([DateTimeOffset]::Parse((git -C $repoRoot log -1 --format=%cI $commit).Trim(),
+    [System.Globalization.CultureInfo]::InvariantCulture)).UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "fowl-release-out\$Tag" }
+if ($Campaigns) {
+    if (-not (Test-Path $Campaigns -PathType Leaf)) { throw "no campaigns file at $Campaigns" }
+    $Campaigns = (Resolve-Path $Campaigns).Path   # before any Push-Location
+}
 
 Say "release $Tag  ($Channel)  from $gitLabel$(if ($WorkingTree) { ' [working tree]' } else { " [worktree of $Ref]" })"
 
@@ -246,18 +358,31 @@ try {
                 ForEach-Object { "extensions\$($_.Name)" })
             foreach ($d in $dirs) {
                 Get-ChildItem (Join-Path $botRoot $d) -Recurse -File |
-                    Where-Object { $_.FullName -notmatch '\\__pycache__\\' -and $_.Name -ne "fowlengine.yaml" } |
+                    Where-Object { $_.FullName -notmatch '\\__pycache__\\' -and $_.Name -ne "fowlengine.yaml" -and
+                                   $_.Name -ne ".fowl-plugin.json" } |
                     ForEach-Object {
                         $rel = $_.FullName.Substring($botRoot.Length + 1).Replace("\", "/")
                         [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $rel) | Out-Null
                     }
             }
+            # The plugin stamp: which build this is. The server's updater won't
+            # unpack it over a newer plugin (e.g. one Fowl Engine Manager
+            # synced), and the Manager won't sync an older bundle over it.
+            $stamp = [ordered]@{ schema = 1; source = "engine-release"; tag = $Tag; git = $gitLabel
+                                 commit = $commit; commit_time = $commitTime; built = $built }
+            $w = [System.IO.StreamWriter]::new($zip.CreateEntry("plugins/fowlengine/.fowl-plugin.json").Open(),
+                                               (New-Object System.Text.UTF8Encoding $false))
+            try { $w.Write(($stamp | ConvertTo-Json)) } finally { $w.Dispose() }
         } finally { $zip.Dispose() }
         $zi = Get-Item $zipPath
         $manifestFiles["fowlengine-bot.zip"] = [ordered]@{
             sha256 = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower(); size = $zi.Length; git = $gitLabel; built = $built
         }
         Say "  fowlengine-bot.zip (bot plugin)" "Gray"
+    }
+    if ($Campaigns) {
+        $packs = Build-CampaignPacks $Campaigns $OutDir $gitLabel $built
+        foreach ($k in $packs.Keys) { $manifestFiles[$k] = $packs[$k] }
     }
     if ($manifestFiles.Count -eq 0) { throw "nothing to release" }
 
@@ -268,14 +393,16 @@ try {
         tag     = $Tag
         git     = $gitLabel
         commit  = $commit
+        commit_time = $commitTime
         built   = $built
         channel = $Channel
         notes   = $Notes
         files   = $manifestFiles
     }
     $manifestPath = Join-Path $OutDir "manifest.json"
-    # UTF-8 without a BOM: a BOM makes some JSON readers choke
-    [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding $false))
+    # UTF-8 without a BOM: a BOM makes some JSON readers choke. Depth: a
+    # campaign pack's per-file listing sits five objects down.
+    [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
     Say "manifest written: $manifestPath"
 
     # ---- sign + publish --------------------------------------------------------------

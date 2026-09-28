@@ -133,6 +133,8 @@ export interface AppState {
   bundle_version: string | null
   plugin_pending: string[]
   plugin_link: string | null
+  /** the bot runs a later plugin than this app's bundle (from an engine release): why sync leaves it */
+  plugin_newer?: string | null
   ops_target: string | null
   ops_error: string | null
   autologon: Autologon

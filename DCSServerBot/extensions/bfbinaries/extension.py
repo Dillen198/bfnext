@@ -19,6 +19,10 @@ auto-updater (plugins/fowlengine/autoupdate.py): if DCS crashes on it, or the
 mission never loads it, the backup taken here is staged back and DCS is
 restarted onto it. That covers a hand-uploaded DLL as much as an automatic one.
 
+A campaign pack (the server's <sortie>_CFG + mission files, from an engine
+release; `autoupdate.campaigns` in fowlengine.yaml) is written at the same
+moment, by the updater, with its own backup and probation.
+
 A staged `bfdb.exe` is handled by plugins/fowlengine/procman.py on its own
 bfdb restarts; if one is pending when DCS restarts, this extension nudges the
 FowlEngine plugin to cycle bfdb so the new build lands promptly.
@@ -288,17 +292,34 @@ class BFBinaries(Extension):
         except Exception as ex:  # noqa: BLE001
             self.log.debug(f"{self.name}: ops announce skipped: {ex}")
 
+    def _apply_campaign(self) -> str | None:
+        """A staged campaign pack (cfg + mission files from an engine release,
+        see autoupdate.py) is written here too, for the same reason as the
+        DLL: DCS is down and the mission not loaded yet. The updater does the
+        work, backup and probation included; a pack that failed its
+        probation is restored the same way."""
+        updater = getattr(self._fowlengine_cog(), "updater", None)
+        if updater is None or not hasattr(updater, "campaign_prepare"):
+            return None
+        try:
+            return updater.campaign_prepare(self.server)
+        except Exception as ex:  # noqa: BLE001
+            self.log.warning(f"{self.name}: campaign pack step failed: {ex}")
+            return None
+
     @override
     async def prepare(self) -> bool:
-        if not self.is_available():
-            return True  # never block a restart
-        self._warn_foreign_pending()
-        note = self._swap_engine()
-        if note:
-            self._begin_probation()
-        self._nudge_bfdb_if_pending()
-        if note:
-            await self._announce(note)
+        note = None
+        if self.is_available():  # a DLL misconfig never blocks a restart
+            self._warn_foreign_pending()
+            note = self._swap_engine()
+            if note:
+                self._begin_probation()
+            self._nudge_bfdb_if_pending()
+        campaign_note = self._apply_campaign()
+        for n in (note, campaign_note):
+            if n:
+                await self._announce(n)
         return True
 
     @override

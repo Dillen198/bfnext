@@ -32,6 +32,10 @@ while bfdb restarts -- which is exactly when an admin wants to watch.
   POST update/apply              {target: bfdb|dll|bftools, server?}
   POST update/rollback           {target: bfdb|dll, server?}
   POST update/unmark             {tag}  -- let a rolled-back release be offered again
+  POST campaign/apply            {server}  -- write a held campaign pack over the server's copy
+                                 at its next DCS start (backup kept)
+  POST campaign/keep             {server}  -- keep the server's cfg (+ missions edited there);
+                                 the pack's other missions still go in, the pack is dismissed
   POST stage/cancel              {name, server?}
   GET  config                    fowlengine.yaml with secrets masked
   POST config                    {yaml, base_mtime, restart_bfdb?}
@@ -141,12 +145,12 @@ def unmask_secrets(new: Any, old: Any, path: str = "") -> None:
 # updates come from and how they are trusted. With one of those, a dashboard
 # admin login would be a way to run a command as the bot (netidx_resolver_cmd,
 # bfdb.exe), to feed it a build (autoupdate.source/folder/repo/public_key,
-# bot_plugin) or to send a saved secret elsewhere (*_url). They are edited on
+# bot_plugin, campaigns) or to send a saved secret elsewhere (*_url). They are edited on
 # the box. Everything else -- tuning, channels, messages, toggles, secrets
 # themselves -- stays editable.
 _PROTECTED_EXACT = {
     "exe", "cmd", "command", "home", "folder", "source", "repo", "url", "uri", "public_key",
-    "bot_plugin", "token", "files", "tag_prefix", "config", "prefix", "bftools", "path",
+    "bot_plugin", "campaigns", "token", "files", "tag_prefix", "config", "prefix", "bftools", "path",
     "listen", "shutdown_path",
 }
 _PROTECTED_SUFFIXES = (
@@ -511,6 +515,8 @@ class OpsApi:
         r.add_api_route("/update/apply", self.update_apply, methods=["POST"])
         r.add_api_route("/update/rollback", self.update_rollback, methods=["POST"])
         r.add_api_route("/update/unmark", self.update_unmark, methods=["POST"])
+        r.add_api_route("/campaign/apply", self.campaign_apply, methods=["POST"])
+        r.add_api_route("/campaign/keep", self.campaign_keep, methods=["POST"])
         r.add_api_route("/stage/cancel", self.stage_cancel, methods=["POST"])
         r.add_api_route("/config", self.config_get, methods=["GET"])
         r.add_api_route("/config", self.config_post, methods=["POST"])
@@ -820,6 +826,31 @@ class OpsApi:
         if not upd.unmark_bad(tag):
             return self._err(404, f"{tag} is not marked bad")
         return self._ok(f"{tag} may be offered again on the next check")
+
+    async def _campaign_decide(self, request, decision: str):
+        upd = getattr(self.cog, "updater", None)
+        if upd is None:
+            return self._err(409, "the auto-updater is not loaded")
+        body = await self._body(request)
+        name = str(body.get("server") or "")
+        if not name:
+            return self._err(400, "need the server whose campaign pack to decide on")
+        try:
+            # keep hashes the server's mission files: off the event loop
+            msg = await asyncio.get_running_loop().run_in_executor(
+                None, upd.campaign_decide, name, decision, "the OPS page")
+        except LookupError as ex:
+            return self._err(404, str(ex))
+        except ValueError as ex:
+            return self._err(400, str(ex))
+        await self.cog.notify_ops(f"🗂️ **{name}**: {msg}")
+        return self._ok(msg)
+
+    async def campaign_apply(self, request: Request):
+        return await self._campaign_decide(request, "apply")
+
+    async def campaign_keep(self, request: Request):
+        return await self._campaign_decide(request, "keep")
 
     async def stage_cancel(self, request: Request):
         pm = self.cog.procman

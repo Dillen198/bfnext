@@ -47,9 +47,38 @@ which also writes manifest.json.sig; deploy/auto-update.md has the key setup):
     "files": {
       "bflib.dll": {"sha256": "...", "size": 123, "git": "a1b2c3d4e5f6"},
       "bfdb.exe":  {"sha256": "...", "size": 456, "git": "a1b2c3d4e5f6"},
+      "campaign-vs2.zip": {"sha256": "...", "size": 789, "key": "vs2",
+                           "cfg_name": "RGW2008_CFG",
+                           "contents": {"RGW2008_CFG": {"sha256": "...", "role": "cfg"},
+                                        "rgw2008_1.0.0.miz": {"sha256": "...", "role": "miz"}}},
       ...
     }
   }
+
+CAMPAIGN PACKS (`campaign-<key>.zip`, opt-in with `autoupdate.campaigns`): one
+DCS server's campaign config + mission files, flat in the zip. <key> is that
+server's bfdb instance `id` (bfdb.instances) or, on a box without instances,
+its DCSServerBot instance name (`DCS.vectorstrike_1`). A pack is staged into
+<staging>/_campaigns/<key>/<tag>/ and written at that server's next DCS start,
+from BFBinaries' prepare() like an engine DLL, after a timestamped backup:
+the cfg to <write dir>\\<cfg_name> (where bflib reads <sortie>_CFG), each .miz
+over the file of that name in the mission list / Missions folder. It is never
+written over a file somebody edited on the server since our last write -- the
+pack is HELD until an admin says apply (overwrite) or keep (the OPS page,
+/feops campaign_apply | campaign_keep). After it is written the server is on
+probation like a new DLL: a crash, a mission that never gets going, or the
+engine refusing the cfg restores the backup and that tag is never retried.
+
+  staged ──(DCS start)──> probation ──> applied
+    │ ▲                        └──(crash / refused / never loaded)──> failed
+    ▼ │ apply
+   held ──keep──> dismissed (or staged, missions only)
+
+The plugin stamp (plugins/fowlengine/.fowl-plugin.json) says which build of
+this plugin is installed and where it came from (an engine release or Fowl
+Engine Manager's bundle). Both installers refuse to replace a NEWER plugin
+with an older one, so the Manager's pre-start sync and a `bot_plugin` release
+can't undo each other.
 
 Everything here is best-effort and never raises into the cog's loop: an
 unreachable GitHub, a half-downloaded file or a server that won't start is a
@@ -61,6 +90,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import shutil
 import time
 import zipfile
@@ -71,7 +101,8 @@ from typing import Any, Awaitable, Callable, Optional
 __all__ = [
     "Updater", "UpdateConfig", "ENGINE_FILES", "parse_manifest", "pick_github_release",
     "pick_folder_release", "file_needs_update", "in_window", "sha256_file",
-    "AUTOUPDATE_SOURCE", "ROLLBACK_SOURCE",
+    "AUTOUPDATE_SOURCE", "ROLLBACK_SOURCE", "campaign_key_of", "campaign_conflicts",
+    "plugin_stamp_older", "PLUGIN_STAMP",
 ]
 
 # Sidecar `source:` values. upload.py writes none (a human uploaded it).
@@ -84,6 +115,21 @@ DLL_FILES = ("bflib.dll", "bfrange.dll")
 BOT_PLUGIN_ZIP = "fowlengine-bot.zip"
 MANIFEST = "manifest.json"
 MANIFEST_SIG = "manifest.json.sig"
+
+# Campaign packs: campaign-<key>.zip. The key becomes a file name on both
+# ends, hence the narrow alphabet (the long DCSServerBot server names, with
+# their brackets and pipes, can't be one -- see campaign_keys()).
+CAMPAIGN_PREFIX = "campaign-"
+CAMPAIGN_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
+CAMPAIGN_BACKUPS = "_fowl_campaign_backups"
+# What bflib logs once a mission, cfg included, is fully up -- and what it
+# logs when it refuses one (bflib/src/lib.rs delayed_init_miz / on_mission_load_end).
+ENGINE_LOG_UP = "starting timed events"
+ENGINE_LOG_REFUSED = "THE MISSION CANNOT START"
+
+# Which build of this plugin is installed, and who put it there. Written by
+# _apply_bot_plugin and by Fowl Engine Manager's sync (bfmanager bot.rs).
+PLUGIN_STAMP = ".fowl-plugin.json"
 
 APPLY_POLICIES = ("next_restart", "when_idle", "immediately")
 
@@ -113,6 +159,22 @@ def sha256_file(path: str) -> Optional[str]:
         return h.hexdigest()
     except OSError:
         return None
+
+
+def _write_json_atomic(path: str, doc: Any) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2)
+    os.replace(tmp, path)
+
+
+def _copy_atomic(src: str, dst: str) -> None:
+    """dst becomes src in one rename: DCS or bflib reading it mid-copy sees
+    the old file or the new one, never half of each."""
+    os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+    tmp = dst + ".fowl-new"
+    shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
 
 
 def _clean(val) -> Optional[str]:
@@ -149,6 +211,11 @@ class UpdateConfig:
     download_dir: Optional[str] = None
     bftools_path: Optional[str] = None
     bot_plugin: bool = False
+    # Stage + apply campaign-<key>.zip packs (cfg + mission files) for the
+    # servers on this box. YAML only, like bot_plugin: it lets a release
+    # rewrite a live campaign.
+    campaigns: bool = False
+    campaign_backups_keep: int = 5
     paused: bool = False
     # The minisign public key every release manifest must be signed with
     # ("RW..." or a `tauri signer` .pub file's contents). Unset = nothing is
@@ -198,6 +265,8 @@ class UpdateConfig:
         c.download_dir = _clean(raw.get("download_dir"))
         c.bftools_path = _clean(raw.get("bftools_path"))
         c.bot_plugin = bool(raw.get("bot_plugin", c.bot_plugin))
+        c.campaigns = bool(raw.get("campaigns", c.campaigns))
+        c.campaign_backups_keep = max(1, int(raw.get("campaign_backups_keep", c.campaign_backups_keep) or 1))
         c.paused = bool(raw.get("paused", c.paused))
         c.public_key = _clean(raw.get("public_key"))
         return c
@@ -225,6 +294,7 @@ class UpdateConfig:
             "probation_minutes": self.probation_minutes,
             "load_timeout_minutes": self.load_timeout_minutes,
             "rollback_on_crash": self.rollback_on_crash, "bot_plugin": self.bot_plugin,
+            "campaigns": self.campaigns, "campaign_backups_keep": self.campaign_backups_keep,
             "paused": self.paused, "signing_key_id": self.key_id(),
         }
 
@@ -244,12 +314,13 @@ def parse_manifest(doc: Any) -> dict:
     clean_files = {}
     for name, meta in files.items():
         lname = str(name).lower()
-        if lname not in ENGINE_FILES and lname != BOT_PLUGIN_ZIP:
+        key = campaign_key_of(lname)
+        if lname not in ENGINE_FILES and lname != BOT_PLUGIN_ZIP and key is None:
             continue  # a newer publisher may ship things this bot doesn't know
         if not isinstance(meta, dict):
             raise ValueError(f"manifest entry for {name} is not an object")
         sha = str(meta.get("sha256") or "").lower()
-        if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+        if not _is_sha(sha):
             raise ValueError(f"manifest entry for {name} has no valid sha256")
         clean_files[lname] = {
             "sha256": sha,
@@ -257,6 +328,8 @@ def parse_manifest(doc: Any) -> dict:
             "git": (str(meta.get("git")) if meta.get("git") else None),
             "built": (str(meta.get("built")) if meta.get("built") else None),
         }
+        if key is not None:
+            clean_files[lname]["campaign"] = _parse_campaign_meta(name, key, meta)
     if not clean_files:
         raise ValueError("manifest lists no engine files this bot knows")
     ch = str(doc.get("channel") or "stable").lower()
@@ -265,10 +338,117 @@ def parse_manifest(doc: Any) -> dict:
         "tag": tag,
         "git": (str(doc.get("git")) if doc.get("git") else None),
         "built": (str(doc.get("built")) if doc.get("built") else None),
+        # when the release's commit was made -- what plugin stamps are ordered by
+        "commit_time": (str(doc.get("commit_time")) if doc.get("commit_time") else None),
         "channel": ch if ch in ("stable", "beta") else "stable",
         "notes": str(doc.get("notes") or "")[:4000],
         "files": clean_files,
     }
+
+
+def _is_sha(s: str) -> bool:
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+
+
+def campaign_key_of(name: str) -> Optional[str]:
+    """'campaign-vs2.zip' -> 'vs2'; None for anything that isn't a pack."""
+    n = str(name).lower()
+    if not (n.startswith(CAMPAIGN_PREFIX) and n.endswith(".zip")):
+        return None
+    key = n[len(CAMPAIGN_PREFIX):-4]
+    return key if CAMPAIGN_KEY_RE.match(key) else None
+
+
+def _flat_name(n: str) -> bool:
+    return bool(n) and n not in (".", "..") and not any(ch in n for ch in '/\\:*?"<>|')
+
+
+def _parse_campaign_meta(name: str, key: str, meta: dict) -> dict:
+    """The per-file listing of one pack. It is inside the signed manifest, so
+    once the zip's own sha256 matched these are authenticated too."""
+    contents = meta.get("contents")
+    if not isinstance(contents, dict) or not contents:
+        raise ValueError(f"manifest entry for {name} lists no contents")
+    cfg_name = str(meta.get("cfg_name") or "")
+    files = {}
+    for fname, fm in contents.items():
+        fname = str(fname)
+        if not _flat_name(fname) or not isinstance(fm, dict):
+            raise ValueError(f"{name}: bad content entry {fname!r}")
+        sha = str(fm.get("sha256") or "").lower()
+        if not _is_sha(sha):
+            raise ValueError(f"{name}: {fname} has no valid sha256")
+        role = str(fm.get("role") or ("cfg" if fname == cfg_name else "miz")).lower()
+        if role == "cfg" and fname != cfg_name:
+            raise ValueError(f"{name}: {fname} is marked cfg but cfg_name is {cfg_name!r}")
+        if role == "miz" and not fname.lower().endswith(".miz"):
+            raise ValueError(f"{name}: {fname} is not a .miz")
+        if role not in ("cfg", "miz"):
+            raise ValueError(f"{name}: {fname} has unknown role {role!r}")
+        files[fname] = {"sha256": sha, "role": role, "size": int(fm.get("size") or 0)}
+    # bflib loads <write dir>\<sortie>_CFG; anything else would be written
+    # where the engine never looks
+    if cfg_name not in files or not cfg_name.endswith("_CFG"):
+        raise ValueError(f"{name}: cfg_name {cfg_name!r} must be one of its files and end in _CFG")
+    return {"key": key, "cfg_name": cfg_name, "contents": files}
+
+
+def campaign_conflicts(want: dict, on_disk: dict, baseline: dict) -> list[str]:
+    """Files a pack must NOT overwrite without asking: present on the server,
+    different from the pack, and different from what we last wrote there (or
+    first saw there). `want`/`on_disk`/`baseline` map file name -> sha256
+    (on_disk None = no such file)."""
+    out = []
+    for name, sha in want.items():
+        cur = on_disk.get(name)
+        if cur is None or cur == sha:
+            continue
+        base = baseline.get(name)
+        if base is not None and cur != base:
+            out.append(name)
+    return out
+
+
+def _stamp_time(stamp: Optional[dict]) -> Optional[datetime]:
+    """When the stamped plugin's code was committed (falling back to when it
+    was built): the order two plugin builds are compared in."""
+    for k in ("commit_time", "built"):
+        v = (stamp or {}).get(k)
+        if not v:
+            continue
+        try:
+            t = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    return None
+
+
+def plugin_stamp_older(incoming: Optional[dict], installed: Optional[dict]) -> Optional[str]:
+    """Why `incoming` must not replace `installed`, or None to go ahead. An
+    unstamped install counts as older than anything (the pre-stamp builds);
+    the same commit is never "older", dirty or not."""
+    if not installed:
+        return None
+    base = lambda s: str((s or {}).get("git") or "").split("-")[0]  # noqa: E731
+    if base(incoming) and base(incoming) == base(installed):
+        return None
+    t_in, t_have = _stamp_time(incoming), _stamp_time(installed)
+    if t_in is None or t_have is None or t_in >= t_have:
+        return None
+    return (f"the installed plugin ({installed.get('source') or '?'} "
+            f"{installed.get('git') or '?'}, {installed.get('commit_time') or installed.get('built')}) "
+            f"is newer than this one ({(incoming or {}).get('git') or '?'}, "
+            f"{(incoming or {}).get('commit_time') or (incoming or {}).get('built')})")
+
+
+def read_plugin_stamp(path: str) -> Optional[dict]:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        return doc if isinstance(doc, dict) else None
+    except (OSError, ValueError):
+        return None
 
 
 def verify_manifest(raw: bytes, sig_text: Optional[str], public_key: Optional[str]) -> dict:
@@ -433,6 +613,10 @@ class Updater:
         self._sampling = False
         self._fast_status: dict = {}
         self._unexpected_down: dict = {}
+        self._unexpected_down_campaign: dict = {}
+        # servers restart_dcs() bounced during this probation pass, so a DLL
+        # rollback and a campaign rollback on one server share one restart
+        self._restarted: set = set()
 
     # ---- config / state -------------------------------------------------
 
@@ -767,6 +951,10 @@ class Updater:
     def _want_file(self, name: str) -> bool:
         if name == BOT_PLUGIN_ZIP:
             return self.cfg.bot_plugin
+        key = campaign_key_of(name)
+        if key is not None:
+            # only this box's own servers' packs are ever downloaded
+            return self.cfg.campaigns and key in self.campaign_key_map()
         return name in self.cfg.files
 
     def _prune_downloads(self, root: str, keep_tag: str) -> None:
@@ -884,6 +1072,9 @@ class Updater:
             if note:
                 out.append(note)
 
+        if self.cfg.campaigns:
+            out += await loop.run_in_executor(None, self._stage_campaigns, latest)
+
         if out:
             self._history("staged", "; ".join(out), tag=latest.get("tag"))
             await self._notify(
@@ -943,14 +1134,16 @@ class Updater:
 
     # ---- bot plugin self-update (opt-in) -------------------------------------
 
-    def _apply_bot_plugin(self, latest: dict) -> Optional[str]:
+    def _apply_bot_plugin(self, latest: dict, plugin_dir: Optional[str] = None) -> Optional[str]:
         """Unpack fowlengine-bot.zip over this plugin + its extensions. Takes
         effect on the next bot restart. Refuses when the plugin is a symlink or
-        lives in a git checkout -- that is a developer's tree, not an install."""
+        lives in a git checkout -- that is a developer's tree, not an install
+        -- and when the plugin installed now is newer than the zip's (Fowl
+        Engine Manager may have synced a later bundle; see PLUGIN_STAMP)."""
         tag = latest.get("tag")
         if self.state.get("bot_plugin_tag") == tag:
             return None
-        plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        plugin_dir = plugin_dir or os.path.dirname(os.path.abspath(__file__))
         bot_root = os.path.dirname(os.path.dirname(plugin_dir))
         if os.path.realpath(plugin_dir) != os.path.abspath(plugin_dir) or _inside_git_worktree(plugin_dir):
             self.log.warning("FowlEngine/autoupdate: bot_plugin is on but the plugin lives in a git "
@@ -958,6 +1151,7 @@ class Updater:
             self.state["bot_plugin_tag"] = tag
             return "bot plugin: skipped (plugin is a git checkout / symlink)"
         zpath = os.path.join(latest.get("dir") or "", BOT_PLUGIN_ZIP)
+        stamp_member = f"plugins/fowlengine/{PLUGIN_STAMP}"
         try:
             with zipfile.ZipFile(zpath) as z:
                 names = z.namelist()
@@ -968,6 +1162,23 @@ class Updater:
                         raise RuntimeError(f"unsafe path in zip: {n}")
                     if not (n.startswith("plugins/fowlengine/") or n.startswith("extensions/bf")):
                         raise RuntimeError(f"zip touches {n}, outside the fowlengine plugin/extensions")
+                # A zip from before stamps: judge it by the release it came in.
+                incoming = None
+                if stamp_member in names:
+                    try:
+                        incoming = json.loads(z.read(stamp_member))
+                    except ValueError:
+                        incoming = None
+                if not isinstance(incoming, dict):
+                    incoming = {"git": latest.get("git"), "commit_time": latest.get("commit_time"),
+                                "built": latest.get("built")}
+                incoming = {**incoming, "schema": 1, "source": "engine-release", "tag": tag}
+                older = plugin_stamp_older(incoming, read_plugin_stamp(os.path.join(plugin_dir, PLUGIN_STAMP)))
+                if older:
+                    self.log.info(f"FowlEngine/autoupdate: bot plugin from {tag} not applied: {older}")
+                    self.state["bot_plugin_tag"] = tag
+                    self._history("bot_plugin", f"skipped: {older}", tag=tag)
+                    return f"bot plugin: skipped ({older})"
                 backup = os.path.join(bot_root, "_fowl_backups", f"plugin-{_now_tag()}.zip")
                 os.makedirs(os.path.dirname(backup), exist_ok=True)
                 with zipfile.ZipFile(backup, "w", zipfile.ZIP_DEFLATED) as bz:
@@ -980,6 +1191,8 @@ class Updater:
                                 full = os.path.join(dirpath, f)
                                 bz.write(full, os.path.relpath(full, bot_root))
                 z.extractall(bot_root)
+            # after the unpack, so the stamp always says what is really there
+            _write_json_atomic(os.path.join(plugin_dir, PLUGIN_STAMP), incoming)
         except Exception as ex:  # noqa: BLE001
             self.log.error(f"FowlEngine/autoupdate: bot plugin update failed: {ex}")
             return f"bot plugin: FAILED ({ex})"
@@ -1031,22 +1244,31 @@ class Updater:
                                    "blip for a few seconds.")
                 await pm.restart_if_pending(self.cog._bfdb_admin_password)
 
-        # engine DLLs: needs that DCS server down
+        # engine DLLs and campaign packs: need that DCS server down. Both land
+        # at the same start, so one restart covers a server with both.
+        due: dict = {}
         for t in self.pending_dll_servers():
-            s = t.server
+            due.setdefault(t.name, (t.server, []))[1].append(t.dll_name)
+        if cfg.campaigns:
+            for s, c in self._campaign_servers():
+                if ((c.get("pack") or {}).get("status") == "staged"
+                        and not self._is_remote(s) and self._has_bfbinaries(s)):
+                    due.setdefault(s.name, (s, []))[1].append(f"campaign pack {c['pack'].get('tag')}")
+        for name, (s, what) in due.items():
             if s.status not in (Status.RUNNING, Status.PAUSED):
                 continue  # swaps in by itself at its next start
             if cfg.apply == "next_restart":
                 continue
             if cfg.apply == "when_idle":
-                if not (in_window(cfg.apply_window) and self._idle_long_enough(t.name)):
+                if not (in_window(cfg.apply_window) and self._idle_long_enough(name)):
                     continue
-            await self.restart_dcs(s, f"applying staged {t.dll_name} (auto-update, {cfg.apply})")
+            await self.restart_dcs(s, f"applying staged {', '.join(what)} (auto-update, {cfg.apply})")
 
     async def restart_dcs(self, server, why: str) -> None:
         """Full DCS stop/start (a mission restart keeps the old DLL loaded).
         BFBinaries' prepare() swaps the staged DLL in on the way up."""
         self._orderly[server.name] = time.time()
+        self._restarted.add(server.name)
         await self._notify(f"🔁 **{server.name}**: restarting DCS -- {why}.")
         self._history("dcs_restart", why, server=server.name)
         try:
@@ -1166,18 +1388,47 @@ class Updater:
         now = time.time()
         self._sampling = True
         on_probation = self.state.get("probation") or {}
+        campaign_probation = {n for n, c in (self.state.get("campaigns") or {}).items() if c.get("probation")}
         for s in list(self.cog.bot.servers.values()):
             st = getattr(s.status, "name", str(s.status))
             prev = self._fast_status.get(s.name)
             self._fast_status[s.name] = st
             if st in ("SHUTTING_DOWN", "STOPPED"):
                 self._orderly[s.name] = now
-            if (s.name in on_probation and prev in ("RUNNING", "PAUSED", "LOADING")
-                    and st in ("SHUTDOWN", "UNREGISTERED")
+            if (prev in ("RUNNING", "PAUSED", "LOADING") and st in ("SHUTDOWN", "UNREGISTERED")
                     and now - self._orderly.get(s.name, 0) >= 300):
-                self._unexpected_down[s.name] = self._unexpected_down.get(s.name, 0) + 1
+                if s.name in on_probation:
+                    self._unexpected_down[s.name] = self._unexpected_down.get(s.name, 0) + 1
+                if s.name in campaign_probation:
+                    self._unexpected_down_campaign[s.name] = self._unexpected_down_campaign.get(s.name, 0) + 1
 
     async def _probation_phase(self, dt: float) -> None:
+        # Campaign packs first: a failed one only stages its restore, and if
+        # the DLL on the same server fails too its rollback restart picks the
+        # restore up -- one restart, not two.
+        self._restarted = set()
+        bounce = await self._campaign_probation_phase(dt)
+        await self._dll_probation_phase(dt)
+        for name, (server, why) in bounce.items():
+            if name not in self._restarted:
+                await self._bounce(server, why)
+
+    async def _bounce(self, server, why: str) -> None:
+        """Get DCS through a fresh start (BFBinaries' prepare()) whatever
+        state it is in: restart a running one, start a crashed one."""
+        from core import Status
+
+        if server.status in (Status.RUNNING, Status.PAUSED):
+            await self.restart_dcs(server, why)
+        elif server.status in (Status.SHUTDOWN, Status.UNREGISTERED):
+            self._orderly[server.name] = time.time()
+            self._restarted.add(server.name)
+            try:
+                await server.startup()
+            except Exception as ex:  # noqa: BLE001
+                self.log.warning(f"FowlEngine/autoupdate: startup of {server.name} failed: {ex}")
+
+    async def _dll_probation_phase(self, dt: float) -> None:
         from core import Status
 
         probation = self.state.get("probation") or {}
@@ -1270,6 +1521,7 @@ class Updater:
             await self.restart_dcs(server, f"rollback of {dll}")
         elif server.status in (Status.SHUTDOWN, Status.UNREGISTERED):
             self._orderly[server.name] = time.time()
+            self._restarted.add(server.name)
             try:
                 await server.startup()
             except Exception as ex:  # noqa: BLE001
@@ -1311,6 +1563,15 @@ class Updater:
                             os.remove(f)
                         except OSError:
                             pass
+        # Its campaign packs too: a pack may need the engine it shipped with.
+        # "cancelled", not failed -- if the release is allowed again, so are they.
+        for name, c in (self.state.get("campaigns") or {}).items():
+            pack = c.get("pack") or {}
+            if pack.get("tag") == tag and pack.get("status") in ("staged", "held"):
+                pack["status"] = "cancelled"
+                pack["reason"] = "the release was rolled back elsewhere and marked bad"
+                self._history("campaign_cancelled", f"{name}: {pack['reason']}", tag=tag, server=name)
+        self._save_state()
 
     def on_bfdb_rollback(self, tag: Optional[str], why: str) -> None:
         """procman rolled bfdb back by itself."""
@@ -1325,6 +1586,678 @@ class Updater:
                             "sha256": sidecar.get("sha256"), "at": _utc_now(),
                             "source": sidecar.get("source") or "manual"}
         self._history("applied", "bfdb.exe", tag=sidecar.get("tag"))
+
+    # ---- campaign packs (autoupdate.campaigns) ---------------------------------
+
+    @staticmethod
+    def _is_remote(server) -> bool:
+        from .upload import is_remote_node
+        return is_remote_node(getattr(server, "node", None))
+
+    @staticmethod
+    def _home(server) -> Optional[str]:
+        return getattr(getattr(server, "instance", None), "home", None)
+
+    def campaign_keys(self, server) -> list[str]:
+        """The pack keys that mean this server, lower-case like pack names:
+        its bfdb instance id (bfdb.instances[].id -- what campaigns.json
+        should use: short, stable, "never change it"), then its DCSServerBot
+        instance name (`dcs.vectorstrike_1`) for a box without instances."""
+        keys: list[str] = []
+        try:
+            iid = self.cog._instance_id(server) if hasattr(self.cog, "_instance_id") else None
+        except Exception:  # noqa: BLE001
+            iid = None
+        inst = getattr(getattr(server, "instance", None), "name", None)
+        for k in (iid, inst):
+            k = str(k or "").strip().lower()
+            if k and CAMPAIGN_KEY_RE.match(k) and k not in keys:
+                keys.append(k)
+        return keys
+
+    def campaign_key_map(self) -> dict:
+        """{pack key: server} for the servers on THIS PC. A server on an agent
+        node never gets a pack: its files live on another machine."""
+        out: dict = {}
+        for s in list(self.cog.bot.servers.values()):
+            if self._is_remote(s):
+                continue
+            for k in self.campaign_keys(s):
+                out.setdefault(k, s)
+        return out
+
+    def _has_bfbinaries(self, server) -> bool:
+        """BFBinaries' prepare() is what writes a pack; without it a staged
+        pack would sit there -- and `when_idle` restart the server for it
+        again and again."""
+        try:
+            return bool(self.cog._ext_cfg(server, "BFBinaries"))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _camp(self, name: str) -> dict:
+        return self.state.setdefault("campaigns", {}).setdefault(name, {"server": name})
+
+    def _campaign_servers(self):
+        servers = {s.name: s for s in self.cog.bot.servers.values()}
+        for name, c in list((self.state.get("campaigns") or {}).items()):
+            if name in servers:
+                yield servers[name], c
+
+    def _cfg_target(self, server, cfg_name: str) -> Optional[str]:
+        """<write dir>\\<cfg_name> -- bflib reads <sortie>_CFG from DCS's
+        write dir (bfprotocols Cfg::load), nowhere else."""
+        home = self._home(server)
+        return os.path.join(home, cfg_name) if home else None
+
+    def _miz_paths(self, server, name: str) -> dict:
+        """Where one mission file of a pack goes. `primary` is the mission
+        itself: the mission-list entry of that name, else a BFWeather template
+        of that name, else <Missions>\\<name>. DCSServerBot keeps a pristine
+        `.dcssb\\<name>.orig` beside a mission it modifies and copies it back
+        over the mission at every start (and may run a `.dcssb\\<name>` copy):
+        both are rewritten too, or that start would bring the old mission
+        straight back. `orig`/`copy` are None when absent."""
+        lname = name.lower()
+        primary = None
+        try:
+            mlist = list((getattr(server, "settings", None) or {}).get("missionList") or [])
+        except Exception:  # noqa: BLE001
+            mlist = []
+        for m in mlist:
+            m = os.path.normpath(str(m))
+            if os.path.basename(m).lower() != lname:
+                continue
+            d = os.path.dirname(m)
+            if os.path.basename(d).lower() == ".dcssb":
+                d = os.path.dirname(d)
+            primary = os.path.join(d, os.path.basename(m))
+            break
+        if primary is None:
+            try:
+                bfw = self.cog._ext_cfg(server, "BFWeather") or {}
+            except Exception:  # noqa: BLE001
+                bfw = {}
+            for k in ("base", "weapon", "options", "warehouse"):
+                p = _clean(bfw.get(k))
+                if p and os.path.basename(p).lower() == lname:
+                    primary = os.path.normpath(p)
+                    break
+        if primary is None:
+            home = self._home(server)
+            mdir = getattr(getattr(server, "instance", None), "missions_dir", None) \
+                or (os.path.join(home, "Missions") if home else None)
+            if not mdir:
+                return {"primary": None, "orig": None, "copy": None}
+            primary = os.path.join(mdir, name)
+        side = os.path.join(os.path.dirname(primary), ".dcssb", os.path.basename(primary))
+        return {"primary": primary,
+                "orig": side + ".orig" if os.path.exists(side + ".orig") else None,
+                "copy": side if os.path.exists(side) else None}
+
+    def _target_paths(self, server, files: dict) -> dict:
+        """name -> {authored: the copy that says what the server runs, write:
+        every path it is written to, new: no such mission yet}. For a mission
+        DCSServerBot modifies, the authored copy is its .orig: the mission
+        itself is rewritten (weather, time) at every start."""
+        out = {}
+        for n, f in files.items():
+            if f.get("role") == "cfg":
+                p = self._cfg_target(server, n)
+                out[n] = {"authored": p, "write": [p] if p else [], "new": not (p and os.path.exists(p))}
+                continue
+            mp = self._miz_paths(server, n)
+            if not mp["primary"]:
+                out[n] = {"authored": None, "write": [], "new": True}
+                continue
+            out[n] = {"authored": mp["orig"] or mp["primary"],
+                      "write": [p for p in (mp["primary"], mp["orig"], mp["copy"]) if p],
+                      "new": not os.path.exists(mp["primary"])}
+        return out
+
+    @staticmethod
+    def _authored_shas(targets: dict) -> dict:
+        return {n: (sha256_file(t["authored"]) if t["authored"] and os.path.exists(t["authored"]) else None)
+                for n, t in targets.items()}
+
+    def _observe_campaign_baselines(self) -> None:
+        """First sight of each server's *_CFG: remember its sha, so an edit
+        made on the server from now on (the dashboard CONFIG page, a text
+        editor) holds the next pack instead of being overwritten. An edit
+        made before the bot ever saw the file can't be told from the file."""
+        changed = False
+        for s in list(self.cog.bot.servers.values()):
+            home = self._home(s)
+            if not home or self._is_remote(s):
+                continue
+            try:
+                names = [f for f in os.listdir(home) if f.endswith("_CFG")
+                         and os.path.isfile(os.path.join(home, f))]
+            except OSError:
+                continue
+            for f in names:
+                base = self._camp(s.name).setdefault("baseline", {})
+                if f in base:
+                    continue
+                sha = sha256_file(os.path.join(home, f))
+                if sha:
+                    base[f] = sha
+                    changed = True
+        if changed:
+            self._save_state()
+
+    @staticmethod
+    def _parse_cfg(data: bytes, name: str) -> dict:
+        """A campaign cfg as bflib reads it (serde_json): UTF-8 JSON, no BOM
+        (Python refuses one too), a JSON object."""
+        try:
+            doc = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as ex:
+            raise ValueError(f"{name} is not valid JSON ({ex}) -- the engine would refuse it") from None
+        if not isinstance(doc, dict):
+            raise ValueError(f"{name} is not a JSON object")
+        return doc
+
+    @classmethod
+    def _netidx_mismatch(cls, current: Optional[str], new: str) -> Optional[str]:
+        """A pack whose netidx_base differs from the running cfg's is most
+        likely ANOTHER server's (a wrong key in campaigns.json), and would
+        cut this engine off from bfdb. Asked about, never just applied."""
+        try:
+            with open(current or "", "rb") as fh:
+                a = cls._parse_cfg(fh.read(), "current").get("netidx_base")
+            with open(new, "rb") as fh:
+                b = cls._parse_cfg(fh.read(), "new").get("netidx_base")
+        except (OSError, ValueError):
+            return None
+        if a and b and a != b:
+            return (f"its netidx_base {b!r} is not this server's {a!r} -- another server's pack? "
+                    f"(if intended, bfdb.instances needs the new one too)")
+        return None
+
+    def _stage_campaigns(self, latest: dict) -> list[str]:
+        """Stage every pack in the latest release that is for a server on this
+        box and differs from what it runs. Returns lines for ops_channel."""
+        out: list[str] = []
+        tag = latest.get("tag")
+        keymap = self.campaign_key_map()
+        for fname, meta in (latest.get("files") or {}).items():
+            camp = meta.get("campaign")
+            if not camp:
+                continue
+            server = keymap.get(camp["key"])
+            if server is None:
+                continue
+            c = self._camp(server.name)
+            c["key"] = camp["key"]
+            pack = c.get("pack") or {}
+            if (tag in (c.get("failed") or []) or tag in (c.get("dismissed") or [])
+                    or c.get("rejected") == tag
+                    or (pack.get("tag") == tag and pack.get("status") != "cancelled")
+                    # one change at a time: the next check stages it
+                    or c.get("probation") or c.get("restore")
+                    or (c.get("installed") or {}).get("sha256") == meta["sha256"]):
+                continue
+            try:
+                note = self._stage_campaign(server, c, fname, meta, latest)
+            except Exception as ex:  # noqa: BLE001
+                # a pack that doesn't verify or parse won't next time either
+                c["last_error"] = f"{tag}: {ex}"
+                c["rejected"] = tag
+                self.log.warning(f"FowlEngine/autoupdate: campaign pack {fname} for {server.name}: {ex}")
+                self._history("campaign_rejected", f"{server.name}: {ex}", tag=tag, server=server.name)
+                out.append(f"⚠️ campaign pack for **{server.name}** refused: {ex}")
+                continue
+            if note:
+                out.append(note)
+        self._save_state()
+        return out
+
+    def _stage_campaign(self, server, c: dict, fname: str, meta: dict, latest: dict) -> Optional[str]:
+        camp = meta["campaign"]
+        tag = latest["tag"]
+        if not self._has_bfbinaries(server):
+            raise ValueError("this instance has no BFBinaries extension in nodes.yaml -- nothing would write "
+                             "the pack at its start")
+        want = {n: f["sha256"] for n, f in camp["contents"].items()}
+        dest = os.path.join(self.global_staging(), "_campaigns", camp["key"], tag)
+        shutil.rmtree(dest, ignore_errors=True)
+        os.makedirs(dest, exist_ok=True)
+        with zipfile.ZipFile(os.path.join(latest.get("dir") or "", fname)) as z:
+            names = [n for n in z.namelist() if not n.endswith("/")]
+            if sorted(names) != sorted(want):
+                raise ValueError(f"{fname} holds {', '.join(sorted(names))} but the manifest lists "
+                                 f"{', '.join(sorted(want))}")
+            for n in names:
+                data = z.read(n)
+                if hashlib.sha256(data).hexdigest() != want[n]:
+                    raise ValueError(f"{fname}: {n} does not match its sha256 in the signed manifest")
+                if camp["contents"][n]["role"] == "cfg":
+                    self._parse_cfg(data, n)
+                with open(os.path.join(dest, n), "wb") as fh:
+                    fh.write(data)
+        targets = self._target_paths(server, camp["contents"])
+        nowhere = [n for n, t in targets.items() if not t["write"]]
+        if nowhere:
+            raise ValueError(f"nowhere to write {', '.join(nowhere)} (no instance home / Missions folder)")
+        on_disk = self._authored_shas(targets)
+        base = c.setdefault("baseline", {})
+        old = c.get("pack") or {}
+        if old.get("dir") and os.path.normcase(old["dir"]) != os.path.normcase(dest):
+            shutil.rmtree(old["dir"], ignore_errors=True)
+        if all(on_disk.get(n) == s for n, s in want.items()):
+            shutil.rmtree(dest, ignore_errors=True)
+            c["pack"] = None
+            c["installed"] = {"tag": tag, "sha256": meta["sha256"], "at": _utc_now(), "files": want,
+                              "cfg_name": camp["cfg_name"]}
+            base.update(want)
+            self._history("campaign_current", f"{server.name} already runs these files", tag=tag,
+                          server=server.name)
+            return None
+        held = campaign_conflicts(want, on_disk, base)
+        for n, s in on_disk.items():
+            if s is not None:
+                base.setdefault(n, s)   # first observation
+        reasons = []
+        if held:
+            reasons.append("server copy was edited since the last update: " + ", ".join(held))
+        mismatch = self._netidx_mismatch(targets[camp["cfg_name"]]["authored"],
+                                         os.path.join(dest, camp["cfg_name"]))
+        if mismatch:
+            reasons.append(mismatch)
+            if camp["cfg_name"] not in held:
+                held.append(camp["cfg_name"])
+        status = "held" if reasons else "staged"
+        c["pack"] = {
+            "tag": tag, "git": meta.get("git") or latest.get("git"),
+            "built": meta.get("built") or latest.get("built"), "sha256": meta["sha256"],
+            "name": fname, "cfg_name": camp["cfg_name"], "files": camp["contents"], "dir": dest,
+            "status": status, "reason": "; ".join(reasons) or None, "held": held,
+            "decision": None, "apply_only": None, "staged_at": _utc_now(),
+        }
+        c.pop("last_error", None)
+        self._history(f"campaign_{status}", f"{server.name}: {c['pack']['reason'] or ', '.join(want)}",
+                      tag=tag, server=server.name)
+        if status == "held":
+            return (f"⏸️ campaign pack for **{server.name}** HELD -- {c['pack']['reason']}. Decide on the OPS "
+                    f"page (Campaign packs) or with `/feops campaign_apply` / `/feops campaign_keep`")
+        return f"campaign pack → {server.name} ({', '.join(want)}, at its next DCS start)"
+
+    def campaign_prepare(self, server) -> Optional[str]:
+        """BFBinaries' prepare(), right before DCS starts (DCS is down, the
+        mission not yet loaded): restore a failed pack's backup, or write a
+        staged pack. Returns a line for ops_channel. Never raises -- a start
+        is never blocked by this."""
+        try:
+            return self._campaign_prepare(server)
+        except Exception as ex:  # noqa: BLE001
+            self.log.exception(f"FowlEngine/autoupdate: campaign pack for {server.name}: {ex}")
+            return f"⚠️ campaign pack: {ex} -- starting with the files as they are."
+
+    def _campaign_prepare(self, server) -> Optional[str]:
+        c = (self.state.get("campaigns") or {}).get(server.name)
+        if not c:
+            return None
+        if c.get("restore"):
+            return self._restore_campaign(server, c)
+        pack = c.get("pack")
+        if not pack or pack.get("status") != "staged" or not self.cfg.campaigns or self._is_remote(server):
+            return None
+        tag = pack["tag"]
+        names = list(pack.get("apply_only") or pack["files"])
+        files = {n: pack["files"][n] for n in names}
+        want = {n: f["sha256"] for n, f in files.items()}
+        targets = self._target_paths(server, files)
+        on_disk = self._authored_shas(targets)
+        base = c.setdefault("baseline", {})
+        if pack.get("decision") != "overwrite":
+            # somebody may have edited it between staging and this start
+            held = campaign_conflicts(want, on_disk, base)
+            if held:
+                pack.update(status="held", held=held,
+                            reason="server copy was edited since the last update: " + ", ".join(held))
+                self._history("campaign_held", f"{server.name}: {pack['reason']}", tag=tag, server=server.name)
+                self._save_state()
+                return f"⏸️ campaign pack {tag} HELD at start -- {pack['reason']}."
+        todo = [n for n in names if on_disk.get(n) != want[n]]
+        for n in todo:
+            if sha256_file(os.path.join(pack["dir"], n)) != want[n]:
+                c["pack"] = None   # the next check stages it afresh
+                c["last_error"] = f"{tag}: the staged copy of {n} is missing or changed"
+                self._save_state()
+                return f"⚠️ campaign pack {tag}: its staged {n} is missing or changed -- dropped, the next check stages it again."
+        prev_installed = c.get("installed")
+        installed_files = dict((prev_installed or {}).get("files") or {})
+        installed_files.update(want)
+        c["installed"] = {"tag": tag, "sha256": pack["sha256"], "at": _utc_now(), "files": installed_files,
+                          "cfg_name": pack["cfg_name"], "partial": bool(pack.get("apply_only"))}
+        if pack.get("decision") == "keep":
+            c["dismissed"] = (list(c.get("dismissed") or []) + [tag])[-20:]
+        for n in names:
+            base[n] = want[n]
+        if not todo:
+            c["pack"] = None
+            self._history("campaign_current", f"{server.name} already runs these files", tag=tag, server=server.name)
+            self._save_state()
+            return None
+
+        home = self._home(server)
+        backup_dir = os.path.join(home, CAMPAIGN_BACKUPS, f"{_now_tag()}-{tag}")
+        writes = [(os.path.join(pack["dir"], n), dst) for n in todo for dst in targets[n]["write"]]
+        entries = []
+        try:
+            os.makedirs(backup_dir, exist_ok=True)
+            for i, (_src, dst) in enumerate(writes):
+                bname = None
+                if os.path.exists(dst):
+                    bname = f"{i:02d}-{os.path.basename(dst)}"
+                    shutil.copy2(dst, os.path.join(backup_dir, bname))
+                entries.append({"path": dst, "backup": bname})
+            _write_json_atomic(os.path.join(backup_dir, "backup.json"),
+                               {"tag": tag, "server": server.name, "at": _utc_now(), "entries": entries,
+                                "files": {n: {"role": files[n]["role"]} for n in todo}})
+        except OSError as ex:
+            c["installed"] = prev_installed
+            c["last_error"] = f"{tag}: backup failed ({ex})"
+            self._save_state()
+            return f"⚠️ campaign pack {tag} NOT written: could not back up the current files ({ex})."
+        try:
+            for src, dst in writes:
+                _copy_atomic(src, dst)
+        except OSError as ex:
+            problems = self._restore_entries(backup_dir, entries)
+            c["installed"] = prev_installed
+            c["last_error"] = f"{tag}: write failed ({ex})"
+            self._save_state()
+            return (f"⚠️ campaign pack {tag} NOT written ({ex}); the previous files are back"
+                    + (f" except: {'; '.join(problems)}" if problems else "") + ". Retried at the next start.")
+
+        log_path, off, head = self._engine_log_mark(server)
+        c["probation"] = {"tag": tag, "backup": backup_dir, "swapped_at": time.time(), "running_secs": 0.0,
+                          "loaded_at": None, "crashes": 0, "prev_installed": prev_installed, "files": todo,
+                          "log": log_path, "log_offset": off, "log_head": head}
+        pack["status"] = "probation"
+        c.pop("last_error", None)
+        # the restart that brought us here was orderly; a crash from here on is not
+        self._orderly.pop(server.name, None)
+        self._unexpected_down_campaign.pop(server.name, None)
+        self._prune_campaign_backups(home)
+        self._history("campaign_applied", f"{server.name}: {', '.join(todo)}", tag=tag, server=server.name)
+        self._save_state()
+        new = [n for n in todo if targets[n]["new"] and files[n]["role"] == "miz"]
+        note = f"campaign pack {tag} written: {', '.join(todo)} (backup `{os.path.basename(backup_dir)}`)."
+        if new:
+            note += (f" New mission file(s) {', '.join(new)}: this start still runs the mission in the list "
+                     f"-- add/select it with /mission if that's the plan.")
+        return note
+
+    @staticmethod
+    def _restore_entries(bdir: str, entries: list) -> list[str]:
+        problems = []
+        for e in reversed(entries):
+            try:
+                if e.get("backup"):
+                    _copy_atomic(os.path.join(bdir, e["backup"]), e["path"])
+                elif os.path.exists(e["path"]):
+                    os.remove(e["path"])   # the pack added it
+            except OSError as ex:
+                problems.append(f"{e.get('path')}: {ex}")
+        return problems
+
+    def _restore_campaign(self, server, c: dict) -> str:
+        bdir = c.get("restore")
+        c["restore"] = None
+        try:
+            with open(os.path.join(bdir, "backup.json"), encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (OSError, TypeError, ValueError) as ex:
+            self._save_state()
+            return (f"⛔ campaign restore for {server.name} impossible: backup unreadable ({ex}) -- restore by "
+                    f"hand from `{bdir}`.")
+        problems = self._restore_entries(bdir, doc.get("entries") or [])
+        # what is on disk again is what we last wrote there
+        base = c.setdefault("baseline", {})
+        files = doc.get("files") or {}
+        for n, sha in self._authored_shas(self._target_paths(server, files)).items():
+            if sha:
+                base[n] = sha
+            else:
+                base.pop(n, None)
+        self._history("campaign_restored", f"{server.name}: {', '.join(files)}"
+                      + (f" -- problems: {'; '.join(problems)}" if problems else ""),
+                      tag=doc.get("tag"), server=server.name)
+        self._save_state()
+        if problems:
+            return f"⛔ campaign files restored from `{os.path.basename(bdir)}` with problems: {'; '.join(problems)}"
+        return f"campaign files restored from `{os.path.basename(bdir)}` (pack {doc.get('tag')} rolled back)."
+
+    def _list_campaign_backups(self, home: Optional[str]) -> list[str]:
+        if not home:
+            return []
+        try:
+            return sorted((e.name for e in os.scandir(os.path.join(home, CAMPAIGN_BACKUPS)) if e.is_dir()),
+                          reverse=True)
+        except OSError:
+            return []
+
+    def _prune_campaign_backups(self, home: str) -> None:
+        for stale in self._list_campaign_backups(home)[self.cfg.campaign_backups_keep:]:
+            shutil.rmtree(os.path.join(home, CAMPAIGN_BACKUPS, stale), ignore_errors=True)
+
+    def _engine_log(self, server) -> Optional[str]:
+        home = self._home(server)
+        try:
+            is_range = bool(self.cog._is_range(server)) if hasattr(self.cog, "_is_range") else False
+        except Exception:  # noqa: BLE001
+            is_range = False
+        # bfrange logs neither marker: a range is judged on "stayed up" alone
+        return os.path.join(home, "Logs", "bfnext.txt") if home and not is_range else None
+
+    @staticmethod
+    def _log_head(path: str) -> Optional[str]:
+        try:
+            with open(path, "rb") as fh:
+                return hashlib.sha256(fh.read(256)).hexdigest()
+        except OSError:
+            return None
+
+    def _engine_log_mark(self, server) -> tuple:
+        p = self._engine_log(server)
+        if not p:
+            return None, 0, None
+        try:
+            size = os.path.getsize(p)
+        except OSError:
+            size = 0
+        return p, size, self._log_head(p)
+
+    def _scan_engine_log(self, p: dict) -> Optional[str]:
+        """What bflib logged since the pack was written: "up", "refused: ..."
+        or None (nothing decisive yet)."""
+        path = p.get("log")
+        if not path:
+            return None
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return None
+        off = int(p.get("log_offset") or 0)
+        head = self._log_head(path)
+        if size < off or head != p.get("log_head"):
+            off = 0   # bflib renames the old log aside at every start (rotate_log)
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(off)
+                data = fh.read(8 << 20)
+        except OSError:
+            return None
+        cut = data.rfind(b"\n")
+        data = data[:cut + 1] if cut >= 0 else b""   # a line still being written waits
+        p["log_offset"] = off + len(data)
+        p["log_head"] = head
+        text = data.decode("utf-8", "replace")
+        for line in text.splitlines():
+            if ENGINE_LOG_REFUSED in line:
+                return "refused: " + line.strip()[:300]
+        return "up" if ENGINE_LOG_UP in text else None
+
+    async def _campaign_probation_phase(self, dt: float) -> dict:
+        """Judge every freshly written pack. Returns {server name: (server,
+        why)} for the ones to restart onto their restored files."""
+        from core import Status
+
+        bounce: dict = {}
+        servers = {s.name: s for s in self.cog.bot.servers.values()}
+        changed = False
+        for name, c in list((self.state.get("campaigns") or {}).items()):
+            p = c.get("probation")
+            s = servers.get(name)
+            if not p or s is None:
+                continue
+            st = s.status
+            prev = self._last_status.get(name)
+            if st in (Status.RUNNING, Status.PAUSED):
+                p["running_secs"] = p.get("running_secs", 0.0) + dt
+                changed = True
+            if self._sampling:
+                crashed = self._unexpected_down_campaign.pop(name, 0) > 0
+            else:
+                went_down = (prev in ("RUNNING", "PAUSED", "LOADING")
+                             and st in (Status.SHUTDOWN, Status.UNREGISTERED))
+                crashed = went_down and time.time() - self._orderly.get(name, 0) >= 300
+            if crashed:
+                p["crashes"] = p.get("crashes", 0) + 1
+                changed = True
+            why = None
+            if not p.get("loaded_at"):
+                seen = await asyncio.get_running_loop().run_in_executor(None, self._scan_engine_log, p)
+                changed = True
+                if seen == "up" or (not p.get("log") and p.get("running_secs", 0) >= 120):
+                    p["loaded_at"] = time.time()
+                    self._history("campaign_loaded", f"{name}: the mission came up", tag=p.get("tag"), server=name)
+                elif seen:
+                    why = f"the engine refused the mission ({seen[len('refused: '):]})"
+            timeout = self.cfg.load_timeout_minutes * 60
+            if why is None and p.get("crashes", 0) >= 1 and self.cfg.rollback_on_crash:
+                why = f"DCS crashed {p['crashes']}x after the campaign files changed"
+            if why is None and not p.get("loaded_at") and p.get("running_secs", 0) > timeout:
+                why = f"the mission never came up ({self.cfg.load_timeout_minutes:.0f} min running)"
+            if why is None and st == Status.LOADING and time.time() - p.get("swapped_at", time.time()) > timeout:
+                why = f"DCS never got past LOADING ({self.cfg.load_timeout_minutes:.0f} min)"
+            if why:
+                await self._notify(self._fail_campaign(s, c, why))
+                bounce[name] = (s, f"restoring the previous campaign files ({why})")
+                changed = True
+                continue
+            if (p.get("loaded_at") and st in (Status.RUNNING, Status.PAUSED)
+                    and time.time() - p["loaded_at"] >= self.cfg.probation_minutes * 60):
+                c["probation"] = None
+                c["last_applied"] = {"tag": p.get("tag"), "at": _utc_now(), "result": "passed",
+                                     "backup": p.get("backup"), "files": p.get("files")}
+                pack = c.get("pack") or {}
+                if pack.get("tag") == p.get("tag"):
+                    shutil.rmtree(pack.get("dir") or "", ignore_errors=True)
+                    c["pack"] = None
+                changed = True
+                self._history("campaign_passed", f"{name}", tag=p.get("tag"), server=name)
+                await self._notify(f"✅ **{name}**: campaign pack {p.get('tag')} passed probation.")
+        if changed:
+            self._save_state()
+        return bounce
+
+    def _fail_campaign(self, server, c: dict, why: str) -> str:
+        """Stage the pre-write backup for the next start and never offer this
+        tag to this server again."""
+        p = c.get("probation") or {}
+        tag = p.get("tag")
+        c["probation"] = None
+        c["failed"] = ([t for t in (c.get("failed") or []) if t != tag] + [tag])[-20:] if tag else c.get("failed")
+        c["restore"] = p.get("backup")
+        c["installed"] = p.get("prev_installed")
+        pack = c.get("pack") or {}
+        if pack.get("tag") == tag:
+            pack.update(status="failed", reason=why)
+        c["last_applied"] = {"tag": tag, "at": _utc_now(), "result": "failed", "reason": why,
+                             "backup": p.get("backup"), "files": p.get("files")}
+        self._history("campaign_rollback", f"{server.name}: {why}", tag=tag, server=server.name)
+        return (f"⏪ **{server.name}**: campaign pack {tag} failed -- {why}. The previous cfg + mission are "
+                f"restored at the restart, and {tag} won't be applied here again.")
+
+    def campaign_decide(self, server_name: str, decision: str, who: str = "") -> str:
+        """An admin's answer to a held (or staged) pack. `apply`: write it
+        over the server's copy at the next start (backup kept). `keep`: keep
+        the server's cfg (and any mission edited there); the pack's other
+        missions still go in, and the pack is dismissed for this server."""
+        c = (self.state.get("campaigns") or {}).get(server_name)
+        pack = (c or {}).get("pack") or {}
+        if pack.get("status") not in ("held", "staged"):
+            raise LookupError(f"{server_name} has no held or staged campaign pack")
+        tag = pack["tag"]
+        by = f" (by {who})" if who else ""
+        if decision == "apply":
+            pack.update(status="staged", decision="overwrite", reason=None, held=[], apply_only=None)
+            self._history("campaign_decision", f"{server_name}: apply over the server's copy{by}", tag=tag,
+                          server=server_name)
+            self._save_state()
+            when = {"next_restart": "its next DCS restart",
+                    "when_idle": "its next DCS start (restarted once empty)",
+                    "immediately": "a DCS restart within the minute"}.get(self.cfg.apply, "its next DCS start")
+            return f"{tag} will overwrite {server_name}'s campaign files at {when}; a backup is kept."
+        if decision != "keep":
+            raise ValueError("decision must be apply or keep")
+        server = {s.name: s for s in self.cog.bot.servers.values()}.get(server_name)
+        if server is None:
+            raise LookupError(f"no server named {server_name!r}")
+        miz = {n: f for n, f in pack["files"].items() if f["role"] == "miz"}
+        want = {n: f["sha256"] for n, f in miz.items()}
+        on_disk = self._authored_shas(self._target_paths(server, miz))
+        edited = set(campaign_conflicts(want, on_disk, c.get("baseline") or {}))
+        only = [n for n in miz if n not in edited and on_disk.get(n) != want[n]]
+        if only:
+            pack.update(status="staged", decision="keep", apply_only=only, held=[],
+                        reason=f"keeping the server's {pack['cfg_name']}; only {', '.join(only)} will be written")
+            msg = f"kept {server_name}'s {pack['cfg_name']}; {', '.join(only)} from {tag} go in at its next DCS start."
+        else:
+            c["dismissed"] = (list(c.get("dismissed") or []) + [tag])[-20:]
+            shutil.rmtree(pack.get("dir") or "", ignore_errors=True)
+            c["pack"] = None
+            msg = f"kept {server_name}'s campaign files; {tag} is dismissed there."
+        self._history("campaign_decision", f"{server_name}: keep the server's copy{by}", tag=tag, server=server_name)
+        self._save_state()
+        return msg
+
+    def campaign_status(self) -> dict:
+        """The OPS page's Campaign packs section: one row per DCS server."""
+        camps = self.state.get("campaigns") or {}
+        rows = []
+        for s in list(self.cog.bot.servers.values()):
+            c = camps.get(s.name) or {}
+            pack = c.get("pack")
+            p = c.get("probation")
+            remote = self._is_remote(s)
+            rows.append({
+                "server": s.name,
+                "keys": self.campaign_keys(s),
+                "key": c.get("key"),
+                "remote": remote,
+                "installed": c.get("installed"),
+                "pack": {**{k: pack.get(k) for k in ("tag", "git", "built", "status", "reason", "held", "decision",
+                                                      "apply_only", "staged_at", "cfg_name")},
+                         "files": sorted(pack.get("files") or {})} if pack else None,
+                "probation": {
+                    "tag": p.get("tag"), "running_secs": int(p.get("running_secs") or 0),
+                    "loaded": bool(p.get("loaded_at")), "crashes": p.get("crashes", 0),
+                    "passes_in_secs": (max(0, int(self.cfg.probation_minutes * 60 - (time.time() - p["loaded_at"])))
+                                       if p.get("loaded_at") else None),
+                } if p else None,
+                "last_applied": c.get("last_applied"),
+                "failed": list(c.get("failed") or [])[-10:],
+                "dismissed": list(c.get("dismissed") or [])[-10:],
+                "restore_pending": bool(c.get("restore")),
+                "last_error": c.get("last_error"),
+                "backups": [] if remote else self._list_campaign_backups(self._home(s))[:10],
+            })
+        return {"enabled": self.cfg.campaigns, "servers": rows}
 
     # ---- the loop -----------------------------------------------------------
 
@@ -1345,6 +2278,8 @@ class Updater:
         self._last_tick = now
         try:
             self._track_idle()
+            if self.cfg.campaigns:
+                await asyncio.get_running_loop().run_in_executor(None, self._observe_campaign_baselines)
             await self._probation_phase(dt)
             if self.cfg.enabled and not self.cfg.paused and not self._lock.locked():
                 last = self.state.get("last_check") or {}
@@ -1398,5 +2333,6 @@ class Updater:
             "probation": probation,
             "idle_since": {k: datetime.fromtimestamp(v, timezone.utc).isoformat()
                            for k, v in self._idle_since.items()},
+            "campaigns": self.campaign_status(),
             "history": list(reversed((self.state.get("history") or [])[-60:])),
         }

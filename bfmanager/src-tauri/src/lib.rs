@@ -50,6 +50,9 @@ struct AppState {
     bundle_version: Option<String>,
     plugin_pending: Vec<String>,
     plugin_link: Option<String>,
+    /// The bot already runs a later plugin than this app carries (an engine
+    /// release put it there): why the sync leaves it alone.
+    plugin_newer: Option<String>,
     ops_target: Option<String>,
     ops_error: Option<String>,
     /// Windows' automatic sign-in (who, and is a password stored).
@@ -86,9 +89,13 @@ async fn get_state() -> CmdResult<serde_json::Value> {
         let bot_dir = cfg.bot_dir();
         let bot_dir_valid = bot_dir.as_deref().map(bot::is_bot_dir).unwrap_or(false);
         let bundle = bot::bundle_manifest();
-        let (plugin_pending, plugin_link) = match (&bot_dir, &bundle) {
-            (Some(d), Some(m)) if bot_dir_valid => (bot::plugin_diff(d, m), bot::linked_plugin(d)),
-            _ => (vec![], None),
+        let (plugin_pending, plugin_link, plugin_newer) = match (&bot_dir, &bundle) {
+            (Some(d), Some(m)) if bot_dir_valid => match bot::newer_installed_plugin(d) {
+                // every file "differs", but none of them is behind
+                Some(why) => (vec![], bot::linked_plugin(d), Some(why)),
+                None => (bot::plugin_diff(d, m), bot::linked_plugin(d), None),
+            },
+            _ => (vec![], None, None),
         };
         let (ops_target, ops_error) = match &bot_dir {
             Some(d) if bot_dir_valid => match bot::ops_target(d) {
@@ -113,6 +120,7 @@ async fn get_state() -> CmdResult<serde_json::Value> {
             bundle_version: bundle.map(|b| b.version),
             plugin_pending,
             plugin_link,
+            plugin_newer,
             ops_target,
             ops_error,
             autologon: desktop::autologon_status(),
