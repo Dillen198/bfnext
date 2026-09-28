@@ -111,15 +111,16 @@ pub struct ParkingSpot {
     pub term_type: i64,
     pub pos: LuaVec3,
     pub dist_to_rw: f64,
-    /// Whether the spot can be used as a takeoff position at all, as DCS
-    /// reports it. `None` means DCS did not report the field.
+    /// DCS's `TO_AC`: an aircraft is on this spot right now, taking off from
+    /// it or having just landed on it ("takeoff/landing aircraft", as MOOSE
+    /// documents it -- its free-spot finders keep exactly the spots where this
+    /// is `false`). So `false` is the normal state of a free spot, `true` is
+    /// the one to avoid, and `None` means DCS did not report the field.
     ///
-    /// Spots that are genuinely `Some(false)` exist (maintenance areas, some
-    /// FARP pads) and DCS will silently air-start a group assigned to one.
-    /// Absent is a different thing and must not be read as `false`: on the
-    /// live server every free spot at a Caucasus airdrome came back without
-    /// it, so a field with 31 free open-big stands reported "0 of 47 usable"
-    /// and the flight went out with no parking assignment at all.
+    /// It used to be read the other way round, as "usable for takeoff". That
+    /// threw away every free spot at any field that reports the flag: Gudauta
+    /// came back "0 of 32 usable, 32 TO_AC=false" and its helo missions were
+    /// put down on open ground on the runway instead of on a ramp stand.
     pub to_ac: Option<bool>,
 }
 
@@ -138,20 +139,20 @@ impl ParkingSpot {
         }
     }
 
+    /// An aircraft is taking off from or has just landed on this spot. See
+    /// [`ParkingSpot::to_ac`]; an unreported flag is not an occupant.
+    pub fn occupied(&self) -> bool {
+        self.to_ac == Some(true)
+    }
+
     /// Can an aircraft of this kind actually start from this spot?
     ///
     /// Mirrors the terminal-type matching every working DCS spawner does
     /// (MOOSE's `AIRBASE.TerminalType` / `_CheckTerminalType`): fixed wing take
     /// shelters and open medium/big ramp, helicopters take helipads and open
     /// ramp, and nobody parks on the runway.
-    /// A spot DCS explicitly marked as not usable for takeoff. Distinct from
-    /// one it said nothing about -- see [`ParkingSpot::to_ac`].
-    pub fn takeoff_denied(&self) -> bool {
-        self.to_ac == Some(false)
-    }
-
     pub fn usable_by(&self, helicopter: bool) -> bool {
-        if self.takeoff_denied() || self.term_type == term_type::RUNWAY {
+        if self.occupied() || self.term_type == term_type::RUNWAY {
             return false;
         }
         if helicopter {

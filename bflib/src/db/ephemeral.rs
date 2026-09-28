@@ -259,6 +259,9 @@ pub struct Ephemeral {
     pub(super) arty_last_fired: FxHashMap<GroupId, DateTime<Utc>>,
     pub(super) delayspawnq: BTreeMap<DateTime<Utc>, SmallVec<[GroupId; 8]>>,
     pub(super) awacs_stn: u32,
+    /// Aircraft templates already reported for spawning with no fuel, so the
+    /// warning is once per template rather than once per spawn.
+    fuel_fixed_templates: FxHashSet<String>,
     pub(super) logistics_stage: LogiStage,
     spawnq: VecDeque<GroupId>,
     despawnq: VecDeque<(GroupId, Despawn)>,
@@ -414,6 +417,7 @@ impl Default for Ephemeral {
             arty_last_fired: FxHashMap::default(),
             delayspawnq: BTreeMap::default(),
             awacs_stn: 0o77777,
+            fuel_fixed_templates: FxHashSet::default(),
             spawnq: VecDeque::default(),
             despawnq: VecDeque::default(),
             carrier_linked_groups: FxHashMap::default(),
@@ -1567,6 +1571,76 @@ impl Ephemeral {
         Ok(())
     }
 
+    /// Give an aircraft template unit its full internal fuel if its payload
+    /// says it has none. DCS reads `payload.fuel` as kilograms in the tank,
+    /// so 0 is not "the airframe's default", it is empty: a cold start sits
+    /// on the ramp for good with its engines off, and an air start falls out
+    /// of the sky. Templates end up like that when a build script swaps the
+    /// airframe and resets the payload -- the RGW2008 BHELO_LOGI Mi-8, whose
+    /// helo missions never left the ground, is how this was found. Only an
+    /// empty or missing load is touched; a deliberately light one is kept.
+    fn ensure_launch_fuel(
+        &mut self,
+        lua: MizLua,
+        template_name: &String,
+        unit: &miz::Unit,
+    ) -> Result<()> {
+        let Ok(payload) = unit.raw_get::<_, LuaTable>("payload") else {
+            return Ok(());
+        };
+        // The mission editor writes it as a number or a numeric string
+        // depending on the airframe; both mean kilograms.
+        let fuel = match payload.raw_get::<_, LuaValue>("fuel")? {
+            LuaValue::Integer(i) => Some(i as f64),
+            LuaValue::Number(n) => Some(n),
+            LuaValue::String(s) => s.to_str().ok().and_then(|s| s.trim().parse::<f64>().ok()),
+            _ => None,
+        };
+        if fuel.is_some_and(|f| f > 0.) {
+            return Ok(());
+        }
+        let typ = unit.typ()?;
+        // The harvested unit db first; the mission sandbox's own
+        // `Unit.getDescByName` if the harvest didn't run or doesn't know it.
+        let max_kg = crate::unitdb::get()
+            .get(typ.as_str())
+            .and_then(|u| u.max_fuel_kg)
+            .or_else(|| {
+                use dcso3::LuaEnv as _;
+                let class: LuaTable = lua.inner().globals().raw_get("Unit").ok()?;
+                let f: LuaFunction = class.get("getDescByName").ok()?;
+                let desc: LuaTable = f.call(typ.as_str()).ok()?;
+                desc.raw_get::<_, f64>("fuelMassMax").ok()
+            })
+            .filter(|kg| *kg > 0.);
+        let first = self.fuel_fixed_templates.insert(template_name.clone());
+        match max_kg {
+            Some(kg) => {
+                payload.raw_set("fuel", kg)?;
+                if first {
+                    warn!(
+                        "[SPAWN] template {template_name} ({typ}) has {} internal fuel in the .miz -- \
+                         spawning it with a full {kg:.0}kg instead; fix the template's payload",
+                        match fuel {
+                            Some(_) => "zero",
+                            None => "no",
+                        }
+                    );
+                }
+            }
+            None => {
+                if first {
+                    warn!(
+                        "[SPAWN] template {template_name} ({typ}) has no internal fuel in the .miz and \
+                         DCS doesn't say how much it holds -- it will spawn empty and never fly; \
+                         fix the template's payload"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn spawn_group<'lua>(
         &mut self,
         perf: &mut PerfInner,
@@ -2079,18 +2153,16 @@ impl Ephemeral {
                             });
                             usable.truncate(want);
                             if usable.len() < want {
-                                // Say *why* nothing matched, and keep the two
-                                // TO_AC states apart: a spot DCS explicitly
-                                // refuses for takeoff is a real constraint, a
-                                // spot it said nothing about is not, and
-                                // conflating them is what made a field with 31
-                                // free open-big stands report nothing usable.
-                                let mut denied = 0usize;
+                                // Say *why* nothing matched: spots another
+                                // aircraft is taking off from or landing on
+                                // (`TO_AC`), and the terminal types of the
+                                // rest, which this airframe can't use.
+                                let mut occupied = 0usize;
                                 let mut by_type: FxHashMap<i64, usize> =
                                     FxHashMap::default();
                                 for sp in &rejected {
-                                    if sp.takeoff_denied() {
-                                        denied += 1;
+                                    if sp.occupied() {
+                                        occupied += 1;
                                     }
                                     *by_type.entry(sp.term_type).or_default() += 1;
                                 }
@@ -2099,10 +2171,15 @@ impl Ephemeral {
                                 types.sort_by_key(|(t, _)| *t);
                                 warn!(
                                     "[GROUND_START] {} wanted {want} parking spots, only {} of {total} free spots are usable by this airframe \
-                                     (helicopter={helicopter}; rejected: {denied} that DCS marks TO_AC=false, \
-                                     Term_Type counts {types:?}) -- the rest go on the field for DCS to assign",
+                                     (helicopter={helicopter}; rejected: {occupied} occupied by a departing/arriving aircraft (TO_AC=true), \
+                                     Term_Type counts {types:?}) -- {}",
                                     group.name,
-                                    usable.len()
+                                    usable.len(),
+                                    if helicopter && usable.is_empty() {
+                                        "a helicopter starts from open ground instead"
+                                    } else {
+                                        "the rest go on the field for DCS to assign"
+                                    }
                                 );
                             }
                             parking_plan = usable;
@@ -2233,9 +2310,26 @@ impl Ephemeral {
                             first.eta = Some(dcso3::Time(0.));
                             first.eta_locked = Some(true);
                             ground_start = true;
+                            // Two different ways to get here, and the log
+                            // used to call both "no resolvable airbase": a
+                            // field DCS has no airbase for at all, and one it
+                            // does but with no free spot this helo can take.
                             info!(
-                                "[GROUND_START] {} has no resolvable airbase for {:?} -- starting from open ground at ({:.0},{:.0}) elev {alt:.0}",
-                                group.name, group.origin, first.pos.x, first.pos.y
+                                "[GROUND_START] {} {} -- starting {} from open ground at ({:.0},{:.0}) elev {alt:.0}",
+                                group.name,
+                                match &ab_start {
+                                    Some((abid, _, cat)) => format_compact!(
+                                        "got no usable parking at {cat:?} id {abid:?} for {:?}",
+                                        group.origin
+                                    ),
+                                    None => format_compact!(
+                                        "has no resolvable airbase for {:?}",
+                                        group.origin
+                                    ),
+                                },
+                                if cold { "cold" } else { "hot" },
+                                first.pos.x,
+                                first.pos.y
                             );
                         }
                         // An action whose spawn location *is* an air start
@@ -2368,6 +2462,22 @@ impl Ephemeral {
                                 }
                             }
                             unit.raw_remove("unitId")?;
+                            if matches!(
+                                template.category,
+                                GroupKind::Plane | GroupKind::Helicopter
+                            ) {
+                                // Never worth losing the spawn over.
+                                if let Err(e) = self.ensure_launch_fuel(
+                                    spctx.lua(),
+                                    &group.template_name,
+                                    &unit,
+                                ) {
+                                    warn!(
+                                        "[SPAWN] {} could not check its template's fuel load: {e:?}",
+                                        group.name
+                                    );
+                                }
+                            }
                             // A parking start is a property of the whole group
                             // table, not just waypoint 0: DCS wants each unit
                             // physically on its spot, at field elevation BARO,

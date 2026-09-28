@@ -752,9 +752,46 @@ pub struct HeloMission {
     /// transit" until the restart, with no troops, no refund and no word.
     #[serde(default)]
     pub deadline: Option<DateTime<Utc>>,
+    /// Where it was put on the ground, to tell "never moved" from "taxied
+    /// but never lifted" when it doesn't get airborne.
+    #[serde(default)]
+    pub launch_pos: Option<Vector2>,
+    /// First poll that saw it in the air. `None` past the startup limit
+    /// means it never got off the ground at all, which is its own failure
+    /// with its own message -- not "never made it down" 20 minutes later.
+    #[serde(default)]
+    pub airborne_at: Option<DateTime<Utc>>,
+    /// Fuel fraction (0..1) on the last poll while it was still on the
+    /// ground. Zero is the one cause we can name outright: a template with
+    /// no fuel in it starts nothing.
+    #[serde(default)]
+    pub ground_fuel: Option<f32>,
 }
 
+/// How long a helo mission may sit on the ground at its launch field before
+/// it is called off. An AI cold start runs a few minutes and a Mi-8's is
+/// among the longest; a hot start should be off the ground in one.
+const HELO_COLD_STARTUP_LIMIT_SECS: i64 = 15 * 60;
+const HELO_HOT_STARTUP_LIMIT_SECS: i64 = 5 * 60;
+
 impl HeloMission {
+    /// Why a helo that never got airborne didn't, for the player and the log.
+    fn never_launched_reason(&self, limit_mins: i64) -> CompactString {
+        let moved = self
+            .launch_pos
+            .map(|p| (self.last_pos - p).norm())
+            .unwrap_or(0.);
+        match self.ground_fuel {
+            Some(f) if f <= 0. => format_compact!(
+                "it spawned with empty tanks (its aircraft template has no fuel) and could not start up"
+            ),
+            _ if moved > 50. => format_compact!(
+                "it taxied {moved:.0}m but never lifted off in {limit_mins} min"
+            ),
+            _ => format_compact!("it never started up and moved off in {limit_mins} min"),
+        }
+    }
+
     /// Poll the DCS group: track its position, detect destruction, and
     /// detect "landed and delivered" -- on the ground (`in_air() == false`)
     /// AND within `landing_radius` of `destination_pos`. Distance alone
@@ -763,6 +800,7 @@ impl HeloMission {
     pub fn poll(
         &mut self,
         lua: MizLua,
+        now: DateTime<Utc>,
         group_name: &str,
         destination_pos: Vector2,
         landing_radius: f64,
@@ -778,6 +816,14 @@ impl HeloMission {
                         // Unknown in-air state is treated as airborne -- never
                         // declare a delivery we aren't sure actually landed.
                         let in_air = unit.in_air().unwrap_or(true);
+                        // Only a definite yes counts as having launched; the
+                        // unknown-means-airborne default above is about not
+                        // faking a delivery, not about proving it flew.
+                        if unit.in_air().unwrap_or(false) {
+                            self.airborne_at.get_or_insert(now);
+                        } else if self.airborne_at.is_none() {
+                            self.ground_fuel = unit.get_fuel().ok();
+                        }
                         if !in_air {
                             let dist = (self.last_pos - destination_pos).norm();
                             if dist <= landing_radius {
@@ -4501,7 +4547,7 @@ impl Db {
             "[HELO_MISSION] launch field {} ({:.0}km from the target, {}) chosen from {} friendly field(s)",
             self.persisted.objectives.get(oid).map(|o| o.name.as_str()).unwrap_or("?"),
             d2.sqrt() / 1000.,
-            if pad { "has a DCS pad" } else { "no DCS pad, ground start" },
+            if pad { "has a DCS airbase" } else { "no DCS airbase, open-ground start" },
             candidates.len()
         );
         Some(**oid)
@@ -4832,6 +4878,9 @@ impl Db {
             last_pos: launch_pos,
             last_check: now,
             deadline: Some(deadline),
+            launch_pos: Some(launch_pos),
+            airborne_at: None,
+            ground_fuel: None,
         };
         info!(
             "[HELO_MISSION] {} dispatched from {} to {}",
@@ -5056,9 +5105,55 @@ impl Db {
             // than `landing_radius_m` out, and the helo then sat there, doors
             // open, never counted as delivered. Down anywhere in the zone counts.
             let delivery_radius = landing_radius.max(dest_radius);
-            match mission.poll(lua, &group_name, dest_pos, delivery_radius) {
+            let origin_name = self
+                .persisted
+                .objectives
+                .get(&mission.origin)
+                .map(|o| o.name.clone())
+                .unwrap_or_else(|| "its launch field".into());
+            let startup_limit_secs = if cfg.cold_start {
+                HELO_COLD_STARTUP_LIMIT_SECS
+            } else {
+                HELO_HOT_STARTUP_LIMIT_SECS
+            };
+            match mission.poll(lua, now, &group_name, dest_pos, delivery_radius) {
                 HeloMissionState::InTransit => {
-                    if mission.deadline.is_some_and(|d| now > d) {
+                    let age_secs = (now - mission.spawn_time).num_seconds();
+                    // Empty tanks never fix themselves, so there's no point
+                    // waiting out the startup limit for one.
+                    let dry = mission.ground_fuel.is_some_and(|f| f <= 0.) && age_secs > 30;
+                    if mission.airborne_at.is_none() && (dry || age_secs > startup_limit_secs) {
+                        // Stuck on the ground at the launch field. Waiting out
+                        // the full flight deadline just made the player sit
+                        // through 20+ minutes of nothing before a refund that
+                        // didn't say what went wrong.
+                        let why = mission.never_launched_reason(startup_limit_secs / 60);
+                        warn!(
+                            "[HELO_MISSION] {} ({}) never got airborne at {}: {}; fuel {:?}, \
+                             {:.0}m from its launch spot",
+                            mission_id,
+                            cfg.aircraft_template.get(&side).map(|t| t.as_str()).unwrap_or("?"),
+                            origin_name,
+                            why,
+                            mission.ground_fuel,
+                            mission
+                                .launch_pos
+                                .map(|p| (mission.last_pos - p).norm())
+                                .unwrap_or(0.)
+                        );
+                        refunds.push((
+                            player,
+                            cost,
+                            format_compact!(
+                                "your helo to {dest_name} never took off from {origin_name}: {why}, mission cancelled"
+                            ),
+                        ));
+                        if carries {
+                            cargo.push((mission_id.clone(), side, TransportEnd::Returned));
+                        }
+                        despawn.push(mission.group_id);
+                        completed.push(mission_id.clone());
+                    } else if mission.deadline.is_some_and(|d| now > d) {
                         info!(
                             "[HELO_MISSION] {} timed out, last seen {:.0}m from {}",
                             mission_id,
@@ -5078,11 +5173,22 @@ impl Db {
                     }
                 }
                 HeloMissionState::Destroyed => {
-                    info!("[HELO_MISSION] {} destroyed en route", mission_id);
+                    let airborne = mission.airborne_at.is_some();
+                    info!(
+                        "[HELO_MISSION] {} destroyed {}",
+                        mission_id,
+                        if airborne { "en route" } else { "before it took off" }
+                    );
                     refunds.push((
                         player,
                         cost,
-                        format_compact!("helo mission to {dest_name} lost en route"),
+                        if airborne {
+                            format_compact!("helo mission to {dest_name} lost en route")
+                        } else {
+                            format_compact!(
+                                "helo mission to {dest_name} lost on the ground at {origin_name} before it took off"
+                            )
+                        },
                     ));
                     if carries {
                         cargo.push((mission_id.clone(), side, TransportEnd::Lost));
@@ -7094,5 +7200,43 @@ mod tests {
         let wrapped_no_cap = inv(u32::MAX - 2, 0);
         assert_eq!(push_value(&wrapped_no_cap), 0);
         assert_eq!(push_value(&inv(12, 0)), 12);
+    }
+
+    fn stuck_helo(fuel: Option<f32>, moved: f64) -> HeloMission {
+        let now = Utc::now();
+        HeloMission {
+            id: "HELO_Blue_0_0".into(),
+            group_id: bfprotocols::db::group::GroupId::from(1),
+            kind: HeloMissionKind::TroopInsertion,
+            origin: ObjectiveId::new(),
+            destination: ObjectiveId::new(),
+            side: Side::Blue,
+            player: dcso3::net::Ucid::default(),
+            cost: 50,
+            spawn_time: now,
+            state: HeloMissionState::InTransit,
+            last_pos: Vector2::new(moved, 0.),
+            last_check: now,
+            deadline: None,
+            launch_pos: Some(Vector2::new(0., 0.)),
+            airborne_at: None,
+            ground_fuel: fuel,
+        }
+    }
+
+    #[test]
+    fn never_launched_reason_names_the_cause() {
+        assert!(stuck_helo(Some(0.), 0.)
+            .never_launched_reason(15)
+            .contains("empty tanks"));
+        assert!(stuck_helo(Some(0.8), 120.)
+            .never_launched_reason(15)
+            .contains("taxied 120m"));
+        assert!(stuck_helo(Some(0.8), 5.)
+            .never_launched_reason(15)
+            .contains("never started up"));
+        assert!(stuck_helo(None, 0.)
+            .never_launched_reason(5)
+            .contains("5 min"));
     }
 }
