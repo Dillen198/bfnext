@@ -569,13 +569,8 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective, friendly: bool) -
     if obj.logi() == 0 && !obj.kind().is_special_sam_site() {
         return CompactString::from("logistics destroyed (logi 0%) -- cannot self-repair");
     }
-    let logi = if obj.kind().is_special_sam_site() {
-        1.0
-    } else {
-        (obj.logi() as f32 / 100.0).max(0.01)
-    };
-    let pulse = (cfg.repair_time as f32 / logi).max(1.0);
-    let elapsed = (Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f32;
+    let pulse = db.repair_pulse_secs(obj).max(1.0);
+    let elapsed = (Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
     format_compact!(
         "self-repairing -- next pulse in ~{:.0}m",
         ((pulse - elapsed).max(0.0) / 60.0).ceil()

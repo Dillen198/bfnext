@@ -275,11 +275,28 @@ fn repair_state(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
     if obj.logi() == 0 {
         return CompactString::from("stalled -- logistics defense destroyed");
     }
-    let logi = (obj.logi() as f32 / 100.0).max(0.01);
-    let pulse = (cfg.repair_time as f32 / logi).max(1.0);
-    let elapsed = (chrono::Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f32;
+    let pulse = db.repair_pulse_secs(obj).max(1.0);
+    let elapsed = (chrono::Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
     let remaining = (pulse - elapsed).max(0.0);
-    format_compact!("active -- next pulse in ~{:.0}m", (remaining / 60.0).ceil())
+    format_compact!(
+        "active -- next pulse in ~{:.0}m{}",
+        (remaining / 60.0).ceil(),
+        speed_up_note(db, obj)
+    )
+}
+
+/// " (undefended: repairs 1.5x faster)" while population scaling is speeding
+/// the base's repairs up, else nothing.
+fn speed_up_note(db: &Db, obj: &Objective) -> CompactString {
+    let Some(ps) = db.ephemeral.cfg.population_scaling.as_ref() else {
+        return CompactString::new("");
+    };
+    let m = ps.repair_speed_mult(db.active_players(obj.owner()));
+    if obj.owner() != Side::Neutral && m > 1. {
+        format_compact!(" (undefended: repairs {} faster)", bfprotocols::cfg::fmt_mult(m))
+    } else {
+        CompactString::new("")
+    }
 }
 
 /// Attacker-side reading of whether a knocked-down objective will heal back
@@ -319,17 +336,13 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
     if obj.logi() == 0 && !obj.kind().is_special_sam_site() {
         return CompactString::from("logistics destroyed (logi 0%) -- cannot self-repair");
     }
-    let logi = if obj.kind().is_special_sam_site() {
-        1.0
-    } else {
-        (obj.logi() as f32 / 100.0).max(0.01)
-    };
-    let pulse = (cfg.repair_time as f32 / logi).max(1.0);
-    let elapsed = (chrono::Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f32;
+    let pulse = db.repair_pulse_secs(obj).max(1.0);
+    let elapsed = (chrono::Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
     let remaining = (pulse - elapsed).max(0.0);
     format_compact!(
-        "WILL self-repair -- next pulse ~{:.0}m; act fast or it heals back above 20%",
-        (remaining / 60.0).ceil()
+        "WILL self-repair -- next pulse ~{:.0}m{}; act fast or it heals back above 20%",
+        (remaining / 60.0).ceil(),
+        speed_up_note(db, obj)
     )
 }
 
@@ -712,11 +725,15 @@ fn build_capture_advisor_card(
         let _ = write!(s, "REPAIR: {}\n", repair_outlook(db, oid, obj));
     }
 
+    if let Some(note) = &diag.undefended {
+        let _ = write!(s, "DEFENDERS OFFLINE: {note}.\n");
+    }
+
     if let Some((side, held, base)) = diag.in_progress {
         if side == viewer {
             let _ = write!(
                 s,
-                "IN PROGRESS: your side is capturing -- held {held}s (~{base}s needed, less with more squads). Hold the zone.\n"
+                "IN PROGRESS: your side is capturing -- held {held}s of ~{base}s (more squads in the zone shorten it). Hold the zone.\n"
             );
         } else {
             let _ = write!(

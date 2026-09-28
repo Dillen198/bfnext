@@ -66,6 +66,22 @@
     "Blue": { "name": "Logistics Repair", "weight": 1500, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 }
   },
 
+  "_emergency_repair_note": "Optional. Adds an Emergency Repair crate to every Base Supply crate menu (sling, C-130, helo dynamic cargo). Unpacked INSIDE the zone of a damaged friendly base it rebuilds one destroyed group at once and restarts the repair countdown, paid from that base's own materiel/supply like an automatic repair. Refused -- crate kept, nothing charged, player told why -- if the base is Neutral, enemy, a carrier, at full health, wiped out (0%), threatened, under a capture timer, consolidating after a capture, the base the crate was loaded at, can't pay for the repair, or had one within cooldown_secs_per_objective. cost_points (default 0) is taken from the delivering player only on success. One crate for both sides; its name must not match any other crate. Absent block = off.",
+  "emergency_repair": {
+    "crate": { "name": "Emergency Repair", "weight": 1500, "required": 1, "pos_unit": null, "max_drop_height_agl": 10, "max_drop_speed": 13 },
+    "cooldown_secs_per_objective": 600,
+    "cost_points": 0
+  },
+
+  "_population_scaling_note": "Optional empty-server protection. A side with fewer than min_defenders players IN A SLOT (spectators don't count) is undefended: captures of its bases take capture_time_mult_when_undefended times as long (or, with scale_by_imbalance, max(that, attackers / max(defenders, 1))), never more than max_capture_time_mult; Neutral bases are never scaled. repair_speed_mult_when_undefended > 1 makes its bases self-repair that many times faster meanwhile (1 = off; keep it small). Re-checked every capture tick, so a defender slotting in restores normal timing at once. Absent block = off.",
+  "population_scaling": {
+    "min_defenders": 1,
+    "capture_time_mult_when_undefended": 2.0,
+    "scale_by_imbalance": false,
+    "max_capture_time_mult": 4.0,
+    "repair_speed_mult_when_undefended": 1.0
+  },
+
   "warehouse": {
     "hub_max": 25,
     "airbase_max": 5,

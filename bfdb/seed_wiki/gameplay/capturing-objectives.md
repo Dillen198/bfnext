@@ -119,6 +119,16 @@ The capture zone is the designated area around the objective.
   (floored at 30 s — it never goes instant).
 - If enemy troops enter, or your troops die/leave, or logistics repairs the
   objective back above the threshold, the timer pauses/resets.
+- **Undefended bases take longer.** Where the server runs empty-server
+  protection, a capture against a side that has fewer than
+  {{cfg:population_scaling.min_defenders|1}} pilot(s) in a slot takes
+  **{{cfg:population_scaling.capture_time_mult_when_undefended|2}}x as long**
+  (up to {{cfg:population_scaling.max_capture_time_mult|4}}x on servers that
+  scale it by how badly the defenders are outnumbered). The capture message
+  says so — `(defenders offline: capture takes 2x longer)` — and the Capture
+  Advisor shows a `DEFENDERS OFFLINE` line. It is re-checked every few seconds:
+  the moment a defender slots in, normal timing applies again. Neutral bases
+  are never scaled.
 
 ### Step 5: Consolidate
 

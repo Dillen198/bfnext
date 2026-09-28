@@ -78,6 +78,12 @@ timer, so you have to out-pace it, or cut its supply first.
 how long they have held, roughly how long is needed. If it is the enemy's,
 killing their troops in the zone stops it.
 
+**DEFENDERS OFFLINE** appears when the base's owner has (almost) nobody in a
+slot and the server's empty-server protection is on: how many pilots they have
+up, how much longer a capture takes against them, and whether their bases are
+repairing faster meanwhile. See
+[Capturing Objectives](../gameplay/capturing-objectives.md).
+
 **YOUR TROOPS NEAR THIS BASE** lists your capture-relevant groups within 30 nm,
 and for each one either `in the zone` or how many metres short of the zone edge
 it is. The `<-- CANNOT capture (troop type)` flag is the single most common

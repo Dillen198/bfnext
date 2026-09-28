@@ -30,6 +30,7 @@ use anyhow::{Context, Result, anyhow};
 use bfprotocols::{
     cfg::{
         Deployable, DeployableObjective, UnitTag, Vehicle, VictoryCondition, MATERIEL_ITEM,
+        fmt_mult,
     },
     db::{
         group::{GroupId, UnitId},
@@ -684,6 +685,9 @@ pub struct CaptureDiagnosis {
     pub in_progress: Option<(Side, i64, i64)>,
     /// The asking side's capture-capable groups in or near the zone.
     pub troops: SmallVec<[CaptureTroopStatus; 4]>,
+    /// Population scaling in force against this objective's owner, in
+    /// words, or None when normal rules apply.
+    pub undefended: Option<CompactString>,
 }
 
 impl CaptureDiagnosis {
@@ -2129,15 +2133,12 @@ impl Db {
                 continue;
             }
             // Special SAM sites have no logistics units, so the logi-scaled
-            // clock below would divide by zero (logi == 0) and never fire.
-            // Rebuild them on the flat repair_time instead.
-            let repair_time = if obj.kind.is_special_sam_site() {
-                self.ephemeral.cfg.repair_time as f32
-            } else {
-                let logi = obj.logi as f32 / 100.;
-                self.ephemeral.cfg.repair_time as f32 / logi
-            };
-            if repair_time < i64::MAX as f32 {
+            // clock would divide by zero (logi == 0) and never fire; they
+            // rebuild on the flat repair_time instead (see repair_pulse_secs,
+            // which also applies the undefended-side speed-up).
+            let speed = super::balance::repair_speed_mult(&self.ephemeral, &self.persisted, obj.owner);
+            let repair_time = super::balance::repair_pulse_secs(&self.ephemeral.cfg, obj, speed);
+            if repair_time.is_finite() && repair_time < i64::MAX as f64 {
                 let repair_time = Duration::seconds(repair_time as i64);
                 if obj.health < 100 && (now - obj.repair_clock_start()) >= repair_time {
                     to_repair.push(*oid);
@@ -2629,6 +2630,16 @@ impl Db {
                 // instant a single squad touched the zone (capture_secs 0),
                 // which -- as they are always capturable -- gave the owner no
                 // window at all to see the capture coming and answer it.
+                //
+                // Then stretched by population scaling while the owner has
+                // (almost) nobody online -- evaluated every tick, so a
+                // defender slotting in mid-capture shortens it at once.
+                let owner = self
+                    .persisted
+                    .objectives
+                    .get(&oid)
+                    .map_or(Side::Neutral, |o| o.owner);
+                let pop_mult = self.capture_time_mult(owner, *side);
                 let capture_secs = {
                     let base_secs = self
                         .ephemeral
@@ -2637,8 +2648,9 @@ impl Db {
                         .as_ref()
                         .map_or(180, |c| c.capture_time_secs) as i64;
                     let n_groups = gids.len().max(1) as i64;
-                    (base_secs / n_groups).max(30)
+                    ((base_secs / n_groups).max(30) as f64 * pop_mult).round() as i64
                 };
+                self.ephemeral.capture_total_secs.insert(oid, capture_secs);
 
                 if capture_secs > 0 {
                     let is_new = !self.ephemeral.capture_progress.contains_key(&oid);
@@ -2659,13 +2671,26 @@ impl Db {
                             .map(|o| o.name.clone())
                             .unwrap_or_else(|| "unknown".into());
                         let enemy = side.opposite();
+                        let note = if pop_mult > 1. {
+                            info!(
+                                "[POP_SCALING] {obj_name}: {owner:?} has {} active player(s), capture by {side:?} takes {} ({capture_secs}s)",
+                                self.active_players(owner),
+                                fmt_mult(pop_mult)
+                            );
+                            format_compact!(
+                                " (defenders offline: capture takes {} longer)",
+                                fmt_mult(pop_mult)
+                            )
+                        } else {
+                            CompactString::new("")
+                        };
                         self.ephemeral.msgs().panel_to_side(
                             15, false, *side,
-                            format_compact!("Capturing {} ({} sec)", obj_name, remaining.max(0)),
+                            format_compact!("Capturing {} ({} sec){note}", obj_name, remaining.max(0)),
                         );
                         self.ephemeral.msgs().panel_to_side(
                             15, false, enemy,
-                            format_compact!("{} is being captured! Eliminate enemy troops!", obj_name),
+                            format_compact!("{} is being captured! Eliminate enemy troops!{note}", obj_name),
                         );
                     }
                     if elapsed < capture_secs {
@@ -2919,6 +2944,8 @@ impl Db {
             in_zone_objectives.contains(oid)
                 || (now - entry.2).num_seconds() < CAPTURE_GRACE_SECS
         });
+        let running = &self.ephemeral.capture_progress;
+        self.ephemeral.capture_total_secs.retain(|oid, _| running.contains_key(oid));
         if actually_captured.len() > 0 {
             self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses {
                 objectives: self
@@ -3016,9 +3043,18 @@ impl Db {
         };
 
         let in_progress = self.ephemeral.capture_progress.get(oid).map(|(side, start, _)| {
-            let base = cev.map(|c| c.capture_time_secs as i64).unwrap_or(180);
+            // What the capture tick last worked out this capture needs
+            // (squads + population scaling), else the scaled base figure.
+            let base = match self.ephemeral.capture_total_secs.get(oid) {
+                Some(t) => *t,
+                None => {
+                    let base = cev.map(|c| c.capture_time_secs as i64).unwrap_or(180);
+                    (base as f64 * self.capture_time_mult(obj.owner, *side)).round() as i64
+                }
+            };
             (*side, (now - *start).num_seconds().max(0), base)
         });
+        let undefended = self.undefended_note(obj.owner, by_side);
 
         // Friendly capture-capable troop / dismount groups near this objective.
         const NEAR_M: f64 = 55_560.0; // ~30 nm -- keep the card about this base
@@ -3078,6 +3114,7 @@ impl Db {
             cooldown_secs,
             in_progress,
             troops,
+            undefended,
         })
     }
 
@@ -4025,6 +4062,10 @@ impl Db {
                     entry.2 = now;
                 }
                 let elapsed = (now - entry.1).num_seconds();
+                // Same empty-server protection as a base capture.
+                let pop_mult = self.capture_time_mult(current_owner, captor_side);
+                let capture_secs = (capture_secs as f64 * pop_mult).round() as i64;
+                self.ephemeral.capture_total_secs.insert(oid, capture_secs);
                 let remaining = capture_secs - elapsed;
                 if is_new {
                     let obj_name = self

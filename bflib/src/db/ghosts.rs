@@ -910,12 +910,7 @@ impl Db {
         if obj.health >= 100 {
             lines.push("repair: at full strength".into());
         } else if blockers.is_empty() {
-            let logi = if obj.kind.is_special_sam_site() {
-                1.
-            } else {
-                (obj.logi as f32 / 100.).max(0.01)
-            };
-            let pulse = (cfg.repair_time as f32 / logi) as i64;
+            let pulse = self.repair_pulse_secs(obj).min(i64::MAX as f64) as i64;
             let left = pulse - (now - obj.repair_clock_start()).num_seconds();
             lines.push(format_compact!(
                 "repair: nothing blocking; next pulse in ~{}",

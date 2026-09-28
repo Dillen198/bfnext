@@ -77,6 +77,8 @@ pub enum Unpakistan {
     /// consolidating: it bought consolidation progress instead of logi.
     Consolidated(String),
     TransferedSupplies(String, String),
+    /// An emergency repair crate went through; the full player message.
+    EmergencyRepaired(CompactString),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -102,6 +104,7 @@ impl fmt::Display for Unpakistan {
             Self::TransferedSupplies(from, to) => {
                 write!(f, "transfered supplies from {from} to {to}")
             }
+            Self::EmergencyRepaired(msg) => write!(f, "delivered an emergency repair crate. {msg}"),
         }
     }
 }
@@ -243,6 +246,9 @@ pub enum C130CargoType {
     CarrierRepair,
     /// Base logistics repair crate (revives dead logistics units at an objective)
     LogisticsRepair,
+    /// Emergency repair crate: one immediate repair step at a damaged, quiet
+    /// friendly base (see `db::emergency_repair`).
+    EmergencyRepair,
     /// Vehicle that can be loaded and airdropped
     Vehicle { name: String, template: String },
 }
@@ -614,11 +620,16 @@ impl Db {
             .deployable_idx
             .get(&st.side)
             .ok_or_else(|| anyhow!("{} doesn't have any deployables", st.side))?;
-        let crate_cfg = dep_idx
-            .crates_by_name
-            .get(name)
-            .ok_or_else(|| anyhow!("no such crate {name}"))?
-            .clone();
+        let crate_cfg = match dep_idx.crates_by_name.get(name) {
+            Some(c) => c.clone(),
+            // Not in the deployable index: it is registered from its own
+            // config block rather than per side.
+            None => self
+                .emergency_repair_crate()
+                .filter(|c| c.name.as_str() == name)
+                .cloned()
+                .ok_or_else(|| anyhow!("no such crate {name}"))?,
+        };
         if let Some((dep, player)) = dep_idx
             .deployables_by_crates
             .get(&crate_cfg.name)
@@ -1284,6 +1295,20 @@ impl Db {
             bail!("no nearby crates")
         }
         let mut reasons: SmallVec<[CompactString; 2]> = smallvec![];
+        // One emergency repair crate per unpack; see db::emergency_repair.
+        if let Some(cr) = nearby
+            .iter()
+            .find(|ci| self.is_emergency_repair_crate(ci.crate_def.name.as_str()))
+            .cloned()
+        {
+            match self.deliver_emergency_repair(st.ucid, st.side, cr.pos, cr.origin, Utc::now())? {
+                Ok(msg) => {
+                    self.delete_group(&cr.group)?;
+                    return Ok(Unpakistan::EmergencyRepaired(msg));
+                }
+                Err(why) => reasons.push(format_compact!("emergency repair crate not used: {why}")),
+            }
+        }
         let base_repairs = base_repairable(self, st.side, &nearby);
         let supply_transfer = supply_transferrable(self, st.side, &nearby);
         if !base_repairs.is_empty() {
@@ -3336,6 +3361,11 @@ impl Db {
         {
             debug!("[C130_CARGO] Found logistics repair crate: {}, weight={}kg", crate_name, cr.weight);
             (cr.clone(), C130CargoType::LogisticsRepair)
+        } else if let Some(cr) = self.emergency_repair_crate()
+            && cr.name == crate_name
+        {
+            debug!("[C130_CARGO] Found emergency repair crate: {}, weight={}kg", crate_name, cr.weight);
+            (cr.clone(), C130CargoType::EmergencyRepair)
         } else if let Some(crate_def) = dep_idx.crates_by_name.get(&crate_name) {
             debug!("[C130_CARGO] Found deployable crate: {}, weight={}kg", crate_name, crate_def.weight);
             (crate_def.clone(), C130CargoType::Deployable { name: crate_name.clone() })
@@ -3871,6 +3901,8 @@ impl Db {
                         C130CargoType::CarrierRepair
                     } else if named(self.ephemeral.cfg.repair_crate.get(&side)) {
                         C130CargoType::LogisticsRepair
+                    } else if named(self.emergency_repair_crate()) {
+                        C130CargoType::EmergencyRepair
                     } else {
                         C130CargoType::Deployable { name: crate_name.clone() }
                     };
@@ -5017,6 +5049,32 @@ impl Db {
                     Ok(msg)
                 } else {
                     bail!("No friendly carrier groups found for repair")
+                }
+            }
+            C130CargoType::EmergencyRepair => {
+                if !self.ephemeral.c130_crates.contains_key(crate_name) {
+                    return Ok(String::from("Crate already processed"));
+                }
+                match self.deliver_emergency_repair(
+                    crate_data.player,
+                    crate_data.side,
+                    crate_data.last_pos,
+                    crate_data.origin,
+                    Utc::now(),
+                )? {
+                    Ok(msg) => {
+                        self.ephemeral.c130_crates.remove(crate_name);
+                        self.delete_group(&crate_data.group_id)?;
+                        Ok(String::from(msg.as_str()))
+                    }
+                    // Left on the ground, unspent. The backoff retries it
+                    // once a minute, so a crate that landed during an attack
+                    // or a cooldown still does its job when the base is free.
+                    Err(why) => Ok(self.c130_crate_blocked(
+                        crate_name,
+                        crate_data,
+                        format!("Emergency repair crate not used: {why}"),
+                    )),
                 }
             }
             C130CargoType::LogisticsRepair => {

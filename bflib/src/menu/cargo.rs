@@ -32,6 +32,14 @@ use dcso3::{
 };
 use fxhash::FxHashMap;
 
+/// The emergency repair crate, when `Cfg::emergency_repair` is on. It is one
+/// crate shared by both sides and gets a single "spawn one" entry under Base
+/// Supply -- no xN quantity menu, since its per-base cooldown makes a stack
+/// pointless.
+fn emergency_crate(cfg: &Cfg) -> Option<&bfprotocols::cfg::Crate> {
+    cfg.emergency_repair.as_ref().filter(|e| e.enabled).map(|e| &e.crate_def)
+}
+
 fn unpakistan(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
@@ -365,6 +373,7 @@ pub(crate) fn spawn_crates_for_ucid(
                 .get(&side)
                 .filter(|cr| cr.name.as_str() == crate_name)
         })
+        .or_else(|| emergency_crate(cfg).filter(|cr| cr.name.as_str() == crate_name))
         .or_else(|| {
             cfg.deployables
                 .get(&side)
@@ -776,6 +785,18 @@ pub(super) fn add_cargo_menu_for_group(
             snd: rep.name.clone(),
         },
     )?;
+    if let Some(er) = emergency_crate(cfg) {
+        mc.add_command_for_group(
+            group,
+            er.name.clone(),
+            Some(logi.clone()),
+            spawn_crate,
+            ArgTuple {
+                fst: group,
+                snd: er.name.clone(),
+            },
+        )?;
+    }
     if let Some(whcfg) = &cfg.warehouse {
         // Add fuel transfer crate menu item
         if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(&side) {
@@ -904,7 +925,9 @@ pub(super) fn add_c130_cargo_menu_for_group(
     // "Base Supply", not "Logistics" -- a deployable's own category path can be
     // named "Logistics" too (e.g. Ammo Truck), and two addSubMenuForGroup calls
     // with the same name+parent collide in DCS, breaking both menus.
-    if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() {
+    let has_base_supply =
+        cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() || emergency_crate(cfg).is_some();
+    if has_base_supply {
         let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(crates_menu.clone()))?;
         // One base-supply crate: the single "spawn 1" command plus a "xN"
         // submenu (1-9) so a poor base can be topped off / a wreck fully
@@ -945,10 +968,18 @@ pub(super) fn add_c130_cargo_menu_for_group(
                 add_supply(whcfg.carrier_repair_crate[&side].name.as_str())?;
             }
         }
+        if let Some(er) = emergency_crate(cfg) {
+            supply.command(
+                mc,
+                er.name.clone(),
+                spawn_c130_crate,
+                ArgTuple { fst: group, snd: er.name.clone() },
+            )?;
+        }
     }
 
     // Add all deployable crates (organized by path, excluding repair crates)
-    let base_items = if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() { 1 } else { 0 };
+    let base_items = if has_base_supply { 1 } else { 0 };
     let mut tree = CrateTree::new(group, crates_menu.clone(), base_items);
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
         if dep.crates.is_empty() && dep.repair_crate.is_none() {
@@ -1131,7 +1162,9 @@ pub(super) fn add_helo_cargo_menu_for_group(
     // named "Logistics" too (e.g. Ammo Truck), and two addSubMenuForGroup calls
     // with the same name+parent collide in DCS, breaking both menus. Build it
     // once and hang every base-supply crate off it.
-    if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() {
+    let has_base_supply =
+        cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() || emergency_crate(cfg).is_some();
+    if has_base_supply {
         let logi = mc.add_submenu_for_group(group, "Base Supply".into(), Some(crates_menu.clone()))?;
         // "spawn 1" command + a "xN" submenu (1-9) per base-supply crate.
         // Two entries per crate (the command and its xN submenu), so four
@@ -1170,9 +1203,17 @@ pub(super) fn add_helo_cargo_menu_for_group(
                 add_supply(whcfg.carrier_repair_crate[side].name.as_str())?;
             }
         }
+        if let Some(er) = emergency_crate(cfg) {
+            supply.command(
+                mc,
+                er.name.clone(),
+                spawn_helo_crate,
+                ArgTuple { fst: group, snd: er.name.clone() },
+            )?;
+        }
     }
 
-    let base_items = if cfg.warehouse.is_some() || !cfg.repair_crate.is_empty() { 1 } else { 0 };
+    let base_items = if has_base_supply { 1 } else { 0 };
     let mut tree = CrateTree::new(group, crates_menu.clone(), base_items);
     for dep in cfg.deployables.get(side).unwrap_or(&vec![]) {
         if dep.crates.is_empty() && dep.repair_crate.is_none() {
