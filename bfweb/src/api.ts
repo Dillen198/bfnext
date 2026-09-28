@@ -1462,10 +1462,21 @@ export interface NewsDay {
   factions?: NewsFactions
   /** False while the day is still running and the digest is being rebuilt. */
   final_: boolean
+  /**
+   * The picture filed with this dispatch, as a path under the API root
+   * (`/api/news/image/<day>?instance=..&v=..`), or null when there is none.
+   * Pictures are only drawn once a day is filed, and only when bfdb has an
+   * image endpoint configured.
+   */
+  image?: string | null
+  /** Pictures are on and this day is still expected to get one. */
+  image_pending?: boolean
 }
 
 export interface NewsArchive {
   days: NewsDay[]
+  /** Whether bfdb draws pictures for dispatches at all. */
+  images?: boolean
 }
 
 export const api = {
