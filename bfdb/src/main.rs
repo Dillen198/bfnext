@@ -451,16 +451,30 @@ async fn resolve_ucid_via_bot(
     }
     let result: anyhow::Result<Option<dcso3::net::Ucid>> = async {
         let http = http_client();
-        let users: Vec<BotUserEntry> = http
+        let resp = http
             .post(format!("{}/getuser", cfg.base_url))
             .header("X-API-Key", &cfg.api_key)
             .form(&[("discord_id", discord_id)])
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("DCSServerBot getuser request failed: {e}"))?
-            .json()
+            .map_err(|e| anyhow::anyhow!("DCSServerBot getuser request failed: {e}"))?;
+        // Read the body as text first: when the bot errors it answers with a
+        // FastAPI error object or a bare "Internal Server Error", and "error
+        // decoding response body" alone said nothing about which (Sept 28:
+        // real Discord ids failing, cause unknown from our side).
+        let status = resp.status();
+        let body = resp
+            .text()
             .await
-            .map_err(|e| anyhow::anyhow!("DCSServerBot getuser response parse failed: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("DCSServerBot getuser read failed: {e}"))?;
+        if !status.is_success() {
+            let snippet: std::string::String = body.chars().take(200).collect();
+            anyhow::bail!("DCSServerBot getuser -> HTTP {status}: {snippet}");
+        }
+        let users: Vec<BotUserEntry> = serde_json::from_str(&body).map_err(|e| {
+            let snippet: std::string::String = body.chars().take(200).collect();
+            anyhow::anyhow!("DCSServerBot getuser response parse failed: {e} (body: {snippet})")
+        })?;
         Ok(match users.into_iter().next() {
             Some(u) => Some(u.ucid.parse().map_err(|e| anyhow::anyhow!("bad ucid from bot: {e:?}"))?),
             None => None,
