@@ -270,7 +270,7 @@ impl Rpcs {
             "Side switch a player",
             |mut c: RpcCall, player: Chars, side: Chars| {
                 let (tx, rx) = oneshot::channel();
-                let side = match Side::from_str(&side) {
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
                     Ok(side) => side,
                     Err(e) => {
                         c.reply.send(Value::Error(format!("{e:?}").into()));

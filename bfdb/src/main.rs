@@ -3078,9 +3078,10 @@ async fn api_admin_side_switch(
 ) -> std::result::Result<impl warp::Reply, Error> {
     use netidx::publisher::Value;
     require_admin(session_id, db.clone()).await?;
+    // The engine parses sides as DCS spells them: lowercase.
     let side = match body.side.to_ascii_lowercase().as_str() {
-        "blue" => "Blue",
-        "red" => "Red",
+        "blue" => "blue",
+        "red" => "red",
         other => {
             return Err(Error(websec::bad_request(format!(
                 "side must be Blue or Red, not {other:?}"
