@@ -381,8 +381,24 @@ DEFAULT:
     rollback_on_crash: true        # (OPS)
     db_snapshots_keep: 3           # bfdb DB copies taken before each bfdb update
     bot_plugin: false              # also update THIS plugin from fowlengine-bot.zip
-                                   # (refused when the plugin is a git checkout / symlink;
+                                   # (refused when the plugin is a git checkout / symlink, or
+                                   # when the plugin installed now is newer -- both this and
+                                   # Fowl Engine Manager's sync read plugins/fowlengine/
+                                   # .fowl-plugin.json and never downgrade;
                                    # YAML only -- the OPS page can't turn it on)
+    # Campaign packs: a release built with `publish-release.ps1 -Campaigns campaigns.json`
+    # carries campaign-<key>.zip per server -- its <sortie>_CFG + mission file(s). With
+    # this on, the pack for a server on THIS box is staged, then written when that DCS
+    # server next starts (BFBinaries, like a DLL -- so the instance needs BFBinaries in
+    # nodes.yaml), after a timestamped backup; it is then on probation, and a crash, a
+    # cfg the engine refuses or a mission that never comes up restores the backup (that
+    # release is never applied to the server again). <key> is the server's bfdb.instances
+    # `id` (vs1), or its DCSServerBot instance name (DCS.vectorstrike_1) on a box without
+    # instances. A cfg or mission EDITED ON THE SERVER since the last update is never
+    # overwritten: the pack is HELD until you answer on the OPS page (Campaign packs:
+    # Apply / Keep server's) or with /feops campaign_apply | campaign_keep.
+    campaigns: false               # YAML only, like bot_plugin
+    campaign_backups_keep: 5       # per server, in <instance home>\_fowl_campaign_backups
 
   # ---------------------------------------------
   # Log analyzer + persistent log archive  (loganalyzer.py)

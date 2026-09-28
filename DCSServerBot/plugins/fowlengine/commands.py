@@ -3098,6 +3098,23 @@ class FowlEngine(Plugin):
                          + (f", {p['crashes']} crash(es)" if p["crashes"] else ""))
         if st.get("bad"):
             lines.append("⛔ marked bad: " + ", ".join(f"`{t}`" for t in st["bad"]))
+        camps = st.get("campaigns") or {}
+        for row in camps.get("servers") or []:
+            inst, pack, prob = row.get("installed") or {}, row.get("pack") or {}, row.get("probation")
+            if not (inst or pack or prob or row.get("last_error")):
+                continue
+            line = f"🗂️ **{row['server']}** campaign: {inst.get('tag') or 'none from a release yet'}"
+            if prob:
+                line += f" · 🧪 {prob['tag']} on probation" + (" (up)" if prob["loaded"] else "")
+            elif pack:
+                line += f" · {pack.get('tag')} **{pack.get('status')}**"
+                if pack.get("reason"):
+                    line += f" -- {pack['reason']}"
+            if row.get("last_error"):
+                line += f" · ⚠️ {row['last_error']}"
+            lines.append(line)
+        if camps and not camps.get("enabled"):
+            lines.append("🗂️ campaign packs: off (`autoupdate.campaigns`)")
         embed = self._vs_embed("Engine Auto-update", color=discord.Color.blurple())
         embed.description = "\n".join(lines)[:4000]
         await interaction.followup.send(embed=embed)
@@ -3169,6 +3186,41 @@ class FowlEngine(Plugin):
             return
         await interaction.followup.send(f"✅ `{tag}` may be offered again." if upd.unmark_bad(tag)
                                         else f"`{tag}` is not marked bad.")
+
+    async def _campaign_decide(self, interaction: discord.Interaction, server, decision: str):
+        await interaction.response.defer(ephemeral=True)
+        upd = await self._updater_or_warn(interaction)
+        if not upd:
+            return
+        try:
+            msg = await asyncio.to_thread(upd.campaign_decide, server.name, decision, str(interaction.user))
+        except (LookupError, ValueError) as ex:
+            await interaction.followup.send(f"❌ {ex}")
+            return
+        await self.notify_ops(f"🗂️ **{server.name}**: {msg} (/feops by {interaction.user})")
+        await interaction.followup.send(f"✅ {msg}")
+
+    @feops.command(name="campaign_apply",
+                   description="Write a HELD campaign pack over the server's edited cfg/mission (backup kept).")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_campaign_apply(self, interaction: discord.Interaction,
+                                   server: app_commands.Transform[Server, utils.ServerTransformer()],
+                                   confirm: bool = False):
+        if not confirm:
+            await interaction.response.send_message(
+                "Re-run with `confirm: True`. The pack replaces the cfg/mission edited on the server at its "
+                "next DCS start; the current files are backed up first.", ephemeral=True)
+            return
+        await self._campaign_decide(interaction, server, "apply")
+
+    @feops.command(name="campaign_keep",
+                   description="Keep the server's edited cfg; dismiss the held campaign pack (other missions still go in).")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def feops_campaign_keep(self, interaction: discord.Interaction,
+                                  server: app_commands.Transform[Server, utils.ServerTransformer()]):
+        await self._campaign_decide(interaction, server, "keep")
 
     @feops.command(name="issues", description="Log analyzer: open issues, with the full report attached.")
     @app_commands.guild_only()

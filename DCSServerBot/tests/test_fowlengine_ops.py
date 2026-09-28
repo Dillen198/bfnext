@@ -124,6 +124,7 @@ TEST_PUB, release_sign = make_key()
 class FakeInstance:
     def __init__(self, home):
         self.home = str(home)
+        self.name = "DCS." + Path(home).name
         self.locals = {}
 
 
@@ -165,8 +166,11 @@ class FakeServer:
 
     async def startup(self):
         self.calls.append("startup")
-        # BFBinaries' prepare() would run here; emulate its swap
+        # BFBinaries' prepare() would run here; emulate its swap (and its
+        # campaign pack step, when a test wires one in)
         ext_swap(self)
+        if getattr(self, "on_prepare", None):
+            self.prepare_notes = getattr(self, "prepare_notes", []) + [self.on_prepare()]
         self.status = Status.RUNNING
 
 
@@ -214,6 +218,10 @@ class FakeCog:
     def _instance_kind(self, server):
         return "campaign"
 
+    def _instance_id(self, server):
+        # as if bfdb.instances listed vs1/vs2 by these ids
+        return {"vs1": "vs1", "vs2": "vs2"}.get(server.name)
+
     def _is_range(self, server):
         return False
 
@@ -260,7 +268,11 @@ def world(tmp_path):
     return types.SimpleNamespace(tmp=tmp_path, cog=cog, servers=servers, home=home, exe=exe, rel=rel, cfg=cfg)
 
 
-def publish(rel: Path, tag: str, files: dict, built: str, channel="stable", sign=release_sign):
+def publish(rel: Path, tag: str, files: dict, built: str, channel="stable", sign=release_sign,
+            campaigns=None):
+    """`campaigns`: {key: {"cfg_name": ..., "files": {name: bytes}}} -> campaign-<key>.zip
+    entries shaped the way publish-release.ps1 writes them."""
+    import zipfile
     d = rel / tag
     d.mkdir(parents=True)
     man = {"schema": 1, "tag": tag, "git": tag[-6:], "built": built, "channel": channel,
@@ -268,6 +280,16 @@ def publish(rel: Path, tag: str, files: dict, built: str, channel="stable", sign
     for name, data in files.items():
         (d / name).write_bytes(data)
         man["files"][name] = {"sha256": sha(data), "size": len(data), "git": tag[-6:]}
+    for key, pack in (campaigns or {}).items():
+        zname = f"campaign-{key}.zip"
+        with zipfile.ZipFile(d / zname, "w") as z:
+            for n, b in pack["files"].items():
+                z.writestr(n, b)
+        data = (d / zname).read_bytes()
+        man["files"][zname] = {
+            "sha256": sha(data), "size": len(data), "git": tag[-6:], "key": key, "cfg_name": pack["cfg_name"],
+            "contents": {n: {"sha256": sha(b), "size": len(b), "role": "cfg" if n == pack["cfg_name"] else "miz"}
+                         for n, b in pack["files"].items()}}
     raw = json.dumps(man).encode()
     (d / "manifest.json").write_bytes(raw)
     if sign:
@@ -1303,3 +1325,307 @@ def test_deleted_embed_is_replaced_once_and_legacy_id_rehomed():
     ids, ch = {"__legacy__": 9}, _Chan()
     asyncio.run(upsert(cog, ids, "vs2", ch, "e"))
     assert ids == {"vs2": 9} and ch.sent == [] and ch.edited == [(9, "e")]
+
+
+# ---- campaign packs ------------------------------------------------------------------
+
+CFG_V1 = json.dumps({"netidx_base": "/local/fowl/vs1", "shutdown": 10}).encode()
+CFG_V2 = json.dumps({"netidx_base": "/local/fowl/vs1", "shutdown": 12}).encode()
+CFG_V3 = json.dumps({"netidx_base": "/local/fowl/vs1", "shutdown": 14}).encode()
+
+
+def campaign_world(world):
+    """vs1 runs ODFv2_CFG + Missions/vs.miz (which DCSServerBot has already
+    modified once, so there is a .dcssb/vs.miz.orig); campaign packs are on."""
+    world.cfg["autoupdate"]["campaigns"] = True
+    world.cfg["autoupdate"]["files"] = []
+    s1 = world.servers[0]
+    home = Path(s1.instance.home)
+    (home / "ODFv2_CFG").write_bytes(CFG_V1)
+    (home / "Missions" / ".dcssb").mkdir(parents=True)
+    (home / "Missions" / "vs.miz").write_bytes(b"miz-v1+weather")          # rewritten at every start
+    (home / "Missions" / ".dcssb" / "vs.miz.orig").write_bytes(b"miz-v1")  # the pristine copy
+    upd = au.Updater(world.cog, log, str(world.tmp / "config" / "upd.json"))
+    world.cog.updater = upd
+    s1.on_prepare = lambda: upd.campaign_prepare(s1)
+    return upd, s1, home
+
+
+def test_campaign_manifest_parsing():
+    assert au.campaign_key_of("campaign-vs2.zip") == "vs2"
+    assert au.campaign_key_of("CAMPAIGN-DCS.vectorstrike_1.zip") == "dcs.vectorstrike_1"
+    assert au.campaign_key_of("campaign-.zip") is None
+    assert au.campaign_key_of("campaign-a b.zip") is None
+    good = {"sha256": "a" * 64, "key": "vs2", "cfg_name": "RGW2008_CFG",
+            "contents": {"RGW2008_CFG": {"sha256": "b" * 64, "role": "cfg"},
+                         "rgw.miz": {"sha256": "c" * 64, "role": "miz"}}}
+    m = au.parse_manifest({"tag": "t", "files": {"campaign-vs2.zip": good}})
+    assert m["files"]["campaign-vs2.zip"]["campaign"]["cfg_name"] == "RGW2008_CFG"
+    for bad in ({**good, "cfg_name": "rgw.miz"},                                    # not a _CFG
+                {**good, "contents": {"../RGW2008_CFG": {"sha256": "b" * 64}}},     # a path
+                {**good, "contents": {"RGW2008_CFG": {"sha256": "nothex"}}},
+                {**good, "cfg_name": "OTHER_CFG"}):                                 # cfg not in the pack
+        with pytest.raises(ValueError):
+            au.parse_manifest({"tag": "t", "files": {"campaign-vs2.zip": bad}})
+    # held: on the server, different from the pack AND from what we last wrote
+    assert au.campaign_conflicts({"a": "new"}, {"a": "edited"}, {"a": "ours"}) == ["a"]
+    assert au.campaign_conflicts({"a": "new"}, {"a": "ours"}, {"a": "ours"}) == []
+    assert au.campaign_conflicts({"a": "new"}, {"a": None}, {"a": "ours"}) == []     # gone -> nothing to lose
+    assert au.campaign_conflicts({"a": "new"}, {"a": "new"}, {"a": "ours"}) == []    # already there
+    assert au.campaign_conflicts({"a": "new"}, {"a": "x"}, {}) == []                 # never seen before
+
+
+def test_campaign_pack_staged_then_applied_at_start(world):
+    upd, s1, home = campaign_world(world)
+    upd._observe_campaign_baselines()
+    publish(world.rel, "engine-c1-aaaaaa", {}, "2026-09-28T10:00:00Z",
+            campaigns={"vs1": {"cfg_name": "ODFv2_CFG", "files": {"ODFv2_CFG": CFG_V2, "vs.miz": b"miz-v2"}},
+                       "elsewhere": {"cfg_name": "X_CFG", "files": {"X_CFG": b"{}"}}})
+    res = asyncio.run(upd.check())
+    assert res["ok"], res
+    # only this box's own pack was downloaded
+    dl = Path(upd.download_root(), "engine-c1-aaaaaa")
+    assert (dl / "campaign-vs1.zip").exists() and not (dl / "campaign-elsewhere.zip").exists()
+    c = upd.state["campaigns"]["vs1"]
+    assert c["pack"]["status"] == "staged" and c["key"] == "vs1"
+    assert (home / "ODFv2_CFG").read_bytes() == CFG_V1              # nothing written before a restart
+    assert any("campaign pack → vs1" in n for n in world.cog.notices)
+    # when_idle, empty server: one restart, and the pack goes in on the way up
+    world.servers[1]._players = 1
+    upd._track_idle()
+    asyncio.run(upd._apply_phase())
+    assert s1.calls == ["shutdown", "startup"]
+    assert (home / "ODFv2_CFG").read_bytes() == CFG_V2
+    assert (home / "Missions" / "vs.miz").read_bytes() == b"miz-v2"
+    assert (home / "Missions" / ".dcssb" / "vs.miz.orig").read_bytes() == b"miz-v2"
+    backups = upd._list_campaign_backups(str(home))
+    assert len(backups) == 1
+    bdoc = json.loads(Path(home, au.CAMPAIGN_BACKUPS, backups[0], "backup.json").read_text())
+    saved = {os.path.basename(e["path"]): Path(home, au.CAMPAIGN_BACKUPS, backups[0], e["backup"]).read_bytes()
+             for e in bdoc["entries"]}
+    assert saved == {"ODFv2_CFG": CFG_V1, "vs.miz": b"miz-v1+weather", "vs.miz.orig": b"miz-v1"}
+    assert c["pack"]["status"] == "probation" and c["installed"]["tag"] == "engine-c1-aaaaaa"
+    # the engine brings the mission up -> probation passes
+    (home / "Logs" / "bfnext.txt").write_text("init_miz: welcome\nstarting timed events\n")
+    upd._last_status = {"vs1": "RUNNING", "vs2": "RUNNING"}
+    asyncio.run(upd._probation_phase(30))
+    assert c["probation"]["loaded_at"]
+    c["probation"]["loaded_at"] -= 11 * 60
+    asyncio.run(upd._probation_phase(30))
+    assert c["probation"] is None and c["pack"] is None and c["last_applied"]["result"] == "passed"
+    assert any("passed probation" in n for n in world.cog.notices)
+    st = upd.status()["campaigns"]
+    row = next(r for r in st["servers"] if r["server"] == "vs1")
+    assert st["enabled"] and row["installed"]["tag"] == "engine-c1-aaaaaa" and row["keys"] == ["vs1", "dcs.vs1"]
+    # the same release again: nothing to do
+    assert asyncio.run(upd.check())["staged"] == []
+
+
+def test_campaign_hold_on_server_edit_keep_then_ask_again(world):
+    upd, s1, home = campaign_world(world)
+    upd._observe_campaign_baselines()
+    (home / "ODFv2_CFG").write_bytes(CFG_V1.replace(b"10", b"99"))      # edited live on the server
+    publish(world.rel, "engine-c2-bbbbbb", {}, "2026-09-28T10:00:00Z",
+            campaigns={"vs1": {"cfg_name": "ODFv2_CFG", "files": {"ODFv2_CFG": CFG_V2, "vs.miz": b"miz-v2"}}})
+    asyncio.run(upd.check())
+    c = upd.state["campaigns"]["vs1"]
+    assert c["pack"]["status"] == "held"
+    assert "server copy was edited since the last update: ODFv2_CFG" in c["pack"]["reason"]
+    assert any("HELD" in n for n in world.cog.notices)
+    # a held pack is never written at a start
+    assert upd.campaign_prepare(s1) is None
+    assert (home / "ODFv2_CFG").read_bytes() == CFG_V1.replace(b"10", b"99")
+    # keep: the server's cfg stays, the untouched mission still goes in
+    msg = upd.campaign_decide("vs1", "keep", "tester")
+    assert "vs.miz" in msg and c["pack"]["status"] == "staged" and c["pack"]["apply_only"] == ["vs.miz"]
+    note = upd.campaign_prepare(s1)
+    assert note and "vs.miz" in note
+    assert (home / "ODFv2_CFG").read_bytes() == CFG_V1.replace(b"10", b"99")
+    assert (home / "Missions" / ".dcssb" / "vs.miz.orig").read_bytes() == b"miz-v2"
+    assert "engine-c2-bbbbbb" in c["dismissed"]
+    c["probation"] = None   # (skip its probation here)
+    # the next release still asks about the edited cfg rather than overwriting it
+    publish(world.rel, "engine-c3-cccccc", {}, "2026-09-28T11:00:00Z",
+            campaigns={"vs1": {"cfg_name": "ODFv2_CFG", "files": {"ODFv2_CFG": CFG_V3, "vs.miz": b"miz-v2"}}})
+    asyncio.run(upd.check())
+    assert c["pack"]["tag"] == "engine-c3-cccccc" and c["pack"]["status"] == "held"
+    # keep with nothing else to write: the pack is simply dismissed
+    assert "dismissed" in upd.campaign_decide("vs1", "keep")
+    assert c["pack"] is None and "engine-c3-cccccc" in c["dismissed"]
+    with pytest.raises(LookupError):
+        upd.campaign_decide("vs1", "apply")
+
+
+def test_campaign_apply_over_edit_via_ops_api(world):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    upd, s1, home = campaign_world(world)
+    upd._observe_campaign_baselines()
+    edited = CFG_V1.replace(b"10", b"77")
+    (home / "ODFv2_CFG").write_bytes(edited)
+    publish(world.rel, "engine-c4-dddddd", {}, "2026-09-28T10:00:00Z",
+            campaigns={"vs1": {"cfg_name": "ODFv2_CFG", "files": {"ODFv2_CFG": CFG_V2, "vs.miz": b"miz-v1"}}})
+    asyncio.run(upd.check())
+    api = oa.OpsApi(world.cog)
+    app = FastAPI()
+    api.mount(app)
+    c = TestClient(app)
+    H = {"X-API-Key": "KEY123"}
+    base = "/stats/fowlengine/ops"
+    body = c.get(f"{base}/status", headers=H).json()
+    row = next(r for r in body["updates"]["campaigns"]["servers"] if r["server"] == "vs1")
+    assert row["pack"]["status"] == "held" and row["pack"]["held"] == ["ODFv2_CFG"]
+    assert c.post(f"{base}/campaign/apply", headers=H, json={"server": "nope"}).status_code == 404
+    assert c.post(f"{base}/campaign/keep", headers=H, json={"server": "vs2"}).status_code == 404
+    r = c.post(f"{base}/campaign/apply", headers=H, json={"server": "vs1"})
+    assert r.status_code == 200, r.text
+    assert upd.state["campaigns"]["vs1"]["pack"]["decision"] == "overwrite"
+    note = upd.campaign_prepare(s1)
+    assert note and "ODFv2_CFG" in note and "vs.miz" not in note          # the mission was already current
+    assert (home / "ODFv2_CFG").read_bytes() == CFG_V2
+    bdir = Path(home, au.CAMPAIGN_BACKUPS, upd._list_campaign_backups(str(home))[0])
+    assert edited in [p.read_bytes() for p in bdir.iterdir()]            # the server's edit is kept
+    api.unregister()
+
+
+def test_campaign_refused_by_engine_rolls_back_and_is_not_retried(world):
+    upd, s1, home = campaign_world(world)
+    publish(world.rel, "engine-c5-eeeeee", {}, "2026-09-28T10:00:00Z",
+            campaigns={"vs1": {"cfg_name": "ODFv2_CFG", "files": {"ODFv2_CFG": CFG_V2, "vs.miz": b"miz-v2"}}})
+    (home / "Logs" / "bfnext.txt").write_text("old run\nstarting timed events\n")   # the previous run's log
+    asyncio.run(upd.check())
+    assert "written" in upd.campaign_prepare(s1)
+    assert (home / "ODFv2_CFG").read_bytes() == CFG_V2
+    # bflib rotates its log and refuses the new cfg
+    (home / "Logs" / "bfnext.txt").write_text("init_miz\nTHE MISSION CANNOT START: invalid cfg\n")
+    upd._last_status = {"vs1": "RUNNING"}
+    asyncio.run(upd._probation_phase(30))
+    c = upd.state["campaigns"]["vs1"]
+    assert "engine-c5-eeeeee" in c["failed"] and c["pack"]["status"] == "failed"
+    assert "invalid cfg" in c["last_applied"]["reason"]
+    # bounced onto the restored files
+    assert s1.calls == ["shutdown", "startup"]
+    assert (home / "ODFv2_CFG").read_bytes() == CFG_V1
+    assert (home / "Missions" / "vs.miz").read_bytes() == b"miz-v1+weather"
+    assert (home / "Missions" / ".dcssb" / "vs.miz.orig").read_bytes() == b"miz-v1"
+    assert c["restore"] is None and any("rolled back" in (n or "") for n in s1.prepare_notes)
+    assert any("won't be applied here again" in n for n in world.cog.notices)
+    # the restored cfg is "ours" again: a later pack is not held over it
+    assert c["baseline"]["ODFv2_CFG"] == sha(CFG_V1)
+    assert asyncio.run(upd.check())["staged"] == []
+
+
+def test_campaign_crash_rolls_back_a_new_mission_file(world):
+    upd, s1, home = campaign_world(world)
+    publish(world.rel, "engine-c6-ffffff", {}, "2026-09-28T10:00:00Z",
+            campaigns={"vs1": {"cfg_name": "ODFv2_CFG",
+                               "files": {"ODFv2_CFG": CFG_V2, "vs-1.0.1.miz": b"new-mission"}}})
+    asyncio.run(upd.check())
+    note = upd.campaign_prepare(s1)
+    assert "New mission file(s) vs-1.0.1.miz" in note
+    assert (home / "Missions" / "vs-1.0.1.miz").read_bytes() == b"new-mission"
+    # DCS dies without an orderly shutdown; the server stays down
+    upd._last_status = {"vs1": "RUNNING"}
+    s1.status = Status.SHUTDOWN
+    asyncio.run(upd._probation_phase(30))
+    assert s1.calls == ["startup"]
+    assert (home / "ODFv2_CFG").read_bytes() == CFG_V1
+    assert not (home / "Missions" / "vs-1.0.1.miz").exists()      # what the pack added is gone again
+
+
+def test_campaign_bad_json_and_foreign_netidx(world):
+    upd, s1, home = campaign_world(world)
+    publish(world.rel, "engine-c7-111111", {}, "2026-09-28T10:00:00Z",
+            campaigns={"vs1": {"cfg_name": "ODFv2_CFG", "files": {"ODFv2_CFG": b'{"netidx_base": ,}'}}})
+    asyncio.run(upd.check())
+    c = upd.state["campaigns"]["vs1"]
+    assert not c.get("pack") and "not valid JSON" in c["last_error"] and c["rejected"] == "engine-c7-111111"
+    assert any("refused" in n for n in world.cog.notices)
+    # vs2's cfg sent to vs1 (a wrong key in campaigns.json): held, not applied
+    other = json.dumps({"netidx_base": "/local/fowl/vs2"}).encode()
+    publish(world.rel, "engine-c8-222222", {}, "2026-09-28T11:00:00Z",
+            campaigns={"vs1": {"cfg_name": "ODFv2_CFG", "files": {"ODFv2_CFG": other}}})
+    asyncio.run(upd.check())
+    assert c["pack"]["status"] == "held" and "netidx_base" in c["pack"]["reason"]
+    assert (home / "ODFv2_CFG").read_bytes() == CFG_V1
+
+
+def test_bfbinaries_extension_writes_the_campaign_pack(world, monkeypatch):
+    import importlib.util
+
+    class Extension:
+        def __init__(self, server, config):
+            self.server, self.config = server, config
+            self.name = "BFBinaries"
+            self.log = log
+            self.version = "1"
+
+    core.Extension = Extension
+    core.Server = object
+    te = types.ModuleType("typing_extensions")
+    te.override = lambda f: f
+    monkeypatch.setitem(sys.modules, "typing_extensions", te)
+    spec = importlib.util.spec_from_file_location("bfb_ext2", EXT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    upd, s1, home = campaign_world(world)
+    publish(world.rel, "engine-c9-333333", {}, "2026-09-28T10:00:00Z",
+            campaigns={"vs1": {"cfg_name": "ODFv2_CFG", "files": {"ODFv2_CFG": CFG_V2}}})
+    asyncio.run(upd.check())
+    b = s1.instance.locals["extensions"]["BFBinaries"]
+    ext = mod.BFBinaries(s1, dict(b))
+    monkeypatch.setattr(ext, "_fowlengine_cog", lambda: world.cog)
+    assert asyncio.run(ext.prepare()) is True
+    assert (home / "ODFv2_CFG").read_bytes() == CFG_V2
+    assert any("campaign pack engine-c9-333333 written" in n for n in world.cog.notices)
+
+
+# ---- plugin stamps: the Manager's sync and a bot_plugin release never downgrade ------
+
+
+def test_plugin_stamp_order():
+    old = {"git": "aaaa", "commit_time": "2026-09-20T10:00:00Z", "source": "manager-bundle"}
+    new = {"git": "bbbb", "commit_time": "2026-09-27T10:00:00Z", "source": "engine-release"}
+    assert au.plugin_stamp_older(old, new)                     # would downgrade -> reason
+    assert au.plugin_stamp_older(new, old) is None
+    assert au.plugin_stamp_older(old, None) is None            # unstamped install = older than anything
+    assert au.plugin_stamp_older({**old, "git": "bbbb-dirty"}, new) is None   # same commit
+    assert au.plugin_stamp_older({"git": "cccc"}, new) is None  # can't tell -> the old behaviour
+    # built is the fallback when a stamp has no commit time
+    assert au.plugin_stamp_older({"git": "x", "built": "2026-09-01T00:00:00Z"},
+                                 {"git": "y", "built": "2026-09-02T00:00:00Z"})
+
+
+def test_bot_plugin_release_skips_older_and_stamps(tmp_path, world):
+    import zipfile
+
+    bot = tmp_path / "bot"
+    plugin = bot / "plugins" / "fowlengine"
+    plugin.mkdir(parents=True)
+    (plugin / "commands.py").write_text("# installed by the Manager")
+    (plugin / au.PLUGIN_STAMP).write_text(json.dumps(
+        {"git": "newer1", "commit_time": "2026-09-27T12:00:00Z", "source": "manager-bundle"}))
+    rel = tmp_path / "dl"
+    rel.mkdir()
+
+    def make_zip(stamp):
+        with zipfile.ZipFile(rel / au.BOT_PLUGIN_ZIP, "w") as z:
+            z.writestr("plugins/fowlengine/commands.py", "# from the release")
+            if stamp:
+                z.writestr(f"plugins/fowlengine/{au.PLUGIN_STAMP}", json.dumps(stamp))
+
+    upd = au.Updater(world.cog, log, str(world.tmp / "config" / "upd.json"))
+    make_zip({"git": "older1", "commit_time": "2026-09-20T12:00:00Z"})
+    note = upd._apply_bot_plugin({"tag": "engine-p1", "dir": str(rel)}, plugin_dir=str(plugin))
+    assert "skipped" in note and "newer" in note
+    assert (plugin / "commands.py").read_text() == "# installed by the Manager"
+    # a zip without a stamp is judged by its release's commit time
+    make_zip(None)
+    note = upd._apply_bot_plugin({"tag": "engine-p2", "dir": str(rel), "git": "newest",
+                                  "commit_time": "2026-09-28T09:00:00Z"}, plugin_dir=str(plugin))
+    assert "active after" in note
+    assert (plugin / "commands.py").read_text() == "# from the release"
+    stamp = json.loads((plugin / au.PLUGIN_STAMP).read_text())
+    assert stamp["source"] == "engine-release" and stamp["tag"] == "engine-p2" and stamp["git"] == "newest"
