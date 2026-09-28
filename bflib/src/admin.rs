@@ -1068,7 +1068,18 @@ pub fn get_airbase(db: &Db, name: &str) -> Result<ObjectiveId> {
 
 fn admin_sideswitch(ctx: &mut Context, side: Side, name: String) -> Result<()> {
     let ucid = get_player_ucid(ctx, name.as_str())?;
-    ctx.db.force_sideswitch_player(&ucid, side)
+    let slotted = ctx
+        .db
+        .player(&ucid)
+        .is_some_and(|p| p.current_slot.is_some());
+    ctx.db.force_sideswitch_player(&ucid, side)?;
+    // Someone switched while sitting in an aircraft would otherwise keep
+    // flying it for the side they just left. Out to spectators; they pick a
+    // slot on the new side from there.
+    if slotted {
+        ctx.db.ephemeral.force_player_to_spectators(&ucid);
+    }
+    Ok(())
 }
 
 fn with_mut_cfg<F: FnOnce(&mut Cfg) -> Result<()>>(ctx: &mut Context, f: F) -> Result<()> {

@@ -2590,6 +2590,53 @@ class FowlEngine(Plugin):
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
 
+    @command(description='Move a pilot to the other coalition on one server.')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    @app_commands.describe(
+        server="Which campaign server",
+        player="In-game name (case-insensitive), player id, or UCID",
+        side="The side to put them on")
+    @app_commands.choices(side=[
+        app_commands.Choice(name="Blue", value="Blue"),
+        app_commands.Choice(name="Red", value="Red"),
+    ])
+    async def fe_side_switch(self, interaction: discord.Interaction,
+                             server: app_commands.Transform[Server, utils.ServerTransformer(status=[Status.RUNNING, Status.PAUSED])],
+                             player: str, side: app_commands.Choice[str]):
+        # Goes to that server's engine, which owns the registration: the side
+        # is per server, and a pilot sitting in a slot is sent to spectators
+        # so they can't keep flying for the side they left. The Discord
+        # coalition roles follow on the next role sync.
+        await interaction.response.defer(ephemeral=True)
+        config = self.get_config(server) or {}
+        api_url = config.get("api_url", "http://localhost:8880")
+        username = config.get("admin_username")
+        password = config.get("admin_password")
+        if not username or not password:
+            await interaction.followup.send(
+                "❌ admin_username/admin_password must be set in fowlengine.yaml (must match bfdb's "
+                "--admin-username/--admin-password) to use admin actions."
+            )
+            return
+        try:
+            status, data = await bfdb_admin_post(
+                api_url, username, password,
+                srv_path("/api/admin/side-switch", server.name),
+                {"player": player, "side": side.value},
+            )
+            if status == 200:
+                await interaction.followup.send(
+                    f"🔁 **{player}** is now {side.value} on {server.name}. If they were in a slot "
+                    f"they've been sent to spectators.", allowed_mentions=NO_PINGS)
+            else:
+                detail = (data or {}).get("error") or (data or {}).get("message") or ""
+                await interaction.followup.send(
+                    f"❌ Side switch failed (HTTP {status}){': ' + str(detail) if detail else ''}",
+                    allowed_mentions=NO_PINGS)
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {ex}")
+
     @command(description='Unban a pilot from the campaign (by UCID).')
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')

@@ -3045,6 +3045,49 @@ async fn api_admin_reset_lives_all(
     ))
 }
 
+#[derive(serde::Deserialize)]
+struct SideSwitchBody {
+    /// Name (case-insensitive, as the engine's `-admin switch` takes it),
+    /// in-game player id, or UCID.
+    player: std::string::String,
+    side: std::string::String,
+}
+
+/// POST /api/admin/side-switch  — force a player onto a side on one server
+/// (`?server=` picks the instance). Proxies bflib's side-switch RPC, which
+/// also puts a slotted player back to spectators; needs the engine running.
+async fn api_admin_side_switch(
+    session_id: Option<Uuid>,
+    body: SideSwitchBody,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use netidx::publisher::Value;
+    require_admin(session_id, db.clone()).await?;
+    let side = match body.side.to_ascii_lowercase().as_str() {
+        "blue" => "Blue",
+        "red" => "Red",
+        other => {
+            return Err(Error(websec::bad_request(format!(
+                "side must be Blue or Red, not {other:?}"
+            ))))
+        }
+    };
+    let player = body.player.trim();
+    if player.is_empty() {
+        return Err(Error(websec::bad_request("player is required")));
+    }
+    let reply = call_engine_rpc_str(
+        &db,
+        &inst,
+        "side-switch",
+        vec![("player", Value::from(player.to_string())), ("side", Value::from(side.to_string()))],
+    )
+    .await?;
+    log::info!("ADMIN: [{}] side switch {player} -> {side}: {reply}", inst.id);
+    Ok(warp::reply::json(&serde_json::json!({"ok": true, "message": reply})))
+}
+
 /// POST /api/admin/merge-rounds  — collapse every round id in the stats DB
 /// into one, repairing the "one campaign shows as dozens of rounds" damage
 /// from the old fork-on-restart bug. `?dry_run=true` (the default) only
@@ -7305,6 +7348,15 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_admin_reset_lives_all);
 
+    let admin_side_switch = warp::path!("api" / "admin" / "side-switch")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<SideSwitchBody>())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_side_switch);
+
     let admin_merge_rounds = warp::path!("api" / "admin" / "merge-rounds")
         .and(warp::post())
         .and(warp::query::<std::collections::HashMap<String, String>>())
@@ -7931,6 +7983,7 @@ async fn main() -> Result<()> {
         .or(admin_merge_rounds)
         .or(admin_rebuild_stats)
         .or(admin_reset_lives_all)
+        .or(admin_side_switch)
         .or(admin_ban_route)
         .or(admin_unban_route)
         .or(admin_cfg_post_route)
