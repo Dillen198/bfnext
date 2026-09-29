@@ -277,6 +277,25 @@ def _port_listening(host: str, port: int, timeout: float = 1.0) -> bool:
         return False
 
 
+def drop_unsupported_flags(args: list, supported: Optional[set]) -> tuple:
+    """Remove `--flag value` pairs the target exe doesn't list. Every flag
+    procman builds takes exactly one value, so pairs are dropped together.
+    Returns (args, dropped flag names). `supported` None = keep everything."""
+    if not supported:
+        return list(args), []
+    out, dropped, i = [], [], 0
+    while i < len(args):
+        a = args[i]
+        if isinstance(a, str) and a.startswith("--") and a not in supported:
+            if a not in dropped:
+                dropped.append(a)
+            i += 2
+            continue
+        out.append(a)
+        i += 1
+    return out, dropped
+
+
 class Procman:
     """Owns the bfdb.exe + netidx resolver child processes for one node.
 
@@ -1062,6 +1081,28 @@ class Procman:
             ]
         return args
 
+    def _supported_flags(self, exe: str) -> Optional[set]:
+        """The long flags `exe --help` lists, cached per exe file (path, size,
+        mtime). None when it can't be read -- then nothing is filtered."""
+        try:
+            st = os.stat(exe)
+        except OSError:
+            return None
+        key = (exe, st.st_size, st.st_mtime)
+        cache = getattr(self, "_flag_cache", None)
+        if cache and cache[0] == key:
+            return cache[1]
+        flags = None
+        try:
+            r = subprocess.run([exe, "--help"], capture_output=True, timeout=15,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
+            found = set(re.findall(r"--[a-z0-9][a-z0-9-]*", (r.stdout or b"").decode("utf-8", "replace")))
+            flags = found or None
+        except (OSError, subprocess.SubprocessError) as ex:
+            self.log.warning(f"FowlEngine/procman: could not read {exe} --help ({ex}); passing every flag")
+        self._flag_cache = (key, flags)
+        return flags
+
     def _bfdb_env(self) -> dict:
         """bfdb's environment: the bot's, plus the secrets bfdb can read from
         the environment instead of its command line: BFDB_NEWS_LLM_KEY
@@ -1362,6 +1403,17 @@ class Procman:
         await self._stop_orphans(admin_password)
 
         args = self._build_args(admin_password, gci_ok, instances_file)
+        supported = await loop.run_in_executor(None, self._supported_flags, self.exe)
+        args, dropped = drop_unsupported_flags(args, supported)
+        if dropped:
+            # A plugin newer than the bfdb.exe it launches (the Manager ships
+            # the plugin, the engine release ships bfdb) used to pass flags the
+            # old exe rejects, and bfdb then refused to start at all (Sept 29:
+            # "unexpected argument '--news-image-provider'"). Start it without
+            # them and say so: those features stay off until bfdb catches up.
+            await self._safe_notify(
+                f"⚠️ bfdb: this bfdb.exe doesn't know {', '.join(dropped)} -- started without "
+                f"them. Update bfdb.exe to turn those settings on.")
         self.log.info(f"FowlEngine/procman: launching {os.path.basename(self.exe)} {self._redact(args)}")
         # capture anything bfdb prints before its own --log-file logger is up
         # (missing-DLL loader errors, panics, "address in use", ...)

@@ -537,6 +537,13 @@ async fn resolve_ucid_via_bot(
             .text()
             .await
             .map_err(|e| anyhow::anyhow!("DCSServerBot getuser read failed: {e}"))?;
+        // The bot answers 404 "Player ... not found" for a Discord account
+        // that has never been linked to a DCS one -- that is the ordinary
+        // "not linked" answer, not a failure (and was logging a WARN on every
+        // dashboard page such a user opened).
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if !status.is_success() {
             let snippet: std::string::String = body.chars().take(200).collect();
             anyhow::bail!("DCSServerBot getuser -> HTTP {status}: {snippet}");

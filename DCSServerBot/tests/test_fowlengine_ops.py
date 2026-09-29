@@ -1683,3 +1683,16 @@ def test_free_image_providers_reach_bfdb_and_the_token_stays_off_argv(world):
     old = {"bfdb": {"news_image_provider": "cloudflare", "news_image_key": "cf-token"}}
     with pytest.raises(ValueError):
         oa.unmask_secrets(new, old)
+
+
+def test_flags_an_older_bfdb_does_not_know_are_dropped_not_fatal():
+    # A plugin newer than bfdb.exe used to pass flags the old exe rejects, and
+    # bfdb refused to start (Sept 29, --news-image-provider).
+    args = ["--db", "x", "--news-image-provider", "pollinations", "--listen-address", "a",
+            "--news-image-model", "flux", "--cors-origin", "o"]
+    kept, dropped = pmmod.drop_unsupported_flags(
+        args, {"--db", "--listen-address", "--cors-origin"})
+    assert kept == ["--db", "x", "--listen-address", "a", "--cors-origin", "o"]
+    assert dropped == ["--news-image-provider", "--news-image-model"]
+    # --help unreadable: pass everything, as before
+    assert pmmod.drop_unsupported_flags(args, None) == (args, [])
