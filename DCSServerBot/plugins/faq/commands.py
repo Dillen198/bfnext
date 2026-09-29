@@ -3,6 +3,8 @@ from discord import app_commands, ui
 from typing import Optional
 from core import Plugin, utils, Server
 
+from ._icons import icon, icon_emoji, emoji_from, plain, render
+
 # Same accent as the about / fowlengine embeds.
 BRAND_COLOR = discord.Color.from_str('#c8102e')
 
@@ -36,7 +38,7 @@ class UnifiedFAQSelect(ui.Select):
                     label=f"Server: {server_name}"[:100],
                     value=f"server:{server_name}",
                     description=f"IP, port, password and SRS ({server_obj.status.name})"[:100],
-                    emoji="\N{LARGE GREEN CIRCLE}" if running else "\N{LARGE RED CIRCLE}",
+                    emoji=icon_emoji("live" if running else "down"),
                 )
             )
 
@@ -46,10 +48,11 @@ class UnifiedFAQSelect(ui.Select):
                 continue  # plain settings (wiki_url, panel, links, ...) are not topics
             topic_options.append(
                 discord.SelectOption(
-                    label=data.get("title", key)[:100],
+                    label=plain(data.get("title", key))[:100],
                     value=f"faq:{key}",
-                    description=data.get("description", "Campaign help topic")[:100],
-                    emoji=data.get("emoji") or "\N{BLACK QUESTION MARK ORNAMENT}",
+                    description=plain(data.get("description", "Campaign help topic"))[:100],
+                    # `emoji:` in faq.yaml may be `{icon:<key>}` or plain unicode.
+                    emoji=emoji_from(data.get("emoji")) or icon_emoji("help"),
                 )
             )
 
@@ -112,7 +115,7 @@ class LinkView(ui.View):
             self.add_item(ui.Button(
                 label=link.get("label", "Open")[:80],
                 url=url,
-                emoji=link.get("emoji") or None,
+                emoji=emoji_from(link.get("emoji")),
                 style=discord.ButtonStyle.link,
             ))
 
@@ -160,8 +163,8 @@ class FAQ(Plugin):
         links = cfg.get("links")
         if links is None:
             links = [
-                {"label": "Full Wiki", "url": cfg.get("wiki_url", ""), "emoji": "\N{OPEN BOOK}"},
-                {"label": "Dashboard", "url": cfg.get("dashboard_url", ""), "emoji": "\N{BAR CHART}"},
+                {"label": "Full Wiki", "url": cfg.get("wiki_url", ""), "emoji": "{icon:book}"},
+                {"label": "Dashboard", "url": cfg.get("dashboard_url", ""), "emoji": "{icon:dashboard}"},
             ]
         view = LinkView(links)
         return view if view.has_buttons else None
@@ -188,7 +191,7 @@ class FAQ(Plugin):
         running = server.status.name == "RUNNING"
 
         embed = self._embed(
-            f"Connection Info: {server.display_name}",
+            f"{icon('connect')} Connection Info: {server.display_name}",
             color=discord.Color.green() if running else discord.Color.red(),
         )
         embed.add_field(name="Server IP & Port", value=f"`{ip}:{port}`", inline=True)
@@ -212,15 +215,19 @@ class FAQ(Plugin):
         if topic_key in RESERVED_KEYS or not isinstance(faq_data, dict):
             return None
 
+        # The topic's own icon (its dropdown emoji) leads the title, so the
+        # answer visibly belongs to the entry that was picked.
+        title = render(faq_data.get("title", "FAQ"))
+        mark = render((faq_data.get("emoji") or "").strip())
         embed = self._embed(
-            faq_data.get("title", "FAQ"),
-            faq_data.get("description", ""),
+            f"{mark} {title}" if mark else title,
+            render(faq_data.get("description", "")),
             url=faq_data.get("url"),
         )
         for field in faq_data.get("fields", []):
             embed.add_field(
-                name=field.get("name", "Info"),
-                value=field.get("value", "N/A"),
+                name=render(field.get("name", "Info")),
+                value=render(field.get("value", "N/A")),
                 inline=field.get("inline", False),
             )
         wiki = (faq_data.get("url") or cfg.get("wiki_url") or "").strip()
@@ -245,15 +252,15 @@ class FAQ(Plugin):
         cfg = self._cfg()
         panel = cfg.get("panel", {})
         embed = self._embed(
-            panel.get("title", "Information Hub"),
-            panel.get("description",
-                      "Pick a server below for live IP, password and SRS details, "
-                      "or a topic for how the campaign actually works."),
+            render(panel.get("title", "Information Hub")),
+            render(panel.get("description",
+                             "Pick a server below for live IP, password and SRS details, "
+                             "or a topic for how the campaign actually works.")),
         )
         wiki = (cfg.get("wiki_url") or "").strip()
         if wiki:
             embed.add_field(
-                name="Everything else",
+                name=f"{icon('book')} Everything else",
                 value=f"The full player wiki lives at {wiki} - menus, logistics, "
                       f"capturing, tasking, CSAR, navaids and the rest.",
                 inline=False,

@@ -2,6 +2,8 @@ import discord
 from discord import app_commands, ui
 from core import Plugin, utils
 
+from ._icons import icon, render, wait_ready
+
 
 class EditRulesModal(ui.Modal, title="Edit Community Rules"):
     """Interactive Modal Form for Admins to Edit Rules."""
@@ -52,6 +54,9 @@ class Rules(Plugin):
 
     async def _startup_sync(self):
         await self.bot.wait_until_ready()
+        # fowlengine reads its custom emoji only once the bot is ready; give it
+        # a moment so the startup edit doesn't put the unicode stand-ins back.
+        await wait_ready()
         await self.update_community_rules()
 
     async def init_db(self):
@@ -198,7 +203,9 @@ class Rules(Plugin):
         return chunks
 
     def format_rules_text(self, config: dict) -> str:
-        title = config.get("title", "📜 **COMMUNITY RULES**")
+        # Left unrendered: this is also the text /edit_rules puts in its form,
+        # where `{icon:<key>}` should stay editable. It's expanded at post time.
+        title = config.get("title", "{icon:rules} **COMMUNITY RULES**")
         description = config.get("description", "")
 
         lines = [f"{title}\n", f"{description}\n", "---"] if description else [f"{title}\n", "---"]
@@ -256,7 +263,10 @@ class Rules(Plugin):
             if ignore_override:
                 await self.save_override_text(channel_id, None)
             text_content = stored if stored is not None else self.format_rules_text(config)
-        chunks = self.chunk_text(text_content)
+        # `{icon:<key>}` in rules.yaml (or in an /edit_rules override) becomes the
+        # custom emoji here -- before chunking, so the markup counts toward the
+        # message length limit.
+        chunks = self.chunk_text(render(text_content))
         image_embed = self.build_image_embed(config.get("image_url"))
 
         stored_ids = await self.get_stored_message_ids(channel_id)
@@ -329,7 +339,7 @@ class Rules(Plugin):
                 current_text = stored
         if len(current_text) > 4000:
             await interaction.response.send_message(
-                "⚠️ The current rules are longer than the 4000-character modal limit. Editing here would "
+                f"{icon('warning')} The current rules are longer than the 4000-character modal limit. Editing here would "
                 "silently truncate and permanently overwrite everything past that point. Edit `rules.yaml` "
                 "directly and run `/post_rules` instead.",
                 ephemeral=True

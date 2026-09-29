@@ -10,6 +10,8 @@ import json
 import re
 import aiohttp
 
+from ._icons import icon, icon_emoji, unicode
+
 # yt-dlp (and the PyNaCl voice codec it depends on via discord.py) are not
 # part of DCSServerBot's own requirements, so they can easily be missing from
 # the bot's venv. An unguarded `import yt_dlp` at module scope makes that a
@@ -25,7 +27,7 @@ try:
 except ImportError as e:
     HAS_YTDLP = False
     print(f"\n==========================================================")
-    print(f"🚨 RADIO WARNING: Missing yt-dlp! ({e})")
+    print(f"RADIO WARNING: Missing yt-dlp! ({e})")
     print(f"Run `pip install yt-dlp PyNaCl` in the bot's venv, then restart.")
     print(f"==========================================================\n")
 
@@ -125,22 +127,30 @@ class RadioControlView(ui.View):
     def __init__(self, plugin):
         super().__init__(timeout=None)
         self.plugin = plugin
+        # Emoji resolve per instance, not in the decorators: those run at
+        # import, before fowlengine's icon set has refreshed. The instance
+        # registered at cog load only routes clicks by custom_id; every
+        # player message gets a fresh view, so it shows the current icons.
+        self.toggle_playback.emoji = icon_emoji("play_pause")
+        self.skip_track.emoji = icon_emoji("skip")
+        self.show_queue.emoji = icon_emoji("queue")
+        self.stop_radio.emoji = icon_emoji("stop")
 
-    @ui.button(label="⏯️ Play/Pause", style=discord.ButtonStyle.blurple, custom_id="radio_pause_resume")
+    @ui.button(label="Play/Pause", style=discord.ButtonStyle.blurple, custom_id="radio_pause_resume")
     async def toggle_playback(self, interaction: discord.Interaction, button: ui.Button):
         vc = interaction.guild.voice_client
         if not vc: 
             return await interaction.response.send_message("Radio is offline.", ephemeral=True)
         if vc.is_playing():
             vc.pause()
-            await interaction.response.send_message("⏸️ Radio paused.", ephemeral=True)
+            await interaction.response.send_message(f"{icon('paused')} Radio paused.", ephemeral=True)
         elif vc.is_paused():
             vc.resume()
-            await interaction.response.send_message("▶️ Radio resumed.", ephemeral=True)
+            await interaction.response.send_message(f"{icon('play')} Radio resumed.", ephemeral=True)
         else:
             await interaction.response.send_message("Nothing is currently loaded.", ephemeral=True)
 
-    @ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, custom_id="radio_skip")
+    @ui.button(label="Skip", style=discord.ButtonStyle.secondary, custom_id="radio_skip")
     async def skip_track(self, interaction: discord.Interaction, button: ui.Button):
         vc = interaction.guild.voice_client
         if vc and (vc.is_playing() or vc.is_paused()):
@@ -148,11 +158,11 @@ class RadioControlView(ui.View):
             if state['loop'] == 'track':
                 state['loop'] = 'off'
             vc.stop() 
-            await interaction.response.send_message("⏭️ Track skipped.", ephemeral=True)
+            await interaction.response.send_message(f"{icon('skip')} Track skipped.", ephemeral=True)
         else:
             await interaction.response.send_message("Nothing to skip.", ephemeral=True)
 
-    @ui.button(label="📜 Queue", style=discord.ButtonStyle.gray, custom_id="radio_queue")
+    @ui.button(label="Queue", style=discord.ButtonStyle.gray, custom_id="radio_queue")
     async def show_queue(self, interaction: discord.Interaction, button: ui.Button):
         state = self.plugin.get_state(interaction.guild.id)
         if not state['queue']:
@@ -160,10 +170,10 @@ class RadioControlView(ui.View):
         q_list = "\n".join([f"**{i+1}.** {track['title']}" for i, track in enumerate(state['queue'][:10])])
         if len(state['queue']) > 10:
             q_list += f"\n...and {len(state['queue']) - 10} more tracks."
-        embed = discord.Embed(title="📻 Upcoming Tracks", description=q_list, color=discord.Color.blue())
+        embed = discord.Embed(title=f"{icon('radio')} Upcoming Tracks", description=q_list, color=discord.Color.blue())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @ui.button(label="⏹️ Stop", style=discord.ButtonStyle.red, custom_id="radio_stop")
+    @ui.button(label="Stop", style=discord.ButtonStyle.red, custom_id="radio_stop")
     async def stop_radio(self, interaction: discord.Interaction, button: ui.Button):
         state = self.plugin.get_state(interaction.guild.id)
         state['queue'].clear()
@@ -179,17 +189,17 @@ class RadioControlView(ui.View):
         except:
             pass 
             
-        await interaction.response.send_message("⏹️ Radio stopped and player removed.", ephemeral=True)
+        await interaction.response.send_message(f"{icon('stop')} Radio stopped and player removed.", ephemeral=True)
 
 
 class LiveRadioView(ui.View):
     """Stage 2: Station Selection (Paginated)"""
-    def __init__(self, stations, plugin, user_id, menu_title="📻 Live Internet Radio Stations"):
+    def __init__(self, stations, plugin, user_id, menu_title=None):
         super().__init__(timeout=120)
         self.stations = stations
         self.plugin = plugin
         self.user_id = user_id
-        self.menu_title = menu_title
+        self.menu_title = menu_title or f"{icon('radio')} Live Internet Radio Stations"
         self.page = 0
         self.per_page = 10
         self.max_page = max(0, (len(stations) - 1) // self.per_page)
@@ -217,7 +227,7 @@ class LiveRadioView(ui.View):
         )
         self.add_item(select)
         
-        prev_btn = ui.Button(label="◀️ Prev", style=discord.ButtonStyle.secondary, disabled=(self.page == 0))
+        prev_btn = ui.Button(label="Prev", emoji=icon_emoji("prev"), style=discord.ButtonStyle.secondary, disabled=(self.page == 0))
         async def prev_cb(interaction: discord.Interaction):
             self.page -= 1
             self.update_components()
@@ -225,7 +235,7 @@ class LiveRadioView(ui.View):
         prev_btn.callback = prev_cb
         self.add_item(prev_btn)
         
-        next_btn = ui.Button(label="Next ▶️", style=discord.ButtonStyle.secondary, disabled=(self.page == self.max_page))
+        next_btn = ui.Button(label="Next", emoji=icon_emoji("next"), style=discord.ButtonStyle.secondary, disabled=(self.page == self.max_page))
         async def next_cb(interaction: discord.Interaction):
             self.page += 1
             self.update_components()
@@ -283,9 +293,9 @@ class LiveRadioView(ui.View):
         vc = interaction.guild.voice_client
         if not vc or (not vc.is_playing() and not vc.is_paused()):
             await self.plugin.play_next_async(interaction.guild.id)
-            await interaction.followup.send(f"📡 Tuning into live broadcast: **{title}**...")
+            await interaction.followup.send(f"{icon('broadcast')} Tuning into live broadcast: **{title}**...")
         else:
-            embed = discord.Embed(description=f"📝 **Added live station to queue:** {title}", color=discord.Color.gold())
+            embed = discord.Embed(description=f"{icon('queue')} **Added live station to queue:** {title}", color=discord.Color.gold())
             if thumbnail: embed.set_thumbnail(url=thumbnail)
             await interaction.followup.send(embed=embed)
             
@@ -335,7 +345,7 @@ class CountrySelectView(ui.View):
         )
         self.add_item(select)
         
-        prev_btn = ui.Button(label="◀️ Prev", style=discord.ButtonStyle.secondary, disabled=(self.page == 0))
+        prev_btn = ui.Button(label="Prev", emoji=icon_emoji("prev"), style=discord.ButtonStyle.secondary, disabled=(self.page == 0))
         async def prev_cb(interaction: discord.Interaction):
             self.page -= 1
             self.update_components()
@@ -343,7 +353,7 @@ class CountrySelectView(ui.View):
         prev_btn.callback = prev_cb
         self.add_item(prev_btn)
         
-        next_btn = ui.Button(label="Next ▶️", style=discord.ButtonStyle.secondary, disabled=(self.page == self.max_page))
+        next_btn = ui.Button(label="Next", emoji=icon_emoji("next"), style=discord.ButtonStyle.secondary, disabled=(self.page == self.max_page))
         async def next_cb(interaction: discord.Interaction):
             self.page += 1
             self.update_components()
@@ -364,7 +374,7 @@ class CountrySelectView(ui.View):
             country_list += f"**{i+1}.** {name} *(Stations: {count})*\n"
             
         embed = discord.Embed(
-            title=f"🌍 Select a Country (Page {self.page+1}/{self.max_page+1})", 
+            title=f"{icon('globe')} Select a Country (Page {self.page+1}/{self.max_page+1})", 
             description=f"Use the buttons to explore, and the dropdown to view stations in that country:\n\n{country_list}",
             color=discord.Color.green()
         )
@@ -385,14 +395,14 @@ class CountrySelectView(ui.View):
                     if resp.status == 200:
                         data = await resp.json(content_type=None)
                         if data and len(data) > 0:
-                            view = LiveRadioView(data, self.plugin, self.user_id, menu_title=f"📻 Top Stations in {country_name}")
+                            view = LiveRadioView(data, self.plugin, self.user_id, menu_title=f"{icon('radio')} Top Stations in {country_name}")
                             embed = view.generate_embed()
                             await interaction.message.edit(embed=embed, view=view)
                             return
         except Exception as e:
             self.plugin.log.error(f"[Radio] API Error fetching stations for {country_name}: {e}")
             
-        await interaction.followup.send(f"❌ Could not load stations for {country_name}.", ephemeral=True)
+        await interaction.followup.send(f"{icon('bad')} Could not load stations for {country_name}.", ephemeral=True)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -431,7 +441,7 @@ class Radio(Plugin):
                     if state.get('current_track_info'):
                         activity = discord.Activity(
                             type=discord.ActivityType.listening, 
-                            name=f"{state['current_track_info']['title']} 🎵"
+                            name=f"{state['current_track_info']['title']} {unicode('music')}"
                         )
                         await self.bot.change_presence(status=discord.Status.online, activity=activity)
             except Exception as e:
@@ -506,7 +516,8 @@ class Radio(Plugin):
             state['current_track_info'] = next_track
             vc.play(player, after=lambda e: self.play_next_sync(guild_id, e))
             
-            activity = discord.Activity(type=discord.ActivityType.listening, name=f"{track_title} 🎵")
+            # Presence text is plain: it can't show custom emoji markup.
+            activity = discord.Activity(type=discord.ActivityType.listening, name=f"{track_title} {unicode('music')}")
             await self.bot.change_presence(status=discord.Status.online, activity=activity)
             
             embed = discord.Embed(color=0x1DB954)
@@ -517,12 +528,12 @@ class Radio(Plugin):
                 artist, display_title = track_title.split(" - ", 1)
             
             embed.set_author(name="Music Player")
-            embed.add_field(name="Track", value=f"**{display_title}**", inline=False)
+            embed.add_field(name=f"{icon('music')} Track", value=f"**{display_title}**", inline=False)
             embed.add_field(name="Artist", value=f"{artist}", inline=True)
             embed.add_field(name="Requested By", value=f"{requester}", inline=True)
             
             time_str = format_duration(duration)
-            embed.add_field(name="Duration", value=f"▶︎ ━━◉━━━━━━━━━━━━━━━━━ {time_str}", inline=False)
+            embed.add_field(name="Duration", value=f"{icon('play')} ━━◉━━━━━━━━━━━━━━━━━ {time_str}", inline=False)
             
             if thumbnail:
                 embed.set_image(url=thumbnail)
@@ -541,17 +552,17 @@ class Radio(Plugin):
                 state['current_track_info'] = None
                 if state['channel']:
                     await state['channel'].send(
-                        f"❌ Playback failed {failures} times in a row (likely a broken audio backend). "
+                        f"{icon('bad')} Playback failed {failures} times in a row (likely a broken audio backend). "
                         "Clearing the queue — check the bot logs."
                     )
                 return
             if state['channel']:
-                await state['channel'].send(f"❌ Error playing track. Skipping...")
+                await state['channel'].send(f"{icon('bad')} Error playing track. Skipping...")
             await self.play_next_async(guild_id, failures)
 
     async def ensure_voice(self, interaction: discord.Interaction):
         if not interaction.user.voice or not interaction.user.voice.channel:
-            await interaction.followup.send("❌ You need to join a voice channel first!", ephemeral=True)
+            await interaction.followup.send(f"{icon('bad')} You need to join a voice channel first!", ephemeral=True)
             return False
         voice_channel = interaction.user.voice.channel
         voice_client = interaction.guild.voice_client
@@ -590,7 +601,7 @@ class Radio(Plugin):
             except Exception as e:
                 self.log.error(f"[Radio] Radio API Error: {e}")
             
-            await interaction.followup.send("❌ Unable to load countries at the moment.", ephemeral=True)
+            await interaction.followup.send(f"{icon('bad')} Unable to load countries at the moment.", ephemeral=True)
             return
 
         # STAGE 2: IF ARGUMENTS PROVIDED -> Jump Straight to Station List
@@ -605,7 +616,7 @@ class Radio(Plugin):
         if query: params["name"] = query
         if country: params["country"] = country
         
-        embed_title = "📻 Live Radio"
+        embed_title = f"{icon('radio')} Live Radio"
         if query and country: embed_title += f" | '{query}' in {country}"
         elif query: embed_title += f" | '{query}'"
         elif country: embed_title += f" | Top in {country}"
@@ -624,7 +635,7 @@ class Radio(Plugin):
         except Exception as e:
             self.log.error(f"[Radio] Radio API Error: {e}")
             
-        await interaction.followup.send("❌ Could not find any active streams matching those filters.", ephemeral=True)
+        await interaction.followup.send(f"{icon('bad')} Could not find any active streams matching those filters.", ephemeral=True)
 
     @app_commands.command(name="play", description="Adds a track to the queue")
     @app_commands.guild_only()
@@ -663,14 +674,14 @@ class Radio(Plugin):
             })
             
             if not voice_client.is_playing() and not voice_client.is_paused():
-                await interaction.followup.send(f"📡 Tuned frequency to **{title}**...")
+                await interaction.followup.send(f"{icon('broadcast')} Tuned frequency to **{title}**...")
                 await self.play_next_async(interaction.guild.id)
             else:
-                embed = discord.Embed(description=f"📝 **Added to queue:** {title}", color=discord.Color.gold())
+                embed = discord.Embed(description=f"{icon('queue')} **Added to queue:** {title}", color=discord.Color.gold())
                 await interaction.followup.send(embed=embed)
         except Exception as e:
             self.log.error(f"[Radio] Search failed: {e}")
-            await interaction.followup.send("❌ Error finding track.", ephemeral=True)
+            await interaction.followup.send(f"{icon('bad')} Error finding track.", ephemeral=True)
 
     @app_commands.command(name="tune_frequency", description="Tune into a 24/7 radio station")
     @app_commands.choices(station=[
@@ -700,7 +711,7 @@ class Radio(Plugin):
         vc = interaction.guild.voice_client
         if vc and (vc.is_playing() or vc.is_paused()): vc.stop()
         else: await self.play_next_async(interaction.guild.id)
-        await interaction.followup.send(f"📻 Tuned main receiver to **{station.name}**.")
+        await interaction.followup.send(f"{icon('radio')} Tuned main receiver to **{station.name}**.")
 
     @app_commands.command(name="filter", description="Apply an audio filter (Takes effect on the NEXT track)")
     @app_commands.choices(effect=[
@@ -713,7 +724,7 @@ class Radio(Plugin):
     async def apply_filter(self, interaction: discord.Interaction, effect: app_commands.Choice[str]):
         state = self.get_state(interaction.guild.id)
         state['filter'] = None if effect.value == "clear" else effect.value
-        await interaction.response.send_message(f"🎛️ Audio filter set to **{effect.name}**.")
+        await interaction.response.send_message(f"{icon('filter')} Audio filter set to **{effect.name}**.")
 
     @app_commands.command(name="loop", description="Change the looping mode")
     @app_commands.choices(mode=[
@@ -725,7 +736,7 @@ class Radio(Plugin):
     async def loop_mode(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
         state = self.get_state(interaction.guild.id)
         state['loop'] = mode.value
-        await interaction.response.send_message(f"🔁 Loop mode set to: **{mode.name}**")
+        await interaction.response.send_message(f"{icon('loop')} Loop mode set to: **{mode.name}**")
 
     @app_commands.command(name="shuffle", description="Randomizes the current queue")
     @app_commands.guild_only()
@@ -734,7 +745,7 @@ class Radio(Plugin):
         if len(state['queue']) < 2:
             return await interaction.response.send_message("Not enough tracks.", ephemeral=True)
         random.shuffle(state['queue'])
-        await interaction.response.send_message("🔀 Queue randomized.")
+        await interaction.response.send_message(f"{icon('shuffle')} Queue randomized.")
 
     @app_commands.command(name="remove", description="Removes a specific track number from the queue")
     @app_commands.guild_only()
@@ -743,7 +754,7 @@ class Radio(Plugin):
         if position < 1 or position > len(state['queue']):
             return await interaction.response.send_message("Invalid position number. Check `/queue`.", ephemeral=True)
         removed = state['queue'].pop(position - 1)
-        await interaction.response.send_message(f"🗑️ Removed **{removed['title']}** from the queue.")
+        await interaction.response.send_message(f"{icon('discard')} Removed **{removed['title']}** from the queue.")
 
     @app_commands.command(name="queue", description="Shows the upcoming transmission schedule")
     @app_commands.guild_only()
@@ -752,7 +763,7 @@ class Radio(Plugin):
         if not state['queue']:
             return await interaction.response.send_message("The queue is empty.", ephemeral=True)
         q_list = "\n".join([f"**{i+1}.** {track['title']}" for i, track in enumerate(state['queue'][:10])])
-        embed = discord.Embed(title="📻 Upcoming", description=q_list, color=discord.Color.blue())
+        embed = discord.Embed(title=f"{icon('radio')} Upcoming", description=q_list, color=discord.Color.blue())
         await interaction.response.send_message(embed=embed)
         
     @app_commands.command(name="stop", description="Cuts the radio transmission")
@@ -765,7 +776,7 @@ class Radio(Plugin):
         if vc and (vc.is_playing() or vc.is_paused()):
             vc.stop()
             await self.bot.change_presence(activity=None)
-            await interaction.response.send_message("📻 Radio transmission cut.")
+            await interaction.response.send_message(f"{icon('radio')} Radio transmission cut.")
         else:
             await interaction.response.send_message("The radio is currently broadcasting static.", ephemeral=True)
 
@@ -779,7 +790,7 @@ class Radio(Plugin):
             return await interaction.response.send_message("Volume must be between 0 and 200.", ephemeral=True)
         if vc.source:
             vc.source.volume = level / 100.0
-            await interaction.response.send_message(f"🔊 Master output adjusted to **{level}%**.")
+            await interaction.response.send_message(f"{icon('volume')} Master output adjusted to **{level}%**.")
         else:
             await interaction.response.send_message("Nothing is currently transmitting.", ephemeral=True)
 
@@ -789,7 +800,7 @@ class Radio(Plugin):
         await interaction.response.defer()
         state = self.get_state(interaction.guild.id)
         tracks = ([state['current_track_info']] if state['current_track_info'] else []) + state['queue']
-        if not tracks: return await interaction.followup.send("❌ No tracks to save!")
+        if not tracks: return await interaction.followup.send(f"{icon('bad')} No tracks to save!")
         
         try:
             async with self.apool.connection() as conn:
@@ -798,10 +809,10 @@ class Radio(Plugin):
                         "INSERT INTO radio_flightplans (guild_id, plan_name, tracks) VALUES (%s, %s, %s) ON CONFLICT (guild_id, plan_name) DO UPDATE SET tracks = EXCLUDED.tracks", 
                         (interaction.guild.id, plan_name.lower().strip(), json.dumps(tracks))
                     )
-            await interaction.followup.send(f"💾 Saved '{plan_name}'.")
+            await interaction.followup.send(f"{icon('save')} Saved '{plan_name}'.")
         except Exception as e:
             self.log.error(f"[Radio] Save Error: {e}")
-            await interaction.followup.send("❌ DB Error.")
+            await interaction.followup.send(f"{icon('bad')} DB Error.")
 
     @app_commands.command(name="load_flightplan", description="Loads a saved playlist")
     @app_commands.guild_only()
@@ -812,7 +823,7 @@ class Radio(Plugin):
                 cursor = await conn.execute("SELECT tracks FROM radio_flightplans WHERE guild_id = %s AND plan_name = %s", (interaction.guild.id, plan_name.lower().strip()))
                 result = await cursor.fetchone()
                 
-            if not result: return await interaction.followup.send(f"❌ '{plan_name}' not found.")
+            if not result: return await interaction.followup.send(f"{icon('bad')} '{plan_name}' not found.")
                 
             state = self.get_state(interaction.guild.id)
             state['channel'] = interaction.channel
@@ -821,10 +832,10 @@ class Radio(Plugin):
             if await self.ensure_voice(interaction):
                 vc = interaction.guild.voice_client
                 if not vc.is_playing() and not vc.is_paused(): await self.play_next_async(interaction.guild.id)
-            await interaction.followup.send(f"📂 Loaded '{plan_name}'.")
+            await interaction.followup.send(f"{icon('load')} Loaded '{plan_name}'.")
         except Exception as e:
             self.log.error(f"[Radio] Load Error: {e}")
-            await interaction.followup.send("❌ DB Error.")
+            await interaction.followup.send(f"{icon('bad')} DB Error.")
 
     @app_commands.command(name="leave", description="Powers down the radio")
     @app_commands.guild_only()
@@ -835,7 +846,7 @@ class Radio(Plugin):
         if interaction.guild.voice_client:
             await interaction.guild.voice_client.disconnect()
             await self.bot.change_presence(activity=None)
-            await interaction.response.send_message("👋 Radio off.")
+            await interaction.response.send_message(f"{icon('leave')} Radio off.")
         else:
             await interaction.response.send_message("Not connected.", ephemeral=True)
 

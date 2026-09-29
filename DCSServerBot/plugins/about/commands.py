@@ -2,6 +2,8 @@ import discord
 from discord import app_commands, ui
 from core import Plugin, utils
 
+from ._icons import emoji_from, render
+
 # Matches the Vector Strike accent the fowlengine plugin's embeds use, so
 # /about doesn't look like it came from a different bot than /feops and the
 # server-info panels.
@@ -26,7 +28,8 @@ class LinkView(ui.View):
             self.add_item(ui.Button(
                 label=link.get("label", "Open")[:80],
                 url=url,
-                emoji=link.get("emoji") or None,
+                # `emoji:` in about.yaml may be `{icon:<key>}` or plain unicode.
+                emoji=emoji_from(link.get("emoji")),
                 style=discord.ButtonStyle.link,
             ))
 
@@ -55,6 +58,9 @@ class About(Plugin):
         return f"{dash}/vs-vectorstrike_hd-white.png" if dash else None
 
     def _embed(self, title: str, description: str = "") -> discord.Embed:
+        """Titles and descriptions come from about.yaml, so `{icon:<key>}` in
+        them is expanded here (plain unicode passes through)."""
+        title, description = render(title), render(description)
         cfg = self._cfg()
         brand = cfg.get("brand_name", "Vector Strike")
         website = (cfg.get("website") or "").strip() or None
@@ -79,8 +85,8 @@ class About(Plugin):
             embed.set_thumbnail(url=logo)
         for member in data.get("team", []):
             embed.add_field(
-                name=member.get("name", "?"),
-                value=member.get("role", ""),
+                name=render(member.get("name", "?")),
+                value=render(member.get("role", "")),
                 inline=True,
             )
         return embed
@@ -95,15 +101,15 @@ class About(Plugin):
         for feature in features:
             if isinstance(feature, dict):
                 embed.add_field(
-                    name=feature.get("name", "Feature"),
-                    value=feature.get("value", ""),
+                    name=render(feature.get("name", "Feature")),
+                    value=render(feature.get("value", "")),
                     inline=feature.get("inline", True),
                 )
         bullets = [f for f in features if isinstance(f, str)]
         if bullets:
             embed.add_field(
                 name="Key Features",
-                value="\n".join(f"- {b}" for b in bullets),
+                value="\n".join(f"- {render(b)}" for b in bullets),
                 inline=False,
             )
         return embed
@@ -129,8 +135,8 @@ class About(Plugin):
             ]
         for entry in entries:
             embed.add_field(
-                name=entry.get("name", "Thanks"),
-                value=entry.get("value", ""),
+                name=render(entry.get("name", "Thanks")),
+                value=render(entry.get("value", "")),
                 inline=entry.get("inline", False),
             )
         return embed
@@ -154,9 +160,9 @@ class About(Plugin):
         if links is None:
             # Synthesize the obvious three from the individual settings.
             links = [
-                {"label": "Website", "url": cfg.get("website", ""), "emoji": "\N{GLOBE WITH MERIDIANS}"},
-                {"label": "Wiki", "url": cfg.get("wiki_url", ""), "emoji": "\N{OPEN BOOK}"},
-                {"label": "Dashboard", "url": cfg.get("dashboard_url", ""), "emoji": "\N{BAR CHART}"},
+                {"label": "Website", "url": cfg.get("website", ""), "emoji": "{icon:globe}"},
+                {"label": "Wiki", "url": cfg.get("wiki_url", ""), "emoji": "{icon:book}"},
+                {"label": "Dashboard", "url": cfg.get("dashboard_url", ""), "emoji": "{icon:dashboard}"},
             ]
         view = LinkView(links)
         return view if view.has_buttons else None

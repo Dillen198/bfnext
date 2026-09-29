@@ -2,6 +2,11 @@ DEFAULT:
   # ---------------------------------------------------------------
   # Settings. Everything below these that is a mapping with a `title`
   # becomes a dropdown topic, so adding one needs no code change.
+  #
+  # A topic's `emoji:` is its dropdown icon and leads its answer's title. Use
+  # "{icon:<key>}" for the Vector Strike set (the fowlengine plugin's icons --
+  # `/feops icons_status` lists the keys) or any plain unicode emoji. `{icon:...}`
+  # also works inside titles, descriptions and field text.
   # ---------------------------------------------------------------
   brand_name: "Vector Strike"
   website: "https://vectorstrike.org"
@@ -21,7 +26,7 @@ DEFAULT:
   getting_started:
     title: "Start Here — Your First Sortie"
     description: "What to do in your first twenty minutes"
-    emoji: "🚀"
+    emoji: "{icon:rocket}"
     url: "https://wiki.vectorstrike.org/playbooks/first-sortie"
     fields:
       - name: "Joining a side"
@@ -43,7 +48,7 @@ DEFAULT:
   fowl_overview:
     title: "Campaign Overview & Victory"
     description: "How a round is won and what carries over"
-    emoji: "🦅"
+    emoji: "{icon:wings}"
     url: "https://wiki.vectorstrike.org/gameplay/objectives"
     fields:
       - name: "Victory condition"
@@ -65,7 +70,7 @@ DEFAULT:
   capture_mechanics:
     title: "Capturing Objectives"
     description: "Break it, take it, then hold it while it consolidates"
-    emoji: "🚩"
+    emoji: "{icon:capture}"
     url: "https://wiki.vectorstrike.org/gameplay/capturing-objectives"
     fields:
       - name: "Stage 1 — make it eligible"
@@ -90,7 +95,7 @@ DEFAULT:
   logistics_system:
     title: "Logistics, Supply & the War Economy"
     description: "Why a base won't repair, and how to starve theirs"
-    emoji: "📦"
+    emoji: "{icon:logistics}"
     url: "https://wiki.vectorstrike.org/gameplay/war-economy"
     fields:
       - name: "Stockpiles are finite"
@@ -115,7 +120,7 @@ DEFAULT:
   support_and_tasking:
     title: "Support Assets & the Tasking Board"
     description: "AWACS, tankers, drones, AI helos, coalition tasks"
-    emoji: "🎯"
+    emoji: "{icon:tasking}"
     url: "https://wiki.vectorstrike.org/gameplay/tasking-board"
     fields:
       - name: "Buying support"
@@ -137,7 +142,7 @@ DEFAULT:
   csar:
     title: "CSAR — Downed Pilots"
     description: "Getting people back, and getting yourself back"
-    emoji: "🚁"
+    emoji: "{icon:csar}"
     url: "https://wiki.vectorstrike.org/f10-menu/csar"
     fields:
       - name: "When a pilot goes down"
@@ -159,7 +164,7 @@ DEFAULT:
   comms_and_navaids:
     title: "Radios, GCI & Navaids"
     description: "Frequencies, AWACS calls, and finding a FARP at night"
-    emoji: "📻"
+    emoji: "{icon:comms}"
     url: "https://wiki.vectorstrike.org/gameplay/comms-plan"
     fields:
       - name: "SRS"
@@ -184,7 +189,7 @@ DEFAULT:
   lives_and_slotting:
     title: "Slots, Lives & Account Linking"
     description: "Why you can't slot, and how to keep your stats"
-    emoji: "✈️"
+    emoji: "{icon:intercept}"
     url: "https://wiki.vectorstrike.org/gameplay/points-and-lives"
     fields:
       - name: "Why can't I take this slot?"
@@ -206,7 +211,7 @@ DEFAULT:
   chat_commands:
     title: "In-Game Chat Commands"
     description: "Type these into the DCS chat window"
-    emoji: "⌨️"
+    emoji: "{icon:keyboard}"
     url: "https://wiki.vectorstrike.org/reference/chat-commands"
     fields:
       - name: "Status & info"

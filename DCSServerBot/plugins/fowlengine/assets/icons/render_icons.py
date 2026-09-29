@@ -949,6 +949,334 @@ def icon_carrier():
     return img
 
 
+# ── the community plugins ───────────────────────────────────────────────────
+# What about, faq, rules, tickets, smartmod and radio post (they reach this set
+# through their own _icons.py). Same rules again: steel for plain labels,
+# green = go, red = stop, blue = something arriving or a pointer elsewhere,
+# amber = waiting on someone.
+
+def icon_play():
+    """Play -- green, the go of the transport controls (resume, play/pause)."""
+    img, d = _canvas()
+    span = S - 2 * PAD
+    h = span * 0.80
+    w = h * 0.87
+    x0 = S / 2 - w * 0.40                 # centroid, not bounding box, on the centre
+    _poly(d, [(x0, S / 2 - h / 2), (x0 + w, S / 2), (x0, S / 2 + h / 2)], GREEN)
+    return img
+
+
+def icon_skip():
+    """Skip to the next track: play head against a bar."""
+    img, d = _canvas()
+    span = S - 2 * PAD
+    h = span * 0.66
+    w = h * 0.87
+    bar = W * 1.3
+    x0 = S / 2 - (w + bar * 1.6) / 2
+    _poly(d, [(x0, S / 2 - h / 2), (x0 + w, S / 2), (x0, S / 2 + h / 2)], STEEL)
+    xb = x0 + w + bar * 0.6
+    d.rectangle([xb, S / 2 - h / 2, xb + bar, S / 2 + h / 2], fill=STEEL)
+    return img
+
+
+def icon_stop():
+    """Stop -- a red square: the transmission is cut."""
+    img, d = _canvas()
+    half = (S - 2 * PAD) * 0.36
+    d.rounded_rectangle([S / 2 - half, S / 2 - half, S / 2 + half, S / 2 + half],
+                        radius=W * 0.7, fill=RED)
+    return img
+
+
+def _chevron(point_left: bool):
+    img, d = _canvas()
+    h = (S - 2 * PAD) * 0.36
+    w = h * 0.78
+    tip, back = (S / 2 - w / 2, S / 2 + w / 2) if point_left else (S / 2 + w / 2, S / 2 - w / 2)
+    _path(d, [(back, S / 2 - h), (tip, S / 2), (back, S / 2 + h)], STEEL, w=int(W * 1.1))
+    return img
+
+
+def icon_prev():
+    """Page back."""
+    return _chevron(True)
+
+
+def icon_next():
+    """Page on."""
+    return _chevron(False)
+
+
+def icon_queue():
+    """Playlist: three lines and a play head -- what's coming up."""
+    img, d = _canvas()
+    gw = int(W * 0.8)
+    for y, x1 in ((S * 0.28, S * 0.78), (S * 0.46, S * 0.78), (S * 0.64, S * 0.48)):
+        _line(d, (PAD + W * 0.4, y), (x1, y), STEEL, w=gw)
+    h = (S - 2 * PAD) * 0.30
+    x0 = S * 0.60
+    _poly(d, [(x0, S * 0.60), (x0 + h * 0.9, S * 0.60 + h / 2), (x0, S * 0.60 + h)], STEEL)
+    return img
+
+
+def icon_music():
+    """Two beamed quavers."""
+    img, d = _canvas()
+    span = S - 2 * PAD
+    hr = span * 0.14                      # note-head radius
+    heads = ((S * 0.30, S - PAD - hr), (S * 0.72, S - PAD - hr - span * 0.10))
+    beam_t = W * 1.5
+    tops = (PAD + span * 0.14, PAD + span * 0.04)
+    sw = int(W * 0.8)
+    for (hx, hy), top in zip(heads, tops):
+        _dot(d, hx, hy, hr, STEEL)
+        x = hx + hr - sw / 2
+        d.rectangle([x - sw / 2, top, x + sw / 2, hy], fill=STEEL)
+    (x_a, _), (x_b, _) = heads
+    xa, xb = x_a + hr - sw, x_b + hr
+    _poly(d, [(xa, tops[0]), (xb, tops[1]), (xb, tops[1] + beam_t), (xa, tops[0] + beam_t)], STEEL)
+    return img
+
+
+def icon_volume():
+    """Speaker with two waves."""
+    img, d = _canvas()
+    span = S - 2 * PAD
+    cy = S / 2
+    left = PAD + span * 0.07                  # the waves are shorter than the box: centre the whole
+    bx0, bx1 = left, left + span * 0.20
+    bh = span * 0.14
+    d.rectangle([bx0, cy - bh, bx1, cy + bh], fill=STEEL)
+    cone_x = left + span * 0.46
+    _poly(d, [(bx1 - 1, cy - bh), (cone_x, cy - span * 0.36), (cone_x, cy + span * 0.36),
+              (bx1 - 1, cy + bh)], STEEL)
+    ax = cone_x - span * 0.06
+    for r in (span * 0.26, span * 0.44):
+        _arc(d, ax, cy, r, -48, 48, STEEL, w=int(W * 0.75))
+    return img
+
+
+def icon_shuffle():
+    """Two crossing arrows, one passing under the other."""
+    img, d = _canvas()
+    gw = int(W * 0.8)
+    top, bot = S * 0.30, S * 0.70
+    x_in, x_a, x_b = PAD + gw * 0.5, S * 0.32, S * 0.62
+    head = W * 2.4
+    x_end = S - PAD - head * 0.8
+    under = [(x_in, top), (x_a, top), (x_b, bot), (x_end, bot)]
+    over = [(x_in, bot), (x_a, bot), (x_b, top), (x_end, top)]
+    _path(d, under, STEEL, w=gw)
+    # Knock a gap where the second arrow crosses, so it reads as over/under.
+    _path(d, over[1:3], CLEAR, w=int(gw * 2.6))
+    _path(d, over, STEEL, w=gw)
+    for y in (top, bot):
+        _arrowhead(d, (S - PAD, y), 0, head, STEEL, spread=0.62)
+    return img
+
+
+def icon_filter():
+    """Three mixer faders -- tune the output."""
+    img, d = _canvas()
+    knob = W * 1.35
+    top, bot = PAD + knob * 0.4, S - PAD - knob * 0.4
+    for x, ky in ((S * 0.27, S * 0.64), (S * 0.50, S * 0.34), (S * 0.73, S * 0.56)):
+        _line(d, (x, top), (x, bot), STEEL, w=int(W * 0.55))
+        d.rounded_rectangle([x - knob, ky - knob * 0.62, x + knob, ky + knob * 0.62],
+                            radius=W * 0.4, fill=STEEL)
+    return img
+
+
+def icon_globe():
+    """Globe with a meridian and parallels -- the website, a country."""
+    img, d = _canvas()
+    cx = cy = S / 2
+    r = S / 2 - PAD
+    gw = int(W * 0.62)
+    _ring(d, cx, cy, r, BLUE, w=int(W * 0.8))
+    d.ellipse([cx - r * 0.42, cy - r, cx + r * 0.42, cy + r], outline=BLUE, width=gw)
+    _line(d, (cx - r + gw * 0.5, cy), (cx + r - gw * 0.5, cy), BLUE, w=gw)
+    for f in (-0.52, 0.52):
+        half = r * math.sqrt(1 - f * f) * 0.92
+        _line(d, (cx - half, cy + r * f), (cx + half, cy + r * f), BLUE, w=gw)
+    return img
+
+
+def icon_ticket():
+    """Ticket stub: notched sides and a perforation -- a support request,
+    amber because it is waiting on someone."""
+    img, d = _canvas()
+    top, bot = S * 0.26, S * 0.74
+    d.rounded_rectangle([PAD, top, S - PAD, bot], radius=W * 0.6, fill=AMBER)
+    notch = (bot - top) * 0.20
+    for x in (PAD, S - PAD):
+        _dot(d, x, S / 2, notch, CLEAR)
+    xp = S * 0.64
+    n = 5
+    for i in range(n):
+        y = top + (bot - top) * (i + 0.5) / n
+        _dot(d, xp, y, W * 0.36, CLEAR)
+    return img
+
+
+def icon_lock():
+    """Padlock -- closed, locked."""
+    img, d = _canvas()
+    cx = S / 2
+    span = S - 2 * PAD
+    bw = span * 0.34
+    body_top = S * 0.46
+    d.rounded_rectangle([cx - bw, body_top, cx + bw, S - PAD], radius=W * 0.7, fill=STEEL)
+    sr = bw * 0.66                            # shackle radius
+    sy = PAD + sr + W * 0.4
+    gw = int(W * 0.95)
+    _arc(d, cx, sy, sr, 180, 360, STEEL, w=gw)
+    for x in (cx - sr + gw / 2, cx + sr - gw / 2):
+        d.rectangle([x - gw / 2, sy, x + gw / 2, body_top + 1], fill=STEEL)
+    _dot(d, cx, body_top + (S - PAD - body_top) * 0.40, W * 0.75, CLEAR)
+    d.rectangle([cx - W * 0.3, body_top + (S - PAD - body_top) * 0.40,
+                 cx + W * 0.3, body_top + (S - PAD - body_top) * 0.72], fill=CLEAR)
+    return img
+
+
+def icon_mail():
+    """Envelope -- open a ticket, something arriving in the inbox."""
+    img, d = _canvas()
+    top, bot = S * 0.24, S * 0.76
+    lo, hi = PAD + W * 0.2, S - PAD - W * 0.2
+    gw = int(W * 0.8)
+    d.rounded_rectangle([lo, top, hi, bot], radius=W * 0.6, outline=BLUE, width=gw)
+    _path(d, [(lo + gw * 0.6, top + gw * 0.6), (S / 2, S * 0.54), (hi - gw * 0.6, top + gw * 0.6)],
+          BLUE, w=gw)
+    return img
+
+
+def icon_help():
+    """Question mark in a ring -- the sibling of `info`."""
+    img, d = _canvas()
+    cx = cy = S / 2
+    r = S / 2 - PAD
+    _ring(d, cx, cy, r, BLUE, w=int(W * 0.8))
+    qr = r * 0.28
+    qy = cy - r * 0.20
+    gw = int(W * 0.9)
+    _arc(d, cx, qy, qr, 190, 440, BLUE, w=gw)
+    a = math.radians(440)
+    _line(d, (cx + qr * math.cos(a), qy + qr * math.sin(a) - gw * 0.3), (cx, cy + r * 0.20), BLUE, w=gw)
+    _dot(d, cx, cy + r * 0.50, W * 0.6, BLUE)
+    return img
+
+
+def icon_rules():
+    """Scroll, rolled at both ends."""
+    img, d = _canvas()
+    span = S - 2 * PAD
+    body_l, body_r = S / 2 - span * 0.32, S / 2 + span * 0.32
+    roll = W * 1.1                            # half-height of a roll
+    top_y, bot_y = PAD + roll, S - PAD - roll
+    d.rectangle([body_l, top_y, body_r, bot_y], fill=STEEL)
+    for y in (top_y, bot_y):
+        d.rounded_rectangle([body_l - W * 1.2, y - roll, body_r + W * 1.2, y + roll],
+                            radius=roll, fill=STEEL)
+        _line(d, (body_l - W * 0.2, y), (body_r + W * 0.2, y), CLEAR, w=int(W * 0.3))
+    for i in range(4):
+        y = top_y + roll + W * 1.2 + i * (bot_y - top_y - 2 * roll - W * 2.4) / 3
+        x1 = body_r - W * 1.3 - (span * 0.16 if i == 3 else 0)
+        _line(d, (body_l + W * 1.3, y), (x1, y), CLEAR, w=int(W * 0.55))
+    return img
+
+
+def icon_rocket():
+    """Rocket climbing to the right -- start here, get going."""
+    # Drawn upright on a double-size canvas and turned 45 degrees: along the
+    # diagonal the glyph can run past the square margin it has to fit in once
+    # it is turned, which is what keeps it from looking undersized.
+    big = Image.new("RGBA", (S * 2, S * 2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(big)
+    c = S                                     # centre of the big canvas
+    L = S / 2 - PAD
+    bw = L * 0.25                             # body half-width
+
+    def at(w, a):                             # (radial, axial) about the centre; a < 0 is the nose
+        return (c + w, c + a)
+
+    nose, shoulder, tail = -1.22 * L, -0.50 * L, 0.52 * L
+    # Exhaust first, so the body laps over its top.
+    _poly(d, [at(-bw * 0.62, tail - W * 0.4), at(bw * 0.62, tail - W * 0.4), at(0, 1.12 * L)], AMBER)
+    for sgn in (-1, 1):
+        _poly(d, [at(sgn * bw, 0.02 * L), at(sgn * bw * 2.15, 0.46 * L),
+                  at(sgn * bw * 2.15, 0.70 * L), at(sgn * bw, tail)], STEEL)
+    _poly(d, [at(0, nose), at(bw * 0.78, nose + (shoulder - nose) * 0.45), at(bw, shoulder),
+              at(bw, tail), at(-bw, tail), at(-bw, shoulder),
+              at(-bw * 0.78, nose + (shoulder - nose) * 0.45)], STEEL)
+    _dot(d, c, c - 0.26 * L, bw * 0.46, CLEAR)
+    big = big.rotate(-45, resample=Image.BICUBIC, center=(c, c))
+    return big.crop((S // 2, S // 2, S // 2 + S, S // 2 + S))
+
+
+def icon_wings():
+    """Aviator's wings -- the campaign itself, and its pilots."""
+    img, d = _canvas()
+    cx = S / 2
+    span = S - 2 * PAD
+    cy = S * 0.53
+    hub = span * 0.13
+    t = W * 0.55                              # feather half-thickness
+    for sgn in (-1, 1):
+        for i, (reach, lift) in enumerate(((0.50, 0.16), (0.40, 0.10), (0.29, 0.05))):
+            y = cy - span * 0.12 + i * span * 0.13
+            x_in = cx + sgn * hub * 0.6
+            x_out = cx + sgn * span * reach
+            _poly(d, [(x_in, y - t), (x_out, y - t - span * lift),
+                      (x_out - sgn * t * 1.6, y + t - span * lift * 0.5), (x_in, y + t * 1.2)], GOLD)
+    _dot(d, cx, cy, hub + W * 0.35, CLEAR)
+    _dot(d, cx, cy, hub, GOLD)
+    _star(d, cx, cy + hub * 0.05, hub * 0.72, 0.45, DARK)
+    return img
+
+
+def icon_keyboard():
+    """Keyboard -- chat commands."""
+    img, d = _canvas()
+    top, bot = S * 0.28, S * 0.72
+    d.rounded_rectangle([PAD, top, S - PAD, bot], radius=W * 0.8, fill=STEEL)
+    k = W * 0.95                              # key size
+    inner_l, inner_r = PAD + W * 1.1, S - PAD - W * 1.1
+    for row, y in enumerate((top + W * 1.1, top + W * 1.1 + k * 1.55)):
+        n = 6 if row == 0 else 5
+        step = (inner_r - inner_l - k) / (n - 1)
+        off = 0 if row == 0 else step / 2
+        for i in range(n):
+            x = inner_l + off + i * step
+            if row == 1 and x + k > inner_r:
+                continue
+            d.rectangle([x, y, x + k, y + k], fill=CLEAR)
+    sy = bot - W * 1.1 - k
+    d.rectangle([S / 2 - (S - 2 * PAD) * 0.24, sy, S / 2 + (S - 2 * PAD) * 0.24, sy + k], fill=CLEAR)
+    return img
+
+
+def icon_book():
+    """Open book -- the wiki."""
+    img, d = _canvas()
+    cx = S / 2
+    gap = W * 0.45
+    top, bot = S * 0.26, S * 0.76
+    dip = S * 0.05
+    for sgn in (-1, 1):
+        outer = cx + sgn * (S / 2 - PAD)
+        inner = cx + sgn * gap
+        _poly(d, [(inner, top + dip), (outer, top), (outer, bot - dip), (inner, bot)], STEEL)
+        for i in range(3):
+            f = 0.26 + i * 0.20
+            y_in, y_out = top + dip + (bot - top - dip) * f, top + (bot - top - dip) * f
+            a = (inner + sgn * W * 1.1, y_in)
+            b = (outer - sgn * W * 1.1, y_out)
+            _line(d, a, b, CLEAR, w=int(W * 0.4))
+    return img
+
+
 # Emoji name -> drawing function. The names are what icons.py looks up in
 # Discord, so they are part of the contract: renaming one orphans the uploaded
 # emoji and the briefing silently falls back to its unicode stand-in.
@@ -1018,6 +1346,26 @@ ICONS = {
     "vs_wind": icon_wind,
     "vs_fuel": icon_fuel,
     "vs_carrier": icon_carrier,
+    "vs_play": icon_play,
+    "vs_skip": icon_skip,
+    "vs_stop": icon_stop,
+    "vs_prev": icon_prev,
+    "vs_next": icon_next,
+    "vs_queue": icon_queue,
+    "vs_music": icon_music,
+    "vs_volume": icon_volume,
+    "vs_shuffle": icon_shuffle,
+    "vs_filter": icon_filter,
+    "vs_globe": icon_globe,
+    "vs_ticket": icon_ticket,
+    "vs_lock": icon_lock,
+    "vs_mail": icon_mail,
+    "vs_help": icon_help,
+    "vs_rules": icon_rules,
+    "vs_rocket": icon_rocket,
+    "vs_wings": icon_wings,
+    "vs_keyboard": icon_keyboard,
+    "vs_book": icon_book,
 }
 
 

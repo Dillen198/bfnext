@@ -1,6 +1,8 @@
 DEFAULT:
   channel: 1450818994973048872  # Target Discord channel ID
-  title: "📜 **VECTOR STRIKE — RULES**"
+  # "{icon:<key>}" anywhere in the title or rule text becomes a Vector Strike
+  # icon (the fowlengine plugin's set); plain unicode emoji still work.
+  title: "{icon:rules} **VECTOR STRIKE — RULES**"
   description: >-
     Two sets of rules: how we behave in Discord, and how we fly. Most of the
     in-game ones are enforced automatically by the server, so they are worth

@@ -4,6 +4,8 @@ from discord.ext import commands
 from core import Plugin, utils
 from datetime import datetime, timezone, timedelta
 
+from ._icons import icon, icon_emoji
+
 # Safely attempt to load the Gemini library
 try:
     import google.generativeai as genai
@@ -11,7 +13,7 @@ try:
 except ImportError as e:
     HAS_GENAI = False
     print(f"\n==========================================================")
-    print(f"🚨 SMARTMOD WARNING: Missing AI Package! ({e})")
+    print(f"SMARTMOD WARNING: Missing AI Package! ({e})")
     print(f"The bot is running in a virtual environment. You must install")
     print(f"the library directly into the .venv folder for AI to work.")
     print(f"==========================================================\n")
@@ -21,6 +23,9 @@ class VerifyView(ui.View):
     def __init__(self, role_id: int):
         super().__init__(timeout=None)
         self.role_id = role_id
+        # Per instance, so a panel from /spawn_verification shows the icon set
+        # as installed now (the copy registered at cog load just routes clicks).
+        self.verify_button.emoji = icon_emoji("good")
 
     @ui.button(label="Click to Verify", style=discord.ButtonStyle.success, custom_id="smartmod:verify")
     async def verify_button(self, interaction: discord.Interaction, button: ui.Button):
@@ -115,7 +120,7 @@ class Smartmod(Plugin):
                     )
         except Exception as e:
             self.log.error(f"[Smartmod] Failed adding points: {e}")
-            return f"⚠️ Failed to record a warning for {member.mention} due to a database error — no points were applied. Check the bot logs."
+            return f"{icon('warning')} Failed to record a warning for {member.mention} due to a database error — no points were applied. Check the bot logs."
 
         current = await self.get_user_points(guild.id, member.id)
         config = self.get_config() or {}
@@ -134,14 +139,14 @@ class Smartmod(Plugin):
                 pass
             except discord.HTTPException as e:
                 self.log.error(f"[Smartmod] Failed to timeout {member.id}: {e}")
-                return f"⚠️ {member.mention} reached {current}/{max_pts} points but the timeout could not be applied (Discord API error — check logs)."
-            return f"🚨 {member.mention} reached {current}/{max_pts} points and was automatically **timed out for {timeout_hours} hours**."
+                return f"{icon('warning')} {member.mention} reached {current}/{max_pts} points but the timeout could not be applied (Discord API error — check logs)."
+            return f"{icon('alert')} {member.mention} reached {current}/{max_pts} points and was automatically **timed out for {timeout_hours} hours**."
         else:
             try:
-                await member.send(f"⚠️ Warning in **{guild.name}**: {reason}{rule_text}. Points: {current}/{max_pts}")
+                await member.send(f"{icon('warning')} Warning in **{guild.name}**: {reason}{rule_text}. Points: {current}/{max_pts}")
             except discord.Forbidden:
                 pass
-            return f"⚠️ {member.mention} warned (+{amount} pts). Total: {current}/{max_pts}"
+            return f"{icon('warning')} {member.mention} warned (+{amount} pts). Total: {current}/{max_pts}"
 
     @app_commands.command(name="warn", description="Warn a user, cite a rule, and assign points")
     @app_commands.guild_only()
@@ -154,7 +159,7 @@ class Smartmod(Plugin):
         await interaction.response.defer()
         result_msg = await self.apply_points(interaction.guild, user, points, reason, article)
         
-        embed = discord.Embed(title="Database Warning Issued", color=discord.Color.orange())
+        embed = discord.Embed(title=f"{icon('warning')} Database Warning Issued", color=discord.Color.orange())
         embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
         embed.add_field(name="User", value=user.mention, inline=True)
         embed.add_field(name="Article", value=article, inline=False)
@@ -171,7 +176,7 @@ class Smartmod(Plugin):
         view = VerifyView(config.get("verified_role_id", 0))
         
         embed = discord.Embed(
-            title="🛡️ Server Verification",
+            title=f"{icon('verify')} Server Verification",
             description="Please click the button below to prove you are human and gain access to the rest of the server.",
             color=discord.Color.dark_teal()
         )
@@ -198,9 +203,9 @@ class Smartmod(Plugin):
                 if "YES" in response.text.strip().upper():
                     await message.delete()
                     action_log = await self.apply_points(message.guild, message.author, 5, "AI context-flagged scam attempt.")
-                    await message.channel.send(f"🛑 {message.author.mention}'s message removed by AI AutoMod. {action_log}", delete_after=10)
+                    await message.channel.send(f"{icon('removed')} {message.author.mention}'s message removed by AI AutoMod. {action_log}", delete_after=10)
                     
-                    embed = discord.Embed(title="AI Scam Blocked", color=discord.Color.red())
+                    embed = discord.Embed(title=f"{icon('removed')} AI Scam Blocked", color=discord.Color.red())
                     embed.add_field(name="User", value=message.author.mention, inline=True)
                     embed.add_field(name="Content", value=content[:1024], inline=False)
                     await self.send_log(message.guild, embed)
@@ -212,7 +217,7 @@ class Smartmod(Plugin):
         if any(scam.lower() in content.lower() for scam in config.get("scam_keywords", [])):
             await message.delete()
             action_log = await self.apply_points(message.guild, message.author, 5, "Keyword-flagged scam text.")
-            await message.channel.send(f"🛑 {message.author.mention}'s message removed. {action_log}", delete_after=10)
+            await message.channel.send(f"{icon('removed')} {message.author.mention}'s message removed. {action_log}", delete_after=10)
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
@@ -229,7 +234,7 @@ class Smartmod(Plugin):
                 if q_role:
                     await member.add_roles(q_role, reason="Alt-detection: Brand new account.")
             
-            embed = discord.Embed(title="⚠️ Suspicious New Account", color=discord.Color.gold())
+            embed = discord.Embed(title=f"{icon('warning')} Suspicious New Account", color=discord.Color.gold())
             embed.add_field(name="User", value=member.mention, inline=True)
             embed.add_field(name="Age", value=f"{account_age.days} days", inline=True)
             await self.send_log(member.guild, embed)

@@ -3,6 +3,8 @@ import discord
 from discord import app_commands, ui
 from core import Plugin, utils
 
+from ._icons import icon, icon_emoji, unicode
+
 
 class TicketModal(ui.Modal, title="Create Support Ticket"):
     """Form modal for user ticket details."""
@@ -52,7 +54,7 @@ class TicketModal(ui.Modal, title="Create Support Ticket"):
 
         # 1. Post Intro Embed
         intro_embed = discord.Embed(
-            title=f"🎫 Support Ticket: {self.subject.value}",
+            title=f"{icon('ticket')} Support Ticket: {self.subject.value}",
             description=(
                 f"Welcome {user.mention}!\n\n"
                 f"Our admin and support team have been notified. Please use this forum thread to upload "
@@ -91,8 +93,12 @@ class TicketControlView(ui.View):
     def __init__(self, plugin):
         super().__init__(timeout=None)
         self.plugin = plugin
+        # Resolved per instance (the decorator runs at import, before the icon
+        # set has refreshed): each new ticket gets the current icon, while the
+        # copy registered at cog load only routes clicks by custom_id.
+        self.close_ticket_button.emoji = icon_emoji("lock")
 
-    @ui.button(label="🔒 Close Ticket & Generate Transcript", style=discord.ButtonStyle.red, custom_id="close_forum_ticket_btn")
+    @ui.button(label="Close Ticket & Generate Transcript", style=discord.ButtonStyle.red, custom_id="close_forum_ticket_btn")
     async def close_ticket_button(self, interaction: discord.Interaction, button: ui.Button):
         if not await self.plugin.can_close_ticket(interaction.channel.id, interaction.user):
             await interaction.response.send_message(
@@ -109,8 +115,11 @@ class TicketPanelView(ui.View):
     def __init__(self, plugin):
         super().__init__(timeout=None)
         self.plugin = plugin
+        # See TicketControlView: a panel posted by /setup_ticket_panel shows
+        # whatever icon is installed at that moment.
+        self.open_ticket_button.emoji = icon_emoji("mail")
 
-    @ui.button(label="📩 Open Support Ticket", style=discord.ButtonStyle.green, custom_id="open_ticket_modal_btn")
+    @ui.button(label="Open Support Ticket", style=discord.ButtonStyle.green, custom_id="open_ticket_modal_btn")
     async def open_ticket_button(self, interaction: discord.Interaction, button: ui.Button):
         modal = TicketModal(self.plugin)
         await interaction.response.send_modal(modal)
@@ -204,7 +213,8 @@ class Tickets(Plugin):
 
             if msg.attachments:
                 attachments_list = ", ".join([att.url for att in msg.attachments])
-                lines.append(f"  📎 Attachments: {attachments_list}")
+                # A .txt file, not a Discord message: plain unicode only.
+                lines.append(f"  {unicode('attachment')} Attachments: {attachments_list}")
 
             lines.append("-" * 40)
 
@@ -217,13 +227,13 @@ class Tickets(Plugin):
     async def close_ticket_thread(self, thread: discord.Thread, closed_by: discord.User | discord.Member):
         """Generate transcript, log closing to DB, post transcript, lock thread."""
         try:
-            await thread.send("⏳ Generating ticket transcript...")
+            await thread.send(f"{icon('pending')} Generating ticket transcript...")
 
             # 1. Build and attach .txt transcript
             transcript_file = await self.generate_transcript(thread)
 
             close_embed = discord.Embed(
-                title="🔒 Ticket Closed",
+                title=f"{icon('lock')} Ticket Closed",
                 description=f"This ticket has been closed by {closed_by.mention}.\nAttached below is the complete chat transcript.",
                 color=discord.Color.red()
             )
@@ -252,10 +262,10 @@ class Tickets(Plugin):
         await interaction.response.defer(ephemeral=True)
 
         embed = discord.Embed(
-            title="❓ Community Support Center",
+            title=f"{icon('help')} Community Support Center",
             description=(
                 "Need assistance or need to report an issue?\n\n"
-                "Click **'📩 Open Support Ticket'** below to open a private forum post. "
+                f"Click {icon('mail')} **Open Support Ticket** below to open a private forum post. "
                 "Only you and server admins will have access to the post."
             ),
             color=discord.Color.dark_teal()

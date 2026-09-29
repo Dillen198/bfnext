@@ -9,10 +9,13 @@ DEFAULT:
 
   # Buttons under the panel. Omit this block entirely and the three links above
   # are turned into Website / Wiki / Dashboard buttons automatically. Max 5.
+  # `emoji:` takes "{icon:<key>}" (the fowlengine plugin's Vector Strike icons,
+  # listed by `/feops icons_status`) or plain unicode; `{icon:...}` also works
+  # in every title, description and field below.
   # links:
   #   - label: "Website"
   #     url: "https://vectorstrike.org"
-  #     emoji: "🌐"
+  #     emoji: "{icon:globe}"
 
   about_us:
     title: "About Vector Strike"

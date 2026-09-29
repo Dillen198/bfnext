@@ -31,6 +31,12 @@ How the rest of the plugin reaches it:
   that also lands somewhere that isn't Discord (the dashboard OPS page,
   persisted update history).
 
+The other plugins in this repo (about, announcements, faq, radio, rules,
+smartmod, tickets) use the same set through their own `_icons.py`: it finds
+this module as `plugins.fowlengine.icons` in sys.modules -- the very module the
+cog's `from .icons import` loaded, so the same active IconSet -- and falls back
+to its own copy of the unicode stand-ins when fowlengine isn't loaded.
+
 Adding an icon: draw it in render_icons.py and add it to its ICONS table, run
 `python render_icons.py`, add the key to FALLBACK below with the unicode it
 replaces, then `/feops icons_install` uploads just the new one.
@@ -73,12 +79,21 @@ FALLBACK = {
     "gold": "🥇", "silver": "🥈", "bronze": "🥉", "players": "👥",
     # range feed
     "day": "☀️", "night": "🌙", "wind": "💨", "fuel": "⛽", "carrier": "⚓",
+    # the community plugins (about, faq, rules, tickets, smartmod, radio) --
+    # they resolve through this table via their own _icons.py
+    "play": "▶️", "skip": "⏭️", "stop": "⏹️", "prev": "◀️", "next": "▶️",
+    "queue": "📜", "music": "🎵", "volume": "🔊", "shuffle": "🔀", "filter": "🎛️",
+    "globe": "🌐", "ticket": "🎫", "lock": "🔒", "mail": "📩", "help": "❓",
+    "rules": "📜", "rocket": "🚀", "wings": "🦅", "keyboard": "⌨️", "book": "📖",
     # aliases (see ALIASES): a borrowed glyph, the unicode they always showed
     "target": "🎯", "inspect": "🔍", "caution": "🟡", "stale": "🟠", "hot": "🔴",
     "cold": "⚪", "side_blue": "🟦", "side_red": "🟥", "rotation": "🔄", "gpu": "🎮",
     "briefing": "📋", "ban": "🔨", "discard": "🗑️", "resume": "▶️", "uptime": "⏱️",
     "url": "🔗", "upload": "📥", "achievement": "🎖️", "all_clear": "🎉",
     "welcome": "🪖",
+    "play_pause": "⏯️", "radio": "📻", "broadcast": "📡", "loop": "🔁", "save": "💾",
+    "load": "📂", "leave": "👋", "attachment": "📎", "verify": "🛡️", "removed": "🛑",
+    "dashboard": "📊",
 }
 
 # Key -> the key whose glyph it borrows. An alias is a meaning with no picture
@@ -91,6 +106,10 @@ ALIASES = {
     "rotation": "restart", "gpu": "cpu", "briefing": "tasking", "ban": "blocked",
     "discard": "bad", "resume": "live", "uptime": "recent", "url": "link",
     "upload": "update", "achievement": "gold", "all_clear": "good", "welcome": "players",
+    # the community plugins
+    "play_pause": "play", "radio": "comms", "broadcast": "comms", "loop": "restart",
+    "save": "disk", "load": "campaign", "leave": "offline", "attachment": "link",
+    "verify": "defend", "removed": "blocked", "dashboard": "posture",
 }
 
 # Discord's cap on application emoji. Checked before an install so a full app
@@ -126,6 +145,13 @@ def icon(key: str) -> str:
     if _active is not None:
         return _active(key)
     return FALLBACK.get(key, "")
+
+
+def ready() -> bool:
+    """Whether the active IconSet has read what is installed yet. Text posted
+    before that shows unicode even where custom emoji exist -- which matters
+    for anything posted once at startup and then left alone."""
+    return _active is not None and _active.refreshed
 
 
 def icon_emoji(key: str):
@@ -170,6 +196,9 @@ class IconSet:
         self.bot = bot
         self.log = log
         self._resolved: dict = {}
+        # True once refresh() has read what is installed: until then every icon
+        # is its unicode stand-in, whether or not the custom emoji exist.
+        self.refreshed = False
         _active = self
 
     def __call__(self, key: str) -> str:
@@ -198,6 +227,7 @@ class IconSet:
                 continue
             found[name[3:]] = str(emoji)
         self._resolved = found
+        self.refreshed = True
         _active = self
         if found:
             self.log.debug(f"FowlEngine: {self.installed}/{len(glyph_keys())} custom icons resolved")

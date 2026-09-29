@@ -2,6 +2,8 @@ import discord
 from discord import app_commands, ui
 from core import Plugin, utils
 
+from ._icons import icon, render
+
 
 class AnnouncementEditModal(ui.Modal, title="Edit General Announcement"):
     """Modal to overwrite a previously posted general text announcement."""
@@ -49,10 +51,11 @@ class AnnouncementEditModal(ui.Modal, title="Edit General Announcement"):
             return
 
         try:
-            await target_message.edit(content=self.new_content.value)
-            await interaction.followup.send(f"Successfully updated message in {target_channel.mention}!", ephemeral=True)
+            await target_message.edit(content=render(self.new_content.value))
+            await interaction.followup.send(
+                f"{icon('good')} Successfully updated message in {target_channel.mention}!", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"Failed to edit message: {e}", ephemeral=True)
+            await interaction.followup.send(f"{icon('bad')} Failed to edit message: {e}", ephemeral=True)
 
 
 class AnnouncementModal(ui.Modal, title="Create General Announcement"):
@@ -76,7 +79,8 @@ class AnnouncementModal(ui.Modal, title="Create General Announcement"):
         await interaction.response.defer(ephemeral=True)
 
         role_mention = f"{self.target_role.mention}\n" if self.target_role else ""
-        final_message = f"{role_mention}{self.content.value}"
+        # `{icon:<key>}` in the text becomes the Vector Strike icon (see /feops icons_status).
+        final_message = f"{role_mention}{render(self.content.value)}"
 
         try:
             msg = await self.target_channel.send(content=final_message)
@@ -85,9 +89,10 @@ class AnnouncementModal(ui.Modal, title="Create General Announcement"):
             if self.target_channel.type == discord.ChannelType.news:
                 await msg.publish()
 
-            await interaction.followup.send(f"Announcement successfully posted in {self.target_channel.mention}!", ephemeral=True)
+            await interaction.followup.send(
+                f"{icon('good')} Announcement successfully posted in {self.target_channel.mention}!", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"Failed to send announcement: {e}", ephemeral=True)
+            await interaction.followup.send(f"{icon('bad')} Failed to send announcement: {e}", ephemeral=True)
 
 
 class Announcements(Plugin):
