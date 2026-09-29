@@ -1414,7 +1414,7 @@ class Procman:
             # "unexpected argument '--news-image-provider'"). Start it without
             # them and say so: those features stay off until bfdb catches up.
             await self._safe_notify(
-                f"⚠️ bfdb: this bfdb.exe doesn't know {', '.join(dropped)} -- started without "
+                f"{icon('warning')} bfdb: this bfdb.exe doesn't know {', '.join(dropped)} -- started without "
                 f"them. Update bfdb.exe to turn those settings on.")
         self.log.info(f"FowlEngine/procman: launching {os.path.basename(self.exe)} {self._redact(args)}")
         # capture anything bfdb prints before its own --log-file logger is up
