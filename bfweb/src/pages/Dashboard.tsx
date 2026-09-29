@@ -646,7 +646,7 @@ export default function Dashboard() {
         }}>
           <Alert size={11} />
           <span style={{ flex: 1, textTransform: 'uppercase' }}>
-            Live data unavailable — the numbers below are stale or empty
+            Live data unavailable — Server Offline
           </span>
           <button
             type="button"
