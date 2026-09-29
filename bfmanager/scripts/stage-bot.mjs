@@ -1,11 +1,14 @@
 // Copies the DCSServerBot pieces Fowl Engine Manager installs into the bot
-// (plugins/fowlengine + extensions/bf*) into src-tauri/resources/bot/, which
+// (plugins/fowlengine, the community plugins in COMMUNITY_PLUGINS, and
+// extensions/bf*) into src-tauri/resources/bot/, which
 // Tauri bundles next to the exe as bot\, and writes the manifest.json the
 // service syncs by (path -> sha256).
 //
 // Left out on purpose: fowlengine.yaml (a live config can hold secrets and
-// belongs in DCSServerBot's config\ anyway), __pycache__, *.pyc, and any
-// plugin stamp lying around in the tree -- a fresh one is written instead.
+// belongs in DCSServerBot's config\ anyway), every *.yaml of the community
+// plugins (the operator's FAQ, rules and ticket settings are theirs -- only
+// code is shipped), __pycache__, *.pyc, and any plugin stamp lying around in
+// the tree -- a fresh one is written instead.
 //
 // The stamp (plugins/fowlengine/.fowl-plugin.json) says which commit the
 // bundle was built from and when that commit was made. The service's pre-start
@@ -29,7 +32,14 @@ const STAMP = 'plugins/fowlengine/.fowl-plugin.json'
 const SKIP_NAMES = new Set(['__pycache__', 'fowlengine.yaml', '.pytest_cache', '.fowl-plugin.json'])
 const skip = (name) => SKIP_NAMES.has(name) || name.endsWith('.pyc')
 
-const dirs = ['plugins/fowlengine']
+// The other plugins in DCSServerBot/plugins/ this project ships. They borrow
+// fowlengine's icon set, so they update with it. Keep in step with
+// COMMUNITY_PLUGINS in deploy/publish-release.ps1 and plugins/fowlengine/autoupdate.py.
+const COMMUNITY_PLUGINS = ['about', 'announcements', 'faq', 'radio', 'rules', 'smartmod', 'tickets']
+const isCommunityYaml = (rel) =>
+  /\.ya?ml$/i.test(rel) && COMMUNITY_PLUGINS.some((p) => rel.startsWith(`plugins/${p}/`))
+
+const dirs = ['plugins/fowlengine', ...COMMUNITY_PLUGINS.map((p) => `plugins/${p}`)]
 for (const e of readdirSync(join(botSrc, 'extensions'), { withFileTypes: true })) {
   if (e.isDirectory() && e.name.startsWith('bf')) dirs.push(`extensions/${e.name}`)
 }
@@ -45,6 +55,7 @@ function walk(abs) {
     if (e.isDirectory()) walk(p)
     else if (e.isFile()) {
       const rel = relative(botSrc, p).split(sep).join('/')
+      if (isCommunityYaml(rel)) continue
       const dest = join(out, ...rel.split('/'))
       mkdirSync(dirname(dest), { recursive: true })
       cpSync(p, dest)

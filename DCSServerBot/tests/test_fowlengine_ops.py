@@ -1696,3 +1696,24 @@ def test_flags_an_older_bfdb_does_not_know_are_dropped_not_fatal():
     assert dropped == ["--news-image-provider", "--news-image-model"]
     # --help unreadable: pass everything, as before
     assert pmmod.drop_unsupported_flags(args, None) == (args, [])
+
+
+def test_bot_zip_carries_community_plugin_code_but_never_their_yaml():
+    """fowlengine-bot.zip may update the community plugins' code (they share
+    fowlengine's icons), but their yaml is the operator's settings."""
+    ok = au.bot_zip_member_allowed
+    assert ok("plugins/fowlengine/commands.py")
+    assert ok("plugins/fowlengine/fowlengine.sample.yaml")
+    assert ok("extensions/bfbinaries/extension.py")
+    for p in au.COMMUNITY_PLUGINS:
+        assert ok(f"plugins/{p}/commands.py"), p
+        assert not ok(f"plugins/{p}/{p}.yaml"), p
+    assert ok("plugins/rules/sql/tables.sql")
+    assert not ok("plugins/faq/FAQ.YML")
+    assert not ok("plugins/userstats/commands.py")
+    assert not ok("plugins/faq")
+    assert not ok("config/plugins/faq.yaml")
+    # the list matches what is actually in the repo
+    here = Path(__file__).resolve().parent.parent / "plugins"
+    for p in au.COMMUNITY_PLUGINS:
+        assert (here / p / "commands.py").is_file(), p

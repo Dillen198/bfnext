@@ -426,6 +426,24 @@ def _stamp_time(stamp: Optional[dict]) -> Optional[datetime]:
     return None
 
 
+# The other plugins in DCSServerBot/plugins/ this project ships next to
+# fowlengine (they borrow its icon set). A release's fowlengine-bot.zip carries
+# their code, never their *.yaml -- that is the operator's settings. Keep in
+# step with COMMUNITY_PLUGINS in bfmanager/scripts/stage-bot.mjs.
+COMMUNITY_PLUGINS = ("about", "announcements", "faq", "radio", "rules", "smartmod", "tickets")
+
+
+def bot_zip_member_allowed(name: str) -> bool:
+    """Whether fowlengine-bot.zip may write `name`: the fowlengine plugin, the
+    bf* extensions, and the community plugins' code (not their yaml)."""
+    if name.startswith("plugins/fowlengine/") or name.startswith("extensions/bf"):
+        return True
+    parts = name.split("/")
+    if len(parts) >= 3 and parts[0] == "plugins" and parts[1] in COMMUNITY_PLUGINS:
+        return not name.lower().endswith((".yaml", ".yml"))
+    return False
+
+
 def plugin_stamp_older(incoming: Optional[dict], installed: Optional[dict]) -> Optional[str]:
     """Why `incoming` must not replace `installed`, or None to go ahead. An
     unstamped install counts as older than anything (the pre-stamp builds);
@@ -1165,7 +1183,7 @@ class Updater:
                 for n in names:
                     if n.startswith("/") or ".." in n.replace("\\", "/").split("/"):
                         raise RuntimeError(f"unsafe path in zip: {n}")
-                    if not (n.startswith("plugins/fowlengine/") or n.startswith("extensions/bf")):
+                    if not bot_zip_member_allowed(n):
                         raise RuntimeError(f"zip touches {n}, outside the fowlengine plugin/extensions")
                 # A zip from before stamps: judge it by the release it came in.
                 incoming = None

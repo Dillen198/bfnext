@@ -354,12 +354,19 @@ try {
         $zip = [System.IO.Compression.ZipFile]::Open($zipPath, "Create")
         try {
             $botRoot = Join-Path $src "DCSServerBot"
-            $dirs = @("plugins\fowlengine") + (Get-ChildItem (Join-Path $botRoot "extensions") -Directory -Filter "bf*" |
+            # The community plugins ride along (they use fowlengine's icons) --
+            # their code only, never their *.yaml, which is the operator's settings.
+            # Keep in step with COMMUNITY_PLUGINS in bfmanager/scripts/stage-bot.mjs.
+            $community = @("about", "announcements", "faq", "radio", "rules", "smartmod", "tickets")
+            $dirs = @("plugins\fowlengine") + ($community | ForEach-Object { "plugins\$_" }) +
+                (Get-ChildItem (Join-Path $botRoot "extensions") -Directory -Filter "bf*" |
                 ForEach-Object { "extensions\$($_.Name)" })
             foreach ($d in $dirs) {
                 Get-ChildItem (Join-Path $botRoot $d) -Recurse -File |
                     Where-Object { $_.FullName -notmatch '\\__pycache__\\' -and $_.Name -ne "fowlengine.yaml" -and
-                                   $_.Name -ne ".fowl-plugin.json" } |
+                                   $_.Name -ne ".fowl-plugin.json" -and
+                                   -not ($community -contains ($d -replace '^plugins\\', '') -and
+                                         $_.Extension -in ".yaml", ".yml") } |
                     ForEach-Object {
                         $rel = $_.FullName.Substring($botRoot.Length + 1).Replace("\", "/")
                         [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $rel) | Out-Null
