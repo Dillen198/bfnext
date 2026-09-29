@@ -1,6 +1,8 @@
 from core import EventListener, Server, event
 from typing import TYPE_CHECKING
 
+from .icons import render
+
 if TYPE_CHECKING:
     from .commands import FowlEngine
 
@@ -43,16 +45,16 @@ class FowlEngineEventListener(EventListener["FowlEngine"]):
             if channel:
                 messages = config.get('messages', {})
                 if event_type == 'achievement':
-                    fmt = messages.get('achievement', "🎖️ **[ACHIEVEMENT]** {message}")
+                    fmt = messages.get('achievement', "{icon:achievement} **[ACHIEVEMENT]** {message}")
                 elif event_type == 'capture':
-                    fmt = messages.get('capture', "🏆 **[CAPTURED]** {message}")
+                    fmt = messages.get('capture', "{icon:captured} **[CAPTURED]** {message}")
                 elif event_type == 'neutral':
-                    fmt = messages.get('neutral', "🏳️ **[NEUTRAL]** {message}")
+                    fmt = messages.get('neutral', "{icon:neutralised} **[NEUTRAL]** {message}")
                 elif event_type == 'ready_to_capture':
-                    fmt = messages.get('ready_to_capture', "⏳ **[READY TO CAPTURE]** {message}")
+                    fmt = messages.get('ready_to_capture', "{icon:pending} **[READY TO CAPTURE]** {message}")
                 else:
-                    fmt = messages.get('alert', "🚨 **[ALERT]** {message}")
+                    fmt = messages.get('alert', "{icon:alert} **[ALERT]** {message}")
                     
                 # the message carries player names: never let one ping anyone
                 import discord
-                await channel.send(fmt.format(message=message), allowed_mentions=discord.AllowedMentions.none())
+                await channel.send(render(fmt).format(message=message), allowed_mentions=discord.AllowedMentions.none())

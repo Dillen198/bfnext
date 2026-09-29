@@ -64,6 +64,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+from .icons import icon, plain
+
 try:  # FastAPI resolves handler annotations from this module's globals
     from fastapi import Request
 except Exception:  # noqa: BLE001 - imported outside the bot (unit tests)
@@ -555,7 +557,9 @@ class OpsApi:
 
     @staticmethod
     def _ok(message: str, **extra) -> dict:
-        return {"ok": True, "message": message, **extra}
+        # The same text often went to ops_channel too; the dashboard gets it
+        # with any custom-emoji markup turned back into unicode.
+        return {"ok": True, "message": plain(message), **extra}
 
     @staticmethod
     def _err(status: int, message: str):
@@ -714,7 +718,7 @@ class OpsApi:
             cfg = self.cog.get_config() or {}
             pm.reload_config(cfg)
             await pm.restart(self.cog._bfdb_admin_password)
-            await self.cog.notify_ops("🔁 bfdb restarted from the dashboard OPS page.")
+            await self.cog.notify_ops(f"{icon('restart')} bfdb restarted from the dashboard OPS page.")
 
         asyncio.create_task(later())
         return self._ok("bfdb is restarting -- the dashboard will reconnect in a few seconds")
@@ -722,7 +726,7 @@ class OpsApi:
     async def bot_restart(self):
         async def later():
             await asyncio.sleep(1.5)
-            await self.cog.notify_ops("🔁 Bot restarting (requested from the dashboard OPS page). "
+            await self.cog.notify_ops(f"{icon('restart')} Bot restarting (requested from the dashboard OPS page). "
                                       "DCS keeps running; bfdb restarts with the bot.")
             await self.cog.bot.node.restart()
 
@@ -734,7 +738,7 @@ class OpsApi:
         if upd is None:
             return self._err(409, "the auto-updater is not loaded")
         res = await upd.check(reason="manual (dashboard)")
-        return {"ok": bool(res.get("ok")), "message": res.get("message") or res.get("error"), "result": res}
+        return {"ok": bool(res.get("ok")), "message": plain(res.get("message") or res.get("error")), "result": res}
 
     async def update_settings(self, request: Request):
         upd = getattr(self.cog, "updater", None)
@@ -768,7 +772,7 @@ class OpsApi:
             async def later():
                 await asyncio.sleep(1.5)
                 await pm.restart(self.cog._bfdb_admin_password)
-                await self.cog.notify_ops("🔁 Staged bfdb.exe applied from the dashboard OPS page.")
+                await self.cog.notify_ops(f"{icon('restart')} Staged bfdb.exe applied from the dashboard OPS page.")
 
             asyncio.create_task(later())
             return self._ok("bfdb is restarting onto the staged build")
@@ -847,7 +851,7 @@ class OpsApi:
             return self._err(404, str(ex))
         except ValueError as ex:
             return self._err(400, str(ex))
-        await self.cog.notify_ops(f"🗂️ **{name}**: {msg}")
+        await self.cog.notify_ops(f"{icon('campaign')} **{name}**: {msg}")
         return self._ok(msg)
 
     async def campaign_apply(self, request: Request):
@@ -988,7 +992,7 @@ class OpsApi:
                     await pm.restart(self.cog._bfdb_admin_password)
                 asyncio.create_task(later())
                 msg += "; bfdb is restarting to pick up bfdb:/gci: changes"
-        await self.cog.notify_ops("⚙️ fowlengine.yaml was edited from the dashboard OPS page "
+        await self.cog.notify_ops(f"{icon('settings')} fowlengine.yaml was edited from the dashboard OPS page "
                                   f"(backup kept in `{self.config_backup_dir}`).")
         return self._ok(msg, mtime=os.path.getmtime(path))
 

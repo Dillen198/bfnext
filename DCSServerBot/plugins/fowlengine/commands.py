@@ -22,7 +22,7 @@ from .opsapi import OpsApi
 from .loganalyzer import LogAnalyzer
 from .upload import handle_bfbinary_upload, engine_binaries, ENGINE_DLLS, is_remote_node
 from .briefing import build_briefing_embed
-from .icons import IconSet
+from .icons import IconSet, icon, icon_emoji, render as render_icons
 from . import rangefeed
 from . import newsfeed
 
@@ -259,6 +259,19 @@ async def bfdb_get_cached(api_url: str, username: str, password: str, path: str,
                 return resp.status, data
 
 
+def _fit_rows(rows: list, limit: int, sep: str) -> str:
+    """Join rows until `limit` characters, never cutting one in half -- a
+    custom emoji sliced mid-markup renders as garbage text."""
+    out, used = [], 0
+    for i, row in enumerate(rows):
+        if used + len(row) + len(sep) > limit:
+            out.append(f"… +{len(rows) - i} more")
+            break
+        out.append(row)
+        used += len(row) + len(sep)
+    return sep.join(out)
+
+
 class CommanderTerminalView(discord.ui.View):
     def __init__(self, api_url: str, admin_username: str, admin_password: str, airbases: list,
                  dynamic_types: list, objectives: list | None = None, server_name: str | None = None):
@@ -299,9 +312,11 @@ class CommanderTerminalView(discord.ui.View):
         obj_options = []
         for o in (objectives or []):
             if o.get('owner') in ('Blue', 'Red'):
-                mark = "⭐ " if o.get('priority') else ""
+                # Option descriptions are plain text -- a custom emoji only
+                # renders in the option's own emoji slot.
                 obj_options.append(discord.SelectOption(
-                    label=o['name'], description=f"{mark}{o.get('owner')} · {o.get('health', 0)}%"))
+                    label=o['name'], description=f"{o.get('owner')} · {o.get('health', 0)}%",
+                    emoji=icon_emoji("priority") if o.get('priority') else None))
         obj_options = obj_options[:25]
         if obj_options:
             self.objective_select = discord.ui.Select(
@@ -330,7 +345,7 @@ class CommanderTerminalView(discord.ui.View):
             return
         await interaction.response.defer(ephemeral=True)
         if not self.admin_username or not self.admin_password:
-            await interaction.followup.send("❌ admin_username/admin_password are not configured.")
+            await interaction.followup.send(f"{icon('bad')} admin_username/admin_password are not configured.")
             return
         try:
             status, _data = await bfdb_admin_post(
@@ -339,13 +354,13 @@ class CommanderTerminalView(discord.ui.View):
                 {"objective": self.selected_objective, "priority": priority},
             )
         except Exception as ex:
-            await interaction.followup.send(f"❌ Failed: {ex}")
+            await interaction.followup.send(f"{icon('bad')} Failed: {ex}")
             return
         if status == 200:
             verb = "marked" if priority else "unmarked"
-            await interaction.followup.send(f"⭐ **{self.selected_objective}** {verb} as priority.")
+            await interaction.followup.send(f"{icon('priority')} **{self.selected_objective}** {verb} as priority.")
         else:
-            await interaction.followup.send(f"❌ Failed to set priority: HTTP {status}")
+            await interaction.followup.send(f"{icon('bad')} Failed to set priority: HTTP {status}")
 
     @discord.ui.button(label="SET PRIORITY", style=discord.ButtonStyle.primary, row=3)
     async def priority_on_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -367,7 +382,7 @@ class CommanderTerminalView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         if not self.admin_username or not self.admin_password:
             await interaction.followup.send(
-                "❌ admin_username/admin_password are not configured for this server "
+                f"{icon('bad')} admin_username/admin_password are not configured for this server "
                 "(required to authenticate against bfdb's commander API)."
             )
             return
@@ -378,12 +393,12 @@ class CommanderTerminalView(discord.ui.View):
                 {"airbase": self.selected_airbase, "type": self.selected_type},
             )
         except Exception as ex:
-            await interaction.followup.send(f"❌ Failed to spawn: {ex}")
+            await interaction.followup.send(f"{icon('bad')} Failed to spawn: {ex}")
             return
         if status == 200:
-            await interaction.followup.send(f"✅ Successfully ordered {self.selected_type} at {self.selected_airbase}.")
+            await interaction.followup.send(f"{icon('good')} Successfully ordered {self.selected_type} at {self.selected_airbase}.")
         else:
-            await interaction.followup.send(f"❌ Failed to spawn: HTTP {status}")
+            await interaction.followup.send(f"{icon('bad')} Failed to spawn: HTTP {status}")
 
 class FowlEngine(Plugin):
     """
@@ -932,33 +947,33 @@ class FowlEngine(Plugin):
                     embed.description = "**No active round.**"
 
                 embed.add_field(
-                    name="🟦 Blue",
+                    name=f"{icon('side_blue')} Blue",
                     value=f"{stats.get('blue_online', 0)} online · {blue_objs} obj",
                     inline=True,
                 )
                 embed.add_field(
-                    name="🟥 Red",
+                    name=f"{icon('side_red')} Red",
                     value=f"{stats.get('red_online', 0)} online · {red_objs} obj",
                     inline=True,
                 )
-                embed.add_field(name="⬜ Neutral", value=f"{neutral_objs} obj", inline=True)
+                embed.add_field(name=f"{icon('unowned')} Neutral", value=f"{neutral_objs} obj", inline=True)
 
                 ready_objs = [o for o in objs if o.get('health', 100) <= 20 and o.get('owner') in ('Blue', 'Red')]
                 if ready_objs:
                     names = ", ".join(f"{o['name']} ({o['owner']})" for o in ready_objs[:5])
                     if len(ready_objs) > 5:
                         names += f" +{len(ready_objs) - 5}"
-                    embed.add_field(name="⏳ Ready to capture", value=names, inline=False)
+                    embed.add_field(name=f"{icon('pending')} Ready to capture", value=names, inline=False)
 
                 priority_objs = [o.get('name') for o in objs if o.get('priority')]
                 if priority_objs:
-                    embed.add_field(name="⭐ Priority", value=", ".join(priority_objs[:5]), inline=False)
+                    embed.add_field(name=f"{icon('priority')} Priority", value=", ".join(priority_objs[:5]), inline=False)
 
                 restart_at = stats.get('restart_at')
                 if restart_at:
                     try:
                         restart_ts = int(self._parse_iso(restart_at).timestamp())
-                        embed.add_field(name="🔄 Next rotation", value=f"<t:{restart_ts}:R>", inline=False)
+                        embed.add_field(name=f"{icon('rotation')} Next rotation", value=f"<t:{restart_ts}:R>", inline=False)
                     except ValueError:
                         pass
                 if dash:
@@ -1021,12 +1036,12 @@ class FowlEngine(Plugin):
         embed = self._vs_embed("Server Performance", color=color)
 
         embed.add_field(
-            name="⚙️ CPU",
+            name=f"{icon('cpu')} CPU",
             value=f"{self._bar(cpu_pct)} {cpu_pct:.0f}%\n{hw.get('cpu_count', '?')} logical cores",
             inline=True,
         )
         embed.add_field(
-            name="🧠 RAM",
+            name=f"{icon('memory')} RAM",
             value=f"{self._bar(mem_pct)} {mem_pct:.0f}%\n{self._fmt_bytes(mem_used)} / {self._fmt_bytes(mem_total)}",
             inline=True,
         )
@@ -1035,9 +1050,9 @@ class FowlEngine(Plugin):
             gpu_mem_total = gpu.get('mem_total_bytes', 0)
             gpu_mem_used = gpu.get('mem_used_bytes', 0)
             gpu_temp = gpu.get('celsius')
-            temp_str = f" · 🌡️ {gpu_temp}°C" if gpu_temp is not None else ""
+            temp_str = f" · {icon('temp')} {gpu_temp}°C" if gpu_temp is not None else ""
             embed.add_field(
-                name=f"🎮 GPU ({gpu.get('name', 'Unknown')})",
+                name=f"{icon('gpu')} GPU ({gpu.get('name', 'Unknown')})",
                 value=(
                     f"{self._bar(gpu_pct)} {gpu_pct:.0f}%{temp_str}\n"
                     f"VRAM: {self._fmt_bytes(gpu_mem_used)} / {self._fmt_bytes(gpu_mem_total)}"
@@ -1053,13 +1068,13 @@ class FowlEngine(Plugin):
                 used = d.get('used_bytes', 0)
                 pct = (used / total * 100) if total else 0.0
                 lines.append(f"`{d.get('mount', '?')}` {self._fmt_bytes(used)} / {self._fmt_bytes(total)} ({pct:.0f}%)")
-            embed.add_field(name="💾 Disk", value="\n".join(lines), inline=False)
+            embed.add_field(name=f"{icon('disk')} Disk", value="\n".join(lines), inline=False)
 
         temps = hw.get('temps', [])
         cpu_temps = [t for t in temps if 'cpu' in t.get('label', '').lower() or 'package' in t.get('label', '').lower()]
         if cpu_temps:
             embed.add_field(
-                name="🌡️ CPU Temp",
+                name=f"{icon('temp')} CPU Temp",
                 value="\n".join(f"{t['label']}: {t['celsius']:.0f}°C" for t in cpu_temps[:3]),
                 inline=True,
             )
@@ -1069,9 +1084,9 @@ class FowlEngine(Plugin):
             frame = engine_by_name.get('frame')
             if frame:
                 mean_us = frame.get('mean', 0)
-                flag = "🔴 " if mean_us >= 25000 else ("🟡 " if mean_us >= 20000 else "")
+                flag = f"{icon('critical')} " if mean_us >= 25000 else (f"{icon('caution')} " if mean_us >= 20000 else "")
                 embed.add_field(
-                    name=f"{flag}📊 Mission Frame Time",
+                    name=f"{flag}{icon('perf')} Mission Frame Time",
                     value=(
                         f"mean **{mean_us:.0f}{frame.get('unit', 'us')}** · "
                         f"p50 {frame.get('p50', 0):.0f} · p90 {frame.get('p90', 0):.0f} · "
@@ -1086,11 +1101,11 @@ class FowlEngine(Plugin):
                 if row:
                     watch_lines.append(f"`{name}`: {row.get('mean', 0):.0f}{row.get('unit', 'us')}")
             if watch_lines:
-                embed.add_field(name="🔍 Script Breakdown (mean)", value="\n".join(watch_lines), inline=False)
+                embed.add_field(name=f"{icon('inspect')} Script Breakdown (mean)", value="\n".join(watch_lines), inline=False)
         else:
-            embed.add_field(name="📊 Mission Status", value="No active DCS session reporting yet.", inline=False)
+            embed.add_field(name=f"{icon('perf')} Mission Status", value="No active DCS session reporting yet.", inline=False)
 
-        embed.add_field(name="🧩 Deploy status", value=self._deploy_status_line(), inline=False)
+        embed.add_field(name=f"{icon('build')} Deploy status", value=self._deploy_status_line(), inline=False)
         return embed
 
     def _ext_cfg(self, server, name: str) -> dict:
@@ -1161,7 +1176,7 @@ class FowlEngine(Plugin):
     @staticmethod
     def _fmt_build(b: dict) -> str:
         if not b or "error" in (b or {}):
-            return f"⚠️ {(b or {}).get('error', 'unknown')}"
+            return f"{icon('warning')} {(b or {}).get('error', 'unknown')}"
         return f"`{b.get('git', '?')}` · {b.get('built', '?')}"
 
     def _engine_binaries(self, server) -> dict:
@@ -1203,7 +1218,7 @@ class FowlEngine(Plugin):
         if self.procman and self.procman.enabled:
             staged = self._staged_for(srv)
             if staged:
-                lines.append("⏳ staged: " + ", ".join(f"`{s}`" for s in staged)
+                lines.append(f"{icon('pending')} staged: " + ", ".join(f"`{s}`" for s in staged)
                              + " — applies next restart")
         return "\n".join(lines) if lines else "no engine build info"
 
@@ -1279,8 +1294,8 @@ class FowlEngine(Plugin):
         blue_cs = g.get('blue_controller_callsign', 'Magic')
         red_cs = g.get('red_controller_callsign', 'Overlord')
         lines = [
-            f"🔵 **Blue** — `{g.get('blue_freq_mhz', 251.0):.3f} {mod}`  ({blue_cs})",
-            f"🔴 **Red** — `{g.get('red_freq_mhz', 252.0):.3f} {mod}`  ({red_cs})",
+            f"{icon('blue')} **Blue** — `{g.get('blue_freq_mhz', 251.0):.3f} {mod}`  ({blue_cs})",
+            f"{icon('red')} **Red** — `{g.get('red_freq_mhz', 252.0):.3f} {mod}`  ({red_cs})",
         ]
         if g.get('whisper_exe'):
             lines.append("Key up and ask by callsign (e.g. *\"Magic, bogey dope\"*) — BOGEY DOPE / "
@@ -1378,9 +1393,9 @@ class FowlEngine(Plugin):
                                 side, text = "blue", str(msg.data)
                             if not text:
                                 continue
-                            emoji = "🔴" if side == "red" else "🔵"
+                            mark = icon("red" if side == "red" else "blue")
                             try:
-                                await channel.send(f"{emoji} {text}", allowed_mentions=NO_PINGS)
+                                await channel.send(f"{mark} {text}", allowed_mentions=NO_PINGS)
                             except discord.HTTPException as ex:
                                 self.log.error(f"FowlEngine: GCI transcript post failed: {ex}")
             except asyncio.CancelledError:
@@ -1409,20 +1424,20 @@ class FowlEngine(Plugin):
     def _build_server_info_embed(self, server) -> discord.Embed:
         up = server.status in (Status.RUNNING, Status.PAUSED)
         embed = self._vs_embed("Server Info", color=discord.Color.green() if up else discord.Color.dark_grey())
-        embed.add_field(name="🔌 Connect", value=self._server_connect_info(server), inline=False)
+        embed.add_field(name=f"{icon('connect')} Connect", value=self._server_connect_info(server), inline=False)
         mission = getattr(getattr(server, 'current_mission', None), 'name', None)
-        embed.add_field(name="🎮 DCS", value=f"{server.status.value}" + (f" · {mission}" if mission else ""), inline=True)
+        embed.add_field(name=f"{icon('server')} DCS", value=f"{server.status.value}" + (f" · {mission}" if mission else ""), inline=True)
         rt = getattr(server, 'restart_time', None)
         if rt:
             try:
-                embed.add_field(name="🔄 Next rotation", value=f"<t:{int(rt.timestamp())}:R>", inline=True)
+                embed.add_field(name=f"{icon('rotation')} Next rotation", value=f"<t:{int(rt.timestamp())}:R>", inline=True)
             except (AttributeError, TypeError, ValueError):
                 pass
-        embed.add_field(name="📡 GCI / AWACS", value="\n".join(self._gci_freq_lines(server)), inline=False)
-        embed.add_field(name="🧩 Engine builds", value=self._deploy_status_line(server), inline=False)
+        embed.add_field(name=f"{icon('air')} GCI / AWACS", value="\n".join(self._gci_freq_lines(server)), inline=False)
+        embed.add_field(name=f"{icon('build')} Engine builds", value=self._deploy_status_line(server), inline=False)
         dash = (self.get_config() or {}).get('dashboard_url')
         if dash:
-            embed.add_field(name="🔗 Links",
+            embed.add_field(name=f"{icon('url')} Links",
                             value=f"[Dashboard]({dash}) · [Live map]({dash.rstrip('/')}/map)", inline=False)
         return embed
 
@@ -1607,7 +1622,7 @@ class FowlEngine(Plugin):
         if objs:
             embed.add_field(
                 name="Front",
-                value=f"🟦 {blue_objs} · ⬜ {neutral_objs} · 🟥 {red_objs}",
+                value=f"{icon('side_blue')} {blue_objs} · {icon('unowned')} {neutral_objs} · {icon('side_red')} {red_objs}",
                 inline=False,
             )
 
@@ -1616,20 +1631,21 @@ class FowlEngine(Plugin):
             "Read the rules, pick your faction on the dashboard, and check the live map. "
             "`/fe_dashboard` for your secure login · `/fe_gci` for AWACS frequencies.",
         )
-        embed.add_field(name="📋 Briefing", value=briefing, inline=False)
+        embed.add_field(name=f"{icon('briefing')} Briefing", value=briefing, inline=False)
 
         if self._gci_cfg().get('enabled'):
-            embed.add_field(name="📡 GCI", value="\n".join(self._gci_freq_lines()[:2]), inline=False)
+            embed.add_field(name=f"{icon('air')} GCI", value="\n".join(self._gci_freq_lines()[:2]), inline=False)
 
         dashboard_url = config.get("dashboard_url")
         if dashboard_url:
-            embed.add_field(name="🔗 Dashboard", value=f"**[Open Dashboard ›]({dashboard_url})**", inline=False)
+            embed.add_field(name=f"{icon('url')} Dashboard", value=f"**[Open Dashboard ›]({dashboard_url})**", inline=False)
 
         embed.set_thumbnail(url=member.display_avatar.url)
 
         welcome_message = config.get('welcome_message', "Welcome aboard, {mention}!")
         try:
-            await channel.send(content=welcome_message.format(mention=member.mention, brand_name=brand_name), embed=embed)
+            await channel.send(content=render_icons(welcome_message).format(mention=member.mention, brand_name=brand_name),
+                               embed=embed)
         except discord.HTTPException as ex:
             self.log.error(f"FowlEngine: failed to send welcome message: {ex}")
 
@@ -1910,7 +1926,7 @@ class FowlEngine(Plugin):
                     state["pending"] = None
                     state["pending_count"] = 0
                     if owner == "Neutral":
-                        fmt = messages.get('neutral', "🏳️ **[NEUTRAL]** {message}")
+                        fmt = render_icons(messages.get('neutral', "{icon:neutralised} **[NEUTRAL]** {message}"))
                         await faction_channels["Neutral"].send(fmt.format(message=f"{name} has gone neutral."),
                                                                   allowed_mentions=NO_PINGS)
                     # Non-neutral ownership changes are announced by
@@ -1934,15 +1950,15 @@ class FowlEngine(Plugin):
                 # needs to know there's an opportunity -- different framing,
                 # each posted only to the thread it's relevant to.
                 if owner in ("Blue", "Red"):
-                    defend_fmt = messages.get('ready_to_capture', "⏳ **[READY TO CAPTURE]** {message}")
+                    defend_fmt = render_icons(messages.get('ready_to_capture', "{icon:pending} **[READY TO CAPTURE]** {message}"))
                     await faction_channels[owner].send(defend_fmt.format(message=f"{name} is ready to be captured -- defend it!"),
                                                       allowed_mentions=NO_PINGS)
                     attacker = "Red" if owner == "Blue" else "Blue"
-                    attack_fmt = messages.get('capture_opportunity', "🎯 **[OPPORTUNITY]** {message}")
+                    attack_fmt = render_icons(messages.get('capture_opportunity', "{icon:target} **[OPPORTUNITY]** {message}"))
                     await faction_channels[attacker].send(attack_fmt.format(message=f"{name} ({owner}) is weak and ready to be captured!"),
                                                          allowed_mentions=NO_PINGS)
                 else:
-                    fmt = messages.get('ready_to_capture', "⏳ **[READY TO CAPTURE]** {message}")
+                    fmt = render_icons(messages.get('ready_to_capture', "{icon:pending} **[READY TO CAPTURE]** {message}"))
                     await faction_channels["Neutral"].send(fmt.format(message=f"{name} ({owner}) is ready to be captured."),
                                                           allowed_mentions=NO_PINGS)
             elif was_weak and health >= WEAK_CLEAR_HEALTH:
@@ -1981,7 +1997,7 @@ class FowlEngine(Plugin):
                 message = f"{obj_name} was captured by {owner} ({pilot_names})."
             else:
                 message = f"{obj_name} was captured by {owner}."
-            fmt = messages.get('capture', "🏆 **[CAPTURED]** {message}")
+            fmt = render_icons(messages.get('capture', "{icon:captured} **[CAPTURED]** {message}"))
             # Both factions care about a capture -- the winner as a win, the
             # loser as something to retake -- so it goes to both threads
             # rather than only the capturing side's.
@@ -2053,7 +2069,7 @@ class FowlEngine(Plugin):
                     if names is None:
                         names = await self._fetch_pilot_names(session, api_url)
                     pname = names.get(killer_ucid, killer_ucid[:8])
-                    fmt = messages.get('achievement', "🎖️ **[ACHIEVEMENT]** {message}")
+                    fmt = render_icons(messages.get('achievement', "{icon:achievement} **[ACHIEVEMENT]** {message}"))
                     await channel.send(fmt.format(message=f"{pname} achieved {label} ({count} air kills without dying)!"),
                                        allowed_mentions=NO_PINGS)
                     break  # only announce the highest newly-crossed threshold per kill
@@ -2164,7 +2180,7 @@ class FowlEngine(Plugin):
         for i in range(0, len(body), 1900):
             chunk = body[i:i + 1900]
             embed = discord.Embed(
-                title="⚠️ Engine Warning/Error",
+                title=f"{icon('warning')} Engine Warning/Error",
                 description=f"```{chunk}```",
                 color=discord.Color.red(),
             )
@@ -2551,15 +2567,15 @@ class FowlEngine(Plugin):
         owner = o.get('owner', 'Unknown')
         health = o.get('health', 0)
         color = {"Blue": discord.Color.blue(), "Red": discord.Color.red()}.get(owner, discord.Color.light_grey())
-        embed = self._vs_embed(f"🎯 {o.get('name', 'Unknown')}", color=color)
+        embed = self._vs_embed(f"{icon('target')} {o.get('name', 'Unknown')}", color=color)
         embed.add_field(name="Owner", value=owner, inline=True)
         embed.add_field(name="Health", value=f"{health}%", inline=True)
         if o.get('kind'):
             embed.add_field(name="Type", value=o['kind'], inline=True)
         if o.get('priority'):
-            embed.add_field(name="Priority", value="⭐ Yes", inline=True)
+            embed.add_field(name="Priority", value=f"{icon('priority')} Yes", inline=True)
         if health <= 20:
-            embed.add_field(name="Status", value="⏳ Ready to capture!", inline=False)
+            embed.add_field(name="Status", value=f"{icon('pending')} Ready to capture!", inline=False)
         await interaction.followup.send(embed=embed)
 
     @command(description='Get the link to the Fowl Engine web dashboard.')
@@ -2589,7 +2605,7 @@ class FowlEngine(Plugin):
         password = config.get("admin_password")
         if not username or not password:
             await interaction.followup.send(
-                "❌ admin_username/admin_password must be set in fowlengine.yaml (must match bfdb's "
+                f"{icon('bad')} admin_username/admin_password must be set in fowlengine.yaml (must match bfdb's "
                 "--admin-username/--admin-password) to use admin actions."
             )
             return
@@ -2599,10 +2615,10 @@ class FowlEngine(Plugin):
                 "/api/admin/ban", {"ucid": ucid, "name": name, "reason": reason, "until": until},
             )
             if status == 200:
-                await interaction.followup.send(f"🔨 Banned **{name}** (`{ucid}`)" + (f" until {until}" if until else " indefinitely") + (f": {reason}" if reason else "."),
+                await interaction.followup.send(f"{icon('ban')} Banned **{name}** (`{ucid}`)" + (f" until {until}" if until else " indefinitely") + (f": {reason}" if reason else "."),
                                                allowed_mentions=NO_PINGS)
             else:
-                await interaction.followup.send(f"❌ Failed to ban: HTTP {status}")
+                await interaction.followup.send(f"{icon('bad')} Failed to ban: HTTP {status}")
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
 
@@ -2631,7 +2647,7 @@ class FowlEngine(Plugin):
         password = config.get("admin_password")
         if not username or not password:
             await interaction.followup.send(
-                "❌ admin_username/admin_password must be set in fowlengine.yaml (must match bfdb's "
+                f"{icon('bad')} admin_username/admin_password must be set in fowlengine.yaml (must match bfdb's "
                 "--admin-username/--admin-password) to use admin actions."
             )
             return
@@ -2643,12 +2659,12 @@ class FowlEngine(Plugin):
             )
             if status == 200:
                 await interaction.followup.send(
-                    f"🔁 **{player}** is now {side.value} on {server.name}. If they were in a slot "
+                    f"{icon('restart')} **{player}** is now {side.value} on {server.name}. If they were in a slot "
                     f"they've been sent to spectators.", allowed_mentions=NO_PINGS)
             else:
                 detail = (data or {}).get("error") or (data or {}).get("message") or ""
                 await interaction.followup.send(
-                    f"❌ Side switch failed (HTTP {status}){': ' + str(detail) if detail else ''}",
+                    f"{icon('bad')} Side switch failed (HTTP {status}){': ' + str(detail) if detail else ''}",
                     allowed_mentions=NO_PINGS)
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
@@ -2666,7 +2682,7 @@ class FowlEngine(Plugin):
         password = config.get("admin_password")
         if not username or not password:
             await interaction.followup.send(
-                "❌ admin_username/admin_password must be set in fowlengine.yaml (must match bfdb's "
+                f"{icon('bad')} admin_username/admin_password must be set in fowlengine.yaml (must match bfdb's "
                 "--admin-username/--admin-password) to use admin actions."
             )
             return
@@ -2676,9 +2692,9 @@ class FowlEngine(Plugin):
             )
             if status == 200:
                 was_banned = bool(data and data.get("was_banned"))
-                await interaction.followup.send(f"✅ Unbanned `{ucid}`." if was_banned else f"ℹ️ `{ucid}` was not banned.")
+                await interaction.followup.send(f"{icon('good')} Unbanned `{ucid}`." if was_banned else f"{icon('info')} `{ucid}` was not banned.")
             else:
-                await interaction.followup.send(f"❌ Failed to unban: HTTP {status}")
+                await interaction.followup.send(f"{icon('bad')} Failed to unban: HTTP {status}")
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
 
@@ -2763,12 +2779,12 @@ class FowlEngine(Plugin):
         cfg = self.get_config() or {}
         brand = cfg.get('brand_name', 'Fowl Engine')
         dash = (cfg.get('dashboard_url') or '').rstrip('/')
-        icon = f"{dash}/vs-vectorstrike_hd-white.png" if dash else None
+        logo = f"{dash}/vs-vectorstrike_hd-white.png" if dash else None
         embed = discord.Embed(title=title, color=color or discord.Color.from_str('#c8102e'))
         if url:
             embed.url = url
-        embed.set_author(name=brand, icon_url=icon, url=dash or None)
-        embed.set_footer(text=brand, icon_url=icon)
+        embed.set_author(name=brand, icon_url=logo, url=dash or None)
+        embed.set_footer(text=brand, icon_url=logo)
         embed.timestamp = discord.utils.utcnow()
         return embed
 
@@ -2779,7 +2795,7 @@ class FowlEngine(Plugin):
     async def _procman_or_warn(self, interaction: discord.Interaction):
         if not self.procman or not self.procman.enabled:
             await interaction.followup.send(
-                "❌ `bfdb.manage` is not enabled in fowlengine.yaml -- the bot isn't managing "
+                f"{icon('bad')} `bfdb.manage` is not enabled in fowlengine.yaml -- the bot isn't managing "
                 "bfdb/netidx, so there's nothing to control here.")
             return None
         return self.procman
@@ -2799,8 +2815,8 @@ class FowlEngine(Plugin):
         await pm.restart(self._bfdb_admin_password)
         ok = await pm.health_ok()
         await interaction.followup.send(
-            "✅ bfdb restarted and answering." if ok else
-            "⚠️ bfdb restarted but not answering yet -- give it a minute, then check `/feops` again.")
+            f"{icon('good')} bfdb restarted and answering." if ok else
+            f"{icon('warning')} bfdb restarted but not answering yet -- give it a minute, then check `/feops` again.")
 
     @feops.command(name="gci_show", description="Show the effective gci.json that will be written for bfdb (secrets masked).")
     @app_commands.guild_only()
@@ -2964,7 +2980,7 @@ class FowlEngine(Plugin):
         if which.value in ("bfdb.exe", "all") and pm.cancel_pending("bfdb.exe"):
             removed.append("`bfdb.exe`")
         await interaction.followup.send(
-            f"🗑️ Discarded: {', '.join(removed)}" if removed else "Nothing to discard.")
+            f"{icon('discard')} Discarded: {', '.join(removed)}" if removed else "Nothing to discard.")
 
     @feops.command(name="stage_apply", description="Apply a staged binary now instead of waiting for the next restart.")
     @app_commands.guild_only()
@@ -3007,7 +3023,7 @@ class FowlEngine(Plugin):
                     msgs.append(f"{dll}: {server.name} started; BFBinaries on node "
                                 f"`{server.node.name}` swaps it in on the way up.")
                 except Exception as ex:
-                    msgs.append(f"⚠️ {server.name} failed to start: {ex}")
+                    msgs.append(f"{icon('warning')} {server.name} failed to start: {ex}")
         elif want_dll and pm.pending_info(dll, sdir):
             live = b["dll_path"]
             if not live:
@@ -3023,7 +3039,7 @@ class FowlEngine(Plugin):
                     await server.startup()
                     msgs.append(f"{server.name} started.")
                 except Exception as ex:
-                    msgs.append(f"⚠️ {server.name} failed to start: {ex}")
+                    msgs.append(f"{icon('warning')} {server.name} failed to start: {ex}")
         elif want_dll:
             msgs.append(f"{dll}: nothing staged for **{server.name}** (in `{sdir or pm.staging_dir}`).")
 
@@ -3048,7 +3064,7 @@ class FowlEngine(Plugin):
             b = builds.get(name) or {}
             path = disk.get(name) or ""
             if "error" in b:
-                lines.append(f"**{name}** — ⚠️ {b['error']}")
+                lines.append(f"**{name}** — {icon('warning')} {b['error']}")
             else:
                 lines.append(f"**{name}** `v{b.get('version','?')}` `{b.get('git','?')}` "
                              f"built {b.get('built','?')}")
@@ -3063,7 +3079,7 @@ class FowlEngine(Plugin):
         if self.procman and self.procman.enabled:
             staged = self._staged_for(server)
             if staged:
-                lines.append("\n⏳ staged (applies next restart): " + ", ".join(f"`{s}`" for s in staged))
+                lines.append(f"\n{icon('pending')} staged (applies next restart): " + ", ".join(f"`{s}`" for s in staged))
 
         embed = self._vs_embed("Engine Builds", color=discord.Color.blurple())
         embed.description = "\n".join(lines)
@@ -3075,7 +3091,7 @@ class FowlEngine(Plugin):
 
     async def _updater_or_warn(self, interaction: discord.Interaction):
         if not self.updater:
-            await interaction.followup.send("❌ The auto-updater is not loaded.")
+            await interaction.followup.send(f"{icon('bad')} The auto-updater is not loaded.")
             return None
         return self.updater
 
@@ -3091,7 +3107,7 @@ class FowlEngine(Plugin):
         c = st["config"]
         src = c["repo"] if c["source"] == "github" else c["folder"]
         lines = [
-            f"**Auto-update** {'✅ on' if c['enabled'] else '⏸️ off'}"
+            f"**Auto-update** {icon('good') + ' on' if c['enabled'] else icon('paused') + ' off'}"
             + (" (paused)" if c["paused"] else "")
             + f" · {c['source']} `{src}` · {c['channel']} · every {c['check_minutes']:.0f} min",
             f"Apply: `{c['apply']}` (bfdb `{c['bfdb_apply']}`), idle ≥ {c['idle_minutes']:.0f} min"
@@ -3109,28 +3125,28 @@ class FowlEngine(Plugin):
             lines.append(f"• installed `{key}`: {v.get('tag') or '(manual upload)'} at {v.get('at')}")
         for p in st.get("probation") or []:
             where = p["server"] or "bfdb"
-            lines.append(f"🧪 probation: `{p['dll']}` on {where} -- "
+            lines.append(f"{icon('probation')} probation: `{p['dll']}` on {where} -- "
                          + ("loaded" if p["loaded"] else "waiting to load")
                          + (f", {p['crashes']} crash(es)" if p["crashes"] else ""))
         if st.get("bad"):
-            lines.append("⛔ marked bad: " + ", ".join(f"`{t}`" for t in st["bad"]))
+            lines.append(f"{icon('blocked')} marked bad: " + ", ".join(f"`{t}`" for t in st["bad"]))
         camps = st.get("campaigns") or {}
         for row in camps.get("servers") or []:
             inst, pack, prob = row.get("installed") or {}, row.get("pack") or {}, row.get("probation")
             if not (inst or pack or prob or row.get("last_error")):
                 continue
-            line = f"🗂️ **{row['server']}** campaign: {inst.get('tag') or 'none from a release yet'}"
+            line = f"{icon('campaign')} **{row['server']}** campaign: {inst.get('tag') or 'none from a release yet'}"
             if prob:
-                line += f" · 🧪 {prob['tag']} on probation" + (" (up)" if prob["loaded"] else "")
+                line += f" · {icon('probation')} {prob['tag']} on probation" + (" (up)" if prob["loaded"] else "")
             elif pack:
                 line += f" · {pack.get('tag')} **{pack.get('status')}**"
                 if pack.get("reason"):
                     line += f" -- {pack['reason']}"
             if row.get("last_error"):
-                line += f" · ⚠️ {row['last_error']}"
+                line += f" · {icon('warning')} {row['last_error']}"
             lines.append(line)
         if camps and not camps.get("enabled"):
-            lines.append("🗂️ campaign packs: off (`autoupdate.campaigns`)")
+            lines.append(f"{icon('campaign')} campaign packs: off (`autoupdate.campaigns`)")
         embed = self._vs_embed("Engine Auto-update", color=discord.Color.blurple())
         embed.description = "\n".join(lines)[:4000]
         await interaction.followup.send(embed=embed)
@@ -3145,10 +3161,10 @@ class FowlEngine(Plugin):
             return
         res = await upd.check(reason=f"manual (/feops by {interaction.user})")
         if res.get("ok"):
-            await interaction.followup.send(f"✅ {res.get('message')}"
+            await interaction.followup.send(f"{icon('good')} {res.get('message')}"
                                             + (f" -- latest `{res['latest']}`" if res.get("latest") else ""))
         else:
-            await interaction.followup.send(f"❌ check failed: {res.get('error')}")
+            await interaction.followup.send(f"{icon('bad')} check failed: {res.get('error')}")
 
     @feops.command(name="update_pause", description="Pause or resume automatic engine updates.")
     @app_commands.guild_only()
@@ -3159,7 +3175,7 @@ class FowlEngine(Plugin):
         if not upd:
             return
         upd.set_overrides({"paused": paused})
-        await interaction.followup.send("⏸️ Auto-update paused." if paused else "▶️ Auto-update resumed.")
+        await interaction.followup.send(f"{icon('paused')} Auto-update paused." if paused else f"{icon('resume')} Auto-update resumed.")
 
     @feops.command(name="update_rollback", description="Roll bfdb or a server's engine DLL back to its previous build.")
     @app_commands.guild_only()
@@ -3188,7 +3204,7 @@ class FowlEngine(Plugin):
             await interaction.followup.send(await pm.rollback_bfdb(self._bfdb_admin_password, why))
             return
         if server is None:
-            await interaction.followup.send("❌ Pick the `server` whose engine DLL to roll back.")
+            await interaction.followup.send(f"{icon('bad')} Pick the `server` whose engine DLL to roll back.")
             return
         await interaction.followup.send(await upd.rollback_dll(server, why))
 
@@ -3200,7 +3216,7 @@ class FowlEngine(Plugin):
         upd = await self._updater_or_warn(interaction)
         if not upd:
             return
-        await interaction.followup.send(f"✅ `{tag}` may be offered again." if upd.unmark_bad(tag)
+        await interaction.followup.send(f"{icon('good')} `{tag}` may be offered again." if upd.unmark_bad(tag)
                                         else f"`{tag}` is not marked bad.")
 
     async def _campaign_decide(self, interaction: discord.Interaction, server, decision: str):
@@ -3211,10 +3227,10 @@ class FowlEngine(Plugin):
         try:
             msg = await asyncio.to_thread(upd.campaign_decide, server.name, decision, str(interaction.user))
         except (LookupError, ValueError) as ex:
-            await interaction.followup.send(f"❌ {ex}")
+            await interaction.followup.send(f"{icon('bad')} {ex}")
             return
-        await self.notify_ops(f"🗂️ **{server.name}**: {msg} (/feops by {interaction.user})")
-        await interaction.followup.send(f"✅ {msg}")
+        await self.notify_ops(f"{icon('campaign')} **{server.name}**: {msg} (/feops by {interaction.user})")
+        await interaction.followup.send(f"{icon('good')} {msg}")
 
     @feops.command(name="campaign_apply",
                    description="Write a HELD campaign pack over the server's edited cfg/mission (backup kept).")
@@ -3244,18 +3260,18 @@ class FowlEngine(Plugin):
     async def feops_issues(self, interaction: discord.Interaction, scan_now: bool = False):
         await interaction.response.defer(ephemeral=True)
         if not self.issues:
-            await interaction.followup.send("❌ The log analyzer is not loaded.")
+            await interaction.followup.send(f"{icon('bad')} The log analyzer is not loaded.")
             return
         if scan_now:
             await self.issues.scan()
         rows = self.issues.listing()
         lines = []
         for it in rows[:12]:
-            flag = "🔁" if it.get("status") == "regressed" else "🆕" if it.get("status") == "new" else "•"
+            flag = icon("restart") if it.get("status") == "regressed" else icon("new") if it.get("status") == "new" else "•"
             lines.append(f"{flag} `{it['id']}` **{it['level']}** ×{it['count']} `{it['source']}`\n"
                          f"   {it['signature'][:150]}")
         embed = self._vs_embed(f"Open issues: {len(rows)}", color=discord.Color.orange())
-        embed.description = ("\n".join(lines) or "No open issues. 🎉")[:4000]
+        embed.description = ("\n".join(lines) or f"No open issues. {icon('all_clear')}")[:4000]
         embed.set_footer(text="Full report attached -- hand it to Claude, or see the dashboard OPS page.")
         report = self.issues.report()
         await interaction.followup.send(
@@ -3280,11 +3296,11 @@ class FowlEngine(Plugin):
         password = config.get("admin_password")
         if not username or not password:
             await interaction.followup.send(
-                "❌ admin_username/admin_password must be set in fowlengine.yaml to use admin actions.")
+                f"{icon('bad')} admin_username/admin_password must be set in fowlengine.yaml to use admin actions.")
             return
         if not confirm:
             await interaction.followup.send(
-                "⚠️ This wipes all pilot stats / kills / sorties / objectives and rebuilds them "
+                f"{icon('warning')} This wipes all pilot stats / kills / sorties / objectives and rebuilds them "
                 "from the stats log — takes a few minutes. bfdb stays up (in-process rebuild). "
                 "Auth, Discord links, bans, wiki and recon intel are kept.\n"
                 "Re-run with **confirm: True** to proceed.")
@@ -3293,11 +3309,11 @@ class FowlEngine(Plugin):
             status, data = await bfdb_admin_post(
                 api_url, username, password, "/api/admin/rebuild-stats", {})
             if status != 200:
-                await interaction.followup.send(f"❌ rebuild-stats failed: HTTP {status} {data}")
+                await interaction.followup.send(f"{icon('bad')} rebuild-stats failed: HTTP {status} {data}")
                 return
             msg = (data or {}).get("message", str(data))
             await interaction.followup.send(
-                f"✅ {msg}\nWatch the engine-log / perf embed. When it settles, run `/feops merge_rounds`.")
+                f"{icon('good')} {msg}\nWatch the engine-log / perf embed. When it settles, run `/feops merge_rounds`.")
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
 
@@ -3314,7 +3330,7 @@ class FowlEngine(Plugin):
             return
         if not confirm:
             await interaction.followup.send(
-                "⚠️ **Only if the sled DB is corrupt** (a rebuild that can't get past a 'Read corrupted "
+                f"{icon('warning')} **Only if the sled DB is corrupt** (a rebuild that can't get past a 'Read corrupted "
                 "data at file offset' error). Moves the whole `bfdb` folder aside and rebuilds from "
                 "`stats.jsonl`.\n"
                 "**Rebuilt:** pilot stats, Discord links, a single clean round.\n"
@@ -3345,7 +3361,7 @@ class FowlEngine(Plugin):
         password = config.get("admin_password")
         if not username or not password:
             await interaction.followup.send(
-                "❌ admin_username/admin_password must be set in fowlengine.yaml to use admin actions.")
+                f"{icon('bad')} admin_username/admin_password must be set in fowlengine.yaml to use admin actions.")
             return
         dry = "false" if confirm else "true"
         try:
@@ -3353,14 +3369,14 @@ class FowlEngine(Plugin):
                 api_url, username, password,
                 srv_path(f"/api/admin/merge-rounds?dry_run={dry}", server.name), {})
             if status != 200:
-                await interaction.followup.send(f"❌ merge-rounds failed: HTTP {status} {data}")
+                await interaction.followup.send(f"{icon('bad')} merge-rounds failed: HTTP {status} {data}")
                 return
             msg = (data or {}).get("message", str(data))
             if confirm:
-                await interaction.followup.send(f"✅ {msg}")
+                await interaction.followup.send(f"{icon('good')} {msg}")
             else:
                 await interaction.followup.send(
-                    f"🔍 {msg}\n\nRe-run with **confirm: True** to apply.")
+                    f"{icon('inspect')} {msg}\n\nRe-run with **confirm: True** to apply.")
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
 
@@ -3385,19 +3401,17 @@ class FowlEngine(Plugin):
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
             return
+        from .icons import glyph_keys
         embed = self._vs_embed("Icon Set", color=discord.Color.blurple())
         parts = []
         if added:
-            parts.append(f"**Installed {len(added)}:** " + " ".join(self.icons(n[3:]) for n in added))
-        if skipped:
-            parts.append(f"**Already present:** {len(skipped)}")
+            parts.append(f"**Added {len(added)}:** " + _fit_rows(
+                [f"{self.icons(n[3:])} `{n[3:]}`" for n in added], 1800, "  "))
+        parts.append(f"**Skipped {len(skipped)}** (already installed)")
         if errors:
-            parts.append("**Failed:**\n" + "\n".join(f"`{e}`" for e in errors[:10]))
-        if not parts:
-            parts.append("Nothing to do.")
-        from .icons import FALLBACK
-        parts.append(f"\n{self.icons.installed}/{len(FALLBACK)} icons now resolve to "
-                     f"custom emoji.")
+            parts.append(f"**Failed {len(errors)}:**\n" + _fit_rows([f"`{e}`" for e in errors], 1200, "\n"))
+        parts.append(f"{self.icons.installed}/{len(glyph_keys())} icons now resolve to custom emoji. "
+                     f"Safe to re-run: only missing icons are uploaded.")
         embed.description = "\n\n".join(parts)[:4000]
         await interaction.followup.send(embed=embed)
 
@@ -3407,14 +3421,15 @@ class FowlEngine(Plugin):
     async def feops_icons_status(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await self.icons.refresh()
-        from .icons import FALLBACK
-        rows = []
-        for key in FALLBACK:
-            rows.append(f"{self.icons(key)} `{key}`")
+        from .icons import ALIASES, glyph_keys
+        rows = [f"{self.icons(key)} `{key}`" for key in glyph_keys()]
         embed = self._vs_embed("Icon Set", color=discord.Color.blurple())
         embed.description = (
-            f"**{self.icons.installed} of {len(FALLBACK)}** installed as custom emoji; "
-            f"the rest fall back to unicode.\n\n" + "  ".join(rows))[:4000]
+            f"**{self.icons.installed} of {len(glyph_keys())}** installed as custom emoji; "
+            f"the rest fall back to unicode.\n\n" + _fit_rows(rows, 3800, "  "))
+        embed.add_field(name="Aliases (share a glyph)",
+                        value=_fit_rows([f"`{a}`→`{k}`" for a, k in ALIASES.items()], 1000, " · "),
+                        inline=False)
         embed.set_footer(text="Install with /feops icons_install · "
                               "regenerate the PNGs with assets/icons/render_icons.py")
         await interaction.followup.send(embed=embed)
@@ -3427,13 +3442,13 @@ class FowlEngine(Plugin):
         await interaction.response.defer(ephemeral=True)
         if not confirm:
             await interaction.followup.send(
-                "⚠️ This deletes every `vs_*` emoji this app or guild owns. Any message already "
+                f"{icon('warning')} This deletes every `vs_*` emoji this app or guild owns. Any message already "
                 "using one renders it as plain text afterwards.\n\nRe-run with **confirm: True**.")
             return
         removed, errors = await self.icons.uninstall()
-        msg = f"✅ Removed {len(removed)} icon(s)."
+        msg = f"{icon('good')} Removed {len(removed)} icon(s)."
         if errors:
-            msg += "\n❌ " + "\n".join(f"`{e}`" for e in errors[:10])
+            msg += f"\n{icon('bad')} " + "\n".join(f"`{e}`" for e in errors[:10])
         await interaction.followup.send(msg)
 
     # ── briefing channels ───────────────────────────────────────────────────
@@ -3458,7 +3473,7 @@ class FowlEngine(Plugin):
         cr = config.get("coalition_roles") or {}
         if not channels:
             await interaction.followup.send(
-                "❌ No `blue_briefing_channel` / `red_briefing_channel` set for "
+                f"{icon('bad')} No `blue_briefing_channel` / `red_briefing_channel` set for "
                 f"**{server.name}** in fowlengine.yaml.")
             return
 
@@ -3467,12 +3482,12 @@ class FowlEngine(Plugin):
             channel = self.bot.get_channel(cid)
             role = self._resolve_role(interaction.guild, cr.get(side.lower()))
             if not channel:
-                plan.append(f"❌ {side}: channel `{cid}` not found / no access")
+                plan.append(f"{icon('bad')} {side}: channel `{cid}` not found / no access")
                 continue
             if not role:
-                plan.append(f"❌ {side}: role {cr.get(side.lower())!r} not found in this guild")
+                plan.append(f"{icon('bad')} {side}: role {cr.get(side.lower())!r} not found in this guild")
                 continue
-            plan.append(f"✅ {side}: {channel.mention} → viewable only by {role.mention}")
+            plan.append(f"{icon('good')} {side}: {channel.mention} → viewable only by {role.mention}")
             targets.append((channel, role))
 
         if not confirm:
@@ -3498,11 +3513,11 @@ class FowlEngine(Plugin):
                     interaction.guild.me, view_channel=True, send_messages=True,
                     read_message_history=True, embed_links=True,
                     reason="Fowl Engine: coalition briefing")
-                applied.append(f"✅ {channel.mention} locked to {role.mention}")
+                applied.append(f"{icon('good')} {channel.mention} locked to {role.mention}")
             except discord.Forbidden:
-                applied.append(f"❌ {channel.mention}: bot lacks Manage Permissions")
+                applied.append(f"{icon('bad')} {channel.mention}: bot lacks Manage Permissions")
             except Exception as ex:
-                applied.append(f"❌ {channel.mention}: {ex}")
+                applied.append(f"{icon('bad')} {channel.mention}: {ex}")
         await interaction.followup.send("\n".join(applied))
 
     async def _ucid_for_member(self, member, pilots: list):
@@ -3554,20 +3569,20 @@ class FowlEngine(Plugin):
         password = config.get("admin_password", "")
         if not username or not password:
             await interaction.followup.send(
-                "❌ admin_username/admin_password must be set in fowlengine.yaml for this.")
+                f"{icon('bad')} admin_username/admin_password must be set in fowlengine.yaml for this.")
             return
         status, data = await bfdb_admin_get(
             api_url, username, password,
             srv_path("/api/admin/pilot-sides", server.name))
         if status != 200 or not data:
-            await interaction.followup.send(f"❌ bfdb did not answer (HTTP {status}).")
+            await interaction.followup.send(f"{icon('bad')} bfdb did not answer (HTTP {status}).")
             return
         pilots = data.get("pilots") or []
         ucid = await self._ucid_for_member(interaction.user, pilots)
         side = next((p["side"] for p in pilots if p.get("ucid") == ucid), None)
         if side not in ("Blue", "Red"):
             await interaction.followup.send(
-                "❌ You have no coalition on this server yet. Take a slot in game — your "
+                f"{icon('bad')} You have no coalition on this server yet. Take a slot in game — your "
                 "first slot pick registers you — and try again.")
             return
         try:
@@ -4008,7 +4023,7 @@ class FowlEngine(Plugin):
         await interaction.response.defer(ephemeral=True)
         srv, why = self._pick_range_server(server)
         if srv is None:
-            await interaction.followup.send(f"❌ {why}")
+            await interaction.followup.send(f"{icon('bad')} {why}")
             return
         try:
             embed = await self._build_range_status_embed(srv, self.get_config(srv) or {})
@@ -4060,7 +4075,7 @@ class FowlEngine(Plugin):
                     timeout=aiohttp.ClientTimeout(total=RANGE_HTTP_TIMEOUT)) as http:
                 data = await self._range_get_json(http, f"{api_url}/api/range/greenie", params)
         except Exception as ex:
-            await interaction.followup.send(f"❌ bfdb did not answer: {type(ex).__name__}: {ex or ''}")
+            await interaction.followup.send(f"{icon('bad')} bfdb did not answer: {type(ex).__name__}: {ex or ''}")
             return
         site = self._range_site(config)
         lines = rangefeed.greenie_lines(data, site, limit=10)

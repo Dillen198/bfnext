@@ -66,7 +66,8 @@ DEFAULT:
   server_info_channel: 123456789012345678
 
   # (Optional) The bot tails bfdb's /ws/gci and posts every GCI (AWACS) call
-  # here as text, prefixed 🔵/🔴 by coalition. Replaces gci.discord_webhook_url.
+  # here as text, prefixed with the Blue/Red coalition icon. Replaces
+  # gci.discord_webhook_url.
   # Requires admin_username/admin_password (the ws is admin-gated).
   gci_transcript_channel: 123456789012345678
 
@@ -82,8 +83,9 @@ DEFAULT:
   # welcome_server: "[VS] Vector Strike - Vector Strike | Dynamic Campaign PVP Modern"
 
   # (Optional) The line posted above the briefing embed. {mention} and
-  # {brand_name} are substituted.
-  welcome_message: "Welcome aboard, {mention}! 🪖"
+  # {brand_name} are substituted, and {icon:<key>} becomes a Vector Strike
+  # icon (see the plugin README for the keys; plain emoji work too).
+  welcome_message: "Welcome aboard, {mention}! {icon:welcome}"
 
   # (Optional) Freeform briefing text shown inside the welcome embed
   # (rules pointer, how to pick a faction, useful commands, etc).
@@ -592,13 +594,16 @@ DEFAULT:
   # Localization & Message Formats
   # ---------------------------------------------
   # Customize the text used by the bot when posting alerts and achievements.
+  # {icon:<key>} is replaced by that Vector Strike icon (its custom emoji once
+  # /feops icons_install has run, its unicode stand-in before); plain emoji
+  # typed here are left as they are.
   messages:
-    capture: "🏆 **[CAPTURED]** {message}"
-    neutral: "🏳️ **[NEUTRAL]** {message}"
-    ready_to_capture: "⏳ **[READY TO CAPTURE]** {message}"
-    capture_opportunity: "🎯 **[OPPORTUNITY]** {message}"
-    achievement: "🎖️ **[ACHIEVEMENT]** {message}"
-    alert: "🚨 **[ALERT]** {message}"
+    capture: "{icon:captured} **[CAPTURED]** {message}"
+    neutral: "{icon:neutralised} **[NEUTRAL]** {message}"
+    ready_to_capture: "{icon:pending} **[READY TO CAPTURE]** {message}"
+    capture_opportunity: "{icon:target} **[OPPORTUNITY]** {message}"
+    achievement: "{icon:achievement} **[ACHIEVEMENT]** {message}"
+    alert: "{icon:alert} **[ALERT]** {message}"
     
   # ---------------------------------------------
   # Discord Role Syncing

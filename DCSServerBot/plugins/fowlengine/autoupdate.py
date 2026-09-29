@@ -98,6 +98,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
+from .icons import icon, plain
+
 __all__ = [
     "Updater", "UpdateConfig", "ENGINE_FILES", "parse_manifest", "pick_github_release",
     "pick_folder_release", "file_needs_update", "in_window", "sha256_file",
@@ -677,7 +679,9 @@ class Updater:
 
     def _history(self, event: str, detail: str = "", **extra) -> None:
         h = list(self.state.get("history") or [])
-        h.append({"ts": _utc_now(), "event": event, "detail": detail, **extra})
+        # History is persisted and shown on the dashboard: never store emoji
+        # markup in it (its ids die with an icon reinstall; the web can't draw it).
+        h.append({"ts": _utc_now(), "event": event, "detail": plain(detail), **extra})
         self.state["history"] = h[-HISTORY_KEEP:]
         self._save_state()
 
@@ -945,6 +949,7 @@ class Updater:
                           tag=manifest["tag"])
         self._prune_downloads(root, keep_tag=manifest["tag"])
         staged = await self._stage_latest() if stage else []
+        staged = [plain(x) for x in staged]   # kept in state + shown on the OPS page
         return {"ok": True, "latest": manifest["tag"], "staged": staged,
                 "message": (f"staged {', '.join(staged)}" if staged else "everything is up to date")}
 
@@ -1078,7 +1083,7 @@ class Updater:
         if out:
             self._history("staged", "; ".join(out), tag=latest.get("tag"))
             await self._notify(
-                f"📦 **Engine update {latest.get('tag')}** (`{latest.get('git') or '?'}`) staged: "
+                f"{icon('update')} **Engine update {latest.get('tag')}** (`{latest.get('git') or '?'}`) staged: "
                 + "; ".join(out) + f"\nApply policy: `{self.cfg.apply}` (bfdb: `{self.cfg.bfdb_apply}`).")
         return out
 
@@ -1240,7 +1245,7 @@ class Updater:
                 and all(self._idle_long_enough(s.name) or s.status not in (Status.RUNNING, Status.PAUSED)
                         for s in servers))
             if go:
-                await self._notify("🔁 Applying staged **bfdb.exe** (auto-update) -- dashboard and GCI "
+                await self._notify(f"{icon('restart')} Applying staged **bfdb.exe** (auto-update) -- dashboard and GCI "
                                    "blip for a few seconds.")
                 await pm.restart_if_pending(self.cog._bfdb_admin_password)
 
@@ -1269,14 +1274,14 @@ class Updater:
         BFBinaries' prepare() swaps the staged DLL in on the way up."""
         self._orderly[server.name] = time.time()
         self._restarted.add(server.name)
-        await self._notify(f"🔁 **{server.name}**: restarting DCS -- {why}.")
+        await self._notify(f"{icon('restart')} **{server.name}**: restarting DCS -- {why}.")
         self._history("dcs_restart", why, server=server.name)
         try:
             await server.shutdown()
             await server.startup()
         except Exception as ex:  # noqa: BLE001
             self.log.error(f"FowlEngine/autoupdate: restart of {server.name} failed: {ex}")
-            await self._notify(f"⚠️ **{server.name}**: DCS restart failed ({ex}).")
+            await self._notify(f"{icon('warning')} **{server.name}**: DCS restart failed ({ex}).")
 
     async def _apply_bftools(self) -> None:
         staging = self.global_staging()
@@ -1300,7 +1305,7 @@ class Updater:
             pass
         self._prune_backups(live)
         self._history("applied", f"bftools.exe {side.get('tag')}", tag=side.get("tag"))
-        await self._notify(f"🧩 bftools.exe updated to {side.get('tag')} (backup `{os.path.basename(backup)}`).")
+        await self._notify(f"{icon('build')} bftools.exe updated to {side.get('tag')} (backup `{os.path.basename(backup)}`).")
 
     @staticmethod
     def _prune_backups(live: str, keep: int = 5) -> None:
@@ -1479,7 +1484,7 @@ class Updater:
                 probation.pop(name, None)
                 changed = True
                 self._history("probation_passed", f"{p['dll']} on {name}", tag=p.get("tag"), server=name)
-                await self._notify(f"✅ **{name}**: `{p['dll']}` {p.get('tag') or '(manual upload)'} "
+                await self._notify(f"{icon('good')} **{name}**: `{p['dll']}` {p.get('tag') or '(manual upload)'} "
                                    f"passed probation.")
         if changed:
             self._save_state()
@@ -1496,7 +1501,7 @@ class Updater:
         backup = (p or {}).get("backup") or self._newest_backup(b["dll_path"])
         if not backup or not os.path.exists(backup):
             self._save_state()
-            msg = f"⛔ **{server.name}**: wanted to roll back `{dll}` ({why}) but there is no backup to restore."
+            msg = f"{icon('blocked')} **{server.name}**: wanted to roll back `{dll}` ({why}) but there is no backup to restore."
             await self._notify(msg)
             return msg
         staging = b["staging_dir"] or self.global_staging()
@@ -1506,7 +1511,7 @@ class Updater:
         try:
             self._stage_local(backup, staging, dll, side)
         except OSError as ex:
-            msg = f"⛔ **{server.name}**: rollback of `{dll}` failed to stage ({ex})."
+            msg = f"{icon('blocked')} **{server.name}**: rollback of `{dll}` failed to stage ({ex})."
             await self._notify(msg)
             return msg
         tag = (p or {}).get("tag")
@@ -1514,7 +1519,7 @@ class Updater:
             self.mark_bad(tag, f"{dll} on {server.name}: {why}")
             self._cancel_tag_everywhere(tag)
         self._history("rollback", f"{dll} on {server.name}: {why}", tag=tag, server=server.name)
-        await self._notify(f"⏪ **{server.name}**: rolling `{dll}` back to "
+        await self._notify(f"{icon('rollback')} **{server.name}**: rolling `{dll}` back to "
                            f"`{os.path.basename(backup)}` -- {why}."
                            + (f" Release {tag} is marked bad and won't be staged again." if tag else ""))
         if server.status in (Status.RUNNING, Status.PAUSED):
@@ -1806,7 +1811,7 @@ class Updater:
                 c["rejected"] = tag
                 self.log.warning(f"FowlEngine/autoupdate: campaign pack {fname} for {server.name}: {ex}")
                 self._history("campaign_rejected", f"{server.name}: {ex}", tag=tag, server=server.name)
-                out.append(f"⚠️ campaign pack for **{server.name}** refused: {ex}")
+                out.append(f"{icon('warning')} campaign pack for **{server.name}** refused: {ex}")
                 continue
             if note:
                 out.append(note)
@@ -1879,7 +1884,7 @@ class Updater:
         self._history(f"campaign_{status}", f"{server.name}: {c['pack']['reason'] or ', '.join(want)}",
                       tag=tag, server=server.name)
         if status == "held":
-            return (f"⏸️ campaign pack for **{server.name}** HELD -- {c['pack']['reason']}. Decide on the OPS "
+            return (f"{icon('paused')} campaign pack for **{server.name}** HELD -- {c['pack']['reason']}. Decide on the OPS "
                     f"page (Campaign packs) or with `/feops campaign_apply` / `/feops campaign_keep`")
         return f"campaign pack → {server.name} ({', '.join(want)}, at its next DCS start)"
 
@@ -1892,7 +1897,7 @@ class Updater:
             return self._campaign_prepare(server)
         except Exception as ex:  # noqa: BLE001
             self.log.exception(f"FowlEngine/autoupdate: campaign pack for {server.name}: {ex}")
-            return f"⚠️ campaign pack: {ex} -- starting with the files as they are."
+            return f"{icon('warning')} campaign pack: {ex} -- starting with the files as they are."
 
     def _campaign_prepare(self, server) -> Optional[str]:
         c = (self.state.get("campaigns") or {}).get(server.name)
@@ -1918,14 +1923,14 @@ class Updater:
                             reason="server copy was edited since the last update: " + ", ".join(held))
                 self._history("campaign_held", f"{server.name}: {pack['reason']}", tag=tag, server=server.name)
                 self._save_state()
-                return f"⏸️ campaign pack {tag} HELD at start -- {pack['reason']}."
+                return f"{icon('paused')} campaign pack {tag} HELD at start -- {pack['reason']}."
         todo = [n for n in names if on_disk.get(n) != want[n]]
         for n in todo:
             if sha256_file(os.path.join(pack["dir"], n)) != want[n]:
                 c["pack"] = None   # the next check stages it afresh
                 c["last_error"] = f"{tag}: the staged copy of {n} is missing or changed"
                 self._save_state()
-                return f"⚠️ campaign pack {tag}: its staged {n} is missing or changed -- dropped, the next check stages it again."
+                return f"{icon('warning')} campaign pack {tag}: its staged {n} is missing or changed -- dropped, the next check stages it again."
         prev_installed = c.get("installed")
         installed_files = dict((prev_installed or {}).get("files") or {})
         installed_files.update(want)
@@ -1960,7 +1965,7 @@ class Updater:
             c["installed"] = prev_installed
             c["last_error"] = f"{tag}: backup failed ({ex})"
             self._save_state()
-            return f"⚠️ campaign pack {tag} NOT written: could not back up the current files ({ex})."
+            return f"{icon('warning')} campaign pack {tag} NOT written: could not back up the current files ({ex})."
         try:
             for src, dst in writes:
                 _copy_atomic(src, dst)
@@ -1969,7 +1974,7 @@ class Updater:
             c["installed"] = prev_installed
             c["last_error"] = f"{tag}: write failed ({ex})"
             self._save_state()
-            return (f"⚠️ campaign pack {tag} NOT written ({ex}); the previous files are back"
+            return (f"{icon('warning')} campaign pack {tag} NOT written ({ex}); the previous files are back"
                     + (f" except: {'; '.join(problems)}" if problems else "") + ". Retried at the next start.")
 
         log_path, off, head = self._engine_log_mark(server)
@@ -2012,7 +2017,7 @@ class Updater:
                 doc = json.load(fh)
         except (OSError, TypeError, ValueError) as ex:
             self._save_state()
-            return (f"⛔ campaign restore for {server.name} impossible: backup unreadable ({ex}) -- restore by "
+            return (f"{icon('blocked')} campaign restore for {server.name} impossible: backup unreadable ({ex}) -- restore by "
                     f"hand from `{bdir}`.")
         problems = self._restore_entries(bdir, doc.get("entries") or [])
         # what is on disk again is what we last wrote there
@@ -2028,7 +2033,7 @@ class Updater:
                       tag=doc.get("tag"), server=server.name)
         self._save_state()
         if problems:
-            return f"⛔ campaign files restored from `{os.path.basename(bdir)}` with problems: {'; '.join(problems)}"
+            return f"{icon('blocked')} campaign files restored from `{os.path.basename(bdir)}` with problems: {'; '.join(problems)}"
         return f"campaign files restored from `{os.path.basename(bdir)}` (pack {doc.get('tag')} rolled back)."
 
     def _list_campaign_backups(self, home: Optional[str]) -> list[str]:
@@ -2160,7 +2165,7 @@ class Updater:
                     c["pack"] = None
                 changed = True
                 self._history("campaign_passed", f"{name}", tag=p.get("tag"), server=name)
-                await self._notify(f"✅ **{name}**: campaign pack {p.get('tag')} passed probation.")
+                await self._notify(f"{icon('good')} **{name}**: campaign pack {p.get('tag')} passed probation.")
         if changed:
             self._save_state()
         return bounce
@@ -2180,7 +2185,7 @@ class Updater:
         c["last_applied"] = {"tag": tag, "at": _utc_now(), "result": "failed", "reason": why,
                              "backup": p.get("backup"), "files": p.get("files")}
         self._history("campaign_rollback", f"{server.name}: {why}", tag=tag, server=server.name)
-        return (f"⏪ **{server.name}**: campaign pack {tag} failed -- {why}. The previous cfg + mission are "
+        return (f"{icon('rollback')} **{server.name}**: campaign pack {tag} failed -- {why}. The previous cfg + mission are "
                 f"restored at the restart, and {tag} won't be applied here again.")
 
     def campaign_decide(self, server_name: str, decision: str, who: str = "") -> str:

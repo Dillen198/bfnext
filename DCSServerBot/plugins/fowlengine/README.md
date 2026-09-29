@@ -12,7 +12,7 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 - **Mission-Briefing Welcome Message:** Posts an embed to `welcome_channel` when someone joins the Discord server, pulling the active scenario, round duration, and current front (objective counts per faction) from bfdb — same data as the live status embed — plus a customizable briefing blurb and dashboard link.
 - **Per-Coalition Briefing Channels:** two channels per DCS server, one per faction, each holding a single embed the bot edits in place from bfdb's `GET /api/situation` — the same auto-generated situation report that backs the in-game F10 → Info → Situation pages, the dashboard BRIEFING page and the kneeboard PDF. Posture, ranked tasking, hotspots, the air-defence areas *that side has earned intel on*, the air picture, logistics and the comms card. `/fe_briefing` gives any pilot their own side's copy privately. `/feops briefing_lock` applies the channel permissions.
 - **Engine-Mirrored Coalition Roles:** every ~5 minutes the bot reads bfdb's admin-only `/api/admin/pilot-sides` — the engine's own registrations for that instance — and makes the Discord Blue/Red roles agree, revoking any coalition role the engine does not back. The mirror runs one way only: Discord never assigns a side, it only reflects the one the engine gave out on first slot pick or `-switch`. That is what makes the briefing channels honest — you cannot read Red's intel without actually flying Red.
-- **Custom Icon Set:** all embeds render with the Vector Strike glyph set (`assets/icons/`, drawn by `render_icons.py`) uploaded as *application* emoji, so the bot's output matches the dashboard rather than looking like a group chat. Every icon has a unicode fallback, so nothing is broken before `/feops icons_install` is run.
+- **Custom Icon Set:** every embed, alert, ops notice and admin reply renders with the Vector Strike glyph set (`assets/icons/`, drawn by `render_icons.py`) uploaded as *application* emoji, so the bot's output matches the dashboard rather than looking like a group chat. Every icon has a unicode fallback, so nothing is broken before `/feops icons_install` is run. See [Icon Set](#icon-set).
 - **Server Performance Embed:** Posts and edits a live CPU/RAM/GPU/disk/temp + DCS frame-time embed every 5 minutes, pulled from bfdb's admin-only `/api/admin/perf`.
 - **Dual-Login Dashboard:** Supports both standard Discord OAuth web-login and securely generated HMAC bot-tokens to seamlessly bridge the `bfweb` dashboard.
 - **Interactive Commander Terminal:** A UI terminal (`/fe_terminal`) to drop crates/infantry at airbases **and** set objective priority, directly from Discord.
@@ -100,8 +100,56 @@ live on the web dashboard now -- `/fe_dashboard` points there.
 - `/feops gci_show` - print the effective `gci.json` (secrets masked).
 - `/feops stage_status | stage_cancel <which> | stage_apply <server> <which>` - manage staged engine binaries.
 - `/feops briefing_lock <server> [confirm]` - show, then apply, the channel overwrites that lock each briefing channel to its coalition role. Dry-run unless `confirm: True`.
-- `/feops icons_install` / `icons_status` / `icons_uninstall` - manage the custom emoji set.
+- `/feops icons_install` / `icons_status` / `icons_uninstall` - manage the custom emoji set. `icons_install` uploads only the icons that are missing and says what it added, skipped and failed; safe to re-run.
 - **Upload:** drop `bflib.dll` / `bfdb.exe` into the admin channel (the bot's `Admin` role only; `binary_upload_role` changes it) to stage it. Each staged file is posted to `ops_channel` with its sha256.
+
+## Icon Set
+
+Everything the bot posts to Discord goes through `icons.py`: code asks for an
+icon by key (`icon("warning")`), never for a literal emoji. Until
+`/feops icons_install` has run, each key renders as the unicode emoji the bot
+always used; afterwards, as the matching `vs_<key>` application emoji. Config
+templates (`messages:`, `welcome_message`) can use `{icon:<key>}`; plain emoji
+typed there keep working.
+
+Glyphs (one PNG each, drawn by `assets/icons/render_icons.py`; `_preview.png`
+is the contact sheet):
+
+| Group | Keys |
+|---|---|
+| Briefing: urgency | `critical` `high` `routine` (red/amber/green chevrons) |
+| Briefing: task kinds | `defend` shield, `capture` flag, `strike` burst, `sead` struck-out radar, `cas` crosshair, `intercept` delta jet, `logistics` crate, `recon` magnifier, `csar` rotor + cross |
+| Briefing: sections | `posture` bars, `weather` cloud, `air` radar scope, `tasking` clipboard, `hotspot` filled caution triangle, `threat` SAM ring, `supply` truck, `comms` antenna, `recent` clock |
+| Sides and status | `blue` / `red` / `unowned` roundels, `live` green lamp, `down` red lamp, `offline` hollow ring, `good` tick, `bad` cross, `neutral` dash, `link` arrow out |
+| Notices | `warning` outlined triangle, `blocked` no-entry, `info` i, `alert` beacon, `pending` hourglass, `paused` bars, `restart` loop arrow, `rollback` rewind, `forward` fast-forward, `update` arrow into tray, `build` puzzle piece, `probation` flask, `new` sparkle, `priority` star, `campaign` folder, `settings` gear |
+| Hardware | `cpu` chip, `memory` RAM stick, `disk` floppy, `temp` thermometer, `perf` pulse trace, `server` rack, `connect` plug |
+| Results and people | `captured` trophy, `neutralised` white flag, `gold` / `silver` / `bronze` medals, `players` two figures |
+| Range feed | `day` sun, `night` crescent, `wind` streamlines, `fuel` drop, `carrier` anchor |
+
+Aliases keep their own unicode stand-in but borrow a glyph once installed, so
+the uploaded set stays small: `target`→`cas`, `inspect`→`recon`,
+`caution`→`high`, `stale`→`warning`, `hot`→`down`, `cold`→`offline`,
+`side_blue`→`blue`, `side_red`→`red`, `rotation`→`restart`, `gpu`→`cpu`,
+`briefing`→`tasking`, `ban`→`blocked`, `discard`→`bad`, `resume`→`live`,
+`uptime`→`recent`, `url`→`link`, `upload`→`update`, `achievement`→`gold`,
+`all_clear`→`good`, `welcome`→`players`.
+
+**Adding an icon**
+
+1. Draw it in `assets/icons/render_icons.py` with the shared helpers (`_canvas`,
+   `_line`, `_ring`, `_arc`, `_dot`, `_path`, `_arrowhead`, `_star`), stroke
+   `W`, margin `PAD` and the palette (a colour only where it means something),
+   and add it to the `ICONS` table as `"vs_<key>"`.
+2. `python render_icons.py` (needs Pillow) and look at `_preview.png` -- the
+   icon has to read at 32 px, next to the rest of the set.
+3. Add `"<key>": "<unicode it replaces>"` to `FALLBACK` in `icons.py` (or, if an
+   existing glyph already means it, add the key to `ALIASES` instead of drawing).
+4. Use `icon("<key>")` in the code. `tests/test_fowlengine_icons.py` fails on a
+   key with no fallback or PNG, and on any raw emoji left in a plugin string.
+5. Deploy and run `/feops icons_install` -- it uploads just the new icon.
+
+Emoji names are the contract: renaming a key orphans its uploaded emoji (it
+silently drops back to unicode until the new name is installed).
 
 ## Architecture & Integration
 
