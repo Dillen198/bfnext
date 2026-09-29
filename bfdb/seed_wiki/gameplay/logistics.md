@@ -117,6 +117,13 @@ side; the enemy has the same page for theirs.
 Ground convoys despawn on arrival, so a convoy still on the map is still
 carrying something.
 
+Convoys keep driving under fire: they don't scatter off the road when hit, so
+the column stays on its route — and stays a target. A convoy that wedges
+somewhere (a wreck on the road, a bridge the AI won't cross) is noticed after a
+few minutes and given a fresh road route, then a cross-country one; if it is
+still stuck after that, it is withdrawn and its load goes back to the hub. One that
+stalls where its road ends, close to the base, counts as delivered.
+
 ### Supply Ticks
 
 The system runs on a **tick cycle**:

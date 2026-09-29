@@ -409,12 +409,223 @@ pub enum ConvoyCargoType {
     Mixed,
 }
 
+/// The route a ground convoy drives from `from` to `to`: along the road
+/// network when DCS can find a path (decimated to sparse "On Road" points),
+/// straight across country when it can't. `label` names the convoy in the
+/// log.
+pub(crate) fn road_route<'lua>(
+    land: &dcso3::land::Land<'lua>,
+    from: Vector2,
+    to: Vector2,
+    speed_mps: f64,
+    label: &str,
+) -> Result<Vec<dcso3::controller::MissionPoint<'lua>>> {
+    use dcso3::controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation};
+    use dcso3::LuaVec2;
+    let origin_alt = land.get_height(LuaVec2(from))?;
+    let dest_alt = land.get_height(LuaVec2(to))?;
+
+    // Build route using road pathfinding when available
+    let mut route_points = Vec::new();
+
+    // Start point
+    route_points.push(MissionPoint {
+        action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+        airdrome_id: None,
+        helipad: None,
+        typ: PointType::TurningPoint,
+        link_unit: None,
+        pos: LuaVec2(from),
+        alt: origin_alt,
+        alt_typ: Some(AltType::BARO),
+        time_re_fu_ar: None,
+        eta: Some(dcso3::Time(0.)),
+        eta_locked: Some(true),
+        speed: speed_mps,
+        speed_locked: Some(true),
+        name: None,
+        task: Box::new(Task::ComboTask(vec![])),
+    });
+
+    // Try to find road path for intermediate waypoints
+    match land.find_path_on_roads(
+        dcso3::land::RoadType::Road,
+        LuaVec2(from),
+        LuaVec2(to),
+    ) {
+        Ok(path) => {
+            // DCS's findPathOnRoads returns the raw road polyline -- often
+            // thousands of vertices. A route that big chokes the group AI
+            // (it just sits at the origin). Decimate to a waypoint roughly
+            // every 3 km (and hard-cap the count); "On Road" formation makes
+            // DCS follow the actual road between the sparse points anyway.
+            const MIN_SPACING_M: f64 = 3000.0;
+            const MAX_WAYPOINTS: usize = 60;
+            let pts: Vec<LuaVec2> = path.into_iter().filter_map(|wp| wp.ok()).collect();
+            let mut last_kept: Option<LuaVec2> = None;
+            let mut wp_count = 0;
+            for (i, wp) in pts.iter().enumerate() {
+                let far_enough = last_kept
+                    .map(|lk| na::distance(&lk.0.into(), &wp.0.into()) >= MIN_SPACING_M)
+                    .unwrap_or(true);
+                // always keep the last polyline point so we actually reach
+                // the road exit nearest the destination
+                let is_last = i + 1 == pts.len();
+                if (far_enough || is_last) && wp_count < MAX_WAYPOINTS {
+                    let alt = land.get_height(*wp).unwrap_or(0.0);
+                    route_points.push(MissionPoint {
+                        action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+                        airdrome_id: None,
+                        helipad: None,
+                        typ: PointType::TurningPoint,
+                        link_unit: None,
+                        pos: *wp,
+                        alt,
+                        alt_typ: Some(AltType::BARO),
+                        time_re_fu_ar: None,
+                        eta: None,
+                        eta_locked: None,
+                        speed: speed_mps,
+                        speed_locked: None,
+                        name: None,
+                        task: Box::new(Task::ComboTask(vec![])),
+                    });
+                    last_kept = Some(*wp);
+                    wp_count += 1;
+                }
+            }
+            if wp_count > 0 {
+                info!(
+                    "{} using road path: {} raw pts -> {} waypoints",
+                    label,
+                    pts.len(),
+                    wp_count
+                );
+            }
+        }
+        Err(e) => {
+            // Was debug, so the log never said why a convoy crawled
+            // cross-country and timed out.
+            warn!(
+                "{}: no road path ({}), driving a straight line cross-country",
+                label, e
+            );
+        }
+    }
+
+    // Destination point (always added as final waypoint)
+    route_points.push(MissionPoint {
+        action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+        airdrome_id: None,
+        helipad: None,
+        typ: PointType::TurningPoint,
+        link_unit: None,
+        pos: LuaVec2(to),
+        alt: dest_alt,
+        alt_typ: Some(AltType::BARO),
+        time_re_fu_ar: None,
+        eta: None,
+        eta_locked: None,
+        speed: speed_mps,
+        speed_locked: None,
+        name: None,
+        task: Box::new(Task::ComboTask(vec![])),
+    });
+    Ok(route_points)
+}
+
+/// A convoy whose lead truck has moved less than this...
+const STALL_MOVE_M: f64 = 150.;
+/// ...for this long is stuck, not slow.
+const STALL_SECS: i64 = 300;
+/// Re-routes before a stuck convoy is sent home: the first on a fresh road
+/// route, the second straight across country around whatever blocks the road.
+const MAX_REROUTES: u8 = 2;
+/// A convoy that stalls this close to its destination has reached the end of
+/// the road there; count it as delivered.
+const STALL_ARRIVED_M: f64 = 1500.;
+
+/// Whether a convoy at `pos` has stalled: it has not moved `STALL_MOVE_M`
+/// from `anchor` in `STALL_SECS`. Real progress moves the anchor.
+fn convoy_stalled(
+    anchor: &mut Option<Vector2>,
+    moved_at: &mut Option<DateTime<Utc>>,
+    pos: Vector2,
+    now: DateTime<Utc>,
+) -> bool {
+    let from = *anchor.get_or_insert(pos);
+    let since = *moved_at.get_or_insert(now);
+    if (pos - from).norm() >= STALL_MOVE_M {
+        *anchor = Some(pos);
+        *moved_at = Some(now);
+        false
+    } else {
+        now - since >= Duration::seconds(STALL_SECS)
+    }
+}
+
+/// Drive the last leg of a convoy route off the road. An "On Road" final
+/// waypoint snaps to the road point nearest the objective, so when the
+/// objective's centre is further than `delivery_distance` from any road the
+/// convoy parked there, stopped, until the transit timeout recalled it.
+fn off_road_last_leg(route: &mut [dcso3::controller::MissionPoint]) {
+    use dcso3::controller::{ActionTyp, VehicleFormation};
+    if let Some(last) = route.last_mut() {
+        last.action = Some(ActionTyp::Ground(VehicleFormation::OffRoad));
+    }
+}
+
+/// Supply convoys never disperse under fire -- DCS scatters the column off the
+/// road and resuming is broken, the trucks often never find the road again --
+/// and run alarm state green so a spotted enemy doesn't halt the column.
+fn set_convoy_ai(group: &dcso3::group::Group) -> Result<()> {
+    use dcso3::controller::{AiOption, AlarmState, GroundOption};
+    let con = group.get_controller()?;
+    con.set_option(AiOption::Ground(GroundOption::DisperseOnAttack(0)))?;
+    con.set_option(AiOption::Ground(GroundOption::AlarmState(AlarmState::Green)))?;
+    Ok(())
+}
+
+/// Give a stuck convoy a fresh route from where its lead truck is. Re-issuing
+/// the route is what gets a DCS column moving again after it wedged (a halt it
+/// never resumed from, a wreck on the road); `cross_country` drives it straight
+/// at the destination instead, around a blockage the road route would hit again.
+fn reroute_convoy(
+    lua: MizLua,
+    group_name: &str,
+    from: Vector2,
+    to: Vector2,
+    speed_mps: f64,
+    cross_country: bool,
+    pairs: &FxHashMap<dcso3::String, dcso3::String>,
+    label: &str,
+) -> Result<()> {
+    use dcso3::controller::{ActionTyp, Task, VehicleFormation};
+    let group = dcso3::group::Group::get_by_name(lua, group_name)?;
+    let land = dcso3::land::Land::singleton(lua)?;
+    let mut route = road_route(&land, from, to, speed_mps, label)?;
+    if cross_country {
+        let (first, last) = (route[0].clone(), route[route.len() - 1].clone());
+        route = vec![first, last];
+        for p in route.iter_mut() {
+            p.action = Some(ActionTyp::Ground(VehicleFormation::OffRoad));
+        }
+    }
+    off_road_last_leg(&mut route);
+    set_convoy_ai(&group)?;
+    // re-hitch in case the new task drops the trailers; with none this is 0
+    if attach_trailers(&group, route.clone(), pairs)? == 0 {
+        group.get_controller()?.set_task(Task::Mission { airborne: Some(false), route })?;
+    }
+    Ok(())
+}
+
 /// Hitch each tractor in `group` to the nearest free trailer it can tow
 /// (`pairs`: tractor type -> trailer type), by putting the `AttachTrailer`
 /// tasks on the first waypoint of `route` and re-issuing the route. Returns
 /// how many were hitched; with none, the group keeps the route it spawned
 /// with.
-fn attach_trailers(
+pub(crate) fn attach_trailers(
     group: &dcso3::group::Group,
     mut route: Vec<dcso3::controller::MissionPoint>,
     pairs: &FxHashMap<dcso3::String, dcso3::String>,
@@ -516,6 +727,18 @@ pub struct SupplyConvoy {
     pub route_m: f64,
     #[serde(default)]
     pub speed_mps: f64,
+    /// Stall watchdog: where the lead truck was when it last made real
+    /// progress, when that was, and how often the convoy has been re-routed.
+    #[serde(default)]
+    pub progress_pos: Option<Vector2>,
+    #[serde(default)]
+    pub moved_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub reroutes: u8,
+    /// Transport AI options applied (see `set_convoy_ai`). Not persisted, so
+    /// they are re-applied to a convoy carried over a restart.
+    #[serde(skip)]
+    pub ai_set: bool,
 }
 
 impl SupplyConvoy {
@@ -3205,7 +3428,7 @@ impl Db {
 
     fn manage_convoys(&mut self, lua: MizLua, ts: DateTime<Utc>) {
         let st = Utc::now();
-        let Some((delivery_distance, check_interval_secs, max_transit)) = self
+        let Some((delivery_distance, check_interval_secs, max_transit, trailer_pairs)) = self
             .ephemeral
             .cfg
             .warehouse
@@ -3216,6 +3439,7 @@ impl Db {
                     c.delivery_distance,
                     c.check_interval_secs,
                     Duration::minutes(c.max_transit_minutes as i64),
+                    c.trailer_pairs.clone(),
                 )
             })
         else {
@@ -3277,12 +3501,75 @@ impl Db {
                                 continue;
                             }
                         };
-                        if convoy.check_delivery(dest_obj.pos(), delivery_distance) {
-                            info!("Convoy {} delivered to {}", convoy.id, dest_obj.name);
-                            // Despawned by finish_transport -- without that they
-                            // park at the destination forever and every
-                            // well-supplied base ends up ringed with dead convoys.
-                            finished.push((convoy_id.clone(), side, gid, TransportEnd::Delivered));
+                        'transit: {
+                            if convoy.check_delivery(dest_obj.pos(), delivery_distance) {
+                                info!("Convoy {} delivered to {}", convoy.id, dest_obj.name);
+                                // Despawned by finish_transport -- without that they
+                                // park at the destination forever and every
+                                // well-supplied base ends up ringed with dead convoys.
+                                finished.push((convoy_id.clone(), side, gid, TransportEnd::Delivered));
+                                break 'transit;
+                            }
+                            if !convoy.ai_set {
+                                match dcso3::group::Group::get_by_name(lua, &group_name)
+                                    .and_then(|g| set_convoy_ai(&g))
+                                {
+                                    Ok(()) => convoy.ai_set = true,
+                                    Err(e) => warn!("Convoy {}: could not set its AI options: {e:?}", convoy.id),
+                                }
+                            }
+                            // DCS ground columns wedge: a halt they never resume
+                            // from, a wreck or a bridge on the road, an "On Road"
+                            // leg that ends short of the base. Waiting out the
+                            // transit timeout left the cargo parked for hours.
+                            let pos = convoy.last_pos;
+                            if !convoy_stalled(&mut convoy.progress_pos, &mut convoy.moved_at, pos, ts) {
+                                break 'transit;
+                            }
+                            let dest_pos = dest_obj.pos();
+                            let dist = (pos - dest_pos).norm();
+                            if dist <= (delivery_distance * 3.).max(STALL_ARRIVED_M) {
+                                info!(
+                                    "Convoy {} stopped {:.0} m short of {} where its road ends, delivered",
+                                    convoy.id, dist, dest_obj.name
+                                );
+                                convoy.state = ConvoyState::Delivered;
+                                finished.push((convoy_id.clone(), side, gid, TransportEnd::Delivered));
+                            } else if convoy.reroutes < MAX_REROUTES {
+                                convoy.reroutes += 1;
+                                let cross_country = convoy.reroutes > 1;
+                                // give the new route its own stall window
+                                convoy.moved_at = Some(ts);
+                                let label = format_compact!("Convoy {} re-route {}", convoy.id, convoy.reroutes);
+                                match reroute_convoy(
+                                    lua,
+                                    &group_name,
+                                    pos,
+                                    dest_pos,
+                                    convoy.speed_mps.max(1.),
+                                    cross_country,
+                                    &trailer_pairs,
+                                    &label,
+                                ) {
+                                    Ok(()) => info!(
+                                        "Convoy {} stuck {:.1} km from {}, re-routed {}",
+                                        convoy.id,
+                                        dist / 1000.,
+                                        dest_obj.name,
+                                        if cross_country { "cross-country" } else { "by road" }
+                                    ),
+                                    Err(e) => warn!("Convoy {} stuck, re-route failed: {e:?}", convoy.id),
+                                }
+                            } else {
+                                warn!(
+                                    "Convoy {} stuck {:.1} km from {} after {} re-routes, returning its load",
+                                    convoy.id,
+                                    dist / 1000.,
+                                    dest_obj.name,
+                                    convoy.reroutes
+                                );
+                                finished.push((convoy_id.clone(), side, gid, TransportEnd::Returned));
+                            }
                         }
                     }
                     ConvoyState::Destroyed => {
@@ -4173,8 +4460,6 @@ impl Db {
 
         // Spawn trucks using existing group spawn infrastructure
         use crate::spawnctx::{SpawnCtx, SpawnLoc};
-        use dcso3::controller::{Task, MissionPoint, PointType, ActionTyp, VehicleFormation, AltType};
-        use dcso3::LuaVec2;
         use dcso3::land::Land;
         use dcso3::env::miz::Miz;
         use crate::db::group::DeployKind;
@@ -4217,116 +4502,15 @@ impl Db {
         // build the road route here and hand it to spawn_group, which bakes the
         // route into the group at actual spawn time (same pattern as
         // add_and_spawn_ai_air).
-        let origin_alt = land.get_height(LuaVec2(origin_pos))?;
-        let dest_alt = land.get_height(LuaVec2(dest_pos))?;
-
-        // Build route using road pathfinding when available
         let speed_mps = speed_kph / 3.6;
-        let mut route_points = Vec::new();
-
-        // Start point
-        route_points.push(MissionPoint {
-            action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
-            airdrome_id: None,
-            helipad: None,
-            typ: PointType::TurningPoint,
-            link_unit: None,
-            pos: LuaVec2(origin_pos),
-            alt: origin_alt,
-            alt_typ: Some(AltType::BARO),
-            time_re_fu_ar: None,
-            eta: Some(dcso3::Time(0.)),
-            eta_locked: Some(true),
-            speed: speed_mps,
-            speed_locked: Some(true),
-            name: None,
-            task: Box::new(Task::ComboTask(vec![])),
-        });
-
-        // Try to find road path for intermediate waypoints
-        match land.find_path_on_roads(
-            dcso3::land::RoadType::Road,
-            LuaVec2(origin_pos),
-            LuaVec2(dest_pos),
-        ) {
-            Ok(path) => {
-                // DCS's findPathOnRoads returns the raw road polyline -- often
-                // thousands of vertices. A route that big chokes the group AI
-                // (it just sits at the origin). Decimate to a waypoint roughly
-                // every 3 km (and hard-cap the count); "On Road" formation makes
-                // DCS follow the actual road between the sparse points anyway.
-                const MIN_SPACING_M: f64 = 3000.0;
-                const MAX_WAYPOINTS: usize = 60;
-                let pts: Vec<LuaVec2> = path.into_iter().filter_map(|wp| wp.ok()).collect();
-                let mut last_kept: Option<LuaVec2> = None;
-                let mut wp_count = 0;
-                for (i, wp) in pts.iter().enumerate() {
-                    let far_enough = last_kept
-                        .map(|lk| na::distance(&lk.0.into(), &wp.0.into()) >= MIN_SPACING_M)
-                        .unwrap_or(true);
-                    // always keep the last polyline point so we actually reach
-                    // the road exit nearest the destination
-                    let is_last = i + 1 == pts.len();
-                    if (far_enough || is_last) && wp_count < MAX_WAYPOINTS {
-                        let alt = land.get_height(*wp).unwrap_or(0.0);
-                        route_points.push(MissionPoint {
-                            action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
-                            airdrome_id: None,
-                            helipad: None,
-                            typ: PointType::TurningPoint,
-                            link_unit: None,
-                            pos: *wp,
-                            alt,
-                            alt_typ: Some(AltType::BARO),
-                            time_re_fu_ar: None,
-                            eta: None,
-                            eta_locked: None,
-                            speed: speed_mps,
-                            speed_locked: None,
-                            name: None,
-                            task: Box::new(Task::ComboTask(vec![])),
-                        });
-                        last_kept = Some(*wp);
-                        wp_count += 1;
-                    }
-                }
-                if wp_count > 0 {
-                    info!(
-                        "Convoy {} using road path: {} raw pts -> {} waypoints",
-                        convoy_id,
-                        pts.len(),
-                        wp_count
-                    );
-                }
-            }
-            Err(e) => {
-                // Was debug, so the log never said why a convoy crawled
-                // cross-country and timed out.
-                warn!(
-                    "Convoy {} {} -> {}: no road path ({}), driving a straight line cross-country",
-                    convoy_id, origin_name, dest_name, e
-                );
-            }
-        }
-
-        // Destination point (always added as final waypoint)
-        route_points.push(MissionPoint {
-            action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
-            airdrome_id: None,
-            helipad: None,
-            typ: PointType::TurningPoint,
-            link_unit: None,
-            pos: LuaVec2(dest_pos),
-            alt: dest_alt,
-            alt_typ: Some(AltType::BARO),
-            time_re_fu_ar: None,
-            eta: None,
-            eta_locked: None,
-            speed: speed_mps,
-            speed_locked: None,
-            name: None,
-            task: Box::new(Task::ComboTask(vec![])),
-        });
+        let mut route_points = road_route(
+            &land,
+            origin_pos,
+            dest_pos,
+            speed_mps,
+            &format_compact!("Convoy {convoy_id} {origin_name} -> {dest_name}"),
+        )?;
+        off_road_last_leg(&mut route_points);
 
         let route_m: f64 = route_points
             .windows(2)
@@ -4353,11 +4537,16 @@ impl Db {
         };
         // Tractor-trailers: now that the units exist with their real ids,
         // hitch every tractor to its trailer before it drives off.
+        let mut ai_set = false;
         if let Some(crate::spawnctx::Spawned::Group(g)) = spawned {
             match attach_trailers(&g, route_for_trailers, &trailer_pairs) {
                 Ok(0) => (),
                 Ok(n) => info!("Convoy {convoy_id}: {n} trailer(s) hitched"),
                 Err(e) => warn!("Convoy {convoy_id}: could not hitch its trailers: {e:?}"),
+            }
+            match set_convoy_ai(&g) {
+                Ok(()) => ai_set = true,
+                Err(e) => warn!("Convoy {convoy_id}: could not set its AI options: {e:?}"),
             }
         }
 
@@ -4376,6 +4565,10 @@ impl Db {
             last_check: now,
             route_m,
             speed_mps,
+            progress_pos: None,
+            moved_at: None,
+            reroutes: 0,
+            ai_set,
         };
 
         // Add to tracking
@@ -7169,6 +7362,23 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn convoy_stall_needs_five_quiet_minutes() {
+        let t0 = Utc::now();
+        let (mut anchor, mut moved) = (None, None);
+        let p = Vector2::new(0., 0.);
+        assert!(!convoy_stalled(&mut anchor, &mut moved, p, t0));
+        // creeping inside the radius is not progress
+        let creep = Vector2::new(50., 0.);
+        assert!(!convoy_stalled(&mut anchor, &mut moved, creep, t0 + Duration::seconds(200)));
+        assert!(convoy_stalled(&mut anchor, &mut moved, creep, t0 + Duration::seconds(301)));
+        // real movement resets the clock
+        let on = Vector2::new(400., 0.);
+        assert!(!convoy_stalled(&mut anchor, &mut moved, on, t0 + Duration::seconds(310)));
+        assert!(!convoy_stalled(&mut anchor, &mut moved, on, t0 + Duration::seconds(600)));
+        assert!(convoy_stalled(&mut anchor, &mut moved, on, t0 + Duration::seconds(611)));
+    }
 
     fn inv(stored: u32, capacity: u32) -> Inventory {
         Inventory {
