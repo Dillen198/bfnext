@@ -32,6 +32,12 @@
 **War news**
 - Daily dispatches get an illustration and are posted to Discord (where
   configured).
+- Each illustration now pictures that day's actual story -- a town being
+  taken, a burnt-out convoy, a SAM site after a strike, jets over the
+  valley -- with real, period-correct equipment (2008-era Russian and Georgian
+  kit on the Caucasus campaign), in the style of a news wire photo. The
+  camera, time of day and weather change from day to day and from server to
+  server.
 
 What's changed since the original open-source Fowl Engine. This page only lists what's **different from stock Fowl Engine** — not a full commit history, and not core mechanics (F10 menus, JTAC, cargo, points/lives, capturing objectives) that were already part of the base engine and are simply documented elsewhere in this wiki.
 

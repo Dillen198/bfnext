@@ -35,7 +35,7 @@
 use crate::{
     db::{RoundId, StatsDb},
     instance::InstanceCfg,
-    news::NewsDigest,
+    news::{Factions, NewsDigest},
 };
 use anyhow::{anyhow, bail, Result};
 use base64::Engine;
@@ -97,20 +97,30 @@ pub const BACKFILL_DAYS: i64 = 3;
 /// usually about to be rewritten (new headline). Wait this long for that
 /// before illustrating the template version anyway.
 const WRITER_GRACE: ChronoDuration = ChronoDuration::hours(6);
-/// Cap on the story text that goes into a prompt.
-const STORY_CHARS: usize = 420;
+/// Cap on the story text that goes into a prompt. Short on purpose: the
+/// planned scene is the subject, and a paragraph that mentions tanks,
+/// helicopters and a town gets all three drawn into every frame.
+const STORY_CHARS: usize = 240;
+/// Cap on a whole prompt. Under Workers AI's 2048 (which truncates from the
+/// end, where the rules are) and a comfortable Pollinations URL once encoded.
+const PROMPT_MAX: usize = 1900;
+/// Caps on operator-written setting / style text.
+const SETTING_CHARS: usize = 300;
+const STYLE_CHARS: usize = 400;
 
-/// The look, when nobody overrides it. The safety rules in `RULES` are
-/// appended whatever the style says.
-const DEFAULT_STYLE: &str = "Realistic military photojournalism, a war correspondent's \
-photograph: natural light, shallow depth of field, cinematic composition, muted \
-colours, 35mm film grain. Era-appropriate vehicles, aircraft and uniforms.";
+/// How the frame is composed, whatever the style. The old single framing --
+/// a soldier's back in the foreground watching parked vehicles -- came from
+/// "seen from behind" and "cinematic composition"; it is named here so the
+/// model steers away from it.
+const COMPOSITION: &str = "One clear subject, framed the way a news photographer on the \
+scene would frame it; any people are small figures far away. No soldier in the \
+foreground, no over-the-shoulder view, no vehicles parked in a row, no posed line-up.";
 
 /// Always appended. The model is told, not trusted, so these are repeated in
 /// the plainest words.
 const RULES: &str = "The image must contain no text, lettering, captions, numbers, \
 signs or watermarks. No identifiable real people, politicians or public figures; \
-soldiers are distant or seen from behind. No national flags or real military \
+no faces toward the camera. No national flags, insignia close-ups or real military \
 insignia. No gore, blood, bodies or casualties. No brand logos.";
 
 /// Who draws the pictures.
@@ -177,7 +187,8 @@ pub struct ImageCfg {
     /// Passed through when set (`gpt-image-1`: low / medium / high -- the
     /// main cost knob there). OpenAI provider only.
     pub quality: Option<String>,
-    /// Replaces `DEFAULT_STYLE` for every instance without its own.
+    /// Replaces the default photographic look for every instance without
+    /// its own.
     pub style: Option<String>,
     /// Cloudflare diffusion steps, 1..=8.
     pub steps: u32,
@@ -379,15 +390,171 @@ fn random_seed() -> u32 {
     (uuid::Uuid::new_v4().as_u128() % (i32::MAX as u128)) as u32
 }
 
-// ── the prompt ───────────────────────────────────────────────────────────────
+// ── the setting ──────────────────────────────────────────────────────────────
+
+/// Which period's equipment is correct in a picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Era {
+    /// The Russo-Georgian war, August 2008.
+    Georgia2008,
+    /// Any present-day war.
+    Modern,
+    /// 1944.
+    Ww2,
+    /// An operator-written setting: no period kit is assumed, only what the
+    /// story itself names.
+    Custom,
+}
+
+/// What the ground looks like, by the kind of place a scene needs. Each list
+/// is a handful of real-looking cues for one theatre; the planner picks one.
+#[derive(Debug)]
+pub struct Land {
+    towns: &'static [&'static str],
+    roads: &'static [&'static str],
+    open: &'static [&'static str],
+    airfields: &'static [&'static str],
+    coast: &'static [&'static str],
+    weather: &'static [&'static str],
+}
+
+const LAND_GEORGIA: Land = Land {
+    towns: &[
+        "a Georgian country town of stone houses with rusted tin roofs and walnut trees",
+        "a Soviet-era town of five-storey concrete apartment blocks",
+        "a hillside village with an old stone church tower",
+        "the edge of a small Georgian town, low houses behind vine-covered fences",
+    ],
+    roads: &[
+        "a two-lane road lined with poplar trees through farmland",
+        "a winding mountain road above a river gorge",
+        "a straight highway across a green valley floor",
+        "a dirt track between maize fields",
+    ],
+    open: &[
+        "green farmland and maize fields in a wide valley",
+        "wooded foothills below the Greater Caucasus",
+        "a grassy ridge above a river valley",
+        "orchards and hayfields at the foot of the mountains",
+    ],
+    airfields: &[
+        "a Soviet-built military airfield with concrete aircraft shelters",
+        "a long concrete runway in a green valley with mountains behind",
+    ],
+    coast: &["the Black Sea coast with green hills behind", "a Black Sea harbour with cranes"],
+    weather: &[
+        "hazy summer air",
+        "towering afternoon thunderclouds over the mountains",
+        "morning mist lying in the valley",
+        "clear mountain air",
+        "smoke drifting from grass fires",
+        "wet asphalt after a summer rainstorm",
+    ],
+};
+
+const LAND_LEVANT: Land = Land {
+    towns: &[
+        "a town of flat-roofed concrete houses and a minaret",
+        "a dusty market town of half-built breeze-block houses",
+        "the outskirts of a hillside town above olive groves",
+        "a stone village on a terraced hillside",
+    ],
+    roads: &[
+        "a straight desert highway with power lines alongside",
+        "a narrow road through olive groves and stone walls",
+        "a dusty road across a flat plain",
+        "a mountain road through dry rocky hills",
+    ],
+    open: &[
+        "dry rocky hills dotted with olive trees",
+        "a flat, sun-baked plain of dry fields",
+        "black basalt plateau country",
+        "terraced hillsides with mountains in haze behind",
+    ],
+    airfields: &[
+        "a desert airbase with hardened aircraft shelters and sand-coloured taxiways",
+        "a long runway on a dusty plain",
+    ],
+    coast: &["the eastern Mediterranean coast with a port town behind", "a rocky Mediterranean shoreline"],
+    weather: &[
+        "heat shimmer",
+        "a dust haze turning the sky pale",
+        "a hard clear sky",
+        "high thin cloud",
+        "drifting smoke",
+        "a winter overcast with low grey cloud",
+    ],
+};
+
+const LAND_DESERT: Land = Land {
+    towns: &[
+        "a low town of mud-brick and concrete houses",
+        "a desert town of flat-roofed houses and palm trees",
+        "a roadside settlement of cinder-block buildings",
+    ],
+    roads: &[
+        "a straight desert highway",
+        "a dusty track across open desert",
+        "a road through a rocky wadi",
+    ],
+    open: &["open desert with low rocky ridges", "a gravel plain under bare mountains", "sand dunes and scrub"],
+    airfields: &[
+        "a desert airbase with hardened aircraft shelters",
+        "a long runway on a sun-baked plain",
+    ],
+    coast: &["a flat desert coastline with a port behind", "a hazy shoreline with oil terminals"],
+    weather: &["heat shimmer", "a dust haze", "a hard clear sky", "a sandstorm building on the horizon", "drifting smoke"],
+};
+
+const LAND_NORMANDY: Land = Land {
+    towns: &[
+        "a Norman stone village with a church steeple",
+        "a small market town of grey stone houses",
+    ],
+    roads: &["a sunken lane between high hedgerows", "a straight road lined with plane trees"],
+    open: &["bocage country of small fields and hedgerows", "apple orchards and pasture"],
+    airfields: &["a temporary airstrip of steel matting laid in a field"],
+    coast: &["a wide beach with bluffs behind", "a small Channel harbour"],
+    weather: &["low grey cloud", "summer haze", "drizzle", "broken cloud and bright sun", "drifting smoke"],
+};
+
+const LAND_TEMPERATE: Land = Land {
+    towns: &["a small town of low houses", "the edge of a small town", "a village of pitched-roof houses"],
+    roads: &["a two-lane country road", "a straight road across open country", "a forest road"],
+    open: &["open farmland", "rolling wooded hills", "a wide river valley"],
+    airfields: &["a military airfield with hardened aircraft shelters"],
+    coast: &["a rocky coastline", "a grey harbour"],
+    weather: &["overcast", "haze", "a clear sky", "drifting smoke", "light rain"],
+};
+
+/// Where and when the war is, for the pictures.
+#[derive(Debug, Clone)]
+pub struct Setting {
+    /// Place, period and landscape in words an image model can draw. No
+    /// equipment: a list of hardware here ends up in every frame.
+    pub text: String,
+    pub era: Era,
+    pub land: &'static Land,
+}
+
+fn land_for(theatre: &str, rgw: bool) -> &'static Land {
+    if rgw {
+        return &LAND_GEORGIA;
+    }
+    match theatre {
+        "Caucasus" => &LAND_GEORGIA,
+        "Syria" => &LAND_LEVANT,
+        "Persian Gulf" | "Iraq" | "Sinai" | "Afghanistan" | "Nevada" => &LAND_DESERT,
+        "Normandy" => &LAND_NORMANDY,
+        _ => &LAND_TEMPERATE,
+    }
+}
 
 /// Where and when the war is, in words an image model can draw. Per instance:
-/// an explicit `news_image_setting` wins; then the scenario's own name (the
-/// 2008 Caucasus campaign is RGW2008), then the theatre the objectives sit in.
-pub fn campaign_setting(cfg: &InstanceCfg, theatre: &str) -> String {
-    if let Some(s) = cfg.news_image_setting.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        return s.to_string();
-    }
+/// an explicit `news_image_setting` wins (and then no period equipment is
+/// assumed); then the scenario's own name (the 2008 Caucasus campaign is
+/// RGW2008), then the theatre the objectives sit in.
+pub fn campaign_setting(cfg: &InstanceCfg, theatre: &str) -> Setting {
     let hay = [
         Some(cfg.id.as_str()),
         cfg.label.as_deref(),
@@ -399,27 +566,1034 @@ pub fn campaign_setting(cfg: &InstanceCfg, theatre: &str) -> String {
     .collect::<Vec<_>>()
     .join(" ")
     .to_lowercase();
-    if hay.contains("rgw") || hay.contains("2008") {
-        return "the August 2008 Russo-Georgian war in the Caucasus: green mountain \
-                valleys and villages of Georgia, late-2000s Soviet-pattern armour, \
-                helicopters and jets"
-            .to_string();
+    let rgw = hay.contains("rgw") || hay.contains("2008");
+    let land = land_for(theatre, rgw);
+    if let Some(s) = cfg.news_image_setting.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        return Setting { text: clip(s, SETTING_CHARS), era: Era::Custom, land };
     }
-    match theatre {
-        "Syria" => "a present-day war in Syria and the Levant: dry hills, desert \
-                    airbases and towns of the eastern Mediterranean, modern military \
-                    equipment"
-            .to_string(),
-        "Caucasus" => "a present-day war in the Caucasus: mountain valleys and the \
-                       Black Sea coast of Georgia, modern military equipment"
-            .to_string(),
-        "Normandy" => "Normandy in 1944: Second World War aircraft, armour and \
-                       hedgerow country"
-            .to_string(),
-        "" => "a present-day war: modern military equipment".to_string(),
-        t => format!("a present-day war in the {t} region: modern military equipment"),
+    let (text, era) = if rgw {
+        (
+            "Georgia in August 2008, the Russo-Georgian war: green valleys, maize fields \
+             and stone villages below the Caucasus mountains"
+                .to_string(),
+            Era::Georgia2008,
+        )
+    } else {
+        match theatre {
+            "Syria" => (
+                "a present-day war in Syria and the Levant: dry hills, olive groves, desert \
+                 airbases and flat-roofed towns of the eastern Mediterranean"
+                    .to_string(),
+                Era::Modern,
+            ),
+            "Caucasus" => (
+                "a present-day war in the Caucasus: mountain valleys and the Black Sea coast \
+                 of Georgia"
+                    .to_string(),
+                Era::Modern,
+            ),
+            "Normandy" => ("Normandy in 1944: hedgerow country and stone villages".to_string(), Era::Ww2),
+            "" => ("a present-day war".to_string(), Era::Modern),
+            t => (format!("a present-day war in the {t} region"), Era::Modern),
+        }
+    };
+    Setting { text, era, land }
+}
+
+// ── the equipment ────────────────────────────────────────────────────────────
+
+/// A job a vehicle does in a picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Role {
+    Tank,
+    Ifv,
+    Truck,
+    /// Strike / attack jet.
+    Jet,
+    Fighter,
+    /// Transport helicopter.
+    Thelo,
+    /// Attack helicopter.
+    Ahelo,
+    Sam,
+    Arty,
+    Ship,
+}
+
+impl Role {
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "tank" => Self::Tank,
+            "ifv" => Self::Ifv,
+            "truck" => Self::Truck,
+            "jet" => Self::Jet,
+            "fighter" => Self::Fighter,
+            "thelo" => Self::Thelo,
+            "ahelo" => Self::Ahelo,
+            "sam" => Self::Sam,
+            "arty" => Self::Arty,
+            "ship" => Self::Ship,
+            _ => return None,
+        })
     }
 }
+
+/// One side's period-correct kit, by role. Every entry ends in a countable
+/// noun, so a plural is the entry plus "s".
+struct Kit {
+    tank: &'static [&'static str],
+    ifv: &'static [&'static str],
+    truck: &'static [&'static str],
+    jet: &'static [&'static str],
+    fighter: &'static [&'static str],
+    thelo: &'static [&'static str],
+    ahelo: &'static [&'static str],
+    sam: &'static [&'static str],
+    arty: &'static [&'static str],
+    ship: &'static [&'static str],
+}
+
+impl Kit {
+    fn get(&self, r: Role) -> &'static [&'static str] {
+        match r {
+            Role::Tank => self.tank,
+            Role::Ifv => self.ifv,
+            Role::Truck => self.truck,
+            Role::Jet => self.jet,
+            Role::Fighter => self.fighter,
+            Role::Thelo => self.thelo,
+            Role::Ahelo => self.ahelo,
+            Role::Sam => self.sam,
+            Role::Arty => self.arty,
+            Role::Ship => self.ship,
+        }
+    }
+}
+
+const KIT_GEO_RU: Kit = Kit {
+    tank: &["T-72B main battle tank", "T-62M tank"],
+    ifv: &["BMP-2 infantry fighting vehicle", "BTR-80 armoured personnel carrier", "BMD-2 airborne fighting vehicle"],
+    truck: &["Ural-4320 army truck", "KamAZ army truck"],
+    jet: &["Su-25 attack jet", "Su-24 strike bomber"],
+    fighter: &["Su-27 fighter", "MiG-29 fighter"],
+    thelo: &["Mi-8 transport helicopter"],
+    ahelo: &["Mi-24 helicopter gunship"],
+    sam: &["Buk (SA-11) missile launcher", "Tor (SA-15) missile vehicle", "Osa (SA-8) missile vehicle"],
+    arty: &["BM-21 Grad rocket launcher", "2S3 Akatsiya self-propelled howitzer", "2S1 Gvozdika self-propelled howitzer"],
+    ship: &["Black Sea Fleet missile boat", "Russian navy patrol ship"],
+};
+
+const KIT_GEO_GE: Kit = Kit {
+    tank: &["T-72 main battle tank"],
+    ifv: &["BMP-2 infantry fighting vehicle", "BMP-1 infantry fighting vehicle", "BTR-80 armoured personnel carrier"],
+    truck: &["KrAZ army truck", "Ural-4320 army truck"],
+    jet: &["Su-25 attack jet"],
+    fighter: &["Su-25 attack jet"],
+    thelo: &["Mi-8 transport helicopter", "UH-1H Huey helicopter"],
+    ahelo: &["Mi-24 helicopter gunship"],
+    sam: &["Buk (SA-11) missile launcher", "Osa (SA-8) missile vehicle"],
+    arty: &["BM-21 Grad rocket launcher", "DANA self-propelled howitzer", "2S7 Pion self-propelled gun"],
+    ship: &["coastguard patrol boat"],
+};
+
+const KIT_WEST: Kit = Kit {
+    tank: &["M1A2 Abrams tank", "Leopard 2A4 tank"],
+    ifv: &["M2 Bradley fighting vehicle", "Stryker armoured vehicle", "M113 armoured personnel carrier"],
+    truck: &["HEMTT army truck", "M939 army truck"],
+    jet: &["A-10C attack jet", "F-16C fighter-bomber", "F/A-18C Hornet", "F-15E Strike Eagle"],
+    fighter: &["F-15C Eagle", "F-16C fighter"],
+    thelo: &["UH-60 Black Hawk helicopter", "CH-47 Chinook helicopter"],
+    ahelo: &["AH-64D Apache helicopter", "AH-1W Cobra helicopter"],
+    sam: &["Patriot missile launcher", "NASAMS missile launcher", "Hawk missile launcher"],
+    arty: &["M109 self-propelled howitzer", "M142 HIMARS rocket launcher", "M270 MLRS rocket launcher"],
+    ship: &["Arleigh Burke-class destroyer", "Oliver Hazard Perry-class frigate"],
+};
+
+const KIT_EAST: Kit = Kit {
+    tank: &["T-72B3 tank", "T-90A tank", "T-55 tank"],
+    ifv: &["BMP-2 infantry fighting vehicle", "BTR-82A armoured personnel carrier", "BMP-3 infantry fighting vehicle"],
+    truck: &["KamAZ army truck", "Ural-4320 army truck"],
+    jet: &["Su-25 attack jet", "Su-24 strike bomber", "Su-34 strike fighter"],
+    fighter: &["MiG-29 fighter", "Su-27 fighter", "Su-30 fighter"],
+    thelo: &["Mi-8 transport helicopter"],
+    ahelo: &["Mi-24 helicopter gunship", "Ka-52 attack helicopter", "Mi-28 attack helicopter"],
+    sam: &["Pantsir-S1 air-defence vehicle", "S-300 missile launcher", "Buk-M2 missile launcher", "Kub (SA-6) missile launcher"],
+    arty: &["BM-21 Grad rocket launcher", "2S19 Msta self-propelled howitzer", "D-30 towed howitzer"],
+    ship: &["missile corvette", "Russian navy frigate"],
+};
+
+const KIT_WW2_ALLIED: Kit = Kit {
+    tank: &["M4 Sherman tank", "Cromwell tank"],
+    ifv: &["M3 half-track", "Universal Carrier"],
+    truck: &["GMC CCKW army truck", "Bedford army truck"],
+    jet: &["P-47 Thunderbolt fighter-bomber", "Typhoon fighter-bomber"],
+    fighter: &["Spitfire fighter", "P-51 Mustang fighter"],
+    thelo: &["C-47 Dakota transport plane"],
+    ahelo: &["P-47 Thunderbolt fighter-bomber"],
+    sam: &["Bofors 40mm anti-aircraft gun"],
+    arty: &["M7 Priest self-propelled howitzer", "25-pounder field gun"],
+    ship: &["destroyer", "landing craft"],
+};
+
+const KIT_WW2_AXIS: Kit = Kit {
+    tank: &["Panzer IV tank", "Panther tank", "Tiger tank"],
+    ifv: &["Sd.Kfz. 251 half-track"],
+    truck: &["Opel Blitz army truck"],
+    jet: &["Fw 190 fighter-bomber"],
+    fighter: &["Bf 109 fighter", "Fw 190 fighter"],
+    thelo: &["Ju 52 transport plane"],
+    ahelo: &["Fw 190 fighter-bomber"],
+    sam: &["88mm Flak gun", "Flak 38 anti-aircraft gun"],
+    arty: &["Nebelwerfer rocket launcher", "Wespe self-propelled howitzer"],
+    ship: &["E-boat"],
+};
+
+const KIT_GENERIC: Kit = Kit {
+    tank: &["main battle tank"],
+    ifv: &["armoured personnel carrier", "infantry fighting vehicle"],
+    truck: &["military truck"],
+    jet: &["ground-attack jet"],
+    fighter: &["fighter jet"],
+    thelo: &["transport helicopter"],
+    ahelo: &["attack helicopter"],
+    sam: &["surface-to-air missile launcher"],
+    arty: &["self-propelled howitzer", "multiple rocket launcher"],
+    ship: &["warship"],
+};
+
+/// The kit one side fields. The faction's own name wins where it says who
+/// the side is; otherwise Blue and Red take the scenario's usual roles.
+fn kit_for(era: Era, side: &str, f: &Factions) -> &'static Kit {
+    let mut who = format!("{} {}", f.name(side), f.adj(side)).to_lowercase();
+    let members = if side == "Blue" { &f.blue_members } else { &f.red_members };
+    for m in members {
+        who.push(' ');
+        who.push_str(&m.to_lowercase());
+    }
+    let any = |ws: &[&str]| ws.iter().any(|w| who.contains(w));
+    let blue = side == "Blue";
+    match era {
+        Era::Georgia2008 => {
+            if any(&["russia"]) {
+                &KIT_GEO_RU
+            } else if any(&["georgia"]) || blue {
+                &KIT_GEO_GE
+            } else {
+                &KIT_GEO_RU
+            }
+        }
+        Era::Modern => {
+            if any(&["russia", "syria", "iran", "soviet"]) {
+                &KIT_EAST
+            } else if any(&["nato", "coalition", "united states", "america", "israel", "turkey", "jordan"]) || blue {
+                &KIT_WEST
+            } else {
+                &KIT_EAST
+            }
+        }
+        Era::Ww2 => {
+            if any(&["german", "axis"]) || !blue {
+                &KIT_WW2_AXIS
+            } else {
+                &KIT_WW2_ALLIED
+            }
+        }
+        Era::Custom => &KIT_GENERIC,
+    }
+}
+
+/// DCS type names (and the ways a dispatch writes them) to the real-world
+/// name an image model knows. More specific patterns first: the first match
+/// in a span wins.
+const TYPE_NAMES: &[(&[&str], &str, Role)] = &[
+    (&["t-72b"], "T-72B main battle tank", Role::Tank),
+    (&["t-72"], "T-72 main battle tank", Role::Tank),
+    (&["t-80"], "T-80 tank", Role::Tank),
+    (&["t-90"], "T-90 tank", Role::Tank),
+    (&["t-62"], "T-62 tank", Role::Tank),
+    (&["t-55"], "T-55 tank", Role::Tank),
+    (&["m1a2", "m-1 abrams", "abrams"], "M1A2 Abrams tank", Role::Tank),
+    (&["leopard"], "Leopard 2 tank", Role::Tank),
+    (&["merkava"], "Merkava tank", Role::Tank),
+    (&["bmp-1"], "BMP-1 infantry fighting vehicle", Role::Ifv),
+    (&["bmp-2"], "BMP-2 infantry fighting vehicle", Role::Ifv),
+    (&["bmp-3"], "BMP-3 infantry fighting vehicle", Role::Ifv),
+    (&["bmd"], "BMD airborne fighting vehicle", Role::Ifv),
+    (&["btr-80", "btr-82"], "BTR-80 armoured personnel carrier", Role::Ifv),
+    (&["mtlb", "mt-lb"], "MT-LB armoured tractor", Role::Ifv),
+    (&["bradley", "m-2 bradley"], "M2 Bradley fighting vehicle", Role::Ifv),
+    (&["m-113", "m113"], "M113 armoured personnel carrier", Role::Ifv),
+    (&["stryker", "m1126"], "Stryker armoured vehicle", Role::Ifv),
+    (&["lav-25"], "LAV-25 armoured vehicle", Role::Ifv),
+    (&["ural-4320", "ural"], "Ural-4320 army truck", Role::Truck),
+    (&["kamaz"], "KamAZ army truck", Role::Truck),
+    (&["hemtt"], "HEMTT army truck", Role::Truck),
+    (&["m939"], "M939 army truck", Role::Truck),
+    (&["su-25"], "Su-25 attack jet", Role::Jet),
+    (&["su-24"], "Su-24 strike bomber", Role::Jet),
+    (&["su-34"], "Su-34 strike fighter", Role::Jet),
+    (&["su-17", "su-22"], "Su-22 fighter-bomber", Role::Jet),
+    (&["a-10"], "A-10 attack jet", Role::Jet),
+    (&["f-15e"], "F-15E Strike Eagle", Role::Jet),
+    (&["fa-18", "f/a-18", "hornet"], "F/A-18C Hornet", Role::Jet),
+    (&["av8bna", "av-8b", "harrier"], "AV-8B Harrier jump jet", Role::Jet),
+    (&["tornado"], "Tornado strike jet", Role::Jet),
+    (&["tu-22"], "Tu-22M3 bomber", Role::Jet),
+    (&["jf-17"], "JF-17 fighter", Role::Fighter),
+    (&["su-27", "su-33"], "Su-27 fighter", Role::Fighter),
+    (&["su-30"], "Su-30 fighter", Role::Fighter),
+    (&["mig-21"], "MiG-21 fighter", Role::Fighter),
+    (&["mig-23"], "MiG-23 fighter", Role::Fighter),
+    (&["mig-29"], "MiG-29 fighter", Role::Fighter),
+    (&["mig-31"], "MiG-31 interceptor", Role::Fighter),
+    (&["f-16"], "F-16C fighter", Role::Fighter),
+    (&["f-15"], "F-15C Eagle", Role::Fighter),
+    (&["f-14"], "F-14 Tomcat", Role::Fighter),
+    (&["f-4"], "F-4 Phantom", Role::Fighter),
+    (&["m-2000", "mirage"], "Mirage 2000 fighter", Role::Fighter),
+    (&["mi-8", "mi-17"], "Mi-8 transport helicopter", Role::Thelo),
+    (&["uh-60", "black hawk"], "UH-60 Black Hawk helicopter", Role::Thelo),
+    (&["uh-1", "huey"], "UH-1 Huey helicopter", Role::Thelo),
+    (&["ch-47", "chinook"], "CH-47 Chinook helicopter", Role::Thelo),
+    (&["sa342", "gazelle"], "Gazelle light helicopter", Role::Thelo),
+    (&["mi-24", "hind"], "Mi-24 helicopter gunship", Role::Ahelo),
+    (&["ka-50"], "Ka-50 attack helicopter", Role::Ahelo),
+    (&["ka-52"], "Ka-52 attack helicopter", Role::Ahelo),
+    (&["mi-28"], "Mi-28 attack helicopter", Role::Ahelo),
+    (&["ah-64", "apache"], "AH-64 Apache helicopter", Role::Ahelo),
+    (&["oh-58", "kiowa"], "OH-58 Kiowa helicopter", Role::Ahelo),
+    (&["sa-11", "buk"], "Buk (SA-11) missile launcher", Role::Sam),
+    (&["sa-10", "s-300"], "S-300 missile launcher", Role::Sam),
+    (&["sa-15", "tor"], "Tor (SA-15) missile vehicle", Role::Sam),
+    (&["sa-8", "osa"], "Osa (SA-8) missile vehicle", Role::Sam),
+    (&["sa-6", "kub"], "Kub (SA-6) missile launcher", Role::Sam),
+    (&["sa-19", "tunguska"], "Tunguska air-defence vehicle", Role::Sam),
+    (&["sa-22", "pantsir"], "Pantsir-S1 air-defence vehicle", Role::Sam),
+    (&["sa-2", "s-75"], "S-75 (SA-2) missile launcher", Role::Sam),
+    (&["sa-3", "s-125"], "S-125 (SA-3) missile launcher", Role::Sam),
+    (&["patriot"], "Patriot missile launcher", Role::Sam),
+    (&["nasams"], "NASAMS missile launcher", Role::Sam),
+    (&["shilka", "zsu-23"], "ZSU-23-4 Shilka anti-aircraft vehicle", Role::Sam),
+    (&["zu-23"], "ZU-23 anti-aircraft gun", Role::Sam),
+    (&["gepard"], "Gepard anti-aircraft vehicle", Role::Sam),
+    (&["bm-21", "grad"], "BM-21 Grad rocket launcher", Role::Arty),
+    (&["bm-27", "uragan"], "BM-27 Uragan rocket launcher", Role::Arty),
+    (&["bm-30", "smerch"], "BM-30 Smerch rocket launcher", Role::Arty),
+    (&["2s19", "msta"], "2S19 Msta self-propelled howitzer", Role::Arty),
+    (&["2s3"], "2S3 Akatsiya self-propelled howitzer", Role::Arty),
+    (&["2s1"], "2S1 Gvozdika self-propelled howitzer", Role::Arty),
+    (&["m-109", "m109"], "M109 self-propelled howitzer", Role::Arty),
+    (&["mlrs", "m270"], "M270 MLRS rocket launcher", Role::Arty),
+    (&["himars"], "M142 HIMARS rocket launcher", Role::Arty),
+    (&["scud"], "Scud missile launcher", Role::Arty),
+    (&["arleigh", "burke"], "Arleigh Burke-class destroyer", Role::Ship),
+    (&["ticonderoga"], "Ticonderoga-class cruiser", Role::Ship),
+    (&["perry"], "Oliver Hazard Perry-class frigate", Role::Ship),
+    (&["moskva"], "Slava-class cruiser", Role::Ship),
+    (&["molniya"], "Molniya missile corvette", Role::Ship),
+];
+
+/// Does `hay` (lower case) mention `pat` as a word? The start must be a word
+/// boundary; so must the end, unless the pattern ends in a digit -- "su-25"
+/// matches "su-25t", but "tor" does not match "tornado".
+fn mentions(hay: &str, pat: &str) -> bool {
+    let mut from = 0;
+    while let Some(off) = hay[from..].find(pat) {
+        let i = from + off;
+        let j = i + pat.len();
+        let before_ok = hay[..i].chars().next_back().map_or(true, |c| !c.is_alphanumeric());
+        let after = hay[j..].chars().next();
+        let after_ok = match after {
+            None => true,
+            Some(c) if !c.is_alphanumeric() => true,
+            Some(c) => pat.ends_with(|p: char| p.is_ascii_digit()) && !c.is_ascii_digit(),
+        };
+        if before_ok && after_ok {
+            return true;
+        }
+        from = i + pat.len().max(1);
+        while !hay.is_char_boundary(from) {
+            from += 1;
+        }
+    }
+    false
+}
+
+/// The real equipment a (sanitised) story names, by role, first mention per
+/// role.
+fn named_kit(text: &str) -> Vec<(Role, &'static str)> {
+    let t = text.to_lowercase();
+    let mut out: Vec<(Role, &'static str)> = Vec::new();
+    for (pats, name, role) in TYPE_NAMES {
+        if out.iter().any(|(r, _)| r == role) {
+            continue;
+        }
+        if pats.iter().any(|p| mentions(&t, p)) {
+            out.push((*role, name));
+        }
+    }
+    out
+}
+
+// ── the scene ────────────────────────────────────────────────────────────────
+
+/// What a dispatch's picture is of, from the day's dominant story.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SceneKind {
+    Capture,
+    CaptureAirfield,
+    Contested,
+    Advance,
+    Opening,
+    Stalemate,
+    AirCombat,
+    Helicopters,
+    AirDefence,
+    Convoy,
+    Armour,
+    Artillery,
+    Naval,
+    Carrier,
+    Resupply,
+}
+
+/// Where the camera can sensibly be for a subject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Frame {
+    Ground,
+    Air,
+    Sea,
+}
+
+/// One way of picturing a kind of story. `{a:role}` is the acting side's
+/// kit, `{v:role}` the side on the receiving end, `+` makes it plural;
+/// `{town}`, `{road}`, `{open}`, `{airfield}`, `{coast}` come from the theatre.
+struct Variant(&'static str, Frame);
+
+use Frame::{Air as FA, Ground as FG, Sea as FS};
+
+fn variants(k: SceneKind) -> &'static [Variant] {
+    match k {
+        SceneKind::Capture => &[
+            Variant("{a:ifv+} moving in file down the main street of {town}, shattered windows and a collapsed roof, infantry spread out along the walls", FG),
+            Variant("a {a:tank} rolling past a burnt-out checkpoint at the entrance to {town}, black smoke rising from a building behind it", FG),
+            Variant("infantry dismounting from a {a:ifv} in the rubble-strewn square of {town}, small figures crouched in cover", FG),
+            Variant("a knocked-out {v:ifv} burning at the roadside as a {a:tank} pushes through drifting smoke into {town}", FG),
+        ],
+        SceneKind::CaptureAirfield => &[
+            Variant("{a:ifv+} crossing a cratered runway at {airfield}, a wrecked hangar smouldering in the distance", FG),
+            Variant("a {a:thelo} setting down beside a damaged control tower at {airfield}, rotor wash kicking up dust and grass", FG),
+            Variant("a {a:tank} taking up position at the end of the runway at {airfield}, smoke from a burning fuel store behind", FG),
+            Variant("a burnt-out {v:jet} in a shattered aircraft shelter at {airfield}, a {a:ifv} passing on the taxiway", FG),
+        ],
+        SceneKind::Contested => &[
+            Variant("smoke columns rising over the rooftops of {town} after days of fighting, a knocked-out {v:ifv} on the approach road", FG),
+            Variant("artillery shells bursting on the outskirts of {town}, seen across {open}", FG),
+            Variant("a {a:tank} firing from a tree line toward {town}, muzzle flash and a burst of dust", FG),
+            Variant("a pockmarked, half-collapsed street in {town}, a burnt car and a wrecked {v:ifv}, smoke hanging in the air", FG),
+        ],
+        SceneKind::Advance => &[
+            Variant("a long armoured column of {a:tank+} and {a:ifv+} advancing along {road}, well spaced, dust trailing behind", FG),
+            Variant("{a:ifv+} fording a shallow river at speed, spray thrown up, {open} beyond", FG),
+            Variant("a {a:tank} cresting a ridge above {open}, its tracks throwing up dirt", FG),
+            Variant("{a:ifv+} racing past an abandoned roadblock on {road}, a destroyed {v:tank} pushed into the ditch", FG),
+        ],
+        SceneKind::Opening => &[
+            Variant("the first night of the war: tracer fire and the flashes of explosions on the horizon over {town}", FG),
+            Variant("a {a:jet} taking off in full afterburner, heat haze over the runway at {airfield}", FG),
+            Variant("a column of {a:tank+} crossing {open} at first light, headlights still on", FG),
+            Variant("a {a:arty} firing the first salvo of the war, smoke and flame, {open} beyond", FG),
+        ],
+        SceneKind::Stalemate => &[
+            Variant("an empty sandbagged trench line on a ridge, {open} stretching away to a distant plume of smoke", FG),
+            Variant("a camouflaged {a:tank} dug into a hull-down position under netting at the edge of {open}", FG),
+            Variant("a deserted road into {town} blocked by concrete barriers and a burnt-out car, artillery smoke far off", FG),
+            Variant("a lone {a:arty} firing from a camouflaged position, the smoke of the shot hanging in the air", FG),
+            Variant("a shell-cratered no man's land across {open}, wrecked vehicles scattered between the lines", FG),
+        ],
+        SceneKind::AirCombat => &[
+            Variant("a {a:jet} banking hard at low level over {open}, vapour streaming off its wings", FA),
+            Variant("white contrails twisting high above {open}, a flare trail and a distant smoke puff where an aircraft was hit", FA),
+            Variant("a {a:jet} releasing a fan of flares as it pulls up over {open}", FA),
+            Variant("two {a:fighter+} climbing steeply in loose formation, afterburners glowing", FA),
+            Variant("the burning wreckage of a {v:jet} scattered across {open}, a black smoke column rising", FG),
+        ],
+        SceneKind::Helicopters => &[
+            Variant("a {a:ahelo} flying nap-of-the-earth along a river valley, rotor blur", FA),
+            Variant("a pair of {a:thelo+} crossing a ridgeline low over {open}, haze behind", FA),
+            Variant("the wreck of a downed {v:thelo} in {open}, its tail boom broken off, smoke curling up", FG),
+            Variant("a {a:ahelo} firing rockets toward a tree line, smoke trails streaking ahead", FA),
+        ],
+        SceneKind::AirDefence => &[
+            Variant("a burnt-out {v:sam} in a scorched field, its launch rails empty, black smoke drifting", FG),
+            Variant("a {v:sam} firing a missile, a bright exhaust trail climbing into the sky", FG),
+            Variant("a radar site on a hilltop torn apart by an air strike, fires still burning", FG),
+            Variant("a camouflaged {v:sam} under netting at the edge of {open}, an explosion rising behind a nearby hill", FG),
+        ],
+        SceneKind::Convoy => &[
+            Variant("a line of burnt-out {v:truck+} along {road}, cabs blackened, smoke still rising", FG),
+            Variant("a supply convoy of {v:truck+} caught in an air strike on {road}, the flash of an explosion and flying debris", FG),
+            Variant("a wrecked fuel tanker on its side beside {road}, a tall column of black smoke, other trucks scattered", FG),
+            Variant("the aftermath of an ambush on {road}: a burnt {v:truck} slewed across the lane, a damaged {v:ifv} beyond", FG),
+        ],
+        SceneKind::Armour => &[
+            Variant("a knocked-out {v:tank} with its turret blown off beside {road}, still smouldering", FG),
+            Variant("a burnt {v:ifv} in a roadside ditch at the edge of {town}, hatches open", FG),
+            Variant("a smoke column where a {v:tank} was hit in {open}, seen from far off", FG),
+            Variant("a {a:tank} firing, the muzzle blast kicking up dust, a burning {v:ifv} in the distance", FG),
+        ],
+        SceneKind::Artillery => &[
+            Variant("a {a:arty} firing, the muzzle flash lighting the ground around it", FG),
+            Variant("a ripple of rockets leaving a {a:arty}, smoke trails arcing into the sky", FG),
+            Variant("craters and smoke drifting across {open} after an artillery barrage", FG),
+            Variant("shell bursts walking across {open} toward {town}, seen from far off", FG),
+        ],
+        SceneKind::Naval => &[
+            Variant("a {v:ship} burning at sea, a thick smoke column over a grey swell", FS),
+            Variant("a {a:ship} under way at speed off {coast}, a big bow wave", FS),
+            Variant("a missile leaving the deck of a {a:ship} in a burst of smoke and flame", FS),
+        ],
+        SceneKind::Carrier => &[
+            Variant("a jet launching off the catapult of an aircraft carrier, steam trailing across the deck, deck crew small in the frame", FS),
+            Variant("an aircraft carrier under way on a calm sea, a jet on final approach behind it", FS),
+            Variant("a jet catching the arrestor wire on a carrier deck, smoke off its tyres", FS),
+        ],
+        SceneKind::Resupply => &[
+            Variant("a {a:thelo} unloading crates at a dusty landing zone, rotor wash raising a brownout cloud", FG),
+            Variant("{a:truck+} moving up {road} with supplies, well spaced, dust behind them", FG),
+            Variant("ammunition crates being unloaded from a {a:truck} at a camouflaged depot at the edge of {open}, the crew small and far off", FG),
+        ],
+    }
+}
+
+/// Camera position and framing, with the lens that goes with it.
+const SHOTS_GROUND: &[(&str, &str)] = &[
+    ("photographed from a hillside far away, telephoto compression and heat haze", "400mm telephoto lens"),
+    ("wide view from a helicopter door, looking down at an angle", "wide-angle lens"),
+    ("ground-level view from beside the road, low angle", "35mm lens"),
+    ("long-lens view across a valley, the subject small in the frame", "300mm telephoto lens"),
+    ("wide establishing shot under a big sky, the action small in the frame", "24mm lens"),
+    ("handheld frame taken on the move, slight motion blur", "35mm lens"),
+    ("tight telephoto framing, background compressed and soft", "200mm lens"),
+    ("high vantage point from a rooftop", "50mm lens"),
+];
+const SHOTS_AIR: &[(&str, &str)] = &[
+    ("photographed from the ground with a long telephoto lens, heat shimmer", "600mm telephoto lens"),
+    ("air-to-air view from a chase aircraft", "70-200mm lens"),
+    ("wide view with the aircraft small against a huge sky", "24mm lens"),
+    ("panning shot, the background streaked with motion blur", "300mm lens"),
+    ("seen from a ridge, looking down on the aircraft as it passes below", "200mm lens"),
+];
+const SHOTS_SEA: &[(&str, &str)] = &[
+    ("seen from far off across the water, telephoto compression", "400mm telephoto lens"),
+    ("aerial view from a helicopter", "wide-angle lens"),
+    ("low angle from a small boat, spray in the air", "35mm lens"),
+];
+
+/// Time of day. The last two are dark; they take the night weather.
+const LIGHT: &[&str] = &[
+    "at first light, a low sun raking across the ground",
+    "in harsh midday sun",
+    "late in the afternoon, long shadows",
+    "at dusk under a deep orange sky",
+    "under flat grey overcast light",
+    "at night, lit only by fires and flares",
+    "in the blue hour before dawn",
+];
+const NIGHT_WEATHER: &[&str] = &["smoke drifting through the firelight", "a clear dark sky", "low cloud lit from below"];
+
+/// How a dispatch will be pictured: subject, camera, light.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenePlan {
+    pub kind: SceneKind,
+    /// What is in the frame, with the equipment named.
+    pub subject: String,
+    /// Where the camera is and how the frame is composed.
+    pub shot: &'static str,
+    /// The lens, for the default photographic look.
+    pub lens: &'static str,
+    pub light: &'static str,
+    pub weather: &'static str,
+}
+
+/// A deterministic stream of choices. Seeded from the dispatch itself, so a
+/// retry of the same day pictures the same scene, while another server or
+/// another day lands somewhere else.
+struct Dice(u64);
+
+impl Dice {
+    fn new(parts: &[&str]) -> Self {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for p in parts {
+            for b in p.as_bytes() {
+                h ^= *b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            h ^= 0xff;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        Self(h)
+    }
+
+    /// splitmix64.
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    fn pick<'a, T>(&mut self, xs: &'a [T]) -> &'a T {
+        &xs[(self.next() % xs.len() as u64) as usize]
+    }
+}
+
+/// Headline words to the scene they call for. The writer composes its own
+/// headline, so this is the best single read of what the dispatch is about;
+/// specific phrases come before the general words they contain.
+const HEADLINE_CUES: &[(&str, SceneKind)] = &[
+    ("aircraft carrier", SceneKind::Carrier),
+    ("carrier group", SceneKind::Carrier),
+    ("carrier deck", SceneKind::Carrier),
+    ("changes hands again", SceneKind::Contested),
+    ("deadlock breaks", SceneKind::Advance),
+    ("breakthrough", SceneKind::Advance),
+    ("air defence", SceneKind::AirDefence),
+    ("air defense", SceneKind::AirDefence),
+    ("air-defence", SceneKind::AirDefence),
+    ("sam", SceneKind::AirDefence),
+    ("sams", SceneKind::AirDefence),
+    ("radar", SceneKind::AirDefence),
+    ("missile site", SceneKind::AirDefence),
+    ("convoy", SceneKind::Convoy),
+    ("supply line", SceneKind::Convoy),
+    ("supply lines", SceneKind::Convoy),
+    ("logistics", SceneKind::Convoy),
+    ("rear", SceneKind::Convoy),
+    ("depot", SceneKind::Convoy),
+    ("ambush", SceneKind::Convoy),
+    ("trucks", SceneKind::Convoy),
+    ("resupply", SceneKind::Resupply),
+    ("airlift", SceneKind::Resupply),
+    ("reinforcements", SceneKind::Resupply),
+    ("helicopter", SceneKind::Helicopters),
+    ("helicopters", SceneKind::Helicopters),
+    ("helos", SceneKind::Helicopters),
+    ("gunships", SceneKind::Helicopters),
+    ("warship", SceneKind::Naval),
+    ("navy", SceneKind::Naval),
+    ("naval", SceneKind::Naval),
+    ("fleet", SceneKind::Naval),
+    ("at sea", SceneKind::Naval),
+    ("harbour", SceneKind::Naval),
+    ("war begins", SceneKind::Opening),
+    ("campaign opens", SceneKind::Opening),
+    ("day one", SceneKind::Opening),
+    ("opening", SceneKind::Opening),
+    ("stalemate", SceneKind::Stalemate),
+    ("deadlock", SceneKind::Stalemate),
+    ("line holds", SceneKind::Stalemate),
+    ("does not move", SceneKind::Stalemate),
+    ("static", SceneKind::Stalemate),
+    ("no change", SceneKind::Stalemate),
+    ("no movement", SceneKind::Stalemate),
+    ("quiet", SceneKind::Stalemate),
+    ("dug in", SceneKind::Stalemate),
+    ("in the air", SceneKind::AirCombat),
+    ("air war", SceneKind::AirCombat),
+    ("air battle", SceneKind::AirCombat),
+    ("skies", SceneKind::AirCombat),
+    ("sky", SceneKind::AirCombat),
+    ("dogfight", SceneKind::AirCombat),
+    ("jets", SceneKind::AirCombat),
+    ("shot down", SceneKind::AirCombat),
+    ("aircraft", SceneKind::AirCombat),
+    ("pilots", SceneKind::AirCombat),
+    ("airfield", SceneKind::CaptureAirfield),
+    ("airbase", SceneKind::CaptureAirfield),
+    ("air base", SceneKind::CaptureAirfield),
+    ("airport", SceneKind::CaptureAirfield),
+    ("advance", SceneKind::Advance),
+    ("advances", SceneKind::Advance),
+    ("offensive", SceneKind::Advance),
+    ("moves into", SceneKind::Advance),
+    ("push", SceneKind::Advance),
+    ("pushes", SceneKind::Advance),
+    ("sweep", SceneKind::Advance),
+    ("breaks", SceneKind::Advance),
+    ("falls", SceneKind::Capture),
+    ("fall of", SceneKind::Capture),
+    ("taken", SceneKind::Capture),
+    ("takes", SceneKind::Capture),
+    ("captures", SceneKind::Capture),
+    ("captured", SceneKind::Capture),
+    ("seize", SceneKind::Capture),
+    ("seizes", SceneKind::Capture),
+    ("retake", SceneKind::Capture),
+    ("retakes", SceneKind::Capture),
+    ("changes hands", SceneKind::Capture),
+    ("first ground", SceneKind::Capture),
+    ("artillery", SceneKind::Artillery),
+    ("barrage", SceneKind::Artillery),
+    ("shelling", SceneKind::Artillery),
+    ("guns", SceneKind::Artillery),
+    ("rockets", SceneKind::Artillery),
+    ("tank", SceneKind::Armour),
+    ("tanks", SceneKind::Armour),
+    ("armour", SceneKind::Armour),
+    ("armor", SceneKind::Armour),
+    ("pressure", SceneKind::Contested),
+    ("approaches", SceneKind::Contested),
+    ("battle for", SceneKind::Contested),
+    ("direction", SceneKind::Contested),
+    ("fighting", SceneKind::Contested),
+    ("siege", SceneKind::Contested),
+];
+
+/// The scene an angle calls for; `None` for the tallies and standing items,
+/// which are pictured by what the losses were.
+fn angle_scene(angle: &str) -> Option<SceneKind> {
+    Some(match angle {
+        "opening_day" | "opening_line" => SceneKind::Opening,
+        "objective_taken" | "objective_taken_by" | "first_loss" => SceneKind::Capture,
+        "objective_traded" | "pressure" | "axis_activity" => SceneKind::Contested,
+        "streak" | "front_broken" | "country_sector" => SceneKind::Advance,
+        "front_stalled" | "static_front" | "quiet" => SceneKind::Stalemate,
+        "sead" => SceneKind::AirDefence,
+        "logistics_struck" => SceneKind::Convoy,
+        "air_war" | "air_war_lopsided" | "pilot_standout" | "top_gun" | "weapon_of_the_day" => {
+            SceneKind::AirCombat
+        }
+        _ => return None,
+    })
+}
+
+/// Angles whose `side` is the one on the receiving end.
+fn side_is_victim(angle: &str) -> bool {
+    matches!(angle, "first_loss" | "sead" | "logistics_struck" | "pressure")
+}
+
+/// Loss category (as the tally labels it) to the scene of its aftermath.
+fn loss_scene(cat: &str) -> SceneKind {
+    match cat {
+        "AIRCRAFT" => SceneKind::AirCombat,
+        "HELO" => SceneKind::Helicopters,
+        "NAVAL" => SceneKind::Naval,
+        "AIR DEF" | "RADAR" => SceneKind::AirDefence,
+        "ARTY" => SceneKind::Artillery,
+        "ARMOR" | "APC" => SceneKind::Armour,
+        "LOGISTICS" => SceneKind::Convoy,
+        _ => SceneKind::Contested,
+    }
+}
+
+/// The loss category that dominated the day, and the side that took most of
+/// it.
+fn dominant_loss(d: &NewsDigest) -> Option<(&str, &'static str)> {
+    d.facts
+        .losses
+        .iter()
+        .filter(|(_, t)| t.blue + t.red > 0)
+        .max_by_key(|(_, t)| t.blue + t.red)
+        .map(|(c, t)| (c.as_str(), if t.blue >= t.red { "Blue" } else { "Red" }))
+}
+
+fn other(side: &str) -> &'static str {
+    if side == "Blue" {
+        "Red"
+    } else {
+        "Blue"
+    }
+}
+
+/// "Blue" / "Red" for a side as a dispatch names it.
+fn side_key(d: &NewsDigest, name: &str) -> Option<&'static str> {
+    let n = name.trim();
+    let f = &d.factions;
+    if n.eq_ignore_ascii_case(&f.blue) || n.eq_ignore_ascii_case(&f.blue_adj) || n.eq_ignore_ascii_case("Blue") {
+        Some("Blue")
+    } else if n.eq_ignore_ascii_case(&f.red) || n.eq_ignore_ascii_case(&f.red_adj) || n.eq_ignore_ascii_case("Red") {
+        Some("Red")
+    } else {
+        None
+    }
+}
+
+/// Does `hay` (lower case) contain `cue` as whole words?
+fn has_words(hay: &str, cue: &str) -> bool {
+    let mut from = 0;
+    while let Some(off) = hay[from..].find(cue) {
+        let i = from + off;
+        let j = i + cue.len();
+        let before = hay[..i].chars().next_back().map_or(true, |c| !c.is_alphanumeric());
+        let after = hay[j..].chars().next().map_or(true, |c| !c.is_alphanumeric());
+        if before && after {
+            return true;
+        }
+        from = j;
+        while !hay.is_char_boundary(from) {
+            from += 1;
+        }
+    }
+    false
+}
+
+fn looks_like_airfield(s: &str) -> bool {
+    let s = s.to_lowercase();
+    ["airfield", "airbase", "air base", "airport", "aerodrome", "heliport"].iter().any(|w| s.contains(w))
+        || has_words(&s, "ab")
+}
+
+/// A subject that is a place worth naming in the picture: short, no digits
+/// (those are grid squares and FOB numbers, not towns).
+fn nameable_place(s: &str) -> Option<String> {
+    let s = s.trim();
+    (s.chars().count() >= 3
+        && s.chars().count() <= 32
+        && !s.chars().any(|c| c.is_ascii_digit())
+        && !s.starts_with("the "))
+        .then(|| s.to_string())
+}
+
+/// "a" before a word said with a vowel sound becomes "an". Equipment names
+/// start with letters said as letters ("an M1A2", "an F-16C", "a BMP-2").
+fn fix_articles(s: &str) -> String {
+    fn wants_an(w: &str) -> bool {
+        let mut cs = w.chars();
+        let Some(c0) = cs.next() else { return false };
+        let c1 = cs.next();
+        if ["HEMTT", "NASAMS"].iter().any(|x| w.starts_with(x)) {
+            return false;
+        }
+        let spelled = c0.is_ascii_uppercase()
+            && c1.map_or(true, |c| c == '-' || c.is_ascii_digit() || c.is_ascii_uppercase());
+        if spelled {
+            return "AEFHILMNORSX".contains(c0);
+        }
+        let l = c0.to_ascii_lowercase();
+        "aeio".contains(l) || (l == 'u' && w.to_lowercase().starts_with("un"))
+    }
+    let words: Vec<&str> = s.split(' ').collect();
+    let mut out = String::with_capacity(s.len() + 8);
+    for (i, w) in words.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let next = words.get(i + 1).copied().unwrap_or("");
+        match *w {
+            "a" if wants_an(next) => out.push_str("an"),
+            "A" if wants_an(next) => out.push_str("An"),
+            _ => out.push_str(w),
+        }
+    }
+    out
+}
+
+/// Fill a variant's placeholders.
+#[allow(clippy::too_many_arguments)]
+fn fill_scene(
+    tpl: &str,
+    dice: &mut Dice,
+    setting: &Setting,
+    actor: &Kit,
+    victim: &Kit,
+    named: &[(Role, &'static str)],
+    named_victim: bool,
+    place: Option<&str>,
+) -> String {
+    let land = setting.land;
+    let mut used: Vec<Role> = Vec::new();
+    let mut out = String::with_capacity(tpl.len() + 64);
+    let mut rest = tpl;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let Some(close) = rest[open..].find('}') else {
+            out.push_str(&rest[open..]);
+            rest = "";
+            break;
+        };
+        let key = &rest[open + 1..open + close];
+        rest = &rest[open + close + 1..];
+        let with_place = |desc: &str| match place {
+            Some(p) => format!("{p}, {desc}"),
+            None => desc.to_string(),
+        };
+        let text = match key {
+            "town" => with_place(*dice.pick(land.towns)),
+            "airfield" => with_place(*dice.pick(land.airfields)),
+            "road" => dice.pick(land.roads).to_string(),
+            "open" => dice.pick(land.open).to_string(),
+            "coast" => dice.pick(land.coast).to_string(),
+            k => {
+                let (who, role) = k.split_once(':').unwrap_or(("a", k));
+                let plural = role.ends_with('+');
+                let role_name = role.trim_end_matches('+');
+                match Role::parse(role_name) {
+                    Some(r) => {
+                        // The story's own equipment first, once, on the side
+                        // the story is about; then the side's period kit.
+                        let name = match named.iter().find(|(nr, _)| *nr == r) {
+                            Some((_, n)) if !used.contains(&r) && (who == "v") == named_victim => {
+                                used.push(r);
+                                *n
+                            }
+                            _ => *dice.pick((if who == "v" { victim } else { actor }).get(r)),
+                        };
+                        if plural {
+                            format!("{name}s")
+                        } else {
+                            name.to_string()
+                        }
+                    }
+                    None => String::new(),
+                }
+            }
+        };
+        out.push_str(&text);
+    }
+    out.push_str(rest);
+    fix_articles(&out)
+}
+
+/// Decide what a dispatch's picture shows. Deterministic in (instance, day,
+/// headline): the same dispatch always plans the same scene; another server
+/// or another day, a different one.
+pub fn plan_scene(d: &NewsDigest, instance: &str, setting: &Setting) -> ScenePlan {
+    let names = private_names(d);
+    let headline = sanitise(&d.headline, &names).to_lowercase();
+    // Place names are not cues: "SAM RIDGE FALLS" is a capture, not an
+    // air-defence story.
+    let headline_cues = d
+        .items
+        .iter()
+        .filter(|it| {
+            matches!(
+                it.angle.as_str(),
+                "objective_taken"
+                    | "objective_taken_by"
+                    | "objective_traded"
+                    | "pressure"
+                    | "axis_activity"
+                    | "country_sector"
+            )
+        })
+        .fold(headline.clone(), |h, it| {
+            if it.subject.trim().chars().count() >= 3 {
+                replace_ci(&h, it.subject.trim(), " ")
+            } else {
+                h
+            }
+        });
+    let mut dice = Dice::new(&[instance, &d.day, &d.headline]);
+
+    // The kind: the headline if it says, else the lead angle, else the day's
+    // losses.
+    let lead = d.items.iter().find(|it| angle_scene(&it.angle).is_some());
+    let top_is_tally = d.items.first().map_or(true, |it| angle_scene(&it.angle).is_none());
+    let from_headline = HEADLINE_CUES.iter().find(|(cue, _)| has_words(&headline_cues, cue)).map(|(_, k)| *k);
+    let loss = dominant_loss(d);
+    let mut kind = match (from_headline, lead) {
+        (Some(k), _) => k,
+        (None, Some(it)) if !top_is_tally => angle_scene(&it.angle).unwrap(),
+        (None, _) => match loss {
+            Some((cat, _)) => loss_scene(cat),
+            None => lead.and_then(|it| angle_scene(&it.angle)).unwrap_or(SceneKind::Stalemate),
+        },
+    };
+    // Which item the picture is about, for its place and its sides.
+    let about = d
+        .items
+        .iter()
+        .find(|it| angle_scene(&it.angle).map_or(false, |k| k == kind || (kind == SceneKind::CaptureAirfield && k == SceneKind::Capture)))
+        .or(lead);
+    let place = about
+        .filter(|it| {
+            matches!(
+                it.angle.as_str(),
+                "objective_taken" | "objective_taken_by" | "objective_traded" | "pressure" | "axis_activity"
+            )
+        })
+        .and_then(|it| nameable_place(&sanitise(&it.subject, &names)));
+    if kind == SceneKind::Capture && place.as_deref().map_or(false, looks_like_airfield) {
+        kind = SceneKind::CaptureAirfield;
+    }
+    // A carrier is a present-day story; anywhere else it is a sea story.
+    if kind == SceneKind::Carrier && !matches!(setting.era, Era::Modern | Era::Custom) {
+        kind = SceneKind::Naval;
+    }
+
+    // Who is acting and who is on the receiving end.
+    let from_item = about.and_then(|it| {
+        let s = side_key(d, it.vars.get("side")?)?;
+        Some(if side_is_victim(&it.angle) { other(s) } else { s })
+    });
+    let actor = match (from_item, loss) {
+        (Some(s), _) => s,
+        (None, Some((_, loser))) => other(loser),
+        (None, None) => {
+            if dice.next() % 2 == 0 {
+                "Blue"
+            } else {
+                "Red"
+            }
+        }
+    };
+    let actor_kit = kit_for(setting.era, actor, &d.factions);
+    let victim_kit = kit_for(setting.era, other(actor), &d.factions);
+
+    // The story's own equipment, from everything it says (names stripped).
+    let mut said = sanitise(&d.headline, &names);
+    for p in &d.body {
+        said.push(' ');
+        said.push_str(&sanitise(p, &names));
+    }
+    for it in &d.items {
+        said.push(' ');
+        said.push_str(&sanitise(&it.text, &names));
+    }
+    let named = named_kit(&said);
+
+    let variant = dice.pick(variants(kind));
+    // In a story about losses the hardware it names is what was lost; in any
+    // other, what did the work.
+    let named_victim = matches!(
+        kind,
+        SceneKind::AirDefence | SceneKind::Convoy | SceneKind::Armour | SceneKind::Naval
+    );
+    let subject = fill_scene(
+        variant.0,
+        &mut dice,
+        setting,
+        actor_kit,
+        victim_kit,
+        &named,
+        named_victim,
+        place.as_deref(),
+    );
+    let (shot, lens) = *dice.pick(match variant.1 {
+        Frame::Ground => SHOTS_GROUND,
+        Frame::Air => SHOTS_AIR,
+        Frame::Sea => SHOTS_SEA,
+    });
+    // A subject that names its own time of day keeps it.
+    let li = (dice.next() % LIGHT.len() as u64) as usize;
+    let light = if variant.0.contains("night") {
+        LIGHT[5]
+    } else if variant.0.contains("first light") {
+        LIGHT[0]
+    } else {
+        LIGHT[li]
+    };
+    let weather = if light.contains("night") {
+        *dice.pick(NIGHT_WEATHER)
+    } else {
+        *dice.pick(setting.land.weather)
+    };
+    ScenePlan { kind, subject, shot, lens, light, weather }
+}
+
+// ── the prompt ───────────────────────────────────────────────────────────────
 
 /// Everyone the digest names who is a private individual -- the pilots.
 fn private_names(d: &NewsDigest) -> Vec<String> {
@@ -429,7 +1603,7 @@ fn private_names(d: &NewsDigest) -> Vec<String> {
         .flat_map(|it| {
             let mut v: Vec<String> =
                 it.vars.iter().filter(|(k, _)| k.contains("pilot")).map(|(_, v)| v.clone()).collect();
-            if it.angle.contains("pilot") {
+            if it.angle.contains("pilot") || it.angle == "top_gun" {
                 v.push(it.subject.clone());
             }
             v
@@ -508,35 +1682,87 @@ fn clip(s: &str, max: usize) -> String {
     }
 }
 
-/// The prompt for one dispatch: the story (sanitised), the setting, the look,
-/// and the rules.
-pub fn build_prompt(d: &NewsDigest, setting: &str, style: Option<&str>) -> String {
+fn capitalise(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
+}
+
+/// What makes equipment period-correct, said once.
+fn era_clause(era: Era) -> &'static str {
+    match era {
+        Era::Georgia2008 => {
+            " All military equipment is authentic August 2008 Russian and Georgian hardware, \
+             exactly as it really looked."
+        }
+        Era::Modern => " All military equipment is real, in-service hardware, exactly as it really looks.",
+        Era::Ww2 => " All equipment is authentic 1944 hardware.",
+        Era::Custom => "",
+    }
+}
+
+/// The prompt for one dispatch: a planned scene (subject, camera, light),
+/// the setting, a line of the story (sanitised), the look, what to avoid and
+/// the rules.
+pub fn build_prompt(d: &NewsDigest, instance: &str, setting: &Setting, style: Option<&str>) -> String {
+    let plan = plan_scene(d, instance, setting);
     let names = private_names(d);
-    let headline = sanitise(&d.headline, &names);
+    // The headline is upper case wire style; a model reads that as text to
+    // render. Sentence case it.
+    let mut headline = sanitise(&d.headline, &names).to_lowercase();
+    // ... but keep the place and side names proper nouns.
+    let proper = d
+        .items
+        .iter()
+        .filter(|it| !it.angle.contains("pilot") && it.angle != "top_gun" && !it.subject.starts_with("the "))
+        .map(|it| it.subject.as_str())
+        .chain([d.factions.blue.as_str(), d.factions.red.as_str(), d.factions.blue_adj.as_str(), d.factions.red_adj.as_str()]);
+    for p in proper {
+        let p = p.trim();
+        if p.chars().count() >= 3 && p.chars().next().map_or(false, char::is_uppercase) {
+            headline = replace_ci(&headline, p, p);
+        }
+    }
+    let headline = capitalise(&headline);
     let first = d
         .body
         .first()
         .cloned()
         .or_else(|| d.items.first().map(|i| i.text.clone()))
         .unwrap_or_default();
-    let story = clip(&sanitise(&first, &names), STORY_CHARS);
-    // The headline is upper case wire style; a model reads that as text to
-    // render. Sentence case it.
-    let headline = {
-        let lower = headline.to_lowercase();
-        let mut c = lower.chars();
-        match c.next() {
-            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-            None => String::new(),
-        }
+    let style = style.map(str::trim).filter(|s| !s.is_empty()).map(|s| clip(s, STYLE_CHARS));
+    let look = match &style {
+        Some(s) => format!("Style: {s}"),
+        None => format!(
+            "Style: unstaged news wire photograph, photojournalism, shot on a {}, natural light, \
+             film grain, muted colours, real-world scale and detail. Avoid: 3D render, CGI, video game \
+             graphics, illustration, painting, concept art, toy-like or miniature-looking vehicles, \
+             oversaturated colour, invented or fantasy vehicles.",
+            plan.lens
+        ),
     };
-    let style = style.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(DEFAULT_STYLE);
-    let mut p = format!("A news photograph illustrating this war report. Story: {headline}.");
-    if !story.is_empty() {
+    let head = format!(
+        "A news photograph: {}. {}, {}, {}. Setting: {}.{} Report: {headline}.",
+        plan.subject,
+        capitalise(plan.shot),
+        plan.light,
+        plan.weather,
+        setting.text,
+        era_clause(setting.era),
+    );
+    let tail = format!(" {look} Composition: {COMPOSITION} {RULES}");
+    // The story gets whatever room is left, so the rules at the end are never
+    // what a length cap cuts.
+    let room = PROMPT_MAX.saturating_sub(head.chars().count() + tail.chars().count() + 1);
+    let story = clip(&sanitise(&first, &names), STORY_CHARS.min(room.saturating_sub(3)));
+    let mut p = head;
+    if !story.is_empty() && room > 40 {
         p.push(' ');
         p.push_str(&story);
     }
-    p.push_str(&format!(" Setting: {setting}. Style: {style} {RULES}"));
+    p.push_str(&tail);
     p
 }
 
@@ -984,7 +2210,7 @@ pub fn illustrate(
         meta.next_try = None;
     }
     let style = inst.news_image_style.as_deref().or(cfg.style.as_deref());
-    let prompt = build_prompt(d, &campaign_setting(inst, &d.facts.theatre), style);
+    let prompt = build_prompt(d, &inst.id, &campaign_setting(inst, &d.facts.theatre), style);
     match generate_with_fallback(cfg, &prompt) {
         Ok((bytes, drawn_by)) => {
             count_call(db, &inst.id, &today)?;
@@ -1142,6 +2368,64 @@ mod tests {
         }
     }
 
+    fn item(angle: &str, subject: &str, weight: u8, vars: &[(&str, &str)]) -> NewsItem {
+        NewsItem {
+            angle: angle.into(),
+            subject: subject.into(),
+            weight,
+            vars: vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            text: format!("{subject}: {angle}."),
+        }
+    }
+
+    fn story(day: &str, headline: &str, items: Vec<NewsItem>, theatre: &str, factions: Factions) -> NewsDigest {
+        NewsDigest {
+            day: day.into(),
+            generated: Utc::now(),
+            round: 1,
+            headline: headline.into(),
+            body: vec![],
+            written_by: "templates".into(),
+            items,
+            facts: DigestFacts { theatre: theatre.into(), ..Default::default() },
+            factions,
+            facts_hash: 0,
+            final_: true,
+        }
+    }
+
+    fn rgw() -> Setting {
+        campaign_setting(&inst(serde_json::json!({"id": "vs2", "engine_config": "C:\\x\\RGW2008_CFG"})), "Caucasus")
+    }
+
+    fn syria() -> Setting {
+        campaign_setting(&inst(serde_json::json!({"id": "vs1", "engine_config": "C:\\x\\ODFv2_CFG"})), "Syria")
+    }
+
+    fn georgia_russia() -> Factions {
+        Factions::new(Some("Georgia"), Some("Russia"), Some("Georgian"), Some("Russian"))
+    }
+
+    fn coalition_syria() -> Factions {
+        Factions::new(Some("the Coalition"), Some("Syria"), Some("coalition"), Some("Syrian"))
+    }
+
+    fn capture(day: &str, town: &str, side: &str, f: Factions, theatre: &str) -> NewsDigest {
+        story(
+            day,
+            &format!("{} FALLS", town.to_uppercase()),
+            vec![item("objective_taken", town, 55, &[("side", side), ("side_adj", side)])],
+            theatre,
+            f,
+        )
+    }
+
+    /// The part of a prompt that describes what to draw -- everything before
+    /// the composition guidance, which names what to avoid.
+    fn positive(p: &str) -> &str {
+        p.split(" Composition:").next().unwrap()
+    }
+
     #[test]
     fn pilot_names_and_callsigns_never_reach_the_prompt() {
         let d = digest(
@@ -1149,7 +2433,7 @@ mod tests {
             &["Viper 1-1 | Bob, flying as [JTF] \"Hammer\", shot down four Russian jets near Gori (callsign Hammer 2)."],
             Some("Viper 1-1 | Bob"),
         );
-        let p = build_prompt(&d, "somewhere", None);
+        let p = build_prompt(&d, "vs2", &rgw(), None);
         let lp = p.to_lowercase();
         assert!(!lp.contains("bob"), "{p}");
         assert!(!lp.contains("viper"), "{p}");
@@ -1161,31 +2445,246 @@ mod tests {
     }
 
     #[test]
+    fn a_named_capture_keeps_the_place_and_loses_the_pilot() {
+        let mut d = story(
+            "2026-09-20",
+            "GORI FALLS",
+            vec![item(
+                "objective_taken_by",
+                "Gori",
+                60,
+                &[("side", "Russia"), ("side_adj", "Russian"), ("pilot", "Wolf 2 | Alice")],
+            )],
+            "Caucasus",
+            georgia_russia(),
+        );
+        d.body = vec!["Wolf 2 | Alice led the Russian push into Gori.".into()];
+        for inst in ["vs1", "vs2", "vs3"] {
+            let plan = plan_scene(&d, inst, &rgw());
+            assert!(matches!(plan.kind, SceneKind::Capture), "{plan:?}");
+            let p = build_prompt(&d, inst, &rgw(), None);
+            assert!(!p.to_lowercase().contains("alice") && !p.contains("Wolf"), "{p}");
+            assert!(plan.subject.contains("Gori"), "{plan:?}");
+        }
+    }
+
+    #[test]
     fn story_is_clipped() {
         let long = "word ".repeat(400);
         let d = digest("THE LINE HOLDS", &[&long], None);
-        let p = build_prompt(&d, "x", None);
-        assert!(p.len() < STORY_CHARS + 1200, "{}", p.len());
+        let p = build_prompt(&d, "x", &rgw(), None);
+        assert!(p.chars().count() <= PROMPT_MAX, "{}", p.len());
+        // Even with the longest operator text, the rules survive the cap.
+        let setting = Setting { text: "x ".repeat(400), ..syria() };
+        let setting = Setting { text: clip(&setting.text, SETTING_CHARS), ..setting };
+        let style = "y ".repeat(600);
+        let p = build_prompt(&d, "x", &setting, Some(&style));
+        assert!(p.chars().count() <= PROMPT_MAX, "{}", p.chars().count());
+        assert!(p.ends_with(RULES), "{p}");
+        // And the whole thing is a sane Pollinations URL.
+        let c = cfg(ImageArgs { provider: Some("pollinations".into()), ..Default::default() });
+        assert!(c.pollinations_url(&p, 1).len() < 8000);
     }
 
     #[test]
     fn style_override_replaces_the_look_not_the_rules() {
         let d = digest("GORI FALLS", &["Gori fell."], None);
-        let p = build_prompt(&d, "x", Some("Oil painting."));
-        assert!(p.contains("Oil painting.") && !p.contains("35mm"));
+        let p = build_prompt(&d, "x", &rgw(), Some("Oil painting."));
+        assert!(p.contains("Oil painting.") && !p.contains("35mm") && !p.contains("CGI"));
         assert!(p.contains("No gore"));
+        assert!(p.contains(COMPOSITION));
+        // The default look is a wire photo and says what it is not.
+        let p = build_prompt(&d, "x", &rgw(), None);
+        for w in ["photojournalism", "film grain", "muted colours", "natural light", "3D render", "CGI", "video game", "painting", "toy-like", "oversaturated"] {
+            assert!(p.contains(w), "{w} missing: {p}");
+        }
     }
 
     #[test]
     fn setting_comes_from_the_scenario() {
-        let rgw = inst(serde_json::json!({"id": "vs2", "engine_config": "C:\\x\\RGW2008_CFG"}));
-        assert!(campaign_setting(&rgw, "Caucasus").contains("2008"));
-        let odf = inst(serde_json::json!({"id": "vs1", "engine_config": "C:\\x\\ODFv2_CFG"}));
-        assert!(campaign_setting(&odf, "Syria").contains("Syria"));
+        let r = rgw();
+        assert!(r.text.contains("2008") && r.era == Era::Georgia2008);
+        let s = syria();
+        assert!(s.text.contains("Syria") && s.era == Era::Modern);
         let plain = inst(serde_json::json!({"id": "vs3"}));
-        assert!(campaign_setting(&plain, "").contains("present-day"));
+        assert!(campaign_setting(&plain, "").text.contains("present-day"));
         let over = inst(serde_json::json!({"id": "vs1", "news_image_setting": "Falklands 1982"}));
-        assert_eq!(campaign_setting(&over, "Syria"), "Falklands 1982");
+        let o = campaign_setting(&over, "Syria");
+        assert_eq!((o.text.as_str(), o.era), ("Falklands 1982", Era::Custom));
+        // No equipment list in the setting: that is what put tanks and two
+        // helicopters in every picture.
+        for t in [&r.text, &s.text] {
+            assert!(!t.contains("helicopter") && !t.contains("armour") && !t.contains("jets"), "{t}");
+        }
+    }
+
+    #[test]
+    fn the_same_dispatch_plans_the_same_scene() {
+        let d = capture("2026-09-21", "Gori", "Russia", georgia_russia(), "Caucasus");
+        assert_eq!(plan_scene(&d, "vs2", &rgw()), plan_scene(&d, "vs2", &rgw()));
+        assert_eq!(build_prompt(&d, "vs2", &rgw(), None), build_prompt(&d, "vs2", &rgw(), None));
+    }
+
+    #[test]
+    fn servers_days_and_headlines_get_different_scenes() {
+        let days: Vec<String> = (1..=12).map(|n| format!("2026-09-{n:02}")).collect();
+        let mut all = HashSet::new();
+        let mut differ_across_servers = 0;
+        for day in &days {
+            let a = plan_scene(&capture(day, "Gori", "Russia", georgia_russia(), "Caucasus"), "vs1", &rgw());
+            let b = plan_scene(&capture(day, "Gori", "Russia", georgia_russia(), "Caucasus"), "vs2", &rgw());
+            if a != b {
+                differ_across_servers += 1;
+            }
+            all.insert(format!("{} | {} | {}", a.subject, a.shot, a.light));
+            all.insert(format!("{} | {} | {}", b.subject, b.shot, b.light));
+        }
+        assert!(differ_across_servers >= 10, "{differ_across_servers}");
+        assert!(all.len() >= 18, "only {} distinct scenes of 24", all.len());
+        // Same server and day, different story.
+        let d1 = capture("2026-09-21", "Gori", "Russia", georgia_russia(), "Caucasus");
+        let d2 = capture("2026-09-21", "Tskhinvali", "Russia", georgia_russia(), "Caucasus");
+        assert_ne!(plan_scene(&d1, "vs2", &rgw()), plan_scene(&d2, "vs2", &rgw()));
+        // And every subject variant of a kind is reachable.
+        let subjects: HashSet<String> = (0..60)
+            .map(|n| {
+                let d = capture(&format!("2026-{:02}-{:02}", 1 + n / 28, 1 + n % 28), "Gori", "Russia", georgia_russia(), "Caucasus");
+                let p = plan_scene(&d, "vs2", &rgw());
+                p.subject.split(',').next().unwrap().split(' ').take(3).collect::<Vec<_>>().join(" ")
+            })
+            .collect();
+        assert!(subjects.len() >= 3, "{subjects:?}");
+    }
+
+    #[test]
+    fn the_old_framing_is_gone() {
+        let headlines = [
+            "GORI FALLS",
+            "STALEMATE HOLDS",
+            "ONE-SIDED DAY IN THE AIR",
+            "RUSSIA REAR UNDER SUSTAINED ATTACK",
+            "RUSSIA AIR DEFENCES TAKE THE BRUNT",
+            "THE CAMPAIGN OPENS",
+            "COUNTING THE COST",
+            "HELICOPTERS RESUPPLY THE FRONT",
+            "SHELLING ON THE APPROACHES",
+        ];
+        for (i, h) in headlines.iter().enumerate() {
+            for inst in ["vs1", "vs2"] {
+                for (setting, f, t) in [(rgw(), georgia_russia(), "Caucasus"), (syria(), coalition_syria(), "Syria")] {
+                    let d = story(&format!("2026-08-{:02}", i + 1), h, vec![], t, f);
+                    let p = build_prompt(&d, inst, &setting, None);
+                    let pos = positive(&p).to_lowercase();
+                    for bad in ["shoulder", "from behind", "foreground", "cinematic", "in a row", "line-up", "parked"] {
+                        assert!(!pos.contains(bad), "{bad}: {p}");
+                    }
+                    assert!(!p.contains("seen from behind"), "{p}");
+                    // ... and the model is told to steer clear of it.
+                    assert!(p.contains("no over-the-shoulder view"), "{p}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_capture_story_pictures_a_capture_with_the_captors_kit() {
+        for day in ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"] {
+            let d = capture(day, "Gori", "Russia", georgia_russia(), "Caucasus");
+            let plan = plan_scene(&d, "vs2", &rgw());
+            assert_eq!(plan.kind, SceneKind::Capture);
+            assert!(plan.subject.contains("Gori"), "{plan:?}");
+            let russian = KIT_GEO_RU.tank.iter().chain(KIT_GEO_RU.ifv).any(|k| plan.subject.contains(k));
+            assert!(russian, "{plan:?}");
+            let p = build_prompt(&d, "vs2", &rgw(), None);
+            assert!(p.contains("2008") && !p.contains("present-day"), "{p}");
+            assert!(p.contains("Report: Gori falls."), "{p}");
+        }
+        // An airfield is taken on the runway, not in a town square.
+        let d = capture("2026-09-06", "Senaki Airbase", "Russia", georgia_russia(), "Caucasus");
+        let plan = plan_scene(&d, "vs2", &rgw());
+        assert_eq!(plan.kind, SceneKind::CaptureAirfield);
+        assert!(plan.subject.contains("Senaki Airbase"), "{plan:?}");
+        // Syria: the Coalition takes a town with western kit, on Levant ground.
+        let d = capture("2026-09-06", "Palmyra", "the Coalition", coalition_syria(), "Syria");
+        let plan = plan_scene(&d, "vs1", &syria());
+        let west = KIT_WEST.tank.iter().chain(KIT_WEST.ifv).any(|k| plan.subject.contains(k));
+        assert!(west && plan.subject.contains("Palmyra"), "{plan:?}");
+    }
+
+    #[test]
+    fn the_dominant_event_picks_the_subject() {
+        let f = georgia_russia;
+        let convoy = story(
+            "2026-09-10",
+            "RUSSIA REAR UNDER SUSTAINED ATTACK",
+            vec![item("logistics_struck", "Russia", 62, &[("side", "Russia")])],
+            "Caucasus",
+            f(),
+        );
+        let plan = plan_scene(&convoy, "vs2", &rgw());
+        assert_eq!(plan.kind, SceneKind::Convoy);
+        assert!(plan.subject.contains("burn") || plan.subject.contains("wreck") || plan.subject.contains("strike"), "{plan:?}");
+        let air = story("2026-09-10", "ONE-SIDED DAY IN THE AIR", vec![], "Caucasus", f());
+        assert_eq!(plan_scene(&air, "vs2", &rgw()).kind, SceneKind::AirCombat);
+        let sead = story(
+            "2026-09-10",
+            "RUSSIA AIR DEFENCES TAKE THE BRUNT",
+            vec![item("sead", "Russia", 68, &[("side", "Russia")])],
+            "Caucasus",
+            f(),
+        );
+        assert_eq!(plan_scene(&sead, "vs2", &rgw()).kind, SceneKind::AirDefence);
+        // A tally headline is pictured by what was lost.
+        let mut tally = story(
+            "2026-09-10",
+            "COUNTING THE COST",
+            vec![item("losses_tally", "the day's losses", 65, &[])],
+            "Caucasus",
+            f(),
+        );
+        tally.facts.losses.insert("LOGISTICS".into(), crate::news::LossTally { blue: 1, red: 9 });
+        tally.facts.losses.insert("ARMOR".into(), crate::news::LossTally { blue: 2, red: 1 });
+        let plan = plan_scene(&tally, "vs2", &rgw());
+        assert_eq!(plan.kind, SceneKind::Convoy);
+        // Red lost the trucks, so any trucks pictured are Russian.
+        if plan.subject.contains("army truck") {
+            assert!(plan.subject.contains("Ural") || plan.subject.contains("KamAZ"), "{plan:?}");
+        }
+        // No carriers in 2008.
+        let cv = story("2026-09-10", "AIRCRAFT CARRIER GROUP MOVES UP", vec![], "Caucasus", f());
+        assert_eq!(plan_scene(&cv, "vs2", &rgw()).kind, SceneKind::Naval);
+        assert_eq!(plan_scene(&cv, "vs1", &syria()).kind, SceneKind::Carrier);
+    }
+
+    #[test]
+    fn dcs_type_names_become_real_names() {
+        let named = named_kit(
+            "Two Su-25T and an F-16C_50 were lost; a Mi-8MTV2 and T-72B pushed on. \
+             A tornado of fire swept the sector behind the lines.",
+        );
+        let names: Vec<&str> = named.iter().map(|(_, n)| *n).collect();
+        for want in ["Su-25 attack jet", "F-16C fighter", "Mi-8 transport helicopter", "T-72B main battle tank"] {
+            assert!(names.contains(&want), "{want} missing from {names:?}");
+        }
+        assert!(!names.iter().any(|n| n.starts_with("Tor (") || n.contains("Mi-24")), "{names:?}");
+        // A story's own aircraft appear in the picture, by their real name.
+        let mut seen = false;
+        for n in 1..=20 {
+            let mut d = story(&format!("2026-07-{n:02}"), "ONE-SIDED DAY IN THE AIR", vec![], "Caucasus", georgia_russia());
+            d.body = vec!["Russian Su-25T strike aircraft ranged over the valley.".into()];
+            let plan = plan_scene(&d, "vs2", &rgw());
+            assert!(!plan.subject.contains("Su-25T"), "{plan:?}");
+            seen |= plan.subject.contains("Su-25 attack jet");
+        }
+        assert!(seen);
+    }
+
+    #[test]
+    fn articles_follow_the_sound() {
+        assert_eq!(fix_articles("a M1A2 Abrams tank and a F-16C"), "an M1A2 Abrams tank and an F-16C");
+        assert_eq!(fix_articles("a BMP-2 and a HEMTT truck"), "a BMP-2 and a HEMTT truck");
+        assert_eq!(fix_articles("a S-300 near a Osa and a Ural-4320"), "an S-300 near an Osa and a Ural-4320");
+        assert_eq!(fix_articles("a infantry section"), "an infantry section");
     }
 
     #[test]
