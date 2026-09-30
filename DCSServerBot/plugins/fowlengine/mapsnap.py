@@ -185,7 +185,8 @@ async def capture(browser: str, url: str, profile: str, size=DEFAULT_SIZE,
                 await cdp.call("Page.enable")
                 await cdp.call("Page.navigate", {"url": url})
                 probe = ("JSON.stringify({p: location.pathname,"
-                         " r: document.documentElement.getAttribute('data-snapshot-ready')})")
+                         " r: document.documentElement.getAttribute('data-snapshot-ready'),"
+                         " m: !!document.querySelector('.leaflet-container')})")
                 state = {}
                 while time.monotonic() - started < timeout:
                     await asyncio.sleep(0.5)
@@ -200,6 +201,17 @@ async def capture(browser: str, url: str, profile: str, size=DEFAULT_SIZE,
                     if log:
                         log.warning(f"FowlEngine: map snapshot page redirected to {state.get('p')!r} -- "
                                     f"the deployed bfweb predates /snapshot (rebuild bfdb)")
+                    return None
+                if state.get("r") != "1" and not state.get("m"):
+                    # Not a slow basemap: the page never drew a map at all,
+                    # so a capture would be a blank rectangle. Usually its
+                    # scripts were refused (a bfdb before the CORS fix answers
+                    # 403 to pages opened at an address outside --cors-origin)
+                    # or its data calls failed.
+                    if log:
+                        log.warning(f"FowlEngine: map snapshot page at {url} never rendered a map -- not posting "
+                                    f"a blank picture (bfdb unreachable, or its scripts blocked: open the URL "
+                                    f"in a browser and check the console)")
                     return None
                 if state.get("r") != "1" and log:
                     log.info("FowlEngine: map snapshot not ready in time (basemap slow?) -- capturing as-is")

@@ -8249,7 +8249,32 @@ async fn main() -> Result<()> {
             .chain(std::iter::once(args.public_api_url.as_str())),
     );
 
-    let routes = websec::csrf_guard(origin_policy)
+    // The dashboard's own files (/assets/*.js, *.css, fonts, and the site's
+    // under /site/), answered ahead of the CORS filter. A browser loads module
+    // scripts and crossorigin stylesheets in CORS mode, so it sends an Origin
+    // even when the page came from this very server -- and the CORS filter
+    // below refused every Origin not in --cors-origin, the server's own
+    // included. A page opened at any other address (http://localhost:<port>,
+    // which is how the Discord bot captures /snapshot) came up blank: its
+    // HTML loaded, every script 403'd. Only files that really exist match
+    // here; everything else, the SPA fallback and the whole API, still goes
+    // through CORS exactly as before.
+    let embedded_files = warp::get()
+        .and(warp::path::tail())
+        .and_then(|tail: warp::path::Tail| async move {
+            let path = tail.as_str();
+            if let Some(site) = path.strip_prefix("site/") {
+                if !site.is_empty() && SiteAssets::get(site).is_some() {
+                    return Ok::<Response, warp::Rejection>(serve_site_asset(site));
+                }
+            } else if !path.is_empty() && path != "index.html" && Assets::get(path).is_some() {
+                return Ok(serve_asset(path));
+            }
+            Err(warp::reject::not_found())
+        })
+        .map(|r: Response| websec::harden(r));
+
+    let cors_routes = websec::csrf_guard(origin_policy)
         // First of all: a cookie-authenticated POST or WebSocket from a page
         // we do not trust is refused before any route sees it.
         .or(shutdown_route)
@@ -8309,6 +8334,7 @@ async fn main() -> Result<()> {
             .boxed())
         .map(|r| websec::harden(warp::Reply::into_response(r)))
         .with(cors);
+    let routes = embedded_files.or(cors_routes);
 
     log::info!("API server listening on http://{}", args.listen_address);
 
