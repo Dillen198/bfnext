@@ -130,13 +130,16 @@ class _Cdp:
 
 async def _devtools_port(profile: str, proc, timeout: float) -> int:
     """The port Chromium picked for --remote-debugging-port=0, read from the
-    DevToolsActivePort file it writes into the profile."""
+    DevToolsActivePort file it writes into the profile.
+
+    The launched process exiting is NOT fatal: Edge started elevated (the
+    Fowl Engine service runs the bot with an elevated token) relaunches
+    itself de-elevated and the process we started exits, while the relaunched
+    one still writes the port file into this profile. Only a port file that
+    never appears is a failure."""
     path = os.path.join(profile, "DevToolsActivePort")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        code = proc.poll()
-        if code is not None:
-            raise RuntimeError(f"browser exited early (code {code})")
         try:
             with open(path, encoding="utf-8") as f:
                 first = f.readline().strip()
@@ -145,7 +148,23 @@ async def _devtools_port(profile: str, proc, timeout: float) -> int:
         except OSError:
             pass
         await asyncio.sleep(0.2)
-    raise TimeoutError("browser never opened its DevTools port")
+    code = proc.poll()
+    raise TimeoutError("browser never opened its DevTools port"
+                       + (f" (the launched process exited with code {code})" if code is not None else ""))
+
+
+def _fresh_profile(base: str) -> str:
+    """A new, empty profile directory under `base` for one capture, after
+    clearing earlier ones. A reused profile that a leftover browser still
+    holds makes the next launch hand over to that browser and exit, and no
+    new DevTools port is ever written."""
+    os.makedirs(base, exist_ok=True)
+    for name in os.listdir(base):
+        if name.startswith("run-"):
+            shutil.rmtree(os.path.join(base, name), ignore_errors=True)
+    path = os.path.join(base, f"run-{os.getpid()}-{int(time.time() * 1000)}")
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 async def capture(browser: str, url: str, profile: str, size=DEFAULT_SIZE,
@@ -155,11 +174,7 @@ async def capture(browser: str, url: str, profile: str, size=DEFAULT_SIZE,
     page -- that is not posted). Raises on browser/protocol failures."""
     import aiohttp
 
-    os.makedirs(profile, exist_ok=True)
-    try:
-        os.remove(os.path.join(profile, "DevToolsActivePort"))
-    except OSError:
-        pass
+    profile = _fresh_profile(profile)
     w, h = size
     # Plain Popen, not asyncio.create_subprocess_exec: DCSServerBot runs on
     # the Windows *selector* event loop (psycopg needs it), which has no
@@ -171,13 +186,17 @@ async def capture(browser: str, url: str, profile: str, size=DEFAULT_SIZE,
          "--no-first-run", "--no-default-browser-check", "--disable-extensions",
          "--disable-background-networking", "--disable-sync",
          "--remote-debugging-port=0", "--remote-allow-origins=*",
+         # Edge only: stay elevated rather than relaunch de-elevated (see
+         # _devtools_port). Other Chromium builds ignore unknown switches.
+         "--do-not-de-elevate",
          f"--user-data-dir={profile}", f"--window-size={w},{h}",
          "about:blank"],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     started = time.monotonic()
+    port = None
     try:
-        port = await _devtools_port(profile, proc, 15.0)
+        port = await _devtools_port(profile, proc, 20.0)
         async with aiohttp.ClientSession() as http:
             async with http.get(f"http://127.0.0.1:{port}/json/list") as resp:
                 targets = await resp.json(content_type=None)
@@ -225,9 +244,30 @@ async def capture(browser: str, url: str, profile: str, size=DEFAULT_SIZE,
                 shot = await cdp.call("Page.captureScreenshot", {"format": "png"}, timeout=20.0)
                 return base64.b64decode(shot["data"])
     finally:
+        if port is not None:
+            await _close_browser(port)
         if proc.poll() is None:
             proc.kill()
             try:
                 await asyncio.get_running_loop().run_in_executor(None, proc.wait, 10)
             except subprocess.TimeoutExpired:
                 pass
+        shutil.rmtree(profile, ignore_errors=True)  # a straggler's lock -> the next run clears it
+
+
+async def _close_browser(port: int) -> None:
+    """Browser.close over the browser-level DevTools socket. Reaches the
+    browser even when it is a relaunched process we hold no handle to."""
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as http:
+            async with http.get(f"http://127.0.0.1:{port}/json/version") as resp:
+                ver = await resp.json(content_type=None)
+            async with http.ws_connect(ver["webSocketDebuggerUrl"]) as ws:
+                await ws.send_str(json.dumps({"id": 1, "method": "Browser.close"}))
+                try:
+                    await ws.receive(timeout=3)
+                except (asyncio.TimeoutError, TimeoutError):
+                    pass
+    except Exception:
+        pass  # already gone, or unreachable; the process kill below still runs

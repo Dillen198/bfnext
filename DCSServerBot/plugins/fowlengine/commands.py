@@ -1437,12 +1437,34 @@ class FowlEngine(Plugin):
         g = self._gci_cfg(server)
         if not g.get('enabled'):
             return ["GCI is currently **off**."]
-        mod = g.get('modulation', 'AM')
+        mod = str(g.get('modulation') or 'AM').upper()
         blue_cs = g.get('blue_controller_callsign', 'Magic')
         red_cs = g.get('red_controller_callsign', 'Overlord')
+
+        def freqs(multi: str, single: str, default: float) -> str:
+            # What bfdb actually transmits on (voice::radios_from): a
+            # `*_freqs` list replaces the single `*_freq_mhz` outright, and an
+            # entry without a modulation is FM below 108 MHz, AM above. This
+            # used to print only the single value -- live, Red's 252.0 while
+            # the controller was really on 124.0 / 228.0 / 40.0.
+            out = []
+            for f in g.get(multi) or []:
+                try:
+                    mhz = float(f.get('mhz'))
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                m = str(f.get('modulation') or ('FM' if mhz < 108.0 else 'AM')).upper()
+                out.append(f"`{mhz:.3f} {m}`")
+            if out:
+                return " · ".join(out)
+            try:
+                return f"`{float(g.get(single, default)):.3f} {mod}`"
+            except (TypeError, ValueError):
+                return f"`{default:.3f} {mod}`"
+
         lines = [
-            f"{icon('blue')} **Blue** — `{g.get('blue_freq_mhz', 251.0):.3f} {mod}`  ({blue_cs})",
-            f"{icon('red')} **Red** — `{g.get('red_freq_mhz', 252.0):.3f} {mod}`  ({red_cs})",
+            f"{icon('blue')} **Blue** ({blue_cs}) — {freqs('blue_freqs', 'blue_freq_mhz', 251.0)}",
+            f"{icon('red')} **Red** ({red_cs}) — {freqs('red_freqs', 'red_freq_mhz', 252.0)}",
         ]
         if g.get('whisper_exe'):
             lines.append(f"Key up and call it: *\"{blue_cs}, bogey dope\"* — also picture, declare, "
