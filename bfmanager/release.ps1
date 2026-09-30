@@ -114,8 +114,10 @@ if ($DryRun) { Say "dry run -- nothing published" "Yellow"; return }
 
 $commit = (git -C $repoRoot rev-parse HEAD).Trim()
 if (-not $Notes) { $Notes = "Fowl Engine Manager $version`n`nBuilt from $($commit.Substring(0,12))." }
+# --target: without it gh tags the repo's DEFAULT branch (main), not the
+# commit this was built from. That commit has to be on the remote.
 $ghArgs = @("release", "create", $tag, $out.FullName, (Join-Path $OutDir $sig.Name), "--repo", $Repo,
-            "--title", "Fowl Engine Manager $version", "--notes", $Notes)
+            "--target", $commit, "--title", "Fowl Engine Manager $version", "--notes", $Notes)
 if ($Channel -eq "beta") { $ghArgs += "--prerelease" }
 gh @ghArgs
 if ($LASTEXITCODE) { throw "gh release create failed" }
