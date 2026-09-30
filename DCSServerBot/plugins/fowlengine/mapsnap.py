@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import time
 from typing import Iterable, Optional
 from urllib.parse import quote
@@ -133,8 +134,9 @@ async def _devtools_port(profile: str, proc, timeout: float) -> int:
     path = os.path.join(profile, "DevToolsActivePort")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if proc.returncode is not None:
-            raise RuntimeError(f"browser exited early (code {proc.returncode})")
+        code = proc.poll()
+        if code is not None:
+            raise RuntimeError(f"browser exited early (code {code})")
         try:
             with open(path, encoding="utf-8") as f:
                 first = f.readline().strip()
@@ -159,15 +161,19 @@ async def capture(browser: str, url: str, profile: str, size=DEFAULT_SIZE,
     except OSError:
         pass
     w, h = size
-    proc = await asyncio.create_subprocess_exec(
-        browser,
-        "--headless=new", "--disable-gpu", "--hide-scrollbars", "--mute-audio",
-        "--no-first-run", "--no-default-browser-check", "--disable-extensions",
-        "--disable-background-networking", "--disable-sync",
-        "--remote-debugging-port=0", "--remote-allow-origins=*",
-        f"--user-data-dir={profile}", f"--window-size={w},{h}",
-        "about:blank",
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    # Plain Popen, not asyncio.create_subprocess_exec: DCSServerBot runs on
+    # the Windows *selector* event loop (psycopg needs it), which has no
+    # subprocess support -- create_subprocess_exec raises a bare
+    # NotImplementedError there. procman spawns bfdb the same way.
+    proc = subprocess.Popen(
+        [browser,
+         "--headless=new", "--disable-gpu", "--hide-scrollbars", "--mute-audio",
+         "--no-first-run", "--no-default-browser-check", "--disable-extensions",
+         "--disable-background-networking", "--disable-sync",
+         "--remote-debugging-port=0", "--remote-allow-origins=*",
+         f"--user-data-dir={profile}", f"--window-size={w},{h}",
+         "about:blank"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     started = time.monotonic()
     try:
@@ -219,9 +225,9 @@ async def capture(browser: str, url: str, profile: str, size=DEFAULT_SIZE,
                 shot = await cdp.call("Page.captureScreenshot", {"format": "png"}, timeout=20.0)
                 return base64.b64decode(shot["data"])
     finally:
-        if proc.returncode is None:
+        if proc.poll() is None:
             proc.kill()
             try:
-                await asyncio.wait_for(proc.wait(), 10)
-            except asyncio.TimeoutError:
+                await asyncio.get_running_loop().run_in_executor(None, proc.wait, 10)
+            except subprocess.TimeoutExpired:
                 pass

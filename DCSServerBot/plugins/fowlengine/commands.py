@@ -1132,7 +1132,8 @@ class FowlEngine(Plugin):
             raise
         except Exception as ex:
             st["failed_at"] = now
-            self.log.warning(f"FowlEngine: status map snapshot for {server.name} failed: {ex}")
+            self.log.warning(f"FowlEngine: status map snapshot for {server.name} failed: "
+                             f"{type(ex).__name__}: {ex or '(no message)'}")
             return st["png"], False
         if not png:
             st["failed_at"] = now
