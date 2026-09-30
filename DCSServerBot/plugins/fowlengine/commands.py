@@ -946,7 +946,17 @@ class FowlEngine(Plugin):
 
                 active_round = stats.get('active_round')
                 if active_round:
-                    desc = f"**Scenario:** {active_round.get('scenario', 'Unknown')}"
+                    # The instance label ("Modern - Syria") reads better than
+                    # the round's scenario id, which on some servers is just
+                    # "campaign"; the id stays when it says something extra.
+                    label = ((self._instance_entry(server) or {}).get('label') or "").strip()
+                    scenario = str(active_round.get('scenario') or "").strip()
+                    if label:
+                        desc = f"**Campaign:** {label}"
+                        if scenario and scenario.lower() not in ('campaign', label.lower()):
+                            desc += f" · {scenario}"
+                    else:
+                        desc = f"**Scenario:** {scenario or 'Unknown'}"
                     start_raw = active_round.get('start')
                     if start_raw:
                         try:

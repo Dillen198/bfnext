@@ -56,7 +56,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
     const c = ownerColor(obj.owner)
     const alive = obj.health > 0
     const base = obj.kind === 'Airbase' ? 22 : (obj.kind === 'Carrier Group' || obj.kind === 'Naval Base') ? 20 : 17
-    const size = snapshot ? Math.round(base * 1.25) : base
+    const size = snapshot ? Math.round(base * 1.5) : base
     const Icon = OBJ_ICON[obj.kind] ?? Pin
     const svg = renderToStaticMarkup(
       <Icon size={size} color={c} strokeWidth={2.25}
@@ -74,8 +74,11 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
   const canvasBase = theme === 'light'
     ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'
     : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
-  const chipFont = snapshot ? '0.8rem' : '0.58rem'
-  const legendFont = snapshot ? '0.74rem' : '0.56rem'
+  // Discord shows the snapshot at ~40% of its 1200px width, so its overlay
+  // text is sized for that, not for a browser.
+  const chipFont = snapshot ? '1.6rem' : '0.58rem'
+  const legendFont = snapshot ? '1.4rem' : '0.56rem'
+  const swatch = snapshot ? 14 : 6
 
   return (
     <div style={{ position: 'relative', height: '100%', background: theme === 'light' ? '#dfe0d8' : '#050806' }}>
@@ -108,8 +111,8 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
             pathOptions={{ color: '#ffffff', weight: snapshot ? 1.75 : 1.25, opacity: 0.9, dashArray: '2 4' }} />
         ))}
         {contested.map(obj => (
-          <CircleMarker key={`c-${obj.id}`} center={[obj.lat, obj.lon]} radius={20}
-            pathOptions={{ color: '#fee75c', weight: 2, opacity: 0.95, fill: true, fillColor: '#fee75c', fillOpacity: 0.12 }} />
+          <CircleMarker key={`c-${obj.id}`} center={[obj.lat, obj.lon]} radius={28}
+            pathOptions={{ color: '#fee75c', weight: 4, opacity: 0.95, fill: true, fillColor: '#fee75c', fillOpacity: 0.15 }} />
         ))}
         {valid.map(obj => (
           <Marker key={obj.id} position={[obj.lat, obj.lon]} icon={markerIcon(obj)} />
@@ -120,7 +123,7 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
       <div style={{
         position: 'absolute', top: 8, left: 8, zIndex: 1000,
         background: 'rgba(8,11,6,0.90)', border: '1px solid var(--border)',
-        padding: snapshot ? '7px 14px' : '5px 10px', display: 'flex', gap: 10,
+        padding: snapshot ? '10px 18px' : '5px 10px', display: 'flex', gap: snapshot ? 16 : 10,
         fontSize: chipFont, fontFamily: 'var(--font-mono)', letterSpacing: '0.1em',
       }}>
         <span style={{ color: campaign.blueColor }}>{blue} BLU</span>
@@ -147,8 +150,8 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
       {/* Bottom legend */}
       <div style={{
         position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', zIndex: 1000,
-        display: 'flex', gap: 14, background: 'rgba(8,11,6,0.88)',
-        padding: snapshot ? '6px 14px' : '4px 12px', border: '1px solid var(--border)',
+        display: 'flex', gap: snapshot ? 24 : 14, background: 'rgba(8,11,6,0.88)',
+        padding: snapshot ? '9px 18px' : '4px 12px', border: '1px solid var(--border)',
         fontSize: legendFont, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em',
       }}>
         {[
@@ -156,14 +159,14 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
           { label: campaign.redLabel,  color: campaign.redColor  },
           { label: 'NEUTRAL',          color: '#4a5240'          },
         ].map(({ label, color }) => (
-          <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 6, height: 6, background: color, display: 'inline-block', flexShrink: 0 }} />
+          <span key={label} style={{ display: 'flex', alignItems: 'center', gap: snapshot ? 8 : 4 }}>
+            <span style={{ width: swatch, height: swatch, background: color, display: 'inline-block', flexShrink: 0 }} />
             {label.toUpperCase()}
           </span>
         ))}
         {snapshot && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, border: '2px solid #fee75c', borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ width: 14, height: 14, border: '3px solid #fee75c', borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
             CONTESTED
           </span>
         )}
