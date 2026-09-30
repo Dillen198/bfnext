@@ -205,6 +205,15 @@ body {
   font-size: 10px !important;
 }
 .leaflet-control-attribution a { color: var(--text-dim) !important; }
+/* The Discord snapshot map fits at a fractional zoom, which scales the tiles
+   and opens hairline seams between them; a 1px overlap closes them. Leaflet
+   blends tiles with plus-lighter, which would turn that overlap into a bright
+   grid, so the snapshot blends normally. */
+.tacmap-snapshot .leaflet-tile-container img.leaflet-tile {
+  width: 257px !important;
+  height: 257px !important;
+  mix-blend-mode: normal !important;
+}
 
 .obj-label { background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
 

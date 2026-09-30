@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-
-type Theme = 'dark' | 'light'
+import { urlTheme, type Theme } from '../lib/urlTheme'
 
 interface ThemeCtx {
   theme: Theme
@@ -12,6 +11,8 @@ const STORAGE_KEY = 'bfweb-theme'
 const ThemeContext = createContext<ThemeCtx>({ theme: 'dark', toggle: () => {} })
 
 function getInitialTheme(): Theme {
+  const fromUrl = urlTheme()
+  if (fromUrl) return fromUrl
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored === 'dark' || stored === 'light') return stored

@@ -26,6 +26,21 @@ DEFAULT:
   #   ops_channel      -- bfdb relaunches / staged binary swaps; one bfdb
   # The ID of the Discord channel where the live campaign status embed will be updated.
   status_channel: 123456789012345678
+
+  # (Optional) The status embed carries a picture of the campaign map: the
+  # dashboard's public SITREP map (objectives + front line only, never the
+  # fog-of-war tacmap), opened at <status_map_url>/snapshot in headless
+  # Microsoft Edge (or Chrome) and screenshotted. Nothing to install on
+  # Windows. Re-captured when an objective changes owner / health band /
+  # contested state (at most every status_map_min_gap_secs), and refreshed
+  # every status_map_minutes regardless. Needs a bfdb built with the current
+  # bfweb (the /snapshot route); an older one just posts no picture.
+  # status_map: true                     # false turns the picture off
+  # status_map_url: "http://localhost:8880"  # default: api_url (bfdb serves bfweb)
+  # status_map_browser: 'C:\Program Files\Google\Chrome\Application\chrome.exe'  # default: Edge, then Chrome
+  # status_map_size: "1200x800"
+  # status_map_minutes: 10
+  # status_map_min_gap_secs: 120
   
   # The ID of the Discord channel where killstreak achievements (Ace, Unstoppable,
   # God of War) will be announced. Detected by polling /api/kills every ~20s and
@@ -59,11 +74,18 @@ DEFAULT:
   # below, and bfdb must be running on the same machine it's reporting on.
   perf_channel: 123456789012345678
 
-  # (Optional) Consolidated server-info embed (auto-updated every ~2 min):
-  # connect address/port/password, DCS + mission status, next rotation, GCI
-  # frequencies, and deploy status (engine build sha + any staged update).
-  # Separate from status_channel (campaign) and perf_channel (hardware).
+  # (Optional) "Comms, Rules & Links" embed (auto-updated every ~2 min): the
+  # GCI frequencies, each side's PLANNED comms channels (cfg `comms_plan`),
+  # the campaign rules (lives, side lock, points) and the dashboard/wiki
+  # links -- only what DCSServerBot's own server-status embed doesn't already
+  # show (connect, slots, mission time, restart, weather, SRS and Tacview are
+  # all there). Comms and rules come from bfdb's public /api/wiki/facts, so
+  # the instance needs `engine_config` set; the live overlay (which AWACS is
+  # up, TACANs, laser codes) stays in the per-side briefing channels. Engine
+  # builds live on the perf embed and /feops versions.
   server_info_channel: 123456789012345678
+  # (Optional) Adds a Wiki link to that embed.
+  # wiki_url: "https://wiki.your-domain.com"
 
   # (Optional) The bot tails bfdb's /ws/gci and posts every GCI (AWACS) call
   # here as text, prefixed with the Blue/Red coalition icon. Replaces

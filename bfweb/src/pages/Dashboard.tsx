@@ -1,21 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import NewsPanel from '../components/NewsPanel'
 import { useQuery } from '@tanstack/react-query'
-import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet'
-import L from 'leaflet'
-import type { LatLngBoundsExpression } from 'leaflet'
-import 'leaflet/dist/leaflet.css'
 import { useNavigate } from 'react-router-dom'
-import { renderToStaticMarkup } from 'react-dom/server'
 import {
-  Airbase,
-  Farp,
-  Fob,
-  Factory,
-  LogiHub,
-  NavalBase,
-  Carrier,
-  CommandCenter,
   Aircraft,
   Pilot as PilotIcon,
   Shield,
@@ -28,16 +15,15 @@ import {
   Baro,
   Visibility,
   Activity,
-  type IconComponent,
-  ExternalLink,
   TrendingUp,
   RefreshCw,
 } from '@icons'
 import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type PilotName, type Stats, type Frontlines } from '../api'
 import { campaign } from '../config/campaign'
 import PanelBase from '../components/Panel'
+import TacMap from '../components/TacMap'
+import { OBJ_ICON } from '../lib/objIcon'
 import { classifyTargetClass, TARGET_CLASS_COLOR, fmtTimeZ, windDir, visStr, cloudStr } from '../lib/format'
-import { useTheme } from '../context/ThemeContext'
 import { useRound } from '../context/RoundContext'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -79,126 +65,6 @@ function KpiCell({ label, value, sub, color = 'var(--text)', delta, icon: Icon }
         )}
       </div>
       {sub && <div className="kpi-sub">{sub}</div>}
-    </div>
-  )
-}
-
-// ── TacMap ────────────────────────────────────────────────────────────────────
-
-function FitBounds({ objectives }: { objectives: Objective[] }) {
-  const map = useMap()
-  useEffect(() => {
-    if (!objectives.length) return
-    map.fitBounds(objectives.map(o => [o.lat, o.lon] as [number, number]) as LatLngBoundsExpression,
-      { padding: [28, 28], maxZoom: 9, animate: false })
-  }, [map, objectives])
-  return null
-}
-
-function TacMap({ objectives, fronts, onOpenTacmap }: { objectives: Objective[]; fronts: Frontlines; onOpenTacmap: () => void }) {
-  const valid = objectives.filter(o => o.lat !== 0 || o.lon !== 0)
-  const ownerColor = (owner: string) =>
-    owner === 'Blue' ? campaign.blueColor :
-    owner === 'Red'  ? campaign.redColor  :
-                       '#4a5240'
-  const blue = valid.filter(o => o.owner === 'Blue').length
-  const red  = valid.filter(o => o.owner === 'Red').length
-  const neu  = valid.filter(o => o.owner === 'Neutral').length
-
-  // The objective-type glyphs rendered straight onto the
-  // map -- no circle, no fill -- same OBJ_ICON set used by the Critical
-  // Objectives list below, so an objective reads the same way in both places
-  // on this page. Owner colour + a flat dark outline keeps them legible over
-  // tiles (no coloured glow).
-  const markerIcon = (obj: Objective) => {
-    const c = ownerColor(obj.owner)
-    const alive = obj.health > 0
-    const size = obj.kind === 'Airbase' ? 22 : (obj.kind === 'Carrier Group' || obj.kind === 'Naval Base') ? 20 : 17
-    const Icon = OBJ_ICON[obj.kind] ?? Pin
-    const svg = renderToStaticMarkup(
-      <Icon size={size} color={c} strokeWidth={2.25}
-        style={{ opacity: alive ? 1 : 0.5, filter: 'drop-shadow(0 1px 1.5px rgba(0,0,0,0.9))' }} />
-    )
-    return L.divIcon({
-      html: svg,
-      className: '',
-      iconSize: [size, size],
-      iconAnchor: [size / 2, size / 2],
-    })
-  }
-
-  const { theme } = useTheme()
-  const canvasBase = theme === 'light'
-    ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'
-    : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
-
-  return (
-    <div style={{ position: 'relative', height: '100%', background: theme === 'light' ? '#dfe0d8' : '#050806' }}>
-      <MapContainer center={campaign.mapCenter} zoom={campaign.mapZoom}
-        style={{ position: 'absolute', inset: 0 }} zoomControl={false} attributionControl={false}>
-        <TileLayer key={theme} url={canvasBase} maxZoom={19} opacity={0.5} />
-        {valid.length > 0 && <FitBounds objectives={valid} />}
-        {fronts.blue.map((l, i) => l.length > 1 && (
-          <Polyline key={`fb-${i}`} positions={l}
-            pathOptions={{ color: '#2f7dff', weight: 1.5, opacity: 0.8, dashArray: '6 5' }} />
-        ))}
-        {fronts.red.map((l, i) => l.length > 1 && (
-          <Polyline key={`fr-${i}`} positions={l}
-            pathOptions={{ color: '#ff3b3b', weight: 1.5, opacity: 0.8, dashArray: '6 5' }} />
-        ))}
-        {fronts.mid.map((l, i) => l.length > 1 && (
-          <Polyline key={`fm-${i}`} positions={l}
-            pathOptions={{ color: '#ffffff', weight: 1.25, opacity: 0.9, dashArray: '2 4' }} />
-        ))}
-        {valid.map(obj => (
-          <Marker key={obj.id} position={[obj.lat, obj.lon]} icon={markerIcon(obj)} />
-        ))}
-      </MapContainer>
-
-      {/* Top-left stat chip */}
-      <div style={{
-        position: 'absolute', top: 8, left: 8, zIndex: 1000,
-        background: 'rgba(8,11,6,0.90)', border: '1px solid var(--border)',
-        padding: '5px 10px', display: 'flex', gap: 10,
-        fontSize: '0.58rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em',
-      }}>
-        <span style={{ color: campaign.blueColor }}>{blue} BLU</span>
-        <span style={{ color: 'var(--border-light)' }}>·</span>
-        <span style={{ color: campaign.redColor }}>{red} RED</span>
-        <span style={{ color: 'var(--border-light)' }}>·</span>
-        <span style={{ color: 'var(--text-dim)' }}>{neu} NEU</span>
-      </div>
-
-      {/* TACMAP button */}
-      <button onClick={onOpenTacmap} style={{
-        position: 'absolute', top: 8, right: 8, zIndex: 1000,
-        display: 'flex', alignItems: 'center', gap: 5,
-        background: 'rgba(8,11,6,0.90)', border: '1px solid var(--accent-border)',
-        color: 'var(--accent-bright)', padding: '5px 10px',
-        fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.14em',
-        cursor: 'pointer', textTransform: 'uppercase', fontFamily: 'var(--font-mono)',
-      }}>
-        <ExternalLink size={9} /> TACMAP
-      </button>
-
-      {/* Bottom legend */}
-      <div style={{
-        position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', zIndex: 1000,
-        display: 'flex', gap: 14, background: 'rgba(8,11,6,0.88)',
-        padding: '4px 12px', border: '1px solid var(--border)',
-        fontSize: '0.56rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em',
-      }}>
-        {[
-          { label: campaign.blueLabel, color: campaign.blueColor },
-          { label: campaign.redLabel,  color: campaign.redColor  },
-          { label: 'NEUTRAL',          color: '#4a5240'          },
-        ].map(({ label, color }) => (
-          <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 6, height: 6, background: color, display: 'inline-block', flexShrink: 0 }} />
-            {label.toUpperCase()}
-          </span>
-        ))}
-      </div>
     </div>
   )
 }
@@ -245,12 +111,6 @@ function TerritoryBar({ objectives }: { objectives: Objective[] }) {
 }
 
 // ── Critical objectives ───────────────────────────────────────────────────────
-
-const OBJ_ICON: Record<string, IconComponent> = {
-  Airbase, FARP: Farp, FOB: Fob, Factory,
-  'Logistics Hub': LogiHub, 'Naval Base': NavalBase,
-  'Carrier Group': Carrier, 'Command Center': CommandCenter,
-}
 
 /** Icon for an objective kind, defaulting to a plain pin for anything unmapped. */
 function ObjIcon({ kind, size, color, style }: { kind: string; size: number; color: string; style?: React.CSSProperties }) {

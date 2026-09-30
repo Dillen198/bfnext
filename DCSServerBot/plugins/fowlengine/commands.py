@@ -25,6 +25,11 @@ from .briefing import build_briefing_embed
 from .icons import IconSet, icon, icon_emoji, render as render_icons
 from . import rangefeed
 from . import newsfeed
+from . import mapsnap
+from . import serverinfo
+
+# The status embed's map snapshot, attached as attachment://<this>.
+STATUS_MAP_FILE = "campaign-map.png"
 
 # NOTE: this plugin previously subclassed Plugin[FowlEngineEventListener] and
 # registered .listener.FowlEngineEventListener for the vs_event/registerDCSServer
@@ -435,6 +440,10 @@ class FowlEngine(Plugin):
         # War diary feed: server name -> {"posted": [ids], "seen": {id: ts}}.
         # Persisted, so a restart never posts a dispatch twice.
         self.news_feed_state = {}
+        # Status-embed map snapshot per server: {"sig", "at", "png",
+        # "failed_at"}. Memory only -- after a restart the first tick captures
+        # afresh (and re-uploads), which is also what re-binds the image.
+        self._mapsnap = {}
         self.state_file = os.path.join(bot.node.config_dir, 'fowlengine_state.json')
         if os.path.exists(self.state_file):
             try:
@@ -911,6 +920,13 @@ class FowlEngine(Plugin):
                         stats = await resp.json()
                     async with session.get(f"{api_url}/api/objectives", params=sp) as resp:
                         objs = await resp.json() if resp.status == 200 else []
+                    captures = []
+                    try:
+                        async with session.get(f"{api_url}/api/capture-events",
+                                               params=srv_params(server.name, limit=3)) as resp:
+                            captures = await resp.json() if resp.status == 200 else []
+                    except (aiohttp.ClientError, ValueError):
+                        pass
 
                 blue_objs = len([o for o in objs if o.get('owner') == 'Blue'])
                 red_objs = len([o for o in objs if o.get('owner') == 'Red'])
@@ -958,12 +974,30 @@ class FowlEngine(Plugin):
                 )
                 embed.add_field(name=f"{icon('unowned')} Neutral", value=f"{neutral_objs} obj", inline=True)
 
-                ready_objs = [o for o in objs if o.get('health', 100) <= 20 and o.get('owner') in ('Blue', 'Red')]
+                # The engine's own flags when bfdb reached it this poll; the
+                # old health guess only when it didn't (persisted snapshot).
+                live = any(o.get('live') for o in objs)
+                sided = [o for o in objs if o.get('owner') in ('Blue', 'Red')]
+                if live:
+                    ready_objs = [o for o in sided if o.get('captureable')]
+                    attacked = [o for o in sided if o.get('threatened') and not o.get('captureable')]
+                else:
+                    ready_objs = [o for o in sided if o.get('health', 100) <= 20]
+                    attacked = []
+                if attacked:
+                    embed.add_field(name=f"{icon('threat')} Under attack",
+                                    value=self._obj_list(attacked), inline=False)
                 if ready_objs:
-                    names = ", ".join(f"{o['name']} ({o['owner']})" for o in ready_objs[:5])
-                    if len(ready_objs) > 5:
-                        names += f" +{len(ready_objs) - 5}"
-                    embed.add_field(name=f"{icon('pending')} Ready to capture", value=names, inline=False)
+                    embed.add_field(name=f"{icon('pending')} Ready to capture",
+                                    value=self._obj_list(ready_objs), inline=False)
+
+                recent = self._recent_captures(captures)
+                if recent:
+                    embed.add_field(name=f"{icon('captured')} Latest captures", value=recent, inline=False)
+
+                wx = self._weather_line(stats.get('weather'))
+                if wx:
+                    embed.add_field(name=f"{icon('weather')} Conditions", value=wx, inline=False)
 
                 priority_objs = [o.get('name') for o in objs if o.get('priority')]
                 if priority_objs:
@@ -984,7 +1018,12 @@ class FowlEngine(Plugin):
                     self.log.error(f"FowlEngine: status_channel {channel_id} not found or bot lacks access.")
                     continue
                     
-                await self._upsert_embed(self.status_msg_ids, server.name, channel, embed, "status embed")
+                png, fresh = await self._status_map(server, config, api_url, objs)
+                if png:
+                    embed.set_image(url=f"attachment://{STATUS_MAP_FILE}")
+                await self._upsert_embed(self.status_msg_ids, server.name, channel, embed, "status embed",
+                                         png=png, png_name=STATUS_MAP_FILE, refresh_png=fresh,
+                                         carries_image=True)
                 
             except Exception as ex:
                 import traceback
@@ -993,6 +1032,103 @@ class FowlEngine(Plugin):
     @update_status.before_loop
     async def before_update_status(self):
         await self.bot.wait_until_ready()
+
+    @staticmethod
+    def _obj_list(objs: list, cap: int = 5) -> str:
+        names = ", ".join(f"{o['name']} ({o['owner']})" for o in objs[:cap])
+        if len(objs) > cap:
+            names += f" +{len(objs) - cap}"
+        return names
+
+    def _recent_captures(self, captures) -> str:
+        """The last few ownership changes, newest first, with Discord relative
+        timestamps: "Hama -> Red by Shade <t:..:R>"."""
+        lines = []
+        for c in (captures if isinstance(captures, list) else [])[:3]:
+            name, side = c.get('objective'), c.get('side')
+            if not name or side not in ('Blue', 'Red', 'Neutral'):
+                continue
+            when = ""
+            try:
+                when = f" <t:{int(self._parse_iso(c['time']).timestamp())}:R>"
+            except (KeyError, TypeError, ValueError):
+                pass
+            side_icon = icon({'Blue': 'side_blue', 'Red': 'side_red'}.get(side, 'unowned'))
+            by = [str(b) for b in (c.get('by') or []) if b][:2]
+            who = f" by {discord.utils.escape_markdown(', '.join(by))}" if by else ""
+            lines.append(f"{side_icon} **{name}** \u2192 {side}{who}{when}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _weather_line(w) -> str:
+        """One line of the mission weather from /api/stats: wind, temperature,
+        cloud base, visibility -- whichever of them bfdb has."""
+        if not isinstance(w, dict):
+            return ""
+        parts = []
+        if w.get('wind_speed_kts') is not None:
+            spd = round(w['wind_speed_kts'])
+            if spd < 1:
+                parts.append("Wind calm")
+            elif w.get('wind_from_deg') is not None:
+                parts.append(f"Wind {round(w['wind_from_deg']) % 360:03d}\u00b0 / {spd} kt")
+            else:
+                parts.append(f"Wind {spd} kt")
+        if w.get('temp_c') is not None:
+            parts.append(f"{round(w['temp_c'])}\u00b0C")
+        density = w.get('cloud_density')
+        if w.get('cloud_base_m') is not None and (density or 0) > 0:
+            parts.append(f"Clouds {round(w['cloud_base_m'] * 3.28084 / 100) * 100:,} ft")
+        elif density is not None and not density:
+            parts.append("Clear")
+        if w.get('visibility_m') is not None and w['visibility_m'] < 9000:
+            parts.append(f"Vis {w['visibility_m'] / 1000:.1f} km")
+        return " \u00b7 ".join(parts)
+
+    async def _status_map(self, server, config: dict, api_url: str, objs: list) -> tuple:
+        """(png, fresh) for the status embed. `png` is the latest map snapshot
+        (None when disabled or never captured); `fresh` says it was captured
+        this tick and must be uploaded.
+
+        Captured only when the picture would change -- owner, health band or
+        contested flags (mapsnap.map_signature) -- at most every
+        status_map_min_gap_secs, plus a refresh every status_map_minutes, so
+        the one-minute text tick doesn't re-upload an identical image."""
+        if not config.get('status_map', True) or not objs:
+            return None, False
+        browser = mapsnap.find_browser(config.get('status_map_browser'))
+        if not browser:
+            self._warn_once(server.name, "mapsnap-browser",
+                            "FowlEngine: no Edge/Chrome found for the status-embed map snapshot -- "
+                            "set status_map_browser, or status_map: false to silence this")
+            return None, False
+        st = self._mapsnap.setdefault(server.name, {"sig": None, "at": 0.0, "png": None, "failed_at": 0.0})
+        now = time.monotonic()
+        sig = mapsnap.map_signature(objs)
+        min_gap = float(config.get('status_map_min_gap_secs', 120))
+        refresh = float(config.get('status_map_minutes', 10)) * 60
+        due = (st["png"] is None
+               or (sig != st["sig"] and now - st["at"] >= min_gap)
+               or now - st["at"] >= refresh)
+        if not due or (st["failed_at"] and now - st["failed_at"] < min_gap):
+            return st["png"], False
+        base = (config.get('status_map_url') or api_url).rstrip('/')
+        profile = os.path.join(self.bot.node.config_dir, 'fowlengine_mapsnap',
+                               re.sub(r'[^A-Za-z0-9_.-]+', '_', server.name))
+        try:
+            png = await mapsnap.capture(browser, mapsnap.snapshot_url(base, server.name), profile,
+                                        size=mapsnap.parse_size(config.get('status_map_size')), log=self.log)
+        except asyncio.CancelledError:
+            raise
+        except Exception as ex:
+            st["failed_at"] = now
+            self.log.warning(f"FowlEngine: status map snapshot for {server.name} failed: {ex}")
+            return st["png"], False
+        if not png:
+            st["failed_at"] = now
+            return st["png"], False
+        st.update(sig=sig, at=now, png=png, failed_at=0.0)
+        return png, True
 
     @staticmethod
     def _parse_iso(raw: str):
@@ -1298,8 +1434,8 @@ class FowlEngine(Plugin):
             f"{icon('red')} **Red** — `{g.get('red_freq_mhz', 252.0):.3f} {mod}`  ({red_cs})",
         ]
         if g.get('whisper_exe'):
-            lines.append("Key up and ask by callsign (e.g. *\"Magic, bogey dope\"*) — BOGEY DOPE / "
-                         "PICTURE / DECLARE / SNAPLOCK / ALPHA CHECK.")
+            lines.append(f"Key up and call it: *\"{blue_cs}, bogey dope\"* — also picture, declare, "
+                         "snaplock, alpha check.")
         else:
             lines.append("Broadcast only — no check-in needed. Toggle with `-gci on|off` in chat or F10 → EWR → GCI Voice.")
         return lines
@@ -1405,40 +1541,69 @@ class FowlEngine(Plugin):
                                f"{type(ex).__name__}: {ex or '(no message)'}")
             await asyncio.sleep(ENGINE_LOG_RECONNECT_SECS)
 
-    # ── consolidated server-info embed ─────────────────────────────────────
+    # ── GCI & links embed (complements DCSServerBot's server-status embed) ──
 
-    def _server_connect_info(self, server) -> str:
+    async def _fetch_wiki_facts(self, server, config: dict) -> dict:
+        """The instance's public cfg facts (bfdb `GET /api/wiki/facts`, no
+        auth): the static comms plan and the campaign rules. {} when bfdb
+        is unreachable or has no engine_config for this instance."""
+        import aiohttp
+        api_url = config.get("api_url", "http://localhost:8880")
         try:
-            settings = getattr(server, 'settings', {}) or {}
-        except Exception:
-            settings = {}
-        ip = (getattr(server.node, 'public_ip', None)
-              or (server.node.locals.get('public_ip') if hasattr(server.node, 'locals') else None)
-              or "?")
-        port = settings.get('port') or getattr(getattr(server, 'instance', None), 'dcs_port', None) or "?"
-        pw = settings.get('password')
-        line = f"`{ip}:{port}`"
-        line += f" · password `{pw}`" if pw else " · no password"
-        return line
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as http:
+                async with http.get(f"{api_url}/api/wiki/facts", params=srv_params(server.name)) as resp:
+                    if resp.status != 200:
+                        return {}
+                    body = await resp.json(content_type=None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as ex:
+            self.log.debug(f"FowlEngine: wiki facts for {server.name} unavailable: {ex}")
+            return {}
+        facts = body.get("facts") if isinstance(body, dict) else None
+        return facts if isinstance(facts, dict) else {}
 
-    def _build_server_info_embed(self, server) -> discord.Embed:
+    def _build_server_info_embed(self, server, facts: dict | None = None) -> discord.Embed:
+        """Only what DCSServerBot's own server-status embed lacks: the GCI
+        frequencies, each side's planned comms channels, the campaign rules
+        and the links. Connect address, slots, mission time, restart,
+        weather, SRS and Tacview are all in the bot's embed -- repeating them
+        here just made two embeds to keep in sync. Engine builds are ops
+        detail: the perf embed and /feops versions have them.
+
+        Comms and rules come from the public cfg facts and are STATIC: the
+        planned channels (the wiki publishes the same tables), never the live
+        overlay -- which AWACS/tanker is really up, TACANs, laser codes --
+        that the per-side briefing channels carry."""
         up = server.status in (Status.RUNNING, Status.PAUSED)
-        embed = self._vs_embed("Server Info", color=discord.Color.green() if up else discord.Color.dark_grey())
-        embed.add_field(name=f"{icon('connect')} Connect", value=self._server_connect_info(server), inline=False)
-        mission = getattr(getattr(server, 'current_mission', None), 'name', None)
-        embed.add_field(name=f"{icon('server')} DCS", value=f"{server.status.value}" + (f" · {mission}" if mission else ""), inline=True)
-        rt = getattr(server, 'restart_time', None)
-        if rt:
-            try:
-                embed.add_field(name=f"{icon('rotation')} Next rotation", value=f"<t:{int(rt.timestamp())}:R>", inline=True)
-            except (AttributeError, TypeError, ValueError):
-                pass
+        config = self.get_config(server) or {}
+        facts = facts or {}
+        wiki = (config.get('wiki_url') or "").strip()
+        title = "Comms, Rules & Links"
+        if sum(1 for s in self.bot.servers.values() if (self.get_config(s) or {}).get('server_info_channel')) > 1:
+            title += f" — {server.name}"
+        embed = self._vs_embed(title, color=discord.Color.green() if up else discord.Color.dark_grey())
         embed.add_field(name=f"{icon('air')} GCI / AWACS", value="\n".join(self._gci_freq_lines(server)), inline=False)
-        embed.add_field(name=f"{icon('build')} Engine builds", value=self._deploy_status_line(server), inline=False)
-        dash = (self.get_config() or {}).get('dashboard_url')
+        plan = facts.get('comms_plan')
+        hint = "full plan in the wiki" if wiki else ""
+        for side, key in (("Blue", "side_blue"), ("Red", "side_red")):
+            block = serverinfo.comms_plan_block(plan, side, hint)
+            if block:
+                embed.add_field(name=f"{icon(key)} {side} comms plan", value=block, inline=False)
+        rules = serverinfo.rules_lines(facts)
+        if rules:
+            embed.add_field(name=f"{icon('rules')} Rules", value="\n".join(rules)[:serverinfo.FIELD_LIMIT],
+                            inline=False)
+        links = []
+        dash = (config.get('dashboard_url') or "").rstrip('/')
         if dash:
-            embed.add_field(name=f"{icon('url')} Links",
-                            value=f"[Dashboard]({dash}) · [Live map]({dash.rstrip('/')}/map)", inline=False)
+            # /map is the fog-of-war tacmap: a visitor who isn't signed in
+            # gets a "not signed in" card, so say so up front.
+            links += [f"[Dashboard]({dash})", f"[Tactical map]({dash}/map) (sign in)"]
+        if wiki:
+            links.append(f"[Wiki]({wiki})")
+        if links:
+            embed.add_field(name=f"{icon('url')} Links", value=" · ".join(links), inline=False)
         return embed
 
     @tasks.loop(minutes=2.0)
@@ -1453,7 +1618,10 @@ class FowlEngine(Plugin):
                 self.log.error(f"FowlEngine: server_info_channel {channel_id} not found")
                 continue
             try:
-                embed = self._build_server_info_embed(server)
+                facts = await self._fetch_wiki_facts(server, config)
+                embed = self._build_server_info_embed(server, facts)
+            except asyncio.CancelledError:
+                raise
             except Exception as ex:
                 self.log.error(f"FowlEngine: failed to build server-info embed: {ex}")
                 continue
@@ -3704,7 +3872,9 @@ class FowlEngine(Plugin):
         return self._embed_from_dict({k: v for k, v in d.items() if k != "title"}, base=base)
 
     async def _upsert_embed(self, ids: dict, key: str, channel, embed: discord.Embed,
-                            what: str = "embed") -> None:
+                            what: str = "embed", png: bytes | None = None,
+                            png_name: str = "image.png", refresh_png: bool = False,
+                            carries_image: bool = False) -> None:
         """Edit the one persisted message for `key` in place, or post it (and
         persist its id) when there is none yet or it was deleted.
 
@@ -3713,16 +3883,28 @@ class FowlEngine(Plugin):
         channel, and without it every tick used to fail, forget the id and
         post a fresh embed -- a new message every few minutes. Only "that
         message is gone" (404) posts a replacement; any other failure is
-        logged and retried next tick, never answered with another post."""
+        logged and retried next tick, never answered with another post.
+
+        `png` is an image the embed shows as attachment://`png_name`. It is
+        uploaded when the message is posted, and on an edit only when
+        `refresh_png` says it changed -- otherwise the edit leaves the
+        message's attachment alone. `carries_image` callers get the old
+        attachment dropped on a tick with no `png`, so it doesn't hang under
+        the embed as a loose file."""
         if key not in ids and '__legacy__' in ids:
             ids[key] = ids.pop('__legacy__')  # pre-multi-server id: re-home it
         msg_id = ids.get(key)
         if msg_id:
             try:
+                kw = {"embed": embed}
+                if refresh_png and png is not None:
+                    kw["attachments"] = [discord.File(io.BytesIO(png), filename=png_name)]
+                elif png is None and carries_image:
+                    kw["attachments"] = []
                 if hasattr(channel, 'get_partial_message'):
-                    await channel.get_partial_message(int(msg_id)).edit(embed=embed)
+                    await channel.get_partial_message(int(msg_id)).edit(**kw)
                 else:
-                    await (await channel.fetch_message(int(msg_id))).edit(embed=embed)
+                    await (await channel.fetch_message(int(msg_id))).edit(**kw)
                 return
             except discord.NotFound:
                 self.log.info(f"FowlEngine: {what} message {msg_id} in channel {channel.id} is gone -- posting a new one")
@@ -3735,7 +3917,10 @@ class FowlEngine(Plugin):
             except discord.HTTPException as ex:
                 self.log.warning(f"FowlEngine: editing the {what} in channel {channel.id} failed ({ex}); retrying next tick")
                 return
-        msg = await channel.send(embed=embed)
+        if png is not None:
+            msg = await channel.send(embed=embed, file=discord.File(io.BytesIO(png), filename=png_name))
+        else:
+            msg = await channel.send(embed=embed)
         ids[key] = msg.id
         self.save_state()
 

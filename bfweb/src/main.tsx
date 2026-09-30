@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { ThemeProvider } from './context/ThemeContext'
+import { urlTheme } from './lib/urlTheme'
 import { campaign, campaignDefaults, type CampaignConfig } from './config/campaign'
 import { API_ROOT } from './api'
 
@@ -193,7 +194,7 @@ async function bootstrap() {
   // [data-theme] and there's no dark/light flash. ThemeProvider keeps it in
   // sync afterwards.
   try {
-    const stored = localStorage.getItem('bfweb-theme')
+    const stored = urlTheme() ?? localStorage.getItem('bfweb-theme')
     const theme = stored === 'light' || stored === 'dark'
       ? stored
       : (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')

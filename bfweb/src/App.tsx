@@ -28,6 +28,7 @@ const CockpitPage      = lazy(() => import('./pages/CockpitPage'))
 const IntelPage        = lazy(() => import('./pages/IntelPage'))
 const IntelTestPage    = lazy(() => import('./pages/IntelTestPage'))
 const ScopePage        = lazy(() => import('./scope/ScopePage'))
+const SnapshotPage     = lazy(() => import('./pages/SnapshotPage'))
 
 /** Shown while a route chunk is in flight. Deliberately quiet -- on a fast
  *  connection the chunk arrives before this is perceptible, and a spinner
@@ -95,6 +96,8 @@ export default function App() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/cockpit" element={<CockpitPage />} />
+              {/* Chromeless public map for the Discord status embed. */}
+              <Route path="/snapshot" element={<SnapshotPage />} />
               {/* A development harness, not a product page: dev builds only. */}
               {import.meta.env.DEV && <Route path="/inteltest" element={<IntelTestPage />} />}
               <Route path="/" element={<Layout />}>
