@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import shutil
+import socket
 import subprocess
 import time
 from typing import Iterable, Optional
@@ -128,29 +129,130 @@ class _Cdp:
             return data.get("result") or {}
 
 
-async def _devtools_port(profile: str, proc, timeout: float) -> int:
-    """The port Chromium picked for --remote-debugging-port=0, read from the
-    DevToolsActivePort file it writes into the profile.
+def _free_port() -> int:
+    """A loopback port nothing is listening on right now."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
-    The launched process exiting is NOT fatal: Edge started elevated (the
-    Fowl Engine service runs the bot with an elevated token) relaunches
-    itself de-elevated and the process we started exits, while the relaunched
-    one still writes the port file into this profile. Only a port file that
-    never appears is a failure."""
-    path = os.path.join(profile, "DevToolsActivePort")
+
+def _tail(path: str, limit: int = 700) -> str:
+    """The end of a browser's stderr log, whitespace-collapsed, for a warning."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - limit * 4))
+            text = f.read().decode("utf-8", "replace")
+    except OSError:
+        return "(no stderr log)"
+    text = " ".join(text.split())
+    return (text[-limit:] if text else "(stderr empty)")
+
+
+async def _wait_devtools(port: int, profile: str, timeout: float) -> int:
+    """The browser's DevTools port once it answers.
+
+    We pick the port ourselves and poll it, rather than rely only on the
+    DevToolsActivePort file Chromium writes into the profile -- on the live
+    server (bot started elevated by the Fowl Engine service) that file never
+    appeared. The file is still read as a second source in case the browser
+    chose another port. The launched process exiting is not fatal on its own:
+    elevated Edge can hand over to a relaunched process."""
+    import aiohttp
+    marker = os.path.join(profile, "DevToolsActivePort")
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2)) as http:
+        while time.monotonic() < deadline:
+            candidates = [port]
+            try:
+                with open(marker, encoding="utf-8") as f:
+                    first = f.readline().strip()
+                if first.isdigit() and int(first) != port:
+                    candidates.append(int(first))
+            except OSError:
+                pass
+            for p in candidates:
+                try:
+                    async with http.get(f"http://127.0.0.1:{p}/json/version") as resp:
+                        if resp.status == 200:
+                            return p
+                except Exception:
+                    pass
+            await asyncio.sleep(0.3)
+    raise TimeoutError(f"browser never opened its DevTools port ({port})")
+
+
+def _launch(browser: str, args: list, stderr_path: str):
+    """Start the browser with plain Popen -- not asyncio.create_subprocess_exec:
+    DCSServerBot runs on the Windows *selector* event loop (psycopg needs it),
+    which has no subprocess support (a bare NotImplementedError). procman
+    spawns bfdb the same way. stderr goes to a file for the failure report."""
+    err = open(stderr_path, "wb")
+    try:
+        proc = subprocess.Popen([browser, *args], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=err)
+    except Exception:
+        err.close()
+        raise
+    return proc, err
+
+
+async def _stop(proc, err) -> None:
+    if proc.poll() is None:
+        proc.kill()
         try:
-            with open(path, encoding="utf-8") as f:
-                first = f.readline().strip()
-            if first.isdigit():
-                return int(first)
-        except OSError:
+            await asyncio.get_running_loop().run_in_executor(None, proc.wait, 10)
+        except subprocess.TimeoutExpired:
             pass
-        await asyncio.sleep(0.2)
-    code = proc.poll()
-    raise TimeoutError("browser never opened its DevTools port"
-                       + (f" (the launched process exited with code {code})" if code is not None else ""))
+    try:
+        err.close()
+    except OSError:
+        pass
+
+
+# Flags every launch shares. --do-not-de-elevate: Edge started elevated
+# otherwise relaunches itself de-elevated; other Chromium builds ignore it.
+_COMMON = ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--mute-audio",
+           "--no-first-run", "--no-default-browser-check", "--disable-extensions",
+           "--disable-background-networking", "--disable-sync", "--do-not-de-elevate",
+           "--enable-logging=stderr", "--v=0"]
+
+# A real snapshot is ~150-350 KB; the dark page with nothing drawn is ~5 KB.
+_BLANK_BYTES = 20_000
+
+
+async def _screenshot_mode(browser: str, url: str, base: str, size, why: str) -> bytes:
+    """Fallback without DevTools: the browser's one-shot --screenshot mode,
+    which writes the PNG itself once the page settles (--virtual-time-budget
+    covers the data fetch and the basemap tiles). Can't check the page's
+    ready flag, so a near-empty image is refused instead of posted."""
+    profile = _fresh_profile(base)
+    out = os.path.join(profile, "shot.png")
+    stderr_path = os.path.join(profile, "browser-stderr.log")
+    w, h = size
+    proc, err = _launch(browser, [*_COMMON, f"--user-data-dir={profile}", f"--window-size={w},{h}",
+                                  "--virtual-time-budget=25000", f"--screenshot={out}", url], stderr_path)
+    try:
+        deadline = time.monotonic() + 60
+        last = -1
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1.0)
+            try:
+                n = os.path.getsize(out)
+            except OSError:
+                continue
+            if n > 0 and n == last:  # written and no longer growing
+                with open(out, "rb") as f:
+                    png = f.read()
+                if len(png) < _BLANK_BYTES:
+                    raise RuntimeError(f"--screenshot came out blank ({len(png)} bytes)")
+                return png
+            last = n
+        raise TimeoutError(f"{why}; --screenshot fallback wrote nothing in 60s either "
+                           f"(exit={proc.poll()}, stderr: {_tail(stderr_path)})")
+    finally:
+        await _stop(proc, err)
+        shutil.rmtree(profile, ignore_errors=True)
 
 
 def _fresh_profile(base: str) -> str:
@@ -174,29 +276,25 @@ async def capture(browser: str, url: str, profile: str, size=DEFAULT_SIZE,
     page -- that is not posted). Raises on browser/protocol failures."""
     import aiohttp
 
-    profile = _fresh_profile(profile)
+    base = profile
+    profile = _fresh_profile(base)
+    stderr_path = os.path.join(profile, "browser-stderr.log")
     w, h = size
-    # Plain Popen, not asyncio.create_subprocess_exec: DCSServerBot runs on
-    # the Windows *selector* event loop (psycopg needs it), which has no
-    # subprocess support -- create_subprocess_exec raises a bare
-    # NotImplementedError there. procman spawns bfdb the same way.
-    proc = subprocess.Popen(
-        [browser,
-         "--headless=new", "--disable-gpu", "--hide-scrollbars", "--mute-audio",
-         "--no-first-run", "--no-default-browser-check", "--disable-extensions",
-         "--disable-background-networking", "--disable-sync",
-         "--remote-debugging-port=0", "--remote-allow-origins=*",
-         # Edge only: stay elevated rather than relaunch de-elevated (see
-         # _devtools_port). Other Chromium builds ignore unknown switches.
-         "--do-not-de-elevate",
-         f"--user-data-dir={profile}", f"--window-size={w},{h}",
-         "about:blank"],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    want = _free_port()
+    proc, err = _launch(browser, [*_COMMON, f"--remote-debugging-port={want}", "--remote-allow-origins=*",
+                                  f"--user-data-dir={profile}", f"--window-size={w},{h}", "about:blank"],
+                        stderr_path)
     started = time.monotonic()
     port = None
     try:
-        port = await _devtools_port(profile, proc, 20.0)
+        try:
+            port = await _wait_devtools(want, profile, 20.0)
+        except TimeoutError as ex:
+            why = f"{ex} (exit={proc.poll()}, stderr: {_tail(stderr_path)})"
+            await _stop(proc, err)
+            if log:
+                log.warning(f"FowlEngine: map snapshot: {why} -- trying the one-shot --screenshot mode")
+            return await _screenshot_mode(browser, url, base, size, why)
         async with aiohttp.ClientSession() as http:
             async with http.get(f"http://127.0.0.1:{port}/json/list") as resp:
                 targets = await resp.json(content_type=None)
@@ -246,12 +344,7 @@ async def capture(browser: str, url: str, profile: str, size=DEFAULT_SIZE,
     finally:
         if port is not None:
             await _close_browser(port)
-        if proc.poll() is None:
-            proc.kill()
-            try:
-                await asyncio.get_running_loop().run_in_executor(None, proc.wait, 10)
-            except subprocess.TimeoutExpired:
-                pass
+        await _stop(proc, err)
         shutil.rmtree(profile, ignore_errors=True)  # a straggler's lock -> the next run clears it
 
 
