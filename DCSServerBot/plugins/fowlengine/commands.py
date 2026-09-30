@@ -1028,12 +1028,14 @@ class FowlEngine(Plugin):
                     self.log.error(f"FowlEngine: status_channel {channel_id} not found or bot lacks access.")
                     continue
                     
-                png, fresh = await self._status_map(server, config, api_url, objs)
+                png, upload = await self._status_map(server, config, api_url, objs)
                 if png:
                     embed.set_image(url=f"attachment://{STATUS_MAP_FILE}")
-                await self._upsert_embed(self.status_msg_ids, server.name, channel, embed, "status embed",
-                                         png=png, png_name=STATUS_MAP_FILE, refresh_png=fresh,
-                                         carries_image=True)
+                delivered = await self._upsert_embed(self.status_msg_ids, server.name, channel, embed,
+                                                     "status embed", png=png, png_name=STATUS_MAP_FILE,
+                                                     refresh_png=upload, carries_image=True)
+                if png and upload and delivered:
+                    self._mapsnap[server.name]["uploaded"] = True
                 
             except Exception as ex:
                 import traceback
@@ -1096,9 +1098,11 @@ class FowlEngine(Plugin):
         return " \u00b7 ".join(parts)
 
     async def _status_map(self, server, config: dict, api_url: str, objs: list) -> tuple:
-        """(png, fresh) for the status embed. `png` is the latest map snapshot
-        (None when disabled or never captured); `fresh` says it was captured
-        this tick and must be uploaded.
+        """(png, upload) for the status embed. `png` is the latest map snapshot
+        (None when disabled or never captured); `upload` says the message
+        doesn't carry it yet -- captured this tick, or an earlier upload
+        failed -- so it must be (re)sent. update_status sets "uploaded" once
+        Discord has taken it.
 
         Captured only when the picture would change -- owner, health band or
         contested flags (mapsnap.map_signature) -- at most every
@@ -1112,7 +1116,9 @@ class FowlEngine(Plugin):
                             "FowlEngine: no Edge/Chrome found for the status-embed map snapshot -- "
                             "set status_map_browser, or status_map: false to silence this")
             return None, False
-        st = self._mapsnap.setdefault(server.name, {"sig": None, "at": 0.0, "png": None, "failed_at": 0.0})
+        st = self._mapsnap.setdefault(server.name, {"sig": None, "at": 0.0, "png": None, "failed_at": 0.0,
+                                                    "uploaded": False})
+        pending = st["png"] is not None and not st["uploaded"]
         now = time.monotonic()
         sig = mapsnap.map_signature(objs)
         min_gap = float(config.get('status_map_min_gap_secs', 120))
@@ -1121,7 +1127,7 @@ class FowlEngine(Plugin):
                or (sig != st["sig"] and now - st["at"] >= min_gap)
                or now - st["at"] >= refresh)
         if not due or (st["failed_at"] and now - st["failed_at"] < min_gap):
-            return st["png"], False
+            return st["png"], pending
         base = (config.get('status_map_url') or api_url).rstrip('/')
         profile = os.path.join(self.bot.node.config_dir, 'fowlengine_mapsnap',
                                re.sub(r'[^A-Za-z0-9_.-]+', '_', server.name))
@@ -1134,11 +1140,15 @@ class FowlEngine(Plugin):
             st["failed_at"] = now
             self.log.warning(f"FowlEngine: status map snapshot for {server.name} failed: "
                              f"{type(ex).__name__}: {ex or '(no message)'}")
-            return st["png"], False
+            return st["png"], pending
         if not png:
             st["failed_at"] = now
-            return st["png"], False
-        st.update(sig=sig, at=now, png=png, failed_at=0.0)
+            return st["png"], pending
+        st.update(sig=sig, at=now, png=png, failed_at=0.0, uploaded=False)
+        if not st.get("logged_first"):
+            st["logged_first"] = True
+            self.log.info(f"FowlEngine: status map snapshot for {server.name} captured "
+                          f"({len(png) // 1024} KB, {browser})")
         return png, True
 
     @staticmethod
@@ -3907,7 +3917,7 @@ class FowlEngine(Plugin):
     async def _upsert_embed(self, ids: dict, key: str, channel, embed: discord.Embed,
                             what: str = "embed", png: bytes | None = None,
                             png_name: str = "image.png", refresh_png: bool = False,
-                            carries_image: bool = False) -> None:
+                            carries_image: bool = False) -> bool:
         """Edit the one persisted message for `key` in place, or post it (and
         persist its id) when there is none yet or it was deleted.
 
@@ -3923,22 +3933,47 @@ class FowlEngine(Plugin):
         `refresh_png` says it changed -- otherwise the edit leaves the
         message's attachment alone. `carries_image` callers get the old
         attachment dropped on a tick with no `png`, so it doesn't hang under
-        the embed as a loose file."""
+        the embed as a loose file.
+
+        Returns whether the message now carries `png` when an upload was asked
+        for (True otherwise, when the edit/post went through). The caller keeps
+        re-sending an image until that is True -- an upload that failed once
+        used to leave the embed pointing at an attachment that was never there,
+        so the picture silently stayed missing. Without "Attach Files" in the
+        channel the image is dropped and the text is still updated."""
         if key not in ids and '__legacy__' in ids:
             ids[key] = ids.pop('__legacy__')  # pre-multi-server id: re-home it
         msg_id = ids.get(key)
+        uploading = png is not None and refresh_png
+
+        def attach_forbidden():
+            self._warn_once(str(channel.id), "attach-forbidden",
+                            f"FowlEngine: can't attach the {what}'s picture in channel {channel.id} -- give the "
+                            f"bot Attach Files there (posting it without the picture until then)")
+            embed.set_image(url=None)
+
+        async def edit(**kw):
+            if hasattr(channel, 'get_partial_message'):
+                await channel.get_partial_message(int(msg_id)).edit(**kw)
+            else:
+                await (await channel.fetch_message(int(msg_id))).edit(**kw)
+
         if msg_id:
             try:
                 kw = {"embed": embed}
-                if refresh_png and png is not None:
+                if uploading:
                     kw["attachments"] = [discord.File(io.BytesIO(png), filename=png_name)]
                 elif png is None and carries_image:
                     kw["attachments"] = []
-                if hasattr(channel, 'get_partial_message'):
-                    await channel.get_partial_message(int(msg_id)).edit(**kw)
-                else:
-                    await (await channel.fetch_message(int(msg_id))).edit(**kw)
-                return
+                try:
+                    await edit(**kw)
+                    return True
+                except discord.Forbidden:
+                    if not uploading:
+                        raise
+                    attach_forbidden()
+                    await edit(embed=embed, attachments=[])
+                    return False
             except discord.NotFound:
                 self.log.info(f"FowlEngine: {what} message {msg_id} in channel {channel.id} is gone -- posting a new one")
                 ids.pop(key, None)
@@ -3946,16 +3981,23 @@ class FowlEngine(Plugin):
                 self._warn_once(str(channel.id), "edit-forbidden",
                                 f"FowlEngine: can't edit the {what} in channel {channel.id} -- give the bot "
                                 f"View Channel, Send Messages and Embed Links there")
-                return
+                return False
             except discord.HTTPException as ex:
                 self.log.warning(f"FowlEngine: editing the {what} in channel {channel.id} failed ({ex}); retrying next tick")
-                return
+                return False
+        delivered = True
         if png is not None:
-            msg = await channel.send(embed=embed, file=discord.File(io.BytesIO(png), filename=png_name))
+            try:
+                msg = await channel.send(embed=embed, file=discord.File(io.BytesIO(png), filename=png_name))
+            except discord.Forbidden:
+                attach_forbidden()
+                msg = await channel.send(embed=embed)
+                delivered = False
         else:
             msg = await channel.send(embed=embed)
         ids[key] = msg.id
         self.save_state()
+        return delivered
 
     @tasks.loop(minutes=RANGE_STATUS_MINUTES)
     async def update_range_status(self):
