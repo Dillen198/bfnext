@@ -2477,6 +2477,7 @@ impl Default for Cfg {
             helo_insertion: None,
             air_life: None,
             modern_war: None,
+            ground_war: None,
             emergency_repair: None,
             population_scaling: None,
             ground_vehicle_cargo: FxHashMap::default(),

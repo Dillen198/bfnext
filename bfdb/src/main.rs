@@ -1339,6 +1339,80 @@ async fn api_briefing(
     }
 }
 
+/// GET /api/groundwar — the ground war as the caller's coalition sees it:
+/// its own formations in full, enemy formations only where its forces are in
+/// contact, the battles being fought, and the objectives to order them at.
+///
+/// Coalition-locked like `/api/situation`: the session resolves to a side and
+/// the engine builds the picture for that side alone. `can_command` says
+/// whether this viewer may give orders -- a pilot registered on a side; an
+/// admin looking in with `?side=` sees but can't command.
+async fn api_groundwar(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use netidx::publisher::Value;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let side_str = match c.side {
+        dcso3::coalition::Side::Red => "red",
+        _ => "blue",
+    };
+    let raw = call_engine_rpc_str(
+        &db,
+        &inst,
+        "query-ground-war",
+        vec![("side", Value::from(side_str.to_string()))],
+    )
+    .await?;
+    let mut v: serde_json::Value = serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
+    if let Some(o) = v.as_object_mut() {
+        o.insert("can_command".into(), serde_json::json!(!c.god_mode && c.ucid().is_some()));
+        o.insert("god_mode".into(), serde_json::json!(c.god_mode));
+    }
+    Ok(json_response(v.to_string()))
+}
+
+/// POST /api/groundwar/command — order one of the caller's side's ground
+/// formations, or raise a new one. The body is a `GroundCommand`. The
+/// engine resolves the caller's side itself, from the ucid their Discord
+/// login is linked to, and refuses an order for a formation that isn't
+/// theirs -- nothing in the body can reach the other side's forces.
+async fn api_groundwar_command(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: bfprotocols::groundwar::GroundCommand,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use netidx::publisher::Value;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    if c.god_mode {
+        return Err(websec::forbidden(
+            "commanding ground forces needs a pilot registered on a side this campaign",
+        )
+        .into());
+    }
+    let Some(ucid) = c.ucid() else {
+        return Err(websec::forbidden(
+            "account not linked -- type -linkme <token> in DCS chat (get the token with /linkme in Discord)",
+        )
+        .into());
+    };
+    let cmd = serde_json::to_string(&body).map_err(anyhow::Error::from)?;
+    let raw = call_engine_rpc_str(
+        &db,
+        &inst,
+        "ground-command",
+        vec![("ucid", Value::from(ucid.to_string())), ("cmd", Value::from(cmd))],
+    )
+    .await?;
+    Ok(json_response(raw))
+}
+
 /// GET /api/situation — the caller's own coalition auto-generated situational
 /// briefing: posture, ranked tasking, hotspots, the air-defence areas *that
 /// side* has actually earned intel on, the air picture, logistics and the comms
@@ -7194,6 +7268,15 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_situation);
 
+    let groundwar = warp::path!("api" / "groundwar")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_groundwar);
+
     let kills = warp::path!("api" / "kills")
         .and(with_db(db.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
@@ -8122,6 +8205,17 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_intel_markup_add);
 
+    let groundwar_command_route = warp::path!("api" / "groundwar" / "command")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<bfprotocols::groundwar::GroundCommand>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_groundwar_command);
+
     let intel_markup_delete_route = warp::path!("api" / "intel" / "markup" / "delete")
         .and(warp::post())
         .and(extract_session_cookie())
@@ -8157,6 +8251,7 @@ async fn main() -> Result<()> {
         .or(frontline)
         .or(briefing)
         .or(situation)
+        .or(groundwar)
         .or(warehouse)
         .or(kills)
         .or(capture_events)
@@ -8324,6 +8419,7 @@ async fn main() -> Result<()> {
             .or(intel_purge_route)
             .or(intel_markup_add_route)
             .or(intel_markup_delete_route)
+            .or(groundwar_command_route)
             .boxed())
         .or(admin_bot_start
             .or(admin_bot_stop)

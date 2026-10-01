@@ -239,6 +239,17 @@ pub enum AdminCommand {
     QueryTacmap {
         side: Side,
     },
+    /// The ground war as one side sees it (`crate::groundwar::picture`).
+    QueryGroundWar {
+        side: Side,
+    },
+    /// A player's order to their side's ground formations, from the
+    /// dashboard. `ucid` is resolved and trusted by bfdb from the player's
+    /// login; the engine checks the formation is on that player's side.
+    GroundCommand {
+        ucid: Ucid,
+        cmd: bfprotocols::groundwar::GroundCommand,
+    },
     QueryGci {
         side: Side,
     },
@@ -3106,6 +3117,7 @@ impl AdminCommand {
                 | Self::QueryBriefing { .. }
                 | Self::QuerySituation { .. }
                 | Self::QueryTacmap { .. }
+                | Self::QueryGroundWar { .. }
                 | Self::QueryGci { .. }
                 | Self::QueryCas { .. }
                 | Self::QueryAtc { .. }
@@ -3603,6 +3615,20 @@ fn run_admin_command(
                 match serde_json::to_string(&picture) {
                     Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize tacmap: {e:?}"),
+                }
+            }
+            AdminCommand::QueryGroundWar { side } => {
+                let picture = crate::groundwar::picture(ctx, lua, side);
+                match serde_json::to_string(&picture) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the ground war: {e:?}"),
+                }
+            }
+            AdminCommand::GroundCommand { ucid, cmd } => {
+                let reply = crate::groundwar::dashboard_command(lua, ctx, ucid, cmd);
+                match serde_json::to_string(&reply) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the ground command reply: {e:?}"),
                 }
             }
             AdminCommand::QueryUnitDb => {

@@ -151,6 +151,20 @@ fn chaikin(pts: &[Vector2], iters: usize) -> Vec<Vector2> {
 /// Trace the F = 0 / F = ±edge_level contours of the ownership field over
 /// `objs` (`(x, y, sign)`, sign > 0 blue / < 0 red).
 pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Frontlines {
+    compute_with_pressure(objs, &[], p)
+}
+
+/// `compute`, with the field also pushed by `pressure` points (same
+/// `(x, y, signed weight)` form): forces in the field, which bend the line
+/// toward the enemy where they stand. They add to the field and count as a
+/// side's presence for "contested", but don't set the map extent or the
+/// smoothing scale -- those stay a function of the objectives, so a column
+/// of tanks parked next to a base can't shrink the whole picture's σ.
+pub fn compute_with_pressure(
+    objs: &[(f64, f64, f64)],
+    pressure: &[(f64, f64, f64)],
+    p: &Params,
+) -> Frontlines {
     let objs: Vec<Obj> = objs
         .iter()
         .filter(|(_, _, s)| *s != 0.0)
@@ -196,6 +210,16 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Frontlines {
     let sigma = (spacing * p.sigma_mult).clamp(p.sigma_min, p.sigma_max);
     let inv_2s2 = 1.0 / (2.0 * sigma * sigma);
     let cutoff2 = (3.0 * sigma).powi(2);
+    let field_pts: Vec<Obj> = objs
+        .iter()
+        .copied()
+        .chain(
+            pressure
+                .iter()
+                .filter(|(_, _, s)| *s != 0.0 && s.is_finite())
+                .map(|&(x, y, s)| Obj { pos: Vector2::new(x, y), sign: s }),
+        )
+        .collect();
 
     // Grid. i indexes x, j indexes y.
     let res = p.grid_res.clamp(80, 400);
@@ -204,7 +228,7 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Frontlines {
     let dy = (mx.y - mn.y) / cols as f64;
     let field = |q: Vector2| -> f64 {
         let mut s = 0.0;
-        for o in &objs {
+        for o in &field_pts {
             let d2 = (o.pos - q).norm_squared();
             if d2 <= cutoff2 {
                 s += o.sign * (-d2 * inv_2s2).exp();
@@ -234,7 +258,7 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Frontlines {
     let keep_dist2 = (sigma * p.contested_mult).powi(2);
     let contested_at = |q: Vector2| -> bool {
         let (mut b, mut r) = (false, false);
-        for o in &objs {
+        for o in &field_pts {
             if (o.pos - q).norm_squared() <= keep_dist2 {
                 if o.sign > 0.0 {
                     b = true;
@@ -501,4 +525,39 @@ pub fn compute(objs: &[(f64, f64, f64)], p: &Params) -> Frontlines {
         red.len()
     );
     Frontlines { mid, blue, red }
+}
+
+#[cfg(test)]
+mod pressure_tests {
+    use super::*;
+
+    /// Mean x of the white line's points.
+    fn mid_x(fl: &Frontlines) -> f64 {
+        let pts: Vec<[f64; 2]> = fl.mid.iter().flatten().copied().collect();
+        assert!(!pts.is_empty(), "no front line traced");
+        pts.iter().map(|p| p[0]).sum::<f64>() / pts.len() as f64
+    }
+
+    #[test]
+    fn a_formation_pushes_the_line_forward() {
+        // Two columns of bases 40 km apart, blue west, red east.
+        let mut objs = vec![];
+        for k in 0..5 {
+            let y = k as f64 * 20_000.;
+            objs.push((0., y, 1.));
+            objs.push((40_000., y, -1.));
+        }
+        let p = Params::default();
+        let base = compute(&objs, &p);
+        let same = compute_with_pressure(&objs, &[], &p);
+        assert_eq!(mid_x(&base), mid_x(&same));
+        // A blue formation sitting just west of the red bases.
+        let pushed = compute_with_pressure(&objs, &[(28_000., 40_000., 0.6)], &p);
+        assert!(
+            mid_x(&pushed) > mid_x(&base),
+            "front did not move east: {} vs {}",
+            mid_x(&pushed),
+            mid_x(&base)
+        );
+    }
 }

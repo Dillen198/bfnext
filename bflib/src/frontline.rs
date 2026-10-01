@@ -130,6 +130,11 @@ pub struct FrontLine {
     marks: Vec<MarkId>,
     config: FrontLineConfig,
     objective_ownership_hash: u64,
+    /// Ground formations bending the line (`crate::db::formation::pressure`),
+    /// as of the last `collect_unit_pressure`.
+    pressure: Vec<(f64, f64, f64)>,
+    /// How hard they bend it; 0 = not at all. Set by the ground war.
+    pressure_weight: f64,
 }
 
 impl FrontLine {
@@ -138,6 +143,8 @@ impl FrontLine {
             marks: Vec::new(),
             config,
             objective_ownership_hash: 0,
+            pressure: Vec::new(),
+            pressure_weight: 0.,
         }
     }
 
@@ -170,7 +177,7 @@ impl FrontLine {
 
     fn draw_frontline(&mut self, persisted: &Persisted, msgq: &mut MsgQ) {
         let objs = frontline_objectives(persisted);
-        let mut fl = fl::compute(&objs, &self.params());
+        let mut fl = fl::compute_with_pressure(&objs, &self.pressure, &self.params());
         if fl.mid.is_empty() && fl.blue.is_empty() && fl.red.is_empty() {
             return;
         }
@@ -247,7 +254,8 @@ impl FrontLine {
             return false;
         }
 
-        let new_hash = Self::calculate_ownership_hash(persisted);
+        let new_hash =
+            Self::calculate_ownership_hash(persisted) ^ self.pressure_hash().rotate_left(17);
         let is_initial = self.objective_ownership_hash == 0;
         if self.config.update_on_objective_change_only && !is_initial && new_hash == self.objective_ownership_hash {
             debug!("Frontline: no ownership change, skipping redraw");
@@ -266,8 +274,29 @@ impl FrontLine {
         true
     }
 
-    /// Dummy method for compatibility (no longer used)
-    pub fn collect_unit_pressure(&mut self, _persisted: &Persisted, _now: DateTime<Utc>) {}
+    /// How strongly ground formations bend the line (`GroundWarCfg::frontline_weight`).
+    pub fn set_pressure_weight(&mut self, weight: f64) {
+        self.pressure_weight = weight.max(0.);
+    }
+
+    /// Pick up where the ground formations are, for the next redraw.
+    pub fn collect_unit_pressure(&mut self, persisted: &Persisted, _now: DateTime<Utc>) {
+        self.pressure = crate::db::formation::pressure(persisted, self.pressure_weight);
+    }
+
+    /// Formation positions to 5 km and strength to a quarter: enough to tell
+    /// a front that has moved from one that has only jittered.
+    fn pressure_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        for (x, y, w) in &self.pressure {
+            ((x / 5_000.).round() as i64).hash(&mut h);
+            ((y / 5_000.).round() as i64).hash(&mut h);
+            ((w * 4.).round() as i64).hash(&mut h);
+        }
+        h.finish()
+    }
 
     /// Remove all frontline segments
     pub fn remove(mut self, msgq: &mut MsgQ) {

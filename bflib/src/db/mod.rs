@@ -43,10 +43,12 @@ use tokio::sync::mpsc::UnboundedSender;
 
 pub mod actions;
 pub mod balance;
+pub mod battle;
 pub mod cargo;
 pub mod emergency_repair;
 pub mod ephemeral;
 pub mod events;
+pub mod formation;
 pub mod ghosts;
 pub mod ground_insertion;
 pub mod group;

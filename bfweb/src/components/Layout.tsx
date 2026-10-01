@@ -16,6 +16,7 @@ import {
   Objective,
   Briefing,
   ReconIntel,
+  Armor,
   Rankings,
   KillFeed,
   Pilot,
@@ -64,6 +65,7 @@ const COALITION_NAV: NavItem[] = [
   { to: '/news',     icon: Briefing,   label: 'WAR DIARY'    },
   { to: '/briefing', icon: Briefing,   label: 'BRIEFING'     },
   { to: '/intel',    icon: ReconIntel, label: 'RECON INTEL'  },
+  { to: '/ground',   icon: Armor,      label: 'GROUND COMMAND' },
 ]
 // Stats & people.
 const STATS_NAV: NavItem[] = [

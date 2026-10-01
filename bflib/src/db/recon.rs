@@ -168,6 +168,15 @@ impl Db {
                     .into_iter()
                     .flat_map(|gs| gs.into_iter())
             })
+            // Ground formations out in the field are out of their bases'
+            // garrisons, but no less visible.
+            .chain(
+                self.persisted
+                    .formations
+                    .into_iter()
+                    .filter(|(_, f)| f.side == enemy_side)
+                    .flat_map(|(_, f)| f.groups.iter()),
+            )
             .filter_map(|gid| self.persisted.groups.get(gid))
             .flat_map(|g| g.units.into_iter())
             .filter_map(|uid| self.persisted.units.get(uid))

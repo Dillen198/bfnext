@@ -17,6 +17,7 @@ for more details.
 pub mod action;
 pub mod cargo;
 pub(crate) mod ewr;
+mod ground;
 mod info;
 pub mod jtac;
 pub(crate) mod objectives;
@@ -452,6 +453,13 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             }
             if ctx.db.ephemeral.cfg.rules.actions.check(&ucid) {
                 built("Actions", action::init_action_menu_for_slot(ctx, lua, slot, &ucid));
+            }
+            if cfg
+                .ground_war
+                .as_ref()
+                .map_or(false, |g| g.enabled && g.command_rule.check(&ucid))
+            {
+                built("Ground Forces", ground::init_ground_menu_for_slot(&mc, miz_gid, ucid));
             }
             built("Objectives", objectives::init_objectives_menu_for_slot(ctx, lua, slot));
             built("Info", info::init_info_menu_for_slot(ctx, lua, slot));

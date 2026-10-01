@@ -15456,5 +15456,42 @@
       "speed_kph": 60,
       "station_radius_m": 5000
     }
+  },
+  "ground_war": {
+    "enabled": true,
+    "max_formations_per_side": 5,
+    "max_live_formations": 6,
+    "groups_per_formation": 3,
+    "keep_home_combat_groups": 1,
+    "take_aaa": true,
+    "speed_kph": 30,
+    "player_bubble_m": 30000,
+    "contact_m": 10000,
+    "despawn_grace_secs": 300,
+    "arrive_m": 1500,
+    "withdraw_strength_pct": 40,
+    "attrition_rate": 0.1,
+    "attrition_secs": 300,
+    "player_order_lock_secs": 3600,
+    "player_order_cooldown_secs": 30,
+    "raise_cost": 0,
+    "frontline_weight": 0.6,
+    "frontline_redraw_secs": 900,
+    "map_pins": true,
+    "battle_marks": true,
+    "smoke": true,
+    "max_wreck_fires": 12,
+    "wreck_fire_secs": 900,
+    "announce": true,
+    "ai": {
+      "sides": ["Blue", "Red"],
+      "think_secs": 300,
+      "max_attack_m": 60000,
+      "concentration": 2,
+      "reserve": 1,
+      "min_objectives": 3,
+      "follow_tempo": true,
+      "pause_when_empty": true
+    }
   }
 }

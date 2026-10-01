@@ -37,6 +37,8 @@ use std::{
 
 mod balance;
 mod example;
+mod ground_war;
+pub use ground_war::{GroundAiCfg, GroundWarCfg};
 
 pub use balance::{fmt_mult, EmergencyRepairCfg, PopulationScalingCfg};
 
@@ -4129,6 +4131,11 @@ pub struct Cfg {
     /// on infrastructure, sea-drone raids and campaign tempo. Absent = off.
     #[serde(default)]
     pub modern_war: Option<ModernWarCfg>,
+    /// The dynamic ground war: AI formations made of objective garrisons
+    /// that leave their bases, march on the enemy and fight, under an AI
+    /// commander and the players. See `GroundWarCfg`. Absent = off.
+    #[serde(default)]
+    pub ground_war: Option<GroundWarCfg>,
 }
 
 /// See `Cfg::modern_war`. Each part is independent; leave one out to turn it

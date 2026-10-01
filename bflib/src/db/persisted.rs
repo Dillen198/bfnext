@@ -152,6 +152,11 @@ pub struct Persisted {
     /// respawned. See `crate::db::ground_insertion`.
     #[serde(default)]
     pub ground_insertions: MapS<CompactString, GroundInsertion>,
+    /// Ground formations in the field (`Cfg::ground_war`), by id. Their
+    /// groups are out of their home objective's `groups` while they are
+    /// here. See `crate::db::formation`.
+    #[serde(default)]
+    pub formations: MapS<super::formation::FormationId, super::formation::Formation>,
 }
 
 /// Backward compatibility: saves written before the per-ship rework stored

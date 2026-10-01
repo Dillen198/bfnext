@@ -26,6 +26,7 @@ mod commander;
 mod db;
 mod ewr;
 mod frontline;
+mod groundwar;
 mod intel_marks;
 mod jtac;
 mod landcache;
@@ -413,6 +414,9 @@ struct Context {
     /// Electronic warfare, SAM magazines, strike raids, sea drones and
     /// campaign tempo (`Cfg::modern_war`). Session state only.
     modern_war: modern_war::ModernWar,
+    /// Ground formations' session state and the player command queue
+    /// (`Cfg::ground_war`). The formations themselves are in the save.
+    groundwar: groundwar::GroundWar,
     last_junk_removal: DateTime<Utc>,
     last_weather_publish: DateTime<Utc>,
     /// When each held player last got the takeoff-hold countdown panel.
@@ -4687,6 +4691,9 @@ fn run_slow_timed_events(
     step(lua, ctx, "air life", |ctx| airlife::tick(lua, ctx, perf, start_ts));
     // EW, SAM magazines, strike raids, sea drones, tempo (`Cfg::modern_war`).
     step(lua, ctx, "modern war", |ctx| modern_war::tick(lua, ctx, perf, start_ts));
+    // Ground formations, the AI ground commander and players' ground orders
+    // (`Cfg::ground_war`).
+    step(lua, ctx, "ground war", |ctx| groundwar::tick(lua, ctx, perf, start_ts));
     step(lua, ctx, "junk removal", |ctx| remove_junk_periodic(lua, ctx, start_ts));
     // Publish weather to dashboard every 5 minutes
     if (start_ts - ctx.last_weather_publish).num_seconds() >= 300 {

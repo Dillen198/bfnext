@@ -66,6 +66,8 @@ pub struct Rpcs {
     _query_briefing: Proc,
     _query_situation: Proc,
     _query_tacmap: Proc,
+    _query_ground_war: Proc,
+    _ground_command: Proc,
     _query_unitdb: Proc,
     _query_gci: Proc,
     _query_cas: Proc,
@@ -797,6 +799,54 @@ impl Rpcs {
             side: Chars = Value::Null; "The side (blue, red, neutral)"
         )?;
         let _q = Arc::clone(&q);
+        let query_ground_war = define_rpc!(
+            publisher,
+            base.append("query-ground-war"),
+            "Query the ground war as one side sees it: its formations, enemy formations in contact, battles and objectives (returns JSON)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryGroundWar { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)"
+        )?;
+        let _q = Arc::clone(&q);
+        let ground_command = define_rpc!(
+            publisher,
+            base.append("ground-command"),
+            "Order the calling player's side's ground formations (JSON GroundCommand); returns a JSON GroundCommandReply",
+            |mut c: RpcCall, ucid: Chars, cmd: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let cmd = match serde_json::from_str::<bfprotocols::groundwar::GroundCommand>(&cmd) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad ground command: {e}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::GroundCommand { ucid, cmd }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            cmd: Chars = Value::Null; "JSON GroundCommand: kind (attack, defend, withdraw, hold, release, raise), formation id, objective id"
+        )?;
+        let _q = Arc::clone(&q);
         let query_gci = define_rpc!(
             publisher,
             base.append("query-gci"),
@@ -1306,6 +1356,8 @@ impl Rpcs {
             _query_briefing: query_briefing,
             _query_situation: query_situation,
             _query_tacmap: query_tacmap,
+            _query_ground_war: query_ground_war,
+            _ground_command: ground_command,
             _query_unitdb: query_unitdb,
             _query_gci: query_gci,
             _query_cas: query_cas,

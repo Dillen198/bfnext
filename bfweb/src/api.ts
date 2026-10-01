@@ -155,6 +155,93 @@ export interface Objective {
 /** The frontline as three independent sets of [lat, lon] polylines: the
  *  white centre (no man's land), the blue-dominance edge and the
  *  red-dominance edge. Same geometry the engine draws on the F10 map. */
+// ── Ground war (from /api/groundwar) ───────────────────────────────────
+// Mirrors `bfprotocols::groundwar`. Built by the engine for the viewer's own
+// coalition only: its formations in full, enemy formations only where its
+// forces are in contact with them, and the battles being fought.
+export type LatLon = [number, number]
+
+export interface GroundFormation {
+  id: number
+  name: string
+  pos: LatLon
+  heading: number
+  order: 'hold' | 'attack' | 'defend' | 'withdraw'
+  target: number | null
+  target_name: string | null
+  posture: 'moving' | 'holding' | 'assaulting'
+  alive: number
+  total: number
+  has_infantry: boolean
+  live: boolean
+  halted: boolean
+  engaged: boolean
+  home: number
+  home_name: string
+  commander: string | null
+  locked_mins: number | null
+  path: LatLon[]
+  km_to_go: number
+  eta_mins: number | null
+}
+
+export interface GroundEnemyContact {
+  pos: LatLon
+  kind: 'armour' | 'mechanised' | 'infantry'
+  approx_vehicles: number
+  heading: number
+}
+
+export interface GroundBattle {
+  id: number
+  pos: LatLon
+  radius_m: number
+  near: string | null
+  since: number
+  live: boolean
+  ours: number[]
+}
+
+export interface GroundObjective {
+  id: number
+  name: string
+  pos: LatLon
+  owner: 'Blue' | 'Red' | 'Neutral'
+  kind: string
+  health: number | null
+  threatened: boolean | null
+  can_raise: number | null
+  being_captured: boolean
+}
+
+export interface GroundPicture {
+  side: 'Blue' | 'Red'
+  enabled: boolean
+  max_formations: number
+  live: number
+  max_live: number
+  player_lock_secs: number
+  formations: GroundFormation[]
+  enemy: GroundEnemyContact[]
+  battles: GroundBattle[]
+  objectives: GroundObjective[]
+  /** Added by bfdb: this viewer may give orders. */
+  can_command: boolean
+  /** Added by bfdb: an admin looking in at a side with ?side=. */
+  god_mode: boolean
+}
+
+export type GroundCommand =
+  | { kind: 'attack' | 'defend' | 'withdraw'; formation: number; objective: number }
+  | { kind: 'hold' | 'release'; formation: number }
+  | { kind: 'raise'; objective: number }
+
+export interface GroundCommandReply {
+  ok: boolean
+  message: string
+  formation: number | null
+}
+
 export interface Frontlines {
   mid: [number, number][][]
   blue: [number, number][][]
@@ -1547,6 +1634,13 @@ export const api = {
   // side the session resolves to, so the enemy's intel never reaches a browser.
   situation: (side?: 'Blue' | 'Red') =>
     get<SituationReport>(side ? `/situation?side=${side}` : '/situation'),
+  // Coalition-locked like `situation`; orders are checked again by the engine
+  // against the side the caller's own pilot is on.
+  groundwar: {
+    picture: (side?: 'Blue' | 'Red') =>
+      get<GroundPicture>(side ? `/groundwar?side=${side}` : '/groundwar'),
+    command: (cmd: GroundCommand) => post<GroundCommandReply>('/groundwar/command', cmd),
+  },
   kills: (roundId?: number, limit = 50) =>
     get<Kill[]>(`/kills?limit=${limit}${roundId ? `&round=${roundId}` : ''}`),
   pilot: (ucid: string) => get<Pilot>(`/pilot/${ucid}`),
