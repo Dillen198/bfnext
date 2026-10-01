@@ -499,8 +499,14 @@ impl Db {
         if total == 0 { 0 } else { alive * 100 / total }
     }
 
-    pub fn formation_has_infantry(&self, f: &Formation) -> bool {
-        f.groups.iter().any(|gid| {
+    /// Whether `f` can take a base: it has an infantry group, or a vehicle
+    /// that carries a squad (see `troop_carrier`).
+    pub fn formation_can_assault(&self, f: &Formation) -> bool {
+        self.infantry_group(f).is_some() || self.troop_carrier(f).is_some()
+    }
+
+    fn infantry_group(&self, f: &Formation) -> Option<GroupId> {
+        f.groups.iter().copied().find(|gid| {
             self.persisted.groups.get(gid).map_or(false, |g| {
                 g.class.is_infantry()
                     && g.units
@@ -508,6 +514,27 @@ impl Db {
                         .any(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
             })
         })
+    }
+
+    /// A live vehicle in `f` that carries infantry -- an IFV or APC with a
+    /// `cfg.dismount` squad for `f`'s side: (its group, where it is, the
+    /// squad's template). Garrisons keep their last infantry group at home,
+    /// so on most maps this is how an armoured formation takes a base.
+    fn troop_carrier(&self, f: &Formation) -> Option<(GroupId, Vector2, String)> {
+        for gid in &f.groups {
+            let Some(g) = self.persisted.groups.get(gid) else { continue };
+            for uid in &g.units {
+                let Some(u) = self.persisted.units.get(uid) else { continue };
+                if u.dead {
+                    continue;
+                }
+                let squad = self.ephemeral.cfg.dismount.get(&u.typ).and_then(|d| d.template.get(&f.side));
+                if let Some(t) = squad {
+                    return Some((*gid, u.pos, t.clone()));
+                }
+            }
+        }
+        None
     }
 
     /// One line describing a formation, for the menus and the dashboard.
@@ -1216,8 +1243,8 @@ impl Db {
                             false,
                             side,
                             format_compact!(
-                                "{oname} is broken, but {name} has no infantry left to take it. \
-                                 Send troops in."
+                                "{oname} is broken, but {name} has no infantry or troop carriers \
+                                 left to take it. Send troops in."
                             ),
                         );
                     }
@@ -1227,8 +1254,10 @@ impl Db {
         }
     }
 
-    /// Send formation `id`'s infantry into `oid` as a capture squad. False
-    /// if it has none left.
+    /// Send formation `id`'s infantry into `oid` as a capture squad: its
+    /// infantry group if it has one (the group becomes the squad), else a
+    /// squad out of one of its IFVs / APCs (the vehicle stays). False if it
+    /// has neither.
     fn launch_assault(
         &mut self,
         rt: &mut FormationRt,
@@ -1240,25 +1269,24 @@ impl Db {
     ) -> Result<bool> {
         let f = self.persisted.formations.get(&id).unwrap();
         let (side, fpos, home) = (f.side, f.pos, f.home);
-        let Some(gid) = f.groups.iter().copied().find(|gid| {
-            self.persisted.groups.get(gid).map_or(false, |g| {
-                g.class.is_infantry()
-                    && g.units
-                        .into_iter()
-                        .any(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
-            })
-        }) else {
-            return Ok(false);
+        // (group the squad comes from, where it gets out, template, the
+        // group itself becomes the squad)
+        let (gid, from, template, whole_group) = match self.infantry_group(f) {
+            Some(gid) => {
+                let g = group!(self, gid)?;
+                (gid, self.group_center(&gid)?, g.template_name.clone(), true)
+            }
+            None => match self.troop_carrier(f) {
+                Some((gid, pos, template)) => (gid, pos, template, false),
+                None => return Ok(false),
+            },
         };
         let obj = objective!(self, oid)?;
         let (zpos, zr) = (obj.zone.pos(), obj.zone.radius());
-        let g = group!(self, gid)?;
-        let (template, gname) = (g.template_name.clone(), g.name.clone());
-        let ipos = self.group_center(&gid)?;
         // Where they get out: where they are, if that is inside the zone,
-        // else halfway in from the formation's side.
-        let at = if obj.zone.contains(ipos) {
-            ipos
+        // else part way in from the formation's side.
+        let at = if obj.zone.contains(from) {
+            from
         } else {
             let d = fpos - zpos;
             let n = d.norm();
@@ -1280,8 +1308,12 @@ impl Db {
             None,
         )
         .context("spawning the assault squad")?;
+        if !whole_group {
+            return Ok(true);
+        }
         // The squad IS that infantry group: it leaves the formation, and its
         // empty place goes home to be rebuilt.
+        let gname = group!(self, gid)?.name.clone();
         for uid in group!(self, gid)?.units.clone().into_iter() {
             let u = unit_mut!(self, uid)?;
             u.dead = true;
@@ -1299,6 +1331,18 @@ impl Db {
         }
         self.ephemeral.dirty();
         Ok(true)
+    }
+
+    /// Length of the road route `order_formation` would plan from `from` to
+    /// `to`, km (a straight line when there is no sensible road).
+    pub fn route_km(&self, lua: MizLua, from: Vector2, to: Vector2) -> Result<f64> {
+        let (path, _) = self.plan_path(lua, from, to)?;
+        let mut prev = from;
+        Ok(path.iter().fold(0., |d, p| {
+            let d = d + dist(prev, *p);
+            prev = *p;
+            d
+        }) / 1000.)
     }
 
     /// Put `gid` back into `oid`'s garrison for `side`. With `at_posts`

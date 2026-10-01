@@ -157,7 +157,8 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
                 .into(),
                 alive,
                 total,
-                has_infantry: db.formation_has_infantry(f),
+                // "Can take a base": infantry, or IFVs / APCs carrying a squad.
+                has_infantry: db.formation_can_assault(f),
                 live: rt.is_live(f),
                 halted,
                 engaged: db.formation_engaged(f),

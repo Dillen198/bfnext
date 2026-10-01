@@ -489,7 +489,7 @@ export default function GroundWarPage(): ReactElement {
                 {f.engaged && <Badge color={BATTLE}>IN CONTACT</Badge>}
                 {f.halted && <Badge color="var(--yellow)">HALTED</Badge>}
                 {f.live && <Badge color="var(--accent-bright)">IN DCS</Badge>}
-                {!f.has_infantry && <Badge color="var(--text-dim)">NO INFANTRY</Badge>}
+                {!f.has_infantry && <Badge color="var(--text-dim)">CAN'T CAPTURE</Badge>}
                 <Badge color={f.commander ? ours : 'var(--text-dim)'}>
                   {f.commander ? `${f.commander}${f.locked_mins != null ? ` · ${f.locked_mins}m` : ''}` : 'AI'}
                 </Badge>
@@ -606,7 +606,7 @@ function FormationOrders({
       </div>
       {!f.has_infantry && (
         <div style={{ marginTop: 6, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-          No infantry left: it can break a base but not take it.
+          No infantry or troop carriers left: it can break a base but not take it.
         </div>
       )}
     </div>
