@@ -137,7 +137,11 @@ export default function GroundWarPage(): ReactElement {
   const { data: pic, error, isLoading } = useQuery<GroundPicture>({
     queryKey: ['groundwar', sideParam],
     queryFn: () => (mock ? Promise.resolve(groundwarMock) : api.groundwar.picture(sideParam)),
-    refetchInterval: 5_000,
+    // Every 5 s while it answers; once a minute, and no retries, while it
+    // doesn't -- a server whose bflib.dll predates the ground war never will,
+    // and hammering it only ties up bfdb.
+    retry: false,
+    refetchInterval: (q) => (q.state.error ? 60_000 : 5_000),
   })
   const { data: fronts = { mid: [], blue: [], red: [] } } = useQuery<Frontlines>({
     queryKey: ['frontline'],

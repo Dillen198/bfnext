@@ -1045,6 +1045,34 @@ fn rotate_log(path: &std::path::Path) {
     }
 }
 
+/// `call_engine_rpc_str` for a procedure the engine on the server may not
+/// publish yet (see `StatsDb::call_engine_rpc_optional`): unanswered calls
+/// don't trip the instance's breaker, and give up after 5s, with an error
+/// that says why that is the likely cause.
+async fn call_engine_rpc_str_optional(
+    db: &StatsDb,
+    inst: &InstanceState,
+    proc_name: &str,
+    args: Vec<(&str, netidx::publisher::Value)>,
+) -> std::result::Result<std::string::String, Error> {
+    use netidx::publisher::Value;
+    const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    let reply = match tokio::time::timeout(RPC_TIMEOUT, db.call_engine_rpc_optional(inst, proc_name, args)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return Err(Error(websec::unavailable(format!("game server not reachable: {e}")))),
+        Err(_) => {
+            return Err(Error(websec::unavailable(format!(
+                "the game server did not answer {proc_name} -- its bflib.dll is probably older than                  this feature (a new one applies at the next mission restart)"
+            ))))
+        }
+    };
+    match reply {
+        Value::Error(e) => Err(Error(websec::engine_refused(e.to_string()))),
+        Value::String(s) => Ok(s.to_string()),
+        other => Err(Error(anyhow::anyhow!("unexpected RPC reply: {other:?}"))),
+    }
+}
+
 async fn call_engine_rpc_str(
     db: &StatsDb,
     inst: &InstanceState,
@@ -1360,7 +1388,7 @@ async fn api_groundwar(
         dcso3::coalition::Side::Red => "red",
         _ => "blue",
     };
-    let raw = call_engine_rpc_str(
+    let raw = call_engine_rpc_str_optional(
         &db,
         &inst,
         "query-ground-war",
@@ -1403,7 +1431,7 @@ async fn api_groundwar_command(
         .into());
     };
     let cmd = serde_json::to_string(&body).map_err(anyhow::Error::from)?;
-    let raw = call_engine_rpc_str(
+    let raw = call_engine_rpc_str_optional(
         &db,
         &inst,
         "ground-command",

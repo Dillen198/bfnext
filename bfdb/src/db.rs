@@ -818,6 +818,11 @@ impl InstanceState {
         }
     }
 
+    /// The breaker is open: enough calls in a row went unanswered.
+    fn breaker_open(&self) -> bool {
+        self.rpc_failures.lock().unwrap().0 >= RPC_FAIL_THRESHOLD
+    }
+
     /// Record how a call went. Any *reply* counts as reachable, including one
     /// carrying a logical error from bflib -- the breaker is about transport,
     /// not about whether the engine liked the arguments.
@@ -1056,11 +1061,16 @@ enum JsonlRead {
 struct RpcOutcome<'a> {
     inst: &'a InstanceState,
     reached: bool,
+    /// Whether a failure counts toward the breaker (see
+    /// `call_engine_rpc_optional`). A reply always counts.
+    counted: bool,
 }
 
 impl Drop for RpcOutcome<'_> {
     fn drop(&mut self) {
-        self.inst.note_rpc_result(self.reached);
+        if self.reached || self.counted {
+            self.inst.note_rpc_result(self.reached);
+        }
     }
 }
 
@@ -1777,6 +1787,32 @@ impl StatsDb {
         proc_name: &str,
         args: Vec<(&str, netidx::publisher::Value)>,
     ) -> Result<netidx::publisher::Value> {
+        self.call_engine_rpc_inner(inst, proc_name, args, true).await
+    }
+
+    /// `call_engine_rpc` for a procedure the running engine may not publish
+    /// yet -- a feature newer than the bflib.dll on the server. Calling a
+    /// procedure nobody publishes waits out the caller's timeout exactly like
+    /// a dead engine, so counting it would open the breaker for *every*
+    /// engine call on the instance while a page that polls it is open (Oct 1:
+    /// the GROUND COMMAND page did this to vs2, still on the old DLL). Its
+    /// failures are not counted; a reply still closes the breaker.
+    pub(crate) async fn call_engine_rpc_optional(
+        &self,
+        inst: &InstanceState,
+        proc_name: &str,
+        args: Vec<(&str, netidx::publisher::Value)>,
+    ) -> Result<netidx::publisher::Value> {
+        self.call_engine_rpc_inner(inst, proc_name, args, false).await
+    }
+
+    async fn call_engine_rpc_inner(
+        &self,
+        inst: &InstanceState,
+        proc_name: &str,
+        args: Vec<(&str, netidx::publisher::Value)>,
+        count_failure: bool,
+    ) -> Result<netidx::publisher::Value> {
         use netidx_protocols::rpc::client::Proc;
         let (subscriber, base) = match (&inst.subscriber, &inst.base) {
             (Some(s), Some(b)) => (s, b),
@@ -1788,7 +1824,11 @@ impl StatsDb {
                 inst.cfg.id
             )
         })?;
-        if !inst.rpc_allowed() {
+        // An optional call must not spend the open breaker's probe: the
+        // probe is how the instance finds out its engine is back, and a
+        // procedure the engine doesn't publish would waste it every time.
+        let allowed = if count_failure { inst.rpc_allowed() } else { !inst.breaker_open() };
+        if !allowed {
             bail!(
                 "instance {:?}: engine not answering (breaker open, retrying every {}s)",
                 inst.cfg.id,
@@ -1815,7 +1855,7 @@ impl StatsDb {
         // A timed-out caller does not cancel `proc.call`, it drops the whole
         // future -- so the outcome has to be recorded from a guard that runs on
         // drop, not from the code after the await (which never runs).
-        let mut guard = RpcOutcome { inst, reached: false };
+        let mut guard = RpcOutcome { inst, reached: false, counted: count_failure };
         let res = proc.call(args).await;
         // A reply carrying bflib's own error still means the engine is there;
         // a transport error does not.
