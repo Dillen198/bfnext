@@ -1047,8 +1047,10 @@ fn rotate_log(path: &std::path::Path) {
 
 /// `call_engine_rpc_str` for a procedure the engine on the server may not
 /// publish yet (see `StatsDb::call_engine_rpc_optional`): unanswered calls
-/// don't trip the instance's breaker, and give up after 5s, with an error
-/// that says why that is the likely cause.
+/// don't trip the instance's breaker, so it can afford to wait longer than
+/// the counted calls -- 15s covers the first call's subscription to the
+/// procedure (netidx gives up on that itself after 10s, with an error that
+/// says so) plus an engine tick that runs long.
 async fn call_engine_rpc_str_optional(
     db: &StatsDb,
     inst: &InstanceState,
@@ -1056,13 +1058,18 @@ async fn call_engine_rpc_str_optional(
     args: Vec<(&str, netidx::publisher::Value)>,
 ) -> std::result::Result<std::string::String, Error> {
     use netidx::publisher::Value;
-    const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
     let reply = match tokio::time::timeout(RPC_TIMEOUT, db.call_engine_rpc_optional(inst, proc_name, args)).await {
         Ok(Ok(v)) => v,
-        Ok(Err(e)) => return Err(Error(websec::unavailable(format!("game server not reachable: {e}")))),
+        Ok(Err(e)) => {
+            log::warn!("[{}] {proc_name}: {e}", inst.id);
+            return Err(Error(websec::unavailable(format!("game server not reachable: {e}"))));
+        }
         Err(_) => {
+            log::warn!("[{}] {proc_name}: no reply in {}s", inst.id, RPC_TIMEOUT.as_secs());
             return Err(Error(websec::unavailable(format!(
-                "the game server did not answer {proc_name} -- its bflib.dll is probably older than                  this feature (a new one applies at the next mission restart)"
+                "the game server did not answer {proc_name} within {}s -- the engine may be                  busy; this page retries every minute",
+                RPC_TIMEOUT.as_secs()
             ))))
         }
     };
